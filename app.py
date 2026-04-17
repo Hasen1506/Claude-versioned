@@ -77,6 +77,54 @@ def api_solve_procurement():
         }), 500
 
 
+# ─── Rolling-horizon MPS re-planning ───
+@app.route('/api/solve/rolling', methods=['POST'])
+def api_solve_rolling():
+    """Re-plan procurement on a rolling horizon. For each wave, freeze the first
+    frozen_weeks of the previous plan, shift horizon forward, re-solve, and
+    collect plan changes. Returns: waves[], nervousness, final_plan."""
+    try:
+        data = request.json
+        waves = int(data.get('n_waves', 4))
+        shift = int(data.get('shift_weeks', 4))
+        frozen = int(data.get('frozen_weeks', 2))
+        base = data.get('base', {})
+        results = []
+        prev_plan = None
+        nervousness = 0
+        for w in range(waves):
+            # Slice demand forward by shift*w weeks — simulate time passing
+            sliced = dict(base)
+            products = []
+            for p in base.get('products', []):
+                demand = list(p.get('demand', []))
+                d_shifted = demand[w * shift:] + demand[:w * shift]
+                products.append({**p, 'demand': d_shifted})
+            sliced['products'] = products
+            # Add frozen constraint marker
+            params = dict(base.get('params', {}))
+            params['frozen_weeks'] = frozen
+            params['wave_index'] = w
+            sliced['params'] = params
+            res = solve_procurement(sliced)
+            # Measure nervousness — delta between this wave's wk-(frozen..shift) vs prev plan's
+            if prev_plan and not res.get('error'):
+                prev_po = prev_plan.get('procurement_schedule', [])
+                curr_po = res.get('procurement_schedule', [])
+                prev_map = {(po.get('week'), po.get('part')): po.get('qty', 0) for po in prev_po}
+                for po in curr_po:
+                    key = (po.get('week'), po.get('part'))
+                    if key in prev_map:
+                        nervousness += abs(po.get('qty', 0) - prev_map[key])
+            results.append({'wave': w, 'shift_weeks': w * shift, 'total_cost': res.get('total_cost', 0),
+                            'solve_time': res.get('solve_time', 0), 'error': res.get('error')})
+            prev_plan = res
+        return jsonify({'waves': results, 'nervousness': nervousness,
+                        'final_plan': prev_plan, 'frozen_weeks': frozen, 'shift_weeks': shift})
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
 # ─── Monte Carlo Simulation ───
 @app.route('/api/solve/montecarlo', methods=['POST'])
 def api_solve_montecarlo():

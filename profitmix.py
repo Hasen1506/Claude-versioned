@@ -24,6 +24,9 @@ def solve_profitmix(data):
     constraints = data.get('constraints', {})
     planning_mode = data.get('planning_mode', 'monthly')  # monthly, quarterly, annual
     demand_mode = data.get('demand_mode', 'mts')  # mts, mto, ato, seasonal
+    # v3.1.1 Q14 — scope: forecast is already sliced by the caller to planning_horizon_months.
+    # If the caller forgot, we fall back to len(forecast) which is self-consistent.
+    planning_horizon_months = int(data.get('planning_horizon_months', 0) or 0)
 
     n = len(products)
     if not n:
@@ -40,6 +43,12 @@ def solve_profitmix(data):
         mape = p.get('mape_pct', 15) / 100
         mto_orders = p.get('mto_orders', [])
         shelf_life_weeks = p.get('shelf_life', 52)
+
+        # Clip forecast/history to the declared horizon so "sum" means "over the planning scope",
+        # not "over whatever array the UI happened to send."
+        if planning_horizon_months > 0:
+            forecast = forecast[:planning_horizon_months] if forecast else forecast
+            history = history[-planning_horizon_months:] if history else history
 
         if demand_mode == 'mto':
             # ONLY confirmed orders — no speculation

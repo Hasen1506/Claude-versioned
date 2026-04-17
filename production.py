@@ -49,11 +49,83 @@ def solve_production(data):
     # completion[k] = last period product k is produced
     completion = {}
 
+    # Helper — for each (product, line) compute the effective capacity per period
+    # based on routing (bottleneck op) when routing is defined, else fall back to line capacity.
+    def _route_cap(k, l):
+        """Return (units_per_period, eligible_bool, route_yield)."""
+        prod = products[k]
+        route = prod.get('routing') or []
+        line_id = lines[l].get('id', f'line{l}')
+        if not route:
+            return lines[l].get('capacity', 50), True, prod.get('yield_pct', 0.95)
+        # Ops assigned to this line
+        ops_on_line = [op for op in route if op.get('line_id') == line_id or op.get('lineId') == line_id]
+        if not ops_on_line:
+            # line isn't part of this product's routing → ineligible
+            return 0, False, 0
+        # Bottleneck op on this line — lowest throughput
+        hrs_per_period = params.get('hrs_per_period', 40)  # weekly hrs available
+        oee = prod.get('oee', 0.85 * 0.92 * 0.98)
+        min_per_period = hrs_per_period * 60 * oee
+        throughputs = []
+        y_mult = 1.0
+        for op in ops_on_line:
+            ct = op.get('cycleTimeMin', op.get('cycle_time_min', 1)) or 1
+            par = max(op.get('parallelism', 1), 1)
+            throughputs.append(min_per_period / ct * par)
+            y_mult *= op.get('yieldPct', op.get('yield_pct', 100)) / 100.0
+        return int(min(throughputs)), True, y_mult
+
+    # Planned maintenance — two modes:
+    #   weekly: line fully down for weeks [from_week, to_week]
+    #   hourly: specific hours on a specific date → capacity reduced pro-rata
+    # JSON payload weekly values are 1-indexed (W1..WT) — normalize to 0-indexed t.
+    maint_down = set()               # (line, t) fully down
+    maint_scale = {}                 # (line, t) -> multiplier in [0, 1]
+    hrs_per_period = params.get('hrs_per_period', 40)  # weekly hrs available per line
+    horizon_start_ts = params.get('horizon_start_date')  # optional YYYY-MM-DD
+    try:
+        import datetime as _dt
+        start_dt = _dt.date.fromisoformat(horizon_start_ts) if horizon_start_ts else None
+    except Exception:
+        start_dt = None
+
+    for l in range(n_lines):
+        for w in lines[l].get('planned_maintenance', []) or []:
+            mode = (w.get('mode') or 'weekly').lower()
+            if mode == 'weekly':
+                fw = max(int(w.get('from_week', 0)) - 1, 0)
+                tw = max(int(w.get('to_week', 0)) - 1, fw)
+                for t in range(fw, min(tw + 1, T)):
+                    maint_down.add((l, t))
+            elif mode == 'hourly':
+                # Resolve which period this date falls in; fallback: period 0.
+                t_target = 0
+                if start_dt and w.get('date'):
+                    try:
+                        d = _dt.date.fromisoformat(w['date'])
+                        t_target = max(0, min((d - start_dt).days // 7, T - 1))
+                    except Exception:
+                        t_target = 0
+                hrs_lost = float(w.get('hours_lost', 0) or 0)
+                if hrs_per_period <= 0 or hrs_lost <= 0:
+                    continue
+                scale = max(0.0, 1.0 - (hrs_lost / hrs_per_period))
+                prev = maint_scale.get((l, t_target), 1.0)
+                maint_scale[(l, t_target)] = min(prev, scale)
+                if scale <= 0.0:
+                    maint_down.add((l, t_target))
+
     for k in range(n_prod):
         completion[k] = pulp.LpVariable(f'comp_{k}', 0, T, cat='Integer')
         for l in range(n_lines):
             for t in range(T):
-                cap = lines[l].get('capacity', 50)
+                cap_route, eligible, _ = _route_cap(k, l)
+                cap = cap_route if eligible else 0
+                if (l, t) in maint_down:
+                    cap = 0  # line fully down — zero capacity
+                elif (l, t) in maint_scale:
+                    cap = int(cap * maint_scale[(l, t)])  # hourly downtime pro-rata
                 x[k, l, t] = pulp.LpVariable(f'x_{k}_{l}_{t}', 0, cap, cat='Integer')
                 y[k, l, t] = pulp.LpVariable(f'y_{k}_{l}_{t}', cat='Binary')
             # Changeover: w[k1,k2,l,t] = 1 if switch from k1 to k2 on line l at period t
@@ -96,22 +168,35 @@ def solve_production(data):
     for k in range(n_prod):
         req = products[k].get('required_qty', 100)
         fy = products[k].get('yield_pct', 0.95)
+        prod_route = products[k].get('routing') or []
 
-        # C1: Total production meets requirement
+        # C1: Total production meets requirement — use routing-derived yield if available
+        if prod_route:
+            # Cascaded yield across all ops (serial)
+            fy_route = 1.0
+            for op in prod_route:
+                fy_route *= op.get('yieldPct', op.get('yield_pct', 100)) / 100.0
+            fy = fy_route if fy_route > 0 else fy
         prob += pulp.lpSum(
             x[k, l, t] for l in range(n_lines) for t in range(T)
         ) * fy >= req, f"Demand_{k}"
 
-        # C2: Can only produce on assigned lines
+        # C2: Can only produce on eligible lines (routing takes precedence; falls back to lines.products)
         for l in range(n_lines):
-            eligible = lines[l].get('products', list(range(n_prod)))
-            if k not in eligible and isinstance(eligible[0] if eligible else 0, int):
+            cap_route, eligible_route, _ = _route_cap(k, l)
+            if prod_route and not eligible_route:
                 for t in range(T):
-                    prob += x[k, l, t] == 0, f"Inelig_{k}_{l}_{t}"
+                    prob += x[k, l, t] == 0, f"InelRt_{k}_{l}_{t}"
+            else:
+                eligible = lines[l].get('products', list(range(n_prod)))
+                if k not in eligible and eligible and isinstance(eligible[0], int):
+                    for t in range(T):
+                        prob += x[k, l, t] == 0, f"Inelig_{k}_{l}_{t}"
 
-        # C3: Linking x and y
+        # C3: Linking x and y using routing-derived per-(k,l) capacity
         for l in range(n_lines):
-            cap = lines[l].get('capacity', 50)
+            cap_route, eligible_route, _ = _route_cap(k, l)
+            cap = cap_route if eligible_route else lines[l].get('capacity', 50)
             for t in range(T):
                 prob += x[k, l, t] <= cap * y[k, l, t], f"Link_{k}_{l}_{t}"
                 prob += x[k, l, t] >= y[k, l, t], f"MinProd_{k}_{l}_{t}"
@@ -131,7 +216,7 @@ def solve_production(data):
             ot_cap_extra = cap * 0.5  # OT can add 50% more
             prob += pulp.lpSum(
                 x[k, l, t] for k in range(n_prod)
-            ) <= total_cap + ot_cap_extra * (ot[l, t] / hrs_per_shift), f"LineCap_{l}_{t}"
+            ) <= total_cap + (ot_cap_extra / max(hrs_per_shift, 1)) * ot[l, t], f"LineCap_{l}_{t}"
 
     # C6: Shared lines — max 1 active product per period (optional for sequential mode)
     for l in range(n_lines):

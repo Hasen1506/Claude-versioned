@@ -99,6 +99,11 @@ def solve_procurement(data):
                 'product_k': k,
                 'part_i': i,
                 'scrap': part.get('scrap_factor', 0),
+                'vol_disc': part.get('vol_disc', []),
+                'trans_tiers': part.get('trans_tiers', []),
+                'trans_rate': part.get('trans_rate', 0.0),
+                'pay_term_days': part.get('pay_term_days', 30),
+                'early_pay_disc': part.get('early_pay_disc', 0),
             })
 
             for t in range(T):
@@ -109,11 +114,32 @@ def solve_procurement(data):
     # ── Objective function ──
     obj = []
 
+    # Helper — expand scalar base into period-indexed series, applying cost_events.
+    # Cost events are stepwise: from_month m onwards, param switches to new value.
+    def _period_series(base, events, param_key, weeks_per_month=4):
+        series = [base] * T
+        if not events:
+            return series
+        ev = sorted(
+            [e for e in events if e.get('param') == param_key],
+            key=lambda e: e.get('from_month', 0),
+        )
+        for e in ev:
+            fm_week = int(e.get('from_month', 0)) * weeks_per_month
+            new_val = e.get('value', base)
+            for t in range(fm_week, T):
+                series[t] = new_val
+        return series
+
     for k, prod in enumerate(products):
         demand = prod.get('demand', [0] * T)[:T]
-        setup_cost = prod.get('setup_cost', 50)
-        var_cost = prod.get('variable_cost', 0)
-        sell_price = prod.get('sell_price', 10)
+        setup_base = prod.get('setup_cost', 50)
+        vc_base = prod.get('variable_cost', 0)
+        sp_base = prod.get('sell_price', 10)
+        events = prod.get('cost_events', [])
+        setup_series = _period_series(setup_base, events, 'setupCost')
+        vc_series = _period_series(vc_base, events, 'variableCost')
+        sp_series = _period_series(sp_base, events, 'sellPrice')
         shelf = prod.get('shelf_life', T)
         fy = prod.get('yield_pct', 0.95)
         unit_cost = sum(
@@ -121,27 +147,85 @@ def solve_procurement(data):
             for pt in prod.get('parts', [])
         )
         fg_hold = unit_cost * carry_rate / 52  # weekly holding cost per unit
-        short_penalty = sell_price * 1.5
 
         for t in range(T):
-            # Setup cost
-            obj.append(setup_cost * y[k, t])
-            # Variable production cost
-            obj.append(var_cost * p[k, t])
+            # Setup cost (period-varying)
+            obj.append(setup_series[t] * y[k, t])
+            # Variable production cost (period-varying)
+            obj.append(vc_series[t] * p[k, t])
             # FG holding
             obj.append(fg_hold * inv[k, t])
-            # Shortage penalty
-            obj.append(short_penalty * short[k, t])
+            # Shortage penalty (period-varying via sell_price events)
+            obj.append(sp_series[t] * 1.5 * short[k, t])
 
-    # RM costs
+    # RM costs — with volume discount & transport tier support via effective unit cost.
+    # Strategy: for each part compute effective per-unit cost at the MAX applicable tier
+    # (assumes solver will tend toward larger batches when discount dominates holding).
+    # For piecewise-linear exact MILP discount modelling, we use tier-indicator binaries.
+    tier_indicators = {}  # (gidx,t,tier_i) -> binary
     for gidx, part in enumerate(all_parts):
+        base_cost = part['cost']
+        tiers = sorted(part.get('vol_disc', []) or [], key=lambda x: x.get('minQty', 0))
+        trans_tiers = sorted(part.get('trans_tiers', []) or [], key=lambda x: x.get('minQty', 0))
+        default_trans = part.get('trans_rate', 0.0) or 0.0
+        has_vol = len(tiers) > 1
+        has_trans = len(trans_tiers) > 0
         for t in range(T):
-            # Purchase cost
-            obj.append(part['cost'] * r[gidx, t])
+            if has_vol or has_trans:
+                # Build tier break points combining both discount and transport tiers
+                break_qtys = sorted(set(
+                    [x.get('minQty', 0) for x in tiers]
+                    + [x.get('minQty', 0) for x in trans_tiers]
+                    + [0]
+                ))
+                # Indicator binaries: exactly one active per period
+                inds = {}
+                seg_costs = []
+                for si, q_lo in enumerate(break_qtys):
+                    q_hi = break_qtys[si + 1] if si + 1 < len(break_qtys) else None
+                    # Effective unit cost at this tier
+                    disc_pct = 0
+                    for vd in tiers:
+                        if vd.get('minQty', 0) <= q_lo:
+                            disc_pct = max(disc_pct, vd.get('pct', 0))
+                    eff_cost = base_cost * (1 - disc_pct / 100.0)
+                    trans_rate_eff = default_trans
+                    for tt in trans_tiers:
+                        if tt.get('minQty', 0) <= q_lo:
+                            trans_rate_eff = tt.get('rate', default_trans)
+                    seg_costs.append((q_lo, q_hi, eff_cost + trans_rate_eff))
+                    inds[si] = pulp.LpVariable(f'tier_{gidx}_{t}_{si}', cat='Binary')
+                tier_indicators[(gidx, t)] = inds
+                # Exactly one segment active when ordering; zero if not ordering
+                prob += pulp.lpSum(inds[si] for si in inds) == o[gidx, t], \
+                    f"TierOne_{gidx}_{t}"
+                # Force r within selected segment bounds
+                M = part.get('max_order', 9999)
+                for si, (q_lo, q_hi, _) in enumerate(seg_costs):
+                    prob += r[gidx, t] >= q_lo * inds[si], f"TierLo_{gidx}_{t}_{si}"
+                    if q_hi is not None:
+                        prob += r[gidx, t] <= q_hi * inds[si] + M * (1 - inds[si]), \
+                            f"TierHi_{gidx}_{t}_{si}"
+                # Cost contribution: sum of (segment_cost × qty × ind) — linearize via
+                # auxiliary: r_seg[si] = r * ind[si]. To keep linear, approximate with
+                # segment cost × minQty as baseline plus marginal at that tier rate.
+                # Simplification: weight each segment's effective rate by indicator × r cap.
+                # Since r is bounded by max_order, we use effective cost of the binding tier:
+                # total = sum(seg_cost[si] × inds[si] × r[t]) — nonlinear; use McCormick/big-M
+                # Introduce auxiliary r_seg ≥ 0, r_seg ≤ M*ind, r_seg ≤ r, r_seg ≥ r - M*(1-ind)
+                for si, (q_lo, q_hi, eff_rate) in enumerate(seg_costs):
+                    r_seg = pulp.LpVariable(f'rseg_{gidx}_{t}_{si}', 0, M)
+                    prob += r_seg <= M * inds[si], f"RsegUB1_{gidx}_{t}_{si}"
+                    prob += r_seg <= r[gidx, t], f"RsegUB2_{gidx}_{t}_{si}"
+                    prob += r_seg >= r[gidx, t] - M * (1 - inds[si]), f"RsegLB_{gidx}_{t}_{si}"
+                    obj.append(eff_rate * r_seg)
+            else:
+                # No tiers — base cost + simple per-unit transport
+                obj.append((base_cost + default_trans) * r[gidx, t])
             # Ordering admin cost
             obj.append(part['ord_cost'] * o[gidx, t])
-            # RM holding
-            rm_hold = part['cost'] * (part['hold_pct'] / 100) / 52
+            # RM holding (use base cost as proxy for holding valuation)
+            rm_hold = base_cost * (part['hold_pct'] / 100) / 52
             obj.append(rm_hold * rm_inv[gidx, t])
 
     # Fixed overhead

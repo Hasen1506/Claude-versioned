@@ -3,10 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Enterprise Simulator v2.0</title>
+<title>Enterprise Simulator v3.0</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 <script>
 // PropTypes shim — Recharts UMD REQUIRES window.PropTypes at init time
 (function(g){
@@ -285,10 +286,20 @@ const defaultSKU=()=>({
   backorderOn:false,salvageRate:0.80,mape:15,
   // v78 product-level params
   fixedFactory:100,laborPerUnit:5,laborType:'hourly',
-  carryRate:24,cycleTime:19,optUtil:85,capCV:5,yieldCV:0,
+  carryRate:24,cycleTime:19,capCV:5,yieldCV:0,
+  // OEE capacity model (v3.0 — replaces optUtil)
+  oeeAvailability:85,oeePerformance:92,oeeQuality:98,
+  // Variable cost breakdown — single source of truth (total = sum of these)
+  vcElectricity:1.5,vcPackaging:1.0,vcConsumables:1.0,vcDirectLabor:1.0,vcOther:0.5,
+  // Carry rate breakdown — single source of truth (total = sum of these)
+  crCapital:10,crStorage:5,crInsurance:2,crObsolescence:4,crHandling:2,crShrinkage:1,
   setupPen:1,whMaxUnits:500,dso:30,
   outRate:2.0,outMode:'perUnit',outShipCost:50,
   prodMode:'mts',
+  // v3.0 — per-product routing (operations DAG). Empty = use fallback capacity.
+  // Each op: {id, seq, name, workCenter, lineId, cycleTimeMin, setupMin, yieldPct, parallelism, predecessor}
+  routing:[],
+  lineMode:'shared', // shared | dedicated | flexible-sequential | flexible-parallel
   history:[120,135,128,140,155,148,162,170,158,145,138,150,125,140,132,148,160,152,168,175,162,150,142,155],
   actuals:Array(12).fill(null), // actual demand per month (for sensing)
   overrides:Array(12).fill(null),
@@ -323,6 +334,8 @@ const defaultState={
   planning:{
     startMonth:0,periods:52,workDays:6,
     indianHolidays:true,planningUnit:'weekly',
+    timeGrain:'weekly', // v3.1.1 Q15 — 'daily' | 'weekly' | 'monthly'
+    horizonStartDate:null, // anchor for hourly-mode maintenance resolution
     histMonths:24,sensingMinWeeks:2,sensingAlpha:0.3,
     frozenWeeks:4,slushyWeeks:12,
   },
@@ -343,6 +356,20 @@ const defaultState={
   versions:[],
   // Working capital params
   workingCapital:{dso:30,dpo:45},
+  // SAP Mode (v3.0) — enterprise-scale extension
+  sap:{enabled:false,plants:[],dcs:[],lanes:[],skuCount:0,mlSensing:false,tcodes:{}},
+  // Physical network — nodes + lanes (v3.0 P9 multi-echelon)
+  network:{
+    nodes:[
+      {id:'plant1',type:'plant',name:'Plant 1',location:'Chennai',lat:13.08,lon:80.27,capacity:1000},
+      {id:'dc1',type:'dc',name:'DC-North',location:'Delhi',lat:28.7,lon:77.1,capacity:5000},
+      {id:'cust1',type:'customer',name:'Region West',location:'Mumbai',lat:19.08,lon:72.88,demandShare:0.4},
+    ],
+    lanes:[
+      {id:'l1',from:'plant1',to:'dc1',mode:'FTL',leadDays:3,ratePerUnit:2.5,capacity:1000,co2:0.12,active:true},
+      {id:'l2',from:'dc1',to:'cust1',mode:'LTL',leadDays:2,ratePerUnit:1.8,capacity:3000,co2:0.08,active:true},
+    ],
+  },
 };
 
 // ════════════════════════════════════════════════
@@ -364,6 +391,8 @@ function reducer(state,action){
     }
     case 'SET_ACTIVE_PRODUCT':s.activeProductId=action.id;break;
     case 'SET_SERVER_STATUS':s.serverStatus=action.status;break;
+    case 'SET_SAP':s.sap={...(s.sap||{}),...action.payload};break;
+    case 'SET_NETWORK':s.network={...(s.network||{}),...action.payload};break;
     case 'ADD_BOM_ITEM':{
       const idx=s.products.findIndex(p=>p.id===action.productId);
       if(idx>=0){s.products=[...s.products];s.products[idx]={...s.products[idx],bom:[...s.products[idx].bom,{
@@ -472,27 +501,48 @@ function SetupTab({state,dispatch}){
   const upC=(k,v)=>dispatch({type:'SET_CONFIG',payload:{[k]:v}});
   const upP=(k,v)=>dispatch({type:'SET_PLANNING',payload:{[k]:v}});
   const upB=(k,v)=>dispatch({type:'SET_BUDGET',payload:{[k]:v}});
+  const sl=+(c.serviceLevel||0.95);
+  const zVal=(p)=>{
+    // Inverse normal CDF (Beasley-Springer-Moro approx), sufficient for 0.5-0.9999
+    const a=[-39.6968302866538,220.946098424521,-275.928510446969,138.357751867269,-30.6647980661472,2.50662827745924];
+    const b=[-54.4760987982241,161.585836858041,-155.698979859887,66.8013118877197,-13.2806815528857];
+    const cc=[-0.00778489400243029,-0.322396458041136,-2.40075827716184,-2.54973253934373,4.37466414146497,2.93816398269878];
+    const d=[0.00778469570904146,0.32246712907004,2.445134137143,3.75440866190742];
+    const pLow=0.02425,pHigh=1-pLow;let q,r;
+    if(p<pLow){q=Math.sqrt(-2*Math.log(p));return (((((cc[0]*q+cc[1])*q+cc[2])*q+cc[3])*q+cc[4])*q+cc[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)}
+    if(p<=pHigh){q=p-0.5;r=q*q;return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q/(((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1)}
+    q=Math.sqrt(-2*Math.log(1-p));return -(((((cc[0]*q+cc[1])*q+cc[2])*q+cc[3])*q+cc[4])*q+cc[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+  };
   return <div className="animate-in">
+    <div style={{fontSize:10,color:'var(--tx3)',padding:'6px 10px',background:'var(--bg3)',borderRadius:4,marginBottom:10,borderLeft:'3px solid var(--ac)'}}>
+      <strong style={{color:'var(--ac)'}}>Tab 1 — Company & Calendar.</strong> Global settings only. Products, BOMs, and production lines live in Tab 2 (inside each product's routing). This tab sets defaults the rest of the app inherits.
+    </div>
     <div className="card"><div className="card-title">🏢 Company Profile</div>
       <div className="grid3">
         <Field label="Company Name"><input value={c.companyName} onChange={e=>upC('companyName',e.target.value)}/></Field>
         <Field label="Currency Symbol"><input value={c.currency} onChange={e=>upC('currency',e.target.value)} style={{width:60}}/></Field>
-        <Field label="GST Registered"><select value={c.gstRegistered?'yes':'no'} onChange={e=>upC('gstRegistered',e.target.value==='yes')}><option value="yes">Yes</option><option value="no">No</option></select></Field>
-        <Field label="Tax Rate %" hint="Corporate tax rate for depreciation tax shield"><input type="number" value={c.taxRate} onChange={e=>upC('taxRate',+e.target.value)}/></Field>
-        <Field label="WACC %" hint="Weighted average cost of capital for NPV discounting"><input type="number" value={c.wacc} onChange={e=>upC('wacc',+e.target.value)}/></Field>
-        <Field label="Target Service Level"><select value={c.serviceLevel} onChange={e=>upC('serviceLevel',+e.target.value)}><option value={0.85}>85%</option><option value={0.90}>90%</option><option value={0.95}>95%</option><option value={0.99}>99%</option></select></Field>
+        <Field label="GST Registered" hint={c.gstRegistered?"Yes → IGST on imports is recoverable as Input Tax Credit (ITC). Net landed cost excludes IGST. Register if turnover > ₹40L (goods) / ₹20L (services).":"No → IGST becomes a sunk cost (~18% added to landed cost and inventory). Not claimable. Consider registering if you import regularly."}><select value={c.gstRegistered?'yes':'no'} onChange={e=>upC('gstRegistered',e.target.value==='yes')}><option value="yes">Yes — ITC recoverable</option><option value="no">No — IGST is sunk cost</option></select></Field>
+        {c.gstRegistered&&<Field label="GSTIN" hint="15-char GST Identification Number (required when registered). Used on invoices and e-way bills."><input value={c.gstin||''} onChange={e=>upC('gstin',e.target.value)} placeholder="22AAAAA0000A1Z5"/></Field>}
+        <Field label="Effective Tax Rate %" hint="After-tax cash flow rate for NPV, depreciation tax shield, and WACC. Indian corporate FY25 = 25%. MSME rebate applies if turnover < ₹400 Cr."><input type="number" value={c.taxRate} onChange={e=>upC('taxRate',+e.target.value)}/></Field>
+        <Field label="WACC %" hint="Discount rate for NPV. Blended cost of equity + debt. Typical Indian mfg = 10-14%."><input type="number" value={c.wacc} onChange={e=>upC('wacc',+e.target.value)}/></Field>
+        <Field label="Service Level %" hint={`Free-form 50-99.99. z=${zVal(sl).toFixed(3)} → Safety Stock = z × σ_LTD. Higher SL = more safety stock = higher cost but fewer stockouts. Typical: 85% commodity, 95% standard, 98% strategic.`}><input type="number" step="0.1" min={50} max={99.99} value={Math.round(sl*10000)/100} onChange={e=>upC('serviceLevel',Math.min(0.9999,Math.max(0.5,+e.target.value/100)))}/></Field>
+      </div>
+      <div style={{fontSize:9,color:'var(--tx3)',marginTop:4,fontFamily:'JetBrains Mono'}}>
+        Service Level {(sl*100).toFixed(2)}% → z = {zVal(sl).toFixed(3)} · applied to every product unless overridden in Tab 2F (Inventory Policy).
       </div>
     </div>
-    <div className="card"><div className="card-title">📅 Planning Horizon</div>
+    <div className="card"><div className="card-title">📅 Planning Calendar</div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Calendar drives: capacity = Machines × Shifts × Hrs × <strong>working days</strong> × OEE. MRP horizon = planning length × working days. Change these and every downstream solver re-uses the new values.</div>
       <div className="grid4">
+        <Field label="Planning Horizon" hint="How far into the future the solver plans. 13 weeks = 1 quarter (operational); 12 months = S&OP; 36 months = capex."><div style={{display:'flex',gap:4}}><input type="number" style={{flex:1}} min={1} max={104} value={pl.horizonLength||pl.periods||52} onChange={e=>upP('horizonLength',+e.target.value)}/><select style={{width:80}} value={pl.horizonUnit||'weeks'} onChange={e=>upP('horizonUnit',e.target.value)}><option value="days">days</option><option value="weeks">weeks</option><option value="months">months</option></select></div></Field>
         <Field label="Start Month"><select value={pl.startMonth} onChange={e=>upP('startMonth',+e.target.value)}>{MONTHS.map((m,i)=><option key={i} value={i}>{m}</option>)}</select></Field>
-        <Field label="Periods (weeks)"><input type="number" value={pl.periods} onChange={e=>upP('periods',+e.target.value)}/></Field>
-        <Field label="Work Days/Week"><select value={pl.workDays} onChange={e=>upP('workDays',+e.target.value)}><option value={5}>5 (Mon-Fri)</option><option value={6}>6 (Mon-Sat)</option><option value={7}>7 (All days)</option></select></Field>
-        <Field label="TN Gazetted Holidays"><select value={pl.indianHolidays?'yes':'no'} onChange={e=>upP('indianHolidays',e.target.value==='yes')}><option value="yes">Yes — 22 holidays excluded (2026 DoPT list)</option><option value="no">No — only weekends</option></select></Field>
-        <Field label="History Months" hint="6-36 months of past data"><input type="number" min={6} max={36} value={pl.histMonths||24} onChange={e=>upP('histMonths',+e.target.value)}/></Field>
-        <Field label="Plan Months" hint="1-12"><input type="number" min={1} max={12} value={pl.planMonths||12} onChange={e=>upP('planMonths',+e.target.value)}/></Field>
-        <Field label="Frozen Horizon (wk)" hint="Firm MPS, no changes"><input type="number" min={0} max={12} value={pl.frozenWeeks||4} onChange={e=>upP('frozenWeeks',+e.target.value)}/></Field>
-        <Field label="Slushy Horizon (wk)" hint="Tentative changes allowed"><input type="number" min={0} max={26} value={pl.slushyWeeks||12} onChange={e=>upP('slushyWeeks',+e.target.value)}/></Field>
+        <Field label="Work Days/Week" hint="5 = Mon-Fri (corporate/services). 6 = Mon-Sat (typical Indian mfg). 7 = continuous process (pharma, steel). Affects every capacity calc."><select value={pl.workDays} onChange={e=>upP('workDays',+e.target.value)}><option value={5}>5 (Mon-Fri)</option><option value={6}>6 (Mon-Sat)</option><option value={7}>7 (continuous)</option></select></Field>
+        <Field label="Gazetted Holidays" hint="When ON, 22 Indian national/state holidays are excluded from working-day count. Affects capacity and lead time calendars."><select value={pl.indianHolidays?'yes':'no'} onChange={e=>upP('indianHolidays',e.target.value==='yes')}><option value="yes">Yes — 22 excluded</option><option value="no">No — weekends only</option></select></Field>
+        <Field label="History Months" hint="How much past demand to feed the forecast engine. 24+ months recommended for seasonality detection."><input type="number" min={6} max={60} value={pl.histMonths||24} onChange={e=>upP('histMonths',+e.target.value)}/></Field>
+        <Field label="Frozen Horizon (wk)" hint="Weeks where the MPS is LOCKED — no changes allowed. Typical 2-4 weeks in auto, 1 week in FMCG."><input type="number" min={0} max={12} value={pl.frozenWeeks||4} onChange={e=>upP('frozenWeeks',+e.target.value)}/></Field>
+        <Field label="Slushy Horizon (wk)" hint="Weeks where changes need approval but are possible. Typical 8-12 weeks."><input type="number" min={0} max={26} value={pl.slushyWeeks||12} onChange={e=>upP('slushyWeeks',+e.target.value)}/></Field>
+        <Field label="Time Grain" hint="Granularity every MILP runs at. Daily: T=horizon_days (slow — 60–300s CBC solve on 6-month window). Weekly: T=horizon_weeks (typical SAP PP default, 2–10s solve). Monthly: S&OP scope, minutes on hundreds of SKUs."><select value={pl.timeGrain||'weekly'} onChange={e=>upP('timeGrain',e.target.value)}><option value="daily">Daily (slow)</option><option value="weekly">Weekly (default)</option><option value="monthly">Monthly (S&amp;OP)</option></select></Field>
+        <Field label="Horizon Start Date" hint="Anchor for hourly-maintenance date resolution. Leave blank to use today."><input type="date" value={pl.horizonStartDate||''} onChange={e=>upP('horizonStartDate',e.target.value)}/></Field>
       </div>
       {/* Live calendar summary */}
       {(()=>{
@@ -508,115 +558,46 @@ function SetupTab({state,dispatch}){
     </div>
     <div className="card"><div className="card-title">💰 Budget Envelope <span className="badge" style={{background:'var(--bg4)',color:'var(--a4)'}}>Optional constraints</span></div>
       <div className="grid3">
-        <Field label={`Procurement Budget (${c.currency})`} hint="0 = unlimited"><input type="number" value={bu.procurement} onChange={e=>upB('procurement',+e.target.value)}/></Field>
-        <Field label={`CAPEX Budget (${c.currency})`} hint="For buy/lease decisions"><input type="number" value={bu.capex} onChange={e=>upB('capex',+e.target.value)}/></Field>
-        <Field label={`Working Capital Limit (${c.currency})`} hint="Max tied up in inventory"><input type="number" value={bu.workingCapital} onChange={e=>upB('workingCapital',+e.target.value)}/></Field>
+        <Field label={`Procurement Budget (${c.currency})`} hint="Cap on total PO value per period. 0 = unlimited. Consumed by procurement MILP as hard constraint."><input type="number" value={bu.procurement} onChange={e=>upB('procurement',+e.target.value)}/></Field>
+        <Field label={`CAPEX Budget (${c.currency})`} hint="Cap for Buy-vs-Lease and capital-budget portfolio selection."><input type="number" value={bu.capex} onChange={e=>upB('capex',+e.target.value)}/></Field>
+        <Field label={`Working Capital Limit (${c.currency})`} hint="Max value tied up in inventory at any point in the plan. Limits procurement MILP."><input type="number" value={bu.workingCapital} onChange={e=>upB('workingCapital',+e.target.value)}/></Field>
       </div>
     </div>
-    {/* Supply Chain Network Topology */}
-    <div className="card">
-      <div className="card-title">🌐 Supply Chain Network <span className="badge" style={{background:'rgba(56,189,248,.1)',color:'var(--a2)'}}>Topology defines cost flow</span></div>
-      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Define your physical supply chain network. Each node's handling cost cascades into <strong style={{color:'var(--ac)'}}>landed cost</strong>, <strong style={{color:'var(--a2)'}}>transport optimizer</strong>, and <strong style={{color:'var(--a4)'}}>procurement planner</strong>. This is your network topology — separate from products (Tab 2) and BOM parts.</div>
-      <div className="grid2">
-        <Field label="Industry Preset">
-          <select value={c.industry||'manufacturing'} onChange={e=>{
-            const presets={
-              manufacturing:{nodes:[{id:'s1',type:'supplier',name:'Supplier',loc:'EXT',cost:0},{id:'w1',type:'warehouse',name:'Raw Store',loc:'LOC1',cost:2},{id:'f1',type:'factory',name:'Production',loc:'LOC1',cost:0},{id:'fg1',type:'fg_store',name:'FG Store',loc:'LOC1',cost:1.5},{id:'c1',type:'customer',name:'Customer',loc:'EXT',cost:0}]},
-              fmcg:{nodes:[{id:'s1',type:'supplier',name:'Supplier',loc:'EXT',cost:0},{id:'w1',type:'warehouse',name:'Warehouse',loc:'LOC1',cost:1.5},{id:'f1',type:'factory',name:'Batch Plant',loc:'LOC1',cost:0},{id:'d1',type:'dc',name:'DC North',loc:'LOC2',cost:2},{id:'d2',type:'dc',name:'DC South',loc:'LOC3',cost:2},{id:'c1',type:'customer',name:'Retailer',loc:'EXT',cost:0}]},
-              engineering:{nodes:[{id:'s1',type:'supplier',name:'Vendor',loc:'EXT',cost:0},{id:'w1',type:'warehouse',name:'Store',loc:'LOC1',cost:3},{id:'f1',type:'factory',name:'Fabrication',loc:'LOC1',cost:0},{id:'f2',type:'factory',name:'Assembly',loc:'LOC1',cost:0},{id:'c1',type:'customer',name:'Site',loc:'EXT',cost:0}]},
-            };
-            const p=presets[e.target.value]||presets.manufacturing;
-            upC('industry',e.target.value);upC('networkNodes',p.nodes);
-          }}>
-            <option value="manufacturing">General Manufacturing</option>
-            <option value="fmcg">FMCG / Consumer Goods</option>
-            <option value="engineering">Heavy Engineering / EPC</option>
-            <option value="automotive">Automotive</option>
-            <option value="pharma">Pharmaceutical</option>
-          </select>
-        </Field>
-        <Field label="Reference System">
-          <select value={c.refMode||'name'} onChange={e=>upC('refMode',e.target.value)}>
-            <option value="name">By Name</option><option value="partno">By Part Number</option><option value="both">Both</option>
-          </select>
-        </Field>
+    <div className="card"><div className="card-title">🎯 Industry Preset <span className="badge" style={{background:'rgba(56,189,248,.1)',color:'var(--a2)'}}>Seeds defaults only</span></div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Apply once on new projects to pre-fill OEE benchmarks, safety stock policy, work calendar, and BOM templates appropriate to your industry. You can override any value per product. No UI-only toggles — this button mutates defaults.</div>
+      <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+        {[
+          {key:'automotive',label:'🚗 Automotive',desc:'6-day, 85% OEE target, IATF 16949, JIT lean, 15-day SS'},
+          {key:'fmcg',label:'🥛 FMCG',desc:'6-day, 70% OEE target, 7-day SS, 15-day cycle stock, weekly S&OP'},
+          {key:'heavy_eng',label:'🏗️ Heavy Engineering',desc:'6-day, 55% OEE, project BOM, 6-18mo lead times'},
+          {key:'pharma',label:'💊 Pharma',desc:'7-day continuous, 75% OEE, batch production, expiry FEFO'},
+        ].map(p=><button key={p.key} className={`btn ${c.industry===p.key?'btn-primary':'btn-secondary'} btn-sm`} style={{flexDirection:'column',alignItems:'flex-start',padding:'6px 10px',minWidth:180}} onClick={()=>{
+          const presets={
+            automotive:{industry:'automotive',workDays:6,serviceLevel:0.95,oeeTarget:85,defaultSafetyDays:15,workflow:'JIT'},
+            fmcg:{industry:'fmcg',workDays:6,serviceLevel:0.95,oeeTarget:70,defaultSafetyDays:7,workflow:'S&OP'},
+            heavy_eng:{industry:'heavy_eng',workDays:6,serviceLevel:0.90,oeeTarget:55,defaultSafetyDays:0,workflow:'ETO'},
+            pharma:{industry:'pharma',workDays:7,serviceLevel:0.99,oeeTarget:75,defaultSafetyDays:21,workflow:'Batch-FEFO'},
+          }[p.key];
+          Object.entries(presets).forEach(([k,v])=>{
+            if(['industry','workflow','oeeTarget','defaultSafetyDays'].includes(k))upC(k,v);
+            else if(['workDays'].includes(k))upP(k,v);
+            else if(['serviceLevel'].includes(k))upC(k,v);
+          });
+        }}>
+          <div style={{fontWeight:600,fontSize:11}}>{p.label}</div>
+          <div style={{fontSize:9,color:'var(--tx3)',marginTop:2}}>{p.desc}</div>
+        </button>)}
       </div>
-      {/* Node type legend */}
-      <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:6,fontSize:9}}>
-        {[['supplier','var(--dg)','🏪','BOM part source — import parts show in Landed Cost calc'],['warehouse','var(--a2)','🏬','RM storage — handling cost added to procurement total'],['factory','var(--ac)','🏭','Connects to Production Lines defined below'],['dc','var(--a3)','📦','Distribution Centre — appears in Transport Allocation matrix as warehouse node'],['fg_store','var(--a2)','📋','FG holding node — cost adds to inventory carry rate'],['customer','var(--gn)','👤','Appears as demand column in Transport Allocation matrix']].map(([t,col,ic,tip])=>
-          <div key={t} title={tip} style={{padding:'2px 6px',borderRadius:4,border:`1px solid ${col}`,color:col,fontSize:8,cursor:'help'}}>
-            {ic} {t.replace('_',' ')} <span style={{color:'var(--tx3)',marginLeft:2}}>{tip}</span>
-          </div>)}
-      </div>
-      {/* Network nodes */}
-      <div style={{marginTop:4}}>
-        <div style={{display:'flex',alignItems:'flex-start',gap:4,overflowX:'auto',padding:'8px 0'}}>
-          {(c.networkNodes||[{id:'s1',type:'supplier',name:'Supplier',loc:'EXT',cost:0},{id:'w1',type:'warehouse',name:'Raw Store',loc:'LOC1',cost:2},{id:'f1',type:'factory',name:'Production',loc:'LOC1',cost:0},{id:'fg1',type:'fg_store',name:'FG Store',loc:'LOC1',cost:1.5},{id:'c1',type:'customer',name:'Customer',loc:'EXT',cost:0}]).map((node,i,arr)=><React.Fragment key={node.id}>
-            <div style={{minWidth:108,padding:6,borderRadius:6,
-              background:node.type==='supplier'?'rgba(248,81,73,.08)':node.type==='customer'?'rgba(63,185,80,.08)':node.type==='factory'?'rgba(0,212,170,.08)':node.type==='dc'?'rgba(167,139,250,.08)':'rgba(56,189,248,.08)',
-              border:`1px solid ${node.type==='supplier'?'var(--dg)':node.type==='customer'?'var(--gn)':node.type==='factory'?'var(--ac)':'var(--a2)'}`,
-              fontSize:9}}>
-              <select value={node.type} style={{width:'100%',fontSize:8,marginBottom:3}} onChange={e=>{const ns=[...(c.networkNodes||[])];ns[i]={...ns[i],type:e.target.value};upC('networkNodes',ns)}}>
-                <option value="supplier">🏪 Supplier</option><option value="warehouse">🏬 Warehouse/Store</option><option value="factory">🏭 Factory</option><option value="dc">📦 Distribution Centre</option><option value="fg_store">📋 FG Store</option><option value="customer">👤 Customer</option>
-              </select>
-              <input value={node.name} style={{width:'100%',fontSize:9,fontWeight:600,marginBottom:2}} onChange={e=>{const ns=[...(c.networkNodes||[])];ns[i]={...ns[i],name:e.target.value};upC('networkNodes',ns)}} placeholder="Name"/>
-              <input value={node.loc} style={{width:'100%',fontSize:8,color:'var(--a2)',marginBottom:2}} onChange={e=>{const ns=[...(c.networkNodes||[])];ns[i]={...ns[i],loc:e.target.value};upC('networkNodes',ns)}} placeholder="Location code"/>
-              <div style={{display:'flex',gap:2,alignItems:'center'}}>
-                <span style={{fontSize:7,color:'var(--tx3)'}}>Cost/u:</span>
-                <input type="number" step="0.1" value={node.cost} style={{width:40,fontSize:8}} onChange={e=>{const ns=[...(c.networkNodes||[])];ns[i]={...ns[i],cost:+e.target.value};upC('networkNodes',ns)}}/>
-                <button style={{fontSize:7,padding:'0 3px',cursor:'pointer',background:'none',border:'1px solid var(--dg)',color:'var(--dg)',borderRadius:3}} onClick={()=>{const ns=[...(c.networkNodes||[])];ns.splice(i,1);upC('networkNodes',ns)}}>×</button>
-              </div>
-              {/* What this node feeds */}
-              <div style={{fontSize:7,color:'var(--tx3)',marginTop:3,lineHeight:1.3}}>
-                {node.type==='supplier'&&'→ BOM landed cost'}
-                {node.type==='warehouse'&&'→ Procurement hold cost'}
-                {node.type==='factory'&&'→ Production lines'}
-                {node.type==='dc'&&'→ Transport matrix (WH col)'}
-                {node.type==='fg_store'&&'→ FG carry rate'}
-                {node.type==='customer'&&'→ Transport matrix (demand col)'}
-              </div>
-            </div>
-            {i<arr.length-1&&<div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',alignSelf:'center',color:'var(--br2)',fontSize:16}}>→</div>}
-          </React.Fragment>)}
-          {/* Add button — always adds a network topology node (not a product or BOM part) */}
-          <div style={{display:'flex',flexDirection:'column',gap:4,alignSelf:'center'}}>
-            {[['warehouse','🏬'],['dc','📦'],['factory','🏭'],['customer','👤'],['supplier','🏪']].map(([t,ic])=>
-              <button key={t} title={`Add ${t} node to network`}
-                style={{minWidth:70,padding:'3px 6px',alignSelf:'center',background:'var(--bg3)',border:'1px dashed var(--br2)',borderRadius:4,cursor:'pointer',fontSize:9,color:'var(--tx3)',textAlign:'left'}}
-                onClick={()=>{const ns=[...(c.networkNodes||[])];ns.push({id:Date.now().toString(36),type:t,name:t.charAt(0).toUpperCase()+t.slice(1).replace('_',' '),loc:'LOC'+(ns.length+1),cost:t==='warehouse'?2:t==='dc'?1.5:0});upC('networkNodes',ns)}}>
-                + {ic} {t.replace('_',' ')}
-              </button>
-            )}
-          </div>
-        </div>
-        {/* Downstream cascade summary */}
-        <div style={{marginTop:6,padding:'6px 10px',background:'var(--bg3)',borderRadius:4,fontSize:9,color:'var(--tx3)'}}>
-          <strong style={{color:'var(--tx2)'}}>How network nodes affect other tabs:</strong><br/>
-          <span style={{color:'var(--dg)'}}>Supplier</span> nodes → Supply Network tab → Landed Cost calculator (BOM parts with Source=Import link here). &nbsp;
-          <span style={{color:'var(--a2)'}}>Warehouse/DC</span> nodes → Transport Allocation matrix (Supply Network tab, bottom). &nbsp;
-          <span style={{color:'var(--ac)'}}>Factory</span> nodes → connected to Production Lines below (same location code). &nbsp;
-          <span style={{color:'var(--gn)'}}>Customer</span> nodes → Transport Allocation matrix demand columns. &nbsp;
-          <strong style={{color:'var(--a4)'}}>All node costs</strong> → cumulative handling cost feeds landed cost calculation &amp; TCO in Analysis tab.
-        </div>
-        <div style={{marginTop:4,fontSize:9,color:'var(--tx3)'}}>
-          ⚠ The "+" buttons add <strong>network topology nodes</strong> (physical locations in your supply chain). To add a new product, use Tab 2 "Products &amp; Demand". To add a new raw material, use the BOM section within each product in Tab 2.
-        </div>
-      </div>
+      {c.industry&&<div style={{marginTop:8,fontSize:9,color:'var(--tx3)',fontFamily:'JetBrains Mono'}}>Active preset: <strong style={{color:'var(--a2)'}}>{c.industry}</strong> · OEE target {c.oeeTarget||70}% · SS default {c.defaultSafetyDays||7}d · Workflow {c.workflow||'standard'}</div>}
     </div>
-    <div className="card"><div className="card-title">🏭 Production Lines <span className="badge" style={{background:'var(--bg4)',color:'var(--tx3)'}}>Factory capabilities — assign products in Tab 2</span></div>
-      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Define your manufacturing lines here. Each line has a capacity and type. Products are assigned to lines in the Products & Demand tab.</div>
-      {state.production.lines.map((line,i)=><div key={line.id} className="bom-row">
-        <Field label="Line Name"><input value={line.name} onChange={e=>{const ls=[...state.production.lines];ls[i]={...ls[i],name:e.target.value};dispatch({type:'SET_PRODUCTION',payload:{lines:ls}})}}/></Field>
-        <Field label="Type"><select value={line.type} onChange={e=>{const ls=[...state.production.lines];ls[i]={...ls[i],type:e.target.value};dispatch({type:'SET_PRODUCTION',payload:{lines:ls}})}}><option value="shared">Shared (multi-SKU sequential)</option><option value="dedicated">Dedicated (single SKU)</option><option value="flexible">Flexible (any SKU parallel)</option></select></Field>
-        <Field label="Capacity (units/day)"><input type="number" value={line.capacity} onChange={e=>{const ls=[...state.production.lines];ls[i]={...ls[i],capacity:+e.target.value};dispatch({type:'SET_PRODUCTION',payload:{lines:ls}})}}/></Field>
-        <Field label="Shifts/Day"><input type="number" value={line.shiftsPerDay} min={1} max={3} onChange={e=>{const ls=[...state.production.lines];ls[i]={...ls[i],shiftsPerDay:+e.target.value};dispatch({type:'SET_PRODUCTION',payload:{lines:ls}})}}/></Field>
-        <Field label="Hours/Shift"><input type="number" value={line.hoursPerShift||8} min={4} max={12} onChange={e=>{const ls=[...state.production.lines];ls[i]={...ls[i],hoursPerShift:+e.target.value};dispatch({type:'SET_PRODUCTION',payload:{lines:ls}})}}/></Field>
-        <Field label="Break (min)"><input type="number" value={line.breakMins||30} onChange={e=>{const ls=[...state.production.lines];ls[i]={...ls[i],breakMins:+e.target.value};dispatch({type:'SET_PRODUCTION',payload:{lines:ls}})}}/></Field>
-        <Field label="OT Multiplier"><input type="number" step="0.1" value={line.otMult||1.5} onChange={e=>{const ls=[...state.production.lines];ls[i]={...ls[i],otMult:+e.target.value};dispatch({type:'SET_PRODUCTION',payload:{lines:ls}})}}/></Field>
-        <Field label="OT Threshold %"><input type="number" value={line.otThresh||80} onChange={e=>{const ls=[...state.production.lines];ls[i]={...ls[i],otThresh:+e.target.value};dispatch({type:'SET_PRODUCTION',payload:{lines:ls}})}}/></Field>
-        <Field label="Changeover (min)"><input type="number" value={line.changeoverMins||30} onChange={e=>{const ls=[...state.production.lines];ls[i]={...ls[i],changeoverMins:+e.target.value};dispatch({type:'SET_PRODUCTION',payload:{lines:ls}})}}/></Field>
-      </div>)}
-      <button className="btn btn-secondary btn-sm" style={{marginTop:6}} onClick={()=>{dispatch({type:'SET_PRODUCTION',payload:{lines:[...state.production.lines,{id:Date.now().toString(36),name:`Line ${state.production.lines.length+1}`,type:'shared',capacity:50,shiftsPerDay:1,hoursPerShift:8}]}})}}>+ Add Line</button>
+    {/* v3.0 notice — sections removed with rationale */}
+    <div className="card" style={{borderLeft:'3px solid var(--a4)'}}>
+      <div className="card-title" style={{color:'var(--a4)'}}>⚡ Moved in v3.0</div>
+      <div style={{fontSize:10,color:'var(--tx2)',lineHeight:1.6}}>
+        <div><strong style={{color:'var(--a4)'}}>Supply Chain Network Topology</strong> was deleted from this tab — it duplicated Tab 2 product/BOM data with no downstream consumer. Physical network (supplier → plant → DC → customer) now lives in <strong style={{color:'var(--a2)'}}>Tab 3 → Lanes</strong> with per-mode freight tiers.</div>
+        <div style={{marginTop:6}}><strong style={{color:'var(--a4)'}}>Production Lines</strong> was deleted as a global section — you can't define capacity for a product that doesn't exist yet. Lines/stations are now declared <strong style={{color:'var(--a2)'}}>inside each product's Routing (Tab 2E)</strong>, and Tab 4 auto-aggregates them into a plant-wide capacity pool.</div>
+        <div style={{marginTop:6,fontSize:9,color:'var(--tx3)'}}>See <code>Enterprise_Simulator_v3_Master_Plan.md</code> §3.6 and §3.7 for rationale.</div>
+      </div>
     </div>
   </div>
 }
@@ -635,9 +616,53 @@ function HistoryPanel({prod,upProd}){
     <div className="card-title">📊 Historical Demand
       <span className="badge" style={{background:'rgba(240,180,41,.1)',color:'var(--a4)',marginLeft:6}}>{Math.ceil((prod.history?.length||12)/12)} yr</span>
     </div>
-    <div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center'}}>
+    <div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center',flexWrap:'wrap'}}>
       {['monthly','weekly'].map(g=><button key={g} className={`btn btn-sm ${histGran===g?'btn-primary':'btn-secondary'}`} onClick={()=>setHistGran(g)}>{g.charAt(0).toUpperCase()+g.slice(1)}</button>)}
       <span style={{fontSize:9,color:'var(--tx3)',marginLeft:8}}>{histGran==='weekly'?`${(prod.history||[]).length*4} weeks computed from monthly`:`${(prod.history||[]).length} months | 24+ recommended for seasonality`}</span>
+      <label className="btn btn-secondary btn-sm" style={{marginLeft:'auto',cursor:'pointer'}} title="Upload .xlsx / .csv — first column = date/period, second column = demand. Daily/weekly rows auto-aggregate into monthly buckets.">
+        📂 Import
+        <input type="file" accept=".xlsx,.xls,.csv" style={{display:'none'}} onChange={e=>{
+          const f=e.target.files[0];if(!f)return;
+          const reader=new FileReader();
+          reader.onload=ev=>{
+            try{
+              const XLSX=window.XLSX;
+              if(!XLSX){alert('XLSX library not loaded — check network connection');return;}
+              const wb=XLSX.read(ev.target.result,{type:'array',cellDates:true});
+              const sh=wb.Sheets[wb.SheetNames[0]];
+              const rows=XLSX.utils.sheet_to_json(sh,{header:1,raw:false,dateNF:'yyyy-mm-dd'});
+              if(!rows.length){alert('Empty sheet');return;}
+              // Skip header if first row has non-numeric second col
+              const dataRows=(isNaN(+rows[0]?.[1])?rows.slice(1):rows).filter(r=>r&&r.length>=2&&r[1]!=null&&r[1]!=='');
+              if(!dataRows.length){alert('No data rows detected');return;}
+              // Auto-detect granularity from first two valid date cells
+              const d0=new Date(dataRows[0][0]),d1=new Date(dataRows[1]?.[0]||dataRows[0][0]);
+              const diffDays=Math.round((d1-d0)/86400000);
+              const gran=isNaN(diffDays)||diffDays===0?'monthly':diffDays<=3?'daily':diffDays<=10?'weekly':'monthly';
+              // Aggregate into monthly buckets keyed by YYYY-MM
+              const buckets={};
+              dataRows.forEach(r=>{
+                const dt=new Date(r[0]);if(isNaN(dt))return;
+                const key=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
+                buckets[key]=(buckets[key]||0)+(+r[1]||0);
+              });
+              const keys=Object.keys(buckets).sort();
+              if(!keys.length){alert('Could not parse any dates in column 1');return;}
+              const monthly=keys.map(k=>Math.round(buckets[k]));
+              upProd({history:monthly});
+              alert(`Imported ${dataRows.length} rows (detected ${gran}) → ${monthly.length} monthly buckets`);
+            }catch(ex){alert('Import failed: '+ex.message);}
+          };
+          reader.readAsArrayBuffer(f);
+          e.target.value='';
+        }}/>
+      </label>
+      <button className="btn btn-secondary btn-sm" onClick={()=>{
+        const h=prod.history||[];const rows=[['Month','Demand']];
+        h.forEach((v,i)=>{const yr=2024+Math.floor(i/12);const mo=(i%12)+1;rows.push([`${yr}-${String(mo).padStart(2,'0')}-01`,v]);});
+        const csv=rows.map(r=>r.join(',')).join('\n');
+        const blob=new Blob([csv],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${prod.name||'demand'}-history.csv`;a.click();
+      }} title="Download current history as CSV template for reference / editing">📥 Export</button>
     </div>
 
     {histGran==='monthly'&&<>
@@ -756,10 +781,21 @@ function ProductsTab({state,dispatch}){
           <Field label="Yield %"><input type="number" value={Math.round(prod.yieldPct*100)} onChange={e=>upProd({yieldPct:+e.target.value/100})} min={1} max={100}/></Field>
         </div>
         <div className="grid4">
-          <Field label={`Variable Cost/unit (${cur})`}><input type="number" value={prod.variableCost} onChange={e=>upProd({variableCost:+e.target.value})}/></Field>
-          <Field label={`Setup Cost/batch (${cur})`}><input type="number" value={prod.setupCost} onChange={e=>upProd({setupCost:+e.target.value})}/></Field>
-          <Field label="Capacity (units/week)"><input type="number" value={prod.capacity} onChange={e=>upProd({capacity:+e.target.value})}/></Field>
-          <Field label="Initial Inventory"><input type="number" value={prod.initInventory} onChange={e=>upProd({initInventory:+e.target.value})}/></Field>
+          {(()=>{
+            const vcTotal=(+prod.vcElectricity||0)+(+prod.vcPackaging||0)+(+prod.vcConsumables||0)+(+prod.vcDirectLabor||0)+(+prod.vcOther||0);
+            return <Field label={`Variable Cost/unit (${cur})`} hint="Computed from component breakdown below (Electricity+Packaging+Consumables+Direct Labor+Other). Edit the components — this total is derived."><input type="number" value={Math.round(vcTotal*100)/100} readOnly style={{background:'var(--bg3)',color:'var(--a2)',fontWeight:700,cursor:'not-allowed'}} title="Read-only: edit breakdown below"/></Field>;
+          })()}
+          <Field label={`Setup Cost/batch (${cur})`} hint="Fixed cost each time this product is produced (tooling changeover, line reset). Consumed by MPS lot-sizing."><input type="number" value={prod.setupCost} onChange={e=>upProd({setupCost:+e.target.value})}/></Field>
+          <Field label="Capacity (units/day)" hint="FALLBACK ONLY — used when no routing is defined in Tab 2E. Once you declare operations with cycle time, effective capacity is computed from OEE × station time."><input type="number" value={prod.capacity} onChange={e=>upProd({capacity:+e.target.value})}/></Field>
+          <Field label="Initial Inventory" hint="On-hand FG stock at plan start. Solver nets this against period-1 demand."><input type="number" value={prod.initInventory} onChange={e=>upProd({initInventory:+e.target.value})}/></Field>
+        </div>
+        {/* OEE trio */}
+        <div className="grid4" style={{marginTop:4,paddingTop:6,borderTop:'1px dashed var(--br)'}}>
+          <div style={{fontSize:9,color:'var(--tx3)',gridColumn:'1 / -1',marginBottom:2}}><strong style={{color:'var(--a2)'}}>OEE — Overall Equipment Effectiveness.</strong> Effective Capacity = Machines × Shifts × Hrs × WorkDays × (A × P × Q). Edit the trio below; the app computes OEE and applies it to every capacity calc. World-class ≥85%, typical Indian mfg 55-70%.</div>
+          <Field label="Availability %" hint="(Planned time − Downtime) / Planned time. Captures breakdowns, setups, breaks."><input type="number" step="1" min={30} max={100} value={prod.oeeAvailability||85} onChange={e=>upProd({oeeAvailability:+e.target.value})}/></Field>
+          <Field label="Performance %" hint="(Ideal cycle × Count) / Run time. Captures micro-stops and slow running."><input type="number" step="1" min={30} max={100} value={prod.oeePerformance||92} onChange={e=>upProd({oeePerformance:+e.target.value})}/></Field>
+          <Field label="Quality %" hint="Good count / Total count. First-pass yield."><input type="number" step="1" min={50} max={100} value={prod.oeeQuality||98} onChange={e=>upProd({oeeQuality:+e.target.value})}/></Field>
+          {(()=>{const a=(+prod.oeeAvailability||85)/100,p=(+prod.oeePerformance||92)/100,q=(+prod.oeeQuality||98)/100;const oee=a*p*q;const col=oee>=0.85?'var(--gn)':oee>=0.70?'var(--a4)':'var(--dg)';return <Field label="OEE (computed)" hint={`Your OEE ${(oee*100).toFixed(1)}% · ${oee>=0.85?'World-class':oee>=0.70?'Good':oee>=0.55?'Typical Indian mfg':'Below benchmark — investigate'}`}><input readOnly value={`${(oee*100).toFixed(1)}%`} style={{background:'var(--bg3)',color:col,fontWeight:700,cursor:'not-allowed'}}/></Field>;})()}
         </div>
       </div>
 
@@ -873,14 +909,85 @@ function ProductsTab({state,dispatch}){
                 <Field label="RM Shelf (d)"><input type="number" value={b.rmShelf||90} style={{width:45}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{rmShelf:+e.target.value}})}/></Field>
                 <Field label="Cost CV%"><input type="number" value={b.costCV||10} style={{width:40}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{costCV:+e.target.value}})}/></Field>
                 <Field label="Trans Mode"><select value={b.transMode||'perUnit'} style={{width:70}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{transMode:e.target.value}})}><option value="perUnit">Per Unit</option><option value="FTL">FTL</option><option value="LTL">LTL</option><option value="contract">Contract</option><option value="air">Air</option></select></Field>
-                <Field label="Proc Policy"><select value={b.procPolicy||'milp'} style={{width:65}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{procPolicy:e.target.value}})}><option value="milp">MILP</option><option value="jit">JIT</option><option value="eoq">EOQ</option><option value="mrp">MRP</option><option value="lfl">Lot-for-Lot</option><option value="kanban">Kanban</option></select></Field>
+                <Field label="Lot-Sizing Rule" hint="Per-part procurement policy. MILP = solved jointly; others = per-part formula (LFL / EOQ / FOQ / POQ / Min-Max / Wagner-Whitin / Silver-Meal / PPB / LUC / LTC / JIT / Kanban). Today MILP is the only one wired end-to-end; other selections are captured to state but not yet honored by the solver (v3.1.1 roadmap).">
+                  <select value={b.procPolicy||'milp'} style={{width:95}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{procPolicy:e.target.value}})}>
+                    <optgroup label="Solver (wired)">
+                      <option value="milp">MILP (joint)</option>
+                    </optgroup>
+                    <optgroup label="Closed-form (v3.1.1)">
+                      <option value="lfl">Lot-for-Lot</option>
+                      <option value="eoq">EOQ</option>
+                      <option value="foq">Fixed Order Qty</option>
+                      <option value="poq">Fixed Order Period</option>
+                      <option value="minmax">Min-Max (ROP)</option>
+                      <option value="epq">EPQ (in-house)</option>
+                    </optgroup>
+                    <optgroup label="Heuristic (v3.1.1)">
+                      <option value="ww">Wagner-Whitin</option>
+                      <option value="silvermeal">Silver-Meal</option>
+                      <option value="ppb">Part-Period Balancing</option>
+                      <option value="luc">Least Unit Cost</option>
+                      <option value="ltc">Least Total Cost</option>
+                    </optgroup>
+                    <optgroup label="Pull / Framework">
+                      <option value="jit">JIT</option>
+                      <option value="kanban">Kanban</option>
+                      <option value="mrp">MRP (framework)</option>
+                    </optgroup>
+                  </select>
+                </Field>
                 <Field label={`Trans Rate (${cur})`}><input type="number" step="0.1" value={b.transRate||0.5} style={{width:45}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{transRate:+e.target.value}})}/></Field>
                 <Field label="Pay Days"><input type="number" value={b.payTermDays||30} style={{width:40}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{payTermDays:+e.target.value}})}/></Field>
                 <Field label="Source"><select value={b.supplierType} style={{width:75}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{supplierType:e.target.value}})}><option value="domestic">Domestic</option><option value="import">Import</option></select></Field>
-                {b.supplierType==='import'&&<Field label="Incoterm"><select value={b.incoterm||''} style={{width:60}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{incoterm:e.target.value}})}><option value="">—</option><option>EXW</option><option>FOB</option><option>CIF</option><option>DDP</option></select></Field>}
-                <Field label="Backup"><input value={b.backupSupplier||''} placeholder="—" style={{width:70}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{backupSupplier:e.target.value}})}/></Field>
+                {b.supplierType==='import'&&<Field label="Incoterm" hint="Incoterms 2020 — 11 rules. Greyed rules are sea/waterway-only (FAS/FOB/CFR/CIF cannot be used for air). Hover an option for who pays what.">
+                  <select value={b.incoterm||''} style={{width:72}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{incoterm:e.target.value}})}>
+                    <option value="">—</option>
+                    <optgroup label="Any mode of transport">
+                      <option value="EXW" title="Ex Works — buyer handles everything from seller's premises">EXW</option>
+                      <option value="FCA" title="Free Carrier — seller delivers to named carrier; common for air/multimodal">FCA</option>
+                      <option value="CPT" title="Carriage Paid To — seller pays freight to named place">CPT</option>
+                      <option value="CIP" title="Carriage & Insurance Paid — CPT + seller's insurance">CIP</option>
+                      <option value="DAP" title="Delivered at Place — seller handles transit to named place">DAP</option>
+                      <option value="DPU" title="Delivered at Place Unloaded — DAP + unloading (new in 2020, replaces DAT)">DPU</option>
+                      <option value="DDP" title="Delivered Duty Paid — seller pays all duties, buyer pays nothing">DDP</option>
+                    </optgroup>
+                    <optgroup label="Sea / waterway only">
+                      <option value="FAS" disabled={b.transMode==='air'} title="Free Alongside Ship — seller delivers to ship's side at origin port">FAS</option>
+                      <option value="FOB" disabled={b.transMode==='air'} title="Free on Board — seller loads vessel at origin port">FOB</option>
+                      <option value="CFR" disabled={b.transMode==='air'} title="Cost and Freight — seller pays freight to destination port">CFR</option>
+                      <option value="CIF" disabled={b.transMode==='air'} title="Cost, Insurance, Freight — CFR + seller's insurance">CIF</option>
+                    </optgroup>
+                  </select>
+                </Field>}
+                <Field label="Backup Suppliers" hint="Kraljic Strategic parts need ≥2 qualified backups. Each entry has its own LT & unit cost; solver picks lowest-cost QUALIFIED alt when primary fails OTD, LT exceeds 2× standard, or price spikes above ceiling.">
+                  <div style={{minWidth:180}}>
+                    {(()=>{
+                      const arr=b.backupSuppliers&&b.backupSuppliers.length?b.backupSuppliers:(b.backupSupplier?[{name:b.backupSupplier,cost:b.backupCost||0,leadTime:b.backupLeadTime||0,qualified:true}]:[]);
+                      return arr.map((bk,bi)=><div key={bi} style={{display:'flex',gap:2,marginBottom:3,alignItems:'center'}}>
+                        <input placeholder="Supplier" value={bk.name||''} style={{width:70,fontSize:9,padding:'2px 4px'}} onChange={e=>{const n=[...arr];n[bi]={...n[bi],name:e.target.value};dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{backupSuppliers:n,backupSupplier:n[0]?.name||''}});}}/>
+                        <input type="number" placeholder="LT(w)" value={bk.leadTime||0} style={{width:34,fontSize:9,padding:'2px 4px'}} title="Lead time (weeks)" onChange={e=>{const n=[...arr];n[bi]={...n[bi],leadTime:+e.target.value};dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{backupSuppliers:n}});}}/>
+                        <input type="number" step="0.1" placeholder="Cost" value={bk.cost||0} style={{width:38,fontSize:9,padding:'2px 4px'}} title={`Unit cost in ${cur}`} onChange={e=>{const n=[...arr];n[bi]={...n[bi],cost:+e.target.value};dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{backupSuppliers:n}});}}/>
+                        <label style={{fontSize:8,color:bk.qualified?'var(--gn)':'var(--a4)',cursor:'pointer'}} title="Qualified = passed audits, ready to activate">
+                          <input type="checkbox" checked={!!bk.qualified} style={{width:10,height:10,verticalAlign:'middle'}} onChange={e=>{const n=[...arr];n[bi]={...n[bi],qualified:e.target.checked};dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{backupSuppliers:n}});}}/>Q
+                        </label>
+                        <button style={{fontSize:8,padding:'0 3px',cursor:'pointer',background:'none',border:'1px solid var(--dg)',color:'var(--dg)',borderRadius:2,lineHeight:1.4}} onClick={()=>{const n=arr.filter((_,j)=>j!==bi);dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{backupSuppliers:n,backupSupplier:n[0]?.name||''}});}}>×</button>
+                      </div>);
+                    })()}
+                    <button style={{fontSize:8,padding:'1px 5px',cursor:'pointer',background:'var(--bg3)',border:'1px solid var(--br2)',color:'var(--tx2)',borderRadius:3}} onClick={()=>{
+                      const arr=b.backupSuppliers&&b.backupSuppliers.length?b.backupSuppliers:(b.backupSupplier?[{name:b.backupSupplier,cost:b.backupCost||0,leadTime:b.backupLeadTime||0,qualified:true}]:[]);
+                      const next=[...arr,{name:`Alt ${arr.length+1}`,cost:(b.cost||1)*1.1,leadTime:(b.leadTime||1)+1,qualified:false}];
+                      dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{backupSuppliers:next,backupSupplier:next[0]?.name||''}});
+                    }}>+ backup</button>
+                    {(()=>{
+                      const arr=b.backupSuppliers&&b.backupSuppliers.length?b.backupSuppliers:(b.backupSupplier?[{qualified:true}]:[]);
+                      const nq=arr.filter(bk=>bk.qualified).length;
+                      const risk=nq===0?{c:'var(--dg)',t:'HIGH RISK'}:nq===1?{c:'var(--a4)',t:'MEDIUM'}:{c:'var(--gn)',t:'LOW'};
+                      return <div style={{fontSize:8,marginTop:2,color:risk.c,fontWeight:600}}>{nq} qualified · {risk.t}</div>;
+                    })()}
+                  </div>
+                </Field>
                 {children.length>0&&<Field label="Cascaded"><input value={`${cur}${cascadedCost.toFixed(2)}`} readOnly style={{width:70,color:'var(--a3)',fontWeight:600}}/></Field>}
-                <Field label="Vol Disc Tiers">
+                <Field label="Vol Disc Tiers" hint="Supplier price break schedule. Solver applies effective unit cost = base × (1 − pct/100) when order ≥ minQty. Tiers stack from lowest to highest MinQty.">
                   <div style={{minWidth:130}}>
                     {(b.volDisc||[{minQty:0,pct:0}]).map((tier,ti)=><div key={ti} style={{display:'flex',gap:2,marginBottom:3,alignItems:'center'}}>
                       <input type="number" placeholder="MinQty" value={tier.minQty} style={{width:48,fontSize:9,padding:'2px 4px'}} onChange={e=>{const vd=[...(b.volDisc||[{minQty:0,pct:0}])];vd[ti]={...vd[ti],minQty:+e.target.value};dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{volDisc:vd}});}}/>
@@ -890,6 +997,18 @@ function ProductsTab({state,dispatch}){
                       {ti>0&&<button style={{fontSize:8,padding:'0 3px',cursor:'pointer',background:'none',border:'1px solid var(--dg)',color:'var(--dg)',borderRadius:2,lineHeight:1.4}} onClick={()=>{const vd=(b.volDisc||[]).filter((_,j)=>j!==ti);dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{volDisc:vd}});}}>×</button>}
                     </div>)}
                     <button style={{fontSize:8,padding:'1px 5px',cursor:'pointer',background:'var(--bg3)',border:'1px solid var(--br2)',color:'var(--tx2)',borderRadius:3}} onClick={()=>{const vd=[...(b.volDisc||[{minQty:0,pct:0}]),{minQty:(b.moq||50)*2,pct:2}];dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{volDisc:vd}});}}>+ tier</button>
+                  </div>
+                </Field>
+                <Field label="Trans Rate Tiers" hint="Freight rate schedule. Solver picks rate = tier.rate where order ≥ tier.minQty. Lets you price FTL/LTL break points (e.g., 500+ units = ₹0.3/u).">
+                  <div style={{minWidth:130}}>
+                    {(b.tiers||[{minQty:0,rate:b.transRate||0.5}]).map((tier,ti)=><div key={ti} style={{display:'flex',gap:2,marginBottom:3,alignItems:'center'}}>
+                      <input type="number" placeholder="MinQty" value={tier.minQty} style={{width:48,fontSize:9,padding:'2px 4px'}} onChange={e=>{const ts=[...(b.tiers||[{minQty:0,rate:0.5}])];ts[ti]={...ts[ti],minQty:+e.target.value};dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{tiers:ts}});}}/>
+                      <span style={{fontSize:9,color:'var(--tx3)'}}>≥</span>
+                      <input type="number" step="0.01" placeholder="Rate" value={tier.rate} style={{width:42,fontSize:9,padding:'2px 4px'}} onChange={e=>{const ts=[...(b.tiers||[{minQty:0,rate:0.5}])];ts[ti]={...ts[ti],rate:+e.target.value};dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{tiers:ts}});}}/>
+                      <span style={{fontSize:9,color:'var(--a3)'}}>{cur}/u</span>
+                      {ti>0&&<button style={{fontSize:8,padding:'0 3px',cursor:'pointer',background:'none',border:'1px solid var(--dg)',color:'var(--dg)',borderRadius:2,lineHeight:1.4}} onClick={()=>{const ts=(b.tiers||[]).filter((_,j)=>j!==ti);dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{tiers:ts}});}}>×</button>}
+                    </div>)}
+                    <button style={{fontSize:8,padding:'1px 5px',cursor:'pointer',background:'var(--bg3)',border:'1px solid var(--br2)',color:'var(--tx2)',borderRadius:3}} onClick={()=>{const ts=[...(b.tiers||[{minQty:0,rate:b.transRate||0.5}]),{minQty:((b.tiers||[]).slice(-1)[0]?.minQty||0)+500,rate:(b.transRate||0.5)*0.7}];dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{tiers:ts}});}}>+ tier</button>
                   </div>
                 </Field>
                 <div style={{display:'flex',gap:3,alignSelf:'flex-end'}}>
@@ -1000,28 +1119,48 @@ function ProductsTab({state,dispatch}){
           <Field label="Cycle Time (min/u)" hint="Process time per unit"><input type="number" value={prod.cycleTime||19} onChange={e=>upProd({cycleTime:+e.target.value})}/></Field>
           <Field label={`Setup Cost (${cur}/batch)`}><input type="number" value={prod.setupCost||50} onChange={e=>upProd({setupCost:+e.target.value})}/></Field>
           <Field label="Setup Penalty" hint="1.0=none, 1.25=seasonal"><input type="number" step="0.05" value={prod.setupPen||1} onChange={e=>upProd({setupPen:+e.target.value})}/></Field>
-          <Field label={`Sell Price (${cur})`}><input type="number" value={prod.sellPrice||100} onChange={e=>upProd({sellPrice:+e.target.value})}/></Field>
-          <Field label={`Variable Cost (${cur}/u)`} hint="Total = sum of breakdown below"><input type="number" value={prod.variableCost||5} onChange={e=>upProd({variableCost:+e.target.value})} style={{fontWeight:700,color:'var(--ac)'}}/></Field>
-          <Field label={`└ Energy (${cur})`}><input type="number" step="0.5" value={prod.vcEnergy||2} onChange={e=>{upProd({vcEnergy:+e.target.value,variableCost:+e.target.value+(prod.vcPackaging||1.5)+(prod.vcConsumables||1)+(prod.vcOther||0.5)})}} style={{fontSize:10}}/></Field>
-          <Field label={`└ Packaging (${cur})`}><input type="number" step="0.5" value={prod.vcPackaging||1.5} onChange={e=>{upProd({vcPackaging:+e.target.value,variableCost:(prod.vcEnergy||2)+e.target.value+(prod.vcConsumables||1)+(prod.vcOther||0.5)})}} style={{fontSize:10}}/></Field>
-          <Field label={`└ Consumables (${cur})`}><input type="number" step="0.5" value={prod.vcConsumables||1} onChange={e=>{upProd({vcConsumables:+e.target.value,variableCost:(prod.vcEnergy||2)+(prod.vcPackaging||1.5)+e.target.value+(prod.vcOther||0.5)})}} style={{fontSize:10}}/></Field>
-          <Field label={`└ Other (${cur})`}><input type="number" step="0.5" value={prod.vcOther||0.5} onChange={e=>{upProd({vcOther:+e.target.value,variableCost:(prod.vcEnergy||2)+(prod.vcPackaging||1.5)+(prod.vcConsumables||1)+e.target.value})}} style={{fontSize:10}}/></Field>
-          <Field label={`Labor (${cur}/u)`}><input type="number" value={prod.laborPerUnit||5} onChange={e=>upProd({laborPerUnit:+e.target.value})}/></Field>
-          <Field label={`Fixed Factory (${cur}/day)`} hint="Rent+salaries+overhead"><input type="number" value={prod.fixedFactory||100} onChange={e=>upProd({fixedFactory:+e.target.value})}/></Field>
-          <Field label="Carry Rate %/yr" hint="Total = sum below"><input type="number" value={prod.carryRate||24} onChange={e=>upProd({carryRate:+e.target.value})} style={{fontWeight:700,color:'var(--ac)'}}/></Field>
-          <Field label="└ Capital Cost %"><input type="number" step="0.5" value={prod.crCapital||10} onChange={e=>{upProd({crCapital:+e.target.value,carryRate:+e.target.value+(prod.crStorage||6)+(prod.crInsurance||1.5)+(prod.crObsolescence||4.5)+(prod.crHandling||2)})}} style={{fontSize:10}}/></Field>
-          <Field label="└ Storage %"><input type="number" step="0.5" value={prod.crStorage||6} onChange={e=>{upProd({crStorage:+e.target.value,carryRate:(prod.crCapital||10)+e.target.value+(prod.crInsurance||1.5)+(prod.crObsolescence||4.5)+(prod.crHandling||2)})}} style={{fontSize:10}}/></Field>
-          <Field label="└ Insurance %"><input type="number" step="0.5" value={prod.crInsurance||1.5} onChange={e=>{upProd({crInsurance:+e.target.value,carryRate:(prod.crCapital||10)+(prod.crStorage||6)+e.target.value+(prod.crObsolescence||4.5)+(prod.crHandling||2)})}} style={{fontSize:10}}/></Field>
-          <Field label="└ Obsolescence %"><input type="number" step="0.5" value={prod.crObsolescence||4.5} onChange={e=>{upProd({crObsolescence:+e.target.value,carryRate:(prod.crCapital||10)+(prod.crStorage||6)+(prod.crInsurance||1.5)+e.target.value+(prod.crHandling||2)})}} style={{fontSize:10}}/></Field>
-          <Field label="└ Handling %"><input type="number" step="0.5" value={prod.crHandling||2} onChange={e=>{upProd({crHandling:+e.target.value,carryRate:(prod.crCapital||10)+(prod.crStorage||6)+(prod.crInsurance||1.5)+(prod.crObsolescence||4.5)+e.target.value})}} style={{fontSize:10}}/></Field>
-          <Field label="Salvage %"><input type="number" value={Math.round((prod.salvageRate||0.8)*100)} onChange={e=>upProd({salvageRate:+e.target.value/100})} min={0} max={100}/></Field>
-          <Field label="Init FG Inventory"><input type="number" value={prod.initInventory||0} onChange={e=>upProd({initInventory:+e.target.value})}/></Field>
-          <Field label="FG Warehouse Max"><input type="number" value={prod.whMaxUnits||500} onChange={e=>upProd({whMaxUnits:+e.target.value})}/></Field>
-          <Field label="Target Util %" hint="Above this → OT kicks in"><input type="number" value={prod.optUtil||85} onChange={e=>upProd({optUtil:+e.target.value})} min={50} max={100}/></Field>
-          <Field label="Cap CV %" hint="Equipment failure variability"><input type="number" value={prod.capCV||5} onChange={e=>upProd({capCV:+e.target.value})}/></Field>
-          <Field label="Production Mode"><select value={prod.prodMode||'mts'} onChange={e=>upProd({prodMode:e.target.value})}><option value="mts">Make-to-Stock (forecast)</option><option value="mto">Make-to-Order (order book)</option><option value="ato">Assemble-to-Order</option><option value="retailer">Retailer (no manufacturing)</option></select></Field>
-          <Field label="Backorder"><select value={prod.backorderOn?'yes':'no'} onChange={e=>upProd({backorderOn:e.target.value==='yes'})}><option value="no">No (lost sale)</option><option value="yes">Yes (backorder)</option></select></Field>
+          {/* Sell Price and Variable Cost shown once at header — this section keeps only fields NOT shown in the header */}
+          <Field label={`Labor (${cur}/u)`} hint="Direct labor cost per unit produced. Distinct from vcDirectLabor which is part of variable cost — use this for overhead-style labor only, set to 0 if already in vcDirectLabor."><input type="number" value={prod.laborPerUnit||5} onChange={e=>upProd({laborPerUnit:+e.target.value})}/></Field>
+          <Field label={`Fixed Factory (${cur}/day)`} hint="Rent+salaries+overhead — allocated per period irrespective of production volume."><input type="number" value={prod.fixedFactory||100} onChange={e=>upProd({fixedFactory:+e.target.value})}/></Field>
+          <Field label="Salvage %" hint="Recovery rate on expired/obsolete inventory. Used in Newsvendor critical ratio and write-off cost."><input type="number" value={Math.round((prod.salvageRate||0.8)*100)} onChange={e=>upProd({salvageRate:+e.target.value/100})} min={0} max={100}/></Field>
+          <Field label="FG Warehouse Max" hint="Per-product storage cap. Solver enforces as hard constraint. 0 = unlimited."><input type="number" value={prod.whMaxUnits||500} onChange={e=>upProd({whMaxUnits:+e.target.value})}/></Field>
+          <Field label="Production Mode" hint="MTS = Make-to-Stock (forecast-driven, safety stock). MTO = Make-to-Order (backlog-driven, no FG inventory). ATO = Assemble-to-Order (subassy MTS + final MTO). This gates which tabs/sections are relevant."><select value={prod.prodMode||'mts'} onChange={e=>upProd({prodMode:e.target.value})}><option value="mts">Make-to-Stock</option><option value="mto">Make-to-Order</option><option value="ato">Assemble-to-Order</option><option value="eto">Engineer-to-Order</option><option value="retailer">Retailer (pass-through)</option></select></Field>
+          <Field label="Backorder" hint="Yes = allow stockouts to be filled in later period (penalty applied). No = treat as lost sales (revenue lost)."><select value={prod.backorderOn?'yes':'no'} onChange={e=>upProd({backorderOn:e.target.value==='yes'})}><option value="no">No (lost sale)</option><option value="yes">Yes (backorder)</option></select></Field>
+          <Field label="Cap CV %" hint="Equipment failure variability — used by Monte Carlo to simulate capacity shortfalls."><input type="number" value={prod.capCV||5} onChange={e=>upProd({capCV:+e.target.value})}/></Field>
         </div>
+        {/* ── Variable Cost breakdown (single source of truth) ── */}
+        {(()=>{
+          const vcTotal=(+prod.vcElectricity||0)+(+prod.vcPackaging||0)+(+prod.vcConsumables||0)+(+prod.vcDirectLabor||0)+(+prod.vcOther||0);
+          return <div style={{marginTop:8,padding:'8px 10px',background:'var(--bg3)',borderRadius:4,borderLeft:'3px solid var(--a2)'}}>
+            <div style={{fontSize:10,fontWeight:600,color:'var(--a2)',marginBottom:4}}>💰 Variable Cost Breakdown <span style={{color:'var(--tx3)',fontSize:9,fontWeight:400,marginLeft:6}}>Edit components — total below is derived. This is the ONLY place to edit variable cost in v3.0 (was duplicated in v2.0).</span></div>
+            <div className="grid6">
+              <Field label={`Electricity (${cur})`}><input type="number" step="0.1" value={prod.vcElectricity||1.5} onChange={e=>upProd({vcElectricity:+e.target.value})}/></Field>
+              <Field label={`Packaging (${cur})`}><input type="number" step="0.1" value={prod.vcPackaging||1} onChange={e=>upProd({vcPackaging:+e.target.value})}/></Field>
+              <Field label={`Consumables (${cur})`}><input type="number" step="0.1" value={prod.vcConsumables||1} onChange={e=>upProd({vcConsumables:+e.target.value})}/></Field>
+              <Field label={`Direct Labor (${cur})`}><input type="number" step="0.1" value={prod.vcDirectLabor||1} onChange={e=>upProd({vcDirectLabor:+e.target.value})}/></Field>
+              <Field label={`Other (${cur})`}><input type="number" step="0.1" value={prod.vcOther||0.5} onChange={e=>upProd({vcOther:+e.target.value})}/></Field>
+              <Field label={`TOTAL (${cur}/u)`} hint="Computed: Σ of the five components. Used by every solver.">
+                <input readOnly value={Math.round(vcTotal*100)/100} style={{background:'var(--bg2)',color:'var(--a2)',fontWeight:700,cursor:'not-allowed'}}/>
+              </Field>
+            </div>
+          </div>;
+        })()}
+        {/* ── Carry Rate breakdown (single source of truth) ── */}
+        {(()=>{
+          const crTotal=(+prod.crCapital||0)+(+prod.crStorage||0)+(+prod.crInsurance||0)+(+prod.crObsolescence||0)+(+prod.crHandling||0)+(+prod.crShrinkage||0);
+          return <div style={{marginTop:6,padding:'8px 10px',background:'var(--bg3)',borderRadius:4,borderLeft:'3px solid var(--a4)'}}>
+            <div style={{fontSize:10,fontWeight:600,color:'var(--a4)',marginBottom:4}}>📦 Annual Carry Rate Breakdown (% of inventory value) <span style={{color:'var(--tx3)',fontSize:9,fontWeight:400,marginLeft:6}}>Edit components — total is derived. Indian typical 20-30%.</span></div>
+            <div className="grid6">
+              <Field label="Capital %" hint="Opportunity cost of capital tied up in inventory. Usually ≈ WACC."><input type="number" step="0.5" value={prod.crCapital||10} onChange={e=>upProd({crCapital:+e.target.value})}/></Field>
+              <Field label="Storage %" hint="Rent, utilities, equipment allocation to stored goods."><input type="number" step="0.5" value={prod.crStorage||5} onChange={e=>upProd({crStorage:+e.target.value})}/></Field>
+              <Field label="Insurance %"><input type="number" step="0.5" value={prod.crInsurance||2} onChange={e=>upProd({crInsurance:+e.target.value})}/></Field>
+              <Field label="Obsolescence %" hint="Expected write-down from expiry, model changes, product discontinuation."><input type="number" step="0.5" value={prod.crObsolescence||4} onChange={e=>upProd({crObsolescence:+e.target.value})}/></Field>
+              <Field label="Handling %"><input type="number" step="0.5" value={prod.crHandling||2} onChange={e=>upProd({crHandling:+e.target.value})}/></Field>
+              <Field label="Shrinkage %" hint="Theft, damage, counting errors."><input type="number" step="0.5" value={prod.crShrinkage||1} onChange={e=>upProd({crShrinkage:+e.target.value})}/></Field>
+              <Field label="TOTAL %/yr" hint="Computed. Solver uses this / 365 as daily carry cost multiplier."><input readOnly value={Math.round(crTotal*10)/10} style={{background:'var(--bg2)',color:'var(--a4)',fontWeight:700,cursor:'not-allowed'}}/></Field>
+            </div>
+          </div>;
+        })()}
         {/* Outbound logistics */}
         <div style={{marginTop:8,padding:'6px 8px',background:'var(--bg3)',borderRadius:4}}>
           <div style={{fontSize:10,fontWeight:600,color:'var(--a2)',marginBottom:4}}>📦 Outbound / Distribution</div>
@@ -1032,6 +1171,74 @@ function ProductsTab({state,dispatch}){
             <Field label="DSO (days)" hint="Days Sales Outstanding"><input type="number" value={prod.dso||30} onChange={e=>upProd({dso:+e.target.value})}/></Field>
           </div>
         </div>
+      </div>
+
+      {/* Routing — per-product operations DAG */}
+      <div className="card">
+        <div className="card-title">🏭 Production Routing — Operations &amp; Line Assignment
+          <span className="badge" style={{background:'rgba(79,168,240,.12)',color:'var(--a2)',marginLeft:6}}>v3.0</span>
+        </div>
+        <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>
+          Define the sequence of operations for <strong>{prod.name}</strong>. Each op runs on a line/work-center with its own cycle time, setup, yield, and parallelism. Leave empty to fall back to the product-level cycleTime/capacity above.
+        </div>
+        <div style={{display:'flex',gap:8,marginBottom:8,alignItems:'center',flexWrap:'wrap'}}>
+          <Field label="Line Mode" hint="Shared = lines pool across products. Dedicated = this SKU owns a line exclusively. Flexible-sequential = ops run one after another, any line. Flexible-parallel = multiple copies of the same op run in parallel on different lines.">
+            <select value={prod.lineMode||'shared'} onChange={e=>upProd({lineMode:e.target.value})}>
+              <option value="shared">Shared pool</option>
+              <option value="dedicated">Dedicated line</option>
+              <option value="flexible-sequential">Flexible (sequential)</option>
+              <option value="flexible-parallel">Flexible (parallel)</option>
+            </select>
+          </Field>
+          <span style={{fontSize:9,color:'var(--tx3)'}}>{(prod.routing||[]).length} op(s) defined</span>
+          <button className="btn btn-secondary btn-sm" style={{marginLeft:'auto'}} onClick={()=>{
+            const rt=prod.routing||[];
+            const seq=rt.length;
+            const newOp={id:Date.now().toString(36),seq,name:`Op ${seq+1}`,workCenter:'WC1',lineId:state.production.lines[0]?.id||'line1',cycleTimeMin:prod.cycleTime||19,setupMin:30,yieldPct:98,parallelism:1,predecessor:seq>0?rt[seq-1].id:null};
+            upProd({routing:[...rt,newOp]});
+          }}>+ Add Operation</button>
+        </div>
+        {(prod.routing||[]).length>0&&<div style={{overflowX:'auto'}}>
+          <table className="data-table">
+            <thead><tr><th>#</th><th>Name</th><th>Work Center</th><th>Line</th><th>Cycle (min/u)</th><th>Setup (min)</th><th>Yield %</th><th>Parallel</th><th>Effective u/hr</th><th></th></tr></thead>
+            <tbody>{(prod.routing||[]).map((op,oi)=>{
+              const line=state.production.lines.find(l=>l.id===op.lineId);
+              const oee=((prod.oeeAvailability||85)*(prod.oeePerformance||92)*(prod.oeeQuality||98))/10000;
+              const effUperHr=op.cycleTimeMin>0?Math.round(60/op.cycleTimeMin*op.parallelism*oee/100*100)/100:0;
+              const upRouting=(patch)=>{const rt=[...(prod.routing||[])];rt[oi]={...rt[oi],...patch};upProd({routing:rt});};
+              return <tr key={op.id}>
+                <td style={{fontWeight:600,color:'var(--a4)'}}>{oi+1}</td>
+                <td><input value={op.name} onChange={e=>upRouting({name:e.target.value})} style={{width:90,fontSize:10}}/></td>
+                <td><input value={op.workCenter} onChange={e=>upRouting({workCenter:e.target.value})} style={{width:60,fontSize:10}} title="SAP CR01 work center code"/></td>
+                <td><select value={op.lineId} onChange={e=>upRouting({lineId:e.target.value})} style={{width:85,fontSize:10}}>{state.production.lines.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></td>
+                <td><input type="number" step="0.1" value={op.cycleTimeMin} onChange={e=>upRouting({cycleTimeMin:+e.target.value})} style={{width:50,fontSize:10}}/></td>
+                <td><input type="number" value={op.setupMin} onChange={e=>upRouting({setupMin:+e.target.value})} style={{width:45,fontSize:10}}/></td>
+                <td><input type="number" value={op.yieldPct} onChange={e=>upRouting({yieldPct:+e.target.value})} style={{width:40,fontSize:10}}/></td>
+                <td><input type="number" min={1} value={op.parallelism} onChange={e=>upRouting({parallelism:+e.target.value})} style={{width:35,fontSize:10}} title="Number of stations running this op in parallel"/></td>
+                <td className="num" style={{color:'var(--ac)',fontSize:10}}>{effUperHr}</td>
+                <td><button className="btn btn-danger btn-sm" onClick={()=>{const rt=(prod.routing||[]).filter(r=>r.id!==op.id);upProd({routing:rt});}}>×</button></td>
+              </tr>;
+            })}</tbody>
+          </table>
+          {(()=>{
+            const rt=prod.routing||[];
+            const oee=((prod.oeeAvailability||85)*(prod.oeePerformance||92)*(prod.oeeQuality||98))/1000000;
+            const perLine={};
+            rt.forEach(op=>{perLine[op.lineId]=(perLine[op.lineId]||0)+op.cycleTimeMin/Math.max(op.parallelism,1);});
+            const bottleneck=Object.entries(perLine).sort((a,b)=>b[1]-a[1])[0];
+            const shiftsHrs=(state.production.lines[0]?.hoursPerShift||8)*(state.production.lines[0]?.shiftsPerDay||1);
+            const netHrs=shiftsHrs-(state.production.lines[0]?.breakMins||30)*(state.production.lines[0]?.shiftsPerDay||1)/60;
+            const effectiveDailyCap=bottleneck?Math.floor(netHrs*60/bottleneck[1]*oee):prod.capacity||50;
+            return <div style={{fontSize:10,color:'var(--tx3)',marginTop:6,padding:'6px 8px',background:'var(--bg3)',borderRadius:4}}>
+              Bottleneck: <strong style={{color:'var(--dg)'}}>{bottleneck?state.production.lines.find(l=>l.id===bottleneck[0])?.name:'—'}</strong> ({bottleneck?.[1].toFixed(1)} min/u/line)
+              {' | '}OEE-adjusted effective daily cap: <strong style={{color:'var(--ac)'}}>{effectiveDailyCap}</strong> units/day
+              {' | '}Weekly: <strong style={{color:'var(--ac)'}}>{effectiveDailyCap*(state.planning.workDays||6)}</strong> u/wk (overrides the product-level Capacity field when routing is defined)
+            </div>;
+          })()}
+        </div>}
+        {!(prod.routing||[]).length&&<div style={{fontSize:10,color:'var(--tx3)',padding:'8px',background:'var(--bg3)',borderRadius:4,textAlign:'center'}}>
+          No routing defined — using fallback product-level capacity of {prod.capacity||50} u/week. Add operations to unlock bottleneck analysis, setup-matrix optimization, and multi-station throughput.
+        </div>}
       </div>
 
       {/* Cost Events — Rolling Horizon */}
@@ -1118,7 +1325,8 @@ function OptimizeTab({state,dispatch}){
             name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,
             variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life:p.shelfLife,
             yield_pct:p.yieldPct,init_inventory:p.initInventory,mape_pct:15,
-            parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05,trans_rate:b.transRate||0.5,trans_mode:b.transMode||'perUnit',proc_policy:b.procPolicy||'milp',part_yield:(b.partYield||98)/100,lt_cv:(b.ltCV||10)/100,cost_cv:(b.costCV||10)/100})),
+            cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue,label:ev.label})),
+            parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05,trans_rate:b.transRate||0.5,trans_mode:b.transMode||'perUnit',proc_policy:b.procPolicy||'milp',part_yield:(b.partYield||98)/100,lt_cv:(b.ltCV||10)/100,cost_cv:(b.costCV||10)/100,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[],pay_term_days:b.payTermDays||30,early_pay_disc:b.earlyPayDisc||0})),
           })),
           params:{periods:state.planning.periods,carry_rate:(state.products[0]?.carryRate||24)/100,wh_max:constraints.warehouse.on?constraints.warehouse.val:5000,service_level:state.config.serviceLevel,budget:constraints.budget.on?constraints.budget.val:state.budget.procurement||0,shared_capacity:state.production.lines[0]?.capacity||50,work_days:state.planning.workDays||6},
           capacity_mode:state.production.lines[0]?.type||'shared',
@@ -1126,17 +1334,25 @@ function OptimizeTab({state,dispatch}){
       }else if(solverMode==='production'){
         endpoint='/api/solve/production';
         payload={
-          products:state.products.map(p=>({name:p.name,required_qty:annDemand(p),setup_cost:p.setupCost,yield_pct:p.yieldPct,cycle_time:(p.cycleTime||19)/60,capacity_per_week:p.capacity,mape_pct:p.mape||15})),
-          lines:state.production.lines.map((l,i)=>({id:l.id,name:l.name,capacity:l.capacity,type:l.type,shifts_per_day:l.shiftsPerDay,hours_per_shift:l.hoursPerShift||8,break_mins:l.breakMins||30,ot_mult:l.otMult||1.5,ot_threshold:l.otThresh||80,changeover_mins:l.changeoverMins||30,products:state.products.map((_,k)=>k)})),
-          params:{periods:state.planning.periods,changeover_cost:100,overtime_cost_per_hr:50,work_days:state.planning.workDays||6},
+          products:state.products.map(p=>({name:p.name,required_qty:annDemand(p),setup_cost:p.setupCost,yield_pct:p.yieldPct,cycle_time:(p.cycleTime||19)/60,capacity_per_week:p.capacity,mape_pct:p.mape||15,
+            routing:(p.routing||[]).map(op=>({op_id:op.id,seq:op.seq,name:op.name,line_id:op.lineId,work_center:op.workCenter,cycle_time_min:op.cycleTimeMin,setup_min:op.setupMin,yield_pct:op.yieldPct,parallelism:op.parallelism})),
+            oee:((p.oeeAvailability||85)*(p.oeePerformance||92)*(p.oeeQuality||98))/1000000,
+            line_mode:p.lineMode||'shared'})),
+          lines:state.production.lines.map((l,i)=>({id:l.id,name:l.name,capacity:l.capacity,type:l.type,shifts_per_day:l.shiftsPerDay,hours_per_shift:l.hoursPerShift||8,break_mins:l.breakMins||30,ot_mult:l.otMult||1.5,ot_threshold:l.otThresh||80,changeover_mins:l.changeoverMins||30,planned_maintenance:(l.plannedMaintenance||[]).map(w=>w.mode==='hourly'?{mode:'hourly',date:w.date,hours_lost:+(w.hoursLost||0),reason:w.reason||''}:{mode:'weekly',from_week:+(w.fromWeek||0),to_week:+(w.toWeek||0),reason:w.reason||''}),products:state.products.map((_,k)=>k)})),
+          params:{periods:state.planning.periods,changeover_cost:100,overtime_cost_per_hr:50,work_days:state.planning.workDays||6,hrs_per_period:(state.production.lines[0]?.hoursPerShift||8)*(state.production.lines[0]?.shiftsPerDay||1)*(state.planning.workDays||6),horizon_start_date:state.planning.horizonStartDate||null,time_grain:state.planning.timeGrain||'weekly'},
         };
       }else if(solverMode==='profitmix'){
         endpoint='/api/solve/profitmix';
+        // v3.1.1 Q14 — scope forecast to planning horizon, not full 24-month history
+        const unit=state.planning.planningUnit||'weekly';
+        const horizonMonths=Math.max(1,Math.min(24,Math.ceil(state.planning.periods*(unit==='weekly'?7:unit==='daily'?1:30)/30.5)));
         payload={
           demand_mode:demandMode,
+          planning_horizon_months:horizonMonths,
+          time_grain:state.planning.timeGrain||'weekly',
           products:state.products.map(p=>({name:p.name,sell_price:p.sellPrice,variable_cost:p.variableCost,
             cycle_time:Math.max(0.1,168/(p.capacity||50)), // hrs/unit derived from weekly capacity
-            forecast:p.history, // monthly forecast from forecast engine
+            forecast:(p.history||[]).slice(-horizonMonths), // sliced to horizon, not full history
             history:p.history, mape_pct:p.mape||15, shelf_life:p.shelfLife,
             carry_rate:0.24, salvage_rate:p.salvageRate||0.8,
             mto_orders:p.mtoOrders||[], min_quantity:0,
@@ -1180,7 +1396,8 @@ function OptimizeTab({state,dispatch}){
           },
           procurement_data:{
             products:state.products.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life:p.shelfLife,yield_pct:p.yieldPct,init_inventory:p.initInventory,
-              parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder,hold_pct:b.holdPct,rm_capacity:b.rmCapacity,ordering_cost:b.orderingCost,rm_shelf:b.rmShelf,scrap_factor:b.scrapFactor}))})),
+              cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue,label:ev.label})),
+              parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder,hold_pct:b.holdPct,rm_capacity:b.rmCapacity,ordering_cost:b.orderingCost,rm_shelf:b.rmShelf,scrap_factor:b.scrapFactor,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[]}))})),
             params:{periods:state.planning.periods,carry_rate:0.24,wh_max:constraints.warehouse.on?constraints.warehouse.val:5000,service_level:state.config.serviceLevel,budget:constraints.budget.on?constraints.budget.val:0},capacity_mode:state.production.lines[0]?.type||'shared',
           },
           production_data:{
@@ -1188,6 +1405,21 @@ function OptimizeTab({state,dispatch}){
             lines:state.production.lines.map(l=>({id:l.id,name:l.name,capacity:l.capacity,type:l.type,shifts_per_day:l.shiftsPerDay,products:state.products.map((_,k)=>k)})),
             params:{periods:state.planning.periods,changeover_cost:100},
           },
+        };
+      }else if(solverMode==='rolling'){
+        endpoint='/api/solve/rolling';
+        payload={
+          n_waves:4,shift_weeks:4,frozen_weeks:state.planning.frozenWeeks||2,
+          base:{
+            products:state.products.map(p=>({
+              name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,
+              variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life:p.shelfLife,
+              yield_pct:p.yieldPct,init_inventory:p.initInventory,
+              cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue,label:ev.label})),
+              parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[]})),
+            })),
+            params:{periods:state.planning.periods,carry_rate:0.24,wh_max:constraints.warehouse.on?constraints.warehouse.val:5000,service_level:state.config.serviceLevel},
+          }
         };
       }
       const res=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -1205,6 +1437,7 @@ function OptimizeTab({state,dispatch}){
     {id:'transport',label:'Transport',icon:'🚛',desc:'Mode selection with demand sensing + allocation (LP). Evaluates road/rail/sea/air/multimodal across 25 Indian routes.',obj:'Min Logistics'},
     {id:'capital',label:'Capital Budget',icon:'🏗️',desc:'Maximize portfolio NPV subject to CAPEX budget (LP). Computes IRR, payback, profitability index per investment.',obj:'Max NPV'},
     {id:'montecarlo',label:'Monte Carlo',icon:'🎲',desc:'1000 stochastic runs with randomized demand (±MAPE%), lead times (±LT_CV%), material prices (±cost_CV%). Outputs VaR/CVaR/fragility.',obj:'Risk Analysis'},
+    {id:'rolling',label:'🔄 Rolling MPS',icon:'🔄',desc:'v3.0 P8 — Re-solve procurement over N waves (default 4). Each wave shifts horizon forward by shiftWeeks, freezes first N weeks of prev plan. Outputs nervousness (qty variance across re-plans) — use to tune the frozen/slushy horizon.',obj:'Rolling-horizon Stability'},
   ];
 
   // Dynamic constraints
@@ -1287,6 +1520,46 @@ function OptimizeTab({state,dispatch}){
               <td className="num" style={{color:'var(--ac)',fontWeight:600}}>{(((l.hoursPerShift||8)*l.shiftsPerDay)-(l.breakMins||30)*l.shiftsPerDay/60).toFixed(1)}h</td>
             </tr>)}</tbody>
           </table>
+          {/* ── Maintenance windows (v3.1 Q3 + v3.1.1 Q12 hourly) ── */}
+          <div style={{marginTop:8,padding:6,background:'var(--bg3)',borderRadius:4,border:'1px solid var(--br)'}}>
+            <div style={{fontSize:10,fontWeight:600,color:'var(--a4)',marginBottom:4}}>🔧 Planned Maintenance <span style={{color:'var(--tx3)',fontWeight:400,fontSize:9}}>— two modes: <em>weekly</em> (zeros capacity for listed weeks) or <em>hourly</em> (capacity reduced pro-rata for hours lost on a date). Unplanned downtime goes into OEE Availability.</span></div>
+            {state.production.lines.map(l=>{
+              const mw=l.plannedMaintenance||[];
+              return <div key={l.id} style={{fontSize:10,marginBottom:4,display:'flex',alignItems:'flex-start',gap:6,flexWrap:'wrap'}}>
+                <strong style={{minWidth:55,color:'var(--ac)',paddingTop:4}}>{l.name}:</strong>
+                <div style={{display:'flex',flexDirection:'column',gap:3,flex:1}}>
+                  {mw.length===0&&<span style={{color:'var(--tx3)',fontSize:9}}>no windows scheduled</span>}
+                  {mw.map((w,wi)=>{
+                    const isHourly=w.mode==='hourly';
+                    return <div key={wi} style={{display:'flex',alignItems:'center',gap:2,background:'var(--bg2)',padding:'2px 4px',borderRadius:3,border:'1px solid var(--br)',flexWrap:'wrap'}}>
+                      <select value={w.mode||'weekly'} style={{width:60,fontSize:9,padding:'1px 3px'}} onChange={e=>{const nl=state.production.lines.map(ll=>ll.id===l.id?{...ll,plannedMaintenance:mw.map((mm,mi)=>mi===wi?{...mm,mode:e.target.value}:mm)}:ll);dispatch({type:'SET_PRODUCTION',payload:{lines:nl}});}}>
+                        <option value="weekly">Weekly</option>
+                        <option value="hourly">Hourly</option>
+                      </select>
+                      {!isHourly&&<>
+                        <span style={{fontSize:9,color:'var(--tx3)'}}>W</span>
+                        <input type="number" placeholder="from" value={w.fromWeek||''} style={{width:32,fontSize:9,padding:'1px 3px'}} onChange={e=>{const nl=state.production.lines.map(ll=>ll.id===l.id?{...ll,plannedMaintenance:mw.map((mm,mi)=>mi===wi?{...mm,fromWeek:+e.target.value}:mm)}:ll);dispatch({type:'SET_PRODUCTION',payload:{lines:nl}});}}/>
+                        <span style={{fontSize:9,color:'var(--tx3)'}}>→</span>
+                        <input type="number" placeholder="to" value={w.toWeek||''} style={{width:32,fontSize:9,padding:'1px 3px'}} onChange={e=>{const nl=state.production.lines.map(ll=>ll.id===l.id?{...ll,plannedMaintenance:mw.map((mm,mi)=>mi===wi?{...mm,toWeek:+e.target.value}:mm)}:ll);dispatch({type:'SET_PRODUCTION',payload:{lines:nl}});}}/>
+                      </>}
+                      {isHourly&&<>
+                        <input type="date" value={w.date||''} style={{width:120,fontSize:9,padding:'1px 3px'}} onChange={e=>{const nl=state.production.lines.map(ll=>ll.id===l.id?{...ll,plannedMaintenance:mw.map((mm,mi)=>mi===wi?{...mm,date:e.target.value}:mm)}:ll);dispatch({type:'SET_PRODUCTION',payload:{lines:nl}});}}/>
+                        <input type="number" placeholder="hrs" min={0.5} step={0.5} value={w.hoursLost||''} style={{width:40,fontSize:9,padding:'1px 3px'}} title="Hours of capacity lost on that date" onChange={e=>{const nl=state.production.lines.map(ll=>ll.id===l.id?{...ll,plannedMaintenance:mw.map((mm,mi)=>mi===wi?{...mm,hoursLost:+e.target.value}:mm)}:ll);dispatch({type:'SET_PRODUCTION',payload:{lines:nl}});}}/>
+                        <span style={{fontSize:9,color:'var(--tx3)'}}>hrs lost</span>
+                      </>}
+                      <input placeholder="reason" value={w.reason||''} style={{width:90,fontSize:9,padding:'1px 3px'}} onChange={e=>{const nl=state.production.lines.map(ll=>ll.id===l.id?{...ll,plannedMaintenance:mw.map((mm,mi)=>mi===wi?{...mm,reason:e.target.value}:mm)}:ll);dispatch({type:'SET_PRODUCTION',payload:{lines:nl}});}}/>
+                      <button style={{fontSize:8,padding:'0 3px',cursor:'pointer',background:'none',border:'1px solid var(--dg)',color:'var(--dg)',borderRadius:2,lineHeight:1.4}} onClick={()=>{const nl=state.production.lines.map(ll=>ll.id===l.id?{...ll,plannedMaintenance:mw.filter((_,mi)=>mi!==wi)}:ll);dispatch({type:'SET_PRODUCTION',payload:{lines:nl}});}}>×</button>
+                    </div>;
+                  })}
+                  <div style={{display:'flex',gap:4}}>
+                    <button style={{fontSize:9,padding:'1px 6px',cursor:'pointer',background:'var(--bg2)',border:'1px solid var(--a4)',color:'var(--a4)',borderRadius:3}} onClick={()=>{const nl=state.production.lines.map(ll=>ll.id===l.id?{...ll,plannedMaintenance:[...(ll.plannedMaintenance||[]),{mode:'weekly',fromWeek:(ll.plannedMaintenance?.length?(ll.plannedMaintenance.slice(-1)[0].toWeek||12)+2:12),toWeek:(ll.plannedMaintenance?.length?(ll.plannedMaintenance.slice(-1)[0].toWeek||12)+3:13),reason:'PM'}]}:ll);dispatch({type:'SET_PRODUCTION',payload:{lines:nl}});}}>+ weekly</button>
+                    <button style={{fontSize:9,padding:'1px 6px',cursor:'pointer',background:'var(--bg2)',border:'1px solid var(--a3)',color:'var(--a3)',borderRadius:3}} onClick={()=>{const today=new Date().toISOString().slice(0,10);const nl=state.production.lines.map(ll=>ll.id===l.id?{...ll,plannedMaintenance:[...(ll.plannedMaintenance||[]),{mode:'hourly',date:today,hoursLost:4,reason:'Bearing replacement'}]}:ll);dispatch({type:'SET_PRODUCTION',payload:{lines:nl}});}}>+ hourly</button>
+                  </div>
+                </div>
+              </div>;
+            })}
+            <div style={{fontSize:9,color:'var(--tx3)',marginTop:4}}>💡 <strong>Taxonomy:</strong> <em>Micro-stops</em> → OEE Performance %; <em>Unplanned downtime</em> → reduce Availability %; <em>Scheduled PM</em> → this calendar. Don't double-count.</div>
+          </div>
           <div style={{fontWeight:600,color:'var(--a2)',marginTop:6,marginBottom:4}}>Products to Schedule:</div>
           <table className="data-table" style={{fontSize:9}}>
             <thead><tr><th>Product</th><th>Annual Demand</th><th>Setup Cost</th><th>Cycle Time</th><th>Yield%</th></tr></thead>
@@ -1432,10 +1705,103 @@ function OptimizeTab({state,dispatch}){
         <KPI label="Total Cost" value={`${cur}${result.total_cost?.toLocaleString()}`} sub={`${result.periods} periods`}/>
         <KPI label="Solve Time" value={`${result.solve_time}s`} sub="CBC" color="var(--a2)"/>
         <KPI label="Status" value={result.status} color="var(--gn)"/>
+        <KPI label="Products" value={result.products?.length||0} color="var(--a2)"/>
+        <KPI label="Materials" value={result.materials?.length||0} color="var(--a3)"/>
+        <KPI label="Total POs" value={result.materials?.reduce((a,m)=>a+(m.num_orders||0),0)||0} color="var(--a4)"/>
       </div>
       {result.cost_breakdown&&<div className="kpi-row">{Object.entries(result.cost_breakdown).filter(([k])=>k!=='total').map(([k,v])=><KPI key={k} label={k.replace(/_/g,' ')} value={`${cur}${Math.round(v).toLocaleString()}`} color="var(--a3)"/>)}</div>}
-      {result.products?.map((p,i)=><div key={i} style={{fontSize:11,color:'var(--tx2)',marginTop:4}}><strong style={{color:'var(--ac)'}}>{p.name}:</strong> {p.total_produced}u produced, {p.num_batches} batches, <span style={{color:p.fill_rate>=99?'var(--gn)':'var(--a4)'}}>{p.fill_rate}% fill</span></div>)}
-      {result.materials?.map((m,i)=><div key={i} style={{fontSize:10,color:'var(--tx3)'}}>{m.name}: {m.num_orders} POs, {m.total_ordered}u, {cur}{m.total_cost}</div>)}
+    </div>}
+
+    {/* ─── DETAILED PRODUCTION SCHEDULE (Procurement mode) ─── */}
+    {result&&result._mode==='procurement'&&result.products?.map((p,pi)=><div key={`sched-${pi}`} className="card">
+      <div className="card-title">📋 Production Schedule — {p.name}
+        <span className="badge" style={{background:'rgba(0,212,170,.12)',color:'var(--ac)',marginLeft:6}}>{p.total_produced?.toLocaleString()}u / {p.total_demand?.toLocaleString()}u</span>
+        <span className="badge" style={{background:p.fill_rate>=99?'rgba(63,185,80,.15)':'rgba(240,180,41,.15)',color:p.fill_rate>=99?'var(--gn)':'var(--a4)',marginLeft:4}}>{p.fill_rate}% fill</span>
+      </div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Period-by-period execution plan. Each row = one planning bucket ({state.planning.planningUnit||'weekly'}).</div>
+      <div style={{overflowX:'auto',maxHeight:360}}>
+        <table className="data-table" style={{fontSize:10}}>
+          <thead style={{position:'sticky',top:0,background:'var(--bg2)'}}>
+            <tr><th>Period</th><th>Demand</th><th style={{color:'var(--ac)'}}>Produce</th><th>Setup</th><th>Inventory</th><th style={{color:'var(--dg)'}}>Shortage</th><th>Fill</th></tr>
+          </thead>
+          <tbody>{p.production?.map((q,t)=>{
+            const dem=(state.products[pi]?.history?.[Math.floor(t/4)]||0)/4;
+            const fill=dem>0?Math.min(100,Math.round((q-(p.shortages?.[t]||0))/Math.max(dem,1)*100)):100;
+            return <tr key={t} style={{background:p.setups?.[t]?'rgba(0,212,170,.03)':'transparent'}}>
+              <td style={{fontFamily:'JetBrains Mono',fontSize:9,color:'var(--tx3)'}}>W{t+1}</td>
+              <td className="num">{Math.round(dem)}</td>
+              <td className="num" style={{color:q>0?'var(--ac)':'var(--tx3)',fontWeight:q>0?700:400}}>{q||'—'}</td>
+              <td style={{textAlign:'center',fontSize:9}}>{p.setups?.[t]?'▶ batch':''}</td>
+              <td className="num" style={{color:(p.inventory?.[t]||0)<5?'var(--dg)':(p.inventory?.[t]||0)<15?'var(--a4)':'var(--tx)'}}>{Math.round(p.inventory?.[t]||0)}</td>
+              <td className="num" style={{color:(p.shortages?.[t]||0)>0?'var(--dg)':'var(--tx3)'}}>{(p.shortages?.[t]||0)>0?Math.round(p.shortages[t]):'—'}</td>
+              <td className="num" style={{color:fill>=99?'var(--gn)':fill>=80?'var(--a4)':'var(--dg)',fontSize:9}}>{fill}%</td>
+            </tr>;
+          })}</tbody>
+          <tfoot><tr style={{borderTop:'2px solid var(--br)',fontWeight:700}}>
+            <td>Total</td>
+            <td className="num">{p.total_demand?.toLocaleString()}</td>
+            <td className="num" style={{color:'var(--ac)'}}>{p.total_produced?.toLocaleString()}</td>
+            <td style={{textAlign:'center'}}>{p.num_batches} batches</td>
+            <td></td>
+            <td className="num" style={{color:'var(--dg)'}}>{p.total_shortage?.toLocaleString()||0}</td>
+            <td className="num">{p.fill_rate}%</td>
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>)}
+
+    {/* ─── PO REGISTER (Procurement mode) ─── */}
+    {result&&result._mode==='procurement'&&result.materials?.length>0&&<div className="card">
+      <div className="card-title">🧾 Purchase Order Register
+        <span className="badge" style={{background:'rgba(79,168,240,.12)',color:'var(--a2)',marginLeft:6}}>{result.materials.reduce((a,m)=>a+(m.purchase_orders?.length||0),0)} POs issued</span>
+      </div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Every PO the MILP decided to issue. Arrival period = Issue period + lead time. Use these as actionable supplier orders.</div>
+      <div style={{overflowX:'auto',maxHeight:400}}>
+        <table className="data-table" style={{fontSize:10}}>
+          <thead style={{position:'sticky',top:0,background:'var(--bg2)'}}>
+            <tr><th>PO #</th><th>Material</th><th>For Product</th><th>Issue Wk</th><th>Arrive Wk</th><th className="num">Qty</th><th className="num">Unit Cost</th><th className="num">Ext Cost</th><th>Supplier</th><th>Mode</th></tr>
+          </thead>
+          <tbody>{(()=>{
+            let poNum=0;const rows=[];
+            result.materials.forEach((m)=>{
+              (m.purchase_orders||[]).forEach(po=>{
+                poNum++;
+                const bomPart=state.products.flatMap(p=>p.bom).find(b=>b.name===m.name)||{};
+                rows.push(<tr key={poNum}>
+                  <td style={{fontFamily:'JetBrains Mono',fontSize:9,fontWeight:600,color:'var(--a2)'}}>PO-{String(poNum).padStart(4,'0')}</td>
+                  <td style={{fontWeight:600}}>{m.name}</td>
+                  <td style={{color:'var(--tx2)',fontSize:9}}>{m.product}</td>
+                  <td style={{fontFamily:'JetBrains Mono',fontSize:9}}>W{po.period+1}</td>
+                  <td style={{fontFamily:'JetBrains Mono',fontSize:9,color:'var(--ac)'}}>W{po.arrive_period+1}</td>
+                  <td className="num" style={{color:'var(--ac)',fontWeight:700}}>{po.quantity.toLocaleString()}</td>
+                  <td className="num">{cur}{(po.cost/Math.max(po.quantity,1)).toFixed(2)}</td>
+                  <td className="num" style={{fontWeight:700}}>{cur}{Math.round(po.cost).toLocaleString()}</td>
+                  <td style={{fontSize:9,color:'var(--tx2)'}}>{bomPart.supplierType||'—'}{bomPart.country?` / ${bomPart.country}`:''}</td>
+                  <td style={{fontSize:9,color:'var(--tx3)'}}>{bomPart.transMode||'perUnit'}</td>
+                </tr>);
+              });
+            });
+            return rows.length?rows:[<tr key="empty"><td colSpan={10} style={{textAlign:'center',color:'var(--tx3)',padding:12}}>No POs issued in this plan</td></tr>];
+          })()}</tbody>
+        </table>
+      </div>
+    </div>}
+
+    {/* ─── RM INVENTORY TIMELINE (Procurement mode) ─── */}
+    {result&&result._mode==='procurement'&&result.materials?.length>0&&<div className="card">
+      <div className="card-title">📊 Raw Material Timeline — Orders &amp; Inventory per Period</div>
+      {result.materials.map((m,mi)=><div key={mi} style={{marginBottom:8}}>
+        <div style={{fontSize:11,fontWeight:600,color:'var(--ac)',marginBottom:3}}>{m.name} <span style={{color:'var(--tx3)',fontWeight:400}}>for {m.product}</span></div>
+        <div style={{overflowX:'auto'}}>
+          <table className="data-table" style={{fontSize:9}}>
+            <thead><tr><th>Series</th>{Array.from({length:Math.min(m.orders?.length||0,26)},(_,t)=><th key={t} style={{fontFamily:'JetBrains Mono',fontSize:8}}>W{t+1}</th>)}</tr></thead>
+            <tbody>
+              <tr><td style={{fontWeight:600,color:'var(--a2)'}}>Orders</td>{(m.orders||[]).slice(0,26).map((q,t)=><td key={t} className="num" style={{color:q>0?'var(--a2)':'var(--tx3)',fontWeight:q>0?700:400}}>{q||'·'}</td>)}</tr>
+              <tr><td style={{fontWeight:600,color:'var(--a4)'}}>RM Inv</td>{(m.inventory||[]).slice(0,26).map((q,t)=><td key={t} className="num" style={{color:q<5?'var(--dg)':q<20?'var(--a4)':'var(--tx)'}}>{Math.round(q)||'·'}</td>)}</tr>
+            </tbody>
+          </table>
+        </div>
+      </div>)}
     </div>}
 
     {/* ─── MRP EXPLOSION ─── */}
@@ -1473,29 +1839,135 @@ function OptimizeTab({state,dispatch}){
 
     {/* ─── PRODUCTION RESULTS ─── */}
     {result&&result._mode==='production'&&<div className="card">
-      <div className="card-title">🏭 Production Schedule Results</div>
+      <div className="card-title">🏭 Production Schedule Results
+        <span className="badge" style={{background:'rgba(0,212,170,.12)',color:'var(--ac)',marginLeft:6}}>{result.gantt?.length||0} production orders</span>
+      </div>
       <div className="kpi-row">
         <KPI label="Total Cost" value={`${cur}${result.total_cost?.toLocaleString()}`}/>
+        <KPI label="Orders Issued" value={result.gantt?.length||0} color="var(--ac)"/>
+        <KPI label="Total Changeovers" value={result.lines?.reduce((a,l)=>a+(l.changeovers||0),0)||0} color="var(--a4)"/>
+        <KPI label="Total OT Hrs" value={`${result.lines?.reduce((a,l)=>a+(l.overtime_hours||0),0).toFixed(1)||0}h`} color="var(--a3)"/>
         <KPI label="Solve Time" value={`${result.solve_time}s`} color="var(--a2)"/>
       </div>
-      {result.products?.map((p,i)=><div key={i} style={{fontSize:11,marginBottom:4}}><strong style={{color:'var(--ac)'}}>{p.name}:</strong> {p.produced}u / {p.required}u required | Completes period {p.completion_period} | {p.utilization}% util</div>)}
-      {result.lines?.map((l,i)=><div key={i} style={{fontSize:10,color:'var(--tx2)'}}><strong>{l.name}:</strong> {l.utilization}% utilized, {l.total_produced}u produced, {l.changeovers} changeovers, {l.overtime_hours}h OT</div>)}
-      {/* Gantt Chart */}
-      {result.gantt&&result.gantt.length>0&&<div style={{marginTop:8}}>
-        <div style={{fontSize:10,fontWeight:600,color:'var(--tx2)',marginBottom:4}}>Gantt Chart</div>
-        <div style={{overflowX:'auto',position:'relative',background:'var(--bg3)',borderRadius:4,padding:8}}>
-          {(result.lines||[]).map((l,li)=><div key={li} style={{display:'flex',alignItems:'center',marginBottom:3}}>
-            <div style={{width:60,fontSize:9,color:'var(--tx2)',flexShrink:0}}>{l.name}</div>
-            <div style={{flex:1,display:'flex',height:18,background:'var(--bg)',borderRadius:2,position:'relative'}}>
-              {result.gantt.filter(g=>g.line_idx===li).map((g,gi)=>{
-                const colors=['#00d4aa','#38bdf8','#a78bfa','#f0b429','#f85149'];
-                return <div key={gi} title={`${g.product} — ${g.quantity}u @ period ${g.period}`} style={{position:'absolute',left:`${g.period/result.periods*100}%`,width:`${Math.max(1/result.periods*100,1)}%`,height:'100%',background:colors[g.product_idx%5],borderRadius:1,opacity:0.8}}/>
-              })}
-            </div>
-          </div>)}
-          <div style={{display:'flex',marginTop:4,gap:8}}>{state.products.map((p,i)=>{const colors=['#00d4aa','#38bdf8','#a78bfa','#f0b429','#f85149'];return <span key={i} style={{fontSize:8,color:colors[i%5]}}>■ {p.name}</span>})}</div>
-        </div>
-      </div>}
+    </div>}
+
+    {/* ─── PRODUCTION ORDERS REGISTER ─── */}
+    {result&&result._mode==='production'&&result.gantt?.length>0&&<div className="card">
+      <div className="card-title">📋 Production Order Register
+        <span className="badge" style={{background:'rgba(79,168,240,.12)',color:'var(--a2)',marginLeft:6}}>Executable Schedule</span>
+      </div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Every production order the MILP decided to issue, sequenced by line & period. Dispatch these to the shop floor.</div>
+      <div style={{overflowX:'auto',maxHeight:400}}>
+        <table className="data-table" style={{fontSize:10}}>
+          <thead style={{position:'sticky',top:0,background:'var(--bg2)'}}>
+            <tr><th>Order #</th><th>Line</th><th>Period</th><th>Product</th><th className="num">Quantity</th><th className="num">Cycle (min)</th><th className="num">Run Hrs</th><th>Changeover?</th></tr>
+          </thead>
+          <tbody>{(()=>{
+            const sorted=[...(result.gantt||[])].sort((a,b)=>a.line_idx-b.line_idx||a.period-b.period);
+            let prevByLine={};
+            return sorted.map((g,gi)=>{
+              const prevProd=prevByLine[g.line_idx];
+              const isChangeover=prevProd!==undefined&&prevProd!==g.product;
+              prevByLine[g.line_idx]=g.product;
+              const prod=state.products[g.product_idx]||{};
+              const cycMin=prod.cycleTime||19;
+              const runHrs=(g.quantity*cycMin/60).toFixed(1);
+              return <tr key={gi} style={isChangeover?{background:'rgba(240,180,41,.05)'}:{}}>
+                <td style={{fontFamily:'JetBrains Mono',fontSize:9,fontWeight:600,color:'var(--a2)'}}>MO-{String(gi+1).padStart(4,'0')}</td>
+                <td style={{fontWeight:600}}>{g.line}</td>
+                <td style={{fontFamily:'JetBrains Mono',fontSize:9,color:'var(--ac)'}}>W{g.period+1}</td>
+                <td style={{fontWeight:600}}>{g.product}</td>
+                <td className="num" style={{color:'var(--ac)',fontWeight:700}}>{g.quantity.toLocaleString()}</td>
+                <td className="num">{cycMin}</td>
+                <td className="num" style={{color:'var(--a3)'}}>{runHrs}h</td>
+                <td style={{color:isChangeover?'var(--a4)':'var(--tx3)',fontWeight:isChangeover?700:400,fontSize:9}}>{isChangeover?'⚡ CHANGEOVER':'—'}</td>
+              </tr>;
+            });
+          })()}</tbody>
+        </table>
+      </div>
+    </div>}
+
+    {/* ─── PER-PRODUCT DEMAND vs PRODUCED ─── */}
+    {result&&result._mode==='production'&&result.products?.length>0&&<div className="card">
+      <div className="card-title">📦 Product Fulfillment</div>
+      <table className="data-table" style={{fontSize:10}}>
+        <thead><tr><th>Product</th><th className="num">Required</th><th className="num">Produced</th><th className="num">Delta</th><th>Completes</th><th className="num">Active Periods</th><th className="num">Util %</th><th>Status</th></tr></thead>
+        <tbody>{result.products.map((p,i)=>{
+          const delta=p.produced-p.required;
+          const ok=delta>=0;
+          return <tr key={i}>
+            <td style={{fontWeight:600,color:'var(--ac)'}}>{p.name}</td>
+            <td className="num">{p.required?.toLocaleString()}</td>
+            <td className="num" style={{color:ok?'var(--gn)':'var(--dg)',fontWeight:700}}>{p.produced?.toLocaleString()}</td>
+            <td className="num" style={{color:ok?'var(--gn)':'var(--dg)'}}>{delta>=0?'+':''}{delta?.toLocaleString()}</td>
+            <td style={{fontFamily:'JetBrains Mono',fontSize:9}}>W{p.completion_period}</td>
+            <td className="num">{p.active_periods}</td>
+            <td className="num">{p.utilization}%</td>
+            <td style={{color:ok?'var(--gn)':'var(--dg)',fontWeight:600,fontSize:9}}>{ok?'✓ FULFILLED':'✗ SHORT'}</td>
+          </tr>;
+        })}</tbody>
+      </table>
+    </div>}
+
+    {/* ─── PER-LINE UTILIZATION ─── */}
+    {result&&result._mode==='production'&&result.lines?.length>0&&<div className="card">
+      <div className="card-title">🏭 Line-Level Execution Summary</div>
+      <table className="data-table" style={{fontSize:10}}>
+        <thead><tr><th>Line</th><th className="num">Active Periods</th><th className="num">Util %</th><th className="num">Units Produced</th><th className="num">Changeovers</th><th className="num">OT Hours</th><th>Load Level</th></tr></thead>
+        <tbody>{result.lines.map((l,i)=>{
+          const heavy=l.utilization>80,light=l.utilization<30;
+          return <tr key={i}>
+            <td style={{fontWeight:600}}>{l.name}</td>
+            <td className="num">{l.active_periods}</td>
+            <td className="num" style={{color:heavy?'var(--dg)':light?'var(--a4)':'var(--gn)',fontWeight:700}}>{l.utilization}%</td>
+            <td className="num" style={{color:'var(--ac)'}}>{l.total_produced?.toLocaleString()}</td>
+            <td className="num" style={{color:'var(--a4)'}}>{l.changeovers}</td>
+            <td className="num" style={{color:l.overtime_hours>0?'var(--dg)':'var(--tx2)'}}>{l.overtime_hours}h</td>
+            <td style={{fontSize:9,color:heavy?'var(--dg)':light?'var(--a4)':'var(--gn)'}}>{heavy?'🔥 BOTTLENECK':light?'💤 UNDERLOADED':'✓ BALANCED'}</td>
+          </tr>;
+        })}</tbody>
+      </table>
+    </div>}
+
+    {/* ─── PER-LINE PERIOD MATRIX ─── */}
+    {result&&result._mode==='production'&&result.gantt?.length>0&&<div className="card">
+      <div className="card-title">📊 Line × Period Schedule Matrix</div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Each cell shows product code & qty produced. Empty = line idle.</div>
+      <div style={{overflowX:'auto'}}>
+        <table className="data-table" style={{fontSize:9}}>
+          <thead><tr><th>Line</th>{Array.from({length:result.periods||26},(_,t)=><th key={t} style={{fontFamily:'JetBrains Mono',fontSize:8}}>W{t+1}</th>)}</tr></thead>
+          <tbody>{(result.lines||[]).map((l,li)=><tr key={li}>
+            <td style={{fontWeight:600,color:'var(--ac)',whiteSpace:'nowrap'}}>{l.name}</td>
+            {Array.from({length:result.periods||26},(_,t)=>{
+              const cell=result.gantt.find(g=>g.line_idx===li&&g.period===t);
+              const colors=['#00d4aa','#38bdf8','#a78bfa','#f0b429','#f85149'];
+              if(!cell)return <td key={t} style={{color:'var(--tx3)',textAlign:'center'}}>·</td>;
+              return <td key={t} style={{background:`${colors[cell.product_idx%5]}22`,color:colors[cell.product_idx%5],fontWeight:700,textAlign:'center',fontSize:8,whiteSpace:'nowrap'}} title={`${cell.product} ${cell.quantity}u`}>
+                P{cell.product_idx+1}<br/>{cell.quantity}
+              </td>;
+            })}
+          </tr>)}</tbody>
+        </table>
+      </div>
+      <div style={{display:'flex',marginTop:4,gap:8,flexWrap:'wrap'}}>{state.products.map((p,i)=>{const colors=['#00d4aa','#38bdf8','#a78bfa','#f0b429','#f85149'];return <span key={i} style={{fontSize:9,color:colors[i%5]}}>■ P{i+1} = {p.name}</span>})}</div>
+    </div>}
+
+    {/* ─── GANTT VISUAL ─── */}
+    {result&&result._mode==='production'&&result.gantt?.length>0&&<div className="card">
+      <div className="card-title">📅 Gantt Chart — Visual Timeline</div>
+      <div style={{overflowX:'auto',position:'relative',background:'var(--bg3)',borderRadius:4,padding:8}}>
+        {(result.lines||[]).map((l,li)=><div key={li} style={{display:'flex',alignItems:'center',marginBottom:3}}>
+          <div style={{width:80,fontSize:9,color:'var(--tx2)',flexShrink:0}}>{l.name}</div>
+          <div style={{flex:1,display:'flex',height:18,background:'var(--bg)',borderRadius:2,position:'relative'}}>
+            {result.gantt.filter(g=>g.line_idx===li).map((g,gi)=>{
+              const colors=['#00d4aa','#38bdf8','#a78bfa','#f0b429','#f85149'];
+              return <div key={gi} title={`${g.product} — ${g.quantity}u @ W${g.period+1}`} style={{position:'absolute',left:`${g.period/result.periods*100}%`,width:`${Math.max(1/result.periods*100,1)}%`,height:'100%',background:colors[g.product_idx%5],borderRadius:1,opacity:0.8}}/>
+            })}
+          </div>
+        </div>)}
+        <div style={{display:'flex',marginTop:4,gap:8}}>{state.products.map((p,i)=>{const colors=['#00d4aa','#38bdf8','#a78bfa','#f0b429','#f85149'];return <span key={i} style={{fontSize:8,color:colors[i%5]}}>■ {p.name}</span>})}</div>
+      </div>
     </div>}
 
     {/* ─── PROFIT MIX RESULTS ─── */}
@@ -1682,6 +2154,85 @@ function OptimizeTab({state,dispatch}){
       </div>
     </div>}
 
+    {/* ─── ROLLING MPS RESULTS ─── */}
+    {result&&result._mode==='rolling'&&<div>
+      <div className="card" style={{borderColor:'var(--a3)'}}>
+        <div className="card-title">🔄 Rolling-Horizon MPS — Nervousness Report
+          <span className="badge" style={{background:'rgba(167,139,250,.12)',color:'var(--a3)',marginLeft:6}}>{result.waves?.length||0} waves</span>
+        </div>
+        <div style={{fontSize:10,color:'var(--tx2)',marginBottom:8}}>Re-ran procurement over {result.waves?.length} rolling waves, each shifted by {result.shift_weeks} weeks with first {result.frozen_weeks} weeks frozen. Total nervousness = total absolute qty delta across re-plans (lower = more stable).</div>
+        <div className="kpi-row">
+          <KPI label="Waves Solved" value={result.waves?.filter(w=>!w.error).length||0} color="var(--a2)"/>
+          <KPI label="Nervousness" value={result.nervousness?.toLocaleString()||0} color={result.nervousness>500?'var(--dg)':result.nervousness>100?'var(--a4)':'var(--gn)'}/>
+          <KPI label="Frozen Horizon" value={`${result.frozen_weeks}w`} color="var(--a3)"/>
+          <KPI label="Shift Step" value={`${result.shift_weeks}w`}/>
+          <KPI label="Final Cost" value={`${cur}${result.final_plan?.total_cost?.toLocaleString()||0}`} color="var(--gn)"/>
+        </div>
+      </div>
+
+      {result.waves?.length>0&&<div className="card">
+        <div className="card-title">📈 Wave-by-Wave Comparison</div>
+        <table className="data-table" style={{fontSize:10}}>
+          <thead><tr><th>Wave</th><th>Shift (wks)</th><th className="num">Total Cost</th><th className="num">Δ vs Wave 0</th><th className="num">Solve Time</th><th>Status</th></tr></thead>
+          <tbody>{result.waves.map((w,i)=>{
+            const base=result.waves[0]?.total_cost||0;
+            const delta=w.total_cost-base;
+            const pct=base?((delta/base)*100).toFixed(1):'0';
+            return <tr key={i}>
+              <td style={{fontWeight:600,color:'var(--ac)'}}>Wave {w.wave+1}</td>
+              <td style={{fontFamily:'JetBrains Mono',fontSize:9}}>+{w.shift_weeks}w</td>
+              <td className="num" style={{fontWeight:700}}>{cur}{w.total_cost?.toLocaleString()}</td>
+              <td className="num" style={{color:delta>0?'var(--dg)':delta<0?'var(--gn)':'var(--tx3)'}}>{i===0?'baseline':`${delta>=0?'+':''}${cur}${delta.toLocaleString()} (${pct}%)`}</td>
+              <td className="num" style={{fontSize:9,color:'var(--tx2)'}}>{w.solve_time}s</td>
+              <td style={{color:w.error?'var(--dg)':'var(--gn)',fontSize:9,fontWeight:600}}>{w.error?`✗ ${w.error}`:'✓ Optimal'}</td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>}
+
+      {result.final_plan&&result.final_plan.materials?.length>0&&<div className="card">
+        <div className="card-title">🧾 Final Wave — Settled PO Register
+          <span className="badge" style={{background:'rgba(0,212,170,.12)',color:'var(--ac)',marginLeft:6}}>{result.final_plan.materials.reduce((a,m)=>a+(m.purchase_orders?.length||0),0)} POs</span>
+        </div>
+        <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>After all rolling re-plans converged, these are the POs to execute. Weeks 1-{result.frozen_weeks} are frozen; later weeks remain re-plannable.</div>
+        <div style={{overflowX:'auto',maxHeight:400}}>
+          <table className="data-table" style={{fontSize:10}}>
+            <thead style={{position:'sticky',top:0,background:'var(--bg2)'}}>
+              <tr><th>PO #</th><th>Material</th><th>Issue Wk</th><th>Arrive Wk</th><th className="num">Qty</th><th className="num">Ext Cost</th><th>Zone</th></tr>
+            </thead>
+            <tbody>{(()=>{
+              let poNum=0;const rows=[];
+              result.final_plan.materials.forEach(m=>{
+                (m.purchase_orders||[]).forEach(po=>{
+                  poNum++;
+                  const frozen=po.period<(result.frozen_weeks||2);
+                  rows.push(<tr key={poNum} style={frozen?{background:'rgba(167,139,250,.05)'}:{}}>
+                    <td style={{fontFamily:'JetBrains Mono',fontSize:9,fontWeight:600,color:'var(--a2)'}}>PO-{String(poNum).padStart(4,'0')}</td>
+                    <td style={{fontWeight:600}}>{m.name}</td>
+                    <td style={{fontFamily:'JetBrains Mono',fontSize:9}}>W{po.period+1}</td>
+                    <td style={{fontFamily:'JetBrains Mono',fontSize:9,color:'var(--ac)'}}>W{po.arrive_period+1}</td>
+                    <td className="num" style={{color:'var(--ac)',fontWeight:700}}>{po.quantity.toLocaleString()}</td>
+                    <td className="num" style={{fontWeight:700}}>{cur}{Math.round(po.cost).toLocaleString()}</td>
+                    <td style={{fontSize:9,color:frozen?'var(--a3)':'var(--tx2)',fontWeight:frozen?700:400}}>{frozen?'🔒 FROZEN':'🔓 OPEN'}</td>
+                  </tr>);
+                });
+              });
+              return rows.length?rows:[<tr key="empty"><td colSpan={7} style={{textAlign:'center',color:'var(--tx3)',padding:12}}>No POs in final plan</td></tr>];
+            })()}</tbody>
+          </table>
+        </div>
+      </div>}
+
+      <div className="card" style={{background:'rgba(167,139,250,.05)',borderColor:'var(--a3)'}}>
+        <div style={{fontSize:11,fontWeight:700,color:'var(--a3)',marginBottom:4}}>💡 Interpretation Guide</div>
+        <div style={{fontSize:10,color:'var(--tx)',lineHeight:1.5}}>
+          <strong>Low nervousness (&lt;100):</strong> Plan is stable — frozen zone is long enough, or demand is well-predicted. Suppliers get consistent POs.<br/>
+          <strong>Medium (100-500):</strong> Some re-planning churn — consider lengthening frozen zone or smoothing demand forecast.<br/>
+          <strong>High (&gt;500):</strong> Plan thrash — suppliers receive conflicting signals. Widen frozen horizon, add safety stock, or improve demand sensing.
+        </div>
+      </div>
+    </div>}
+
     {/* MILP Export */}
     <div className="card">
       <div className="card-title">📤 MILP Export & Data Management</div>
@@ -1766,6 +2317,75 @@ function SupplyTab({state,dispatch}){
       <KPI label="Total Material Cost/unit" value={`${cur}${state.products.reduce((a,p)=>a+p.bom.reduce((s,b)=>s+b.cost*b.qtyPer,0),0).toFixed(0)}`} sub="across all SKUs" color="var(--a2)"/>
       <KPI label="Avg Lead Time" value={`${(allParts.reduce((a,b)=>a+b.leadTime,0)/Math.max(allParts.length,1)).toFixed(1)} wk`} sub="weighted by part count" color="var(--a3)"/>
       <KPI label="Import Exposure" value={`${importParts.length>0?Math.round(importParts.length/allParts.length*100):0}%`} sub={`${importParts.length} imported parts`} color={importParts.length>0?'var(--a4)':'var(--gn)'}/>
+    </div>
+
+    {/* Multi-Echelon Network (v3.0 P9) */}
+    <div className="card">
+      <div className="card-title">🛣️ Physical Network — Nodes &amp; Lanes
+        <span className="badge" style={{background:'rgba(79,168,240,.12)',color:'var(--a2)',marginLeft:6}}>v3.0 multi-echelon</span>
+      </div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:8}}>
+        Define the physical supply chain: Plants (where production happens), DCs (stock points), Customers (demand regions).
+        Lanes connect nodes with lead time, mode, rate, capacity, CO₂ factor. This drives transport solver &amp; multi-echelon inventory pooling.
+      </div>
+      {(()=>{
+        const net=state.network||{nodes:[],lanes:[]};
+        const upNodes=(nds)=>dispatch({type:'SET_NETWORK',payload:{nodes:nds}});
+        const upLanes=(lns)=>dispatch({type:'SET_NETWORK',payload:{lanes:lns}});
+        return <>
+          <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:6,flexWrap:'wrap'}}>
+            <strong style={{fontSize:11,color:'var(--tx2)'}}>Nodes ({net.nodes.length})</strong>
+            <button className="btn btn-secondary btn-sm" onClick={()=>upNodes([...net.nodes,{id:'n'+Date.now().toString(36),type:'dc',name:`Node ${net.nodes.length+1}`,location:'',lat:0,lon:0,capacity:1000}])}>+ Node</button>
+          </div>
+          <table className="data-table" style={{marginBottom:10}}>
+            <thead><tr><th>Type</th><th>Name</th><th>Location</th><th>Lat</th><th>Lon</th><th>Cap / Share</th><th></th></tr></thead>
+            <tbody>{net.nodes.map((n,i)=>{
+              const upN=(patch)=>{const nds=[...net.nodes];nds[i]={...nds[i],...patch};upNodes(nds);};
+              return <tr key={n.id}>
+                <td><select value={n.type} onChange={e=>upN({type:e.target.value})} style={{fontSize:10}}><option value="plant">Plant</option><option value="dc">DC</option><option value="customer">Customer</option><option value="supplier">Supplier</option></select></td>
+                <td><input value={n.name} onChange={e=>upN({name:e.target.value})} style={{width:90,fontSize:10}}/></td>
+                <td><input value={n.location||''} onChange={e=>upN({location:e.target.value})} style={{width:85,fontSize:10}}/></td>
+                <td><input type="number" step="0.01" value={n.lat||0} onChange={e=>upN({lat:+e.target.value})} style={{width:55,fontSize:10}}/></td>
+                <td><input type="number" step="0.01" value={n.lon||0} onChange={e=>upN({lon:+e.target.value})} style={{width:55,fontSize:10}}/></td>
+                <td>{n.type==='customer'
+                  ?<input type="number" step="0.01" min={0} max={1} value={n.demandShare||0} onChange={e=>upN({demandShare:+e.target.value})} style={{width:55,fontSize:10}} title="Demand fraction (0-1)"/>
+                  :<input type="number" value={n.capacity||0} onChange={e=>upN({capacity:+e.target.value})} style={{width:70,fontSize:10}}/>}
+                </td>
+                <td><button className="btn btn-danger btn-sm" onClick={()=>{upNodes(net.nodes.filter(x=>x.id!==n.id));upLanes(net.lanes.filter(l=>l.from!==n.id&&l.to!==n.id));}}>×</button></td>
+              </tr>;
+            })}</tbody>
+          </table>
+
+          <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:6,flexWrap:'wrap'}}>
+            <strong style={{fontSize:11,color:'var(--tx2)'}}>Lanes ({net.lanes.length})</strong>
+            <button className="btn btn-secondary btn-sm" disabled={net.nodes.length<2} onClick={()=>upLanes([...net.lanes,{id:'l'+Date.now().toString(36),from:net.nodes[0]?.id,to:net.nodes[1]?.id,mode:'FTL',leadDays:3,ratePerUnit:2.5,capacity:1000,co2:0.12,active:true}])}>+ Lane</button>
+            <span style={{fontSize:9,color:'var(--tx3)'}}>Modes: FTL/LTL/Rail/Air/Sea/Courier. Cheapest valid path auto-selected by transport solver.</span>
+          </div>
+          <table className="data-table">
+            <thead><tr><th>From</th><th>→</th><th>To</th><th>Mode</th><th>Lead (d)</th><th>Rate /u</th><th>Capacity</th><th>CO₂ kg/u</th><th>Active</th><th></th></tr></thead>
+            <tbody>{net.lanes.map((lane,i)=>{
+              const upL=(patch)=>{const ls=[...net.lanes];ls[i]={...ls[i],...patch};upLanes(ls);};
+              return <tr key={lane.id}>
+                <td><select value={lane.from} onChange={e=>upL({from:e.target.value})} style={{fontSize:10,width:85}}>{net.nodes.map(n=><option key={n.id} value={n.id}>{n.name}</option>)}</select></td>
+                <td style={{color:'var(--tx3)'}}>→</td>
+                <td><select value={lane.to} onChange={e=>upL({to:e.target.value})} style={{fontSize:10,width:85}}>{net.nodes.map(n=><option key={n.id} value={n.id}>{n.name}</option>)}</select></td>
+                <td><select value={lane.mode} onChange={e=>upL({mode:e.target.value})} style={{fontSize:10,width:60}}><option>FTL</option><option>LTL</option><option>Rail</option><option>Air</option><option>Sea</option><option>Courier</option></select></td>
+                <td><input type="number" step="0.5" value={lane.leadDays} onChange={e=>upL({leadDays:+e.target.value})} style={{width:45,fontSize:10}}/></td>
+                <td><input type="number" step="0.1" value={lane.ratePerUnit} onChange={e=>upL({ratePerUnit:+e.target.value})} style={{width:50,fontSize:10}}/></td>
+                <td><input type="number" value={lane.capacity} onChange={e=>upL({capacity:+e.target.value})} style={{width:65,fontSize:10}}/></td>
+                <td><input type="number" step="0.01" value={lane.co2||0} onChange={e=>upL({co2:+e.target.value})} style={{width:50,fontSize:10}}/></td>
+                <td><input type="checkbox" checked={lane.active!==false} onChange={e=>upL({active:e.target.checked})}/></td>
+                <td><button className="btn btn-danger btn-sm" onClick={()=>upLanes(net.lanes.filter(x=>x.id!==lane.id))}>×</button></td>
+              </tr>;
+            })}</tbody>
+          </table>
+          <div style={{fontSize:10,color:'var(--tx3)',marginTop:6}}>
+            Total lane capacity: <strong style={{color:'var(--ac)'}}>{net.lanes.filter(l=>l.active!==false).reduce((a,l)=>a+l.capacity,0).toLocaleString()} u/period</strong>
+            {' | '}Avg freight rate: <strong>{cur}{(net.lanes.reduce((a,l)=>a+l.ratePerUnit,0)/Math.max(net.lanes.length,1)).toFixed(2)}/u</strong>
+            {' | '}Weighted lead: <strong>{(net.lanes.reduce((a,l)=>a+l.leadDays*l.capacity,0)/Math.max(net.lanes.reduce((a,l)=>a+l.capacity,0),1)).toFixed(1)} days</strong>
+          </div>
+        </>;
+      })()}
     </div>
 
     {/* Supplier Master */}
@@ -2749,15 +3369,28 @@ function LearningLab({state}){
       <p style={{marginTop:6,color:'var(--a4)'}}>Pro tip: FOB gives you control over freight costs (you can negotiate better rates with your own forwarder). CIF is simpler but the seller bakes their freight margin into the price. For high-volume imports, FOB saves 5-15% on logistics.</p>
     </S>
 
-    <S id="sensing" title="📡 Demand Sensing — When to Switch to Air" color="var(--ac)">
-      <p>Demand sensing compares actual consumption vs forecast. When actuals deviate significantly (|deviation| {'>'} 2σ for 2+ consecutive periods), it triggers a replan.</p>
-      <p style={{marginTop:6}}>The transport optimizer integrates with demand sensing: if a spike is detected AND current stock won't last until sea freight arrives, it computes:</p>
+    <S id="sensing" title="📡 Demand Sensing — What's Wired, What's Not" color="var(--ac)">
+      <p><strong>What IS implemented (v3.1):</strong> Classical exponential smoothing on the MPS — sensed_next = α × last_actual + (1 − α) × prior_forecast, with α tunable in Tab 2C (default 0.3). When the sensed forecast drifts from consensus by more than the sensing threshold, the MPS re-plans. The transport optimizer also consults the sensed forecast to decide air vs sea overrides.</p>
+      <p style={{marginTop:6}}><strong>SPC tripwire (rule of thumb):</strong> When |actual − forecast| exceeds 2σ for 2+ consecutive periods, it's a genuine regime change (not noise) — trigger replan. This is a Shewhart/Western-Electric rule; false-alarm rate is ~0.25% vs 32% at 1σ.</p>
+      <p style={{marginTop:6}}>The transport leg specifically: if sensed spike AND stock won't last sea freight arrival, compute:</p>
       <p style={{fontFamily:'JetBrains Mono',fontSize:10,padding:8,background:'var(--bg3)',borderRadius:4,marginTop:6}}>
-        Stockout cost = gap_days × daily_consumption × unit_value × 0.3<br/>
-        Air premium = air_cost - sea_cost<br/>
+        Stockout cost = gap_days × daily_consumption × unit_value × <em>stockoutRevenuePct</em> (default 0.3)<br/>
+        Air premium = air_cost − sea_cost<br/>
         Decision: USE AIR if premium {'<'} stockout_cost, else ACCEPT RISK
       </p>
-      <p style={{marginTop:6}}>This uses the real transit time database (Shanghai→Chennai: 18d sea, 4d air; Hamburg→JNPT: 26d sea, 5d air) plus customs clearance days (green: 2d, normal: 4d, red: 7d).</p>
+      <p style={{marginTop:6}}>Transit DB: Shanghai→Chennai 18d sea / 4d air, Hamburg→JNPT 26d sea / 5d air; customs green 2d, normal 4d, red 7d.</p>
+      <div style={{marginTop:10,padding:8,background:'rgba(240,180,41,.08)',border:'1px solid var(--a4)',borderRadius:4}}>
+        <div style={{fontSize:11,fontWeight:700,color:'var(--a4)',marginBottom:4}}>🗺️ SAP IBP-Style Pattern Sensing — Roadmap v3.2 (NOT yet implemented)</div>
+        <div style={{fontSize:10,color:'var(--tx)',lineHeight:1.5}}>
+          SAP IBP Demand Sensing goes further than α-smoothing. What <em>it</em> does (and we currently don't):<br/>
+          <strong>1. Multi-signal intake</strong> — POS, shipments, orders, weather, promo calendars, web traffic; each with its own lag.<br/>
+          <strong>2. Pattern library</strong> — learned templates for recurring shapes (promo lift, holiday ramp, weekend dip, post-outage bounce).<br/>
+          <strong>3. ML matching</strong> — gradient-boosted or neural matchers score new actuals against templates; closest match nudges short-horizon forecast.<br/>
+          <strong>4. Horizon handoff</strong> — sensed forecast owns weeks 0–6; statistical forecast owns 7+; soft blend in the overlap.<br/>
+          <strong>5. Posterior uncertainty</strong> — every sensed point carries its own variance, propagated into safety stock.<br/>
+          <span style={{color:'var(--a4)',fontWeight:600}}>Honest status:</span> Our α=0.3 smoother is a baseline. The pattern layer above is scoped for v3.2. We won't pretend otherwise.
+        </div>
+      </div>
     </S>
 
     <S id="profitmix" title="💰 Profit Maximization — Shadow Prices" color="var(--gn)">
@@ -2827,13 +3460,20 @@ function LearningLab({state}){
     <S id="prob_lab" title="🎲 Probability Lab — Interactive Distributions" color="var(--a2)">
       {(()=>{
         const mu=avgMonthly,sig=stdDem;
+        const cv=mu>0?(sig/mu*100):0;
+        const highCV=cv>25;
         const zVals=[{z:1.036,sl:85},{z:1.282,sl:90},{z:1.645,sl:95},{z:2.326,sl:99}];
-        const points=[];for(let x=mu-3.5*sig;x<=mu+3.5*sig;x+=sig/10){
+        // Clip left tail to 0 — demand can't be negative
+        const xMin=Math.max(0,mu-3.5*sig);
+        const points=[];for(let x=xMin;x<=mu+3.5*sig;x+=sig/10){
           const pdf=1/(sig*Math.sqrt(2*Math.PI))*Math.exp(-0.5*Math.pow((x-mu)/sig,2));
           points.push({x:Math.round(x),y:+(pdf*1000).toFixed(2)});
         }
         return <div>
-          <p>Your demand: μ = {mu} units/month, σ = {sig}. The normal distribution N({mu}, {sig}²) describes the probability of different demand levels.</p>
+          <p>Your demand: μ = {mu} units/month, σ = {sig} (CV = {cv.toFixed(1)}%). The normal distribution N({mu}, {sig}²) describes the probability of different demand levels.</p>
+          {highCV&&<div style={{padding:6,background:'rgba(248,81,73,.08)',border:'1px solid var(--dg)',borderRadius:4,fontSize:10,color:'var(--dg)',marginTop:4}}>
+            ⚠ <strong>High variability (CV &gt; 25%):</strong> Normal approximation is weak — it assigns non-trivial probability to negative demand (impossible). X-axis is clipped to 0; for safety-stock accuracy consider <strong>lognormal</strong> or <strong>gamma</strong> distributions instead of normal.
+          </div>}
           <div style={{height:160,marginTop:8}}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={points.filter((_,i)=>i%3===0)} margin={{top:5,right:5,left:0,bottom:5}}>
@@ -2878,7 +3518,8 @@ function LearningLab({state}){
 // ════════════════════════════════════════════════
 
 function MPSVizCard({state}){
-  const [mpsGran,setMpsGran]=useState('weekly'); // weekly | daily
+  const [mpsGran,setMpsGran]=useState('weekly'); // monthly | weekly | daily
+  const [dailyWeeks,setDailyWeeks]=useState(4); // how many weeks of daily granularity to show
   const [selSKU,setSelSKU]=useState(0);
   const [prodOverrides,setProdOverrides]=useState({}); // week/day index → user qty
   const products=state.products;
@@ -2939,14 +3580,19 @@ function MPSVizCard({state}){
     sensingNote={bias:bias.toFixed(1),sensedNext,nextFcst,correction:sensedNext-nextFcst,lastIdx};
   }
 
-  // Daily breakdown (first week of current month)
-  const dMPS=Array.from({length:workDays},(_,di)=>{
-    const dayNames=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-    const baseDD=Math.round((mMPS[0]?.demand||0)/(4*workDays));
-    const baseDProd=Math.round((mMPS[0]?.production||0)/(4*workDays));
+  // Daily breakdown across first N weeks — respects workDays/week
+  const dayNames=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const totalDays=dailyWeeks*workDays;
+  const dMPS=Array.from({length:totalDays},(_,di)=>{
+    const wIdx=Math.floor(di/workDays);
+    const dow=di%workDays;
+    const wk=wMPS[wIdx]||{demand:0,production:0};
+    const baseDD=Math.round((wk.demand||0)/workDays);
+    const baseDProd=Math.round((wk.production||0)/workDays);
     const key=`d${di}`;
     const ov=prodOverrides[key];
-    return{day:dayNames[di],demand:baseDD,production:ov!==undefined?ov:baseDProd,baseProd:baseDProd,isOverridden:ov!==undefined};
+    const globalDay=di+1;
+    return{day:dayNames[dow],globalDay,wIdx,demand:baseDD,production:ov!==undefined?ov:baseDProd,baseProd:baseDProd,isOverridden:ov!==undefined,isFrozen:wIdx<frozenWk,isSlushy:wIdx>=frozenWk&&wIdx<slushyWk};
   });
 
   const setOverride=(key,val)=>setProdOverrides(o=>({...o,[key]:val})); // store raw string
@@ -2962,7 +3608,10 @@ function MPSVizCard({state}){
 
     {/* Controls row */}
     <div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center',flexWrap:'wrap'}}>
-      {['weekly','daily'].map(v=><button key={v} className={`btn btn-sm ${mpsGran===v?'btn-primary':'btn-secondary'}`} onClick={()=>setMpsGran(v)}>{v.charAt(0).toUpperCase()+v.slice(1)}</button>)}
+      {['monthly','weekly','daily'].map(v=><button key={v} className={`btn btn-sm ${mpsGran===v?'btn-primary':'btn-secondary'}`} onClick={()=>setMpsGran(v)}>{v.charAt(0).toUpperCase()+v.slice(1)}</button>)}
+      {mpsGran==='daily'&&<select value={dailyWeeks} onChange={e=>setDailyWeeks(+e.target.value)} style={{fontSize:10,padding:'3px 6px'}} title="Number of weeks to show daily">
+        {[1,2,4,8,12].map(n=><option key={n} value={n}>{n} wk ({n*workDays}d)</option>)}
+      </select>}
       {products.length>1&&<select value={selSKU} onChange={e=>setSelSKU(+e.target.value)} style={{fontSize:10,padding:'3px 6px'}}>{products.map((p,i)=><option key={i} value={i}>{p.name}</option>)}</select>}
       <span style={{fontSize:9,color:'var(--tx3)',marginLeft:4}}>🔒Frozen {frozenWk}wk | 🟡Slushy {slushyWk}wk | 🟢Open</span>
       {overrideCount>0&&<button className="btn btn-secondary btn-sm" onClick={clearOverrides} style={{marginLeft:'auto',fontSize:9}}>↺ Clear overrides</button>}
@@ -2978,6 +3627,22 @@ function MPSVizCard({state}){
     </div>}
     {!sensingActive&&<div style={{marginBottom:8,padding:'4px 10px',background:'var(--bg3)',borderRadius:4,fontSize:9,color:'var(--tx3)'}}>
       📡 Demand Sensing inactive — enter {sensingMin} periods of actuals in Tab 2 → Products & Demand to activate. (α={sensingAlpha})
+    </div>}
+
+    {/* MONTHLY view — overview of base plan */}
+    {mpsGran==='monthly'&&<div style={{overflowX:'auto'}}>
+      <div style={{fontSize:9,color:'var(--tx3)',marginBottom:4}}>Base monthly plan driving downstream MPS weeks. Edit monthly demand in Tab 2 → Products & Demand.</div>
+      <table className="data-table">
+        <thead><tr><th>Month</th><th>Demand</th><th>Production</th><th>End Inv.</th><th>Shortfall</th><th>Batches</th></tr></thead>
+        <tbody>{mMPS.map((mo,i)=><tr key={i}>
+          <td style={{fontWeight:600}}>{mo.month}</td>
+          <td className="num">{mo.demand.toLocaleString()}</td>
+          <td className="num" style={{color:'var(--ac)'}}>{mo.production.toLocaleString()}</td>
+          <td className="num" style={{color:mo.inventory<10?'var(--dg)':mo.inventory<30?'var(--a4)':'var(--tx)'}}>{mo.inventory.toLocaleString()}</td>
+          <td className="num" style={{color:mo.shortfall>0?'var(--dg)':'var(--tx3)'}}>{mo.shortfall>0?mo.shortfall.toLocaleString():'—'}</td>
+          <td className="num" style={{fontSize:9,color:'var(--tx3)'}}>{mo.batches}</td>
+        </tr>)}</tbody>
+      </table>
     </div>}
 
     {/* WEEKLY view — editable production */}
@@ -3019,15 +3684,18 @@ function MPSVizCard({state}){
 
     {/* DAILY view — editable */}
     {mpsGran==='daily'&&<>
-      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Daily breakdown — Week 1 of {MONTHS[0]} | {workDays} working days/week | Editable production quantities</div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Daily breakdown — {dailyWeeks}-week window ({totalDays} working days) | {workDays} working days/week | Editable production quantities</div>
+      <div style={{overflowX:'auto',maxHeight:420}}>
       <table className="data-table">
-        <thead><tr><th>Day</th><th>Daily Demand</th><th style={{color:'var(--ac)'}}>Production ✏</th><th>Cap Util%</th><th>Hours Req</th><th>Δ from plan</th></tr></thead>
+        <thead style={{position:'sticky',top:0,background:'var(--bg2)'}}><tr><th>Day#</th><th>Wk</th><th>Day</th><th>Daily Demand</th><th style={{color:'var(--ac)'}}>Production ✏</th><th>Cap Util%</th><th>Hours Req</th><th>Δ from plan</th><th>Zone</th></tr></thead>
         <tbody>{dMPS.map((d,i)=>{
           const dayCapU=(prod.capacity||50)/workDays;
           const util=Math.round(d.production/Math.max(dayCapU,1)*100);
           const hrsReq=((d.production*(prod.cycleTime||19))/60).toFixed(1);
           const delta=d.production-d.baseProd;
-          return <tr key={i}>
+          return <tr key={i} style={{background:d.isFrozen?'rgba(248,81,73,.04)':d.isSlushy?'rgba(240,180,41,.02)':'transparent'}}>
+            <td style={{fontSize:9,color:'var(--tx3)'}}>{d.globalDay}</td>
+            <td style={{fontSize:9,color:'var(--tx3)'}}>W{d.wIdx+1}</td>
             <td style={{fontWeight:600}}>{d.day}</td>
             <td className="num">{d.demand}</td>
             <td className="num">
@@ -3037,15 +3705,21 @@ function MPSVizCard({state}){
                   fontWeight:d.isOverridden?700:600,
                   background:d.isOverridden?'rgba(240,180,41,.08)':'transparent',
                   border:d.isOverridden?'1px solid var(--a4)':'1px solid transparent',
-                  borderRadius:3,padding:'1px 4px'}}
-                onChange={e=>setOverride(`d${i}`,e.target.value)}/>
+                  borderRadius:3,padding:'1px 4px',
+                  cursor:d.isFrozen?'not-allowed':'text',
+                  opacity:d.isFrozen?0.6:1}}
+                readOnly={d.isFrozen}
+                title={d.isFrozen?'Frozen — cannot edit':'Override production qty'}
+                onChange={e=>!d.isFrozen&&setOverride(`d${i}`,e.target.value)}/>
             </td>
             <td className="num" style={{color:util>100?'var(--dg)':util>80?'var(--a4)':'var(--gn)'}}>{util}%</td>
             <td className="num">{hrsReq}h</td>
             <td className="num" style={{color:delta>0?'var(--gn)':delta<0?'var(--dg)':'var(--tx3)',fontSize:9}}>{delta>0?'+':''}{delta||'—'}</td>
+            <td style={{fontSize:8,color:d.isFrozen?'var(--dg)':d.isSlushy?'var(--a4)':'var(--gn)'}}>{d.isFrozen?'🔒':d.isSlushy?'🟡':'🟢'}</td>
           </tr>;
         })}</tbody>
       </table>
+      </div>
       <div style={{fontSize:9,color:'var(--tx3)',marginTop:4}}>
         Cycle: {prod.cycleTime||19} min/u | Daily cap: {Math.round((prod.capacity||50)/workDays)} u | 
         Shifts: {state.production.lines[0]?.shiftsPerDay||1}/day × {state.production.lines[0]?.hoursPerShift||8}h | 
@@ -3820,7 +4494,8 @@ function CommandCenterTab({state,dispatch}){
           const dem=annDem(P.find(p=>p.name===b.pn)||P[0]||{history:[]});
           const spend=dem*b.qtyPer*b.cost;
           const highValue=spend>allParts.reduce((s,b2)=>{const d2=annDem(P.find(p=>p.name===b2.pn)||P[0]||{history:[]});return s+d2*b2.qtyPer*b2.cost},0)/Math.max(allParts.length,1);
-          const highRisk=b.supplierType==='import'||b.leadTime>4||!b.backupSupplier;
+          const qBackups=((b.backupSuppliers||[]).filter(bk=>bk.qualified).length)+((!b.backupSuppliers||!b.backupSuppliers.length)&&b.backupSupplier?1:0);
+          const highRisk=b.supplierType==='import'||b.leadTime>4||qBackups<2;
           const quad=highValue&&highRisk?'Strategic':highValue&&!highRisk?'Leverage':!highValue&&highRisk?'Bottleneck':'Non-Critical';
           return{...b,spend,quad};
         });
@@ -3832,7 +4507,7 @@ function CommandCenterTab({state,dispatch}){
             <td className="num">{cur}{Math.round(b.spend).toLocaleString()}</td>
             <td><span style={{padding:'2px 8px',borderRadius:10,fontSize:9,fontWeight:700,color:quads[b.quad].color}}>{b.quad}</span></td>
             <td style={{fontSize:9,color:'var(--tx3)'}}>{quads[b.quad].strategy}</td>
-            <td style={{fontSize:9}}>{[b.supplierType==='import'&&'Import',b.leadTime>4&&`LT ${b.leadTime}wk`,!b.backupSupplier&&'No backup'].filter(Boolean).join(', ')||'Low risk'}</td>
+            <td style={{fontSize:9}}>{[b.supplierType==='import'&&'Import',b.leadTime>4&&`LT ${b.leadTime}wk`,qBackups===0&&'No backup',qBackups===1&&'Single backup'].filter(Boolean).join(', ')||`${qBackups} qualified backups ✓`}</td>
           </tr>)}</tbody>
         </table>
       })()}
@@ -4065,17 +4740,233 @@ function LiveCascadeIndicator({state}){
 }
 
 // ════════════════════════════════════════════════
+// SAP Planning Runner — MD01/MD41 equivalent
+// ════════════════════════════════════════════════
+function SAPPlanningRunner({state}){
+  const [runLog,setRunLog]=useState([]);
+  const [running,setRunning]=useState(false);
+  const [runMode,setRunMode]=useState('MD01'); // MD01 total MRP, MD41 MPS, MD02 single
+  const [selectedSKU,setSelectedSKU]=useState(state.products[0]?.id);
+
+  const runPlanning=async()=>{
+    setRunning(true);
+    const log=[];
+    const startTs=new Date().toLocaleTimeString();
+    log.push({ts:startTs,level:'info',msg:`[${runMode}] Run initiated on ${state.products.length} SKU(s)`});
+    setRunLog([...log]);
+    const targets=runMode==='MD02'?[state.products.find(p=>p.id===selectedSKU)].filter(Boolean):state.products;
+    for(const p of targets){
+      log.push({ts:new Date().toLocaleTimeString(),level:'info',msg:`▶ ${p.name}: demand=${(p.history||[]).slice(-12).reduce((a,b)=>a+b,0)} u/yr, ${p.bom.length} components`});
+      setRunLog([...log]);
+      try{
+        const wd=state.planning.workDays||6;
+        const weeks=[];const hist=(p.history||[]).slice(-12);
+        for(let m=0;m<Math.min(state.planning.planMonths||12,hist.length);m++){const mo=hist[m]||0;const w1=Math.round(mo*0.27);const w2=Math.round(mo*0.27);const w3=Math.round(mo*0.23);weeks.push(w1,w2,w3,mo-w1-w2-w3);}
+        const res=await fetch('/api/solve/procurement',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+          products:[{name:p.name,demand:weeks.slice(0,state.planning.periods),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,yield_pct:p.yieldPct,init_inventory:p.initInventory,cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue})),parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,ordering_cost:b.orderingCost||75,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[]}))}],
+          params:{periods:state.planning.periods,carry_rate:0.24,service_level:state.config.serviceLevel},
+        })});
+        const data=await res.json();
+        if(data.error){log.push({ts:new Date().toLocaleTimeString(),level:'err',msg:`✗ ${p.name}: ${data.error}`});}
+        else{log.push({ts:new Date().toLocaleTimeString(),level:'ok',msg:`✓ ${p.name}: total cost ${state.config.currency}${Math.round(data.total_cost||0).toLocaleString()}, ${(data.procurement_schedule||[]).length} POs, solve ${data.solve_time||0}s`});}
+        setRunLog([...log]);
+      }catch(e){log.push({ts:new Date().toLocaleTimeString(),level:'err',msg:`✗ ${p.name}: ${e.message}`});setRunLog([...log]);}
+    }
+    log.push({ts:new Date().toLocaleTimeString(),level:'info',msg:`[${runMode}] Run complete — ${targets.length} material(s) processed`});
+    setRunLog([...log]);
+    setRunning(false);
+  };
+
+  return <>
+    <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:8,flexWrap:'wrap'}}>
+      <select value={runMode} onChange={e=>setRunMode(e.target.value)} style={{fontSize:10,padding:'3px 6px'}}>
+        <option value="MD01">MD01 — Total MRP Run</option>
+        <option value="MD02">MD02 — Single Material</option>
+        <option value="MD41">MD41 — MPS (Planned Orders)</option>
+      </select>
+      {runMode==='MD02'&&<select value={selectedSKU} onChange={e=>setSelectedSKU(e.target.value)} style={{fontSize:10}}>
+        {state.products.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>}
+      <button className="btn btn-primary btn-sm" disabled={running} onClick={runPlanning}>
+        {running?'⏳ Running…':`▶ Execute ${runMode}`}
+      </button>
+      <span style={{fontSize:9,color:'var(--tx3)'}}>Equivalent to SAP T-code {runMode}</span>
+    </div>
+    {runLog.length>0&&<div style={{maxHeight:260,overflowY:'auto',background:'#000',color:'#0f0',fontFamily:'JetBrains Mono',fontSize:10,padding:8,borderRadius:4}}>
+      {runLog.map((l,i)=><div key={i} style={{color:l.level==='err'?'#f85149':l.level==='ok'?'#3fb950':'#8b949e'}}>
+        [{l.ts}] {l.msg}
+      </div>)}
+    </div>}
+  </>;
+}
+
+// ════════════════════════════════════════════════
+// SAP MODE — enterprise-scale multi-plant / multi-echelon extension
+// Skeleton per v3.0 Master Plan §6 (SAP Mode design)
+// ════════════════════════════════════════════════
+function SAPModeTab({state,dispatch}){
+  const [sapOn,setSapOn]=useState(!!state.sap?.enabled);
+  const [view,setView]=useState('overview');
+  const sap=state.sap||{enabled:false,plants:[],dcs:[],lanes:[],skuCount:0,mlSensing:false,tcodes:{}};
+  const cur=state.config.currency;
+
+  const toggleSAP=()=>{
+    const next=!sapOn;setSapOn(next);
+    dispatch({type:'SET_CONFIG',payload:{/* keep config untouched */}});
+    dispatch({type:'SET_SAP',payload:{...sap,enabled:next}});
+  };
+
+  return <div>
+    <div className="card" style={{borderLeft:'3px solid var(--a2)'}}>
+      <div className="card-title">🏢 SAP Mode — Enterprise Multi-Plant / Multi-Echelon</div>
+      <div style={{display:'flex',gap:12,alignItems:'center',marginBottom:10}}>
+        <button className={`btn ${sapOn?'btn-primary':'btn-secondary'}`} onClick={toggleSAP}>
+          {sapOn?'✓ SAP Mode ON':'Enable SAP Mode'}
+        </button>
+        <span style={{fontSize:10,color:'var(--tx3)',flex:1}}>
+          Unlocks 10k+ SKU scale, multi-plant/multi-DC network, per-plant BOM routing, ML demand sensing (ensemble + external signals),
+          SAP T-code mapping (MD04, ME21N, MIGO, MIRO, CO01), stochastic &amp; CVaR-robust solver modes.
+          Standard mode remains single-plant, single-DC MILP for teaching &amp; small-scale use.
+        </span>
+      </div>
+      {sapOn&&<div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+        {['overview','network','masterdata','planning','tcodes','ml','stochastic'].map(v=>
+          <button key={v} className={`btn btn-sm ${view===v?'btn-primary':'btn-secondary'}`} onClick={()=>setView(v)}>
+            {v.charAt(0).toUpperCase()+v.slice(1)}
+          </button>
+        )}
+      </div>}
+    </div>
+
+    {!sapOn&&<div className="card">
+      <div style={{fontSize:11,color:'var(--tx2)',lineHeight:1.6}}>
+        <p><strong>What SAP Mode adds (v3.0 roadmap):</strong></p>
+        <ul style={{paddingLeft:18,marginTop:6}}>
+          <li><strong>Multi-Plant Network</strong> — Plants (P1..Pn), DCs (D1..Dm), customer regions; per-lane lead times, freight modes (FTL/LTL/rail/air), capacity.</li>
+          <li><strong>Per-Plant BOM &amp; Routing</strong> — each plant has own routing DAG (op1 → op2 → op3) with work centers, setup matrices, yield per op.</li>
+          <li><strong>Multi-Echelon Inventory</strong> — METRIC / Clark-Scarf safety stock allocation; echelon-based pooling vs. local stocking.</li>
+          <li><strong>10k+ SKU Scale</strong> — sparse data model, deferred-load tables, LP-relaxation + rounding heuristic for large instances.</li>
+          <li><strong>ML Demand Sensing</strong> — ensemble of LightGBM / Prophet / LSTM on top of statistical forecasts, ingesting external signals (promo, weather, macro, POS).</li>
+          <li><strong>SAP T-Code Mapping</strong> — every app action mapped to real SAP transactions: MD04 (stock/requirements), ME21N (create PO), MIGO (goods receipt), MIRO (invoice verify), CO01 (production order), MRP run (MD01), MPS run (MD41).</li>
+          <li><strong>Advanced Solver Modes</strong> — rolling-horizon MPS, stochastic programming (scenario trees), CVaR-robust procurement.</li>
+          <li><strong>Governance</strong> — change management log, approval workflows, segregation-of-duties per T-code.</li>
+        </ul>
+        <p style={{marginTop:8,fontSize:10,color:'var(--tx3)'}}>Click Enable SAP Mode to access the full extended workspace. Standard users need not touch this tab.</p>
+      </div>
+    </div>}
+
+    {sapOn&&view==='overview'&&<div className="card">
+      <div className="card-title">Overview</div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:10}}>
+        {[
+          {k:'Plants',v:(sap.plants||[]).length||1,icon:'🏭'},
+          {k:'DCs',v:(sap.dcs||[]).length||1,icon:'📦'},
+          {k:'Active SKUs',v:state.products.length,icon:'🔢'},
+          {k:'Lanes',v:(sap.lanes||[]).length||0,icon:'🛣️'},
+          {k:'ML Sensing',v:sap.mlSensing?'ON':'OFF',icon:'🤖'},
+        ].map(c=><div key={c.k} style={{padding:10,background:'var(--bg3)',borderRadius:6,border:'1px solid var(--br2)'}}>
+          <div style={{fontSize:20}}>{c.icon}</div>
+          <div style={{fontSize:10,color:'var(--tx3)'}}>{c.k}</div>
+          <div style={{fontSize:18,fontWeight:700,color:'var(--ac)'}}>{c.v}</div>
+        </div>)}
+      </div>
+    </div>}
+
+    {sapOn&&view==='network'&&<div className="card">
+      <div className="card-title">Physical Network — Plants, DCs, Lanes</div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:8}}>Shared with Tab 3 → Suppliers & Network. Edit there for one source of truth. This view summarises the current network.</div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:10,marginBottom:10}}>
+        {['plant','dc','customer','supplier'].map(t=>{
+          const count=(state.network?.nodes||[]).filter(n=>n.type===t).length;
+          return <div key={t} style={{padding:10,background:'var(--bg3)',borderRadius:6,border:'1px solid var(--br2)'}}>
+            <div style={{fontSize:10,color:'var(--tx3)',textTransform:'uppercase'}}>{t}s</div>
+            <div style={{fontSize:20,fontWeight:700,color:'var(--ac)'}}>{count}</div>
+          </div>;
+        })}
+      </div>
+      <table className="data-table">
+        <thead><tr><th>Type</th><th>Name</th><th>Location</th><th>Capacity / Share</th></tr></thead>
+        <tbody>{(state.network?.nodes||[]).map(n=><tr key={n.id}>
+          <td><span style={{padding:'1px 6px',fontSize:9,borderRadius:8,background:'var(--bg3)',textTransform:'uppercase'}}>{n.type}</span></td>
+          <td>{n.name}</td>
+          <td style={{color:'var(--tx2)',fontSize:10}}>{n.location||'—'}</td>
+          <td className="num">{n.type==='customer'?`${Math.round((n.demandShare||0)*100)}%`:(n.capacity||0).toLocaleString()}</td>
+        </tr>)}</tbody>
+      </table>
+      <div style={{fontSize:10,color:'var(--tx3)',marginTop:6}}>
+        Lanes: <strong>{(state.network?.lanes||[]).length}</strong>. Edit in Tab 3.
+      </div>
+    </div>}
+
+    {sapOn&&view==='masterdata'&&<div className="card">
+      <div className="card-title">Master Data — Material / Vendor / Routing / Work Center</div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:8}}>SAP-style master data: MARA (material), LFA1 (vendor), MAPL (routing), CRHD (work center), MARM (units of measure).</div>
+      <div style={{fontSize:11,padding:10,background:'var(--bg3)',borderRadius:6,border:'1px dashed var(--br2)'}}>
+        🚧 <strong>Bulk import from SAP export</strong> — upcoming in v3.0 P11. Current SKUs/BOMs in Tab 2 become the MARA baseline.
+      </div>
+    </div>}
+
+    {sapOn&&view==='planning'&&<div className="card">
+      <div className="card-title">Planning Runs — MRP / MPS / S&amp;OP</div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:8}}>Triggers MILP procurement solve across every active SKU. Equivalent to SAP MD01 (total MRP run).</div>
+      <SAPPlanningRunner state={state}/>
+    </div>}
+
+    {sapOn&&view==='tcodes'&&<div className="card">
+      <div className="card-title">T-Code Mapping Cheatsheet</div>
+      <table className="data-table">
+        <thead><tr><th>App Action</th><th>SAP T-Code</th><th>Description</th></tr></thead>
+        <tbody>{[
+          ['Edit product (BOM)','CS01/CS02','Create/Change BOM'],
+          ['Create Purchase Order','ME21N','Create PO'],
+          ['Goods Receipt','MIGO','Post goods movement'],
+          ['Invoice Verify','MIRO','Logistics invoice verification'],
+          ['Production Order','CO01','Create production order'],
+          ['MRP Run','MD01/MD02','Total/single-item MRP'],
+          ['MPS Run','MD41','Master Production Schedule'],
+          ['Stock/Requirement List','MD04','View S/R situation'],
+          ['Forecast (Univariate)','MP30','Forecast model profile'],
+          ['Safety Stock','OMIF','Define SS in material master MRP2'],
+          ['Routing','CA01/CA02','Create/Change routing'],
+          ['Work Center','CR01/CR02','Create/Change work center'],
+          ['Vendor Master','XK01/XK02','Create/Change vendor'],
+          ['Capacity Evaluation','CM01','Work center load'],
+          ['COGS / P&L','S_ALR_87013611','Standard P&L report'],
+        ].map(([a,t,d])=><tr key={t}><td>{a}</td><td style={{fontFamily:'JetBrains Mono',color:'var(--a2)',fontWeight:600}}>{t}</td><td style={{fontSize:10,color:'var(--tx3)'}}>{d}</td></tr>)}</tbody>
+      </table>
+    </div>}
+
+    {sapOn&&view==='ml'&&<div className="card">
+      <div className="card-title">ML Demand Sensing (v3.0 P11)</div>
+      <div style={{fontSize:10,color:'var(--tx3)'}}>Ensemble: LightGBM + Prophet + LSTM on top of 17 statistical models. External signals: promos, weather, macro, POS sell-through. Bayesian weight blending by recent MAPE.</div>
+      <div style={{fontSize:11,padding:10,background:'var(--bg3)',borderRadius:6,border:'1px dashed var(--br2)',marginTop:8}}>
+        🚧 Roadmap — external signal ingestion endpoints not yet wired.
+      </div>
+    </div>}
+
+    {sapOn&&view==='stochastic'&&<div className="card">
+      <div className="card-title">Stochastic / CVaR-Robust Solver (v3.0 P8)</div>
+      <div style={{fontSize:10,color:'var(--tx3)'}}>Scenario-tree MILP: each node a demand/cost realization with probability. Maximize expected margin subject to CVaR_α loss ≤ threshold. Benders decomposition for scale.</div>
+      <div style={{fontSize:11,padding:10,background:'var(--bg3)',borderRadius:6,border:'1px dashed var(--br2)',marginTop:8}}>
+        🚧 Current Monte Carlo (Tab 5) gives empirical VaR/CVaR; stochastic optimisation variant is next.
+      </div>
+    </div>}
+  </div>;
+}
+
+// ════════════════════════════════════════════════
 // MAIN APP
 // ════════════════════════════════════════════════
 const TABS=[
-  {id:'setup',label:'Setup',icon:'⚙️'},
+  {id:'setup',label:'Company & Calendar',icon:'⚙️'},
   {id:'products',label:'Products & Demand',icon:'📦'},
-  {id:'supply',label:'Supply Network',icon:'🌐'},
+  {id:'supply',label:'Suppliers & Network',icon:'🌐'},
   {id:'finance',label:'Finance & Costs',icon:'💰'},
   {id:'optimize',label:'Optimize & Solve',icon:'⚡'},
-  {id:'analysis',label:'Analysis & Reports',icon:'📊'},
+  {id:'analysis',label:'Risk & Scenarios',icon:'📊'},
   {id:'command',label:'Command Center',icon:'🎯'},
   {id:'learn',label:'Learning Lab',icon:'🎓'},
+  {id:'sap',label:'SAP Mode',icon:'🏢'},
 ];
 
 function App(){
@@ -4105,6 +4996,7 @@ function App(){
       case 'analysis':return <AnalysisTab state={state} dispatch={dispatch}/>;
       case 'command':return <CommandCenterTab state={state} dispatch={dispatch}/>;
       case 'learn':return <LearningLab state={state}/>;
+      case 'sap':return <SAPModeTab state={state} dispatch={dispatch}/>;
       default:return null;
     }
   };
@@ -4112,7 +5004,7 @@ function App(){
   return <div className="app-shell">
     <div className="top-bar">
       <h1>Enterprise Simulator</h1>
-      <span className="ver">v2.0</span>
+      <span className="ver">v3.0</span>
       <LiveCascadeIndicator state={state}/>
       <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:12,fontSize:11,color:'var(--tx2)'}}>
         <select value={state.config.currency} onChange={e=>{const map={'₹':{r:1,n:'INR'},'$':{r:0.012,n:'USD'},'€':{r:0.011,n:'EUR'},'£':{r:0.0095,n:'GBP'}};const m=map[e.target.value]||{r:1,n:'INR'};dispatch({type:'SET_CONFIG',payload:{currency:e.target.value,currencyRate:m.r,currencyName:m.n}})}} style={{background:'var(--bg3)',border:'1px solid var(--br2)',color:'var(--tx)',padding:'3px 8px',fontSize:10,borderRadius:4}}>
