@@ -454,6 +454,27 @@ const forecasters = {
   'Seasonal Naive': (d)=>{const m=Math.min(12,d.length);return d.slice(-m).map(v=>Math.round(v))},
 };
 
+// v3.3.3 — formula + plain-English explanation for each of the 17 models
+const FORECAST_FORMULAE={
+  'Simple Avg':{formula:'F_t = (1/n) Σ dᵢ',fit:(d)=>({mean:(d.reduce((a,b)=>a+b,0)/d.length).toFixed(2)}),explain:'Flat forecast equal to the historical mean. Ignores trend and seasonality — best only for stable demand.'},
+  'SMA(3)':{formula:'F_t = (d_{t-1} + d_{t-2} + d_{t-3}) / 3',fit:(d)=>({lastMean:(d.slice(-3).reduce((a,b)=>a+b,0)/3).toFixed(2)}),explain:'Average of the last 3 periods. Responds to recent shifts but lags trends.'},
+  'WMA(3)':{formula:'F_t = (1·d_{t-3} + 2·d_{t-2} + 3·d_{t-1}) / 6',fit:(d)=>{const w=d.slice(-3);return{w1:w[0]||0,w2:w[1]||0,w3:w[2]||0};},explain:'Weighted moving average — newer periods get higher weight. Better than SMA when demand is shifting.'},
+  'Weighted Avg':{formula:'F_t = Σ(i · dᵢ) / Σi, for i = 1..n',fit:(d)=>({n:d.length}),explain:'Linear weights across the entire history. Smoother than WMA(3), slower to react.'},
+  'SES':{formula:'F_{t+1} = α·d_t + (1-α)·F_t',fit:()=>({alpha:0.30}),explain:'Simple Exponential Smoothing. α=0.3 means the latest observation counts for 30%, the smoothed prior for 70%. Good for level demand with no trend.'},
+  'Adaptive SES':{formula:'F_{t+1} = α*·d_t + (1-α*)·F_t where α* minimizes MAE',fit:(d)=>{let bestA=.1,bestE=1e9;for(let a=.05;a<=.95;a+=.05){let ss=d[0],e=0;d.forEach(v=>{e+=Math.abs(v-ss);ss=a*v+(1-a)*ss});if(e<bestE){bestE=e;bestA=a}}return{'optimal α':bestA.toFixed(2),MAE:bestE.toFixed(0)};},explain:'Sweeps α from 0.05→0.95 and picks the value that minimizes Mean Absolute Error. Tuning-free SES.'},
+  'DES (Holt)':{formula:'ℓ_t = α·d_t + (1-α)(ℓ_{t-1}+b_{t-1});  b_t = β(ℓ_t-ℓ_{t-1}) + (1-β)b_{t-1};  F_{t+h} = ℓ_t + h·b_t',fit:(d)=>{let l=d[0],t=d.length>1?d[1]-d[0]:0;const a=.3,b=.1;d.forEach(v=>{const pl=l;l=a*v+(1-a)*(l+t);t=b*(l-pl)+(1-b)*t});return{level:l.toFixed(1),trend:t.toFixed(2)};},explain:'Double Exponential Smoothing — tracks a level AND a trend. Use when demand is steadily rising or falling.'},
+  "Brown's DES":{formula:'S¹_t = α·d_t + (1-α)S¹_{t-1};  S²_t = α·S¹_t + (1-α)S²_{t-1};  F_{t+h} = (2S¹-S²) + α/(1-α)(S¹-S²)·h',fit:(d)=>{let s1=d[0],s2=d[0];const a=.3;d.forEach(v=>{s1=a*v+(1-a)*s1;s2=a*s1+(1-a)*s2});return{S1:s1.toFixed(2),S2:s2.toFixed(2)};},explain:"Brown's single-parameter linear trend — uses double smoothing with one α instead of Holt's α+β."},
+  'Linear Regression':{formula:'F_t = a + b·t   where b = (n·Σxy - ΣxΣy)/(n·Σx² - (Σx)²), a = ȳ - b·x̄',fit:(d)=>{const n=d.length;let sx=0,sy=0,sxy=0,sx2=0;d.forEach((v,i)=>{sx+=i;sy+=v;sxy+=i*v;sx2+=i*i});const b=(n*sxy-sx*sy)/(n*sx2-sx*sx||1),a2=sy/n-b*sx/n;return{intercept:a2.toFixed(2),slope:b.toFixed(3)};},explain:'Ordinary least squares straight-line fit. Captures pure trend, ignores seasonality and cycles.'},
+  'HW Additive':{formula:'ℓ_t = α(d_t - s_{t-m}) + (1-α)(ℓ_{t-1}+b_{t-1});  F_{t+h} = ℓ_t + h·b_t + s_{t-m+h}',fit:(d)=>{const m=Math.min(12,d.length);return{'seasonal period':m,alpha:0.3,beta:0.1,gamma:0.3};},explain:'Holt-Winters Additive — level + trend + seasonal shift (constant amplitude). Use for ±50u seasonal swing regardless of volume.'},
+  'HW Multiplicative':{formula:'ℓ_t = α(d_t / s_{t-m}) + (1-α)(ℓ_{t-1}+b_{t-1});  F_{t+h} = (ℓ_t + h·b_t)·s_{t-m+h}',fit:(d)=>{const m=Math.min(12,d.length);return{'seasonal period':m,alpha:0.3,beta:0.1,gamma:0.3};},explain:'Holt-Winters Multiplicative — level + trend + seasonal factor (proportional). Use for ±30% seasonal swing that grows with volume.'},
+  'Seasonal LinReg':{formula:'F_t = (a + b·t) + S_i  where S_i = avg(residuals in season i)',fit:(d)=>{const m=Math.min(12,d.length),n=d.length;let sx=0,sy=0,sxy=0,sx2=0;d.forEach((v,i)=>{sx+=i;sy+=v;sxy+=i*v;sx2+=i*i});const b=(n*sxy-sx*sy)/(n*sx2-sx*sx||1),a2=sy/n-b*sx/n;return{intercept:a2.toFixed(2),slope:b.toFixed(3),'season len':m};},explain:'Detrend with OLS, then average residuals by season position → add back. Simpler than HW but quite effective.'},
+  'Auto-ARIMA':{formula:'AR(1) + drift:  F_t = c + φ·d_{t-1}   where φ = Σ(d_i - μ)(d_{i-1} - μ) / Σ(d_{i-1} - μ)²',fit:(d)=>{const n=d.length,mu=d.reduce((a,b)=>a+b,0)/n;let num=0,den=0;for(let i=1;i<n;i++){num+=(d[i]-mu)*(d[i-1]-mu);den+=(d[i-1]-mu)**2}const phi=den>0?num/den:0;return{'φ (AR1)':phi.toFixed(3),mu:mu.toFixed(1),c:(mu*(1-phi)).toFixed(2)};},explain:'Simplified Auto-ARIMA: fits an AR(1) with drift. Real Auto-ARIMA selects (p,d,q) via AIC — we use a stable AR(1) proxy for speed.'},
+  'Auto-SARIMA':{formula:'1) Deseasonalize: d\u0303_t = d_t - S_{t mod m};  2) AR(1) on d\u0303;  3) Add back S',fit:(d)=>{const m=Math.min(12,d.length),n=d.length;const sIdx=Array(m).fill(0),sCnt=Array(m).fill(0);d.forEach((v,i)=>{sIdx[i%m]+=v;sCnt[i%m]++});return{'seasonal period':m,'n':n};},explain:'Seasonal AR(1): deseasonalize by averaging same-position observations, AR(1) on residuals, then add seasonal factors back.'},
+  "Croston's":{formula:'z_t = α·d_t + (1-α)·z_{t-1};   p_t = α·k + (1-α)·p_{t-1};   F_t = z_t / p_t',fit:(d)=>{const nz=d.filter(v=>v>0).length;return{'non-zero pct':((nz/d.length)*100).toFixed(0)+'%','n':d.length};},explain:'For intermittent demand (many zeros). Splits demand into size z and inter-arrival p, smooths each independently.'},
+  'Naive':{formula:'F_t = d_{t-1}',fit:(d)=>({last:d[d.length-1]}),explain:"Random walk — tomorrow = today. Surprisingly hard to beat for many noisy series; used as the industry benchmark."},
+  'Seasonal Naive':{formula:'F_t = d_{t-m}',fit:(d)=>{const m=Math.min(12,d.length);return{'seasonal period':m,'last m':d.slice(-m).join(',')};},explain:'This month = same month last year. Baseline for seasonal series.'},
+};
+
 function calcErrors(actual,forecast){
   const n=Math.min(actual.length,forecast.length);if(n<1)return{};
   let ae=0,se=0,pe=0,ape=0,cnt=0;
@@ -513,6 +534,8 @@ const defaultSKU=()=>({
   // Carry rate breakdown — single source of truth (total = sum of these)
   crCapital:10,crStorage:5,crInsurance:2,crObsolescence:4,crHandling:2,crShrinkage:1,
   setupPen:1,whMaxUnits:500,dso:30,
+  // v3.3.3 — per-SKU production bounds for MILP lower/upper bounds
+  minProd:0,maxProd:0,  // 0 = no bound; if minProd>0, MILP adds x_sku >= minProd; if maxProd>0, x_sku <= maxProd
   outRate:2.0,outMode:'perUnit',outShipCost:50,
   prodMode:'mts',
   // v3.0 — per-product routing (operations DAG). Empty = use fallback capacity.
@@ -1061,6 +1084,7 @@ function ProductsTab({state,dispatch}){
   const products=state.products;
   const activeId=state.activeProductId||products[0]?.id;
   const prod=products.find(p=>p.id===activeId);
+  const [expandedModel,setExpandedModel]=React.useState(null); // v3.3.3 — expand forecast model to see formula + fit
 
   useEffect(()=>{if(!state.activeProductId&&products.length)dispatch({type:'SET_ACTIVE_PRODUCT',id:products[0].id})},[]);
 
@@ -1135,6 +1159,18 @@ function ProductsTab({state,dispatch}){
           <Field label={`Setup Cost/batch (${cur})`} hint="Fixed cost each time this product is produced (tooling changeover, line reset). Consumed by MPS lot-sizing."><input type="number" value={prod.setupCost} onChange={e=>upProd({setupCost:+e.target.value})}/></Field>
           <Field label="Capacity (units/day)" hint="FALLBACK ONLY — used when no routing is defined in Tab 2E. Once you declare operations with cycle time, effective capacity is computed from OEE × station time."><input type="number" value={prod.capacity} onChange={e=>upProd({capacity:+e.target.value})}/></Field>
           <Field label="Initial Inventory" hint="On-hand FG stock at plan start. Solver nets this against period-1 demand."><input type="number" value={prod.initInventory} onChange={e=>upProd({initInventory:+e.target.value})}/></Field>
+        </div>
+        {/* v3.3.3 — per-SKU production bounds (MILP lower/upper) */}
+        <div className="grid4" style={{marginTop:4,paddingTop:6,borderTop:'1px dashed var(--br)'}}>
+          <div style={{fontSize:9,color:'var(--tx3)',gridColumn:'1 / -1',marginBottom:2}}><strong style={{color:'var(--a3)'}}>Production bounds (MILP).</strong> Set <em>Min Prod</em> &gt; 0 when you must produce ≥ that many units (contract minimums, safety stock refresh, running a line to keep workers paid). <em>Max Prod</em> caps output even if capacity is free (market absorption limit). 0 = no bound.</div>
+          <Field label="Min Prod (units/period)" hint="Lower bound in profit-mix MILP: x ≥ minProd. Use for contract minimums or must-run quantities."><input type="number" value={prod.minProd||0} min={0} onChange={e=>upProd({minProd:+e.target.value})} style={{color:(+prod.minProd>0)?'var(--a3)':'inherit',fontWeight:(+prod.minProd>0)?600:400}}/></Field>
+          <Field label="Max Prod (units/period)" hint="Upper bound in profit-mix MILP: x ≤ maxProd. Use for market absorption limit or strategic cap. 0 = uncapped (capacity only)."><input type="number" value={prod.maxProd||0} min={0} onChange={e=>upProd({maxProd:+e.target.value})} style={{color:(+prod.maxProd>0)?'var(--a3)':'inherit',fontWeight:(+prod.maxProd>0)?600:400}}/></Field>
+          <div style={{gridColumn:'3 / 5',fontSize:10,padding:'4px 8px',background:'var(--bg3)',borderRadius:4,alignSelf:'center'}}>
+            {(+prod.minProd>0||+prod.maxProd>0)
+              ? <span><strong style={{color:'var(--a3)'}}>Active:</strong> {+prod.minProd>0 && <>min {prod.minProd}u{+prod.maxProd>0?' · ':''}</>}{+prod.maxProd>0 && <>max {prod.maxProd}u</>} → added as constraint to profit-mix MILP.</span>
+              : <span style={{color:'var(--tx3)'}}>No bounds active. Solver chooses any x ∈ [0, capacity].</span>
+            }
+          </div>
         </div>
         {/* OEE trio */}
         <div className="grid4" style={{marginTop:4,paddingTop:6,borderTop:'1px dashed var(--br)'}}>
@@ -1217,20 +1253,47 @@ function ProductsTab({state,dispatch}){
           <KPI label="Annual Forecast" value={bestModel.forecast.reduce((a,b)=>a+b,0).toLocaleString()} sub="units (consensus)" color="var(--a2)"/>
           <KPI label="Consensus MAPE" value={`${bestModel.mape}%`} sub={bestModel.mape<10?'Excellent':bestModel.mape<20?'Good':'Needs review'} color={bestModel.mape<10?'var(--gn)':bestModel.mape<20?'var(--a4)':'var(--dg)'}/>
         </div>}
+        <div style={{fontSize:10,color:'var(--tx3)',marginBottom:4}}>Click any model row to reveal its formula, fitted coefficients, and plain-English explanation.</div>
         <div className="fcst-table">
           <table className="data-table">
-            <thead><tr><th>#</th><th>Model</th><th>MAPE%</th><th>MAE</th><th>RMSE</th><th>WMAPE%</th><th>Bias</th><th>TS</th>{MONTHS.map(m=><th key={m}>{m.slice(0,3)}</th>)}</tr></thead>
-            <tbody>{forecastResults.map((r,i)=><tr key={r.name}>
-              <td>{i+1}</td>
-              <td className={i===0?'win':''}>{r.name}</td>
-              <td className="num" style={{color:i===0?'var(--ac)':'var(--tx)'}}>{r.mape}</td>
-              <td className="num">{r.mae}</td>
-              <td className="num">{r.rmse}</td>
-              <td className="num">{r.wmape}</td>
-              <td className="num" style={{color:r.bias>0?'var(--a4)':'var(--a2)'}}>{r.bias>0?'+':''}{r.bias}</td>
-              <td className="num" style={{color:r.ts>4?'var(--dg)':'var(--tx)'}}>{r.ts}</td>
-              {(r.forecast||[]).map((v,j)=><td key={j} className="num">{v}</td>)}
-            </tr>)}</tbody>
+            <thead><tr><th></th><th>#</th><th>Model</th><th>MAPE%</th><th>MAE</th><th>RMSE</th><th>WMAPE%</th><th>Bias</th><th>TS</th>{MONTHS.map(m=><th key={m}>{m.slice(0,3)}</th>)}</tr></thead>
+            <tbody>{forecastResults.map((r,i)=>{
+              const isOpen=expandedModel===r.name;
+              const meta=FORECAST_FORMULAE[r.name];
+              const fitted=meta&&prod?.history?meta.fit(prod.history):null;
+              return <React.Fragment key={r.name}>
+                <tr onClick={()=>setExpandedModel(isOpen?null:r.name)} style={{cursor:'pointer',background:isOpen?'rgba(0,212,170,.05)':'transparent'}}>
+                  <td style={{width:18,color:'var(--a3)',fontWeight:700}}>{isOpen?'▼':'▸'}</td>
+                  <td>{i+1}</td>
+                  <td className={i===0?'win':''}>{r.name}</td>
+                  <td className="num" style={{color:i===0?'var(--ac)':'var(--tx)'}}>{r.mape}</td>
+                  <td className="num">{r.mae}</td>
+                  <td className="num">{r.rmse}</td>
+                  <td className="num">{r.wmape}</td>
+                  <td className="num" style={{color:r.bias>0?'var(--a4)':'var(--a2)'}}>{r.bias>0?'+':''}{r.bias}</td>
+                  <td className="num" style={{color:r.ts>4?'var(--dg)':'var(--tx)'}}>{r.ts}</td>
+                  {(r.forecast||[]).map((v,j)=><td key={j} className="num">{v}</td>)}
+                </tr>
+                {isOpen&&meta&&<tr>
+                  <td colSpan={21} style={{padding:10,background:'var(--bg3)'}}>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                      <div>
+                        <div style={{fontSize:10,color:'var(--tx3)',fontWeight:700,marginBottom:3}}>FORMULA</div>
+                        <div style={{fontFamily:'JetBrains Mono, monospace',fontSize:11,padding:'6px 8px',background:'var(--bg)',border:'1px solid var(--br)',borderRadius:3,color:'var(--a2)'}}>{meta.formula}</div>
+                        <div style={{fontSize:10,color:'var(--tx2)',marginTop:6,lineHeight:1.5}}>{meta.explain}</div>
+                      </div>
+                      <div>
+                        <div style={{fontSize:10,color:'var(--tx3)',fontWeight:700,marginBottom:3}}>FITTED ON YOUR DATA ({prod?.history?.length||0} periods)</div>
+                        {fitted&&<table style={{width:'100%',fontSize:10}}>
+                          <tbody>{Object.entries(fitted).map(([k,v])=><tr key={k}><td style={{color:'var(--tx3)',padding:'2px 6px'}}>{k}</td><td style={{color:'var(--a4)',fontWeight:600,padding:'2px 6px'}}>{String(v)}</td></tr>)}</tbody>
+                        </table>}
+                        <div style={{fontSize:9,color:'var(--tx3)',marginTop:6}}>Error metrics on backtest: MAPE <strong>{r.mape}%</strong> · MAE <strong>{r.mae}</strong> · Bias <strong>{r.bias}</strong> · Tracking Signal <strong>{r.ts}</strong> {Math.abs(r.ts)>4&&<span style={{color:'var(--dg)'}}>(|TS|&gt;4 → model is biased, re-fit)</span>}</div>
+                      </div>
+                    </div>
+                  </td>
+                </tr>}
+              </React.Fragment>;
+            })}</tbody>
           </table>
         </div>
       </div>
@@ -1747,7 +1810,7 @@ function OptimizeTab({state,dispatch}){
             forecast:(p.history||[]).slice(-horizonMonths), // sliced to horizon, not full history
             history:p.history, mape_pct:p.mape||15, shelf_life:p.shelfLife,
             carry_rate:0.24, salvage_rate:p.salvageRate||0.8,
-            mto_orders:p.mtoOrders||[], min_quantity:0,
+            mto_orders:p.mtoOrders||[], min_quantity:+p.minProd||0, max_quantity:+p.maxProd||0,
             parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer}))})),
           constraints:{shared_capacity:state.production.lines.reduce((a,l)=>a+l.capacity*state.planning.periods,0),budget:constraints.budget.on?constraints.budget.val:0,warehouse:constraints.warehouse.on?constraints.warehouse.val:0},
         };
@@ -2396,17 +2459,46 @@ function OptimizeTab({state,dispatch}){
         </div>)}
       </div>}
       {result.shadow_prices&&result.shadow_prices.length>0&&<div style={{marginTop:10}}>
-        <div style={{fontSize:11,fontWeight:600,color:'var(--a3)',marginBottom:4}}>Shadow Prices</div>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+          <div style={{fontSize:11,fontWeight:600,color:'var(--a3)'}}>🎯 Shadow Prices &amp; Range of Feasibility</div>
+          <button className="btn btn-secondary btn-sm" onClick={()=>{
+            // Generate CSV of binding constraints + slack + allowable ranges
+            const rows=[['Constraint','Shadow Price','Slack','Binding','Allowable Increase','Allowable Decrease','Interpretation']];
+            result.shadow_prices.forEach(s=>rows.push([s.constraint,s.shadow_price,s.slack,s.binding?'YES':'No',s.allowable_increase||'—',s.allowable_decrease||'—',(s.interpretation||'').replace(/,/g,';')]));
+            if(result.reduced_costs){rows.push([]);rows.push(['Decision Variable','Quantity','Margin','Reduced Cost','In Solution','Interpretation']);result.reduced_costs.forEach(r=>rows.push([r.variable,r.quantity,r.margin,r.reduced_cost,r.in_solution?'YES':'No',(r.interpretation||'').replace(/,/g,';')]));}
+            const csv=rows.map(r=>r.map(x=>`"${x}"`).join(',')).join('\n');
+            const blob=new Blob([csv],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`lp_sensitivity_${Date.now()}.csv`;a.click();
+          }}>📥 Export Sensitivity (CSV)</button>
+        </div>
         <table className="data-table">
-          <thead><tr><th>Constraint</th><th>Shadow Price</th><th>Slack</th><th>Binding?</th><th>Interpretation</th></tr></thead>
-          <tbody>{result.shadow_prices.map((s,i)=><tr key={i}>
+          <thead><tr><th>Constraint</th><th>Shadow Price</th><th>Slack</th><th>Binding?</th><th>Allow ↑</th><th>Allow ↓</th><th>Interpretation</th></tr></thead>
+          <tbody>{result.shadow_prices.map((s,i)=><tr key={i} style={s.binding?{background:'rgba(240,180,41,.05)'}:{}}>
             <td>{s.constraint}</td>
             <td className="num" style={{color:s.binding?'var(--ac)':'var(--tx2)',fontWeight:s.binding?700:400}}>{cur}{s.shadow_price}</td>
-            <td className="num">{s.slack}</td>
-            <td style={{color:s.binding?'var(--dg)':'var(--gn)'}}>{s.binding?'YES':'No'}</td>
+            <td className="num" style={{color:(s.slack==null||s.slack<0.01)?'var(--tx3)':'var(--gn)'}}>{s.slack==null?'—':s.slack}</td>
+            <td><span className="badge" style={{background:s.binding?'rgba(240,180,41,.15)':'rgba(63,185,80,.08)',color:s.binding?'var(--a4)':'var(--gn)',fontWeight:700}}>{s.binding?'🔒 BINDING':'slack'}</span></td>
+            <td className="num" style={{fontSize:9,color:'var(--tx3)'}}>{s.allowable_increase||'—'}</td>
+            <td className="num" style={{fontSize:9,color:'var(--tx3)'}}>{s.allowable_decrease||'—'}</td>
             <td style={{fontSize:10,color:'var(--tx2)'}}>{s.interpretation}</td>
           </tr>)}</tbody>
         </table>
+      </div>}
+      {result.reduced_costs&&result.reduced_costs.length>0&&<div style={{marginTop:10}}>
+        <div style={{fontSize:11,fontWeight:600,color:'var(--a4)',marginBottom:4}}>📐 Reduced Costs &amp; Range of Optimality (Decision Variables)</div>
+        <table className="data-table">
+          <thead><tr><th>Product</th><th>Qty</th><th>Margin</th><th>Reduced Cost</th><th>In Mix?</th><th>Interpretation</th></tr></thead>
+          <tbody>{result.reduced_costs.map((r,i)=><tr key={i} style={r.in_solution?{}:{opacity:.7}}>
+            <td>{r.variable}</td>
+            <td className="num">{r.quantity}</td>
+            <td className="num">{cur}{r.margin}</td>
+            <td className="num" style={{color:Math.abs(r.reduced_cost)>0.01?'var(--a4)':'var(--tx3)',fontWeight:600}}>{cur}{r.reduced_cost}</td>
+            <td><span className="badge" style={{background:r.in_solution?'rgba(63,185,80,.12)':'rgba(139,148,158,.12)',color:r.in_solution?'var(--gn)':'var(--tx3)'}}>{r.in_solution?'✓ YES':'— no'}</span></td>
+            <td style={{fontSize:10,color:'var(--tx2)'}}>{r.interpretation}</td>
+          </tr>)}</tbody>
+        </table>
+        <div style={{fontSize:9,color:'var(--tx3)',marginTop:4,padding:'4px 8px',background:'var(--bg3)',borderRadius:4}}>
+          <strong style={{color:'var(--a2)'}}>Reading guide:</strong> <em>Shadow price</em> = profit change per unit RHS relaxation. <em>Slack</em> = unused capacity. <em>Binding</em> constraints drive profit — relax those first. <em>Reduced cost</em> = how much an excluded variable's margin must improve to enter the optimal mix. Export CSV to run sensitivity offline in Excel.
+        </div>
       </div>}
     </div>}
 
@@ -2761,20 +2853,43 @@ function SupplyTab({state,dispatch}){
             <button className="btn btn-secondary btn-sm" disabled={net.nodes.length<2} onClick={()=>upLanes([...net.lanes,{id:'l'+Date.now().toString(36),from:net.nodes[0]?.id,to:net.nodes[1]?.id,mode:'FTL',leadDays:3,ratePerUnit:2.5,capacity:1000,co2:0.12,active:true}])}>+ Lane</button>
             <span style={{fontSize:9,color:'var(--tx3)'}}>Modes: FTL/LTL/Rail/Air/Sea/Courier. Cheapest valid path auto-selected by transport solver.</span>
           </div>
+          {/* v3.3.3 — mode-based rate + distance table (shown above lanes for reference) */}
+          <div style={{marginBottom:6,padding:6,background:'var(--bg3)',borderRadius:3,fontSize:9,color:'var(--tx3)'}}>
+            <strong style={{color:'var(--a2)'}}>Mode economics (typical Indian rates):</strong>
+            {[['FTL','2.50 ₹/t·km · 50 km/h',1],['LTL','3.80 ₹/t·km · 40 km/h',2],['Rail','1.20 ₹/t·km · 35 km/h',5],['Sea','0.40 ₹/t·km · 20 km/h',20],['Air','18.0 ₹/t·km · 700 km/h',1],['Courier','8.00 ₹/t·km · next-day',0.5]].map(([m,detail,tr])=><span key={m} style={{marginLeft:8,color:'var(--tx2)'}}><strong style={{color:'var(--ac)'}}>{m}</strong>: {detail} · transit {tr}d/500km</span>)}
+          </div>
           <table className="data-table">
-            <thead><tr><th>From</th><th>→</th><th>To</th><th>Mode</th><th>Lead (d)</th><th>Rate /u</th><th>Cap/period</th><th>Demand u/wk</th><th>Units/ship</th><th>Freq /wk</th><th>CO₂ kg/u</th><th>Active</th><th></th></tr></thead>
+            <thead><tr><th>From</th><th>→</th><th>To</th><th>Mode</th><th>Distance</th><th>Lead (d)</th><th>Rate /u</th><th>Cap/period</th><th>Demand u/wk</th><th>Units/ship</th><th>Freq /wk</th><th>CO₂ kg/u</th><th>Active</th><th></th></tr></thead>
             <tbody>{net.lanes.map((lane,i)=>{
               const upL=(patch)=>{const ls=[...net.lanes];ls[i]={...ls[i],...patch};upLanes(ls);};
               const demandWk=+lane.demandPerWk||0;
               const unitsPerShip=+lane.unitsPerShip||(lane.mode==='FTL'?1000:lane.mode==='Rail'?4000:lane.mode==='Sea'?10000:lane.mode==='Air'?200:500);
               const freq=demandWk>0?Math.max(1,Math.ceil(demandWk/Math.max(unitsPerShip,1))):(+lane.freqPerWk||1);
+              // Distance & mode-aware suggested rate
+              const fromN=net.nodes.find(n=>n.id===lane.from);
+              const toN=net.nodes.find(n=>n.id===lane.to);
+              let distKm=0;
+              if(fromN?.lat&&fromN?.lon&&toN?.lat&&toN?.lon){
+                const R=6371,toR=x=>x*Math.PI/180;
+                const dLa=toR(toN.lat-fromN.lat),dLo=toR(toN.lon-fromN.lon);
+                const a=Math.sin(dLa/2)**2+Math.cos(toR(fromN.lat))*Math.cos(toR(toN.lat))*Math.sin(dLo/2)**2;
+                distKm=Math.round(2*R*Math.asin(Math.sqrt(a)));
+              }
+              const ratePerTKm={FTL:2.5,LTL:3.8,Rail:1.2,Sea:0.4,Air:18,Courier:8}[lane.mode]||2.5;
+              const avgUnitWeightKg=1;
+              const suggestedRate=+(distKm*ratePerTKm*avgUnitWeightKg/1000).toFixed(2); // per unit
+              const rateDiverges=Math.abs((+lane.ratePerUnit||0)-suggestedRate)>suggestedRate*0.25&&suggestedRate>0;
               return <tr key={lane.id}>
                 <td><select value={lane.from} onChange={e=>upL({from:e.target.value})} style={{fontSize:10,width:85}}>{net.nodes.map(n=><option key={n.id} value={n.id}>{n.name}</option>)}</select></td>
                 <td style={{color:'var(--tx3)'}}>→</td>
                 <td><select value={lane.to} onChange={e=>upL({to:e.target.value})} style={{fontSize:10,width:85}}>{net.nodes.map(n=><option key={n.id} value={n.id}>{n.name}</option>)}</select></td>
                 <td><select value={lane.mode} onChange={e=>upL({mode:e.target.value})} style={{fontSize:10,width:60}}><option>FTL</option><option>LTL</option><option>Rail</option><option>Air</option><option>Sea</option><option>Courier</option></select></td>
+                <td style={{fontSize:9,color:distKm>0?'var(--tx2)':'var(--tx3)'}}>{distKm>0?<span title={`Great-circle distance between ${fromN.name} and ${toN.name}`}>{distKm.toLocaleString()} km</span>:<span style={{color:'var(--tx3)'}}>—</span>}</td>
                 <td><input type="number" step="0.5" value={lane.leadDays} onChange={e=>upL({leadDays:+e.target.value})} style={{width:45,fontSize:10}}/></td>
-                <td><input type="number" step="0.1" value={lane.ratePerUnit} onChange={e=>upL({ratePerUnit:+e.target.value})} style={{width:50,fontSize:10}}/></td>
+                <td>
+                  <input type="number" step="0.1" value={lane.ratePerUnit} onChange={e=>upL({ratePerUnit:+e.target.value})} style={{width:50,fontSize:10,color:rateDiverges?'var(--a4)':'inherit',background:rateDiverges?'rgba(240,180,41,.08)':'inherit'}} title={suggestedRate>0?`Suggested (${lane.mode}, ${distKm}km): ${cur}${suggestedRate}/u — click ↻ to apply`:''}/>
+                  {suggestedRate>0&&rateDiverges&&<button className="btn btn-secondary btn-sm" style={{fontSize:8,padding:'1px 4px',marginLeft:2}} title={`Apply ${cur}${suggestedRate} from mode×distance`} onClick={()=>upL({ratePerUnit:suggestedRate})}>↻{suggestedRate}</button>}
+                </td>
                 <td><input type="number" value={lane.capacity} onChange={e=>upL({capacity:+e.target.value})} style={{width:65,fontSize:10}}/></td>
                 <td><input type="number" value={demandWk} onChange={e=>upL({demandPerWk:+e.target.value})} style={{width:60,fontSize:10,background:demandWk>0?'rgba(63,185,80,.08)':'var(--bg3)'}} placeholder="0"/></td>
                 <td><input type="number" value={unitsPerShip} onChange={e=>upL({unitsPerShip:+e.target.value})} style={{width:55,fontSize:10}}/></td>
@@ -2817,6 +2932,151 @@ function SupplyTab({state,dispatch}){
         </>;
       })()}
     </div>
+
+    {/* Center of Gravity — optimal warehouse/DC location */}
+    <div className="card">
+      <div className="card-title">📍 Center of Gravity — Optimal DC/Warehouse Location <span className="badge" style={{background:'rgba(240,180,41,.1)',color:'var(--a4)'}}>weighted centroid</span></div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:8}}>
+        Classic facility-location: given customer demand and supplier sources (with lat/lon), compute the <strong>cost-minimizing centroid</strong> where a new DC should sit.
+        Formula: <em>lat* = Σ(wᵢ · latᵢ · rateᵢ) / Σ(wᵢ · rateᵢ)</em>. Freight cost ∝ demand × distance × rate. Compare the optimum against each existing node to find the biggest relocation saving.
+      </div>
+      {(()=>{
+        const net=state.network||{nodes:[],lanes:[]};
+        // Points with weight = demand (customers) or capacity (suppliers/plants) and rate = default ₹/unit-km
+        const customers=net.nodes.filter(n=>n.type==='customer'&&n.lat&&n.lon);
+        const plants=net.nodes.filter(n=>(n.type==='plant'||n.type==='supplier')&&n.lat&&n.lon);
+        const dcs=net.nodes.filter(n=>n.type==='dc'&&n.lat&&n.lon);
+        // Total network demand proxy: sum of product histories averaged × demandShare
+        const totalMonthly=state.products.reduce((a,p)=>a+((p.history||[]).slice(-12).reduce((s,x)=>s+x,0)/12),0);
+        const points=[];
+        customers.forEach(c=>points.push({name:c.name,lat:c.lat,lon:c.lon,weight:(c.demandShare||1/Math.max(customers.length,1))*totalMonthly,rate:2.5,role:'demand'}));
+        plants.forEach(p=>points.push({name:p.name,lat:p.lat,lon:p.lon,weight:(p.capacity||1000)*0.4,rate:1.5,role:'source'}));  // inbound weighted less
+        if(points.length<2){
+          return <div style={{padding:12,background:'var(--bg3)',borderRadius:4,fontSize:11,color:'var(--tx3)',textAlign:'center'}}>Need at least 2 nodes with lat/lon (customers, plants or suppliers) to compute center of gravity. Add them above.</div>;
+        }
+        // Weighted centroid
+        const sumW=points.reduce((a,p)=>a+p.weight*p.rate,0);
+        const cogLat=points.reduce((a,p)=>a+p.lat*p.weight*p.rate,0)/sumW;
+        const cogLon=points.reduce((a,p)=>a+p.lon*p.weight*p.rate,0)/sumW;
+        // Haversine distance in km
+        const hav=(la1,lo1,la2,lo2)=>{const R=6371,toR=x=>x*Math.PI/180;const dLa=toR(la2-la1),dLo=toR(lo2-lo1);const a=Math.sin(dLa/2)**2+Math.cos(toR(la1))*Math.cos(toR(la2))*Math.sin(dLo/2)**2;return 2*R*Math.asin(Math.sqrt(a));};
+        // Total cost at optimum vs at each existing DC vs naive midpoint
+        const costAt=(lat,lon)=>points.reduce((a,p)=>a+p.weight*p.rate*hav(lat,lon,p.lat,p.lon),0);
+        const optCost=costAt(cogLat,cogLon);
+        const existingDCCosts=dcs.map(d=>({name:d.name,location:d.location,lat:d.lat,lon:d.lon,cost:costAt(d.lat,d.lon),dist:hav(d.lat,d.lon,cogLat,cogLon)}));
+        existingDCCosts.sort((a,b)=>a.cost-b.cost);
+        const bestExisting=existingDCCosts[0];
+        const saving=bestExisting?(bestExisting.cost-optCost):0;
+        const savingPct=bestExisting?(saving/bestExisting.cost*100):0;
+        // Guess nearest Indian city for the optimum (hand-rolled; approximate)
+        const cityGuess=[['Nagpur',21.15,79.09],['Hyderabad',17.38,78.49],['Pune',18.52,73.85],['Nashik',19.99,73.78],['Indore',22.72,75.86],['Bhopal',23.25,77.41],['Ahmedabad',23.03,72.58],['Jaipur',26.92,75.82],['Lucknow',26.85,80.95],['Bengaluru',12.97,77.59],['Chennai',13.08,80.27],['Delhi',28.7,77.1],['Mumbai',19.08,72.88],['Kolkata',22.57,88.36],['Guwahati',26.14,91.74],['Bhubaneswar',20.27,85.84]].map(([n,la,lo])=>({n,d:hav(cogLat,cogLon,la,lo)}));
+        cityGuess.sort((a,b)=>a.d-b.d);
+        const nearest=cityGuess[0];
+        return <div>
+          <div className="grid3" style={{marginBottom:10}}>
+            <div style={{padding:10,background:'rgba(63,185,80,.08)',border:'2px solid var(--gn)',borderRadius:4}}>
+              <div style={{fontSize:9,color:'var(--tx3)'}}>OPTIMAL CENTER OF GRAVITY</div>
+              <div style={{fontSize:16,fontWeight:700,color:'var(--gn)'}}>{cogLat.toFixed(3)}°, {cogLon.toFixed(3)}°</div>
+              <div style={{fontSize:10,color:'var(--tx2)',marginTop:2}}>Nearest city: <strong>{nearest.n}</strong> ({nearest.d.toFixed(0)} km)</div>
+            </div>
+            <div style={{padding:10,background:'var(--bg3)',border:'1px solid var(--br)',borderRadius:4}}>
+              <div style={{fontSize:9,color:'var(--tx3)'}}>TOTAL FREIGHT @ OPTIMUM</div>
+              <div style={{fontSize:16,fontWeight:700,color:'var(--a2)'}}>{cur}{Math.round(optCost).toLocaleString()}<span style={{fontSize:9,color:'var(--tx3)'}}>/mo</span></div>
+              <div style={{fontSize:10,color:'var(--tx2)',marginTop:2}}>Σ demand × distance × rate across {points.length} nodes</div>
+            </div>
+            <div style={{padding:10,background:saving>0?'rgba(63,185,80,.08)':'rgba(248,81,73,.08)',border:`1px solid ${saving>0?'var(--gn)':'var(--dg)'}`,borderRadius:4}}>
+              <div style={{fontSize:9,color:'var(--tx3)'}}>RELOCATION SAVING vs best DC</div>
+              <div style={{fontSize:16,fontWeight:700,color:saving>0?'var(--gn)':'var(--dg)'}}>{saving>0?'+':''}{cur}{Math.round(saving).toLocaleString()}</div>
+              <div style={{fontSize:10,color:'var(--tx2)',marginTop:2}}>{savingPct.toFixed(1)}% of current spend · {bestExisting?`vs ${bestExisting.name}`:'no DCs'}</div>
+            </div>
+          </div>
+          {existingDCCosts.length>0&&<div>
+            <div style={{fontSize:11,fontWeight:600,color:'var(--a3)',marginBottom:4}}>Existing DC comparison (sorted by total cost)</div>
+            <table className="data-table">
+              <thead><tr><th>DC</th><th>Location</th><th>Distance from COG (km)</th><th>Total Freight/mo</th><th>Premium vs Optimum</th><th>Verdict</th></tr></thead>
+              <tbody>{existingDCCosts.map((d,i)=>{const prem=d.cost-optCost;const premPct=(prem/optCost*100);return <tr key={i} style={i===0?{background:'rgba(63,185,80,.04)'}:{}}>
+                <td style={{fontWeight:600}}>{d.name}</td>
+                <td>{d.location||`${d.lat.toFixed(2)},${d.lon.toFixed(2)}`}</td>
+                <td className="num">{d.dist.toFixed(0)}</td>
+                <td className="num">{cur}{Math.round(d.cost).toLocaleString()}</td>
+                <td className="num" style={{color:premPct<5?'var(--gn)':premPct<15?'var(--a4)':'var(--dg)',fontWeight:600}}>+{cur}{Math.round(prem).toLocaleString()} ({premPct.toFixed(1)}%)</td>
+                <td><span className="badge" style={{background:premPct<5?'rgba(63,185,80,.15)':premPct<15?'rgba(240,180,41,.15)':'rgba(248,81,73,.15)',color:premPct<5?'var(--gn)':premPct<15?'var(--a4)':'var(--dg)'}}>{premPct<5?'✓ near-optimum':premPct<15?'acceptable':'relocate'}</span></td>
+              </tr>})}</tbody>
+            </table>
+          </div>}
+          <div style={{marginTop:10,padding:8,background:'var(--bg3)',borderRadius:4,fontSize:10,color:'var(--tx2)'}}>
+            <strong style={{color:'var(--a2)'}}>How to use:</strong> if the best existing DC is within 5% of optimum, stay put. If 5-15%, put relocation in the 3-yr capex roadmap. If {'>'}15%, run a Greenfield vs Brownfield NPV analysis in Tab 6. Center of Gravity is a <em>starting point</em>, not a decision — real siting must layer in land cost, labor, port access, and tax incentives.
+          </div>
+        </div>;
+      })()}
+    </div>
+
+    {/* v3.3.3 — Incoterm × Mode duty responsibility matrix (reference + live import parts list) */}
+    {(()=>{
+      const importParts=state.products.flatMap(p=>p.bom.filter(b=>b.supplierType==='import').map(b=>({...b,skuName:p.name})));
+      if(importParts.length===0)return null;
+      const INCOTERMS=[
+        {code:'EXW',seller:'Ex-Works (buyer picks up)',sellerPays:'Nothing',buyerPays:'Export clearance + all freight + import duty',bestFor:'Full buyer control — least common for sea/air'},
+        {code:'FCA',seller:'Free Carrier',sellerPays:'To carrier at named place',buyerPays:'Main carriage + import duty',bestFor:'Any mode — safer than EXW (seller handles export)'},
+        {code:'FAS',seller:'Free Alongside Ship',sellerPays:'Alongside vessel at port',buyerPays:'Loading + sea freight + import duty',bestFor:'Sea only (bulk)'},
+        {code:'FOB',seller:'Free On Board',sellerPays:'On board vessel',buyerPays:'Sea freight + import duty',bestFor:'Sea only (containerized)'},
+        {code:'CFR',seller:'Cost and Freight',sellerPays:'Sea freight to destination port',buyerPays:'Insurance + import duty',bestFor:'Sea only — buyer insures'},
+        {code:'CIF',seller:'Cost, Insurance, Freight',sellerPays:'Sea freight + insurance',buyerPays:'Import duty + local',bestFor:'Sea only — most common Indian import'},
+        {code:'CPT',seller:'Carriage Paid To',sellerPays:'Freight to destination',buyerPays:'Insurance + import duty',bestFor:'Air / multimodal'},
+        {code:'CIP',seller:'Carriage + Insurance Paid',sellerPays:'Freight + insurance',buyerPays:'Import duty + local',bestFor:'Air / multimodal (default since 2020 = all-risk insurance)'},
+        {code:'DAP',seller:'Delivered At Place',sellerPays:'All transport to named place',buyerPays:'Import duty + unloading',bestFor:'Simpler for buyer — seller takes the risk'},
+        {code:'DPU',seller:'Delivered at Place Unloaded',sellerPays:'All transport + unloading',buyerPays:'Import duty only',bestFor:'Unique: only Incoterm where seller unloads'},
+        {code:'DDP',seller:'Delivered Duty Paid',sellerPays:'Everything incl. import duty',buyerPays:'Nothing',bestFor:'Buyer-easy, seller-risky — rarely used by MSMEs'}
+      ];
+      return <div className="card">
+        <div className="card-title">🛃 Incoterm Responsibility Matrix (2020) <span className="badge" style={{background:'rgba(240,180,41,.1)',color:'var(--a4)'}}>{importParts.length} import part{importParts.length>1?'s':''}</span></div>
+        <div style={{fontSize:10,color:'var(--tx3)',marginBottom:8}}>
+          Incoterm determines <em>who pays which cost leg</em> and where risk transfers. In India, imports via sea almost always use CIF; air imports default to CIP. DDP shifts everything — including BCD+SWS+IGST — to the seller.
+          Landed cost = <strong>CIF value + BCD (7.5-10%) + SWS (10% of BCD) + IGST (18%) + CHA (₹5K) + Port (₹8K) + Local transport</strong>.
+        </div>
+        <div style={{overflowX:'auto',marginBottom:10}}>
+          <table className="data-table">
+            <thead><tr><th>Incoterm</th><th>Full name</th><th>Seller pays</th><th>Buyer pays</th><th>Best for / Note</th></tr></thead>
+            <tbody>{INCOTERMS.map(ic=>{
+              const used=importParts.some(p=>p.incoterm===ic.code);
+              return <tr key={ic.code} style={used?{background:'rgba(63,185,80,.04)'}:{}}>
+                <td><span style={{fontFamily:'JetBrains Mono',fontWeight:700,color:used?'var(--gn)':'var(--tx2)'}}>{ic.code}</span>{used&&<span className="badge" style={{marginLeft:4,background:'rgba(63,185,80,.12)',color:'var(--gn)',fontSize:8}}>✓ in use</span>}</td>
+                <td style={{fontSize:10}}>{ic.seller}</td>
+                <td style={{fontSize:10,color:'var(--a2)'}}>{ic.sellerPays}</td>
+                <td style={{fontSize:10,color:'var(--a4)'}}>{ic.buyerPays}</td>
+                <td style={{fontSize:10,color:'var(--tx2)'}}>{ic.bestFor}</td>
+              </tr>;
+            })}</tbody>
+          </table>
+        </div>
+        <div style={{fontSize:11,fontWeight:600,color:'var(--a3)',marginBottom:4}}>Import parts in your BOM (live):</div>
+        <table className="data-table">
+          <thead><tr><th>Part</th><th>SKU</th><th>Country</th><th>Incoterm</th><th>Duty components applied</th><th>Effective landed uplift</th></tr></thead>
+          <tbody>{importParts.map((b,i)=>{
+            const ic=b.incoterm||'—';
+            // Rough uplift: CIF → BCD 7.5% → SWS 10%·BCD → IGST 18% of CIF+BCD+SWS
+            const bcd=(ic==='DDP'?0:0.075);
+            const sws=(ic==='DDP'?0:0.1*bcd);
+            const igstBase=1+bcd+sws;
+            const igst=ic==='DDP'?0:0.18*igstBase;
+            const totalUplift=(bcd+sws+igst)*100;
+            return <tr key={i}>
+              <td style={{fontWeight:600}}>{b.name}</td>
+              <td style={{color:'var(--tx2)',fontSize:10}}>{b.skuName}</td>
+              <td>{b.country||<span style={{color:'var(--tx3)'}}>—</span>}</td>
+              <td><span style={{fontFamily:'JetBrains Mono',fontWeight:700,color:ic==='—'?'var(--dg)':'var(--a2)'}}>{ic}</span></td>
+              <td style={{fontSize:10}}>
+                {ic==='DDP'?<span style={{color:'var(--gn)'}}>✓ None — seller-paid</span>:<>
+                  <span style={{color:'var(--a4)'}}>BCD 7.5%</span> + <span style={{color:'var(--a4)'}}>SWS 10%·BCD</span> + <span style={{color:'var(--a2)'}}>IGST 18%</span>
+                  {(ic==='FAS'||ic==='FOB'||ic==='EXW')&&<span style={{color:'var(--dg)',marginLeft:4}}>+ insurance (buyer)</span>}
+                </>}
+              </td>
+              <td className="num" style={{color:totalUplift>0?'var(--dg)':'var(--gn)',fontWeight:600}}>+{totalUplift.toFixed(1)}%</td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>;
+    })()}
 
     {/* Supplier Master */}
     <div className="card">
@@ -3656,41 +3916,7 @@ function AnalysisTab({state,dispatch}){
       </table>
     </div>
 
-    {/* Network Visualization (simple) */}
-    <div className="card">
-      <div className="card-title">🌐 Supply Network Map</div>
-      <div style={{padding:16,background:'var(--bg3)',borderRadius:6,position:'relative',minHeight:160}}>
-        {(()=>{
-          const suppliers=state.products.flatMap(p=>p.bom.map(b=>b.name));
-          const uniqueS=[...new Set(suppliers)];
-          const products=state.products.map(p=>p.name);
-          return <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:20}}>
-            <div style={{textAlign:'center'}}>
-              <div style={{fontSize:9,color:'var(--tx3)',marginBottom:4}}>SUPPLIERS</div>
-              {uniqueS.map((s,i)=><div key={i} style={{padding:'4px 8px',background:'var(--bg4)',borderRadius:4,marginBottom:3,fontSize:10,border:'1px solid var(--br2)'}}>{s}</div>)}
-            </div>
-            <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center'}}>
-              {uniqueS.map((s,i)=><div key={i} style={{width:'100%',height:1,background:'var(--br2)',margin:8,position:'relative'}}>
-                <div style={{position:'absolute',top:-6,left:'50%',transform:'translateX(-50)',fontSize:8,color:'var(--tx3)'}}>→</div>
-              </div>)}
-            </div>
-            <div style={{textAlign:'center',padding:'12px 16px',background:'rgba(0,212,170,.1)',border:'2px solid var(--ac)',borderRadius:8}}>
-              <div style={{fontSize:11,fontWeight:700,color:'var(--ac)'}}>🏭 Factory</div>
-              <div style={{fontSize:9,color:'var(--tx2)'}}>{state.production.lines.length} lines</div>
-            </div>
-            <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center'}}>
-              {products.map((p,i)=><div key={i} style={{width:'100%',height:1,background:'var(--br2)',margin:8,position:'relative'}}>
-                <div style={{position:'absolute',top:-6,left:'50%',transform:'translateX(-50)',fontSize:8,color:'var(--tx3)'}}>→</div>
-              </div>)}
-            </div>
-            <div style={{textAlign:'center'}}>
-              <div style={{fontSize:9,color:'var(--tx3)',marginBottom:4}}>PRODUCTS</div>
-              {products.map((p,i)=><div key={i} style={{padding:'4px 8px',background:'var(--bg4)',borderRadius:4,marginBottom:3,fontSize:10,border:'1px solid var(--a2)'}}>{p}</div>)}
-            </div>
-          </div>
-        })()}
-      </div>
-    </div>
+    {/* Network Visualization removed in v3.3.3 — replaced by real Physical Network (Tab 3 → Lanes) with actual lat/lon, distance, cost per tonne-km, mode, and lead time. Duplicate simple graph deleted. */}
 
     {/* What-If Bot */}
     {(()=>{
@@ -3713,6 +3939,77 @@ function AnalysisTab({state,dispatch}){
           <div style={{marginTop:6,fontSize:10,color:'var(--a4)'}}>{wiResult.impact}</div>
         </div>}
       </div>
+    })()}
+
+    {/* v3.3.3 — Parameter sensitivity: one-param slider + tornado */}
+    {(()=>{
+      const P=state.products;if(P.length===0)return null;
+      // Baseline profit (heuristic — sum of margin × forecasted demand × min(1, capacity/demand))
+      const computeProfit=(delta)=>{
+        let profit=0;
+        P.forEach(p=>{
+          const mc=p.bom.reduce((s,b)=>s+(b.cost*(1+(delta.matCost||0)))*b.qtyPer,0);
+          const margin=(p.sellPrice*(1+(delta.sellPrice||0)))-p.variableCost-mc;
+          const forecast=(p.history||[]).slice(-12).reduce((a,b)=>a+b,0)*(1+(delta.demand||0));
+          const cap=(p.capacity||50)*state.planning.periods*(1+(delta.capacity||0));
+          const produced=Math.min(forecast,cap);
+          profit+=margin*produced-p.setupCost*Math.ceil(produced/Math.max(p.capacity,1))*(1+(delta.setupCost||0));
+        });
+        // Freight cost (if lanes)
+        const act=(state.network?.lanes||[]).filter(l=>l.active!==false);
+        const freight=act.reduce((a,l)=>a+(+l.demandPerWk||0)*(+l.ratePerUnit||0)*(1+(delta.freight||0)),0)*52;
+        return Math.round(profit-freight);
+      };
+      const baseProfit=computeProfit({});
+      // Tornado: ±20% on each parameter
+      const params=[
+        {key:'sellPrice',label:'Sell Price',unit:'%'},
+        {key:'matCost',label:'Material Cost',unit:'%',invert:true},
+        {key:'demand',label:'Demand Volume',unit:'%'},
+        {key:'capacity',label:'Production Capacity',unit:'%'},
+        {key:'freight',label:'Freight Rate',unit:'%',invert:true},
+        {key:'setupCost',label:'Setup Cost',unit:'%',invert:true},
+      ];
+      const tornado=params.map(pr=>{
+        const down=computeProfit({[pr.key]:-0.20});
+        const up=computeProfit({[pr.key]:+0.20});
+        return {label:pr.label,down:down-baseProfit,up:up-baseProfit,range:Math.abs((up-down))};
+      }).sort((a,b)=>b.range-a.range);
+      const maxRange=Math.max(1,...tornado.map(t=>Math.max(Math.abs(t.up),Math.abs(t.down))));
+      return <div className="card">
+        <div className="card-title">🎚️ What-If Sensitivity <span className="badge" style={{background:'rgba(240,180,41,.1)',color:'var(--a4)'}}>deterministic · no solver re-run</span></div>
+        <div style={{fontSize:10,color:'var(--tx3)',marginBottom:8}}>
+          Instant sensitivity: each parameter is perturbed ±20% while holding everything else fixed, and the resulting profit impact is plotted as a tornado. The widest bar is the parameter your plan is most exposed to — invest in hedging, negotiation, or capacity there first.
+        </div>
+        <div style={{fontSize:11,marginBottom:8}}>
+          <strong style={{color:'var(--tx2)'}}>Baseline profit:</strong> <span style={{color:'var(--ac)',fontWeight:700}}>{cur}{baseProfit.toLocaleString()}</span>/yr
+          <span style={{color:'var(--tx3)',marginLeft:12}}>Δ shown in {cur}/yr for a ±20% shock on each single parameter</span>
+        </div>
+        {tornado.map((t,i)=>{
+          const widthDown=Math.abs(t.down)/maxRange*50;
+          const widthUp=Math.abs(t.up)/maxRange*50;
+          return <div key={i} style={{display:'grid',gridTemplateColumns:'140px 1fr 80px',alignItems:'center',gap:6,marginBottom:4,fontSize:11}}>
+            <div style={{color:'var(--tx2)',fontWeight:i===0?700:400}}>{i+1}. {t.label}</div>
+            <div style={{display:'flex',alignItems:'center',height:18,background:'var(--bg3)',borderRadius:3,position:'relative'}}>
+              <div style={{flex:1,textAlign:'right',paddingRight:4,fontSize:9,color:'var(--dg)'}}>
+                <div style={{display:'inline-block',width:`${widthDown}%`,height:14,background:'rgba(248,81,73,.3)',borderRight:'2px solid var(--dg)'}} title={`-20%: ${t.down>=0?'+':''}${cur}${t.down.toLocaleString()}`}></div>
+              </div>
+              <div style={{width:1,height:18,background:'var(--br)'}}></div>
+              <div style={{flex:1,paddingLeft:4,fontSize:9,color:'var(--gn)'}}>
+                <div style={{display:'inline-block',width:`${widthUp}%`,height:14,background:'rgba(63,185,80,.3)',borderLeft:'2px solid var(--gn)'}} title={`+20%: ${t.up>=0?'+':''}${cur}${t.up.toLocaleString()}`}></div>
+              </div>
+            </div>
+            <div style={{fontSize:9,fontFamily:'JetBrains Mono',color:'var(--tx3)',textAlign:'right'}}>
+              <span style={{color:'var(--dg)'}}>{t.down>=0?'+':''}{(t.down/1000).toFixed(0)}k</span>
+              <span style={{margin:'0 2px',color:'var(--tx3)'}}>↔</span>
+              <span style={{color:'var(--gn)'}}>+{(t.up/1000).toFixed(0)}k</span>
+            </div>
+          </div>;
+        })}
+        <div style={{marginTop:10,padding:8,background:'var(--bg3)',borderRadius:4,fontSize:10,color:'var(--tx2)'}}>
+          <strong style={{color:'var(--a2)'}}>Reading:</strong> the <em>{tornado[0].label}</em> lever swings profit by roughly {cur}{(tornado[0].range/1000).toFixed(0)}k for every ±20% move. Your profit is most sensitive to this parameter — focus risk-management effort here. Run the Monte Carlo engine (Solve tab) for full joint-distribution uncertainty.
+        </div>
+      </div>;
     })()}
 
     {/* PDF Report Export */}
@@ -4121,10 +4418,20 @@ function IbpSenseDemo({cur}){
 function MPSVizCard({state}){
   const [mpsGran,setMpsGran]=useState('weekly'); // monthly | weekly | daily
   const [dailyWeeks,setDailyWeeks]=useState(4); // how many weeks of daily granularity to show
-  const [selSKU,setSelSKU]=useState(0);
+  const [selSKU,setSelSKU]=useState(-1); // v3.3.3 — -1 = aggregate all SKUs, 0+ = single SKU
   const [prodOverrides,setProdOverrides]=useState({}); // week/day index → user qty
+  const [expandedWeek,setExpandedWeek]=React.useState(null); // v3.3.3 — click week to show days
   const products=state.products;
-  const prod=products[selSKU]||products[0];
+  // v3.3.3 — aggregate mode synthesizes a pseudo-SKU summing all products
+  const aggregateMode=selSKU===-1&&products.length>1;
+  const prod=aggregateMode?{
+    name:`ALL SKUs (${products.length})`,
+    initInventory:products.reduce((a,p)=>a+(p.initInventory||0),0),
+    capacity:products.reduce((a,p)=>a+(p.capacity||50),0),
+    cycleTime:products.reduce((a,p)=>a+(p.cycleTime||19)*((p.history||[]).reduce((s,x)=>s+x,0)),0)/Math.max(1,products.reduce((a,p)=>a+(p.history||[]).reduce((s,x)=>s+x,0),0)),
+    history:MONTHS.map((_,i)=>products.reduce((a,p)=>a+((p.history||[])[i]||0),0)),
+    overrides:Array(12).fill(null),actuals:Array(12).fill(null)
+  }:(products[selSKU]||products[0]);
   if(!prod)return null;
   const cur=state.config.currency;
   const workDays=state.planning.workDays||6;
@@ -4213,7 +4520,10 @@ function MPSVizCard({state}){
       {mpsGran==='daily'&&<select value={dailyWeeks} onChange={e=>setDailyWeeks(+e.target.value)} style={{fontSize:10,padding:'3px 6px'}} title="Number of weeks to show daily">
         {[1,2,4,8,12].map(n=><option key={n} value={n}>{n} wk ({n*workDays}d)</option>)}
       </select>}
-      {products.length>1&&<select value={selSKU} onChange={e=>setSelSKU(+e.target.value)} style={{fontSize:10,padding:'3px 6px'}}>{products.map((p,i)=><option key={i} value={i}>{p.name}</option>)}</select>}
+      {products.length>1&&<select value={selSKU} onChange={e=>setSelSKU(+e.target.value)} style={{fontSize:10,padding:'3px 6px',background:aggregateMode?'rgba(167,139,250,.12)':'inherit',color:aggregateMode?'var(--a3)':'inherit',fontWeight:aggregateMode?700:400}}>
+        <option value={-1}>📊 ALL SKUs (aggregate)</option>
+        {products.map((p,i)=><option key={i} value={i}>{p.name}</option>)}
+      </select>}
       <span style={{fontSize:9,color:'var(--tx3)',marginLeft:4}}>🔒Frozen {frozenWk}wk | 🟡Slushy {slushyWk}wk | 🟢Open</span>
       {overrideCount>0&&<button className="btn btn-secondary btn-sm" onClick={clearOverrides} style={{marginLeft:'auto',fontSize:9}}>↺ Clear overrides</button>}
     </div>
@@ -4246,17 +4556,20 @@ function MPSVizCard({state}){
       </table>
     </div>}
 
-    {/* WEEKLY view — editable production */}
+    {/* WEEKLY view — editable production; click a week row to expand its days (v3.3.3) */}
     {mpsGran==='weekly'&&<div style={{overflowX:'auto'}}>
-      <div style={{fontSize:9,color:'var(--tx3)',marginBottom:4}}>Click any Production cell to override. Changes don't affect the MILP solver — export manually if needed.</div>
+      <div style={{fontSize:9,color:'var(--tx3)',marginBottom:4}}>Click ▸ to expand a week into its {workDays} working days. Click any Production cell to override.</div>
       <table className="data-table">
-        <thead><tr><th>Week</th><th>Month</th><th>Demand</th><th style={{color:'var(--ac)'}}>Production ✏</th><th>Δ from plan</th><th>Inventory est.</th><th>Zone</th></tr></thead>
+        <thead><tr><th></th><th>Week</th><th>Month</th><th>Demand</th><th style={{color:'var(--ac)'}}>Production ✏</th><th>Δ from plan</th><th>Inventory est.</th><th>Zone</th></tr></thead>
         <tbody>{(()=>{
           let wInv=prod.initInventory||0;
-          return wMPS.slice(0,Math.min(state.planning.periods,48)).map((wk,i)=>{
+          const rows=[];
+          wMPS.slice(0,Math.min(state.planning.periods,48)).forEach((wk,i)=>{
             wInv=Math.max(0,wInv+wk.production-wk.demand);
             const delta=wk.production-wk.baseProd;
-            return <tr key={i} style={{background:wk.isFrozen?'rgba(248,81,73,.04)':wk.isSlushy?'rgba(240,180,41,.02)':'transparent'}}>
+            const isOpen=expandedWeek===wk.wIdx;
+            rows.push(<tr key={`wk${i}`} style={{background:isOpen?'rgba(0,212,170,.06)':wk.isFrozen?'rgba(248,81,73,.04)':wk.isSlushy?'rgba(240,180,41,.02)':'transparent'}}>
+              <td onClick={()=>setExpandedWeek(isOpen?null:wk.wIdx)} style={{cursor:'pointer',width:18,color:'var(--a3)',fontWeight:700,textAlign:'center'}}>{isOpen?'▼':'▸'}</td>
               <td style={{fontWeight:wk.isFirst?700:400,fontFamily:'JetBrains Mono',fontSize:9}}>{wk.week}</td>
               <td style={{color:'var(--tx3)',fontSize:9}}>{wk.isFirst?wk.month:''}</td>
               <td className="num" style={{fontSize:10}}>{wk.demand}</td>
@@ -4277,8 +4590,39 @@ function MPSVizCard({state}){
               <td className="num" style={{color:delta>0?'var(--gn)':delta<0?'var(--dg)':'var(--tx3)',fontSize:9}}>{delta>0?'+':''}{delta||'—'}</td>
               <td className="num" style={{color:wInv<10?'var(--dg)':wInv<30?'var(--a4)':'var(--tx)',fontSize:9}}>{wInv}</td>
               <td style={{fontSize:8,color:wk.isFrozen?'var(--dg)':wk.isSlushy?'var(--a4)':'var(--gn)'}}>{wk.isFrozen?'🔒 Frozen':wk.isSlushy?'🟡 Slushy':'🟢 Open'}</td>
-            </tr>;
+            </tr>);
+            if(isOpen){
+              // Expand into workDays daily rows for this week
+              const wkDemand=wk.demand,wkProd=wk.production;
+              const dailyDem=Math.floor(wkDemand/workDays),dailyDemRemainder=wkDemand-dailyDem*workDays;
+              const dailyProd=Math.floor(wkProd/workDays),dailyProdRemainder=wkProd-dailyProd*workDays;
+              for(let dd=0;dd<workDays;dd++){
+                const dKey=`d_w${wk.wIdx}_${dd}`;
+                const ov=prodOverrides[dKey];
+                const baseDemD=dailyDem+(dd<dailyDemRemainder?1:0);
+                const baseProdD=dailyProd+(dd<dailyProdRemainder?1:0);
+                const prodD=ov!==undefined&&ov!==''?+ov:baseProdD;
+                const dayCap=(prod.capacity||50)/workDays;
+                const util=Math.round(prodD/Math.max(dayCap,1)*100);
+                rows.push(<tr key={`d${i}_${dd}`} style={{background:'var(--bg3)'}}>
+                  <td></td>
+                  <td style={{fontSize:9,color:'var(--tx3)',paddingLeft:16}}>↳ {dayNames[dd]}</td>
+                  <td style={{fontSize:9,color:'var(--tx3)'}}>Day {dd+1}/{workDays}</td>
+                  <td className="num" style={{fontSize:9}}>{baseDemD}</td>
+                  <td className="num">
+                    <input type="number" min={0} value={ov!==undefined?ov:baseProdD}
+                      style={{width:55,textAlign:'right',fontSize:9,color:ov!==undefined?'var(--a4)':'var(--a3)',fontWeight:600,background:ov!==undefined?'rgba(240,180,41,.08)':'transparent',border:'1px solid '+(ov!==undefined?'var(--a4)':'transparent'),borderRadius:3,padding:'1px 4px',opacity:wk.isFrozen?0.6:1}}
+                      readOnly={wk.isFrozen}
+                      onChange={e=>!wk.isFrozen&&setOverride(dKey,e.target.value)}/>
+                  </td>
+                  <td className="num" style={{fontSize:9,color:util>100?'var(--dg)':util>80?'var(--a4)':'var(--gn)'}}>util {util}%</td>
+                  <td className="num" style={{fontSize:9,color:'var(--tx3)'}}>cap {Math.round(dayCap)}u</td>
+                  <td style={{fontSize:8,color:'var(--tx3)'}}>hrs: {((prodD*(prod.cycleTime||19))/60).toFixed(1)}h</td>
+                </tr>);
+              }
+            }
           });
+          return rows;
         })()}</tbody>
       </table>
     </div>}
@@ -4438,9 +4782,13 @@ function MILPFormCard({state}){
   const WACC=state.config.wacc;
 
   const FORMS={
-    procurement:{label:'② Procurement',color:'var(--ac)',content:()=><div style={{fontFamily:'JetBrains Mono',fontSize:10,lineHeight:2}}>
+    procurement:{label:'② Procurement',color:'var(--ac)',content:()=>{
+      const P=state.products;
+      const allParts=P.flatMap(p=>p.bom.map(b=>({...b,skuName:p.name})));
+      return <div style={{fontFamily:'JetBrains Mono',fontSize:10,lineHeight:2}}>
+      <div style={{fontSize:9,color:'var(--tx3)',marginBottom:4}}>Problem size derived live from your data: <strong style={{color:'var(--a2)'}}>{P.length} SKUs × {T} periods × {allParts.length} parts</strong>. Totals below: {P.length*T + allParts.length*T} continuous vars, {P.length*T + allParts.length*T} binaries.</div>
       <div style={{color:'var(--a4)',fontWeight:700}}>SETS:</div>
-      <div style={{paddingLeft:10,color:'var(--tx2)'}}>k ∈ K = {'{'+state.products.map(p=>p.name).join(', ')+'}'} &nbsp;|&nbsp; t ∈ T = 1..{T} wks &nbsp;|&nbsp; i ∈ I = {nI} RM parts</div>
+      <div style={{paddingLeft:10,color:'var(--tx2)'}}>k ∈ K = {'{'+P.map(p=>p.name).join(', ')+'}'} (|K|={P.length}) &nbsp;|&nbsp; t ∈ T = 1..{T} wks &nbsp;|&nbsp; i ∈ I = {'{'+[...new Set(allParts.map(b=>b.name))].slice(0,8).join(', ')+(allParts.length>8?', …':'')+'}'} (|I|={allParts.length})</div>
       <div style={{color:'var(--a4)',fontWeight:700,marginTop:4}}>DECISION VARIABLES:</div>
       <div style={{paddingLeft:10,color:'var(--tx2)'}}>
         y[k,t] ∈ {'{ 0,1 }'} — setup binary (produce k in period t?)<br/>
@@ -4475,9 +4823,9 @@ function MILPFormCard({state}){
         {state.products.map(p=>{const mc=p.bom.reduce((s,b)=>s+b.cost*b.qtyPer,0);const hfg=(mc*(p.carryRate||24)/100/52);return `${p.name}: cap=${p.capacity}u/wk, setup=${cur}${p.setupCost}, h_fg=${cur}${hfg.toFixed(4)}/u/wk, yield=${Math.round((p.yieldPct||0.95)*100)}%`}).join(' | ')}
       </div>
       <div style={{fontSize:9,color:'var(--tx3)',marginTop:6,padding:'4px 8px',background:'var(--bg3)',borderRadius:4}}>
-        Solver: PuLP → CBC (COIN-OR) | ~{nP*T} FG vars + ~{nI*T} RM vars + {nP*T+nI*T} binary vars | {nP} SKUs × {T} periods × {nI} parts
+        Solver: PuLP → CBC (COIN-OR) | {P.length*T} FG continuous + {allParts.length*T} RM continuous + {P.length*T+allParts.length*T} binaries | {P.length} SKUs × {T} periods × {allParts.length} parts
       </div>
-    </div>},
+    </div>;}},
 
     production:{label:'③ Production',color:'var(--a2)',content:()=><div style={{fontFamily:'JetBrains Mono',fontSize:10,lineHeight:2}}>
       <div style={{color:'var(--a4)',fontWeight:700}}>SETS:</div>
@@ -4509,35 +4857,44 @@ function MILPFormCard({state}){
       </div>
     </div>},
 
-    profitmix:{label:'① Profit Max',color:'var(--gn)',content:()=><div style={{fontFamily:'JetBrains Mono',fontSize:10,lineHeight:2}}>
-      <div style={{color:'var(--a4)',fontWeight:700}}>SETS:</div>
-      <div style={{paddingLeft:10,color:'var(--tx2)'}}>k ∈ K = {'{'+state.products.map(p=>p.name).join(', ')+'}'} (single planning horizon)</div>
-      <div style={{color:'var(--a4)',fontWeight:700,marginTop:4}}>DECISION VARIABLE:</div>
-      <div style={{paddingLeft:10,color:'var(--tx2)'}}>qty[k] ≥ 0 — annual units to produce of product k</div>
-      <div style={{color:'var(--a4)',fontWeight:700,marginTop:4}}>OBJECTIVE — MAXIMIZE:</div>
-      <div style={{padding:'8px 10px',background:'var(--bg3)',borderRadius:4,color:'var(--ac)'}}>
-        Z = Σ_k [ (sell_price[k] − var_cost[k] − mat_cost[k]) · qty[k] ]<br/>
-          = Σ_k margin[k] · qty[k]
-      </div>
-      <div style={{color:'var(--a4)',fontWeight:700,marginTop:4}}>CONSTRAINTS:</div>
-      <div style={{paddingLeft:10,color:'var(--tx2)'}}>
-        Demand ceiling: qty[k] ≤ demand_ceiling[k] = forecast[k]·(1+MAPE[k]%) &nbsp;&nbsp;∀ k<br/>
-        Shared capacity: Σ_k (cycle_time[k]/60·qty[k]) ≤ total_line_hours<br/>
-        Non-negativity: qty[k] ≥ 0 &nbsp;&nbsp;∀ k
-      </div>
-      <div style={{color:'var(--a4)',fontWeight:700,marginTop:4}}>MARGIN RANKING (allocates bottleneck hours to highest margin/hr first):</div>
-      <div style={{paddingLeft:10,color:'var(--tx2)',fontSize:9}}>
-        {state.products.map(p=>{
-          const mc=p.bom.reduce((s,b)=>s+b.cost*b.qtyPer,0);
-          const mg=p.sellPrice-p.variableCost-mc;
-          const ct=(p.cycleTime||19)/60;
-          return `${p.name}: margin=${cur}${mg.toFixed(2)}/u, cycle=${p.cycleTime||19}min, margin_hr=${cur}${(mg/ct).toFixed(1)}/hr`
-        }).join('\n')}
-      </div>
-      <div style={{fontSize:9,color:'var(--tx3)',marginTop:6,padding:'4px 8px',background:'var(--bg3)',borderRadius:4}}>
-        Note: LP relaxation (qty continuous). Shadow prices show binding constraint value. Crossover analysis shows price at which excluded SKUs enter the mix.
-      </div>
-    </div>},
+    profitmix:{label:'① Profit Max',color:'var(--gn)',content:()=>{
+      const P=state.products;
+      const skuVar=(p,i)=>`x${(p.name||`P${i+1}`).replace(/[^a-zA-Z0-9]/g,'_').slice(0,8)}`;
+      const margins=P.map(p=>{const mc=p.bom.reduce((s,b)=>s+b.cost*b.qtyPer,0);return{p,mc,margin:p.sellPrice-p.variableCost-mc,cycle:(p.cycleTime||19)/60};});
+      const totalCap=state.production.lines.reduce((a,l)=>a+(l.capacity||0)*state.planning.periods,0);
+      return <div style={{fontFamily:'JetBrains Mono',fontSize:10,lineHeight:2}}>
+        <div style={{color:'var(--a4)',fontWeight:700}}>SETS (rendered from your <strong>{P.length}</strong> SKU{P.length!==1?'s':''}):</div>
+        <div style={{paddingLeft:10,color:'var(--tx2)'}}>K = {'{'+P.map(p=>p.name).join(', ')+'}'} &nbsp;|&nbsp; |K| = {P.length}</div>
+        <div style={{color:'var(--a4)',fontWeight:700,marginTop:4}}>DECISION VARIABLES ({P.length}):</div>
+        <div style={{paddingLeft:10,color:'var(--tx2)'}}>
+          {P.map((p,i)=><div key={i}><span style={{color:'var(--ac)'}}>{skuVar(p,i)}</span> ≥ 0 &nbsp;— units of {p.name} to produce</div>)}
+        </div>
+        <div style={{color:'var(--a4)',fontWeight:700,marginTop:4}}>OBJECTIVE — MAXIMIZE (expanded):</div>
+        <div style={{padding:'8px 10px',background:'var(--bg3)',borderRadius:4,color:'var(--ac)',whiteSpace:'pre-wrap'}}>
+          Z = {margins.map((m,i)=>`${cur}${m.margin.toFixed(2)}·${skuVar(m.p,i)}`).join(' + ')}
+        </div>
+        <div style={{color:'var(--a4)',fontWeight:700,marginTop:4}}>CONSTRAINTS ({P.length + (totalCap>0?1:0) + P.filter(p=>+p.minProd>0||+p.maxProd>0).length} active):</div>
+        <div style={{paddingLeft:10,color:'var(--tx2)'}}>
+          <div style={{color:'var(--tx3)',fontSize:9,marginTop:2}}>Demand ceiling (per SKU):</div>
+          {P.map((p,i)=>{const mape=(p.mape||15)/100;const f=(p.history||[]).slice(-12).reduce((a,b)=>a+b,0);const ceil=Math.round(f*(1+mape));return <div key={i} style={{paddingLeft:8}}>{skuVar(p,i)} ≤ {ceil.toLocaleString()} &nbsp;<span style={{color:'var(--tx3)',fontSize:9}}>(forecast {f.toLocaleString()} × (1+{(mape*100).toFixed(0)}% MAPE))</span></div>})}
+          {totalCap>0&&<div style={{color:'var(--tx3)',fontSize:9,marginTop:4}}>Shared capacity:</div>}
+          {totalCap>0&&<div style={{paddingLeft:8}}>{margins.map((m,i)=>`${m.cycle.toFixed(3)}·${skuVar(m.p,i)}`).join(' + ')} ≤ {totalCap.toLocaleString()} hrs</div>}
+          {P.filter(p=>+p.minProd>0).length>0&&<div style={{color:'var(--tx3)',fontSize:9,marginTop:4}}>Min prod bounds (user-set):</div>}
+          {P.map((p,i)=>+p.minProd>0&&<div key={i} style={{paddingLeft:8,color:'var(--a3)'}}>{skuVar(p,i)} ≥ {p.minProd}</div>)}
+          {P.filter(p=>+p.maxProd>0).length>0&&<div style={{color:'var(--tx3)',fontSize:9,marginTop:4}}>Max prod bounds (user-set):</div>}
+          {P.map((p,i)=>+p.maxProd>0&&<div key={i} style={{paddingLeft:8,color:'var(--a3)'}}>{skuVar(p,i)} ≤ {p.maxProd}</div>)}
+        </div>
+        <div style={{color:'var(--a4)',fontWeight:700,marginTop:4}}>MARGIN RANKING (allocates bottleneck hours to highest margin/hr first):</div>
+        <div style={{paddingLeft:10,color:'var(--tx2)',fontSize:9}}>
+          {margins.sort((a,b)=>(b.margin/b.cycle)-(a.margin/a.cycle)).map((m,i)=><div key={i}>
+            <strong style={{color:'var(--ac)'}}>{i+1}. {m.p.name}</strong>: margin={cur}{m.margin.toFixed(2)}/u, cycle={(m.cycle*60).toFixed(0)}min → <strong>{cur}{(m.margin/m.cycle).toFixed(1)}/hr</strong>
+          </div>)}
+        </div>
+        <div style={{fontSize:9,color:'var(--tx3)',marginTop:6,padding:'4px 8px',background:'var(--bg3)',borderRadius:4}}>
+          <strong style={{color:'var(--a2)'}}>Problem size:</strong> {P.length} decision variables, {P.length + (totalCap>0?1:0) + P.filter(p=>+p.minProd>0||+p.maxProd>0).length} constraints. LP relaxation (qty continuous). Shadow prices surface the binding constraint; reduced costs tell you how much margin each excluded SKU is missing.
+        </div>
+      </div>;
+    }},
 
     transport:{label:'Transport',color:'var(--a3)',content:()=><div style={{fontFamily:'JetBrains Mono',fontSize:10,lineHeight:2}}>
       <div style={{color:'var(--a4)',fontWeight:700}}>PROBLEM TYPE: Multi-modal mode selection + LP allocation</div>

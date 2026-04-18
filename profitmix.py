@@ -155,14 +155,24 @@ def solve_profitmix(data):
 
     for k in range(n):
         di = demand_info[k]
+        user_max = products[k].get('max_quantity', 0) or 0
 
-        # Demand ceiling: can't sell more than market absorbs
-        prob += q[k] <= di['ceiling'], f"DemandCeiling_{k}"
+        # Demand ceiling: can't sell more than market absorbs.
+        # If user set maxProd > 0, cap at min(market ceiling, user max).
+        effective_ceiling = di['ceiling']
+        if user_max > 0:
+            effective_ceiling = min(effective_ceiling, user_max)
+        prob += q[k] <= effective_ceiling, f"DemandCeiling_{k}"
+        if user_max > 0:
+            constraint_names[f"Max prod: {products[k].get('name', f'P{k}')}"] = f"DemandCeiling_{k}"
 
-        # Demand floor: minimum commitment (MTO orders, contracts)
-        if di['floor'] > 0:
-            prob += q[k] >= di['floor'], f"DemandFloor_{k}"
-            constraint_names[f"Min commit: {products[k].get('name', f'P{k}')}"] = f"DemandFloor_{k}"
+        # Demand floor: minimum commitment (MTO orders, contracts, user-set minProd)
+        user_min = products[k].get('min_quantity', 0) or 0
+        effective_floor = max(di['floor'], user_min)
+        if effective_floor > 0:
+            prob += q[k] >= effective_floor, f"DemandFloor_{k}"
+            tag = "Min prod" if user_min >= di['floor'] else "Min commit"
+            constraint_names[f"{tag}: {products[k].get('name', f'P{k}')}"] = f"DemandFloor_{k}"
 
         # Excess = max(0, q - absorbable_demand)
         # Linearized: excess >= q - absorbable
@@ -266,7 +276,7 @@ def solve_profitmix(data):
     # Sort by margin/hr for display
     product_results.sort(key=lambda x: x['margin_per_hour'], reverse=True)
 
-    # Shadow prices
+    # Shadow prices + LP sensitivity (range of feasibility / allowable RHS change)
     shadow_prices = []
     for display_name, c_name in constraint_names.items():
         c = prob.constraints.get(c_name)
@@ -274,17 +284,51 @@ def solve_profitmix(data):
             dual = c.pi if hasattr(c, 'pi') and c.pi is not None else 0
             slack = c.slack if hasattr(c, 'slack') else None
             binding = slack is not None and abs(slack) < 0.01
+            # For non-binding constraints, allowable decrease = slack (before it becomes binding).
+            # For binding constraints, exact range requires sensitivity from CBC; we approximate.
+            if not binding and slack is not None:
+                allow_dec = round(abs(slack), 2)
+                allow_inc = "∞"
+            else:
+                allow_inc = "see re-solve"  # exact requires basis re-solve; UI can trigger
+                allow_dec = "see re-solve"
             shadow_prices.append({
                 'constraint': display_name,
                 'shadow_price': round(dual, 2),
                 'slack': round(slack, 2) if slack is not None else None,
                 'binding': binding,
+                'allowable_increase': allow_inc,
+                'allowable_decrease': allow_dec,
                 'interpretation': (
-                    f"Adding 1 more unit increases profit by ${abs(round(dual, 2))}"
+                    f"Binding. Relaxing RHS by 1 improves profit by ${abs(round(dual, 2))}. "
+                    f"Tightening by 1 costs ${abs(round(dual, 2))}."
                     if binding and dual != 0
-                    else f"Not binding — {round(slack, 1)} units unused" if slack else "—"
+                    else f"Not binding — {round(slack, 1)} units of slack remain. No profit impact until tightened past slack." if slack else "—"
                 ),
             })
+
+    # Reduced costs (range of optimality) for decision variables
+    reduced_costs = []
+    for k in range(n):
+        p = products[k]
+        dj = q[k].dj if hasattr(q[k], 'dj') and q[k].dj is not None else 0
+        qty = pulp.value(q[k]) or 0
+        margin = p.get('_margin', 0)
+        in_solution = qty > 0.01
+        reduced_costs.append({
+            'variable': p.get('name', f'P{k}'),
+            'quantity': round(qty, 2),
+            'margin': round(margin, 2),
+            'reduced_cost': round(dj, 2),
+            'in_solution': in_solution,
+            'interpretation': (
+                f"In the optimal mix. Margin must drop by more than ${abs(round(dj, 2))}/u before it exits."
+                if in_solution and dj != 0
+                else f"Excluded from mix. Margin must rise by ${abs(round(dj, 2))}/u before it enters."
+                if not in_solution and dj != 0
+                else f"In mix at boundary — margin change has immediate effect."
+            ),
+        })
 
     # Compute crossover analysis: at what price does each excluded product enter the mix?
     crossover = []
@@ -318,6 +362,7 @@ def solve_profitmix(data):
         'demand_mode': demand_mode,
         'products': product_results,
         'shadow_prices': shadow_prices,
+        'reduced_costs': reduced_costs,
         'crossover_analysis': crossover,
         'solve_time': round(solve_time, 2),
     }
