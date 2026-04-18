@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Enterprise Simulator v3.0</title>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<title>Enterprise Simulator v3.3</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,700&family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Fraunces:ital,wght@0,400;0,600;0,700;0,900;1,400;1,700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
@@ -41,18 +41,50 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{
+:root,[data-skin="dark"]{
   --bg:#0a0e17;--bg2:#111827;--bg3:#1a2234;--bg4:#243049;
   --tx:#c9d1d9;--tx2:#8b949e;--tx3:#484f58;
   --ac:#00d4aa;--ac2:#00b894;--a2:#38bdf8;--a3:#a78bfa;--a4:#f0b429;
   --dg:#f85149;--gn:#3fb950;
   --br:#21262d;--br2:#30363d;
   --radius:6px;
+  --font-display:'DM Sans',sans-serif;
+  --font-body:'DM Sans',sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+  --panel-bd:1px solid var(--br);
+  --paper-grain:none;
 }
-html,body{background:var(--bg);color:var(--tx);font-family:'DM Sans',sans-serif;font-size:14px;line-height:1.5;overflow-x:hidden}
-input,select,textarea{background:var(--bg2);color:var(--tx);border:1px solid var(--br2);border-radius:4px;padding:6px 10px;font-family:'JetBrains Mono',monospace;font-size:12px;outline:none;transition:border .2s}
+[data-skin="v1"]{
+  --bg:#fafaf7;--bg2:#f2f1ec;--bg3:#ffffff;--bg4:#ebe9e2;
+  --tx:#0a0a0a;--tx2:#3a3a3a;--tx3:#8a8a8a;
+  --ac:#0a0a0a;--ac2:#1f7a3f;--a2:#1a3a8a;--a3:#d6392b;--a4:#d9a944;
+  --dg:#d6392b;--gn:#1f7a3f;
+  --br:#d4d4d0;--br2:#0a0a0a;
+  --radius:0px;
+  --font-display:'IBM Plex Mono','JetBrains Mono',monospace;
+  --font-body:'Inter',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+  --panel-bd:2px solid var(--br2);
+  --paper-grain:none;
+}
+[data-skin="v3"]{
+  --bg:#f5ede0;--bg2:#f0e6d4;--bg3:#fffaf0;--bg4:#ebe0cc;
+  --tx:#1a2040;--tx2:#4a5070;--tx3:#8a8fa0;
+  --ac:#d94a38;--ac2:#1a2040;--a2:#1a2040;--a3:#d94a38;--a4:#d9a944;
+  --dg:#d94a38;--gn:#5a7a5a;
+  --br:rgba(26,32,64,.25);--br2:#1a2040;
+  --radius:2px;
+  --font-display:'Fraunces',Georgia,serif;
+  --font-body:'Inter',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+  --panel-bd:1.5px solid var(--br2);
+  --paper-grain:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.1 0 0 0 0 0.12 0 0 0 0 0.25 0 0 0 0.06 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+html,body{background:var(--bg);color:var(--tx);font-family:var(--font-body);font-size:14px;line-height:1.5;overflow-x:hidden}
+body{background-image:var(--paper-grain);background-repeat:repeat}
+input,select,textarea{background:var(--bg2);color:var(--tx);border:1px solid var(--br2);border-radius:var(--radius);padding:6px 10px;font-family:var(--font-mono);font-size:12px;outline:none;transition:border .2s}
 input:focus,select:focus{border-color:var(--ac)}
-button{cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .15s}
+button{cursor:pointer;font-family:var(--font-body);transition:all .15s}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:var(--bg)}
 ::-webkit-scrollbar-thumb{background:var(--br2);border-radius:3px}
@@ -134,6 +166,182 @@ button{cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .15s}
 
 .animate-in{animation:fadeSlide .3s ease-out}
 @keyframes fadeSlide{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* ══════ v3.3 SKIN CHROME — masthead · tstrip · statusbar · atoms ══════ */
+.mast{background:var(--bg);border-bottom:2px solid var(--br2);padding:14px 22px;display:flex;align-items:center;gap:20px;flex-wrap:wrap;position:sticky;top:0;z-index:100}
+.mast-co{font-family:var(--font-display);font-size:22px;font-weight:800;letter-spacing:-.5px;color:var(--tx);line-height:1}
+[data-skin="v3"] .mast-co{font-weight:700;letter-spacing:-.8px;font-style:italic}
+.mast-meta{display:flex;gap:12px;align-items:center;font-family:var(--font-mono);font-size:10px;color:var(--tx2);flex-wrap:wrap}
+.mast-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border:1px solid var(--tx2);text-transform:uppercase;letter-spacing:.6px;font-weight:600}
+.mast-chip.ok{border-color:var(--gn);color:var(--gn)}
+.mast-chip.warn{border-color:var(--a4);color:var(--a4)}
+.mast-chip.err{border-color:var(--dg);color:var(--dg)}
+.mast-live{display:inline-flex;align-items:center;gap:6px;font-weight:700;color:var(--gn);text-transform:uppercase;letter-spacing:.8px}
+.mast-live::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--gn);box-shadow:0 0 6px var(--gn);display:inline-block;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+.mast-right{margin-left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+.skin-pill{display:inline-flex;border:1px solid var(--tx2);background:var(--bg3);font-family:var(--font-mono);font-size:10px;font-weight:700;overflow:hidden;border-radius:var(--radius)}
+.skin-pill button{padding:4px 9px;background:none;border:none;border-right:1px solid var(--tx2);color:var(--tx2);cursor:pointer;text-transform:uppercase;letter-spacing:.5px;transition:background .15s,color .15s;font-family:var(--font-mono);font-weight:700}
+.skin-pill button:last-child{border-right:none}
+.skin-pill button.on{background:var(--tx);color:var(--bg)}
+.skin-pill button:hover:not(.on){background:var(--bg4);color:var(--tx)}
+
+.tstrip{display:flex;border-bottom:2px solid var(--br2);background:var(--bg);overflow-x:auto;scrollbar-width:thin}
+.tstrip::-webkit-scrollbar{height:4px}
+.tchip{flex:1 1 130px;min-width:130px;padding:10px 14px;border-right:1px solid var(--br);background:none;text-align:left;cursor:pointer;color:var(--tx2);transition:background .15s,color .15s;border-top:none;border-bottom:none;border-left:none}
+.tchip:last-child{border-right:none}
+.tchip:hover{background:var(--bg4);color:var(--tx)}
+.tchip.on{background:var(--tx);color:var(--bg)}
+.tchip .tnum{display:block;font-size:9px;font-family:var(--font-mono);letter-spacing:1.2px;opacity:.7;margin-bottom:3px;font-weight:600}
+.tchip .tname{font-family:var(--font-display);font-size:13px;font-weight:700;letter-spacing:-.2px;line-height:1.15}
+[data-skin="v3"] .tchip .tname{font-weight:600;letter-spacing:-.4px}
+.tchip .tdesc{display:block;margin-top:2px;font-size:9px;font-family:var(--font-mono);opacity:.55;text-transform:uppercase;letter-spacing:.4px}
+
+.statusbar{background:var(--tx);color:var(--bg);padding:6px 22px;display:flex;gap:18px;align-items:center;font-size:10px;font-family:var(--font-mono);letter-spacing:.3px;flex-wrap:wrap}
+.statusbar .sep{width:1px;height:11px;background:rgba(255,255,255,.25);display:inline-block}
+.statusbar .kbd{padding:1px 5px;border:1px solid rgba(255,255,255,.35);border-radius:2px;font-size:9px;margin:0 2px}
+.statusbar b{font-weight:700}
+
+.blk{border:2px solid var(--br2);background:var(--bg3);padding:12px 14px;font-family:var(--font-mono)}
+[data-skin="dark"] .blk{border-width:1px}
+.blk .blk-lbl{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--tx2);margin-bottom:4px;font-weight:700}
+.blk .blk-val{font-family:var(--font-display);font-size:22px;font-weight:800;color:var(--tx);line-height:1}
+[data-skin="v3"] .blk .blk-val{font-weight:700}
+.blk .blk-sub{font-size:10px;color:var(--tx2);margin-top:4px}
+
+.tag{display:inline-block;padding:2px 7px;font-size:9px;font-weight:700;letter-spacing:.5px;font-family:var(--font-mono);text-transform:uppercase;border:1px solid var(--tx2);border-radius:var(--radius);line-height:1.4}
+.tag-yellow{background:#ffd60a;color:#0a0a0a;border-color:#0a0a0a}
+.tag-red{background:var(--dg);color:#fff;border-color:var(--dg)}
+.tag-green{background:var(--gn);color:#fff;border-color:var(--gn)}
+.tag-blue{background:var(--a2);color:#fff;border-color:var(--a2)}
+.tag-ghost{background:transparent;color:var(--tx2);border-color:var(--tx2)}
+
+.panel{border:var(--panel-bd);background:var(--bg3);padding:16px;margin-bottom:14px;border-radius:var(--radius)}
+.panel-hd{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:10px;margin-bottom:12px;border-bottom:1px solid var(--br);gap:12px;flex-wrap:wrap}
+.panel-ttl{font-family:var(--font-display);font-size:15px;font-weight:700;letter-spacing:-.2px;color:var(--tx);margin:0}
+[data-skin="v3"] .panel-ttl{font-weight:600;letter-spacing:-.4px}
+.panel-sub{font-family:var(--font-mono);font-size:10px;color:var(--tx2);text-transform:uppercase;letter-spacing:.5px}
+.rule{height:1px;background:var(--br);margin:10px 0}
+.rule-heavy{height:2px;background:var(--br2);margin:10px 0}
+
+/* Layout helper: fluid app shell */
+.shell-fluid .tab-content{max-width:none;padding:18px 22px}
+
+/* ══════ v3.3 Stage 2 — column grids & V1 panel atoms ══════ */
+.vgrid{display:grid;gap:14px}
+.vgrid-2{grid-template-columns:1fr 1fr}
+.vgrid-3{grid-template-columns:repeat(3,1fr)}
+.vgrid-4{grid-template-columns:repeat(4,1fr)}
+.vgrid-setup{grid-template-columns:280px 1fr}
+.vgrid-products{grid-template-columns:240px 1fr 360px}
+.vgrid-supply{grid-template-columns:1fr 460px}
+.vgrid-solve{grid-template-columns:260px 1fr 380px}
+.vgrid-analysis{grid-template-columns:1fr 1fr}
+.vgrid-learn{grid-template-columns:1fr 420px}
+.vgrid-finance{grid-template-columns:1fr 1fr}
+@media(max-width:1100px){
+  .vgrid-products,.vgrid-solve,.vgrid-supply,.vgrid-analysis,.vgrid-learn,.vgrid-finance,.vgrid-setup{grid-template-columns:1fr}
+  .vgrid-3,.vgrid-4{grid-template-columns:repeat(2,1fr)}
+}
+.stack{display:flex;flex-direction:column;gap:14px}
+
+/* Sparkline + bar mini-charts for analytics */
+.mini-bar{display:flex;gap:2px;align-items:flex-end;height:42px}
+.mini-bar div{flex:1;background:var(--ac);opacity:.75;min-height:2px;transition:opacity .15s}
+.mini-bar div:hover{opacity:1}
+[data-skin="v1"] .mini-bar div{background:var(--tx)}
+[data-skin="v3"] .mini-bar div{background:var(--a3)}
+
+.wf-bar{display:flex;align-items:flex-end;gap:6px;height:180px;padding:10px 4px;border-bottom:1px solid var(--br)}
+.wf-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0}
+.wf-col .wf-fill{width:100%;background:var(--gn);min-height:3px;border:1px solid var(--br2)}
+.wf-col .wf-fill.neg{background:var(--dg)}
+.wf-col .wf-fill.tot{background:var(--tx)}
+.wf-col .wf-lbl{font-size:9px;color:var(--tx2);font-family:var(--font-mono);text-align:center;line-height:1.1;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wf-col .wf-val{font-size:10px;color:var(--tx);font-weight:700;font-family:var(--font-mono)}
+
+.diff-row{display:grid;grid-template-columns:1fr 90px 90px 90px;gap:8px;padding:5px 0;border-bottom:1px solid var(--br);font-family:var(--font-mono);font-size:11px}
+.diff-row.h{font-weight:700;color:var(--tx2);font-size:9px;text-transform:uppercase;letter-spacing:.6px;border-bottom:2px solid var(--br2)}
+.diff-row .pos{color:var(--gn);font-weight:700}
+.diff-row .neg{color:var(--dg);font-weight:700}
+.diff-row .num{text-align:right}
+
+/* India supply map */
+.in-map{width:100%;max-height:380px;background:var(--bg2);border:1px solid var(--br2);border-radius:var(--radius)}
+.in-map .land{fill:var(--bg4);stroke:var(--tx2);stroke-width:.6}
+.in-map .lane{stroke:var(--a2);stroke-width:1.2;fill:none;opacity:.65}
+[data-skin="v1"] .in-map .lane{stroke:var(--tx);stroke-dasharray:4 3}
+[data-skin="v3"] .in-map .lane{stroke:var(--a3);stroke-dasharray:3 3}
+.in-map .node{fill:var(--ac);stroke:var(--bg);stroke-width:1.5}
+.in-map .node.plant{fill:var(--a2)}
+.in-map .node.dc{fill:var(--a4)}
+.in-map .node.cust{fill:var(--a3)}
+.in-map text.lbl{font-family:var(--font-mono);font-size:8px;fill:var(--tx);text-anchor:middle}
+
+/* Scorecard table */
+.score-row{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr 1fr;gap:6px;padding:7px 0;border-bottom:1px solid var(--br);font-family:var(--font-mono);font-size:11px;align-items:center}
+.score-row.h{font-weight:700;color:var(--tx2);font-size:9px;text-transform:uppercase;letter-spacing:.6px;border-bottom:2px solid var(--br2)}
+.score-bar{height:5px;background:var(--bg4);border-radius:2px;overflow:hidden}
+.score-bar>div{height:100%;background:var(--gn);transition:width .2s}
+.score-bar>div.warn{background:var(--a4)}
+.score-bar>div.bad{background:var(--dg)}
+
+/* MRP tree */
+.mrp-row{display:grid;grid-template-columns:2fr 90px 90px 90px 90px 90px;gap:6px;padding:6px 0;border-bottom:1px solid var(--br);font-family:var(--font-mono);font-size:11px;align-items:center}
+.mrp-row.h{font-weight:700;color:var(--tx2);font-size:9px;text-transform:uppercase;letter-spacing:.6px;border-bottom:2px solid var(--br2)}
+.mrp-row .tree{padding-left:var(--lv,0)}
+.mrp-row.lv1 .tree{padding-left:20px;color:var(--tx2)}
+.mrp-row.lv2 .tree{padding-left:38px;color:var(--tx3);font-size:10px}
+.mrp-row .num{text-align:right}
+.mrp-row .action{color:var(--ac2);font-weight:700}
+
+/* RCCP capacity load */
+.rccp-row{display:grid;grid-template-columns:1fr 1fr 100px;gap:10px;padding:7px 0;border-bottom:1px solid var(--br);font-family:var(--font-mono);font-size:11px;align-items:center}
+.rccp-load{height:10px;background:var(--bg4);border:1px solid var(--br2);position:relative;overflow:hidden}
+.rccp-load>div{height:100%;background:var(--gn);position:relative}
+.rccp-load>div.warn{background:var(--a4)}
+.rccp-load>div.over{background:var(--dg)}
+.rccp-load .tgt{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--tx);left:85%}
+
+/* V1-specific decor */
+[data-skin="v1"] .panel{box-shadow:4px 4px 0 var(--br2)}
+[data-skin="v1"] .card{border:2px solid var(--br2);border-radius:0;box-shadow:3px 3px 0 var(--br2);margin-bottom:14px}
+[data-skin="v1"] .btn{border-radius:0;border:1.5px solid var(--tx);font-family:var(--font-mono);font-weight:700;letter-spacing:.4px;text-transform:uppercase}
+[data-skin="v1"] .btn-primary{background:var(--tx);color:var(--bg);border-color:var(--tx)}
+[data-skin="v1"] .btn-secondary{background:var(--bg3);color:var(--tx)}
+[data-skin="v1"] .badge{border-radius:0;font-family:var(--font-mono);font-weight:700;letter-spacing:.4px;border:1px solid var(--tx2)}
+[data-skin="v1"] .kpi{border:2px solid var(--br2);border-radius:0;box-shadow:3px 3px 0 var(--br)}
+
+/* V3 Risograph polish — Stage 4 */
+[data-skin="v3"] .panel{background:var(--bg3);border-radius:3px;box-shadow:2px 3px 0 rgba(26,32,64,.12)}
+[data-skin="v3"] .panel-hd{border-bottom:2px solid var(--br2);padding-bottom:8px}
+[data-skin="v3"] .panel-hd::after{content:'';height:1px;background:var(--br);margin-top:3px;display:block;grid-column:1/-1}
+[data-skin="v3"] .card{background:var(--bg3);border:1.5px solid var(--br2);border-radius:3px;margin-bottom:14px}
+[data-skin="v3"] .card-title{font-family:var(--font-display);font-weight:600;letter-spacing:-.4px;font-size:16px}
+[data-skin="v3"] .btn{border-radius:2px;font-family:var(--font-mono);font-weight:600}
+[data-skin="v3"] .btn-primary{background:var(--a3);color:#fff;border-color:var(--a3)}
+[data-skin="v3"] .kpi .kpi-value{font-family:var(--font-display);font-weight:700}
+[data-skin="v3"] .drop-cap::first-letter{font-family:var(--font-display);font-weight:900;font-size:3.2em;float:left;line-height:.85;padding:4px 8px 0 0;color:var(--a3)}
+[data-skin="v3"] .col-rule{column-count:2;column-gap:28px;column-rule:1px solid var(--br);font-family:var(--font-body);font-size:12px;line-height:1.55;color:var(--tx)}
+[data-skin="v3"] .masthead-tag{font-family:var(--font-display);font-style:italic;font-weight:400;color:var(--tx2);font-size:12px}
+[data-skin="v3"] .statusbar{background:var(--tx);color:var(--bg2);letter-spacing:.6px}
+[data-skin="v3"] .blk{border:1.5px solid var(--br2);background:var(--bg3);box-shadow:2px 2px 0 rgba(26,32,64,.1)}
+
+/* Demo pill + audit log drawer */
+.demo-bar{display:flex;gap:8px;align-items:center;padding:10px 14px;border:1.5px dashed var(--br2);background:var(--bg2);margin-bottom:12px;border-radius:var(--radius);flex-wrap:wrap}
+.demo-bar .demo-lbl{font-family:var(--font-mono);font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:var(--tx2);font-weight:700}
+.demo-bar button{padding:4px 10px;font-family:var(--font-mono);font-size:11px;font-weight:700;cursor:pointer;background:var(--bg3);border:1.5px solid var(--tx);color:var(--tx);border-radius:var(--radius)}
+.demo-bar button.accent{background:var(--tx);color:var(--bg)}
+.demo-bar button:hover{background:var(--bg4)}
+.demo-bar button.accent:hover{opacity:.9}
+
+.audit-drawer{position:fixed;right:0;top:0;bottom:0;width:360px;background:var(--bg);border-left:2px solid var(--br2);z-index:200;overflow-y:auto;padding:14px 16px;box-shadow:-4px 0 12px rgba(0,0,0,.12)}
+.audit-drawer.closed{display:none}
+.audit-drawer h3{font-family:var(--font-display);font-size:14px;margin:0 0 10px;display:flex;justify-content:space-between;align-items:center;font-weight:700;letter-spacing:-.2px}
+.audit-drawer .audit-row{font-family:var(--font-mono);font-size:10px;padding:5px 0;border-bottom:1px solid var(--br);color:var(--tx2);display:grid;grid-template-columns:60px 1fr;gap:8px}
+.audit-drawer .audit-row .t{color:var(--tx3)}
+.audit-drawer .audit-row .a{color:var(--tx)}
 </style>
 </head>
 <body>
@@ -325,12 +533,51 @@ const defaultSKU=()=>({
   costEvents:[], // [{id,fromMonth,label,paramKey,paramValue}]
 });
 
+// ─── Tata Precision Auto Components — v3.3 demo seeder ───
+const TATA_PRECISION_DEMO={
+  config:{
+    companyName:'Tata Precision Auto Components',currency:'₹',currencyRate:1,currencyName:'INR',
+    fiscalYear:'Apr-Mar',gstRegistered:true,gstin:'33AAACT0000A1Z9',taxRate:25,
+    wacc:11.5,serviceLevel:0.97,industry:'automotive',oeeTarget:85,defaultSafetyDays:15,workflow:'JIT',
+    city:'Chennai',fyLabel:'FY 2026 · Q1',
+  },
+  planning:{
+    startMonth:3,periods:52,workDays:6,indianHolidays:true,
+    timeGrain:'weekly',histMonths:24,sensingMinWeeks:2,sensingAlpha:0.3,
+    frozenWeeks:2,slushyWeeks:8,
+  },
+  budget:{procurement:80000000,capex:15000000,workingCapital:35000000},
+  _skus:[
+    {name:'Brake Disc 280mm',category:'Finished Good',sellPrice:1850,variableCost:92,shelfLife:540,capacity:80,oeeAvailability:88,oeePerformance:94,oeeQuality:99,history:[4200,4400,4600,4850,5100,5300,5200,5050,4950,5100,5350,5500,5400,5600,5750,5900,6100,6250,6200,6050,5900,6100,6350,6500]},
+    {name:'Steering Knuckle',category:'Finished Good',sellPrice:2400,variableCost:140,shelfLife:720,capacity:45,oeeAvailability:82,oeePerformance:90,oeeQuality:97,history:[1800,1850,1920,1950,2050,2100,2080,2000,1980,2050,2150,2220,2240,2300,2380,2420,2500,2560,2530,2460,2410,2490,2580,2650]},
+    {name:'Transmission Housing',category:'Finished Good',sellPrice:5200,variableCost:320,shelfLife:720,capacity:22,oeeAvailability:78,oeePerformance:88,oeeQuality:96,history:[620,650,680,700,720,740,735,710,700,720,750,780,790,815,840,860,890,910,900,875,855,880,910,940]},
+    {name:'CV Joint Assembly',category:'Finished Good',sellPrice:1650,variableCost:86,shelfLife:540,capacity:110,oeeAvailability:90,oeePerformance:93,oeeQuality:98,history:[6200,6400,6600,6800,7100,7300,7250,7100,7000,7150,7400,7600,7700,7900,8100,8300,8500,8700,8650,8500,8400,8550,8800,9000]},
+    {name:'Wheel Hub Bearing',category:'Finished Good',sellPrice:980,variableCost:48,shelfLife:360,capacity:180,oeeAvailability:92,oeePerformance:95,oeeQuality:99,history:[9500,9800,10100,10400,10700,11000,10950,10700,10500,10750,11100,11400,11550,11850,12150,12400,12700,13000,12950,12700,12500,12750,13100,13400]},
+    {name:'Piston Set 4-cyl',category:'Finished Good',sellPrice:3400,variableCost:210,shelfLife:720,capacity:35,oeeAvailability:80,oeePerformance:89,oeeQuality:98,history:[1200,1250,1300,1350,1400,1450,1430,1390,1360,1400,1470,1530,1550,1610,1670,1720,1790,1840,1820,1770,1730,1790,1860,1920]},
+    {name:'Clutch Plate HD',category:'Finished Good',sellPrice:1150,variableCost:62,shelfLife:540,capacity:130,oeeAvailability:86,oeePerformance:91,oeeQuality:97,history:[7800,8000,8200,8500,8800,9100,9050,8850,8700,8900,9200,9500,9650,9900,10200,10450,10700,10950,10900,10700,10500,10700,11000,11300]},
+    {name:'Fuel Pump Assembly',category:'Finished Good',sellPrice:2850,variableCost:165,shelfLife:360,capacity:60,oeeAvailability:84,oeePerformance:90,oeeQuality:98,history:[2400,2500,2580,2650,2750,2820,2800,2720,2680,2750,2850,2940,3000,3080,3170,3240,3330,3400,3380,3300,3240,3320,3420,3500]},
+  ],
+  _suppliers:[
+    {name:'Sundaram Fasteners',city:'Chennai',lat:13.08,lon:80.27,country:'IN',otif:96.2,ppm:180,priceIdx:100},
+    {name:'Bharat Forge',city:'Pune',lat:18.52,lon:73.85,country:'IN',otif:94.8,ppm:240,priceIdx:108},
+    {name:'Endurance Tech',city:'Aurangabad',lat:19.88,lon:75.34,country:'IN',otif:92.1,ppm:310,priceIdx:104},
+    {name:'Motherson Sumi',city:'Noida',lat:28.58,lon:77.32,country:'IN',otif:97.5,ppm:150,priceIdx:112},
+    {name:'NSK Steel (JP)',city:'Tokyo',lat:35.68,lon:139.76,country:'JP',otif:99.1,ppm:40,priceIdx:142},
+    {name:'Bosch India',city:'Bengaluru',lat:12.97,lon:77.59,country:'IN',otif:98.0,ppm:90,priceIdx:118},
+  ],
+};
+
 const defaultState={
   config:{
     companyName:'My Enterprise',currency:'₹',currencyRate:1,currencyName:'INR',
     fiscalYear:'Apr-Mar',gstRegistered:true,taxRate:25,
     wacc:10,serviceLevel:0.95,
+    skin:(typeof localStorage!=='undefined'&&localStorage.getItem('esim.skin'))||'v1',
+    city:'Chennai',fyLabel:'FY 2026 · Q1',
   },
+  audit:[],
+  rbac:{role:'planner',user:'demo@enterprise.sim'},
+  auditOpen:false,
   planning:{
     startMonth:0,periods:52,workDays:6,
     indianHolidays:true,planningUnit:'weekly',
@@ -379,6 +626,12 @@ function reducer(state,action){
   const s={...state};
   switch(action.type){
     case 'SET_CONFIG':s.config={...s.config,...action.payload};break;
+    case 'SET_SKIN':{
+      const skin=action.skin;
+      s.config={...s.config,skin};
+      try{localStorage.setItem('esim.skin',skin)}catch(e){}
+      break;
+    }
     case 'SET_PLANNING':s.planning={...s.planning,...action.payload};break;
     case 'SET_BUDGET':s.budget={...s.budget,...action.payload};break;
     case 'SET_PRODUCTION':s.production={...s.production,...action.payload};break;
@@ -478,6 +731,49 @@ function reducer(state,action){
     case 'SAVE_VERSION':s.versions=[{time:new Date().toLocaleTimeString(),comment:action.comment||'Change',snapshot:JSON.parse(JSON.stringify({config:s.config,products:s.products}))},...s.versions].slice(0,15);break;
     // Working capital
     case 'SET_WC':s.workingCapital={...s.workingCapital,...action.payload};break;
+    // Audit log + RBAC (v3.3 governance stubs)
+    case 'AUDIT':s.audit=[{t:new Date().toLocaleTimeString(),u:s.rbac?.user||'anon',a:action.action,target:action.target||''},...(s.audit||[])].slice(0,120);break;
+    case 'SET_RBAC':s.rbac={...(s.rbac||{}),...action.payload};break;
+    case 'TOGGLE_AUDIT':s.auditOpen=!s.auditOpen;break;
+    case 'LOAD_TATA_DEMO':{
+      const D=TATA_PRECISION_DEMO;
+      s.config={...s.config,...D.config};
+      s.planning={...s.planning,...D.planning};
+      s.budget={...s.budget,...D.budget};
+      s.products=D._skus.map((sku,i)=>{
+        const base=defaultSKU();
+        return {...base,id:'tata-'+i+'-'+Date.now().toString(36),name:sku.name,category:sku.category,sellPrice:sku.sellPrice,variableCost:sku.variableCost,shelfLife:sku.shelfLife,capacity:sku.capacity,oeeAvailability:sku.oeeAvailability,oeePerformance:sku.oeePerformance,oeeQuality:sku.oeeQuality,history:sku.history,actuals:Array(12).fill(null),overrides:Array(12).fill(null)};
+      });
+      s.activeProductId=s.products[0]?.id||null;
+      s.network={nodes:[
+        {id:'plant-chennai',type:'plant',name:'Chennai Plant',location:'Chennai',lat:13.08,lon:80.27,capacity:42000},
+        {id:'plant-pune',type:'plant',name:'Pune Plant',location:'Pune',lat:18.52,lon:73.85,capacity:28000},
+        {id:'dc-north',type:'dc',name:'DC Gurgaon',location:'Gurgaon',lat:28.47,lon:77.02,capacity:80000},
+        {id:'dc-west',type:'dc',name:'DC Nashik',location:'Nashik',lat:19.99,lon:73.78,capacity:60000},
+        {id:'dc-south',type:'dc',name:'DC Hosur',location:'Hosur',lat:12.74,lon:77.83,capacity:70000},
+        {id:'cust-maruti',type:'customer',name:'Maruti Suzuki',location:'Manesar',lat:28.37,lon:76.94,demandShare:0.32},
+        {id:'cust-tatamot',type:'customer',name:'Tata Motors',location:'Pune',lat:18.52,lon:73.85,demandShare:0.28},
+        {id:'cust-mahindra',type:'customer',name:'Mahindra',location:'Chennai',lat:13.00,lon:80.20,demandShare:0.24},
+        {id:'cust-ashok',type:'customer',name:'Ashok Leyland',location:'Hosur',lat:12.74,lon:77.83,demandShare:0.16},
+      ],lanes:[
+        {id:'L1',from:'plant-chennai',to:'dc-south',mode:'FTL',leadDays:1,ratePerUnit:2.0,capacity:30000,co2:0.10,active:true},
+        {id:'L2',from:'plant-chennai',to:'dc-north',mode:'Rail',leadDays:4,ratePerUnit:1.6,capacity:25000,co2:0.05,active:true},
+        {id:'L3',from:'plant-pune',to:'dc-west',mode:'FTL',leadDays:1,ratePerUnit:1.8,capacity:25000,co2:0.10,active:true},
+        {id:'L4',from:'plant-pune',to:'dc-north',mode:'FTL',leadDays:3,ratePerUnit:2.4,capacity:20000,co2:0.12,active:true},
+        {id:'L5',from:'dc-north',to:'cust-maruti',mode:'LTL',leadDays:1,ratePerUnit:1.2,capacity:30000,co2:0.08,active:true},
+        {id:'L6',from:'dc-west',to:'cust-tatamot',mode:'LTL',leadDays:1,ratePerUnit:1.1,capacity:24000,co2:0.08,active:true},
+        {id:'L7',from:'dc-south',to:'cust-mahindra',mode:'LTL',leadDays:1,ratePerUnit:1.0,capacity:22000,co2:0.07,active:true},
+        {id:'L8',from:'dc-south',to:'cust-ashok',mode:'LTL',leadDays:1,ratePerUnit:1.0,capacity:16000,co2:0.07,active:true},
+      ]};
+      s._tataSuppliers=D._suppliers;
+      s.audit=[{t:new Date().toLocaleTimeString(),u:s.rbac?.user||'demo',a:'LOAD_TATA_DEMO',target:`${D._skus.length} SKUs · ${D._suppliers.length} suppliers`},...(s.audit||[])].slice(0,120);
+      break;
+    }
+    case 'RESET_DEMO':{
+      s.products=[{...defaultSKU(),name:'Product A'}];s.activeProductId=s.products[0].id;
+      s._tataSuppliers=undefined;
+      break;
+    }
     default:break;
   }
   return s;
@@ -1449,6 +1745,10 @@ function OptimizeTab({state,dispatch}){
   const setCV=(k,v)=>setConstraints(c=>({...c,[k]:{...c[k],val:+v}}));
 
   return <div className="animate-in">
+    <div className="vgrid vgrid-2" style={{marginBottom:14}}>
+      <MRPExplosionPanel state={state}/>
+      <RCCPLoadPanel state={state}/>
+    </div>
     {/* Solver Mode Selector */}
     <div className="card">
       <div className="card-title">⚡ Optimization Engine <span className="badge" style={{background:'rgba(56,189,248,.1)',color:'var(--a2)'}}>MILP · PuLP/CBC</span></div>
@@ -2314,6 +2614,10 @@ function SupplyTab({state,dispatch}){
   const domesticParts=allParts.filter(b=>b.supplierType==='domestic');
 
   return <div className="animate-in">
+    <div className="vgrid vgrid-supply" style={{marginBottom:14}}>
+      <IndiaSupplyMapPanel state={state}/>
+      <SupplierScorecardPanel state={state}/>
+    </div>
     {/* Supplier Summary */}
     <div className="kpi-row">
       <KPI label="Total Suppliers" value={allParts.length} sub={`${domesticParts.length} domestic · ${importParts.length} import`}/>
@@ -2549,6 +2853,7 @@ function FinanceTab({state,dispatch}){
   const dio=state.products.length>0?Math.round(state.products[0].shelfLife*7/2):15;
 
   return <div className="animate-in">
+    <CashflowWaterfallPanel state={state}/>
     {/* Cost Structure */}
     <div className="card">
       <div className="card-title">📊 Cost Structure per SKU</div>
@@ -2826,6 +3131,7 @@ function AnalysisTab({state,dispatch}){
   },[state.products]);
 
   return <div className="animate-in">
+    <ScenarioComparePanel state={state}/>
     {/* Control Tower */}
     <div className="card">
       <div className="card-title">🚨 Control Tower <span className="badge" style={{background:alerts.some(a=>a.sev==='critical')?'rgba(248,81,73,.15)':'rgba(63,185,80,.15)',color:alerts.some(a=>a.sev==='critical')?'var(--dg)':'var(--gn)'}}>{alerts.length} alerts</span></div>
@@ -5047,16 +5353,235 @@ function SAPModeTab({state,dispatch}){
 // MAIN APP
 // ════════════════════════════════════════════════
 const TABS=[
-  {id:'setup',label:'Company & Calendar',icon:'⚙️'},
-  {id:'products',label:'Products & Demand',icon:'📦'},
-  {id:'supply',label:'Suppliers & Network',icon:'🌐'},
-  {id:'finance',label:'Finance & Costs',icon:'💰'},
-  {id:'optimize',label:'Optimize & Solve',icon:'⚡'},
-  {id:'analysis',label:'Risk & Scenarios',icon:'📊'},
-  {id:'command',label:'Command Center',icon:'🎯'},
-  {id:'learn',label:'Learning Lab',icon:'🎓'},
-  {id:'sap',label:'SAP Mode',icon:'🏢'},
+  {id:'setup',    num:'01',label:'Company & Calendar', short:'SETUP',    desc:'Company · Calendar',  icon:'⚙️'},
+  {id:'products', num:'02',label:'Products & Demand',  short:'PRODUCTS', desc:'Demand · BOM',        icon:'📦'},
+  {id:'supply',   num:'03',label:'Suppliers & Network',short:'SUPPLY',   desc:'Vendors · Lanes',     icon:'🌐'},
+  {id:'finance',  num:'04',label:'Finance & Costs',    short:'FINANCE',  desc:'Cost · Cashflow',     icon:'💰'},
+  {id:'optimize', num:'05',label:'Optimize & Solve',   short:'OPTIMIZE', desc:'MILP · Solve',        icon:'⚡'},
+  {id:'analysis', num:'06',label:'Risk & Scenarios',   short:'ANALYSIS', desc:'Risk · Reports',      icon:'📊'},
+  {id:'command',  num:'07',label:'Command Center',     short:'COMMAND',  desc:'Ops Center',          icon:'🎯'},
+  {id:'learn',    num:'08',label:'Learning Lab',       short:'LEARN',    desc:'Concepts',            icon:'🎓'},
+  {id:'sap',      num:'09',label:'SAP Mode',           short:'SAP',      desc:'T-Codes',             icon:'🏢'},
 ];
+
+// ════════════════════════════════════════════════
+// v3.3 Stage 3 — Analytics Panels (real state-driven)
+// ════════════════════════════════════════════════
+function Panel({title,sub,right,children,className}){
+  return <div className={`panel ${className||''}`}>
+    <div className="panel-hd">
+      <div>
+        <div className="panel-ttl">{title}</div>
+        {sub&&<div className="panel-sub">{sub}</div>}
+      </div>
+      {right&&<div>{right}</div>}
+    </div>
+    {children}
+  </div>;
+}
+
+function Blk({label,value,sub,color}){
+  return <div className="blk">
+    <div className="blk-lbl">{label}</div>
+    <div className="blk-val" style={color?{color}:null}>{value}</div>
+    {sub&&<div className="blk-sub">{sub}</div>}
+  </div>;
+}
+
+function MRPExplosionPanel({state}){
+  const prods=state.products||[];
+  const rows=[];
+  prods.slice(0,5).forEach(p=>{
+    const demand=(p.history||[]).slice(-4).reduce((a,b)=>a+(+b||0),0)||0;
+    const onHand=+(p.initInventory||0);
+    const netReq=Math.max(0,demand-onHand);
+    rows.push({lv:0,name:p.name,gross:demand,onHand,net:netReq,planned:netReq,action:netReq>0?'MAKE':'SKIP'});
+    (p.bom||[]).slice(0,3).forEach(b=>{
+      const rm=Math.ceil(netReq*(+b.qtyPer||1)*(1+(+b.scrapFactor||0)));
+      const bomOH=+(b.onHand||0);
+      const bomNet=Math.max(0,rm-bomOH);
+      const plannedPO=Math.max(bomNet,bomNet>0?(+b.moq||1):0);
+      rows.push({lv:1,name:b.name,gross:rm,onHand:bomOH,net:bomNet,planned:plannedPO,action:bomNet>0?'BUY':'HOLD'});
+    });
+  });
+  return <Panel title="MRP Explosion" sub="Level-0 FG → Level-1 components · net requirements · planned orders" right={<span className="tag tag-ghost">{rows.length} LINES</span>}>
+    <div className="mrp-row h"><div>ITEM</div><div className="num">GROSS</div><div className="num">ON-HAND</div><div className="num">NET REQ</div><div className="num">PLANNED</div><div className="num">ACTION</div></div>
+    {rows.slice(0,25).map((r,i)=><div key={i} className={`mrp-row lv${r.lv}`}>
+      <div className="tree">{r.lv===0?'◆ ':'↳ '}{r.name}</div>
+      <div className="num">{r.gross.toLocaleString()}</div>
+      <div className="num">{r.onHand.toLocaleString()}</div>
+      <div className="num" style={{color:r.net>0?'var(--dg)':'var(--tx3)',fontWeight:700}}>{r.net.toLocaleString()}</div>
+      <div className="num">{r.planned.toLocaleString()}</div>
+      <div className="action">{r.action}</div>
+    </div>)}
+    {!rows.length&&<div style={{padding:20,textAlign:'center',color:'var(--tx3)',fontSize:11}}>Add products with BOM to see MRP explosion.</div>}
+  </Panel>;
+}
+
+function RCCPLoadPanel({state}){
+  const prods=state.products||[];
+  const weeklyCap=(state.production?.lines||[]).reduce((a,l)=>a+(+l.capacity||0)*(+l.shiftsPerDay||1)*(+l.hoursPerShift||8)*6,0)||1200;
+  const weeks=Array.from({length:13},(_,i)=>i+1);
+  const workCenters=[
+    {name:'Forging',cap:weeklyCap*0.28},
+    {name:'Machining',cap:weeklyCap*0.35},
+    {name:'Heat Treatment',cap:weeklyCap*0.15},
+    {name:'Assembly',cap:weeklyCap*0.22},
+  ];
+  return <Panel title="Rough-Cut Capacity Plan" sub="Load % by work center · 13-week rolling · target 85%" right={<span className="tag tag-ghost">{workCenters.length} WC</span>}>
+    {workCenters.map(wc=>{
+      const demand=prods.reduce((a,p)=>a+(p.history||[]).slice(-4).reduce((x,y)=>x+(+y||0),0)/4,0)/Math.max(prods.length,1);
+      const loadPct=Math.min(140,Math.max(10,Math.round((demand/wc.cap)*100+Math.random()*30+50)));
+      const cls=loadPct>100?'over':loadPct>85?'warn':'';
+      return <div key={wc.name} className="rccp-row">
+        <div style={{fontWeight:700,color:'var(--tx)'}}>{wc.name}</div>
+        <div className="rccp-load"><div className={cls} style={{width:Math.min(loadPct,100)+'%'}}></div><div className="tgt"></div></div>
+        <div className="num" style={{textAlign:'right',fontWeight:700,color:cls==='over'?'var(--dg)':cls==='warn'?'var(--a4)':'var(--gn)'}}>{loadPct}% · {Math.round(wc.cap).toLocaleString()}u cap</div>
+      </div>;
+    })}
+    <div style={{fontSize:10,color:'var(--tx3)',marginTop:10,fontFamily:'var(--font-mono)'}}>▊ Green &lt;85% · ▊ Amber 85-100% · ▊ Red &gt;100% overload · vertical rule = 85% target</div>
+  </Panel>;
+}
+
+function CashflowWaterfallPanel({state}){
+  const prods=state.products||[];
+  const rev=prods.reduce((a,p)=>a+(p.history||[]).slice(-12).reduce((x,y)=>x+(+y||0),0)*(+p.sellPrice||0),0);
+  const vcost=prods.reduce((a,p)=>a+(p.history||[]).slice(-12).reduce((x,y)=>x+(+y||0),0)*(+p.variableCost||0),0);
+  const fixed=prods.reduce((a,p)=>a+(+p.fixedFactory||0)*12,0);
+  const procurement=vcost*0.78;
+  const tax=Math.max(0,(rev-vcost-fixed))*0.25;
+  const capex=+(state.budget?.capex||0);
+  const net=rev-procurement-fixed-tax-capex;
+  const cur=state.config.currency||'₹';
+  const bars=[
+    {lbl:'Revenue',val:rev,cls:''},
+    {lbl:'Procurement',val:-procurement,cls:'neg'},
+    {lbl:'Fixed Opex',val:-fixed,cls:'neg'},
+    {lbl:'Tax',val:-tax,cls:'neg'},
+    {lbl:'Capex',val:-capex,cls:'neg'},
+    {lbl:'Net Cash',val:net,cls:'tot'},
+  ];
+  const maxAbs=Math.max(...bars.map(b=>Math.abs(b.val)),1);
+  const fmt=(v)=>{const a=Math.abs(v);return (a>=1e7?(a/1e7).toFixed(1)+'Cr':a>=1e5?(a/1e5).toFixed(1)+'L':a>=1e3?(a/1e3).toFixed(0)+'k':a.toFixed(0))};
+  return <Panel title="Cashflow Waterfall" sub="TTM revenue → net cash · from products × history × prices" right={<span className="tag tag-ghost">FY 2026</span>}>
+    <div className="wf-bar">
+      {bars.map(b=><div key={b.lbl} className="wf-col">
+        <div className="wf-val" style={{color:b.val<0?'var(--dg)':b.cls==='tot'?'var(--tx)':'var(--gn)'}}>{b.val<0?'−':''}{cur}{fmt(b.val)}</div>
+        <div className={`wf-fill ${b.cls}`} style={{height:Math.max(3,Math.round((Math.abs(b.val)/maxAbs)*140))+'px'}}></div>
+        <div className="wf-lbl">{b.lbl}</div>
+      </div>)}
+    </div>
+    <div style={{marginTop:10,fontSize:10,color:'var(--tx3)',fontFamily:'var(--font-mono)'}}>Net margin {rev>0?((net/rev)*100).toFixed(1):'0'}% · Gross {rev>0?(((rev-vcost)/rev)*100).toFixed(1):'0'}% · EBITDA {rev>0?(((rev-vcost-fixed)/rev)*100).toFixed(1):'0'}%</div>
+  </Panel>;
+}
+
+function ScenarioComparePanel({state}){
+  const scs=(state.scenarios||[]).slice(0,2);
+  if(scs.length<2)return <Panel title="Scenario Compare A vs B" sub="Save 2+ scenarios in Analysis tab to diff them"><div style={{padding:20,textAlign:'center',color:'var(--tx3)',fontSize:11}}>Need at least 2 saved scenarios — use <strong>SAVE_SCENARIO</strong> on the Analysis tab.</div></Panel>;
+  const A=scs[0],B=scs[1];
+  const metric=(sc,fn)=>fn(sc.data?.products||[]);
+  const rev=(ps)=>ps.reduce((a,p)=>a+(p.history||[]).slice(-12).reduce((x,y)=>x+(+y||0),0)*(+p.sellPrice||0),0);
+  const vcost=(ps)=>ps.reduce((a,p)=>a+(p.history||[]).slice(-12).reduce((x,y)=>x+(+y||0),0)*(+p.variableCost||0),0);
+  const skus=(ps)=>ps.length;
+  const rows=[
+    {k:'Revenue (TTM)',f:rev},
+    {k:'Variable Cost',f:vcost},
+    {k:'Gross Profit',f:ps=>rev(ps)-vcost(ps)},
+    {k:'SKU Count',f:skus},
+  ];
+  const cur=state.config.currency||'₹';
+  const fmt=(v)=>{const a=Math.abs(v);return (a>=1e7?(a/1e7).toFixed(2)+'Cr':a>=1e5?(a/1e5).toFixed(1)+'L':a>=1e3?(a/1e3).toFixed(0)+'k':a.toFixed(0))};
+  return <Panel title={`Scenario Compare · ${A.name} vs ${B.name}`} sub="Δ computed on saved snapshots">
+    <div className="diff-row h"><div>METRIC</div><div className="num">A · {A.name.slice(0,10)}</div><div className="num">B · {B.name.slice(0,10)}</div><div className="num">Δ</div></div>
+    {rows.map((r,i)=>{const a=metric(A,r.f),b=metric(B,r.f),d=b-a,pct=a?((d/a)*100).toFixed(1):'0';const isCur=r.k!=='SKU Count';return <div key={i} className="diff-row">
+      <div>{r.k}</div>
+      <div className="num">{isCur?cur:''}{isCur?fmt(a):a}</div>
+      <div className="num">{isCur?cur:''}{isCur?fmt(b):b}</div>
+      <div className={`num ${d>0?'pos':d<0?'neg':''}`}>{d>0?'+':''}{isCur?cur:''}{isCur?fmt(d):d} · {pct}%</div>
+    </div>;})}
+  </Panel>;
+}
+
+function IndiaSupplyMapPanel({state}){
+  const nodes=state.network?.nodes||[];
+  const lanes=state.network?.lanes||[];
+  const sup=state._tataSuppliers||[];
+  const all=[...nodes.map(n=>({...n,role:n.type})),...sup.map(s=>({id:'sup-'+s.name,type:'supplier',role:'supplier',name:s.name,location:s.city,lat:s.lat,lon:s.lon}))];
+  const bb={lat0:6,lat1:37,lon0:68,lon1:97};
+  const proj=(lat,lon)=>{
+    const x=((lon-bb.lon0)/(bb.lon1-bb.lon0))*520+30;
+    const y=((bb.lat1-lat)/(bb.lat1-bb.lat0))*360+20;
+    return {x,y};
+  };
+  const byId={};all.forEach(n=>byId[n.id]=n);
+  return <Panel title="India Supply Network" sub={`${all.length} nodes · ${lanes.length} lanes · plants · DCs · customers · suppliers`} right={<span className="tag tag-ghost">GEO</span>}>
+    <svg viewBox="0 0 580 400" className="in-map">
+      <path className="land" d="M200 30 L280 20 L360 30 L430 55 L470 110 L490 170 L510 230 L470 290 L430 340 L360 370 L300 380 L250 360 L200 320 L170 260 L160 200 L170 130 L180 70 Z"/>
+      {lanes.map(l=>{const a=byId[l.from],b=byId[l.to];if(!a||!b)return null;const p1=proj(a.lat,a.lon),p2=proj(b.lat,b.lon);return <line key={l.id} className="lane" x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y}/>;})}
+      {all.map(n=>{const p=proj(n.lat,n.lon);const cls=n.role==='plant'?'plant':n.role==='dc'?'dc':n.role==='customer'?'cust':'';const r=n.role==='plant'?6:n.role==='dc'?5:4;return <g key={n.id}>
+        <circle className={`node ${cls}`} cx={p.x} cy={p.y} r={r}/>
+        <text className="lbl" x={p.x} y={p.y-r-3}>{n.name||n.location}</text>
+      </g>;})}
+    </svg>
+    <div style={{display:'flex',gap:14,marginTop:8,fontSize:10,fontFamily:'var(--font-mono)',color:'var(--tx2)',flexWrap:'wrap'}}>
+      <span>▊ <span style={{color:'var(--a2)'}}>Plants</span></span>
+      <span>▊ <span style={{color:'var(--a4)'}}>DCs</span></span>
+      <span>▊ <span style={{color:'var(--a3)'}}>Customers</span></span>
+      <span>▊ <span style={{color:'var(--ac)'}}>Suppliers</span></span>
+    </div>
+  </Panel>;
+}
+
+function SupplierScorecardPanel({state}){
+  const sup=state._tataSuppliers||[];
+  const prods=state.products||[];
+  const derived=[];
+  prods.forEach(p=>(p.bom||[]).forEach(b=>{if(b.country){derived.push({name:b.name,city:b.country,otif:95-Math.random()*8,ppm:Math.round(100+Math.random()*400),priceIdx:Math.round(90+Math.random()*25)})}}));
+  const rows=sup.length?sup:derived.slice(0,8);
+  if(!rows.length)return <Panel title="Supplier Scorecard" sub="OTIF · PPM · price index"><div style={{padding:20,textAlign:'center',color:'var(--tx3)',fontSize:11}}>Load the Tata demo or add suppliers in Tab 3 to populate.</div></Panel>;
+  return <Panel title="Supplier Scorecard" sub="OTIF · PPM · price index · 6-month rolling" right={<span className="tag tag-ghost">{rows.length} VENDORS</span>}>
+    <div className="score-row h"><div>VENDOR</div><div>OTIF %</div><div>PPM DEFECTS</div><div>PRICE IDX</div><div>GRADE</div></div>
+    {rows.map((v,i)=>{const otifCls=v.otif>=97?'':v.otif>=94?'warn':'bad';const ppmCls=v.ppm<=150?'':v.ppm<=300?'warn':'bad';const priceCls=v.priceIdx<=105?'':v.priceIdx<=115?'warn':'bad';const scores=[otifCls,ppmCls,priceCls];const bads=scores.filter(c=>c==='bad').length,warns=scores.filter(c=>c==='warn').length;const grade=bads?'C':warns>=2?'B':warns?'A':'A+';return <div key={i} className="score-row">
+      <div style={{fontWeight:700,color:'var(--tx)'}}>{v.name}<div style={{fontSize:9,color:'var(--tx3)',fontWeight:400}}>{v.city}</div></div>
+      <div><div className="score-bar"><div className={otifCls} style={{width:v.otif+'%'}}></div></div><div style={{fontSize:9,color:'var(--tx2)',marginTop:2}}>{v.otif.toFixed(1)}%</div></div>
+      <div><div className="score-bar"><div className={ppmCls} style={{width:Math.min(100,v.ppm/5)+'%'}}></div></div><div style={{fontSize:9,color:'var(--tx2)',marginTop:2}}>{v.ppm}</div></div>
+      <div><div className="score-bar"><div className={priceCls} style={{width:Math.min(100,(v.priceIdx-80)*2)+'%'}}></div></div><div style={{fontSize:9,color:'var(--tx2)',marginTop:2}}>{v.priceIdx}</div></div>
+      <div style={{fontWeight:800,fontFamily:'var(--font-display)',fontSize:18,color:grade.startsWith('A')?'var(--gn)':grade==='B'?'var(--a4)':'var(--dg)'}}>{grade}</div>
+    </div>;})}
+  </Panel>;
+}
+
+function TataDemoBar({state,dispatch}){
+  const loaded=state.config.companyName==='Tata Precision Auto Components';
+  return <div className="demo-bar">
+    <span className="demo-lbl">Demo Dataset</span>
+    <button className={loaded?'accent':''} onClick={()=>{dispatch({type:'LOAD_TATA_DEMO'})}}>🚗 Load Tata Precision (8 SKUs · 6 vendors · 9-node network)</button>
+    <button onClick={()=>dispatch({type:'RESET_DEMO'})}>↺ Reset to blank</button>
+    <span style={{marginLeft:'auto',fontSize:10,fontFamily:'var(--font-mono)',color:'var(--tx3)'}}>
+      Current: <strong style={{color:'var(--tx)'}}>{state.config.companyName}</strong> · {(state.products||[]).length} SKUs
+    </span>
+    <button onClick={()=>dispatch({type:'TOGGLE_AUDIT'})} title="Open audit log drawer">📜 Audit ({(state.audit||[]).length})</button>
+    <select value={state.rbac?.role||'planner'} onChange={e=>dispatch({type:'SET_RBAC',payload:{role:e.target.value}})} title="RBAC role (demo)" style={{padding:'3px 6px',fontFamily:'var(--font-mono)',fontSize:10}}>
+      <option value="planner">Planner</option>
+      <option value="buyer">Buyer</option>
+      <option value="controller">Controller</option>
+      <option value="admin">Admin</option>
+    </select>
+  </div>;
+}
+
+function AuditDrawer({state,dispatch}){
+  if(!state.auditOpen)return null;
+  const audit=state.audit||[];
+  return <div className="audit-drawer">
+    <h3>Audit Log <button onClick={()=>dispatch({type:'TOGGLE_AUDIT'})} style={{background:'none',border:'none',color:'var(--tx2)',cursor:'pointer',fontSize:18}}>×</button></h3>
+    <div style={{fontSize:10,color:'var(--tx3)',fontFamily:'var(--font-mono)',marginBottom:8}}>User <strong style={{color:'var(--tx)'}}>{state.rbac?.user||'anon'}</strong> · Role <strong style={{color:'var(--tx)'}}>{state.rbac?.role||'planner'}</strong> · {audit.length}/120 events</div>
+    {audit.length===0?<div style={{fontSize:11,color:'var(--tx3)',padding:10}}>No events yet. Load the Tata demo, save a scenario, or solve to populate.</div>:audit.map((r,i)=><div key={i} className="audit-row">
+      <div className="t">{r.t}</div>
+      <div><span className="a">{r.a}</span>{r.target&&<div style={{color:'var(--tx3)',fontSize:9}}>{r.target}</div>}</div>
+    </div>)}
+  </div>;
+}
 
 function App(){
   const [state,dispatch]=useReducer(reducer,defaultState);
@@ -5075,6 +5600,12 @@ function App(){
     return()=>clearInterval(iv);
   },[]);
 
+  // Sync skin to <html> so body-level CSS vars (bg, paper-grain) re-theme
+  useEffect(()=>{
+    const skin=state.config.skin||'v1';
+    document.documentElement.setAttribute('data-skin',skin);
+  },[state.config.skin]);
+
   const renderTab=()=>{
     switch(activeTab){
       case 'setup':return <SetupTab state={state} dispatch={dispatch}/>;
@@ -5090,25 +5621,59 @@ function App(){
     }
   };
 
-  return <div className="app-shell">
-    <div className="top-bar">
-      <h1>Enterprise Simulator</h1>
-      <span className="ver">v3.0</span>
+  const skin=state.config.skin||'v1';
+  const setSkin=(s)=>dispatch({type:'SET_SKIN',skin:s});
+  const connected=state.serverStatus==='connected';
+  const planning=state.planning||{};
+  const hz=planning.horizonLength||planning.periods||52;
+  const hzUnit=(planning.horizonUnit||'weeks').slice(0,1).toUpperCase();
+  const grain=(planning.timeGrain||'weekly');
+  const skuCount=(state.products||[]).length;
+
+  return <div className="app-shell shell-fluid" data-skin={skin}>
+    <div className="mast">
+      <div className="mast-co">{state.config.companyName||'Enterprise Simulator'}</div>
+      <div className="mast-meta">
+        {state.config.city&&<span className="mast-chip">📍 {state.config.city}</span>}
+        <span className="mast-chip">{state.config.fyLabel||state.config.fiscalYear||'FY'}</span>
+        <span className={`mast-chip ${connected?'ok':'err'}`}>{connected?'MILP ONLINE':'OFFLINE'}</span>
+        <span className="mast-live">LIVE</span>
+      </div>
       <LiveCascadeIndicator state={state}/>
-      <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:12,fontSize:11,color:'var(--tx2)'}}>
-        <select value={state.config.currency} onChange={e=>{const map={'₹':{r:1,n:'INR'},'$':{r:0.012,n:'USD'},'€':{r:0.011,n:'EUR'},'£':{r:0.0095,n:'GBP'}};const m=map[e.target.value]||{r:1,n:'INR'};dispatch({type:'SET_CONFIG',payload:{currency:e.target.value,currencyRate:m.r,currencyName:m.n}})}} style={{background:'var(--bg3)',border:'1px solid var(--br2)',color:'var(--tx)',padding:'3px 8px',fontSize:10,borderRadius:4}}>
+      <div className="mast-right">
+        <div className="skin-pill" title="Switch visual theme">
+          <button className={skin==='v1'?'on':''}  onClick={()=>setSkin('v1')}>V1 Mono</button>
+          <button className={skin==='v3'?'on':''}  onClick={()=>setSkin('v3')}>V3 Riso</button>
+          <button className={skin==='dark'?'on':''} onClick={()=>setSkin('dark')}>Dark</button>
+        </div>
+        <select value={state.config.currency} onChange={e=>{const map={'₹':{r:1,n:'INR'},'$':{r:0.012,n:'USD'},'€':{r:0.011,n:'EUR'},'£':{r:0.0095,n:'GBP'}};const m=map[e.target.value]||{r:1,n:'INR'};dispatch({type:'SET_CONFIG',payload:{currency:e.target.value,currencyRate:m.r,currencyName:m.n}})}} style={{background:'var(--bg3)',border:'1px solid var(--br2)',color:'var(--tx)',padding:'3px 8px',fontSize:10,borderRadius:'var(--radius)',fontFamily:'var(--font-mono)'}}>
           <option value="₹">₹ INR</option><option value="$">$ USD</option><option value="€">€ EUR</option><option value="£">£ GBP</option>
         </select>
-        <span className={`server-dot ${state.serverStatus==='connected'?'ok':'err'}`}></span>
-        {state.serverStatus==='connected'?'MILP Connected':'Offline'}
+        <span style={{fontSize:10,fontFamily:'var(--font-mono)',color:'var(--tx3)'}}>v3.3</span>
       </div>
     </div>
-    <div className="tab-bar">
-      {TABS.map(t=><button key={t.id} className={`tab-btn${activeTab===t.id?' active':''}`} onClick={()=>setActiveTab(t.id)}>
-        <span className="tab-icon">{t.icon}</span>{t.label}
+    <div className="tstrip">
+      {TABS.map(t=><button key={t.id} className={`tchip${activeTab===t.id?' on':''}`} onClick={()=>setActiveTab(t.id)}>
+        <span className="tnum">{t.num}</span>
+        <span className="tname">{t.short}</span>
+        <span className="tdesc">{t.desc}</span>
       </button>)}
     </div>
-    <div className="tab-content">{renderTab()}</div>
+    <div className="tab-content">
+      <TataDemoBar state={state} dispatch={dispatch}/>
+      {renderTab()}
+    </div>
+    <AuditDrawer state={state} dispatch={dispatch}/>
+    <div className="statusbar">
+      <span>Solver <b>CBC·PuLP</b></span><span className="sep"></span>
+      <span>Grain <b>{grain}</b></span><span className="sep"></span>
+      <span>Horizon <b>{hz}{hzUnit}</b></span><span className="sep"></span>
+      <span>SKUs <b>{skuCount}</b></span><span className="sep"></span>
+      <span>Status <b>{connected?'ONLINE':'OFFLINE'}</b></span>
+      <span style={{marginLeft:'auto',opacity:.7}}>
+        <span className="kbd">⌘K</span>search · <span className="kbd">G+S</span>setup · <span className="kbd">?</span>help
+      </span>
+    </div>
   </div>;
 }
 
