@@ -802,6 +802,46 @@ function KPI({label,value,sub,color}){
   return <div className="kpi"><div className="kpi-label">{label}</div><div className="kpi-value" style={{color:color||'var(--ac)'}}>{value}</div>{sub&&<div className="kpi-sub">{sub}</div>}</div>
 }
 
+// Reusable asset illustration — used in Asset Register, Buy-vs-Lease, NPV examples
+function AssetIcon({kind='cnc',size=48,color='var(--ac)',bg='transparent'}){
+  const stroke=color,s=size;const f=bg;
+  const paths={
+    cnc:<g><rect x="6" y="22" width="36" height="18" rx="1" fill={f} stroke={stroke} strokeWidth="1.5"/><rect x="10" y="10" width="28" height="12" fill={f} stroke={stroke} strokeWidth="1.5"/><line x1="16" y1="16" x2="32" y2="16" stroke={stroke} strokeWidth="1"/><circle cx="14" cy="44" r="3" fill={stroke}/><circle cx="34" cy="44" r="3" fill={stroke}/><line x1="24" y1="22" x2="24" y2="30" stroke={stroke} strokeWidth="2"/></g>,
+    forklift:<g><rect x="4" y="22" width="18" height="14" fill={f} stroke={stroke} strokeWidth="1.5"/><rect x="22" y="28" width="10" height="8" fill={f} stroke={stroke} strokeWidth="1.5"/><line x1="32" y1="8" x2="32" y2="36" stroke={stroke} strokeWidth="1.5"/><line x1="32" y1="12" x2="42" y2="12" stroke={stroke} strokeWidth="1.5"/><line x1="32" y1="20" x2="42" y2="20" stroke={stroke} strokeWidth="1.5"/><circle cx="10" cy="40" r="4" fill={stroke}/><circle cx="26" cy="40" r="3" fill={stroke}/></g>,
+    truck:<g><rect x="4" y="18" width="22" height="16" fill={f} stroke={stroke} strokeWidth="1.5"/><path d={`M26 22 L36 22 L42 28 L42 34 L26 34 Z`} fill={f} stroke={stroke} strokeWidth="1.5"/><circle cx="12" cy="38" r="4" fill={stroke}/><circle cx="34" cy="38" r="4" fill={stroke}/><line x1="10" y1="22" x2="22" y2="22" stroke={stroke} strokeWidth="1"/></g>,
+    line:<g><rect x="4" y="16" width="40" height="8" rx="1" fill={f} stroke={stroke} strokeWidth="1.5"/><circle cx="10" cy="20" r="1.5" fill={stroke}/><circle cx="18" cy="20" r="1.5" fill={stroke}/><circle cx="26" cy="20" r="1.5" fill={stroke}/><circle cx="34" cy="20" r="1.5" fill={stroke}/><circle cx="42" cy="20" r="1.5" fill={stroke}/><rect x="12" y="26" width="24" height="14" fill={f} stroke={stroke} strokeWidth="1.5"/><line x1="16" y1="30" x2="32" y2="30" stroke={stroke} strokeWidth="1"/><line x1="16" y1="34" x2="32" y2="34" stroke={stroke} strokeWidth="1"/></g>,
+    warehouse:<g><path d="M4 20 L24 8 L44 20 L44 40 L4 40 Z" fill={f} stroke={stroke} strokeWidth="1.5"/><rect x="12" y="24" width="10" height="16" fill={f} stroke={stroke} strokeWidth="1"/><rect x="26" y="24" width="10" height="10" fill={f} stroke={stroke} strokeWidth="1"/><line x1="12" y1="30" x2="22" y2="30" stroke={stroke} strokeWidth="1"/></g>,
+    factory:<g><rect x="4" y="22" width="40" height="18" fill={f} stroke={stroke} strokeWidth="1.5"/><path d="M20 22 L20 12 L28 18 L28 12 L36 22" fill={f} stroke={stroke} strokeWidth="1.5"/><rect x="8" y="28" width="6" height="10" fill={stroke}/><rect x="34" y="28" width="6" height="10" fill={stroke}/><line x1="14" y1="22" x2="14" y2="8" stroke={stroke} strokeWidth="1.5"/><circle cx="14" cy="6" r="2" fill={stroke}/></g>,
+    molding:<g><rect x="8" y="10" width="32" height="10" fill={f} stroke={stroke} strokeWidth="1.5"/><rect x="8" y="28" width="32" height="10" fill={f} stroke={stroke} strokeWidth="1.5"/><line x1="24" y1="20" x2="24" y2="28" stroke={stroke} strokeWidth="2"/><line x1="14" y1="10" x2="14" y2="4" stroke={stroke} strokeWidth="1.5"/><line x1="34" y1="10" x2="34" y2="4" stroke={stroke} strokeWidth="1.5"/><line x1="4" y1="38" x2="44" y2="38" stroke={stroke} strokeWidth="2"/></g>
+  };
+  return <svg width={s} height={s} viewBox="0 0 48 48" style={{display:'block'}}>{paths[kind]||paths.factory}</svg>;
+}
+
+// Inline horizontal bars — compact comparison
+function MiniBars({data,max,color='var(--ac)',h=6,fmt=v=>v.toLocaleString()}){
+  const m=max||Math.max(...data.map(d=>Math.abs(d.value||0)))||1;
+  return <div style={{display:'flex',flexDirection:'column',gap:3,fontSize:9}}>{data.map((d,i)=><div key={i} style={{display:'grid',gridTemplateColumns:'70px 1fr 80px',gap:4,alignItems:'center'}}>
+    <span style={{color:'var(--tx2)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.label}</span>
+    <div style={{height:h,background:'var(--bg3)',position:'relative',borderRadius:1}}><div style={{position:'absolute',left:0,top:0,bottom:0,width:`${Math.abs(d.value||0)/m*100}%`,background:d.color||color}}/></div>
+    <span className="num" style={{color:d.color||color,fontWeight:600,textAlign:'right'}}>{fmt(d.value||0)}</span>
+  </div>)}</div>;
+}
+
+// Inline vertical bar chart — for yearly cash flows
+function YearBars({data,color='var(--a2)',negColor='var(--dg)',h=70,fmt=v=>Math.round(v/1000)+'k'}){
+  const max=Math.max(...data.map(d=>Math.abs(d.value||0)))||1;
+  return <div style={{display:'flex',gap:3,alignItems:'flex-end',height:h+28,padding:'4px 0'}}>{data.map((d,i)=>{
+    const hp=Math.abs(d.value||0)/max*h;const pos=d.value>=0;
+    return <div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:2,minWidth:16}}>
+      <div style={{fontSize:8,color:'var(--tx3)',fontFamily:'JetBrains Mono'}}>{fmt(d.value)}</div>
+      <div style={{width:'100%',height:h,display:'flex',flexDirection:'column',justifyContent:'flex-end'}}>
+        <div style={{width:'100%',height:hp,background:pos?(d.color||color):negColor}}/>
+      </div>
+      <div style={{fontSize:8,color:'var(--tx2)',fontFamily:'JetBrains Mono'}}>{d.label}</div>
+    </div>;
+  })}</div>;
+}
+
 // ─── TAB 1: SETUP ───
 function SetupTab({state,dispatch}){
   const c=state.config,pl=state.planning,bu=state.budget;
@@ -1104,6 +1144,48 @@ function ProductsTab({state,dispatch}){
           <Field label="Quality %" hint="Good count / Total count. First-pass yield."><input type="number" step="1" min={50} max={100} value={prod.oeeQuality||98} onChange={e=>upProd({oeeQuality:+e.target.value})}/></Field>
           {(()=>{const a=(+prod.oeeAvailability||85)/100,p=(+prod.oeePerformance||92)/100,q=(+prod.oeeQuality||98)/100;const oee=a*p*q;const col=oee>=0.85?'var(--gn)':oee>=0.70?'var(--a4)':'var(--dg)';return <Field label="OEE (computed)" hint={`Your OEE ${(oee*100).toFixed(1)}% · ${oee>=0.85?'World-class':oee>=0.70?'Good':oee>=0.55?'Typical Indian mfg':'Below benchmark — investigate'}`}><input readOnly value={`${(oee*100).toFixed(1)}%`} style={{background:'var(--bg3)',color:col,fontWeight:700,cursor:'not-allowed'}}/></Field>;})()}
         </div>
+        {(()=>{
+          const a=(+prod.oeeAvailability||85)/100,p=(+prod.oeePerformance||92)/100,q=(+prod.oeeQuality||98)/100;const oee=a*p*q;
+          const pl=state.planning||{},m=pl.machines||1,sh=pl.shifts||2,hr=pl.hrsPerShift||8,wd=pl.workDays||22;
+          const nameplate=m*sh*hr*wd;
+          const effHrs=nameplate*oee;
+          const effDaily=(m*sh*hr*oee);
+          const cap=+prod.capacity||0;
+          const effMonthly=Math.round(effDaily*wd*cap/Math.max(effHrs,1));
+          const throughputPerHr=cap/Math.max(sh*hr,1);
+          const monthlyUnits=Math.round(cap*wd*oee);
+          return <div style={{marginTop:10,padding:10,background:'var(--bg2)',border:'2px solid var(--br2)',borderRadius:4}}>
+            <div style={{fontSize:11,fontWeight:700,color:'var(--tx)',marginBottom:8,display:'flex',alignItems:'center',gap:8}}>
+              <AssetIcon kind="cnc" size={28} color="var(--ac)"/> Effective Capacity (computed)
+              <span className="badge" style={{marginLeft:'auto',background:'var(--bg3)',color:'var(--tx2)'}}>Nameplate × OEE</span>
+            </div>
+            <div className="grid4" style={{gap:6}}>
+              <div style={{padding:6,background:'var(--bg)',border:'1px solid var(--br)'}}>
+                <div style={{fontSize:9,color:'var(--tx3)'}}>Nameplate Hrs/Mo</div>
+                <div style={{fontSize:15,fontWeight:700,color:'var(--tx2)'}}>{nameplate.toLocaleString()}<span style={{fontSize:9,color:'var(--tx3)'}}> hrs</span></div>
+                <div style={{fontSize:8,color:'var(--tx3)'}}>{m}M × {sh}S × {hr}h × {wd}d</div>
+              </div>
+              <div style={{padding:6,background:'var(--bg)',border:'1px solid var(--br)'}}>
+                <div style={{fontSize:9,color:'var(--tx3)'}}>Effective Hrs/Mo</div>
+                <div style={{fontSize:15,fontWeight:700,color:'var(--ac)'}}>{Math.round(effHrs).toLocaleString()}<span style={{fontSize:9,color:'var(--tx3)'}}> hrs</span></div>
+                <div style={{fontSize:8,color:'var(--tx3)'}}>after OEE loss {((1-oee)*100).toFixed(1)}%</div>
+              </div>
+              <div style={{padding:6,background:'var(--bg)',border:'1px solid var(--br)'}}>
+                <div style={{fontSize:9,color:'var(--tx3)'}}>Daily Throughput</div>
+                <div style={{fontSize:15,fontWeight:700,color:'var(--a2)'}}>{Math.round(cap*oee).toLocaleString()}<span style={{fontSize:9,color:'var(--tx3)'}}> u/d</span></div>
+                <div style={{fontSize:8,color:'var(--tx3)'}}>from {cap}/d × {(oee*100).toFixed(0)}% OEE</div>
+              </div>
+              <div style={{padding:6,background:'var(--hl,var(--bg3))',border:'2px solid var(--br2)'}}>
+                <div style={{fontSize:9,color:'var(--tx2)',fontWeight:600}}>Monthly Capacity</div>
+                <div style={{fontSize:16,fontWeight:800,color:'var(--tx)'}}>{monthlyUnits.toLocaleString()}<span style={{fontSize:9}}> units/mo</span></div>
+                <div style={{fontSize:8,color:'var(--tx2)'}}>= {cap}/d × {wd}d × OEE</div>
+              </div>
+            </div>
+            <div style={{fontSize:9,color:'var(--tx3)',marginTop:6,fontFamily:'JetBrains Mono'}}>
+              Effective Capacity = {cap} (nameplate u/d) × {wd} (work days) × {(a*100).toFixed(0)}% A × {(p*100).toFixed(0)}% P × {(q*100).toFixed(0)}% Q = <strong style={{color:'var(--ac)'}}>{monthlyUnits.toLocaleString()} u/mo</strong> · Throughput: <strong>{throughputPerHr.toFixed(1)} u/hr nameplate → {(throughputPerHr*oee).toFixed(1)} u/hr effective</strong>
+            </div>
+          </div>;
+        })()}
       </div>
 
       {/* Historical Demand — Multi-Year with granularity toggle */}
@@ -2680,9 +2762,12 @@ function SupplyTab({state,dispatch}){
             <span style={{fontSize:9,color:'var(--tx3)'}}>Modes: FTL/LTL/Rail/Air/Sea/Courier. Cheapest valid path auto-selected by transport solver.</span>
           </div>
           <table className="data-table">
-            <thead><tr><th>From</th><th>→</th><th>To</th><th>Mode</th><th>Lead (d)</th><th>Rate /u</th><th>Capacity</th><th>CO₂ kg/u</th><th>Active</th><th></th></tr></thead>
+            <thead><tr><th>From</th><th>→</th><th>To</th><th>Mode</th><th>Lead (d)</th><th>Rate /u</th><th>Cap/period</th><th>Demand u/wk</th><th>Units/ship</th><th>Freq /wk</th><th>CO₂ kg/u</th><th>Active</th><th></th></tr></thead>
             <tbody>{net.lanes.map((lane,i)=>{
               const upL=(patch)=>{const ls=[...net.lanes];ls[i]={...ls[i],...patch};upLanes(ls);};
+              const demandWk=+lane.demandPerWk||0;
+              const unitsPerShip=+lane.unitsPerShip||(lane.mode==='FTL'?1000:lane.mode==='Rail'?4000:lane.mode==='Sea'?10000:lane.mode==='Air'?200:500);
+              const freq=demandWk>0?Math.max(1,Math.ceil(demandWk/Math.max(unitsPerShip,1))):(+lane.freqPerWk||1);
               return <tr key={lane.id}>
                 <td><select value={lane.from} onChange={e=>upL({from:e.target.value})} style={{fontSize:10,width:85}}>{net.nodes.map(n=><option key={n.id} value={n.id}>{n.name}</option>)}</select></td>
                 <td style={{color:'var(--tx3)'}}>→</td>
@@ -2691,17 +2776,44 @@ function SupplyTab({state,dispatch}){
                 <td><input type="number" step="0.5" value={lane.leadDays} onChange={e=>upL({leadDays:+e.target.value})} style={{width:45,fontSize:10}}/></td>
                 <td><input type="number" step="0.1" value={lane.ratePerUnit} onChange={e=>upL({ratePerUnit:+e.target.value})} style={{width:50,fontSize:10}}/></td>
                 <td><input type="number" value={lane.capacity} onChange={e=>upL({capacity:+e.target.value})} style={{width:65,fontSize:10}}/></td>
+                <td><input type="number" value={demandWk} onChange={e=>upL({demandPerWk:+e.target.value})} style={{width:60,fontSize:10,background:demandWk>0?'rgba(63,185,80,.08)':'var(--bg3)'}} placeholder="0"/></td>
+                <td><input type="number" value={unitsPerShip} onChange={e=>upL({unitsPerShip:+e.target.value})} style={{width:55,fontSize:10}}/></td>
+                <td><span style={{fontSize:10,fontWeight:700,color:freq>7?'var(--dg)':freq>=1?'var(--ac)':'var(--tx3)'}}>{freq}×</span></td>
                 <td><input type="number" step="0.01" value={lane.co2||0} onChange={e=>upL({co2:+e.target.value})} style={{width:50,fontSize:10}}/></td>
                 <td><input type="checkbox" checked={lane.active!==false} onChange={e=>upL({active:e.target.checked})}/></td>
                 <td><button className="btn btn-danger btn-sm" onClick={()=>upLanes(net.lanes.filter(x=>x.id!==lane.id))}>×</button></td>
               </tr>;
             })}</tbody>
           </table>
-          <div style={{fontSize:10,color:'var(--tx3)',marginTop:6}}>
-            Total lane capacity: <strong style={{color:'var(--ac)'}}>{net.lanes.filter(l=>l.active!==false).reduce((a,l)=>a+l.capacity,0).toLocaleString()} u/period</strong>
-            {' | '}Avg freight rate: <strong>{cur}{(net.lanes.reduce((a,l)=>a+l.ratePerUnit,0)/Math.max(net.lanes.length,1)).toFixed(2)}/u</strong>
-            {' | '}Weighted lead: <strong>{(net.lanes.reduce((a,l)=>a+l.leadDays*l.capacity,0)/Math.max(net.lanes.reduce((a,l)=>a+l.capacity,0),1)).toFixed(1)} days</strong>
-          </div>
+          {(()=>{
+            const act=net.lanes.filter(l=>l.active!==false);
+            const totDem=act.reduce((a,l)=>a+(+l.demandPerWk||0),0);
+            const totShips=act.reduce((a,l)=>{const d=+l.demandPerWk||0,u=+l.unitsPerShip||(l.mode==='Sea'?10000:l.mode==='Air'?200:1000);return a+(d>0?Math.ceil(d/Math.max(u,1)):(+l.freqPerWk||0));},0);
+            const totFreight=act.reduce((a,l)=>a+(+l.demandPerWk||0)*(+l.ratePerUnit||0),0);
+            const totCO2=act.reduce((a,l)=>a+(+l.demandPerWk||0)*(+l.co2||0),0);
+            return <div style={{marginTop:10,padding:8,background:'var(--bg2)',border:'1px solid var(--br2)',borderRadius:3}}>
+              <div style={{fontSize:10,fontWeight:700,color:'var(--tx)',marginBottom:6,display:'flex',alignItems:'center',gap:6}}><AssetIcon kind="truck" size={20} color="var(--ac)"/> Flow Summary — demand-driven ({act.length} active lanes)</div>
+              <div className="grid4" style={{gap:6}}>
+                <div style={{padding:6,background:'var(--bg)',border:'1px solid var(--br)'}}>
+                  <div style={{fontSize:8,color:'var(--tx3)'}}>TOTAL DEMAND</div>
+                  <div style={{fontSize:14,fontWeight:700,color:'var(--a2)'}}>{totDem.toLocaleString()}<span style={{fontSize:8,color:'var(--tx3)'}}> u/wk</span></div>
+                </div>
+                <div style={{padding:6,background:'var(--bg)',border:'1px solid var(--br)'}}>
+                  <div style={{fontSize:8,color:'var(--tx3)'}}>SHIPMENTS/WK</div>
+                  <div style={{fontSize:14,fontWeight:700,color:'var(--ac)'}}>{totShips}<span style={{fontSize:8,color:'var(--tx3)'}}> trips</span></div>
+                </div>
+                <div style={{padding:6,background:'var(--bg)',border:'1px solid var(--br)'}}>
+                  <div style={{fontSize:8,color:'var(--tx3)'}}>FREIGHT SPEND</div>
+                  <div style={{fontSize:14,fontWeight:700,color:'var(--a4)'}}>{cur}{Math.round(totFreight).toLocaleString()}<span style={{fontSize:8,color:'var(--tx3)'}}>/wk</span></div>
+                </div>
+                <div style={{padding:6,background:'var(--bg)',border:'1px solid var(--br)'}}>
+                  <div style={{fontSize:8,color:'var(--tx3)'}}>CO₂</div>
+                  <div style={{fontSize:14,fontWeight:700,color:totCO2>1000?'var(--dg)':'var(--gn)'}}>{totCO2.toFixed(0)}<span style={{fontSize:8,color:'var(--tx3)'}}> kg/wk</span></div>
+                </div>
+              </div>
+              <div style={{fontSize:9,color:'var(--tx3)',marginTop:6}}>Avg lead: <strong>{(act.reduce((a,l)=>a+l.leadDays*(+l.demandPerWk||1),0)/Math.max(act.reduce((a,l)=>a+(+l.demandPerWk||1),0),1)).toFixed(1)} d</strong> · Rate: <strong>{cur}{(act.reduce((a,l)=>a+l.ratePerUnit,0)/Math.max(act.length,1)).toFixed(2)}/u</strong> · Enter <strong>demand u/wk</strong> per lane — shipments auto-computed from units/ship.</div>
+            </div>;
+          })()}
         </>;
       })()}
     </div>
@@ -2898,53 +3010,125 @@ function FinanceTab({state,dispatch}){
     {/* Asset Register */}
     <div className="card">
       <div className="card-title">🏭 Asset Register <span className="badge" style={{background:'rgba(56,189,248,.1)',color:'var(--a2)'}}>{state.assets.length} assets</span></div>
-      {state.assets.map(a=><div key={a.id} className="bom-row">
-        <Field label="Asset Name"><input value={a.name} onChange={e=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{name:e.target.value}})}/></Field>
-        <Field label={`Purchase Price (${cur})`}><input type="number" value={a.purchasePrice} onChange={e=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{purchasePrice:+e.target.value}})}/></Field>
-        <Field label="Residual Value"><input type="number" value={a.residualValue} onChange={e=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{residualValue:+e.target.value}})}/></Field>
-        <Field label="Useful Life (yr)"><input type="number" value={a.usefulLife} onChange={e=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{usefulLife:+e.target.value}})}/></Field>
-        <Field label="Method"><select value={a.method} onChange={e=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{method:e.target.value}})}><option value="SLM">SLM</option><option value="WDV">WDV</option><option value="UoP">UoP</option></select></Field>
-        <Field label="Annual Depr"><input value={`${cur}${Math.round(a.method==='SLM'?(a.purchasePrice-a.residualValue)/a.usefulLife:a.method==='WDV'?a.purchasePrice*(a.wdvRate||20)/100:0).toLocaleString()}`} readOnly style={{color:'var(--a4)',fontWeight:600}}/></Field>
-        <button className="btn btn-danger btn-sm" onClick={()=>dispatch({type:'DELETE_ASSET',id:a.id})}>×</button>
-      </div>)}
-      <button className="btn btn-secondary btn-sm" onClick={()=>dispatch({type:'ADD_ASSET'})}>+ Add Asset</button>
-      {state.assets.length>0&&<div style={{marginTop:6,fontSize:10,color:'var(--tx2)'}}>
-        Total annual depreciation: <strong style={{color:'var(--a4)'}}>{cur}{state.assets.reduce((s,a)=>s+Math.round(a.method==='SLM'?(a.purchasePrice-a.residualValue)/a.usefulLife:a.purchasePrice*(a.wdvRate||20)/100),0).toLocaleString()}</strong> | 
-        Tax shield ({state.config.taxRate}%): <strong style={{color:'var(--gn)'}}>{cur}{Math.round(state.assets.reduce((s,a)=>s+Math.round(a.method==='SLM'?(a.purchasePrice-a.residualValue)/a.usefulLife:a.purchasePrice*(a.wdvRate||20)/100),0)*state.config.taxRate/100).toLocaleString()}</strong>/yr
+      {state.assets.length===0&&<div style={{padding:12,background:'var(--bg2)',border:'1px dashed var(--br2)',textAlign:'center',color:'var(--tx3)',fontSize:10,marginBottom:8}}>
+        <div style={{display:'flex',justifyContent:'center',gap:10,marginBottom:6,opacity:.5}}>
+          <AssetIcon kind="cnc" size={32} color="var(--tx2)"/>
+          <AssetIcon kind="molding" size={32} color="var(--tx2)"/>
+          <AssetIcon kind="forklift" size={32} color="var(--tx2)"/>
+          <AssetIcon kind="line" size={32} color="var(--tx2)"/>
+          <AssetIcon kind="warehouse" size={32} color="var(--tx2)"/>
+        </div>
+        No assets — add CNC machines, moulding presses, forklifts, packing lines or storage to track depreciation &amp; NPV inputs.
       </div>}
+      {state.assets.map(a=>{
+        const nm=(a.name||'').toLowerCase();
+        const kind=nm.includes('cnc')||nm.includes('lathe')||nm.includes('mill')?'cnc':nm.includes('press')||nm.includes('mould')||nm.includes('mold')?'molding':nm.includes('fork')||nm.includes('lift')||nm.includes('truck')?'forklift':nm.includes('line')||nm.includes('conveyor')||nm.includes('assemb')?'line':nm.includes('warehouse')||nm.includes('rack')||nm.includes('store')?'warehouse':'factory';
+        const annDep=Math.round(a.method==='SLM'?(a.purchasePrice-a.residualValue)/a.usefulLife:a.method==='WDV'?a.purchasePrice*(a.wdvRate||20)/100:0);
+        return <div key={a.id} className="bom-row" style={{alignItems:'center',gap:6}}>
+          <div style={{padding:4,background:'var(--bg2)',border:'1px solid var(--br2)',flexShrink:0}}><AssetIcon kind={kind} size={36} color="var(--ac)"/></div>
+          <Field label="Asset Name"><input value={a.name} onChange={e=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{name:e.target.value}})}/></Field>
+          <Field label={`Purchase Price (${cur})`}><input type="number" value={a.purchasePrice} onChange={e=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{purchasePrice:+e.target.value}})}/></Field>
+          <Field label="Residual Value"><input type="number" value={a.residualValue} onChange={e=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{residualValue:+e.target.value}})}/></Field>
+          <Field label="Useful Life (yr)"><input type="number" value={a.usefulLife} onChange={e=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{usefulLife:+e.target.value}})}/></Field>
+          <Field label="Method"><select value={a.method} onChange={e=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{method:e.target.value}})}><option value="SLM">SLM</option><option value="WDV">WDV</option><option value="UoP">UoP</option></select></Field>
+          <Field label="Annual Depr"><input value={`${cur}${annDep.toLocaleString()}`} readOnly style={{color:'var(--a4)',fontWeight:600}}/></Field>
+          <button className="btn btn-danger btn-sm" onClick={()=>dispatch({type:'DELETE_ASSET',id:a.id})}>×</button>
+        </div>;
+      })}
+      <div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:6}}>
+        <button className="btn btn-secondary btn-sm" onClick={()=>dispatch({type:'ADD_ASSET'})}>+ Add Asset</button>
+        <button className="btn btn-secondary btn-sm" style={{fontSize:10}} onClick={()=>{const samples=[{name:'CNC Machining Center',purchasePrice:8500000,residualValue:500000,usefulLife:10,method:'SLM'},{name:'Injection Moulding Press',purchasePrice:12000000,residualValue:800000,usefulLife:12,method:'WDV',wdvRate:15},{name:'Electric Forklift',purchasePrice:1800000,residualValue:150000,usefulLife:7,method:'SLM'},{name:'Packing Line',purchasePrice:4200000,residualValue:200000,usefulLife:8,method:'SLM'},{name:'Warehouse Racking',purchasePrice:2500000,residualValue:50000,usefulLife:15,method:'SLM'}];samples.forEach(s=>dispatch({type:'ADD_ASSET',payload:s}));}}>Load example assets</button>
+      </div>
+      {state.assets.length>0&&(()=>{
+        const totDep=state.assets.reduce((s,a)=>s+Math.round(a.method==='SLM'?(a.purchasePrice-a.residualValue)/a.usefulLife:a.purchasePrice*(a.wdvRate||20)/100),0);
+        const totCapex=state.assets.reduce((s,a)=>s+(+a.purchasePrice||0),0);
+        const shield=Math.round(totDep*state.config.taxRate/100);
+        return <div style={{marginTop:8,padding:8,background:'var(--bg2)',border:'1px solid var(--br2)'}}>
+          <div className="grid4" style={{gap:6}}>
+            <div style={{padding:6,background:'var(--bg)',border:'1px solid var(--br)'}}><div style={{fontSize:8,color:'var(--tx3)'}}>TOTAL CAPEX</div><div style={{fontSize:13,fontWeight:700,color:'var(--tx2)'}}>{cur}{totCapex.toLocaleString()}</div></div>
+            <div style={{padding:6,background:'var(--bg)',border:'1px solid var(--br)'}}><div style={{fontSize:8,color:'var(--tx3)'}}>ANNUAL DEPR</div><div style={{fontSize:13,fontWeight:700,color:'var(--a4)'}}>{cur}{totDep.toLocaleString()}</div></div>
+            <div style={{padding:6,background:'var(--bg)',border:'1px solid var(--br)'}}><div style={{fontSize:8,color:'var(--tx3)'}}>TAX SHIELD {state.config.taxRate}%</div><div style={{fontSize:13,fontWeight:700,color:'var(--gn)'}}>{cur}{shield.toLocaleString()}/yr</div></div>
+            <div style={{padding:6,background:'var(--bg)',border:'1px solid var(--br)'}}><div style={{fontSize:8,color:'var(--tx3)'}}>NET DEPR COST</div><div style={{fontSize:13,fontWeight:700,color:'var(--tx)'}}>{cur}{(totDep-shield).toLocaleString()}/yr</div></div>
+          </div>
+        </div>;
+      })()}
     </div>
 
     {/* Buy vs Lease Comparison */}
     {(()=>{
       const annDepr=(bvl.assetCost-bvl.residual)/bvl.life;
       const taxShield=annDepr*bvl.taxRate/100;
-      const annBuyCost=annDepr+bvl.maintBuy-taxShield;
+      const horizon=Math.max(bvl.life,bvl.leaseYears);
+      const buyYears=Array.from({length:horizon},(_,t)=>{
+        const y=t+1;const inLife=y<=bvl.life;
+        const cf=y===1?-bvl.assetCost+(-bvl.maintBuy+taxShield):inLife?(-bvl.maintBuy+taxShield)+(y===bvl.life?bvl.residual:0):0;
+        return{label:`Y${y}`,value:Math.round(cf),color:cf>=0?'var(--a2)':'var(--dg)'};
+      });
+      const leaseYears=Array.from({length:horizon},(_,t)=>{
+        const y=t+1;const inTerm=y<=bvl.leaseYears;
+        const cf=inTerm?-(bvl.leaseCost*12)-bvl.maintLease:0;
+        return{label:`Y${y}`,value:Math.round(cf),color:'var(--a4)'};
+      });
       const buyNPV=-bvl.assetCost+Array.from({length:bvl.life},(_,t)=>(-bvl.maintBuy+taxShield)/Math.pow(1+bvl.wacc/100,t+1)).reduce((a,b)=>a+b,0)+bvl.residual/Math.pow(1+bvl.wacc/100,bvl.life);
       const leaseNPV=Array.from({length:bvl.leaseYears},(_,t)=>(-(bvl.leaseCost*12)-bvl.maintLease)/Math.pow(1+bvl.wacc/100,t+1)).reduce((a,b)=>a+b,0);
+      const buyTotal=buyYears.reduce((a,y)=>a+y.value,0);
+      const leaseTotal=leaseYears.reduce((a,y)=>a+y.value,0);
+      const winBuy=buyNPV>leaseNPV;
       return <div className="card">
-        <div className="card-title">🔄 Buy vs Lease Comparison <span className="badge" style={{background:'rgba(0,212,170,.1)',color:'var(--ac)'}}>NPV Analysis</span></div>
+        <div className="card-title">🔄 Buy vs Lease Comparison <span className="badge" style={{background:'rgba(0,212,170,.1)',color:'var(--ac)'}}>NPV Analysis · {bvl.wacc}% WACC</span></div>
         <div className="grid2">
-          <div style={{padding:8,background:'rgba(56,189,248,.05)',borderRadius:4,border:'1px solid rgba(56,189,248,.2)'}}>
-            <div style={{fontSize:11,fontWeight:700,color:'var(--a2)',marginBottom:6}}>OPTION A: BUY</div>
-            <Field label="Purchase Price"><input type="number" value={bvl.assetCost} onChange={e=>setBvl(v=>({...v,assetCost:+e.target.value}))}/></Field>
-            <Field label="Residual Value"><input type="number" value={bvl.residual} onChange={e=>setBvl(v=>({...v,residual:+e.target.value}))}/></Field>
-            <Field label="Useful Life (yr)"><input type="number" value={bvl.life} onChange={e=>setBvl(v=>({...v,life:+e.target.value}))}/></Field>
-            <Field label="Annual Maintenance"><input type="number" value={bvl.maintBuy} onChange={e=>setBvl(v=>({...v,maintBuy:+e.target.value}))}/></Field>
-            <div style={{fontSize:10,color:'var(--tx2)',marginTop:4}}>Annual depreciation: {cur}{Math.round(annDepr).toLocaleString()} | Tax shield: {cur}{Math.round(taxShield).toLocaleString()}/yr</div>
-            <div style={{fontSize:13,fontWeight:700,color:buyNPV>leaseNPV?'var(--gn)':'var(--tx)',marginTop:6}}>NPV(Buy): {cur}{Math.round(buyNPV).toLocaleString()}</div>
+          <div style={{padding:10,background:'rgba(56,189,248,.05)',borderRadius:4,border:`2px solid ${winBuy?'var(--a2)':'var(--br2)'}`,position:'relative'}}>
+            {winBuy&&<span style={{position:'absolute',top:-10,right:8,background:'var(--a2)',color:'#fff',fontSize:9,fontWeight:800,padding:'2px 8px',letterSpacing:.4,fontFamily:'JetBrains Mono'}}>WINNER</span>}
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+              <div style={{padding:6,background:'var(--bg2)',border:'1px solid var(--a2)'}}><AssetIcon kind="cnc" size={40} color="var(--a2)"/></div>
+              <div>
+                <div style={{fontSize:11,fontWeight:800,color:'var(--a2)',letterSpacing:.4,fontFamily:'JetBrains Mono'}}>OPTION A · BUY</div>
+                <div style={{fontSize:9,color:'var(--tx3)'}}>Own the asset · depreciation tax shield · residual recovery</div>
+              </div>
+            </div>
+            <div className="grid2" style={{gap:4}}>
+              <Field label="Purchase Price"><input type="number" value={bvl.assetCost} onChange={e=>setBvl(v=>({...v,assetCost:+e.target.value}))}/></Field>
+              <Field label="Residual Value"><input type="number" value={bvl.residual} onChange={e=>setBvl(v=>({...v,residual:+e.target.value}))}/></Field>
+              <Field label="Useful Life (yr)"><input type="number" value={bvl.life} onChange={e=>setBvl(v=>({...v,life:+e.target.value}))}/></Field>
+              <Field label="Annual Maintenance"><input type="number" value={bvl.maintBuy} onChange={e=>setBvl(v=>({...v,maintBuy:+e.target.value}))}/></Field>
+            </div>
+            <div style={{fontSize:10,color:'var(--tx2)',marginTop:6,padding:4,background:'var(--bg)',border:'1px dashed var(--br)'}}>
+              Annual depr: <strong style={{color:'var(--a4)'}}>{cur}{Math.round(annDepr).toLocaleString()}</strong> · Tax shield: <strong style={{color:'var(--gn)'}}>{cur}{Math.round(taxShield).toLocaleString()}/yr</strong>
+            </div>
+            <div style={{marginTop:6}}><YearBars data={buyYears} color="var(--a2)" h={48} fmt={v=>Math.abs(v)>=1e6?((v/1e6).toFixed(1)+'M'):Math.round(v/1000)+'k'}/></div>
+            <div style={{fontSize:14,fontWeight:800,color:winBuy?'var(--gn)':'var(--tx)',marginTop:6,fontFamily:'JetBrains Mono'}}>NPV(Buy): {cur}{Math.round(buyNPV).toLocaleString()}</div>
+            <div style={{fontSize:9,color:'var(--tx3)'}}>Undiscounted total: {cur}{buyTotal.toLocaleString()}</div>
           </div>
-          <div style={{padding:8,background:'rgba(240,180,41,.05)',borderRadius:4,border:'1px solid rgba(240,180,41,.2)'}}>
-            <div style={{fontSize:11,fontWeight:700,color:'var(--a4)',marginBottom:6}}>OPTION B: LEASE</div>
-            <Field label="Monthly Lease Cost"><input type="number" value={bvl.leaseCost} onChange={e=>setBvl(v=>({...v,leaseCost:+e.target.value}))}/></Field>
-            <Field label="Lease Term (yr)"><input type="number" value={bvl.leaseYears} onChange={e=>setBvl(v=>({...v,leaseYears:+e.target.value}))}/></Field>
-            <Field label="Annual Maintenance"><input type="number" value={bvl.maintLease} onChange={e=>setBvl(v=>({...v,maintLease:+e.target.value}))}/></Field>
-            <div style={{fontSize:10,color:'var(--tx2)',marginTop:4}}>Annual lease: {cur}{(bvl.leaseCost*12).toLocaleString()} | No tax shield (IFRS 16: on balance sheet)</div>
-            <div style={{fontSize:13,fontWeight:700,color:leaseNPV>buyNPV?'var(--gn)':'var(--tx)',marginTop:6}}>NPV(Lease): {cur}{Math.round(leaseNPV).toLocaleString()}</div>
+          <div style={{padding:10,background:'rgba(240,180,41,.05)',borderRadius:4,border:`2px solid ${!winBuy?'var(--a4)':'var(--br2)'}`,position:'relative'}}>
+            {!winBuy&&<span style={{position:'absolute',top:-10,right:8,background:'var(--a4)',color:'#000',fontSize:9,fontWeight:800,padding:'2px 8px',letterSpacing:.4,fontFamily:'JetBrains Mono'}}>WINNER</span>}
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+              <div style={{padding:6,background:'var(--bg2)',border:'1px solid var(--a4)'}}><AssetIcon kind="forklift" size={40} color="var(--a4)"/></div>
+              <div>
+                <div style={{fontSize:11,fontWeight:800,color:'var(--a4)',letterSpacing:.4,fontFamily:'JetBrains Mono'}}>OPTION B · LEASE</div>
+                <div style={{fontSize:9,color:'var(--tx3)'}}>Operating cost · no residual risk · IFRS 16 ROU</div>
+              </div>
+            </div>
+            <div className="grid2" style={{gap:4}}>
+              <Field label="Monthly Lease"><input type="number" value={bvl.leaseCost} onChange={e=>setBvl(v=>({...v,leaseCost:+e.target.value}))}/></Field>
+              <Field label="Lease Term (yr)"><input type="number" value={bvl.leaseYears} onChange={e=>setBvl(v=>({...v,leaseYears:+e.target.value}))}/></Field>
+              <Field label="Annual Maintenance"><input type="number" value={bvl.maintLease} onChange={e=>setBvl(v=>({...v,maintLease:+e.target.value}))}/></Field>
+              <Field label="WACC %"><input type="number" step="0.5" value={bvl.wacc} onChange={e=>setBvl(v=>({...v,wacc:+e.target.value}))}/></Field>
+            </div>
+            <div style={{fontSize:10,color:'var(--tx2)',marginTop:6,padding:4,background:'var(--bg)',border:'1px dashed var(--br)'}}>
+              Annual lease: <strong style={{color:'var(--a4)'}}>{cur}{(bvl.leaseCost*12).toLocaleString()}</strong> · No tax shield <em>(IFRS 16: on BS)</em>
+            </div>
+            <div style={{marginTop:6}}><YearBars data={leaseYears} color="var(--a4)" h={48} fmt={v=>Math.abs(v)>=1e6?((v/1e6).toFixed(1)+'M'):Math.round(v/1000)+'k'}/></div>
+            <div style={{fontSize:14,fontWeight:800,color:!winBuy?'var(--gn)':'var(--tx)',marginTop:6,fontFamily:'JetBrains Mono'}}>NPV(Lease): {cur}{Math.round(leaseNPV).toLocaleString()}</div>
+            <div style={{fontSize:9,color:'var(--tx3)'}}>Undiscounted total: {cur}{leaseTotal.toLocaleString()}</div>
           </div>
         </div>
-        <div style={{marginTop:8,padding:8,background:buyNPV>leaseNPV?'rgba(56,189,248,.08)':'rgba(240,180,41,.08)',borderRadius:4,border:`1px solid ${buyNPV>leaseNPV?'var(--a2)':'var(--a4)'}`,textAlign:'center'}}>
-          <strong style={{color:buyNPV>leaseNPV?'var(--a2)':'var(--a4)',fontSize:13}}>RECOMMENDATION: {buyNPV>leaseNPV?'BUY':'LEASE'}</strong>
-          <div style={{fontSize:10,color:'var(--tx2)'}}>Savings: {cur}{Math.abs(Math.round(buyNPV-leaseNPV)).toLocaleString()} over {Math.max(bvl.life,bvl.leaseYears)} years (NPV at {bvl.wacc}% WACC)</div>
+        <div style={{marginTop:10,padding:10,background:winBuy?'rgba(56,189,248,.08)':'rgba(240,180,41,.08)',borderRadius:4,border:`2px solid ${winBuy?'var(--a2)':'var(--a4)'}`,display:'flex',alignItems:'center',gap:12}}>
+          <div style={{fontSize:28,fontWeight:900,color:winBuy?'var(--a2)':'var(--a4)',fontFamily:'JetBrains Mono'}}>{winBuy?'BUY':'LEASE'}</div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:10,color:'var(--tx2)',fontWeight:700}}>RECOMMENDATION · {winBuy?'Own the asset':'Take the lease'}</div>
+            <div style={{fontSize:11,color:'var(--tx)'}}>Savings: <strong style={{color:'var(--gn)'}}>{cur}{Math.abs(Math.round(buyNPV-leaseNPV)).toLocaleString()}</strong> over {horizon} yrs (NPV @ {bvl.wacc}% WACC · {bvl.taxRate}% tax)</div>
+            <div style={{fontSize:9,color:'var(--tx3)',marginTop:2}}>Spread: {(Math.abs((buyNPV-leaseNPV)/Math.max(bvl.assetCost,1))*100).toFixed(1)}% of asset cost. {winBuy?'Buying earns its capital back via depreciation tax shield + residual value.':'Leasing avoids upfront CAPEX and end-of-life risk.'}</div>
+          </div>
         </div>
       </div>
     })()}
@@ -3029,6 +3213,17 @@ function FinanceTab({state,dispatch}){
           <KPI label="Payback" value={npvResult.payback_discounted!==null?`${npvResult.payback_discounted} yrs`:'Never'} sub="discounted" color="var(--a2)"/>
           <KPI label="Decision" value={npvResult.decision} color={npvResult.decision==='INVEST'?'var(--gn)':'var(--dg)'}/>
         </div>
+        {(()=>{
+          const cfs=npvForm.cash_flows.split(',').map(Number);
+          const r=npvForm.wacc/100;
+          let cum=0;
+          const bars=cfs.map((cf,t)=>{const pv=cf/Math.pow(1+r,t);cum+=pv;return{label:t===0?'Y0':`Y${t}`,value:Math.round(pv),color:cf>=0?'var(--gn)':'var(--dg)',cum:Math.round(cum)};});
+          return <div style={{marginTop:10,padding:8,background:'var(--bg2)',border:'1px solid var(--br2)'}}>
+            <div style={{fontSize:10,fontWeight:700,color:'var(--tx2)',marginBottom:4,letterSpacing:.3,fontFamily:'JetBrains Mono'}}>DISCOUNTED CASH FLOWS @ {npvForm.wacc}%</div>
+            <YearBars data={bars} color="var(--gn)" negColor="var(--dg)" h={54} fmt={v=>Math.abs(v)>=1000?(v/1000).toFixed(1)+'k':v.toString()}/>
+            <div style={{fontSize:9,color:'var(--tx3)',marginTop:4,fontFamily:'JetBrains Mono'}}>Cumulative PV crosses zero at Y{bars.findIndex(b=>b.cum>0)<0?'—':bars.findIndex(b=>b.cum>0)} (payback). Final Σ PV = {cur}{bars[bars.length-1]?.cum?.toLocaleString()}</div>
+          </div>;
+        })()}
         <div style={{fontSize:10,color:'var(--tx3)',marginTop:4}}>Rule: NPV {'>'} 0 AND IRR {'>'} WACC → INVEST. NPV = Σ(CF_t / (1+r)^t)</div>
       </div>}
     </div>
