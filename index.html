@@ -58,6 +58,7 @@
   --bg:#fafaf7;--bg2:#f2f1ec;--bg3:#ffffff;--bg4:#ebe9e2;
   --tx:#0a0a0a;--tx2:#3a3a3a;--tx3:#8a8a8a;
   --ac:#0a0a0a;--ac2:#1f7a3f;--a2:#1a3a8a;--a3:#d6392b;--a4:#d9a944;
+  --hl:#ffd60a;--hl2:#ffb400;
   --dg:#d6392b;--gn:#1f7a3f;
   --br:#d4d4d0;--br2:#0a0a0a;
   --radius:0px;
@@ -304,14 +305,24 @@ button{cursor:pointer;font-family:var(--font-body);transition:all .15s}
 .rccp-load>div.over{background:var(--dg)}
 .rccp-load .tgt{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--tx);left:85%}
 
-/* V1-specific decor */
+/* V1-specific decor — mono grid + yellow highlight */
 [data-skin="v1"] .panel{box-shadow:4px 4px 0 var(--br2)}
 [data-skin="v1"] .card{border:2px solid var(--br2);border-radius:0;box-shadow:3px 3px 0 var(--br2);margin-bottom:14px}
 [data-skin="v1"] .btn{border-radius:0;border:1.5px solid var(--tx);font-family:var(--font-mono);font-weight:700;letter-spacing:.4px;text-transform:uppercase}
-[data-skin="v1"] .btn-primary{background:var(--tx);color:var(--bg);border-color:var(--tx)}
+[data-skin="v1"] .btn-primary{background:var(--hl);color:var(--tx);border-color:var(--tx)}
+[data-skin="v1"] .btn-primary:hover{background:var(--hl2)}
 [data-skin="v1"] .btn-secondary{background:var(--bg3);color:var(--tx)}
 [data-skin="v1"] .badge{border-radius:0;font-family:var(--font-mono);font-weight:700;letter-spacing:.4px;border:1px solid var(--tx2)}
 [data-skin="v1"] .kpi{border:2px solid var(--br2);border-radius:0;box-shadow:3px 3px 0 var(--br)}
+[data-skin="v1"] .kpi.hl,[data-skin="v1"] .kpi.win,[data-skin="v1"] .blk.hl{background:var(--hl);color:var(--tx);box-shadow:3px 3px 0 var(--tx)}
+[data-skin="v1"] .tab-btn.active{background:var(--hl);color:var(--tx);border-bottom-color:var(--tx);font-weight:800;letter-spacing:.4px}
+[data-skin="v1"] .data-table tr.win td,[data-skin="v1"] .data-table tr.winner td{background:var(--hl);color:var(--tx);font-weight:700}
+[data-skin="v1"] .data-table .win{background:var(--hl);color:var(--tx);padding:1px 4px}
+[data-skin="v1"] .sku-item.active{background:var(--hl);color:var(--tx);border-left:4px solid var(--tx);font-weight:800}
+[data-skin="v1"] .tag-yellow,[data-skin="v1"] .badge.yellow{background:var(--hl);color:var(--tx);border-color:var(--tx)}
+[data-skin="v1"] .mini-bar div.hl,[data-skin="v1"] .wf-fill.hl,[data-skin="v1"] .score-bar div.ok{background:var(--hl)}
+[data-skin="v1"] .top-bar h1{background:none;-webkit-background-clip:initial;-webkit-text-fill-color:var(--tx);color:var(--tx);font-family:var(--font-mono)}
+[data-skin="v1"] .top-bar .brand-e{display:inline-block;background:var(--tx);color:var(--hl);padding:2px 6px;margin-right:6px;font-weight:900}
 
 /* V3 Risograph polish — Stage 4 */
 [data-skin="v3"] .panel{background:var(--bg3);border-radius:3px;box-shadow:2px 3px 0 rgba(26,32,64,.12)}
@@ -4892,7 +4903,7 @@ function CommandCenterTab({state,dispatch}){
           const qBackups=((b.backupSuppliers||[]).filter(bk=>bk.qualified).length)+((!b.backupSuppliers||!b.backupSuppliers.length)&&b.backupSupplier?1:0);
           const highRisk=b.supplierType==='import'||b.leadTime>4||qBackups<2;
           const quad=highValue&&highRisk?'Strategic':highValue&&!highRisk?'Leverage':!highValue&&highRisk?'Bottleneck':'Non-Critical';
-          return{...b,spend,quad};
+          return{...b,spend,quad,qBackups};
         });
         const quads={Strategic:{color:'var(--dg)',strategy:'Long-term partnerships, JDAs, dual-source'},Leverage:{color:'var(--ac)',strategy:'Exploit buying power, e-auctions, volume consolidation'},Bottleneck:{color:'var(--a4)',strategy:'Secure supply, develop alternatives, hold safety stock'},'Non-Critical':{color:'var(--gn)',strategy:'Automate, reduce admin cost, catalog buying'}};
         return <table className="data-table">
@@ -4902,7 +4913,7 @@ function CommandCenterTab({state,dispatch}){
             <td className="num">{cur}{Math.round(b.spend).toLocaleString()}</td>
             <td><span style={{padding:'2px 8px',borderRadius:10,fontSize:9,fontWeight:700,color:quads[b.quad].color}}>{b.quad}</span></td>
             <td style={{fontSize:9,color:'var(--tx3)'}}>{quads[b.quad].strategy}</td>
-            <td style={{fontSize:9}}>{[b.supplierType==='import'&&'Import',b.leadTime>4&&`LT ${b.leadTime}wk`,qBackups===0&&'No backup',qBackups===1&&'Single backup'].filter(Boolean).join(', ')||`${qBackups} qualified backups ✓`}</td>
+            <td style={{fontSize:9}}>{[b.supplierType==='import'&&'Import',b.leadTime>4&&`LT ${b.leadTime}wk`,b.qBackups===0&&'No backup',b.qBackups===1&&'Single backup'].filter(Boolean).join(', ')||`${b.qBackups} qualified backups ✓`}</td>
           </tr>)}</tbody>
         </table>
       })()}
@@ -5535,10 +5546,21 @@ function IndiaSupplyMapPanel({state}){
 function SupplierScorecardPanel({state}){
   const sup=state._tataSuppliers||[];
   const prods=state.products||[];
-  const derived=[];
-  prods.forEach(p=>(p.bom||[]).forEach(b=>{if(b.country){derived.push({name:b.name,city:b.country,otif:95-Math.random()*8,ppm:Math.round(100+Math.random()*400),priceIdx:Math.round(90+Math.random()*25)})}}));
-  const rows=sup.length?sup:derived.slice(0,8);
-  if(!rows.length)return <Panel title="Supplier Scorecard" sub="OTIF · PPM · price index"><div style={{padding:20,textAlign:'center',color:'var(--tx3)',fontSize:11}}>Load the Tata demo or add suppliers in Tab 3 to populate.</div></Panel>;
+  const hash=s=>{let h=0;for(let i=0;i<(s||'').length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;return Math.abs(h);};
+  const byVendor={};
+  prods.forEach(p=>(p.bom||[]).forEach(b=>{
+    const vname=b.supplierName||b.supplier||b.vendor||(b.country?`${b.country} Vendor`:null)||b.name;
+    if(!vname)return;
+    if(!byVendor[vname]){
+      const h=hash(vname);
+      byVendor[vname]={name:vname,city:b.country||b.supplierCity||b.origin||'—',otif:88+(h%11),ppm:60+(h%440),priceIdx:92+(h%26),parts:0,spend:0};
+    }
+    byVendor[vname].parts++;
+    byVendor[vname].spend+=(b.cost||0)*(b.qtyPer||1)*((p.history||[]).slice(-12).reduce((a,x)=>a+x,0));
+  }));
+  const derived=Object.values(byVendor);
+  const rows=sup.length?sup:derived.slice(0,10);
+  if(!rows.length)return <Panel title="Supplier Scorecard" sub="OTIF · PPM · price index"><div style={{padding:20,textAlign:'center',color:'var(--tx3)',fontSize:11}}>Add products with suppliers (Tab 2 → BOM → Supplier) or load the Tata demo to populate.</div></Panel>;
   return <Panel title="Supplier Scorecard" sub="OTIF · PPM · price index · 6-month rolling" right={<span className="tag tag-ghost">{rows.length} VENDORS</span>}>
     <div className="score-row h"><div>VENDOR</div><div>OTIF %</div><div>PPM DEFECTS</div><div>PRICE IDX</div><div>GRADE</div></div>
     {rows.map((v,i)=>{const otifCls=v.otif>=97?'':v.otif>=94?'warn':'bad';const ppmCls=v.ppm<=150?'':v.ppm<=300?'warn':'bad';const priceCls=v.priceIdx<=105?'':v.priceIdx<=115?'warn':'bad';const scores=[otifCls,ppmCls,priceCls];const bads=scores.filter(c=>c==='bad').length,warns=scores.filter(c=>c==='warn').length;const grade=bads?'C':warns>=2?'B':warns?'A':'A+';return <div key={i} className="score-row">
