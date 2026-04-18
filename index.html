@@ -316,7 +316,7 @@ const defaultSKU=()=>({
     payTermDays:30,earlyPayDisc:0, // payment terms
     vmi:false, // vendor managed inventory
     onHand:0, // initial RM inventory
-    procPolicy:'milp', // jit/eoq/mrp/lfl/milp per part
+    procPolicy:'auto', // v3.2: auto evaluates all & picks cheapest; also accepts milp/lfl/eoq/foq/poq/minmax/epq/ww/silvermeal/ppb/luc/ltc/jit/kanban/mrp
     supplierType:'domestic',country:'',incoterm:'',hsCode:'',
     backupSupplier:'',backupCost:0,backupLeadTime:0,backupActivation:'manual',
     subcontract:false,subcontractRate:0,subcontractLT:0,
@@ -909,12 +909,15 @@ function ProductsTab({state,dispatch}){
                 <Field label="RM Shelf (d)"><input type="number" value={b.rmShelf||90} style={{width:45}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{rmShelf:+e.target.value}})}/></Field>
                 <Field label="Cost CV%"><input type="number" value={b.costCV||10} style={{width:40}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{costCV:+e.target.value}})}/></Field>
                 <Field label="Trans Mode"><select value={b.transMode||'perUnit'} style={{width:70}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{transMode:e.target.value}})}><option value="perUnit">Per Unit</option><option value="FTL">FTL</option><option value="LTL">LTL</option><option value="contract">Contract</option><option value="air">Air</option></select></Field>
-                <Field label="Lot-Sizing Rule" hint="Per-part procurement policy. MILP = solved jointly; others = per-part formula (LFL / EOQ / FOQ / POQ / Min-Max / Wagner-Whitin / Silver-Meal / PPB / LUC / LTC / JIT / Kanban). Today MILP is the only one wired end-to-end; other selections are captured to state but not yet honored by the solver (v3.1.1 roadmap).">
-                  <select value={b.procPolicy||'milp'} style={{width:95}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{procPolicy:e.target.value}})}>
+                <Field label="Lot-Sizing Rule" hint="Per-part procurement policy. AUTO (default) evaluates ALL policies against this part's demand and picks the cheapest — no more manual toggling. MILP = solved jointly across all parts; others = closed-form / heuristic on this part alone. When MILP wins (common at small scale with clean data), AUTO picks MILP. Leaderboard is returned in the result.">
+                  <select value={b.procPolicy||'auto'} style={{width:95}} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{procPolicy:e.target.value}})}>
+                    <optgroup label="v3.2 — Auto (recommended)">
+                      <option value="auto">Auto (cheapest wins)</option>
+                    </optgroup>
                     <optgroup label="Solver (wired)">
                       <option value="milp">MILP (joint)</option>
                     </optgroup>
-                    <optgroup label="Closed-form (v3.1.1)">
+                    <optgroup label="Closed-form (v3.2)">
                       <option value="lfl">Lot-for-Lot</option>
                       <option value="eoq">EOQ</option>
                       <option value="foq">Fixed Order Qty</option>
@@ -922,7 +925,7 @@ function ProductsTab({state,dispatch}){
                       <option value="minmax">Min-Max (ROP)</option>
                       <option value="epq">EPQ (in-house)</option>
                     </optgroup>
-                    <optgroup label="Heuristic (v3.1.1)">
+                    <optgroup label="Heuristic (v3.2)">
                       <option value="ww">Wagner-Whitin</option>
                       <option value="silvermeal">Silver-Meal</option>
                       <option value="ppb">Part-Period Balancing</option>
@@ -3379,18 +3382,19 @@ function LearningLab({state}){
         Decision: USE AIR if premium {'<'} stockout_cost, else ACCEPT RISK
       </p>
       <p style={{marginTop:6}}>Transit DB: Shanghai→Chennai 18d sea / 4d air, Hamburg→JNPT 26d sea / 5d air; customs green 2d, normal 4d, red 7d.</p>
-      <div style={{marginTop:10,padding:8,background:'rgba(240,180,41,.08)',border:'1px solid var(--a4)',borderRadius:4}}>
-        <div style={{fontSize:11,fontWeight:700,color:'var(--a4)',marginBottom:4}}>🗺️ SAP IBP-Style Pattern Sensing — Roadmap v3.2 (NOT yet implemented)</div>
+      <div style={{marginTop:10,padding:8,background:'rgba(0,212,170,.08)',border:'1px solid var(--ac)',borderRadius:4}}>
+        <div style={{fontSize:11,fontWeight:700,color:'var(--ac)',marginBottom:4}}>🗺️ SAP IBP-Style Pattern Sensing — v3.2 <span style={{background:'var(--ac)',color:'var(--bg)',padding:'1px 5px',borderRadius:3,fontSize:8,marginLeft:4}}>LIVE</span></div>
         <div style={{fontSize:10,color:'var(--tx)',lineHeight:1.5}}>
-          SAP IBP Demand Sensing goes further than α-smoothing. What <em>it</em> does (and we currently don't):<br/>
-          <strong>1. Multi-signal intake</strong> — POS, shipments, orders, weather, promo calendars, web traffic; each with its own lag.<br/>
-          <strong>2. Pattern library</strong> — learned templates for recurring shapes (promo lift, holiday ramp, weekend dip, post-outage bounce).<br/>
-          <strong>3. ML matching</strong> — gradient-boosted or neural matchers score new actuals against templates; closest match nudges short-horizon forecast.<br/>
-          <strong>4. Horizon handoff</strong> — sensed forecast owns weeks 0–6; statistical forecast owns 7+; soft blend in the overlap.<br/>
-          <strong>5. Posterior uncertainty</strong> — every sensed point carries its own variance, propagated into safety stock.<br/>
-          <span style={{color:'var(--a4)',fontWeight:600}}>Honest status:</span> Our α=0.3 smoother is a baseline. The pattern layer above is scoped for v3.2. We won't pretend otherwise.
+          All five SAP IBP Demand Sensing layers are now wired via <code>/api/demand/sense</code>:<br/>
+          <strong>1. Multi-signal intake</strong> — actuals + promo_weeks + holiday_weeks external signals (POS/weather coming in v3.3).<br/>
+          <strong>2. Pattern library</strong> — 7 parametric templates: promo_lift, holiday_ramp, weekend_dip, post_outage_bounce, trend_break_up/down, cannibalization.<br/>
+          <strong>3. Cosine-similarity matching</strong> — residual shape vs each template; pattern with highest similarity drives the lift correction (confidence gate at 0.15).<br/>
+          <strong>4. Horizon handoff</strong> — sensed owns weeks 0–6 (configurable), linear blend over 3 weeks, statistical owns 7+.<br/>
+          <strong>5. Posterior uncertainty</strong> — σ from residual std; CV-scaled safety-stock multiplier z·(1+CV).<br/>
+          <span style={{color:'var(--ac)',fontWeight:600}}>Use the "Run Pattern Sense" button below</span> with your actuals + baseline forecast to see matched patterns, blended curve, and propagated σ.
         </div>
       </div>
+      <IbpSenseDemo cur={cur}/>
     </S>
 
     <S id="profitmix" title="💰 Profit Maximization — Shadow Prices" color="var(--gn)">
@@ -3511,6 +3515,91 @@ function LearningLab({state}){
       })()}
     </S>
   </div>
+}
+
+// ════════════════════════════════════════════════
+// v3.2 — IBP-Style Pattern Sensing Demo (live)
+// ════════════════════════════════════════════════
+function IbpSenseDemo({cur}){
+  const [actuals,setActuals]=useState('92,98,105,128,165,178,142,118');
+  const [baseline,setBaseline]=useState('100,100,105,110,115,120,120,118,115,112,110,108,106,104,102,100');
+  const [promo,setPromo]=useState('');
+  const [holiday,setHoliday]=useState('');
+  const [res,setRes]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const [err,setErr]=useState(null);
+  const parseArr=(s)=>s.split(',').map(x=>parseFloat(x.trim())).filter(x=>!isNaN(x));
+  const parseIdx=(s)=>s.split(',').map(x=>parseInt(x.trim(),10)).filter(x=>!isNaN(x));
+  const run=async()=>{
+    setLoading(true);setErr(null);setRes(null);
+    try{
+      const r=await fetch('/api/demand/sense',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        actuals:parseArr(actuals),baseline_forecast:parseArr(baseline),
+        promo_weeks:parseIdx(promo),holiday_weeks:parseIdx(holiday),
+        sense_weeks:6,blend_weeks:3,alpha:0.3,z:1.645,
+      })});
+      const j=await r.json();
+      if(j.error){setErr(j.error);}else{setRes(j);}
+    }catch(e){setErr(String(e));}
+    setLoading(false);
+  };
+  return <div style={{marginTop:10,padding:10,background:'var(--bg2)',border:'1px solid var(--bd)',borderRadius:4}}>
+    <div style={{fontSize:11,fontWeight:700,marginBottom:6,color:'var(--a2)'}}>🧪 Interactive: Run Pattern Sense on Your Data</div>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,fontSize:10,marginBottom:6}}>
+      <label>Actuals (recent, comma-sep)<input style={{width:'100%'}} value={actuals} onChange={e=>setActuals(e.target.value)}/></label>
+      <label>Baseline forecast (covers actuals + future)<input style={{width:'100%'}} value={baseline} onChange={e=>setBaseline(e.target.value)}/></label>
+      <label>Promo week indices (optional)<input style={{width:'100%'}} value={promo} onChange={e=>setPromo(e.target.value)}/></label>
+      <label>Holiday week indices (optional)<input style={{width:'100%'}} value={holiday} onChange={e=>setHoliday(e.target.value)}/></label>
+    </div>
+    <button onClick={run} disabled={loading} style={{padding:'6px 14px',background:'var(--ac)',color:'var(--bg)',border:'none',borderRadius:3,fontWeight:700,fontSize:10,cursor:'pointer'}}>
+      {loading?'Sensing…':'Run Pattern Sense'}
+    </button>
+    {err&&<div style={{color:'var(--rd)',marginTop:6,fontSize:10}}>⚠ {err}</div>}
+    {res&&<div style={{marginTop:10,fontSize:10}}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,marginBottom:8}}>
+        <div style={{padding:6,background:'var(--bg3)',borderRadius:3}}>
+          <div style={{fontSize:8,color:'var(--tx3)'}}>PRIMARY PATTERN</div>
+          <div style={{fontWeight:700,color:'var(--ac)'}}>{res.primary_pattern}</div>
+          <div style={{fontSize:8,color:'var(--tx3)'}}>confidence {res.pattern_confidence}</div>
+        </div>
+        <div style={{padding:6,background:'var(--bg3)',borderRadius:3}}>
+          <div style={{fontSize:8,color:'var(--tx3)'}}>POSTERIOR σ</div>
+          <div style={{fontWeight:700,color:'var(--a2)'}}>{res.posterior.sigma}</div>
+          <div style={{fontSize:8,color:'var(--tx3)'}}>CV {res.posterior.cv} · SS×{res.posterior.safety_stock_multiplier}</div>
+        </div>
+        <div style={{padding:6,background:'var(--bg3)',borderRadius:3}}>
+          <div style={{fontSize:8,color:'var(--tx3)'}}>LEVEL RATIO</div>
+          <div style={{fontWeight:700,color:'var(--a4)'}}>{res.audit.level_ratio}×</div>
+          <div style={{fontSize:8,color:'var(--tx3)'}}>smoothed {res.audit.smoothed_level} vs base {res.baseline_forecast[0]}</div>
+        </div>
+      </div>
+      <div style={{marginBottom:6}}>
+        <div style={{fontSize:9,fontWeight:700,color:'var(--tx2)',marginBottom:2}}>Pattern Leaderboard (cosine similarity)</div>
+        <table style={{width:'100%',fontSize:9,borderCollapse:'collapse'}}>
+          <tr style={{background:'var(--bg3)'}}><th style={{textAlign:'left',padding:'3px 6px'}}>Pattern</th><th style={{textAlign:'right',padding:'3px 6px'}}>Similarity</th><th style={{textAlign:'left',padding:'3px 6px'}}>Description</th></tr>
+          {res.matched_patterns.map((m,i)=>
+            <tr key={i} style={{borderTop:'1px solid var(--bd)',background:i===0?'rgba(0,212,170,.08)':'transparent'}}>
+              <td style={{padding:'3px 6px',fontWeight:i===0?700:400}}>{m.pattern}</td>
+              <td style={{textAlign:'right',padding:'3px 6px',fontFamily:'JetBrains Mono'}}>{m.similarity}</td>
+              <td style={{padding:'3px 6px',color:'var(--tx2)'}}>{m.description}</td>
+            </tr>
+          )}
+        </table>
+      </div>
+      <div style={{marginBottom:6}}>
+        <div style={{fontSize:9,fontWeight:700,color:'var(--tx2)',marginBottom:2}}>Blended Forecast (sensed weeks 0-5 → blend 6-8 → statistical 9+)</div>
+        <div style={{display:'flex',gap:2,fontSize:8,fontFamily:'JetBrains Mono',overflowX:'auto',padding:4,background:'var(--bg3)',borderRadius:3}}>
+          {res.blended_forecast.map((v,i)=>
+            <div key={i} style={{minWidth:38,textAlign:'center',padding:'2px 4px',borderRadius:2,background:i<6?'rgba(0,212,170,.15)':i<9?'rgba(167,139,250,.12)':'transparent',color:i<6?'var(--ac)':i<9?'var(--a3)':'var(--tx2)'}}>
+              <div style={{fontSize:7,color:'var(--tx3)'}}>w{i}</div>
+              {Math.round(v)}
+            </div>
+          )}
+        </div>
+        <div style={{fontSize:8,color:'var(--tx3)',marginTop:3}}>Green=sensed (pattern-driven), Purple=blend band, Grey=statistical.</div>
+      </div>
+    </div>}
+  </div>;
 }
 
 // ════════════════════════════════════════════════

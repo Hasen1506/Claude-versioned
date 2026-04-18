@@ -15,6 +15,11 @@ import math
 import time
 import numpy as np
 
+try:
+    from .lot_sizing import run_policy, auto_select_policy
+except ImportError:
+    from lot_sizing import run_policy, auto_select_policy
+
 
 def solve_procurement(data):
     """Main entry point. data = dict from API request."""
@@ -104,6 +109,7 @@ def solve_procurement(data):
                 'trans_rate': part.get('trans_rate', 0.0),
                 'pay_term_days': part.get('pay_term_days', 30),
                 'early_pay_disc': part.get('early_pay_disc', 0),
+                'proc_policy': (part.get('proc_policy') or 'milp').lower(),
             })
 
             for t in range(T):
@@ -393,6 +399,63 @@ def solve_procurement(data):
                     'cost': round(orders[t] * part['cost'], 2),
                 })
 
+        # v3.2 — compute MILP's realized per-part cost for comparison
+        milp_cost = round(
+            sum(orders) * part['cost']
+            + sum(order_flags) * part['ord_cost']
+            + sum(rm_levels) * part['cost'] * (part['hold_pct'] / 100) / 52,
+            2,
+        )
+
+        # v3.2 — run alternative closed-form / heuristic policies on the part's
+        # derived demand (production × qty_per × effective_qty_mult) for ranking.
+        k = part['product_k']
+        prod = products[k]
+        fy = prod.get('yield_pct', 0.95)
+        qty_per = part['qty_per']
+        scrap = part['scrap']
+        eff_mult = qty_per * (1 + scrap) / max(fy, 0.01)
+        prod_schedule = product_results[k]['production']
+        part_demand = [int(round(q * eff_mult)) for q in prod_schedule]
+
+        lp_params = {
+            'unit_cost': part['cost'],
+            'ord_cost': part['ord_cost'],
+            'hold_rate_annual': part['hold_pct'] / 100,
+            'hold_rate_weekly': (part['hold_pct'] / 100) / 52,
+            'lead_time': part['lt'],
+            'z': z,
+            'init_inv': 0,
+            'max_shortage': 0,
+        }
+        alt = auto_select_policy(part_demand, lp_params)
+        leaderboard = alt['leaderboard']
+        # Prepend MILP for ranking visibility (flagged separately)
+        leaderboard = [{
+            'policy': 'milp',
+            'label': 'MILP (joint solver)',
+            'total_cost': milp_cost,
+            'order_cost': round(sum(order_flags) * part['ord_cost'], 2),
+            'hold_cost': round(
+                sum(rm_levels) * part['cost'] * (part['hold_pct'] / 100) / 52,
+                2,
+            ),
+            'num_orders': sum(order_flags),
+            'shortage': 0,
+            'feasible': True,
+        }] + leaderboard
+        leaderboard.sort(key=lambda x: (not x['feasible'], x['total_cost']))
+        cheapest_policy = leaderboard[0]['policy'] if leaderboard else 'milp'
+
+        # Honor per-part procPolicy setting
+        policy_pref = part.get('proc_policy', 'milp')
+        if policy_pref == 'auto':
+            chosen = cheapest_policy
+        elif policy_pref in ('milp', None, ''):
+            chosen = 'milp'
+        else:
+            chosen = policy_pref
+
         material_results.append({
             'name': part['name'],
             'product': products[part['product_k']].get('name', ''),
@@ -402,6 +465,16 @@ def solve_procurement(data):
             'total_ordered': sum(orders),
             'total_cost': round(sum(orders) * part['cost'], 2),
             'num_orders': sum(order_flags),
+            # v3.2 additions
+            'proc_policy_pref': policy_pref,
+            'proc_policy_chosen': chosen,
+            'cheapest_policy': cheapest_policy,
+            'milp_cost': milp_cost,
+            'policy_leaderboard': leaderboard,
+            'winner_vs_milp_savings': round(
+                milp_cost - (leaderboard[0]['total_cost'] if leaderboard else milp_cost),
+                2,
+            ),
         })
 
     # Cost breakdown

@@ -1080,4 +1080,47 @@ Deeper phases (P2 routing, P3 Excel import, P5 job-shop DAG, P9 multi-echelon, P
 
 ---
 
-_End of Master Plan — v3.0_
+## 13. v3.2 — SHIPPED (2026-04-18)
+
+Two features landed in this release, addressing the last two open user questions:
+
+### 13.1 Auto-select Lot-Sizing Policy
+
+**User question:** *"What is the point of having all different lot sizing formulas? Won't MILP win all the time? Shouldn't it be that whatever else gives lowest cost should win, instead of me toggling around each?"*
+
+**Answer:** Exactly right. The dropdown shouldn't force the user to guess. A new **"Auto (cheapest wins)"** option is now the default. Behind the scenes:
+
+1. `lot_sizing.py` implements all 13 policies (LFL, EOQ, FOQ, POQ, Min-Max, EPQ, Wagner-Whitin, Silver-Meal, PPB, LUC, LTC, JIT, Kanban) as pure-Python closed-form or DP functions — each returns `(orders[T], label)`.
+2. `auto_select_policy(demand, params)` runs every policy, simulates each through a shared inventory simulator (holding + ordering cost), filters out infeasible (exceeds `max_shortage`), and returns the cheapest with full leaderboard.
+3. `procurement.py` runs MILP normally, then for every part ALSO runs the auto-selector against that part's derived demand (production × qty_per × eff_mult). MILP's realized cost is prepended to the leaderboard for a fair comparison.
+4. `proc_policy_pref` controls behavior:
+   - `'milp'` (joint) → MILP always chosen, leaderboard is informational only
+   - `'auto'` → `cheapest_policy` field picks MILP or a formula, whichever is lowest
+   - specific key (e.g. `'eoq'`) → that policy is reported as chosen, MILP kept as the baseline for comparison
+5. **UI:** Lot-Sizing dropdown default changed to `'auto'`. New label "AUTO (cheapest wins)" at the top. Tooltip explains that MILP typically wins at small scale with clean data — but the user no longer has to guess.
+
+**Why MILP usually wins at this scale:** CBC solves the joint problem exactly under ~50 SKUs × 52 weeks. Closed-form policies are per-part and can't exploit shared setup amortization or warehouse pooling. At 10,000 SKUs, MILP runs out of time → heuristics (Silver-Meal, PPB) become competitive because they're O(T²) per part. **Rule of thumb:** MILP wins when N·T < ~5000; otherwise check the leaderboard.
+
+### 13.2 SAP IBP-Style Pattern Sensing
+
+**User question:** *"SAP IBP style pattern sensing implemented?"*
+
+**Answer:** Yes, via `pattern_sensing.py` and `/api/demand/sense`. All five IBP layers are now live:
+
+1. **Multi-signal intake** — `actuals` + optional `promo_weeks`, `holiday_weeks` (POS/weather coming in v3.3).
+2. **Pattern library** — 7 parametric templates: `promo_lift`, `holiday_ramp`, `weekend_dip`, `post_outage_bounce`, `trend_break_up`, `trend_break_down`, `cannibalization`. Each template's shape is a multiplicative lift over 8 weeks anchored at the current point.
+3. **Cosine-similarity matching** — Normalized residual (actual/baseline, mean-centered) is compared via cosine similarity against each template; top match drives shape correction. A confidence gate of 0.15 prevents spurious low-similarity matches from distorting the forecast.
+4. **Horizon handoff** — Sensed forecast owns weeks 0..`sense_weeks-1` (default 6), statistical owns `sense_weeks+blend_weeks..` (default 9+), linear blend in between. Default: 6 sensed + 3 blend + statistical.
+5. **Posterior variance** — σ from residual std; CV = σ / μ_baseline; safety-stock multiplier = z·(1 + CV) so high-noise periods inflate SS. This propagates uncertainty directly into safety-stock sizing.
+
+**Frontend:** The "v3.2 Roadmap — NOT yet implemented" card is replaced with a "LIVE" badge and an interactive `IbpSenseDemo` component in the Learning Lab. User enters recent actuals + baseline; the panel returns matched patterns, blended curve visualized as sensed/blend/statistical bands, and posterior σ with its safety-stock multiplier.
+
+### 13.3 What did NOT ship in v3.2 (deferred to v3.3+)
+
+- **ML-based matching** (gradient-boosted trees or LSTM on POS data) — cosine similarity on a small parametric library is the v3.2 baseline. Adding `scikit-learn` / `lightgbm` would break Render starter plan memory limits.
+- **Weather / macro signal ingestion** — the signal schema supports it (promo_weeks, holiday_weeks) but external API plumbing is v3.3.
+- **Auto-select with production-pegged MILP** — current auto-select evaluates per-part in isolation. A future version could re-solve a reduced MILP with the winning policies baked in, potentially finding deeper savings from cross-part interactions.
+
+---
+
+_End of Master Plan — v3.2 shipped 2026-04-18_

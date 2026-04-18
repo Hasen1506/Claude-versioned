@@ -27,6 +27,8 @@ from solvers.montecarlo import run_montecarlo
 from solvers.finance import calc_landed_cost, calc_npv, calc_depreciation, calc_wacc
 from solvers.report import generate_report
 from solvers.disaggregate import disaggregate
+from solvers.lot_sizing import solve_lot_sizing
+from solvers.pattern_sensing import sense as demand_sense, list_patterns
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
@@ -403,6 +405,35 @@ def api_solve_pipeline():
 def api_disaggregate():
     try:
         return jsonify(disaggregate(request.json))
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+# ─── Lot-Sizing Policies (v3.2) ───
+@app.route('/api/solve/lotsizing', methods=['POST'])
+def api_lot_sizing():
+    """Run one policy or 'auto' (evaluate all, pick cheapest per part)."""
+    try:
+        return jsonify(solve_lot_sizing(request.json or {}))
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+# ─── Demand Sensing — SAP IBP-style pattern sensing (v3.2) ───
+@app.route('/api/demand/sense', methods=['POST'])
+def api_demand_sense():
+    """Pattern-match recent actuals against library, blend sensed + statistical."""
+    try:
+        return jsonify(demand_sense(request.json or {}))
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+@app.route('/api/demand/patterns', methods=['GET'])
+def api_demand_patterns():
+    """Return the pattern library for UI documentation."""
+    try:
+        return jsonify({'patterns': list_patterns()})
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
