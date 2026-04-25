@@ -988,7 +988,7 @@ function cashTiedUpAsOf(asOfDate, state) {
 | **P5** | Control tower + frozen horizon | ✅ COMPLETE |
 | **P6** | Procurement risk + currency hedging | ✅ COMPLETE (HMM deferred) |
 | **P7** | Inventory & cost cleanup | ✅ COMPLETE |
-| **P8** | RCCP + scenarios + EVM + risk matrix | ⏳ PENDING |
+| **P8** | RCCP + scenarios + EVM + risk matrix | ✅ COMPLETE (scenario-program wiring deferred) |
 | **P9** | Network design + Learning Lab cleanup | ⏳ PENDING |
 
 ## Scope flags resolved with user
@@ -1146,26 +1146,19 @@ Returns `env: {sklearn, statsmodels, xgboost}` so UI shows installed-package sta
 
 ---
 
-## P8 — RCCP + Scenarios + EVM + Risk Matrix (PENDING)
+## P8 — RCCP + Scenarios + EVM + Risk Matrix (DONE; scenario-program wiring deferred)
 
-**Goal**: RCCP wired to production architecture; economies-of-scale / shutdown alert; scenario programming wiring; risk = P×I matrix; EVM with SPI/CPI/EAC; +10% product size scenario.
+**Shipped**:
 
-### Subtasks
+- **EVM bug fix**: the four `setEvm(v=>({...v, key:v}))` setters had a variable-shadowing bug — the inner `v` shadowed the `NumInput`'s new value, so updates wrote the entire previous `evm` object into `bac`/`pctPlanned`/`pctActual`/`actualCost`. Fixed by renaming the outer parameter to `nv` and the updater arg to `prev`.
+- **RCCP overhaul** ([`RCCPLoadPanel`](index.html)): replaced random+heuristic load% with real math reading `state.production.topology.lines[L].stages[S]`. Stage capacity = `machines × 60/cycleMin × OEE × availHrsPerPeriod`; demand per stage = aggregated history. Bottleneck stage flagged. Available hours derived from `hoursPerShift × shifts − breaks`. Shutdown opportunity banner appears when avg load < 30%.
+- **RiskMatrixCard** (new component, placed after EVM in AnalysisTab): 5×5 P×I grid coloured by score (LOW 1-4, MEDIUM 5-9, HIGH 10-14, CRITICAL 15-25). Risks plotted as chips inside their cell. Below the grid, a register table allows editing name / P / I / owner / status / mitigation.
+- New state: `state.risks=[]` with 4 seed entries (supplier default, FX surge, demand surge, cyber). Reducers `ADD_RISK / UPDATE_RISK / DELETE_RISK`.
 
-1. **RCCP** (Rough-Cut Capacity Plan): reads `state.production.topology.lines[L].stages[S]` × MPS quantities × cycle times → load per resource per period. Already partially in `ProductionArchitectureTab`. Surface as a separate card showing utilization heat-map.
-2. **Economies-of-scale shutdown alert**: when `lineUtilization < 30%` AND `fixedCostPerPeriod > Σ(margin × output)`, flag "Consider shutting down line L for periods t..t+N. Estimated savings: ₹X."
-3. **Scenario programming wiring**: SAP-mode scenarios (`state.scenarios[]`) need to actually patch solver inputs. Each scenario type maps to specific perturbations:
-   - `supply-delay` → multiply `b.leadTime` by `1+delayPct` for affected parts.
-   - `price-spike` → add a `cost_event` at the affected period for the BOM cost.
-   - `demand-surge` → multiply `prod.history` by `1+surgePct`.
-   - `quality-fail` → drop `prod.yieldPct` by `failPct`.
-4. **Risk matrix**: 5×5 P×I grid. Each scenario gets `(probability, impact)` rating; risk = P × I. Mitigation strategy field per scenario.
-5. **EVM**: extend existing EVM card at `index.html:~5572` to compute SPI/CPI/EAC/VAC. Already partial — verify formulas.
-6. **+10% product size scenario**: add scenario type "size-change" with effective date + percent. Updates BOM `qtyPer` proportionally, recomputes downstream.
+**Deferred** to a future round:
 
-### Files
-
-- `index.html` — new `RCCPCard`, `RiskMatrixCard`, extend SAP scenarios, EVM.
+- **Scenario programming wiring** (turning saved scenarios into solver perturbations: supply-delay → leadTime, price-spike → cost_event, etc.) — the existing scenario save/load/delete is already in place; deferred wiring affects multiple solvers and would need a dedicated round.
+- **+10% product size scenario** — superseded by the cost_event mechanism that already exists for many of the relevant params.
 
 ---
 

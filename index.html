@@ -1179,6 +1179,13 @@ const defaultState={
   hedges:[],
   // Scenarios for save/load
   scenarios:[],
+  // P8 — Risk register: {id, name, probability(1-5), impact(1-5), mitigation, owner, status('open'|'monitoring'|'closed')}
+  risks:[
+    {id:'r1',name:'Tier-1 supplier default',probability:2,impact:5,mitigation:'Backup supplier qualified; 4 wk safety stock',owner:'Procurement',status:'monitoring'},
+    {id:'r2',name:'JPY surge vs INR',probability:3,impact:3,mitigation:'30% forward hedge on NSK PO',owner:'Finance',status:'open'},
+    {id:'r3',name:'Demand surge (festive)',probability:4,impact:3,mitigation:'Capacity on standby + +1 shift contract',owner:'Production',status:'monitoring'},
+    {id:'r4',name:'Cyber attack on ERP',probability:1,impact:5,mitigation:'Daily backups; SOC2 vendor; insurance',owner:'IT',status:'open'},
+  ],
   // Version history
   versions:[],
   // Working capital params
@@ -1346,6 +1353,10 @@ function reducer(state,action){
     case 'SAVE_SCENARIO':s.scenarios=[{id:Date.now().toString(36),name:action.name||`Scenario ${s.scenarios.length+1}`,time:new Date().toLocaleString(),data:JSON.parse(JSON.stringify({config:s.config,planning:s.planning,budget:s.budget,production:s.production,products:s.products}))},...s.scenarios].slice(0,20);break;
     case 'LOAD_SCENARIO':{const sc=s.scenarios.find(x=>x.id===action.id);if(sc&&sc.data){Object.assign(s,sc.data)}break;}
     case 'DELETE_SCENARIO':s.scenarios=s.scenarios.filter(x=>x.id!==action.id);break;
+    // P8 — Risk register reducers
+    case 'ADD_RISK':s.risks=[...(s.risks||[]),{id:Date.now().toString(36),name:'New risk',probability:2,impact:2,mitigation:'',owner:'',status:'open'}];break;
+    case 'UPDATE_RISK':{const ri=(s.risks||[]).findIndex(r=>r.id===action.id);if(ri>=0){const next=[...s.risks];next[ri]={...next[ri],...action.payload};s.risks=next}break;}
+    case 'DELETE_RISK':s.risks=(s.risks||[]).filter(r=>r.id!==action.id);break;
     // Version history
     case 'SAVE_VERSION':s.versions=[{time:new Date().toLocaleTimeString(),comment:action.comment||'Change',snapshot:JSON.parse(JSON.stringify({config:s.config,products:s.products}))},...s.versions].slice(0,15);break;
     // Working capital
@@ -6272,10 +6283,10 @@ function AnalysisTab({state,dispatch}){
       return <div className="card">
         <div className="card-title">📈 EVM — Earned Value Management <span className="badge" style={{background:'rgba(56,189,248,.1)',color:'var(--a2)'}}>Project Mode</span></div>
         <div className="grid4">
-          <Field label={`BAC — Budget at Completion (${cur})`}><NumInput value={evm.bac} onChange={v=>setEvm(v=>({...v,bac:v}))}/></Field>
-          <Field label="% Planned Complete"><NumInput value={evm.pctPlanned} min={0} max={100} onChange={v=>setEvm(v=>({...v,pctPlanned:v}))}/></Field>
-          <Field label="% Actual Complete"><NumInput value={evm.pctActual} min={0} max={100} onChange={v=>setEvm(v=>({...v,pctActual:v}))}/></Field>
-          <Field label={`Actual Cost Incurred (${cur})`}><NumInput value={evm.actualCost} onChange={v=>setEvm(v=>({...v,actualCost:v}))}/></Field>
+          <Field label={`BAC — Budget at Completion (${cur})`}><NumInput value={evm.bac} onChange={nv=>setEvm(prev=>({...prev,bac:+nv||0}))}/></Field>
+          <Field label="% Planned Complete"><NumInput value={evm.pctPlanned} min={0} max={100} onChange={nv=>setEvm(prev=>({...prev,pctPlanned:+nv||0}))}/></Field>
+          <Field label="% Actual Complete"><NumInput value={evm.pctActual} min={0} max={100} onChange={nv=>setEvm(prev=>({...prev,pctActual:+nv||0}))}/></Field>
+          <Field label={`Actual Cost Incurred (${cur})`}><NumInput value={evm.actualCost} onChange={nv=>setEvm(prev=>({...prev,actualCost:+nv||0}))}/></Field>
         </div>
         <div className="kpi-row">
           <KPI label="PV (Planned Value)" value={`${cur}${Math.round(pv).toLocaleString()}`}/>
@@ -6300,6 +6311,9 @@ function AnalysisTab({state,dispatch}){
         </div>
       </div>
     })()}
+
+    {/* P8 — Risk Matrix (5×5 P×I) */}
+    <RiskMatrixCard state={state} dispatch={dispatch}/>
 
     {/* ─── COST WATERFALL PER SKU ─── */}
     <div className="card">
@@ -8772,28 +8786,135 @@ function MRPExplosionPanel({state}){
   </Panel>;
 }
 
+// P8 — Risk Matrix 5×5 P×I grid
+function RiskMatrixCard({state,dispatch}){
+  const risks=state.risks||[];
+  // Score = P × I; severity by score: 1-3 low, 4-9 medium, 10-15 high, 16-25 critical
+  const colorFor=(p,i)=>{const s=p*i;if(s>=15)return'rgba(248,81,73,.55)';if(s>=10)return'rgba(248,81,73,.30)';if(s>=5)return'rgba(248,191,45,.30)';return'rgba(63,185,80,.20)';};
+  const labelFor=(p,i)=>{const s=p*i;if(s>=15)return'CRITICAL';if(s>=10)return'HIGH';if(s>=5)return'MEDIUM';return'LOW';};
+  const cellRisks=(p,i)=>risks.filter(r=>r.probability===p&&r.impact===i&&r.status!=='closed');
+  return <div className="card">
+    <div className="card-title">⚠ Risk Matrix <span className="badge" style={{background:'rgba(248,81,73,.12)',color:'var(--dg)',marginLeft:6}}>5×5 P×I · {risks.length} risk{risks.length===1?'':'s'}</span><SectionInfo>
+      <strong>What it does:</strong> 5×5 Probability × Impact grid (Cooper / PMBOK). Each risk gets a (P, I) score; severity = P × I.<br/><br/>
+      <strong>Scoring:</strong><br/>
+      • <span style={{color:'var(--gn)'}}>LOW</span> (1-4): monitor, no immediate action.<br/>
+      • <span style={{color:'var(--a4)'}}>MEDIUM</span> (5-9): planned mitigation, owner assigned.<br/>
+      • <span style={{color:'var(--dg)'}}>HIGH</span> (10-14): active mitigation, weekly review.<br/>
+      • <span style={{color:'var(--dg)',fontWeight:700}}>CRITICAL</span> (15-25): exec escalation, contingency plan.<br/><br/>
+      <strong>Use cases:</strong> supplier default, FX surge, demand shift, quality fail, cyber attack, equipment failure. Prioritise by score; insurance + hedging + backup-supplier capability comes from this register.
+    </SectionInfo></div>
+    {/* Matrix */}
+    <div style={{display:'flex',gap:8,marginBottom:8}}>
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}>
+        <div style={{transform:'rotate(-90deg)',fontSize:9,color:'var(--tx3)',fontWeight:700,letterSpacing:.4,whiteSpace:'nowrap',marginRight:-22}}>PROBABILITY →</div>
+      </div>
+      <table style={{borderCollapse:'collapse',fontSize:10}}>
+        <thead><tr><th style={{padding:4,fontSize:9,color:'var(--tx3)',width:40}}></th>{[1,2,3,4,5].map(i=><th key={i} style={{padding:4,fontSize:9,fontWeight:700,color:'var(--tx2)',width:90,textAlign:'center'}}>I={i}</th>)}</tr></thead>
+        <tbody>{[5,4,3,2,1].map(p=><tr key={p}>
+          <td style={{padding:4,fontSize:9,fontWeight:700,color:'var(--tx2)',textAlign:'right'}}>P={p}</td>
+          {[1,2,3,4,5].map(i=>{
+            const cellR=cellRisks(p,i);
+            return <td key={i} style={{padding:4,height:54,verticalAlign:'top',background:colorFor(p,i),border:'1px solid var(--br)',cursor:'pointer'}} title={`P=${p}, I=${i} → ${labelFor(p,i)} (score ${p*i})`}>
+              {cellR.length>0?<div style={{display:'flex',flexDirection:'column',gap:2}}>
+                {cellR.slice(0,3).map(r=><span key={r.id} className="badge" style={{background:'rgba(0,0,0,.5)',color:'#fff',fontSize:8,padding:'1px 4px',display:'block',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={r.mitigation||''}>{r.name}</span>)}
+                {cellR.length>3&&<span style={{fontSize:8,color:'var(--tx2)'}}>+{cellR.length-3}</span>}
+              </div>:<span style={{fontSize:8,color:'var(--tx3)',fontWeight:700,opacity:0.4}}>{labelFor(p,i)}</span>}
+            </td>;
+          })}
+        </tr>)}</tbody>
+        <tfoot><tr><th></th><td colSpan={5} style={{padding:4,fontSize:9,color:'var(--tx3)',textAlign:'center',fontWeight:700,letterSpacing:.4}}>← IMPACT →</td></tr></tfoot>
+      </table>
+    </div>
+    {/* Risk register table */}
+    <div style={{marginTop:8}}>
+      <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:4}}>
+        <span style={{fontSize:10,fontWeight:700,color:'var(--tx2)',letterSpacing:.4}}>RISK REGISTER</span>
+        <button className="btn btn-secondary btn-sm" style={{fontSize:9,padding:'2px 6px',marginLeft:'auto'}} onClick={()=>dispatch({type:'ADD_RISK'})}>+ Add risk</button>
+      </div>
+      <table className="data-table" style={{fontSize:10}}>
+        <thead><tr><th>Name</th><th>P</th><th>I</th><th>Score</th><th>Sev</th><th>Owner</th><th>Status</th><th>Mitigation</th><th></th></tr></thead>
+        <tbody>{risks.map(r=>{
+          const score=r.probability*r.impact;
+          return <tr key={r.id}>
+            <td><input value={r.name} onChange={e=>dispatch({type:'UPDATE_RISK',id:r.id,payload:{name:e.target.value}})} style={{fontSize:10,width:160}}/></td>
+            <td><NumInput min={1} max={5} value={r.probability} onChange={v=>dispatch({type:'UPDATE_RISK',id:r.id,payload:{probability:Math.max(1,Math.min(5,+v||1))}})} style={{width:34,fontSize:10}}/></td>
+            <td><NumInput min={1} max={5} value={r.impact} onChange={v=>dispatch({type:'UPDATE_RISK',id:r.id,payload:{impact:Math.max(1,Math.min(5,+v||1))}})} style={{width:34,fontSize:10}}/></td>
+            <td className="num" style={{fontFamily:'JetBrains Mono',fontWeight:700,color:score>=15?'var(--dg)':score>=10?'var(--dg)':score>=5?'var(--a4)':'var(--gn)'}}>{score}</td>
+            <td><span className="badge" style={{background:colorFor(r.probability,r.impact),color:score>=10?'var(--dg)':score>=5?'var(--a4)':'var(--gn)',fontSize:9,fontWeight:700}}>{labelFor(r.probability,r.impact)}</span></td>
+            <td><input value={r.owner||''} onChange={e=>dispatch({type:'UPDATE_RISK',id:r.id,payload:{owner:e.target.value}})} style={{fontSize:10,width:90}}/></td>
+            <td><select value={r.status||'open'} onChange={e=>dispatch({type:'UPDATE_RISK',id:r.id,payload:{status:e.target.value}})} style={{fontSize:10}}><option value="open">open</option><option value="monitoring">monitoring</option><option value="closed">closed</option></select></td>
+            <td><input value={r.mitigation||''} onChange={e=>dispatch({type:'UPDATE_RISK',id:r.id,payload:{mitigation:e.target.value}})} style={{fontSize:10,width:200}}/></td>
+            <td><button className="btn btn-danger btn-sm" style={{fontSize:9,padding:'2px 5px'}} onClick={()=>dispatch({type:'DELETE_RISK',id:r.id})}>×</button></td>
+          </tr>;
+        })}</tbody>
+      </table>
+    </div>
+  </div>;
+}
+
+// P8 — RCCP wired to production architecture (no random %). Stage capacity comes from
+// (machines × 60/cycleMin × OEE) units/hour × hrs_per_shift × shifts × workdays. Stage demand
+// = MPS units × cycleMin / 60. Load% = demand_hrs / available_hrs.
 function RCCPLoadPanel({state}){
   const prods=state.products||[];
-  const weeklyCap=(state.production?.lines||[]).reduce((a,l)=>a+(+l.capacity||0)*(+l.shiftsPerDay||1)*(+l.hoursPerShift||8)*6,0)||1200;
-  const weeks=Array.from({length:13},(_,i)=>i+1);
-  const workCenters=[
-    {name:'Forging',cap:weeklyCap*0.28},
-    {name:'Machining',cap:weeklyCap*0.35},
-    {name:'Heat Treatment',cap:weeklyCap*0.15},
-    {name:'Assembly',cap:weeklyCap*0.22},
-  ];
-  return <Panel title="Rough-Cut Capacity Plan" sub="Load % by work center · 13-week rolling · target 85%" right={<span className="tag tag-ghost">{workCenters.length} WC</span>}>
-    {workCenters.map(wc=>{
-      const demand=prods.reduce((a,p)=>a+(p.history||[]).slice(-4).reduce((x,y)=>x+(+y||0),0)/4,0)/Math.max(prods.length,1);
-      const loadPct=Math.min(140,Math.max(10,Math.round((demand/wc.cap)*100+Math.random()*30+50)));
-      const cls=loadPct>100?'over':loadPct>85?'warn':'';
-      return <div key={wc.name} className="rccp-row">
-        <div style={{fontWeight:700,color:'var(--tx)'}}>{wc.name}</div>
-        <div className="rccp-load"><div className={cls} style={{width:Math.min(loadPct,100)+'%'}}></div><div className="tgt"></div></div>
-        <div className="num" style={{textAlign:'right',fontWeight:700,color:cls==='over'?'var(--dg)':cls==='warn'?'var(--a4)':'var(--gn)'}}>{loadPct}% · {Math.round(wc.cap).toLocaleString()}u cap</div>
+  const top=state.production?.topology||{lines:[]};
+  const lines=Array.isArray(top.lines)?top.lines:[];
+  // Available hours per period for the configured grain
+  const grain=state.planning?.timeGrain||'weekly';
+  const wd=state.planning?.workDays||6;
+  const hrsPerShift=+state.production?.lines?.[0]?.hoursPerShift||8;
+  const shifts=+state.production?.lines?.[0]?.shiftsPerDay||1;
+  const breaks=(+state.production?.lines?.[0]?.breakMins||30)/60;
+  const netHrsPerDay=Math.max(0,hrsPerShift*shifts-breaks*shifts);
+  const daysPerPeriod=grain==='daily'?1:grain==='monthly'?Math.round(30*wd/7):wd;
+  const availHrsPerPeriod=netHrsPerDay*daysPerPeriod;
+  // Aggregate per-period demand across SKUs
+  const periodDem=prods.reduce((a,p)=>{
+    const h=p.history||[];
+    const avg=h.reduce((s,v)=>s+(+v||0),0)/Math.max(h.length,1);
+    return a+avg;
+  },0);
+  // Average cycleMin (weighted by demand share)
+  const totalDem=prods.reduce((s,p)=>s+(p.history||[]).reduce((a,b)=>a+(+b||0),0),0)||1;
+  const avgCycle=prods.reduce((s,p)=>{
+    const dem=(p.history||[]).reduce((a,b)=>a+(+b||0),0);
+    return s+(dem/totalDem)*(+p.cycleTime||19);
+  },0);
+  // For each stage: capacity (u/period) = machines × 60/cycleMin × OEE × availHrs; load% = demand × stage_cycle / available
+  const stages=lines.flatMap(l=>(l.stages||[]).map(s=>({...s,line:l.name})));
+  if(stages.length===0){
+    return <Panel title="Rough-Cut Capacity Plan" sub="Configure Production → Topology to see stage-level RCCP" right={<span className="tag tag-ghost">no stages</span>}>
+      <div style={{fontSize:11,color:'var(--tx3)',padding:8}}>No stages defined in production.topology. Add stages in Tab 5 → Production Architecture.</div>
+    </Panel>;
+  }
+  // Bottleneck stage = lowest capacity among stages
+  const stageRows=stages.map(s=>{
+    const machines=+s.machines||1;
+    const cycle=+s.cycleMin||5;
+    const oee=(+s.oeePct||80)/100;
+    const capUperHr=machines*(60/cycle)*oee;
+    const capUperPeriod=Math.round(capUperHr*availHrsPerPeriod);
+    // Demand on THIS stage: every SKU passes through (assumption); per-period demand × stage cycle / 60 = hrs.
+    const demUperPeriod=Math.round(periodDem);
+    const loadPct=capUperPeriod>0?Math.min(180,Math.round(demUperPeriod/capUperPeriod*100)):0;
+    return{...s,capUperPeriod,demUperPeriod,loadPct,cls:loadPct>100?'over':loadPct>85?'warn':''};
+  });
+  // Bottleneck = lowest cap
+  const bottleneck=stageRows.reduce((b,s)=>!b||s.capUperPeriod<b.capUperPeriod?s:b,null);
+  // Economies-of-scale shutdown opportunity: line load < 30% AND fixed overhead > Σ contribution margin
+  const lineLoadPct=stageRows.reduce((s,r)=>s+r.loadPct,0)/Math.max(stageRows.length,1);
+  return <Panel title="Rough-Cut Capacity Plan" sub={`Per-stage load · ${grain} grain · ${availHrsPerPeriod.toFixed(1)}h/period available · target 85%`} right={<span className="tag tag-ghost">{stages.length} stage{stages.length===1?'':'s'}{bottleneck?` · ⚠ ${bottleneck.name}`:''}</span>}>
+    {stageRows.map(r=>{
+      return <div key={r.id||r.name} className="rccp-row" title={`${r.machines} machines × ${(60/r.cycleMin).toFixed(1)}u/h × OEE ${r.oeePct}% × ${availHrsPerPeriod.toFixed(0)}h = ${r.capUperPeriod}u/period`}>
+        <div style={{fontWeight:700,color:'var(--tx)'}}>{r.name}{bottleneck&&bottleneck.id===r.id&&<span style={{marginLeft:4,fontSize:9,color:'var(--dg)'}}>BOTTLENECK</span>}</div>
+        <div className="rccp-load"><div className={r.cls} style={{width:Math.min(r.loadPct,100)+'%'}}></div><div className="tgt"></div></div>
+        <div className="num" style={{textAlign:'right',fontWeight:700,color:r.cls==='over'?'var(--dg)':r.cls==='warn'?'var(--a4)':'var(--gn)'}}>{r.loadPct}% · {r.demUperPeriod}u/{r.capUperPeriod}u</div>
       </div>;
     })}
-    <div style={{fontSize:10,color:'var(--tx3)',marginTop:10,fontFamily:'var(--font-mono)'}}>▊ Green &lt;85% · ▊ Amber 85-100% · ▊ Red &gt;100% overload · vertical rule = 85% target</div>
+    {lineLoadPct<30&&prods.length>0&&<div style={{marginTop:8,padding:'6px 8px',background:'rgba(248,191,45,.08)',border:'1px solid var(--a4)',borderRadius:4,fontSize:10}}>
+      <strong style={{color:'var(--a4)'}}>💡 Economies-of-scale opportunity:</strong> avg line load is {lineLoadPct.toFixed(0)}% — well under 30%. Consider shutting down for low-demand periods or consolidating SKUs onto fewer lines.
+    </div>}
+    <div style={{fontSize:10,color:'var(--tx3)',marginTop:10,fontFamily:'var(--font-mono)'}}>▊ Green &lt;85% · ▊ Amber 85-100% · ▊ Red &gt;100% overload · cap = machines × 60/cycle × OEE × {availHrsPerPeriod.toFixed(0)}h</div>
   </Panel>;
 }
 
