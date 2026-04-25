@@ -28,9 +28,19 @@ def solve_procurement(data):
     params = data.get('params', {})
     cap_mode = data.get('capacity_mode', 'parallel')  # shared or parallel
 
-    T = params.get('periods', 52)  # weekly periods
-    carry_rate = params.get('carry_rate', 0.24)
+    T = params.get('periods', 52)  # period count at configured grain
+    # Pillar 2 — period grain scales per-period carry cost (annual rate → per-period).
+    time_grain = params.get('time_grain', 'weekly')
+    periods_per_year = {'daily': 365, 'weekly': 52, 'monthly': 12}.get(time_grain, 52)
+    carry_rate_annual = params.get('carry_rate', 0.24)
+    # The solver accumulates holding cost once per period, so per-period rate = annual / periods-per-year.
+    carry_rate = carry_rate_annual / periods_per_year * 52  # keep legacy "per-week equivalent" when weekly grain
+    # Holiday list (ISO dates) — periods that overlap with a holiday are excluded from capacity & shift production.
+    holidays = params.get('holidays', []) or []
+    horizon_start_date = params.get('horizon_start_date', None)
     wh_max = params.get('wh_max', 5000)
+    # Pillar 10 — hard working-capital constraint: Σ (inv × per-unit-value) ≤ working_capital per period.
+    working_capital = params.get('working_capital', 0) or 0
     fixed_daily = params.get('fixed_daily', 0)
     bo_on = params.get('backorder_on', False)
     salvage = params.get('salvage_rate', 0.80)
@@ -41,8 +51,41 @@ def solve_procurement(data):
     if not n_products:
         return {'error': 'No products provided'}
 
-    z_map = {0.85: 1.036, 0.90: 1.282, 0.95: 1.645, 0.99: 2.326}
-    z = z_map.get(service_level, 1.645)
+    # Pillar 5 — continuous z from inverse-normal CDF. Replaces the old 4-value z_map bucket.
+    try:
+        from statistics import NormalDist
+        z = NormalDist().inv_cdf(max(0.5, min(0.9999, float(service_level))))
+    except Exception:
+        z_map = {0.85: 1.036, 0.90: 1.282, 0.95: 1.645, 0.99: 2.326}
+        z = z_map.get(round(service_level, 2), 1.645)
+
+    # Pillar 6 — per-period capacity factor: fraction of the period that is NOT a holiday.
+    # Daily:   1.0 if the date is not a holiday, else 0.0.
+    # Weekly:  (working_days_in_week - holidays_in_week) / working_days_in_week.
+    # Monthly: (working_days_in_month - holidays_in_month) / working_days_in_month.
+    from datetime import date, timedelta
+    hol_set = set(holidays) if isinstance(holidays, list) else set()
+    try:
+        start = date.fromisoformat(horizon_start_date) if horizon_start_date else date.today()
+    except Exception:
+        start = date.today()
+    def period_factor(t):
+        if not hol_set:
+            return 1.0
+        if time_grain == 'daily':
+            d = start + timedelta(days=t)
+            return 0.0 if d.isoformat() in hol_set else 1.0
+        if time_grain == 'monthly':
+            ref = start + timedelta(days=t * 30)
+            wdays = sum(1 for i in range(30) if (ref + timedelta(days=i)).weekday() < 6)
+            hols = sum(1 for i in range(30) if (ref + timedelta(days=i)).isoformat() in hol_set)
+            return max(0.0, (wdays - hols) / max(wdays, 1))
+        # weekly (default)
+        ref = start + timedelta(days=t * 7)
+        wdays = sum(1 for i in range(7) if (ref + timedelta(days=i)).weekday() < 6)
+        hols = sum(1 for i in range(7) if (ref + timedelta(days=i)).isoformat() in hol_set)
+        return max(0.0, (wdays - hols) / max(wdays, 1))
+    cap_factor = [period_factor(t) for t in range(T)]
 
     # ── Build problem ──
     prob = pulp.LpProblem("Procurement_Optimizer", pulp.LpMinimize)
@@ -68,7 +111,7 @@ def solve_procurement(data):
         cap = prod.get('capacity', 50)
         setup_cost = prod.get('setup_cost', 50)
         var_cost = prod.get('variable_cost', 0)
-        shelf = prod.get('shelf_life', T)
+        shelf = prod.get('shelf_life_periods') or prod.get('shelf_life', T)
         sell_price = prod.get('sell_price', 10)
         fy = prod.get('yield_pct', 0.95)
         short_penalty = sell_price * 1.5  # lost margin + goodwill
@@ -146,13 +189,16 @@ def solve_procurement(data):
         setup_series = _period_series(setup_base, events, 'setupCost')
         vc_series = _period_series(vc_base, events, 'variableCost')
         sp_series = _period_series(sp_base, events, 'sellPrice')
-        shelf = prod.get('shelf_life', T)
+        shelf = prod.get('shelf_life_periods') or prod.get('shelf_life', T)
         fy = prod.get('yield_pct', 0.95)
         unit_cost = sum(
             pt.get('cost', 1) * pt.get('qty_per', 1)
             for pt in prod.get('parts', [])
         )
         fg_hold = unit_cost * carry_rate / 52  # weekly holding cost per unit
+        # v3.6 — Milk-run inbound consolidation cost (fixed per period when active).
+        # Wired from JS payload milk_run_per_period (computed via milkRunPerPeriod in index.html).
+        milk_run_pp = float(prod.get('milk_run_per_period', 0) or 0)
 
         for t in range(T):
             # Setup cost (period-varying)
@@ -163,6 +209,9 @@ def solve_procurement(data):
             obj.append(fg_hold * inv[k, t])
             # Shortage penalty (period-varying via sell_price events)
             obj.append(sp_series[t] * 1.5 * short[k, t])
+            # v3.6 — Milk run fixed cost per period
+            if milk_run_pp:
+                obj.append(milk_run_pp)
 
     # RM costs — with volume discount & transport tier support via effective unit cost.
     # Strategy: for each part compute effective per-unit cost at the MAX applicable tier
@@ -244,9 +293,10 @@ def solve_procurement(data):
     for k, prod in enumerate(products):
         demand = prod.get('demand', [0] * T)[:T]
         cap = prod.get('capacity', 50)
-        shelf = prod.get('shelf_life', T)
+        shelf = prod.get('shelf_life_periods') or prod.get('shelf_life', T)
         fy = prod.get('yield_pct', 0.95)
         init_inv = prod.get('init_inventory', 0)
+        demand_mode = prod.get('demand_mode', 'mts-weekly')
 
         demand_arr = np.array(demand, dtype=float)
         ss = max(1, round(z * max(demand_arr.std(), 0.1)))
@@ -260,8 +310,9 @@ def solve_procurement(data):
             prob += inv[k, t] == prev_inv + good_prod - d + short[k, t], \
                 f"InvBal_{k}_{t}"
 
-            # C2: Capacity
-            prob += p[k, t] <= cap * y[k, t], f"Cap_{k}_{t}"
+            # C2: Capacity (scaled by per-period working-day factor — Pillar 6 holiday exclusion)
+            eff_cap = cap * cap_factor[t] if t < len(cap_factor) else cap
+            prob += p[k, t] <= eff_cap * y[k, t], f"Cap_{k}_{t}"
 
             # C3: Min production (if producing, produce at least 1)
             prob += p[k, t] >= y[k, t], f"MinProd_{k}_{t}"
@@ -273,19 +324,38 @@ def solve_procurement(data):
             if not bo_on:
                 prob += short[k, t] == 0, f"NoBO_{k}_{t}"
 
+            # Pillar 13 — demand_mode variants
+            # MTO: no inventory build-ahead. FG inv capped at safety stock; production tracks demand each period.
+            if demand_mode == 'mto':
+                prob += inv[k, t] <= ss, f"MTO_NoBuild_{k}_{t}"
+                prob += p[k, t] <= d + ss, f"MTO_TrackDemand_{k}_{t}"
+
+        # Simultaneous: total horizon demand must be met by total horizon production + init_inv
+        if demand_mode == 'simultaneous':
+            total_d = sum(demand)
+            prob += pulp.lpSum(p[k, tt] for tt in range(T)) + init_inv >= total_d, f"Simul_HorizonMeet_{k}"
+
     # Aggregate warehouse constraint
     for t in range(T):
         prob += pulp.lpSum(
             inv[k, t] for k in range(n_products)
         ) <= wh_max, f"WH_{t}"
 
-    # Shared capacity constraint
+    # Pillar 10 — working-capital hard constraint. Sum of (FG inv × selling-price) + (RM inv × base-cost) per period ≤ working_capital.
+    if working_capital and working_capital > 0:
+        for t in range(T):
+            fg_value = [inv[k, t] * (products[k].get('sell_price') or 100) for k in range(n_products)]
+            # rm_inv populated later; add RM value terms when we enter the RM loop (lazy add below).
+            prob += pulp.lpSum(fg_value) <= working_capital, f"WC_FG_{t}"
+
+    # Shared capacity constraint (scaled by holiday cap factor)
     if cap_mode == 'shared':
         shared_cap = params.get('shared_capacity', 100)
         for t in range(T):
+            eff_shared = shared_cap * (cap_factor[t] if t < len(cap_factor) else 1.0)
             prob += pulp.lpSum(
                 p[k, t] for k in range(n_products)
-            ) <= shared_cap, f"SharedCap_{t}"
+            ) <= eff_shared, f"SharedCap_{t}"
 
     # RM constraints
     for gidx, part in enumerate(all_parts):
@@ -327,6 +397,13 @@ def solve_procurement(data):
 
             # RM warehouse capacity
             prob += rm_inv[gidx, t] <= rm_cap, f"RMCap_{gidx}_{t}"
+
+    # Pillar 10 — add RM inventory value into per-period working capital sum. Combined FG+RM ≤ WC.
+    if working_capital and working_capital > 0:
+        for t in range(T):
+            rm_value = [part['cost'] * rm_inv[gidx, t] for gidx, part in enumerate(all_parts)]
+            fg_value = [inv[k, t] * (products[k].get('sell_price') or 100) for k in range(n_products)]
+            prob += pulp.lpSum(fg_value + rm_value) <= working_capital, f"WC_Combined_{t}"
 
     # Budget constraint (optional)
     if budget and budget > 0:
@@ -501,6 +578,11 @@ def solve_procurement(data):
             for k in range(n_products)
         ), 2),
         'fixed_overhead': round(fixed_daily * T, 2),
+        # v3.6 — milk run inbound consolidation cost (per-product * T periods).
+        'milk_run': round(sum(
+            float(products[k].get('milk_run_per_period', 0) or 0) * T
+            for k in range(n_products)
+        ), 2),
     }
 
     return {

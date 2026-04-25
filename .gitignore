@@ -18,3 +18,11 @@ Thumbs.db
 # Env files
 .env
 .env.local
+
+# npm / Node — never commit installed packages.
+# These are only present locally for JSX validation tooling (@babel/parser).
+node_modules/
+package-lock.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

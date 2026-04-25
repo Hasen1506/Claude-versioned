@@ -29,6 +29,7 @@ from solvers.report import generate_report
 from solvers.disaggregate import disaggregate
 from solvers.lot_sizing import solve_lot_sizing
 from solvers.pattern_sensing import sense as demand_sense, list_patterns
+from solvers.forecast import run_forecast
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
@@ -328,6 +329,15 @@ def api_solve_transport():
 def api_solve_capital():
     try:
         return jsonify(solve_capital_budget(request.json))
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+# ─── Forecast Engine (v3.6 P3) ───
+@app.route('/api/forecast', methods=['POST'])
+def api_forecast():
+    try:
+        return jsonify(run_forecast(request.json))
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
