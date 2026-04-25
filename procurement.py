@@ -46,6 +46,14 @@ def solve_procurement(data):
     salvage = params.get('salvage_rate', 0.80)
     service_level = params.get('service_level', 0.95)
     budget = params.get('budget', None)  # optional budget constraint
+    # P4 — replan from period: lock production = committed actuals for periods 0..replan_from_period-1; re-solve forward.
+    # Each product may carry an `actuals_override` array (None where uncommitted).
+    replan_from_period = params.get('replan_from_period', None)
+    if replan_from_period is not None:
+        try:
+            replan_from_period = int(replan_from_period)
+        except Exception:
+            replan_from_period = None
 
     n_products = len(products)
     if not n_products:
@@ -297,6 +305,10 @@ def solve_procurement(data):
         fy = prod.get('yield_pct', 0.95)
         init_inv = prod.get('init_inventory', 0)
         demand_mode = prod.get('demand_mode', 'mts-weekly')
+        # P4 — actuals_override: per-product, per-period committed production (e.g. demand-sensing replan).
+        # When (replan_from_period is set) AND (actuals_override[t] is not None) AND (t < replan_from_period),
+        # the LP fixes p[k,t] to that committed value. Periods >= replan_from_period stay free.
+        actuals_override = prod.get('actuals_override') or []
 
         demand_arr = np.array(demand, dtype=float)
         ss = max(1, round(z * max(demand_arr.std(), 0.1)))
@@ -316,6 +328,16 @@ def solve_procurement(data):
 
             # C3: Min production (if producing, produce at least 1)
             prob += p[k, t] >= y[k, t], f"MinProd_{k}_{t}"
+
+            # P4 — C-LOCK: if a replan anchor is set, force production for committed actuals.
+            if replan_from_period is not None and t < replan_from_period and t < len(actuals_override):
+                ato = actuals_override[t]
+                if ato is not None:
+                    try:
+                        ato_v = int(round(float(ato)))
+                        prob += p[k, t] == ato_v, f"LockActual_{k}_{t}"
+                    except Exception:
+                        pass
 
             # C4: Warehouse limit (shared across products)
             # Added below as aggregate
@@ -594,4 +616,12 @@ def solve_procurement(data):
         'solve_time': round(solve_time, 2),
         'periods': T,
         'solver': 'CBC',
+        # P4 — echo replan context so UI knows the solver honoured the lock.
+        'replan_from_period': replan_from_period,
+        'actuals_locked': sum(
+            1 for k, prod in enumerate(products)
+            for t in range((replan_from_period or 0))
+            if t < len((prod.get('actuals_override') or []))
+            and (prod.get('actuals_override') or [])[t] is not None
+        ) if replan_from_period else 0,
     }

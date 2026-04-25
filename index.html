@@ -1242,6 +1242,29 @@ function reducer(state,action){
       if(pi>=0){s.products=[...s.products];const a=[...(s.products[pi].actuals||Array(12).fill(null))];a[action.month]=action.value;s.products[pi]={...s.products[pi],actuals:a}}
       break;
     }
+    // P4 — bulk overwrite all actuals for a product (Excel paste, full reset).
+    case 'UPDATE_PRODUCT_ACTUALS':{
+      const pi=s.products.findIndex(p=>p.id===action.productId);
+      if(pi>=0){s.products=[...s.products];s.products[pi]={...s.products[pi],actuals:Array.isArray(action.actuals)?[...action.actuals]:Array(12).fill(null)}}
+      break;
+    }
+    // P4 — rolling-horizon patches: short-term demand-sensing adjustments to MPS without re-solving.
+    // Shape: state.mpsRollingPatch = { [productId]: { [periodIdx]: number } }
+    case 'SET_MPS_ROLLING_PATCH':{
+      const cur=s.mpsRollingPatch||{};
+      const prev=cur[action.productId]||{};
+      const nxt={...prev};
+      if(action.patch&&typeof action.patch==='object'){Object.entries(action.patch).forEach(([k,v])=>{if(v===null||v===undefined)delete nxt[k];else nxt[k]=+v||0});}
+      s.mpsRollingPatch={...cur,[action.productId]:nxt};
+      break;
+    }
+    case 'CLEAR_MPS_ROLLING_PATCH':{
+      const cur={...(s.mpsRollingPatch||{})};
+      if(action.productId)delete cur[action.productId];
+      else Object.keys(cur).forEach(k=>delete cur[k]);
+      s.mpsRollingPatch=cur;
+      break;
+    }
     case 'ADD_EVENT':{
       const pi=s.products.findIndex(p=>p.id===action.productId);
       // v3.6 — accept custom event payload (used by Excel import to pre-populate promo flags). Falls back to defaults.
@@ -2796,53 +2819,34 @@ function ProductsTab({state,dispatch}){
         </div>
       </div>
 
-      {/* Actuals Input — Demand Sensing */}
-      <div className="card">
-        <div className="card-title">📡 Demand Sensing <span className="badge" style={{background:'rgba(56,189,248,.1)',color:'var(--a2)'}}>Actuals vs Forecast</span><SectionInfo><strong>What it does:</strong> Feeds short-term actuals back into the plan so MPS/MILP doesn't drift from reality.<br/><strong>Logic:</strong> if recent actuals deviate from forecast beyond your threshold for N consecutive periods, raise an alert and recommend either (a) rerun MILP with updated demand, or (b) apply rolling-horizon adjustment without resolve.<br/><strong>P4 plan:</strong> merge this into MPS as a side-by-side planned-vs-actual view.</SectionInfo></div>
-        <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Enter actual sales as months complete. Sensing detects deviations and triggers replanning when threshold is breached.</div>
-        {/* Sensing Configuration */}
+      {/* P4 — Demand Sensing moved into MPS. Card kept as a quick-access actuals matrix + config; full breach detection + alert action buttons + side-by-side planned-vs-actual live in the MPS card under Tab 4. */}
+      <div className="card" style={{borderLeft:'3px solid var(--a2)'}}>
+        <div className="card-title">📡 Demand Sensing — Actuals Entry <span className="badge" style={{background:'rgba(56,189,248,.1)',color:'var(--a2)'}}>moved to MPS</span><SectionInfo><strong>What it does:</strong> Captures actual realised demand per period. Once you have ≥ N actuals (N = "Min periods" below), MPS auto-runs deviation detection.<br/><strong>Where alerts/actions live:</strong> Master Production Schedule card (Tab 4) shows side-by-side planned-vs-actual, breach banner, and 2 alert action buttons (Re-run MILP / Rolling-horizon adjust).<br/><strong>Default policy:</strong> short-horizon drift (≤4 periods) → rolling-horizon adjustment (no full re-solve); structural shift (≥4 consecutive breaches) → full MILP re-run.</SectionInfo></div>
+        <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Enter actuals here OR directly in the MPS table. Both write to the same <code>state.products[k].actuals</code> array.</div>
+        {/* Sensing Configuration — single source of truth (consumed by MPSVizCard) */}
         <div style={{display:'flex',gap:12,marginBottom:8,padding:'4px 8px',background:'var(--bg3)',borderRadius:4,fontSize:10,flexWrap:'wrap',alignItems:'center'}}>
-          <label>Min periods before sensing: <NumInput min={1} max={8} value={state.planning.sensingMinWeeks||2} style={{width:40}} onChange={v=>dispatch({type:'SET_PLANNING',payload:{sensingMinWeeks:v}})}/></label>
-          <label>Unit: <select value={state.planning.sensingUnit||'months'} style={{fontSize:10}} onChange={e=>dispatch({type:'SET_PLANNING',payload:{sensingUnit:e.target.value}})}><option value="weeks">Weeks</option><option value="months">Months</option></select></label>
-          <label>Sensing α: <NumInput step="0.05" min={0.1} max={0.9} value={state.planning.sensingAlpha||0.3} style={{width:45}} onChange={v=>dispatch({type:'SET_PLANNING',payload:{sensingAlpha:v}})}/></label>
+          <span style={{fontWeight:700,color:'var(--tx2)'}}>Sensing config:</span>
+          <label>Min periods: <NumInput min={1} max={8} value={state.planning.sensingMinWeeks||2} style={{width:40}} onChange={v=>dispatch({type:'SET_PLANNING',payload:{sensingMinWeeks:v}})}/></label>
+          <label>α (smooth): <NumInput step="0.05" min={0.1} max={0.9} value={state.planning.sensingAlpha||0.3} style={{width:45}} onChange={v=>dispatch({type:'SET_PLANNING',payload:{sensingAlpha:v}})}/></label>
           <label>Window: <NumInput min={1} max={12} value={state.planning.sensingWindow||2} style={{width:40}} onChange={v=>dispatch({type:'SET_PLANNING',payload:{sensingWindow:v}})}/></label>
-          <label>Trigger pct %: <NumInput min={0} max={100} value={state.planning.sensingPctThreshold||15} style={{width:45}} onChange={v=>dispatch({type:'SET_PLANNING',payload:{sensingPctThreshold:v}})}/></label>
-          <label>Trigger k·σ: <NumInput step="0.5" min={0} max={5} value={state.planning.sensingStdK||2} style={{width:40}} onChange={v=>dispatch({type:'SET_PLANNING',payload:{sensingStdK:v}})}/></label>
-          <span style={{color:'var(--tx3)'}}>replan when |actual − forecast| &gt; max(k·σ, pct%·forecast) over window</span>
+          <label>Pct %: <NumInput min={0} max={100} value={state.planning.sensingPctThreshold||15} style={{width:45}} onChange={v=>dispatch({type:'SET_PLANNING',payload:{sensingPctThreshold:v}})}/></label>
+          <label>k·σ: <NumInput step="0.5" min={0} max={5} value={state.planning.sensingStdK||2} style={{width:40}} onChange={v=>dispatch({type:'SET_PLANNING',payload:{sensingStdK:v}})}/></label>
+          <label>Re-solve after: <NumInput min={1} max={12} value={state.planning.sensingResolveAfter||4} style={{width:40}} onChange={v=>dispatch({type:'SET_PLANNING',payload:{sensingResolveAfter:v}})}/> consecutive breaches</label>
+          <span style={{color:'var(--tx3)',width:'100%',fontSize:9}}>Alert fires when |actual − forecast| &gt; max(k·σ, pct%·forecast) over window. Re-run MILP recommended if &gt; resolve-after periods of breach (default 4).</span>
         </div>
         <div className="month-grid">
           {MONTHS.map((m,i)=>{
             const act=prod.actuals?.[i];const fct=consensus[i]||0;const dev=act!==null&&act!==undefined&&fct>0?((act-fct)/fct*100).toFixed(0):null;
             return <div key={m} className="month-cell" style={{borderColor:act!==null&&act!==undefined?(Math.abs(dev)>20?'var(--dg)':Math.abs(dev)>10?'var(--a4)':'var(--gn)'):'var(--br)'}}>
               <label>{m} (f:{fct})</label>
-              <NumInput placeholder="—" value={act!==null&&act!==undefined?act:''} onChange={v=>dispatch({type:'UPDATE_ACTUAL',productId:activeId,month:i,value:e.target.value===''?null:v})}/>
+              <NumInput placeholder="—" value={act!==null&&act!==undefined?act:''} onChange={v=>dispatch({type:'UPDATE_ACTUAL',productId:activeId,month:i,value:v===''||v===null?null:+v||0})}/>
               {dev!==null&&<div style={{fontSize:8,color:Math.abs(+dev)>20?'var(--dg)':Math.abs(+dev)>10?'var(--a4)':'var(--gn)',fontWeight:600}}>{+dev>0?'+':''}{dev}%</div>}
             </div>})}
         </div>
-        {(()=>{const filled=[];const indices=[];(prod.actuals||[]).forEach((a,i)=>{if(a!==null&&a!==undefined){filled.push(a);indices.push(i)}});
-          if(filled.length<(state.planning.sensingMinWeeks||2))return <div style={{marginTop:6,fontSize:10,color:'var(--tx3)'}}>Enter {state.planning.sensingMinWeeks||2}+ periods of actuals to activate sensing. ({filled.length} entered)</div>;
-          const alpha=state.planning.sensingAlpha||0.3;
-          const biasArr=indices.map((idx,j)=>{const f=consensus[idx]||1;return filled[j]-f});
-          const bias=biasArr.reduce((s,v)=>s+v,0)/biasArr.length;
-          const mape=indices.reduce((s,idx,j)=>s+Math.abs(filled[j]-(consensus[idx]||0))/Math.max(filled[j],1),0)/filled.length*100;
-          const ts=Math.abs(biasArr.reduce((s,v)=>s+v,0))/(biasArr.reduce((s,v)=>s+Math.abs(v),0)/biasArr.length||1);
-          // Sensed demand for next period (exponential smoothing of error)
-          const lastIdx=indices[indices.length-1];
-          const nextFcst=consensus[Math.min(lastIdx+1,11)]||0;
-          const sensedNext=Math.round(alpha*filled[filled.length-1]+(1-alpha)*nextFcst);
-          const correction=sensedNext-nextFcst;
-          return <div style={{marginTop:6,fontSize:10}}>
-            <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
-              <span>Bias: <strong style={{color:Math.abs(bias)>10?'var(--dg)':'var(--gn)'}}>{bias>0?'+':''}{bias.toFixed(1)}</strong> {bias>5?'(over-forecast)':bias<-5?'(under-forecast)':'(balanced)'}</span>
-              <span>Track MAPE: <strong style={{color:mape>20?'var(--dg)':'var(--gn)'}}>{mape.toFixed(1)}%</strong></span>
-              <span>TS (tracking signal): <strong style={{color:Math.abs(ts)>4?'var(--dg)':'var(--gn)'}}>{ts.toFixed(1)}</strong> {Math.abs(ts)>4?'⚠ OUT OF CONTROL':'✓ in control'}</span>
-            </div>
-            <div style={{marginTop:4,padding:'4px 8px',background:Math.abs(correction)>5?'rgba(248,81,73,.06)':'rgba(63,185,80,.06)',borderRadius:4,border:`1px solid ${Math.abs(correction)>5?'var(--dg)':'var(--gn)'}`}}>
-              <strong>Sensing correction:</strong> Next period forecast {nextFcst} → sensed <strong style={{color:'var(--ac)'}}>{sensedNext}</strong> (Δ={correction>0?'+':''}{correction})
-              {Math.abs(bias)>15&&<span style={{color:'var(--dg)',fontWeight:600,marginLeft:8}}>⚠ Significant bias ({bias.toFixed(0)}) — REPLAN RECOMMENDED</span>}
-            </div>
-          </div>
-        })()}
+        <div style={{marginTop:6,fontSize:10,color:'var(--tx3)',display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+          <span>↪ <strong style={{color:'var(--a2)'}}>See MPS card</strong> (Tab 4) for breach detection, side-by-side view, and replan controls.</span>
+          {(prod.actuals||[]).some(a=>a!==null&&a!==undefined)&&<button className="btn btn-secondary btn-sm" onClick={()=>{if(confirm('Clear all actuals for '+prod.name+'?'))dispatch({type:'UPDATE_PRODUCT_ACTUALS',productId:activeId,actuals:Array(12).fill(null)})}}>↺ Clear actuals</button>}
+        </div>
       </div>
 
       {/* Promotions & Events — v3.6 P3.6: include/exclude in baseline + promo period flag for forecast */}
@@ -3211,12 +3215,12 @@ function OptimizeTab({state,dispatch}){
         payload={
           products:state.products.map(p=>({
             name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,
-            variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),
+            variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),
             yield_pct:p.yieldPct,init_inventory:p.initInventory,mape_pct:15,
             cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue,label:ev.label})),
             parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05,trans_rate:b.transRate||0.5,trans_mode:b.transMode||'perUnit',proc_policy:b.procPolicy||'milp',part_yield:(b.partYield||98)/100,lt_cv:(b.ltCV||10)/100,cost_cv:(b.costCV||10)/100,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[],pay_term_days:b.payTermDays||30,early_pay_disc:b.earlyPayDisc||0})),
           })),
-          params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(state.products[0]?.carryRate||24)/100,wh_max:constraints.warehouse.on?constraints.warehouse.val:5000,service_level:state.config.serviceLevel,budget:constraints.budget.on?constraints.budget.val:state.budget.procurement||0,shared_capacity:state.production.lines[0]?.capacity||50,work_days:state.planning.workDays||6},
+          params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(state.products[0]?.carryRate||24)/100,wh_max:constraints.warehouse.on?constraints.warehouse.val:5000,service_level:state.config.serviceLevel,budget:constraints.budget.on?constraints.budget.val:state.budget.procurement||0,shared_capacity:state.production.lines[0]?.capacity||50,work_days:state.planning.workDays||6,replan_from_period:state.planning.replanFromPeriod??null},
           capacity_mode:state.production.lines[0]?.type||'shared',
         };
       }else if(solverMode==='production'){
@@ -3254,7 +3258,7 @@ function OptimizeTab({state,dispatch}){
           products:state.products.map(p=>({name:p.name,sell_price:p.sellPrice,variable_cost:p.variableCost,
             cycle_time:Math.max(0.1,168/(p.capacity||50)), // hrs/unit derived from weekly capacity
             forecast:(p.history||[]).slice(-horizonMonths).map(v=>+v||0), // nulls treated as 0 demand
-            history:(p.history||[]).map(v=>v==null?null:(+v||0)), mape_pct:p.mape||15, shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),
+            history:(p.history||[]).map(v=>v==null?null:(+v||0)), mape_pct:p.mape||15, shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),
             carry_rate:0.24, salvage_rate:p.salvageRate||0.8,
             mto_orders:p.mtoOrders||[], min_quantity:+p.minProd||0, max_quantity:+p.maxProd||0,
             fixed_daily_cost:+p.fixedFactory||0, labor_per_unit:+p.laborPerUnit||0,
@@ -3294,7 +3298,7 @@ function OptimizeTab({state,dispatch}){
       }else if(solverMode==='montecarlo'){
         endpoint='/api/solve/montecarlo';
         payload={
-          products:state.products.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),yield_pct:p.yieldPct,yield_cv:(p.yieldCV||0)/100,init_inventory:p.initInventory,mape_pct:p.mape||15,carry_rate:(p.carryRate||24)/100,cap_cv:(p.capCV||5)/100,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,cost_cv:(b.costCV||10)/100,lead_time:b.leadTime,lt_cv:(b.ltCV||10)/100,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,ordering_cost:b.orderingCost||75}))})),
+          products:state.products.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,yield_cv:(p.yieldCV||0)/100,init_inventory:p.initInventory,mape_pct:p.mape||15,carry_rate:(p.carryRate||24)/100,cap_cv:(p.capCV||5)/100,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,cost_cv:(b.costCV||10)/100,lead_time:b.leadTime,lt_cv:(b.ltCV||10)/100,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,ordering_cost:b.orderingCost||75}))})),
           params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(state.products[0]?.carryRate||24)/100,service_level:state.config.serviceLevel},n_runs:1000,
         };
       }else if(solverMode==='capital'){
@@ -3316,7 +3320,7 @@ function OptimizeTab({state,dispatch}){
             constraints:{shared_capacity:state.production.lines.reduce((a,l)=>a+l.capacity*periodCount(state.planning),0),budget:constraints.budget.on?constraints.budget.val:0,warehouse:constraints.warehouse.on?constraints.warehouse.val:5000},
           },
           procurement_data:{
-            products:state.products.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),yield_pct:p.yieldPct,init_inventory:p.initInventory,
+            products:state.products.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,init_inventory:p.initInventory,
               cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue,label:ev.label})),
               parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder,hold_pct:b.holdPct,rm_capacity:b.rmCapacity,ordering_cost:b.orderingCost,rm_shelf:b.rmShelf,scrap_factor:b.scrapFactor,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[]}))})),
             params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:0.24,wh_max:constraints.warehouse.on?constraints.warehouse.val:5000,service_level:state.config.serviceLevel,budget:constraints.budget.on?constraints.budget.val:0},capacity_mode:state.production.lines[0]?.type||'shared',
@@ -3334,7 +3338,7 @@ function OptimizeTab({state,dispatch}){
           base:{
             products:state.products.map(p=>({
               name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,
-              variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),
+              variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),
               yield_pct:p.yieldPct,init_inventory:p.initInventory,
               cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue,label:ev.label})),
               parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[]})),
@@ -4221,7 +4225,7 @@ function OptimizeTab({state,dispatch}){
       <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
         <button className="btn btn-secondary btn-sm" onClick={()=>{
           let py='# Enterprise Simulator — MILP Export\n# Run: pip install pulp numpy && python this_file.py\nimport pulp, numpy as np\n\n';
-          py+='# PRODUCTS\nproducts = '+JSON.stringify(state.products.map(p=>({name:p.name,demand:demandByPeriod(p,state.planning),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),yield_pct:p.yieldPct,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder,hold_pct:b.holdPct,ordering_cost:b.orderingCost}))})),null,2)+'\n\n';
+          py+='# PRODUCTS\nproducts = '+JSON.stringify(state.products.map(p=>({name:p.name,demand:demandByPeriod(p,state.planning),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder,hold_pct:b.holdPct,ordering_cost:b.orderingCost}))})),null,2)+'\n\n';
           py+='# Copy into milp_v3_fixed.py or use the /api/solve/procurement endpoint\n';
           py+='print("Products:", len(products))\nfor p in products:\n    print(f"  {p[\'name\']}: demand={sum(p[\'demand\'])}u, parts={len(p[\'parts\'])}")\n';
           const blob=new Blob([py],{type:'text/python'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='milp_export.py';a.click();
@@ -5701,7 +5705,7 @@ function AnalysisTab({state,dispatch}){
   const buildPayload=()=>({
     products:state.products.map(p=>({
       name:p.name,demand:demandByPeriod(p,state.planning),
-      capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),yield_pct:p.yieldPct,init_inventory:p.initInventory,mape_pct:15,
+      capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,init_inventory:p.initInventory,mape_pct:15,
       parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,cost_cv:0.05,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder,hold_pct:b.holdPct,ordering_cost:b.orderingCost})),
     })),
     params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:0.24,service_level:state.config.serviceLevel},
@@ -6704,6 +6708,7 @@ function MPSVizCard({state,dispatch}){
   const senseWindow=state.planning.sensingWindow||2;
   const sensePct=state.planning.sensingPctThreshold||15;
   const senseK=state.planning.sensingStdK||2;
+  const senseResolveAfter=state.planning.sensingResolveAfter||4; // P4 — full re-solve threshold
   const replanFrom=state.planning.replanFromPeriod;
   let sensingNote=null;
   if(sensingActive){
@@ -6723,9 +6728,22 @@ function MPSVizCard({state,dispatch}){
     const threshold=Math.max(pctTrigger,kTrigger);
     const breach=absDev>threshold&&threshold>0;
     const breachStart=breach?window[0].i:null; // first period of the deviating window → replan anchor
-    sensingNote={bias:bias.toFixed(1),sensedNext,nextFcst,correction:sensedNext-nextFcst,lastIdx,
-      sigma:sigma.toFixed(1),absDev:absDev.toFixed(1),threshold:threshold.toFixed(1),breach,breachStart,window:senseWindow};
+    // P4 — count CONSECUTIVE per-period breaches (each period vs its forecast, not the windowed mean).
+    // Used to recommend rolling-horizon vs full-resolve action: ≥ senseResolveAfter consecutive breaches → full re-solve.
+    let consecutive=0;
+    for(let j=filledActuals.length-1;j>=0;j--){
+      const {a,i}=filledActuals[j];
+      const f=consensus[i]||0;
+      const trig=Math.max(Math.abs(f)*sensePct/100,senseK*sigma);
+      if(Math.abs(a-f)>trig&&trig>0)consecutive++;else break;
+    }
+    const recommendResolve=consecutive>=senseResolveAfter; // structural shift
+    sensingNote={bias:bias.toFixed(1),sensedNext,nextFcst,correction:sensedNext-nextFcst,lastIdx,lastActual,
+      sigma:sigma.toFixed(1),absDev:absDev.toFixed(1),threshold:threshold.toFixed(1),breach,breachStart,window:senseWindow,
+      consecutive,recommendResolve};
   }
+  // P4 — rolling-horizon patches read for MPS display
+  const rollingPatch=(state.mpsRollingPatch&&prod.id&&state.mpsRollingPatch[prod.id])||{};
 
   // Daily breakdown across first N weeks — uses real calendar dates from horizonStartDate.
   // Skips weekends (Sat-Sun if workDays=5; Sun if workDays=6; never if workDays=7) AND gazetted holidays.
@@ -6783,26 +6801,65 @@ function MPSVizCard({state,dispatch}){
       {overrideCount>0&&<button className="btn btn-secondary btn-sm" onClick={clearOverrides} style={{marginLeft:'auto',fontSize:9}}>↺ Clear overrides</button>}
     </div>
 
-    {/* Demand sensing summary — integrated with MPS (v3.4) */}
+    {/* P4 — Demand sensing summary with 2 alert-action buttons (rerun MILP / rolling-horizon adjust) */}
     {sensingNote&&<div style={{marginBottom:8,padding:'6px 10px',background:sensingNote.breach?'rgba(248,81,73,.08)':'rgba(56,189,248,.06)',border:`1px solid ${sensingNote.breach?'var(--dg)':'rgba(56,189,248,.2)'}`,borderRadius:4,fontSize:10}}>
       <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
         <span style={{color:sensingNote.breach?'var(--dg)':'var(--a2)',fontWeight:700}}>📡 Demand Sensing {sensingNote.breach?'BREACH':'active'} ({filledActuals.length} periods, window={sensingNote.window})</span>
+        {sensingNote.consecutive>0&&<span className="badge" style={{background:sensingNote.recommendResolve?'rgba(248,81,73,.15)':'rgba(240,180,41,.12)',color:sensingNote.recommendResolve?'var(--dg)':'var(--a4)'}}>{sensingNote.consecutive} consecutive breach{sensingNote.consecutive>1?'es':''}</span>}
         <span style={{color:'var(--tx2)'}}>Bias: <strong style={{color:Math.abs(+sensingNote.bias)>10?'var(--dg)':'var(--gn)'}}>{+sensingNote.bias>0?'+':''}{sensingNote.bias}</strong></span>
         <span style={{color:'var(--tx2)'}}>|Δ| window: <strong style={{color:sensingNote.breach?'var(--dg)':'var(--tx)'}}>{sensingNote.absDev}</strong></span>
         <span style={{color:'var(--tx2)'}}>σ: {sensingNote.sigma}</span>
         <span style={{color:'var(--tx2)'}}>trigger: <strong>{sensingNote.threshold}</strong></span>
         <span style={{color:'var(--tx2)'}}>Next: {sensingNote.nextFcst} → <strong style={{color:'var(--ac)'}}>{sensingNote.sensedNext}</strong> (Δ{sensingNote.correction>0?'+':''}{sensingNote.correction})</span>
         <span style={{color:'var(--tx3)',fontSize:9}}>α={sensingAlpha} · k={senseK}·σ or {sensePct}%</span>
-        {sensingNote.breach&&sensingNote.breachStart!==null&&<button className="btn btn-danger btn-sm" style={{marginLeft:'auto',fontSize:10,padding:'3px 8px'}} onClick={()=>dispatch({type:'SET_PLANNING',payload:{replanFromPeriod:sensingNote.breachStart}})}>⟳ Replan from {MONTHS[sensingNote.breachStart].slice(0,3)}</button>}
       </div>
+      {/* P4 — TWO alert action buttons. Default policy: ≤ resolveAfter consecutive breaches → rolling-horizon (cheap, no full re-solve). > resolveAfter → full MILP re-run (structural shift). */}
+      {sensingNote.breach&&sensingNote.breachStart!==null&&<div style={{marginTop:6,paddingTop:6,borderTop:'1px dashed var(--br)',display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+        <span style={{fontSize:9,color:'var(--tx3)',fontWeight:600}}>RECOMMENDED ACTION:</span>
+        <span style={{fontSize:10,color:sensingNote.recommendResolve?'var(--dg)':'var(--a4)',fontWeight:700}}>
+          {sensingNote.recommendResolve
+            ? `🔁 Re-run MILP — ${sensingNote.consecutive} consecutive breaches indicate a structural shift (≥ ${senseResolveAfter}-period rule).`
+            : `🩹 Rolling-horizon adjust — short drift (${sensingNote.consecutive}/${senseResolveAfter}). No need to re-solve full horizon.`}
+        </span>
+        <div style={{marginLeft:'auto',display:'flex',gap:6}}>
+          <button className={`btn btn-sm ${sensingNote.recommendResolve?'btn-primary':'btn-secondary'}`} style={{fontSize:10,padding:'3px 8px'}}
+            onClick={()=>{
+              dispatch({type:'SET_PLANNING',payload:{replanFromPeriod:sensingNote.breachStart,sensingActionMode:'rerun-milp'}});
+              alert(`Replan anchor set to period ${sensingNote.breachStart+1} (${MONTHS[sensingNote.breachStart]}).\n\nGo to Tab 9 (Solver Pipeline) and click "Run Procurement" — actuals through period ${sensingNote.breachStart} will be locked, and periods ${sensingNote.breachStart+1}..end will be re-optimised.`);
+            }} title="Locks committed actuals up to the breach start; re-solves forward periods with updated demand. Best for structural shifts (≥4 consecutive breaches).">
+            🔁 Re-run MILP from {MONTHS[sensingNote.breachStart].slice(0,3)}
+          </button>
+          <button className={`btn btn-sm ${sensingNote.recommendResolve?'btn-secondary':'btn-primary'}`} style={{fontSize:10,padding:'3px 8px'}}
+            onClick={()=>{
+              // Apply rolling-horizon patch: write sensed adjustment into next senseResolveAfter periods.
+              const patch={};
+              const adj=sensingNote.sensedNext-sensingNote.nextFcst;
+              const startT=sensingNote.lastIdx+1;
+              for(let dt=0;dt<senseResolveAfter;dt++){
+                const t=startT+dt;
+                if(t>=12)break;
+                patch[t]=Math.max(0,(consensus[t]||0)+adj);
+              }
+              dispatch({type:'SET_MPS_ROLLING_PATCH',productId:prod.id,patch});
+              alert(`Rolling-horizon patch applied to ${prod.name} (next ${Object.keys(patch).length} periods, +${adj} units each).\n\nPatched values are visible in the Monthly view "Δ from plan" column. No solver re-run needed.`);
+            }} title="Updates only the next N periods of MPS in-place using exponentially-smoothed actual. Cheap; no full re-solve. Best for short-horizon drift (<4 consecutive breaches).">
+            🩹 Rolling-horizon adjust ({senseResolveAfter}p)
+          </button>
+        </div>
+      </div>}
       {replanFrom!==null&&replanFrom!==undefined&&<div style={{marginTop:4,padding:'4px 8px',background:'rgba(240,180,41,.08)',border:'1px solid var(--a4)',borderRadius:3,display:'flex',alignItems:'center',gap:8}}>
         <span style={{color:'var(--a4)',fontWeight:600}}>🔄 Replan anchor set: period {replanFrom+1} ({MONTHS[replanFrom]})</span>
-        <span style={{color:'var(--tx3)',fontSize:9}}>Solver will lock qty before this period and re-optimize forward.</span>
-        <button className="btn btn-secondary btn-sm" style={{marginLeft:'auto',fontSize:9}} onClick={()=>dispatch({type:'SET_PLANNING',payload:{replanFromPeriod:null}})}>× clear</button>
+        <span style={{color:'var(--tx3)',fontSize:9}}>Solver will lock periods 1..{replanFrom} (actuals committed) and re-optimise from period {replanFrom+1}.</span>
+        <button className="btn btn-secondary btn-sm" style={{marginLeft:'auto',fontSize:9}} onClick={()=>dispatch({type:'SET_PLANNING',payload:{replanFromPeriod:null,sensingActionMode:null}})}>× clear</button>
+      </div>}
+      {Object.keys(rollingPatch).length>0&&<div style={{marginTop:4,padding:'4px 8px',background:'rgba(56,189,248,.08)',border:'1px solid var(--a2)',borderRadius:3,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+        <span style={{color:'var(--a2)',fontWeight:600}}>🩹 Rolling-horizon patch active: {Object.keys(rollingPatch).length} period{Object.keys(rollingPatch).length>1?'s':''}</span>
+        <span style={{color:'var(--tx3)',fontSize:9}}>{Object.entries(rollingPatch).slice(0,4).map(([t,v])=>`${MONTHS[+t]?.slice(0,3)||'P'+(+t+1)}: ${Math.round(v)}u`).join(', ')}{Object.keys(rollingPatch).length>4?'…':''}</span>
+        <button className="btn btn-secondary btn-sm" style={{marginLeft:'auto',fontSize:9}} onClick={()=>dispatch({type:'CLEAR_MPS_ROLLING_PATCH',productId:prod.id})}>× clear patch</button>
       </div>}
     </div>}
     {!sensingActive&&<div style={{marginBottom:8,padding:'4px 10px',background:'var(--bg3)',borderRadius:4,fontSize:9,color:'var(--tx3)'}}>
-      📡 Demand Sensing inactive — enter {sensingMin} periods of actuals in Tab 2 → Products & Demand to activate. (α={sensingAlpha})
+      📡 Demand Sensing inactive — enter {sensingMin} periods of actuals (in this card or in Tab 2 → Products & Demand) to activate. (α={sensingAlpha})
     </div>}
 
     {/* MONTHLY view — base plan + editable actuals row + auto-replan on miss (v3.5) */}
@@ -6811,16 +6868,19 @@ function MPSVizCard({state,dispatch}){
         T0 on-hand: <strong style={{color:'var(--a4)'}}>{(prod.initInventory||0).toLocaleString()}</strong> units (edit per-SKU in Tab 2). Enter Actual Produced per month to track against plan — misses roll forward into next period via the ⟳ Replan button.
       </div>
       <table className="data-table">
-        <thead><tr><th>Month</th><th>Demand</th><th>Plan</th><th style={{color:'var(--a4)'}}>Actual ✏</th><th>Δ (Act−Plan)</th><th>End Inv.</th><th>Shortfall</th><th>Batches</th></tr></thead>
+        <thead><tr><th>Month</th><th>Demand</th><th>Plan</th><th style={{color:'var(--a2)'}}>Adj Plan</th><th style={{color:'var(--a4)'}}>Actual ✏</th><th>Δ (Act−Plan)</th><th>End Inv.</th><th>Shortfall</th><th>Batches</th></tr></thead>
         <tbody>{mMPS.map((mo,i)=>{
           const actual=prod.actuals?.[i];
           const hasAct=actual!=null&&actual!=='';
-          const delta=hasAct?(+actual-mo.production):null;
-          const missed=hasAct&&delta<-Math.max(5,mo.production*0.05); // >5% miss
-          return <tr key={i} style={{background:missed?'rgba(248,81,73,.05)':undefined}}>
+          const patched=rollingPatch[i];
+          const adjPlan=patched!==undefined?patched:mo.production;
+          const delta=hasAct?(+actual-adjPlan):null;
+          const missed=hasAct&&delta<-Math.max(5,adjPlan*0.05); // >5% miss
+          return <tr key={i} style={{background:missed?'rgba(248,81,73,.05)':patched!==undefined?'rgba(56,189,248,.04)':undefined}}>
             <td style={{fontWeight:600}}>{mo.month}{i===0&&<span style={{fontSize:8,color:'var(--a4)',marginLeft:4}} title={`T0 on-hand = ${(prod.initInventory||0).toLocaleString()} units`}>T0</span>}</td>
             <td className="num">{mo.demand.toLocaleString()}</td>
             <td className="num" style={{color:'var(--ac)'}}>{mo.production.toLocaleString()}</td>
+            <td className="num" style={{color:patched!==undefined?'var(--a2)':'var(--tx3)',fontWeight:patched!==undefined?700:400}} title={patched!==undefined?'Rolling-horizon patch overrides original plan for this period.':'No patch.'}>{patched!==undefined?Math.round(patched).toLocaleString():'—'}</td>
             <td className="num"><input type="number" placeholder="—" style={{width:62,textAlign:'right',fontSize:10,background:hasAct?'rgba(240,180,41,.06)':undefined}} value={actual??''} onChange={e=>{const v=e.target.value;const sku=products[aggregateMode?0:selSKU>=0?selSKU:0];if(!sku)return;dispatch({type:'UPDATE_ACTUAL',productId:sku.id,month:i,value:v===''?null:+v||0})}} title="Enter actual produced qty. Leave blank = no data yet (uncommitted)."/></td>
             <td className="num" style={{color:hasAct?(missed?'var(--dg)':Math.abs(delta)<=3?'var(--tx3)':delta>0?'var(--gn)':'var(--a4)'):'var(--tx3)'}}>{hasAct?(delta>0?'+':'')+delta:'—'}</td>
             <td className="num" style={{color:mo.inventory<10?'var(--dg)':mo.inventory<30?'var(--a4)':'var(--tx)'}}>{mo.inventory.toLocaleString()}</td>
@@ -7668,7 +7728,7 @@ function CommandCenterTab({state,dispatch}){
             {name:'Procurement (Min Cost)',inputs:'Products, BOM, Planning',
               check:()=>P.length>0&&P.every(p=>p.bom.length>0)&&P.every(p=>p.history?.length>=12),
               data:()=>`${P.length} SKUs, ${allParts.length} parts, ${periodCount(state.planning)} periods`,
-              run:()=>runSolver('procurement','/api/solve/procurement',{products:P.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),yield_pct:p.yieldPct,init_inventory:p.initInventory,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05}))})),params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(P[0]?.carryRate||24)/100,wh_max:P[0]?.whMaxUnits||5000,service_level:state.config.serviceLevel},capacity_mode:'parallel'})},
+              run:()=>runSolver('procurement','/api/solve/procurement',{products:P.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,init_inventory:p.initInventory,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05}))})),params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(P[0]?.carryRate||24)/100,wh_max:P[0]?.whMaxUnits||5000,service_level:state.config.serviceLevel,replan_from_period:state.planning.replanFromPeriod??null},capacity_mode:'parallel'})},
             {name:'Production (Min Makespan)',inputs:'Products, Lines',
               check:()=>P.length>0&&state.production.lines.length>0,
               data:()=>`${state.production.lines.length} lines, ${P.length} products`,
@@ -7680,7 +7740,7 @@ function CommandCenterTab({state,dispatch}){
             {name:'Monte Carlo (Risk)',inputs:'All product + BOM data',
               check:()=>P.length>0,
               data:()=>`1000 runs, ${P.length} SKUs`,
-              run:()=>runSolver('montecarlo','/api/solve/montecarlo',{products:P.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),yield_pct:p.yieldPct,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,scrap_factor:b.scrapFactor||0.05}))})),params:{n_runs:1000,periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(P[0]?.carryRate||24)/100,service_level:state.config.serviceLevel}})},
+              run:()=>runSolver('montecarlo','/api/solve/montecarlo',{products:P.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,scrap_factor:b.scrapFactor||0.05}))})),params:{n_runs:1000,periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(P[0]?.carryRate||24)/100,service_level:state.config.serviceLevel}})},
           ].map((s,i)=>{const ok=s.check();return <tr key={i}>
             <td style={{fontWeight:600}}>{s.name}</td>
             <td style={{fontSize:9,color:'var(--tx3)'}}>{s.inputs}</td>

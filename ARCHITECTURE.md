@@ -984,7 +984,7 @@ function cashTiedUpAsOf(asOfDate, state) {
 | **P1** | UI hygiene (13 items) | ✅ COMPLETE |
 | **P2** | Supplier consolidation | ✅ COMPLETE |
 | **P3** | Forecasting overhaul | ✅ COMPLETE |
-| **P4** | Demand sensing in MPS | ⏳ PENDING |
+| **P4** | Demand sensing in MPS | ✅ COMPLETE |
 | **P5** | Control tower + frozen horizon | ⏳ PENDING |
 | **P6** | Procurement risk + currency hedging | ⏳ PENDING |
 | **P7** | Inventory & cost cleanup | ⏳ PENDING |
@@ -1071,28 +1071,22 @@ Returns `env: {sklearn, statsmodels, xgboost}` so UI shows installed-package sta
 
 ---
 
-## P4 — Demand Sensing in MPS (PENDING)
+## P4 — Demand Sensing in MPS (DONE)
 
-**Goal**: Move demand sensing INTO the MPS card; add actuals input; show planned-vs-actual side-by-side with per-product toggle; deviation alerts; rolling-horizon vs MILP-rerun choice.
+**Shipped**:
 
-### Subtasks
+- Standalone Demand Sensing card consolidated → small redirect note + actuals matrix; full breach detection / alerts / actions live in `MPSVizCard`.
+- `MPSVizCard` breach banner now shows 2 alert-action buttons:
+  - **🔁 Re-run MILP from {period}** — sets `state.planning.replanFromPeriod` + `sensingActionMode='rerun-milp'`. User then runs procurement in Tab 9; payload sends `actuals_override` per-product + `replan_from_period` in params.
+  - **🩹 Rolling-horizon adjust (Np)** — writes exponentially-smoothed adjustment into next N periods via new `SET_MPS_ROLLING_PATCH` reducer. NO solver re-run. Patch surfaces in MPS Monthly view "Adj Plan" column.
+- Default policy logic: `consecutive` breach counter reading filled actuals back-to-front. ≥ `state.planning.sensingResolveAfter` (default 4) → recommend full re-solve; otherwise rolling-horizon. Recommendation surfaced as the "RECOMMENDED ACTION" line in the breach banner.
+- New reducers: `UPDATE_PRODUCT_ACTUALS` (bulk write), `SET_MPS_ROLLING_PATCH`, `CLEAR_MPS_ROLLING_PATCH`. Located near `UPDATE_ACTUAL` in the reducer.
+- New state shape: `state.mpsRollingPatch = { [productId]: { [periodIdx]: number } }`.
+- `procurement.py` extended: accepts `params.replan_from_period` + per-product `actuals_override: [num|null]`. When the anchor is set, `LockActual_{k}_{t}` constraints fix `p[k,t] = round(actuals_override[t])` for `t < replan_from_period`. Result echoes `replan_from_period` + `actuals_locked` count.
+- `actuals_override` injected into all 9 procurement payloads via the shared `milk_run_per_period:milkRunPerPeriod(p),` anchor (replace_all).
+- `replan_from_period` added to procurement params at `index.html:~3223` (main solve dialog) and `index.html:~7731` (SolverPipelineTab readiness card).
 
-1. **Move sensing UI**: `state.products[k].actuals` (already exists) drives a side-by-side toggle in `MPSVizCard` at `index.html:~6285`. Add a per-product dropdown to switch between SKUs.
-2. **Actuals input**: extend `MPSVizCard` table — add an editable "Actual" column next to the planned production column. Dispatch `UPDATE_PRODUCT_ACTUALS` (new reducer) writing to `prod.actuals[t]`.
-3. **Deviation thresholds**: user-configurable `state.planning.sensingPctThreshold` and `sensingStdK` already exist (see `index.html:~1095`). Surface them in the MPS card with explicit "trigger if `|actual − planned| > max(pct%, k·σ)` for N consecutive periods" rule.
-4. **Alert action choice**: when threshold breached, show two buttons: (a) "Re-run MILP with revised demand" — fires `runSolver('procurement', ...)` with actuals patched into `weeklyDemand(p)`. (b) "Apply rolling-horizon adjustment" — only updates the next N-period plan, doesn't re-solve full horizon.
-5. **Research note**: industry practice (Toyota, P&G, Amazon) uses **rolling-horizon adjustment** for short-horizon drift (≤4 periods) and **full re-solve** for structural shifts (≥4 periods of breach). Implement as default policy with override.
-
-### Files to touch
-
-- `index.html` — `MPSVizCard` (replace standalone Demand Sensing card), reducer `UPDATE_PRODUCT_ACTUALS`.
-- `procurement.py` — accept `actuals_override: [[...,...],...]` per-product to replace history with actuals when re-solving. Currently demand comes only from `prod.demand` which is the forecast.
-
-### Acceptance
-
-- Click a SKU pill → MPS table shows planned + actual + Δ + status.
-- Enter an actual that breaches threshold → red banner + 2 action buttons.
-- Both action buttons produce coherent solver output (rerun changes `state.solverResults.procurement`; rolling adjustment writes to `state.mpsRollingPatch[productId][periodIdx]`).
+**Verified**: smoke-tested with `replan_from_period=3` + `actuals_override=[12,11,9,None…]` — solver returns `actuals_locked: 3` and production = `[12, 11, 9, 50, 33, 0, ...]`.
 
 ---
 
