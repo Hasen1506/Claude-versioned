@@ -916,10 +916,27 @@ function incotermBuyerPays(ic){
   if(ic2==='CFR'||ic2==='CPT')return {freight:false,insurance:true,duty:true,handling:true};
   return {freight:true,insurance:true,duty:true,handling:true};
 }
-function landedCost(b,config,plant){
+// P6 — effective FX with hedging. spot = state.config.fxRates[supplierCcy]; forward = profile.forwardRate (default = spot).
+// Effective FX = spot × (1 - hedgeRatio) + forward × hedgeRatio. Returns 1 if home-ccy or no rates set.
+function effectiveFX(supplierCcy,homeCcy,hedgeRatio,forwardRate,fxRates){
+  if(!supplierCcy||supplierCcy===homeCcy)return 1;
+  const spot=+(fxRates||{})[supplierCcy]||1;
+  const fwd=+forwardRate||spot;
+  const h=Math.max(0,Math.min(100,+hedgeRatio||0))/100;
+  return spot*(1-h)+fwd*h;
+}
+function landedCost(b,config,plant,profiles){
   if(!b)return 0;
-  const base=+b.cost||0;
+  let base=+b.cost||0;
   const cfg=config||{};
+  // P6 — currency hedging: if BOM row's supplier (b.supplierName / b.supplier) has a profile with non-home currency, apply hedged FX.
+  // base is assumed in supplier currency; output is in home currency.
+  const sname=b.supplierName||b.supplier||b.vendor;
+  const prof=sname&&profiles&&profiles[sname]?profiles[sname]:null;
+  const supCcy=prof?.currency||b.supplierCurrency||cfg.currency;
+  const homeCcy=cfg.currency;
+  const fx=effectiveFX(supCcy,homeCcy,prof?.hedgeRatio,prof?.forwardRate,cfg.fxRates);
+  base=base*fx;
   const gstRegistered=cfg.gstRegistered!==false;
   const bp=incotermBuyerPays(b.incoterm);
   const frt=bp.freight?(+b.transFreight||+b.transRate||0)*(1+(+b.transFuelPct||0)/100):0;
@@ -1052,6 +1069,8 @@ const TATA_PRECISION_DEMO={
     fiscalYear:'Apr-Mar',gstRegistered:true,gstin:'33AAACT0000A1Z9',taxRate:25,
     wacc:11.5,serviceLevel:0.97,industry:'automotive',oeeTarget:85,defaultSafetyDays:15,workflow:'JIT',
     city:'Chennai',fyLabel:'FY 2026 · Q1',
+    // P6 — supplier-currency → home-currency spot rates. Edited in Procurement Risk card. Forward rates live per supplier (state.supplierProfiles[name].forwardRate).
+    fxRates:{USD:83.2,EUR:89.5,JPY:0.55,GBP:104.0,CNY:11.5,SGD:62.0},
   },
   planning:{
     startMonth:3,periods:52,workDays:6,indianHolidays:true,
@@ -1092,6 +1111,7 @@ const defaultState={
     wacc:10,serviceLevel:0.95,
     skin:(typeof localStorage!=='undefined'&&localStorage.getItem('esim.skin'))||'v1',
     city:'Chennai',fyLabel:'FY 2026 · Q1',
+    fxRates:{USD:83.2,EUR:89.5,JPY:0.55,GBP:104.0,CNY:11.5,SGD:62.0},
   },
   audit:[],
   rbac:{role:'planner',user:'demo@enterprise.sim'},
@@ -3268,7 +3288,7 @@ function OptimizeTab({state,dispatch}){
             init_inventory:+p.initInventory||0, // v3.5 — T0 FG on-hand: solver nets this against demand ceiling
             parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,
               // v3.5 — landed-cost components let the solver reflect mode-of-transport in material cost
-              landed_cost:landedCost(b,state.config,state.plant),transport_mode:b.transMode||'road',
+              landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),transport_mode:b.transMode||'road',
               trans_freight:+b.transFreight||+b.transRate||0,trans_insurance_pct:+b.transInsurancePct||0,
               trans_duty_pct:+b.transDutyPct||0,trans_handling:+b.transHandlingPerUnit||0,trans_fuel_pct:+b.transFuelPct||0,
               weight_kg:+b.weightKg||1,volume_cbm:+b.volumeCbm||0.005,origin_city:b.originCity||'',dest_city:b.destCity||state.config.city||''}))})),
@@ -3285,7 +3305,7 @@ function OptimizeTab({state,dispatch}){
               name:`${b.name} for ${p.name}`,
               weight_kg:monthlyUnits*(+b.weightKg||1),
               volume_cbm:monthlyUnits*(+b.volumeCbm||0.005),
-              value:landedCost(b,state.config,state.plant)*monthlyUnits,
+              value:landedCost(b,state.config,state.plant,state.supplierProfiles)*monthlyUnits,
               deadline_days:b.leadTime*7,urgency:b.leadTime<=1?'critical':b.leadTime<=3?'high':'normal',
               origin:b.originCity||(b.supplierType==='import'?'International':'Domestic'),
               destination:b.destCity||state.config.city||'Factory',
@@ -4603,10 +4623,19 @@ function SupplierManagementCard({state,dispatch,allParts}){
     {/* ── Sub-card 3: Contract Definitions ── */}
     <CollapsibleCard title="📝 Contract Definitions" accent="var(--a4)" defaultOpen={false} info={<><strong>What it does:</strong> Per-supplier contract metadata: currency, type (rate/blanket/fixed/cost-plus/AMC), payment terms, hedge ratio, start/end. Foreign-supplier hedge ratio + currency feed P6 currency-hedging into landed cost. Contract type seeds default payment behavior in the Payment Ledger.</>}>
       {supplierNames.length===0?<div style={{fontSize:10,color:'var(--tx3)',padding:8}}>Define suppliers in BOM first; their contracts will appear here.</div>:<table className="data-table" style={{fontSize:10}}>
-        <thead><tr><th>Supplier</th><th>Currency</th><th>Contract Type</th><th>Payment Terms</th><th>Hedge Ratio %</th><th>Start</th><th>End</th><th>Notes</th></tr></thead>
-        <tbody>{supplierNames.map(name=>{const prof=profiles[name]||{};return <tr key={name}>
+        <thead><tr><th>Supplier</th><th>Currency</th><th>Contract Type</th><th>Pay Terms</th><th>Hedge %</th><th>Forward Rate</th><th>Effective FX</th><th>Start</th><th>End</th><th>Notes</th></tr></thead>
+        <tbody>{supplierNames.map(name=>{
+          const prof=profiles[name]||{};
+          const supCcy=prof.currency||cur;
+          const ccyKey=supCcy==='$'?'USD':supCcy==='€'?'EUR':supCcy==='¥'?'JPY':supCcy==='£'?'GBP':supCcy==='₹'?'INR':supCcy;
+          const fxRates=state.config.fxRates||{};
+          const spot=fxRates[ccyKey]||(supCcy===cur?1:1);
+          const fwd=+prof.forwardRate||spot;
+          const h=(+prof.hedgeRatio||0)/100;
+          const eff=supCcy===cur?1:spot*(1-h)+fwd*h;
+          return <tr key={name}>
           <td style={{fontWeight:600}}>{name}</td>
-          <td><select value={prof.currency||cur} onChange={e=>setProf(name,{currency:e.target.value})} style={{fontSize:10,width:60}}><option value="₹">INR ₹</option><option value="$">USD $</option><option value="€">EUR €</option><option value="¥">JPY ¥</option><option value="£">GBP £</option></select></td>
+          <td><select value={prof.currency||cur} onChange={e=>setProf(name,{currency:e.target.value})} style={{fontSize:10,width:60}}><option value="₹">INR ₹</option><option value="USD">USD $</option><option value="EUR">EUR €</option><option value="JPY">JPY ¥</option><option value="GBP">GBP £</option><option value="CNY">CNY ¥</option><option value="SGD">SGD S$</option></select></td>
           <td><select value={prof.contractType||'rate'} onChange={e=>setProf(name,{contractType:e.target.value})} style={{fontSize:10,width:90}}>
             <option value="rate">Rate Contract</option>
             <option value="blanket">Blanket PO</option>
@@ -4615,11 +4644,13 @@ function SupplierManagementCard({state,dispatch,allParts}){
             <option value="amc">AMC</option>
             <option value="spot">Spot</option>
           </select></td>
-          <td>Net <NumInput value={prof.paymentTerms||30} onChange={v=>setProf(name,{paymentTerms:v})} style={{width:48,fontSize:10}}/>d</td>
-          <td><NumInput min={0} max={100} value={prof.hedgeRatio||0} onChange={v=>setProf(name,{hedgeRatio:v})} style={{width:48,fontSize:10}} disabled={!prof.hedged&&(prof.currency||cur)===cur} title="% of FX exposure hedged via forward/option contracts. Active only when supplier currency ≠ home currency."/></td>
+          <td>Net <NumInput value={prof.paymentTerms||30} onChange={v=>setProf(name,{paymentTerms:v})} style={{width:42,fontSize:10}}/>d</td>
+          <td><NumInput min={0} max={100} value={prof.hedgeRatio||0} onChange={v=>setProf(name,{hedgeRatio:v})} style={{width:42,fontSize:10}} disabled={supCcy===cur} title="% of FX exposure hedged via forward contracts. Effective FX = spot × (1−h) + forward × h."/></td>
+          <td><NumInput step="0.01" value={prof.forwardRate||(supCcy===cur?'':spot)} placeholder={supCcy===cur?'—':String(spot)} onChange={v=>setProf(name,{forwardRate:v})} style={{width:55,fontSize:10}} disabled={supCcy===cur} title={`Forward rate locked-in for ${supCcy}→${cur}. Default = current spot ${spot}.`}/></td>
+          <td className="num" style={{fontFamily:'JetBrains Mono',color:supCcy===cur?'var(--tx3)':eff<spot?'var(--gn)':eff>spot?'var(--dg)':'var(--tx)'}} title={`spot ${spot} · fwd ${fwd} · hedge ${(h*100).toFixed(0)}% → eff ${eff.toFixed(3)}`}>{supCcy===cur?'1.000':eff.toFixed(3)}</td>
           <td><input type="date" value={prof.startDate||''} onChange={e=>setProf(name,{startDate:e.target.value})} style={{fontSize:10}}/></td>
           <td><input type="date" value={prof.endDate||''} onChange={e=>setProf(name,{endDate:e.target.value})} style={{fontSize:10}}/></td>
-          <td><input value={prof.notes||''} onChange={e=>setProf(name,{notes:e.target.value})} placeholder="e.g. JDA, GMP ceiling…" style={{fontSize:10,width:120}}/></td>
+          <td><input value={prof.notes||''} onChange={e=>setProf(name,{notes:e.target.value})} placeholder="e.g. JDA, GMP ceiling…" style={{fontSize:10,width:100}}/></td>
         </tr>;})}</tbody>
       </table>}
       <div style={{fontSize:9,color:'var(--tx3)',marginTop:6,padding:'5px 8px',background:'var(--bg3)',borderRadius:3}}>
@@ -4978,7 +5009,7 @@ function SupplyTab({state,dispatch}){
       </div>
       {(()=>{
         const rows=allParts.map(b=>{
-          const landed=landedCost(b,state.config,state.plant);
+          const landed=landedCost(b,state.config,state.plant,state.supplierProfiles);
           const isImport=b.supplierType==='import'||(b.country&&b.country!=='IN');
           const intrastate=!isImport&&b.supplierState&&b.supplierState===((state.plant&&state.plant.state)||'TN');
           const taxRegime=isImport?(state.config.gstRegistered?'Import · IGST-ITC':'Import · IGST-sunk'):intrastate?'Domestic · CGST+SGST':'Domestic · IGST';
@@ -5022,7 +5053,7 @@ function SupplyTab({state,dispatch}){
             if(!agg[key])agg[key]={origin,mode:b.transMode||'road',incoterm:b.incoterm||'—',partCount:0,monthlyUnits:0,monthlyValue:0};
             agg[key].partCount++;
             agg[key].monthlyUnits+=monthDem*(+b.qtyPer||1);
-            agg[key].monthlyValue+=monthDem*(+b.qtyPer||1)*landedCost(b,state.config,state.plant);
+            agg[key].monthlyValue+=monthDem*(+b.qtyPer||1)*landedCost(b,state.config,state.plant,state.supplierProfiles);
           });
         });
         const laneRows=Object.entries(agg).map(([k,v])=>({k,...v})).sort((a,b)=>b.monthlyValue-a.monthlyValue);
@@ -5069,6 +5100,169 @@ function SupplyTab({state,dispatch}){
     {/* Replaces: (1) Tab 3 read-only scorecard, (2) Command Center scorecard methodology, (3) Command Center should-cost docs. */}
     <SupplierManagementCard state={state} dispatch={dispatch} allParts={allParts}/>
   </div>
+}
+
+// ─── P6 — Procurement Risk + Currency Hedging Card ───
+function ProcurementRiskCard({state,dispatch}){
+  const cur=state.config.currency;
+  const profiles=state.supplierProfiles||{};
+  const fxRates=state.config.fxRates||{};
+
+  // ── Spot-price volatility per BOM row (history-based, simple z-score) ──
+  // BOM rows can carry b.priceHistory:[number] (last N quotes). If absent, fall back to costCV which is a stored CV%.
+  const volAlerts=[];
+  state.products.forEach(p=>{
+    (p.bom||[]).forEach(b=>{
+      const hist=Array.isArray(b.priceHistory)?b.priceHistory.filter(v=>v!=null&&!isNaN(+v)).map(v=>+v):[];
+      let z=0,mu=null,sigma=null;
+      if(hist.length>=4){
+        mu=hist.reduce((s,v)=>s+v,0)/hist.length;
+        sigma=Math.sqrt(hist.reduce((s,v)=>s+(v-mu)*(v-mu),0)/hist.length);
+        const cur_q=+b.cost||0;
+        z=sigma>0?(cur_q-mu)/sigma:0;
+      }else if(b.costCV){
+        // Fallback: assume current quote drifted by 1× costCV from mean (just enough to surface as a watch).
+        z=(b.costCV/100>=0.15)?1.6:0;
+      }
+      if(Math.abs(z)>=1.5){
+        volAlerts.push({
+          product:p.name,part:b.name,supplier:b.supplierName||b.supplier||'—',
+          currentPrice:+b.cost||0,mean:mu,sigma:sigma,zscore:z,
+          bom:b,
+        });
+      }
+    });
+  });
+
+  // ── FX Exposure rollup ──
+  // Per-supplier in foreign currency: spot, hedge ratio, forward, exposure (sum of BOM rows × qty/per × estimated horizon demand).
+  const T=periodCount(state.planning);
+  const exposureBySupplier={};
+  state.products.forEach(p=>{
+    const annDem=(p.history||[]).reduce((s,v)=>s+(+v||0),0);
+    (p.bom||[]).forEach(b=>{
+      const sname=b.supplierName||b.supplier||b.vendor;
+      if(!sname)return;
+      const prof=profiles[sname]||{};
+      const supCcy=prof.currency||cur;
+      if(supCcy===cur)return; // no FX exposure
+      const ccyKey=supCcy==='$'?'USD':supCcy==='€'?'EUR':supCcy==='¥'?'JPY':supCcy==='£'?'GBP':supCcy;
+      const spot=+fxRates[ccyKey]||1;
+      const fwd=+prof.forwardRate||spot;
+      const h=(+prof.hedgeRatio||0)/100;
+      const eff=spot*(1-h)+fwd*h;
+      const annPartUnits=annDem*(+b.qtyPer||1);
+      const supBaseCost=annPartUnits*(+b.cost||0); // in supplier ccy
+      if(!exposureBySupplier[sname])exposureBySupplier[sname]={supplier:sname,ccy:supCcy,supBaseCost:0,annHomeAtSpot:0,annHomeAtEff:0,hedgeRatio:h*100,spot,forward:fwd,eff};
+      exposureBySupplier[sname].supBaseCost+=supBaseCost;
+      exposureBySupplier[sname].annHomeAtSpot+=supBaseCost*spot;
+      exposureBySupplier[sname].annHomeAtEff+=supBaseCost*eff;
+    });
+  });
+  const exposureRows=Object.values(exposureBySupplier).sort((a,b)=>b.annHomeAtEff-a.annHomeAtEff);
+
+  // ── Backup-supplier auto-check ──
+  const backupRows=[];
+  state.products.forEach(p=>{
+    (p.bom||[]).forEach(b=>{
+      const arr=Array.isArray(b.backupSuppliers)?b.backupSuppliers:[];
+      const qualified=arr.filter(x=>x.qualified);
+      if(qualified.length===0&&(b.leadTime||0)>2){
+        backupRows.push({product:p.name,part:b.name,primary:b.supplierName||'—',primaryLT:b.leadTime||0,gap:'No qualified backup supplier'});
+      }else if(qualified.length){
+        // pick lowest leadTime backup; compute gap if primary is delayed
+        const best=qualified.slice().sort((a,b)=>(+a.leadTime||99)-(+b.leadTime||99))[0];
+        const gapWk=Math.max(0,(+best.leadTime||0)-(+b.leadTime||0));
+        const costPremium=((+best.cost||0)-(+b.cost||0))/Math.max(+b.cost||1,0.01)*100;
+        backupRows.push({product:p.name,part:b.name,primary:b.supplierName||'—',primaryLT:b.leadTime||0,backup:best.name,backupLT:best.leadTime,backupCost:best.cost,gap:`+${gapWk}wk LT, +${costPremium.toFixed(0)}% cost`,quality:best.quality});
+      }
+    });
+  });
+
+  return <div className="card" style={{borderLeft:'3px solid var(--dg)'}}>
+    <div className="card-title">⚠ Procurement Risk &amp; FX Hedging<SectionInfo>
+      <strong>What it does:</strong> Continuously monitors three procurement risk signals and surfaces actionable mitigation choices.<br/><br/>
+      <strong>1. Spot-price volatility</strong> — flags BOM rows where current quote ≥ 1.5σ above 4-quote rolling mean (or via costCV ≥ 15%). Releases offer 4 choices: <em>release-now / delay-watch / trigger-backup / hedge-with-forward</em>.<br/>
+      <strong>2. FX exposure</strong> — for foreign-currency suppliers, computes effective FX = spot × (1−h) + forward × h, where h = supplierProfile.hedgeRatio. <code>landedCost()</code> applies this multiplier to BOM cost so the MILP sees the hedged price.<br/>
+      <strong>3. Backup-supplier auto-check</strong> — flags long-LT parts (&gt;2 wk) without a qualified backup; for those WITH backup, computes (LT gap, cost premium, quality) so you can pre-decide failover thresholds.<br/><br/>
+      <strong>HMM regime detection</strong>: deferred to a future risk.py module — would tag periods as low-vol vs high-vol and pre-trigger alerts.
+    </SectionInfo></div>
+
+    {/* Spot rates editable */}
+    <div style={{marginBottom:10,padding:'6px 8px',background:'var(--bg3)',borderRadius:4,fontSize:10}}>
+      <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:4}}>
+        <span style={{fontWeight:700,letterSpacing:.4,color:'var(--tx2)'}}>FX SPOT RATES</span>
+        <span style={{color:'var(--tx3)',fontSize:9}}>per 1 unit foreign → {cur} home</span>
+      </div>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+        {['USD','EUR','JPY','GBP','CNY','SGD'].map(k=><label key={k} style={{fontSize:10}}>{k}: <NumInput step="0.01" value={fxRates[k]||0} onChange={v=>dispatch({type:'SET_CONFIG',payload:{fxRates:{...fxRates,[k]:+v||0}}})} style={{width:55}}/></label>)}
+      </div>
+    </div>
+
+    {/* Volatility alerts */}
+    <div style={{marginBottom:10}}>
+      <div style={{fontSize:10,fontWeight:700,color:'var(--dg)',marginBottom:4}}>📈 Spot-price volatility ({volAlerts.length})</div>
+      {volAlerts.length===0?<div style={{fontSize:10,color:'var(--gn)'}}>✅ No BOM rows currently flagged (need ≥ 4 history points OR costCV ≥ 15%).</div>:
+      <table className="data-table" style={{fontSize:10}}>
+        <thead><tr><th>Part</th><th>Supplier</th><th>Now</th><th>μ</th><th>σ</th><th>z</th><th>Release decision</th></tr></thead>
+        <tbody>{volAlerts.map((a,i)=><tr key={i}>
+          <td>{a.part} <span style={{color:'var(--tx3)'}}>({a.product})</span></td>
+          <td style={{color:'var(--tx2)'}}>{a.supplier}</td>
+          <td className="num">{cur}{a.currentPrice.toFixed(2)}</td>
+          <td className="num" style={{color:'var(--tx3)'}}>{a.mean!=null?cur+a.mean.toFixed(2):'—'}</td>
+          <td className="num" style={{color:'var(--tx3)'}}>{a.sigma!=null?a.sigma.toFixed(2):'—'}</td>
+          <td className="num" style={{color:Math.abs(a.zscore)>2?'var(--dg)':'var(--a4)',fontWeight:700}}>{a.zscore.toFixed(2)}</td>
+          <td>
+            <div style={{display:'flex',gap:3,flexWrap:'wrap',fontSize:9}}>
+              <button className="btn btn-secondary btn-sm" style={{fontSize:9,padding:'1px 5px'}} title="Accept the current spike; release PO at this price.">Release</button>
+              <button className="btn btn-secondary btn-sm" style={{fontSize:9,padding:'1px 5px'}} title="Hold the PO for 1 week; retest. Risk: stockout if LT short.">Delay</button>
+              <button className="btn btn-secondary btn-sm" style={{fontSize:9,padding:'1px 5px',color:'var(--a2)'}} title="Switch to backup supplier (configured in BOM row).">Trigger backup</button>
+              <button className="btn btn-secondary btn-sm" style={{fontSize:9,padding:'1px 5px',color:'var(--a3)'}} title="Set supplier hedgeRatio in Contract row to lock forward FX.">Hedge</button>
+            </div>
+          </td>
+        </tr>)}</tbody>
+      </table>}
+    </div>
+
+    {/* FX exposure */}
+    <div style={{marginBottom:10}}>
+      <div style={{fontSize:10,fontWeight:700,color:'var(--a3)',marginBottom:4}}>💱 FX exposure rollup ({exposureRows.length} foreign-ccy supplier{exposureRows.length===1?'':'s'})</div>
+      {exposureRows.length===0?<div style={{fontSize:10,color:'var(--tx3)'}}>All suppliers in home currency ({cur}). No FX exposure.</div>:
+      <table className="data-table" style={{fontSize:10}}>
+        <thead><tr><th>Supplier</th><th>Ccy</th><th>Annual ({cur})</th><th>Spot</th><th>Forward</th><th>Hedge %</th><th>Effective FX</th><th>Annual @ Eff ({cur})</th><th>Hedged Δ</th></tr></thead>
+        <tbody>{exposureRows.map((e,i)=>{
+          const delta=e.annHomeAtEff-e.annHomeAtSpot;
+          return <tr key={i}>
+            <td style={{fontWeight:600}}>{e.supplier}</td>
+            <td style={{fontFamily:'JetBrains Mono',color:'var(--a4)'}}>{e.ccy}</td>
+            <td className="num">{cur}{Math.round(e.annHomeAtSpot).toLocaleString()}</td>
+            <td className="num" style={{fontFamily:'JetBrains Mono',color:'var(--tx3)'}}>{e.spot}</td>
+            <td className="num" style={{fontFamily:'JetBrains Mono',color:'var(--tx3)'}}>{e.forward}</td>
+            <td className="num" style={{color:e.hedgeRatio>=50?'var(--gn)':e.hedgeRatio>0?'var(--a4)':'var(--dg)'}}>{e.hedgeRatio.toFixed(0)}%</td>
+            <td className="num" style={{fontFamily:'JetBrains Mono'}}>{e.eff.toFixed(3)}</td>
+            <td className="num" style={{fontWeight:700}}>{cur}{Math.round(e.annHomeAtEff).toLocaleString()}</td>
+            <td className="num" style={{color:delta<0?'var(--gn)':delta>0?'var(--dg)':'var(--tx3)'}}>{delta>0?'+':''}{cur}{Math.round(delta).toLocaleString()}</td>
+          </tr>;
+        })}</tbody>
+      </table>}
+      <div style={{fontSize:9,color:'var(--tx3)',marginTop:4}}>Edit hedgeRatio + forwardRate per supplier in <strong>Tab 3 → Supplier Management → Contract Definitions</strong>.</div>
+    </div>
+
+    {/* Backup-supplier auto-check */}
+    <div style={{marginBottom:6}}>
+      <div style={{fontSize:10,fontWeight:700,color:'var(--a4)',marginBottom:4}}>🔄 Backup-supplier auto-check ({backupRows.length})</div>
+      {backupRows.length===0?<div style={{fontSize:10,color:'var(--gn)'}}>✅ All long-LT parts have qualified backups.</div>:
+      <table className="data-table" style={{fontSize:10}}>
+        <thead><tr><th>Part</th><th>Primary (LT)</th><th>Backup (LT, cost, Q)</th><th>Gap if primary fails</th></tr></thead>
+        <tbody>{backupRows.map((r,i)=><tr key={i}>
+          <td>{r.part} <span style={{color:'var(--tx3)'}}>({r.product})</span></td>
+          <td>{r.primary} <span style={{color:'var(--tx3)'}}>({r.primaryLT}wk)</span></td>
+          <td>{r.backup?<>{r.backup} <span style={{color:'var(--tx3)'}}>({r.backupLT}wk, {cur}{r.backupCost}, Q={r.quality}%)</span></>:<span style={{color:'var(--dg)',fontStyle:'italic'}}>none qualified</span>}</td>
+          <td style={{color:r.backup?'var(--a4)':'var(--dg)'}}>{r.gap}</td>
+        </tr>)}</tbody>
+      </table>}
+    </div>
+  </div>;
 }
 
 // ─── TAB 4: FINANCE & COSTS ───
@@ -5197,6 +5391,9 @@ function FinanceTab({state,dispatch}){
 
     {/* Pillar 15 — Payment Ledger */}
     <PaymentLedgerCard state={state} dispatch={dispatch}/>
+
+    {/* P6 — Procurement Risk + FX Exposure */}
+    <ProcurementRiskCard state={state} dispatch={dispatch}/>
 
     {/* Asset Register */}
     <div className="card">

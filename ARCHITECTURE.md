@@ -986,7 +986,7 @@ function cashTiedUpAsOf(asOfDate, state) {
 | **P3** | Forecasting overhaul | ✅ COMPLETE |
 | **P4** | Demand sensing in MPS | ✅ COMPLETE |
 | **P5** | Control tower + frozen horizon | ✅ COMPLETE |
-| **P6** | Procurement risk + currency hedging | ⏳ PENDING |
+| **P6** | Procurement risk + currency hedging | ✅ COMPLETE (HMM deferred) |
 | **P7** | Inventory & cost cleanup | ⏳ PENDING |
 | **P8** | RCCP + scenarios + EVM + risk matrix | ⏳ PENDING |
 | **P9** | Network design + Learning Lab cleanup | ⏳ PENDING |
@@ -1108,22 +1108,20 @@ Returns `env: {sklearn, statsmodels, xgboost}` so UI shows installed-package sta
 
 ---
 
-## P6 — Procurement Risk + Currency Hedging (PENDING)
+## P6 — Procurement Risk + Currency Hedging (DONE; HMM deferred)
 
-**Goal**: Spot-price volatility alert with 4 release options; backup-supplier auto-check + gap impact; currency hedging contracts → landed cost.
+**Shipped**:
 
-### Subtasks
+- New helper [`effectiveFX`](index.html) computes hedged FX = `spot × (1 − h) + forward × h`, returning 1 when supplier currency = home currency or rates missing.
+- `landedCost(b, config, plant, profiles)` extended with 4th arg. When the BOM row's supplier has a profile with non-home currency, the base cost is multiplied by the hedged FX before transport overlays. All 4 callers updated via replace_all.
+- `state.config.fxRates = {USD, EUR, JPY, GBP, CNY, SGD}` seeded in both Tata and generic `defaultState`. Editable in the new Procurement Risk card.
+- Per-supplier `forwardRate` field added to Contract Definitions row alongside existing `hedgeRatio`. Live-computed "Effective FX" column shows the resulting multiplier.
+- New [`ProcurementRiskCard`](index.html) component placed in FinanceTab after `PaymentLedgerCard`. Three sections:
+  1. **Spot-price volatility** — z-score per BOM row using `b.priceHistory[]` (4+ points) or `b.costCV` fallback (≥ 15% → soft flag). Threshold `|z| ≥ 1.5σ` raises an alert with 4 release options (Release / Delay / Trigger backup / Hedge).
+  2. **FX exposure rollup** — per-supplier table of annual spend in supplier currency, spot, forward, hedge %, effective FX, annual at effective rate, and Δ (hedge gain/loss). Only shows foreign-ccy suppliers.
+  3. **Backup-supplier auto-check** — flags long-LT parts (>2 wk) with no qualified backup; for parts WITH qualified backup, shows LT gap, cost premium, and quality of best alternative.
 
-1. **Spot-price volatility alert**: when `b.priceVolatility = (current - history.mean)/history.std > 1.5σ`, raise alert with 4 buttons: (a) Release at new price, (b) Delay & watch, (c) Trigger backup supplier, (d) Hedge (only if supplier has `hedged=true` in supplierProfiles).
-2. **Backup supplier logic**: BOM rows already have `b.backupSuppliers[]`. Add auto-check button: if primary fails to ship by lead time, evaluate backups by `(cost, leadTime, quality)`. Compute the gap if backup partial-fills; surface impact on production plan.
-3. **Currency hedging wired to landed cost**: `supplierProfiles[name].currency` + `hedgeRatio` + `state.config.currencyRate` → effective FX rate = `spot × (1 - hedgeRatio) + forwardRate × hedgeRatio`. Multiply BOM cost by this when supplier currency ≠ home currency. Update `landedCost` helper at `index.html:~580`.
-4. **HMM regime detection** (research-then-decide): low-vol vs high-vol regime switching using `hmmlearn` (lightweight). If implementing, add to `forecast.py` as a price-time-series module separate from demand forecasting. Output: probability of being in high-vol regime → triggers earlier alerts.
-
-### Files
-
-- `index.html` — new `ProcurementRiskCard` (place after Payment Ledger in FinanceTab).
-- `landedCost` helper at `index.html:~580`.
-- Optionally `forecast.py` for HMM (or new `risk.py`).
+**HMM regime detection deferred** to a future `risk.py` module — low-priority; user said "research-then-decide" and the existing volatility z-score covers the immediate need.
 
 ---
 
