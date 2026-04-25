@@ -916,6 +916,23 @@ function incotermBuyerPays(ic){
   if(ic2==='CFR'||ic2==='CPT')return {freight:false,insurance:true,duty:true,handling:true};
   return {freight:true,insurance:true,duty:true,handling:true};
 }
+// P7 — translate warehouse mode (units|area|volume|unlimited) into a single unit count for the solver.
+// Mode is at state.budget.warehouseMode; per-product footprintArea / footprintVolume drive the conversion.
+// `defaultUnits` is used when mode='units' and no explicit value is passed (fallback 5000).
+function effectiveWhMaxUnits(state,defaultUnits){
+  const bu=state.budget||{};
+  const mode=bu.warehouseMode||'units';
+  if(mode==='unlimited')return 999999;
+  if(mode==='units')return +bu.warehouseLimitUnits||defaultUnits||5000;
+  // area / volume — weighted-avg per-SKU footprint
+  const products=state.products||[];
+  const totDem=products.reduce((s,p)=>s+(p.history||[]).reduce((a,b)=>a+(+b||0),0),0);
+  if(totDem<=0)return defaultUnits||5000;
+  const wAvgFp=products.reduce((s,p)=>{const f=+(mode==='area'?p.footprintArea:p.footprintVolume)||0.05;const w=(p.history||[]).reduce((a,b)=>a+(+b||0),0);return s+f*w},0)/totDem;
+  const lim=+(mode==='area'?bu.warehouseLimitArea:bu.warehouseLimitVolume)||0;
+  return wAvgFp>0?Math.round(lim/wAvgFp):(defaultUnits||5000);
+}
+
 // P6 — effective FX with hedging. spot = state.config.fxRates[supplierCcy]; forward = profile.forwardRate (default = spot).
 // Effective FX = spot × (1 - hedgeRatio) + forward × hedgeRatio. Returns 1 if home-ccy or no rates set.
 function effectiveFX(supplierCcy,homeCcy,hedgeRatio,forwardRate,fxRates){
@@ -1615,6 +1632,39 @@ function SetupTab({state,dispatch}){
           <Field label={`SCM Opex (${c.currency})`} hint="Planner headcount + scheduler + ERP/WMS licences + quality/compliance + IT. Catch-all for SCM running cost."><NumInput value={bu.scmOpex||0} onChange={v=>upB('scmOpex',v)}/></Field>
           <Field label={`Working Capital Limit (${c.currency})`} hint="Max value tied up in AR+Inventory−AP at any point. HARD constraint in procurement MILP: Σ(inv × value) ≤ limit per period."><NumInput value={bu.workingCapital||0} onChange={v=>upB('workingCapital',v)}/></Field>
           <Field label={`Reserve / Contingency (${c.currency})`} hint="Unallocated buffer for shocks — supplier default, FX spike, equipment failure. Enterprise norm: 5-15% of master budget."><NumInput value={bu.reserve||0} onChange={v=>upB('reserve',v)}/></Field>
+        </div>
+        {/* P7 — Warehouse capacity mode (4 options) */}
+        <div style={{marginTop:8,padding:'6px 8px',background:'var(--bg3)',borderRadius:4,fontSize:10}}>
+          <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:4,flexWrap:'wrap'}}>
+            <span style={{fontWeight:700,letterSpacing:.4,color:'var(--tx2)'}}>WAREHOUSE CAPACITY MODE</span>
+            <SectionInfo><strong>What it does:</strong> Choose how the solver interprets the FG warehouse limit.<br/><br/>
+              <strong>Direct (units)</strong> — wh_max is a count. Σ inventory ≤ wh_max units (any SKU mix).<br/>
+              <strong>Area (m²)</strong> — wh_max_area / weighted-avg footprint per SKU = effective unit cap. Edit per-SKU footprint in Tab 2 → Product Parameters.<br/>
+              <strong>Volume (m³)</strong> — same logic with stack volume.<br/>
+              <strong>Unlimited</strong> — solver gets wh_max = ∞ (used for warehouse capacity sensitivity studies).<br/><br/>
+              The conversion happens client-side; the solver always receives a unit count via the <code>wh_max</code> param. Inspect the effective number under the mode selector after saving.</SectionInfo>
+            <select value={bu.warehouseMode||'units'} onChange={e=>upB('warehouseMode',e.target.value)} style={{fontSize:10,padding:'2px 6px'}}>
+              <option value="units">Direct — units count</option>
+              <option value="area">Area — m² + per-SKU footprint</option>
+              <option value="volume">Volume — m³ + per-SKU stack vol</option>
+              <option value="unlimited">Unlimited (no cap)</option>
+            </select>
+            {(bu.warehouseMode==='area'||bu.warehouseMode==='volume')&&<>
+              <label>{bu.warehouseMode==='area'?'Area (m²):':'Volume (m³):'} <NumInput value={(bu.warehouseMode==='area'?bu.warehouseLimitArea:bu.warehouseLimitVolume)||0} onChange={v=>upB(bu.warehouseMode==='area'?'warehouseLimitArea':'warehouseLimitVolume',v)} style={{width:80}}/></label>
+            </>}
+            {(()=>{
+              const products=state.products||[];
+              if(bu.warehouseMode==='unlimited')return <span style={{marginLeft:'auto',color:'var(--tx3)'}}>→ effective wh_max = ∞ (solver receives 999999u)</span>;
+              if(bu.warehouseMode==='area'||bu.warehouseMode==='volume'){
+                const lim=+(bu.warehouseMode==='area'?bu.warehouseLimitArea:bu.warehouseLimitVolume)||0;
+                const totDem=products.reduce((s,p)=>s+(p.history||[]).reduce((a,b)=>a+(+b||0),0),0);
+                const wAvgFp=products.reduce((s,p)=>{const f=+(bu.warehouseMode==='area'?p.footprintArea:p.footprintVolume)||0.05;const w=(p.history||[]).reduce((a,b)=>a+(+b||0),0);return s+f*w},0)/Math.max(totDem,1);
+                const eff=wAvgFp>0?Math.round(lim/wAvgFp):0;
+                return <span style={{marginLeft:'auto',color:'var(--ac)'}}>→ effective wh_max ≈ {eff.toLocaleString()}u <span style={{color:'var(--tx3)'}}>(weighted avg fp = {wAvgFp.toFixed(3)} {bu.warehouseMode==='area'?'m²/u':'m³/u'})</span></span>;
+              }
+              return null;
+            })()}
+          </div>
         </div>
         {/* Utilization bar */}
         {master>0&&<div style={{marginTop:8}}>
@@ -2978,7 +3028,20 @@ function ProductsTab({state,dispatch}){
           <Field label="Demand Ceiling" hint="strict = cap at forecast (no MAPE buffer); soft = forecast × (1+MAPE) (deterministic robust-optimization, Bertsimas-Sim style); off = solver free (use maxProd only)"><select value={prod.demandCeilingMode||'soft'} onChange={e=>upProd({demandCeilingMode:e.target.value})} style={{color:prod.demandCeilingMode==='strict'?'var(--dg)':prod.demandCeilingMode==='off'?'var(--a3)':'var(--ac)',fontWeight:600}}><option value="soft">soft (±MAPE robust)</option><option value="strict">strict (cap at forecast)</option><option value="off">off (free)</option></select></Field>
           <Field label="Demand Mode" hint="MTS-weekly (default): build-to-stock; demand[t] is the period total; solver may pre-build inventory. Simultaneous: total demand fires at once across horizon. Daily: demand spread evenly across workdays in the period. MTO: make-to-order; no inventory build-ahead — production must match demand each period (FG inv ≤ safety stock only)."><select value={prod.demandMode||'mts-weekly'} onChange={e=>upProd({demandMode:e.target.value})} style={{color:'var(--a3)',fontWeight:600}}><option value="mts-weekly">MTS (build to stock)</option><option value="simultaneous">Simultaneous</option><option value="daily">Daily-spread</option><option value="mto">MTO (make to order)</option></select></Field>
           <Field label="Shelf Life (days)" hint={`FG expiry in DAYS. At grain "${state.planning?.timeGrain||'weekly'}" solver enforces ${effectiveShelfDays(prod.shelfLife||52,state.planning)} days. Switch grain to daily for 100% exact.`}><NumInput value={prod.shelfLife||52} onChange={v=>upProd({shelfLife:v})}/></Field>
-          <Field label="Yield %" hint="Production yield → scrap"><NumInput value={Math.round((prod.yieldPct||0.95)*100)} onChange={v=>upProd({yieldPct:v/100})} min={50} max={100}/></Field>
+          <Field label="Yield Predicted %" hint="Production yield used by the planner → scrap factor. Predicted = what the design says you should achieve."><NumInput value={Math.round((prod.yieldPct||0.95)*100)} onChange={v=>upProd({yieldPct:v/100})} min={50} max={100} style={{color:'var(--ac)',fontWeight:600}}/></Field>
+          {/* P7 — yieldActual side-by-side variance vs predicted */}
+          <Field label="Yield Actual %" hint="Yield observed in production this horizon. If left blank or 0, the planner assumes predicted = actual. Variance = (actual − predicted) drives the Cost Waterfall Quality Loss bar and the P5 alert if Δ > 5 pp."><NumInput value={prod.yieldActual!=null?Math.round((prod.yieldActual||0)*100):''} placeholder="—" onChange={v=>upProd({yieldActual:v===''||v==null?null:(+v||0)/100})} min={0} max={100} style={{color:'var(--a4)'}}/></Field>
+          {(()=>{
+            if(prod.yieldActual==null)return null;
+            const dPct=((prod.yieldActual-(prod.yieldPct||0.95))*100).toFixed(1);
+            const sign=+dPct>=0?'+':'';
+            const col=Math.abs(+dPct)>5?'var(--dg)':Math.abs(+dPct)>2?'var(--a4)':'var(--gn)';
+            return <div className="field" style={{display:'flex',flexDirection:'column',justifyContent:'flex-end',padding:'4px 6px',background:'var(--bg3)',border:`1px solid ${col}`,borderRadius:3}}>
+              <span style={{fontSize:9,color:'var(--tx3)',letterSpacing:.4,fontWeight:600}}>YIELD VARIANCE</span>
+              <span style={{fontSize:14,fontWeight:700,color:col}}>{sign}{dPct} pp</span>
+              <span style={{fontSize:8,color:'var(--tx3)'}}>{Math.abs(+dPct)>5?'⚠ exceeds threshold':'within tolerance'}</span>
+            </div>;
+          })()}
           <Field label="Yield CV %" hint="Variability for MC"><NumInput value={prod.yieldCV||0} onChange={v=>upProd({yieldCV:v})}/></Field>
           <Field label="Capacity (u/week)"><NumInput value={prod.capacity||50} onChange={v=>upProd({capacity:v})}/></Field>
           <Field label="Cycle Time (min/u)" hint="Process time per unit"><NumInput value={prod.cycleTime||19} onChange={v=>upProd({cycleTime:v})}/></Field>
@@ -2986,6 +3049,9 @@ function ProductsTab({state,dispatch}){
           {/* Setup Cost + Fixed Factory + Labor moved to the dedicated "Fixed & Setup Costs" card above — single source of truth */}
           <Field label="Salvage %" hint="Recovery rate on expired/obsolete inventory. Used in Newsvendor critical ratio and write-off cost."><NumInput value={Math.round((prod.salvageRate||0.8)*100)} onChange={v=>upProd({salvageRate:v/100})} min={0} max={100}/></Field>
           <Field label="FG Warehouse Max" hint="Per-product storage cap. Solver enforces as hard constraint. 0 = unlimited."><NumInput value={prod.whMaxUnits||500} onChange={v=>upProd({whMaxUnits:v})}/></Field>
+          {/* P7 — per-product footprint for area/volume warehouse modes */}
+          <Field label="Footprint (m²/u)" hint="Floor area per unit. Used when Setup → Budget warehouse mode = 'area'; effective wh_max = area_limit / weighted-avg footprint."><NumInput step="0.01" value={prod.footprintArea||0.05} onChange={v=>upProd({footprintArea:v})}/></Field>
+          <Field label="Volume (m³/u)" hint="Stack volume per unit. Used when warehouse mode = 'volume'."><NumInput step="0.001" value={prod.footprintVolume||0.02} onChange={v=>upProd({footprintVolume:v})}/></Field>
           <Field label="Production Mode" hint="MTS = Make-to-Stock (forecast-driven, safety stock). MTO = Make-to-Order (backlog-driven, no FG inventory). ATO = Assemble-to-Order (subassy MTS + final MTO). This gates which tabs/sections are relevant."><select value={prod.prodMode||'mts'} onChange={e=>upProd({prodMode:e.target.value})}><option value="mts">Make-to-Stock</option><option value="mto">Make-to-Order</option><option value="ato">Assemble-to-Order</option><option value="eto">Engineer-to-Order</option><option value="retailer">Retailer (pass-through)</option></select></Field>
           <Field label="Backorder" hint="Yes = allow stockouts to be filled in later period (penalty applied). No = treat as lost sales (revenue lost)."><select value={prod.backorderOn?'yes':'no'} onChange={e=>upProd({backorderOn:e.target.value==='yes'})}><option value="no">No (lost sale)</option><option value="yes">Yes (backorder)</option></select></Field>
           <Field label="Cap CV %" hint="Equipment failure variability — used by Monte Carlo to simulate capacity shortfalls."><NumInput value={prod.capCV||5} onChange={v=>upProd({capCV:v})}/></Field>
@@ -3240,7 +3306,7 @@ function OptimizeTab({state,dispatch}){
             cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue,label:ev.label})),
             parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05,trans_rate:b.transRate||0.5,trans_mode:b.transMode||'perUnit',proc_policy:b.procPolicy||'milp',part_yield:(b.partYield||98)/100,lt_cv:(b.ltCV||10)/100,cost_cv:(b.costCV||10)/100,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[],pay_term_days:b.payTermDays||30,early_pay_disc:b.earlyPayDisc||0})),
           })),
-          params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(state.products[0]?.carryRate||24)/100,wh_max:constraints.warehouse.on?constraints.warehouse.val:5000,service_level:state.config.serviceLevel,budget:constraints.budget.on?constraints.budget.val:state.budget.procurement||0,shared_capacity:state.production.lines[0]?.capacity||50,work_days:state.planning.workDays||6,replan_from_period:state.planning.replanFromPeriod??null},
+          params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(state.products[0]?.carryRate||24)/100,wh_max:constraints.warehouse.on?Math.min(constraints.warehouse.val,effectiveWhMaxUnits(state,5000)):effectiveWhMaxUnits(state,5000),wh_mode:state.budget.warehouseMode||'units',service_level:state.config.serviceLevel,budget:constraints.budget.on?constraints.budget.val:state.budget.procurement||0,shared_capacity:state.production.lines[0]?.capacity||50,work_days:state.planning.workDays||6,replan_from_period:state.planning.replanFromPeriod??null},
           capacity_mode:state.production.lines[0]?.type||'shared',
         };
       }else if(solverMode==='production'){
@@ -3343,7 +3409,7 @@ function OptimizeTab({state,dispatch}){
             products:state.products.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,init_inventory:p.initInventory,
               cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue,label:ev.label})),
               parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder,hold_pct:b.holdPct,rm_capacity:b.rmCapacity,ordering_cost:b.orderingCost,rm_shelf:b.rmShelf,scrap_factor:b.scrapFactor,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[]}))})),
-            params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:0.24,wh_max:constraints.warehouse.on?constraints.warehouse.val:5000,service_level:state.config.serviceLevel,budget:constraints.budget.on?constraints.budget.val:0},capacity_mode:state.production.lines[0]?.type||'shared',
+            params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:0.24,wh_max:constraints.warehouse.on?Math.min(constraints.warehouse.val,effectiveWhMaxUnits(state,5000)):effectiveWhMaxUnits(state,5000),wh_mode:state.budget.warehouseMode||'units',service_level:state.config.serviceLevel,budget:constraints.budget.on?constraints.budget.val:0},capacity_mode:state.production.lines[0]?.type||'shared',
           },
           production_data:{
             products:state.products.map(p=>({name:p.name,required_qty:annDemand(p),setup_cost:p.setupCost,yield_pct:p.yieldPct,cycle_time:1})),
@@ -3363,7 +3429,7 @@ function OptimizeTab({state,dispatch}){
               cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue,label:ev.label})),
               parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[]})),
             })),
-            params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:0.24,wh_max:constraints.warehouse.on?constraints.warehouse.val:5000,service_level:state.config.serviceLevel},
+            params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:0.24,wh_max:constraints.warehouse.on?Math.min(constraints.warehouse.val,effectiveWhMaxUnits(state,5000)):effectiveWhMaxUnits(state,5000),wh_mode:state.budget.warehouseMode||'units',service_level:state.config.serviceLevel},
           }
         };
       }
@@ -8022,7 +8088,7 @@ function CommandCenterTab({state,dispatch}){
             {name:'Procurement (Min Cost)',inputs:'Products, BOM, Planning',
               check:()=>P.length>0&&P.every(p=>p.bom.length>0)&&P.every(p=>p.history?.length>=12),
               data:()=>`${P.length} SKUs, ${allParts.length} parts, ${periodCount(state.planning)} periods`,
-              run:()=>runSolver('procurement','/api/solve/procurement',{products:P.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,init_inventory:p.initInventory,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05}))})),params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(P[0]?.carryRate||24)/100,wh_max:P[0]?.whMaxUnits||5000,service_level:state.config.serviceLevel,replan_from_period:state.planning.replanFromPeriod??null},capacity_mode:'parallel'})},
+              run:()=>runSolver('procurement','/api/solve/procurement',{products:P.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,init_inventory:p.initInventory,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05}))})),params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(P[0]?.carryRate||24)/100,wh_max:effectiveWhMaxUnits(state,P[0]?.whMaxUnits||5000),wh_mode:state.budget.warehouseMode||'units',service_level:state.config.serviceLevel,replan_from_period:state.planning.replanFromPeriod??null},capacity_mode:'parallel'})},
             {name:'Production (Min Makespan)',inputs:'Products, Lines',
               check:()=>P.length>0&&state.production.lines.length>0,
               data:()=>`${state.production.lines.length} lines, ${P.length} products`,

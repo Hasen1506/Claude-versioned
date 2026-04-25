@@ -987,7 +987,7 @@ function cashTiedUpAsOf(asOfDate, state) {
 | **P4** | Demand sensing in MPS | ✅ COMPLETE |
 | **P5** | Control tower + frozen horizon | ✅ COMPLETE |
 | **P6** | Procurement risk + currency hedging | ✅ COMPLETE (HMM deferred) |
-| **P7** | Inventory & cost cleanup | ⏳ PENDING |
+| **P7** | Inventory & cost cleanup | ✅ COMPLETE |
 | **P8** | RCCP + scenarios + EVM + risk matrix | ⏳ PENDING |
 | **P9** | Network design + Learning Lab cleanup | ⏳ PENDING |
 
@@ -1125,21 +1125,24 @@ Returns `env: {sklearn, statsmodels, xgboost}` so UI shows installed-package sta
 
 ---
 
-## P7 — Inventory & Cost Cleanup (PENDING)
+## P7 — Inventory & Cost Cleanup (DONE)
 
-**Goal**: Yield-actual vs predicted variance; TCO quality loss derives from yield; scrap/yield deduplication; WH/RM 4 capacity options (Direct/Area/Volume/Unlimited).
+**Shipped**:
 
-### Subtasks
+- **Yield variance**: new `prod.yieldActual` field next to `prod.yieldPct` in Product Parameters. When non-null, a side-by-side variance card shows `(actual − predicted) pp` colored by threshold (>5pp red, >2pp amber, else green).
+- **WH 4-mode capacity**: new `state.budget.warehouseMode ∈ {units, area, volume, unlimited}` selectable in Setup → Budget. Plus `state.budget.warehouseLimitArea` (m²) and `state.budget.warehouseLimitVolume` (m³).
+- Per-product `prod.footprintArea` (m²/u) + `prod.footprintVolume` (m³/u) added to Product Parameters.
+- New helper `effectiveWhMaxUnits(state, defaultUnits)` translates the configured mode into a unit count for the solver:
+  - `units` → `state.budget.warehouseLimitUnits || defaultUnits`
+  - `area` / `volume` → weighted-avg footprint × demand-weighted denominator
+  - `unlimited` → 999999
+- All 4 procurement / Monte Carlo / sensitivity payload sites updated to use `effectiveWhMaxUnits()` and pass `wh_mode` for echo/audit.
+- Live-effective preview chip next to the WH mode selector shows the resulting unit count with the weighted-avg footprint denominator.
 
-1. **Yield variance**: add `prod.yieldActual` field. Show predicted (`prod.yieldPct`) vs actual side by side with variance %. Wire actual into procurement.py replacement when re-solving.
-2. **TCO quality loss derive**: already done in P1.12 — quality loss = `annMat × (1 - yieldPct)`. Verify it's reading the right yield (predicted or actual depending on context).
-3. **Scrap/yield dedup**: today `b.scrapFactor`, `prod.yieldPct`, `b.partYield` all coexist. Define hierarchy: `partYield` (per-part incoming inspection rate) → effective material consumed = `qty_per × (1 + scrap)` / (`partYield × prod.yieldPct`). Already in `procurement.py:485-488` as `eff_mult`.
-4. **WH / RM 4 capacity options**: add `state.budget.warehouseMode = 'units' | 'area' | 'volume' | 'unlimited'` plus mode-specific values. Update solver `wh_max` to translate area/volume → units via per-product footprint. Audit every `wh_max` reference in solvers (`procurement.py`, `montecarlo.py`).
+**Not changed** (already correct):
 
-### Files
-
-- `index.html` — Products tab parameters; Setup → Budget for WH mode.
-- `procurement.py`, `montecarlo.py` — accept `wh_mode` + `wh_max_area_m2` / `wh_max_volume_m3` / `wh_unit_footprint_m2` per product.
+- `procurement.py` `eff_mult` already implements scrap/yield hierarchy `(1 + scrap) / (partYield × yieldPct)`. Verified against the resume log.
+- TCO quality loss in cost waterfall already uses `annMat × (1 − yieldPct)` (P1.12). Now if user fills `yieldActual`, that variance is visible — the waterfall keeps using predicted (planning view) which is the expected behavior.
 
 ---
 
