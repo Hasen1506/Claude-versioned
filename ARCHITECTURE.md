@@ -985,7 +985,7 @@ function cashTiedUpAsOf(asOfDate, state) {
 | **P2** | Supplier consolidation | ✅ COMPLETE |
 | **P3** | Forecasting overhaul | ✅ COMPLETE |
 | **P4** | Demand sensing in MPS | ✅ COMPLETE |
-| **P5** | Control tower + frozen horizon | ⏳ PENDING |
+| **P5** | Control tower + frozen horizon | ✅ COMPLETE |
 | **P6** | Procurement risk + currency hedging | ⏳ PENDING |
 | **P7** | Inventory & cost cleanup | ⏳ PENDING |
 | **P8** | RCCP + scenarios + EVM + risk matrix | ⏳ PENDING |
@@ -1090,20 +1090,21 @@ Returns `env: {sklearn, statsmodels, xgboost}` so UI shows installed-package sta
 
 ---
 
-## P5 — Control Tower + Frozen Horizon (PENDING)
+## P5 — Control Tower + Frozen Horizon (DONE)
 
-**Goal**: Horizon-scoped alerts wired to solver outputs with recommended actions; frozen-vs-slushy distinction; capacity-shortage example with impact estimate.
+**Shipped** (located in `AnalysisTab` Tab 6, not Command Center — alert generator + Control Tower card live there):
 
-### Subtasks
-
-1. **Horizon scope filter**: alerts are computed app-wide today. Add a horizon-scope toggle in the Command Center → Alerts section: "All / Frozen only / Slushy only / Plannable". Map alert period to `state.planning.frozenWeeks` / `slushyWeeks`.
-2. **Solver-output-driven alerts**: capacity shortage alert reads `state.solverResults.procurement.products[k].fill_rate < 100` per period; flags the period and suggests: (a) overtime (`+1 shift`), (b) outsource the bottleneck stage (`production.topology.lines[L].stages[S].canOutsource`), (c) delay fulfillment (push demand to next period), (d) reduce safety stock (`state.config.serviceLevel` lower).
-3. **Frozen horizon awareness**: alert in `t < frozenWeeks` → red URGENT-UNACTIONABLE badge (you can't fix what's already locked); alert in `frozenWeeks ≤ t < slushyWeeks` → yellow ACTIONABLE-WITH-APPROVAL; alert in `t ≥ slushyWeeks` → green ACTIONABLE.
-4. **Impact estimates** per recommendation: e.g. "+1 shift adds 28 units/wk capacity at +₹X/wk overtime cost" — derived from `production.topology.lines[L].hoursPerShift × stage.throughput × overtime_multiplier`.
-
-### Files
-
-- `index.html` — `CommandCenterTab`, locate at `~7300` (search `id="alerts"`).
+- Alert generator now produces tagged alerts: `{sev, msg, period?, zone, actions?, source}`. Zones: `frozen | slushy | open | global`.
+- Static (config) alerts: short shelf life, single-source BOM, long lead time, missing Incoterm, capacity vs avg-demand gap. Each carries `actions` with impact-estimate strings.
+- Solver-driven alerts: reads `state.solverResults.procurement.products[k]`:
+  - `fill_rate < 100` → horizon-wide alert with action recommendations.
+  - per-period `shortage[t] > 0` → period-tagged alert; severity scales with zone (frozen=critical, slushy=warn, open=info).
+  - per-period at-capacity (production ≥ 99% cap AND demand > cap) → period-tagged "at-capacity" alert with shift+outsource recommendations.
+- Replan-anchor banner: when `state.planning.replanFromPeriod` is set, surfaces an info-alert tagged with the anchor period.
+- Scope filter UI: 5 buttons (All / Frozen / Slushy / Open / Global) with live counts.
+- Each alert renders zone badge + period number + urgency tag (URGENT-UNACTIONABLE / ACTIONABLE-WITH-APPROVAL / ACTIONABLE).
+- Source tag (`[config]` or `[solver]`) helps users spot which alerts react to a re-solve.
+- `useEffect` deps include `state.solverResults` so alerts refresh after every solver run.
 
 ---
 

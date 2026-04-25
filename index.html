@@ -5735,32 +5735,129 @@ function AnalysisTab({state,dispatch}){
     setLoading('');
   };
 
-  // Generate alerts
+  // P5 — Control Tower: horizon-scoped alerts wired to solver outputs + recommended actions.
+  // Alert shape: {sev, msg, period?, zone, actions?:[{label, impact}], source}
+  const [alertScope,setAlertScope]=useState('all'); // all | frozen | slushy | open | global
   useEffect(()=>{
     const a=[];
+    const fz=state.planning.frozenWeeks||4;
+    const sl=state.planning.slushyWeeks||12;
+    const T=periodCount(state.planning);
+    const zoneOf=(t)=>t==null?'global':t<fz?'frozen':t<sl?'slushy':'open';
+    const proc=state.solverResults?.procurement;
+    const procProducts=Array.isArray(proc?.products)?proc.products:null;
+
+    // Static (config) alerts — horizon-wide unless tied to a period
     state.products.forEach(p=>{
-      if(p.shelfLife<8)a.push({sev:'warn',msg:`${p.name}: short shelf life (${p.shelfLife}wk) — high expiry risk`});
-      if(p.bom.length===1)a.push({sev:'info',msg:`${p.name}: single-source material (${p.bom[0].name}) — consider backup supplier`});
+      if(p.shelfLife<8)a.push({sev:'warn',msg:`${p.name}: short shelf life (${p.shelfLife} days) — high expiry risk`,period:null,zone:'global',source:'config',
+        actions:[{label:'Switch to daily grain',impact:'Exact shelf-life modeling (no period rounding)'},{label:'Reduce safety stock',impact:`-${Math.round((p.history||[]).reduce((s,v)=>s+(+v||0),0)/52*0.1)}u/wk avg inventory`}]});
+      if(p.bom.length===1)a.push({sev:'info',msg:`${p.name}: single-source on ${p.bom[0].name} — concentration risk`,period:null,zone:'global',source:'config',
+        actions:[{label:'Add backup supplier in BOM',impact:'Activates auto-failover (P6)'}]});
       p.bom.forEach(b=>{
-        if(b.leadTime>4)a.push({sev:'warn',msg:`${p.name}/${b.name}: long lead time (${b.leadTime}wk) — maintain higher safety stock`});
-        if(b.supplierType==='import'&&!b.incoterm)a.push({sev:'info',msg:`${p.name}/${b.name}: import part without Incoterm set`});
+        if(b.leadTime>4)a.push({sev:'warn',msg:`${p.name}/${b.name}: long lead time (${b.leadTime}wk) — maintain higher safety stock`,period:null,zone:'global',source:'config',
+          actions:[{label:'Increase SS for this part',impact:`+${Math.ceil((b.leadTime/4-1)*5)}u of buffer at z=${(state.config.serviceLevel*1.645).toFixed(2)}σ`}]});
+        if(b.supplierType==='import'&&!b.incoterm)a.push({sev:'info',msg:`${p.name}/${b.name}: import part without Incoterm set`,period:null,zone:'global',source:'config'});
       });
       const avgDemand=(p.history||[]).reduce((s,v)=>s+(+v||0),0)/12;
-      if(p.capacity*4<avgDemand)a.push({sev:'critical',msg:`${p.name}: monthly capacity (${p.capacity*4}) < avg demand (${Math.round(avgDemand)}) — capacity shortage!`});
+      if(p.capacity*4<avgDemand){
+        const gap=Math.round(avgDemand-p.capacity*4);
+        a.push({sev:'critical',msg:`${p.name}: monthly capacity (${p.capacity*4}) < avg demand (${Math.round(avgDemand)}) — gap ${gap}u/mo`,period:null,zone:'global',source:'config',
+          actions:[
+            {label:'+1 shift',impact:`+${Math.round(p.capacity*0.5)}u/wk capacity at +${state.config.currency}${Math.round((state.production.lines[0]?.hoursPerShift||8)*(state.production.lines[0]?.shiftsPerDay||1)*50)}/wk OT`},
+            {label:'Outsource bottleneck stage',impact:`Capacity uplift; cost = part cost × (1+OS premium)`},
+            {label:'Reduce service level',impact:`SS shrinks ~${Math.round((state.config.serviceLevel*100-90))}% with SL drop to 90%`},
+          ]});
+      }
     });
+
+    // P5 — Solver-output-driven alerts (capacity shortage, fill rate, shortages).
+    if(procProducts){
+      procProducts.forEach((sp,k)=>{
+        const skuName=sp.name||`SKU#${k+1}`;
+        // total fill rate < 100% → flag
+        if(typeof sp.fill_rate==='number'&&sp.fill_rate<100){
+          a.push({sev:sp.fill_rate<90?'critical':'warn',msg:`${skuName}: solver fill rate ${sp.fill_rate}% (${sp.total_short||0}u short over horizon)`,period:null,zone:'global',source:'solver',
+            actions:[
+              {label:'Re-run with higher capacity',impact:`Try capacity +25%`},
+              {label:'Allow backorders',impact:`Set product.backorderOn=true and re-solve`},
+            ]});
+        }
+        // Per-period shortages → period-tagged alerts (only if non-zero)
+        const prodArr=sp.production||[];
+        const demArr=sp.demand||[];
+        const shortArr=sp.shortage||sp.short||[];
+        for(let t=0;t<Math.min(prodArr.length,T);t++){
+          const sh=shortArr[t]||0;
+          if(sh>0){
+            const zone=zoneOf(t);
+            const sevByZone=zone==='frozen'?'critical':zone==='slushy'?'warn':'info';
+            a.push({sev:sevByZone,msg:`${skuName}: shortage ${Math.round(sh)}u at period ${t+1}`,period:t,zone,source:'solver',
+              actions:zone==='frozen'?[{label:'URGENT: outsource or expedite',impact:'Frozen-period gap — only outsourcing or air freight can plug.'}]
+                :zone==='slushy'?[{label:'+1 shift in periods t-1..t',impact:`+${Math.round((state.products[k]?.capacity||50)*0.5)}u/wk before deadline`},{label:'Push demand 1 period',impact:'Backorder cost ≈ short × sellPrice × 0.1'}]
+                :[{label:'Increase capacity from period t-2',impact:`Re-solve with capacity +${Math.round(sh/2)}u/wk`},{label:'Reduce safety stock',impact:`Frees up ~${Math.round((state.products[k]?.capacity||50)*0.1)}u of inventory`}],
+            });
+          }
+          // Capacity-bound period (production hits its cap) → capacity-shortage alert
+          const cap=(state.products[k]?.capacity||50);
+          if(prodArr[t]>=cap*0.99&&(demArr[t]||0)>cap){
+            const zone=zoneOf(t);
+            const sevByZone=zone==='frozen'?'critical':zone==='slushy'?'warn':'info';
+            a.push({sev:sevByZone,msg:`${skuName}: at-capacity at period ${t+1} (${prodArr[t]}/${cap}u, demand ${demArr[t]||0})`,period:t,zone,source:'solver',
+              actions:[
+                {label:'+1 shift',impact:`+${Math.round(cap*0.5)}u/wk at +${state.config.currency}${Math.round((state.production.lines[0]?.hoursPerShift||8)*50)}/wk OT`},
+                {label:'Outsource bottleneck stage',impact:`Capacity uplift via stage.outsourceCostPerUnit`},
+              ]});
+          }
+        }
+      });
+    }
+
+    // Replan anchor banner
+    if(state.planning.replanFromPeriod!=null){
+      const t=state.planning.replanFromPeriod;
+      a.push({sev:'info',msg:`Replan anchor active: solver will lock periods 1..${t} (committed actuals) and re-optimise from period ${t+1}`,period:t,zone:zoneOf(t),source:'config',
+        actions:[{label:'Run procurement (Tab 9)',impact:`Re-solve forward periods with locked actuals_override`}]});
+    }
     setAlerts(a);
-  },[state.products]);
+  },[state.products,state.solverResults,state.planning.frozenWeeks,state.planning.slushyWeeks,state.planning.replanFromPeriod]);
 
   return <div className="animate-in">
     <ScenarioComparePanel state={state}/>
-    {/* Control Tower */}
+    {/* P5 — Control Tower with horizon-scope filter, zone tags, recommended actions */}
     <div className="card">
-      <div className="card-title">🚨 Control Tower <span className="badge" style={{background:alerts.some(a=>a.sev==='critical')?'rgba(248,81,73,.15)':'rgba(63,185,80,.15)',color:alerts.some(a=>a.sev==='critical')?'var(--dg)':'var(--gn)'}}>{alerts.length} alerts</span></div>
-      {alerts.length===0?<div style={{color:'var(--gn)',fontSize:11}}>✅ All clear — no alerts</div>:
-        alerts.map((a,i)=><div key={i} style={{padding:'4px 8px',marginBottom:3,borderRadius:4,fontSize:11,borderLeft:`3px solid ${a.sev==='critical'?'var(--dg)':a.sev==='warn'?'var(--a4)':'var(--a2)'}`,background:a.sev==='critical'?'rgba(248,81,73,.05)':a.sev==='warn'?'rgba(240,180,41,.05)':'rgba(56,189,248,.05)'}}>
-          {a.sev==='critical'?'🔴':a.sev==='warn'?'🟡':'🔵'} {a.msg}
-        </div>)
-      }
+      <div className="card-title">🚨 Control Tower <span className="badge" style={{background:alerts.some(a=>a.sev==='critical')?'rgba(248,81,73,.15)':'rgba(63,185,80,.15)',color:alerts.some(a=>a.sev==='critical')?'var(--dg)':'var(--gn)'}}>{alerts.length} alerts</span><SectionInfo><strong>What it does:</strong> Live alert feed combining static config checks (shelf life, single-source, lead time) with solver outputs (fill rate, capacity-bound periods, shortages).<br/><br/><strong>Horizon zones:</strong><br/>• <span style={{color:'var(--dg)'}}>🔒 Frozen</span> ({state.planning.frozenWeeks||4}wk) — production locked. Alerts here are URGENT-UNACTIONABLE; only outsource/expedite can help.<br/>• <span style={{color:'var(--a4)'}}>🟡 Slushy</span> ({(state.planning.slushyWeeks||12)-(state.planning.frozenWeeks||4)}wk) — overrides accepted with approval.<br/>• <span style={{color:'var(--gn)'}}>🟢 Open</span> — fully plannable.<br/>• 🌐 Global — horizon-wide alerts not tied to a specific period.<br/><br/><strong>Recommended actions</strong> include impact estimates derived from your line config (shifts × hours × OT mult).</SectionInfo></div>
+      {/* Scope filter */}
+      <div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center',flexWrap:'wrap',fontSize:10}}>
+        <span style={{color:'var(--tx3)',fontWeight:600,letterSpacing:.4}}>SCOPE:</span>
+        {[['all','All'],['frozen','🔒 Frozen'],['slushy','🟡 Slushy'],['open','🟢 Open'],['global','🌐 Global']].map(([k,lbl])=>{
+          const cnt=k==='all'?alerts.length:alerts.filter(a=>a.zone===k).length;
+          return <button key={k} className={`btn btn-sm ${alertScope===k?'btn-primary':'btn-secondary'}`} onClick={()=>setAlertScope(k)} style={{fontSize:10,padding:'3px 8px'}}>{lbl} ({cnt})</button>;
+        })}
+        <span style={{marginLeft:'auto',color:'var(--tx3)',fontSize:9}}>Frozen={state.planning.frozenWeeks||4}wk · Slushy={(state.planning.slushyWeeks||12)-(state.planning.frozenWeeks||4)}wk</span>
+      </div>
+      {(()=>{
+        const filtered=alertScope==='all'?alerts:alerts.filter(a=>a.zone===alertScope);
+        if(filtered.length===0)return <div style={{color:'var(--gn)',fontSize:11,padding:'8px 6px'}}>✅ No alerts in this scope</div>;
+        return filtered.map((a,i)=>{
+          const sevColor=a.sev==='critical'?'var(--dg)':a.sev==='warn'?'var(--a4)':'var(--a2)';
+          const sevBg=a.sev==='critical'?'rgba(248,81,73,.06)':a.sev==='warn'?'rgba(240,180,41,.06)':'rgba(56,189,248,.05)';
+          const zoneIcon=a.zone==='frozen'?'🔒':a.zone==='slushy'?'🟡':a.zone==='open'?'🟢':'🌐';
+          const urgency=a.zone==='frozen'?'URGENT-UNACTIONABLE':a.zone==='slushy'?'ACTIONABLE-WITH-APPROVAL':a.zone==='open'?'ACTIONABLE':'';
+          return <div key={i} style={{padding:'6px 8px',marginBottom:4,borderRadius:4,borderLeft:`3px solid ${sevColor}`,background:sevBg,fontSize:11}}>
+            <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
+              <span>{a.sev==='critical'?'🔴':a.sev==='warn'?'🟡':'🔵'}</span>
+              <span style={{flex:1,color:'var(--tx)'}}>{a.msg}</span>
+              <span className="badge" style={{background:'rgba(0,0,0,.2)',color:sevColor,fontSize:9}}>{zoneIcon} {a.zone.toUpperCase()}{a.period!=null?` · P${a.period+1}`:''}</span>
+              {urgency&&<span style={{fontSize:8,color:sevColor,fontWeight:700,letterSpacing:.4}}>{urgency}</span>}
+              <span style={{fontSize:8,color:'var(--tx3)'}}>[{a.source}]</span>
+            </div>
+            {a.actions&&a.actions.length>0&&<div style={{marginTop:4,paddingTop:4,borderTop:'1px dashed var(--br)',display:'flex',gap:6,flexWrap:'wrap'}}>
+              <span style={{fontSize:9,color:'var(--tx3)',fontWeight:600,letterSpacing:.4}}>RECOMMEND:</span>
+              {a.actions.map((act,j)=><span key={j} style={{fontSize:10,padding:'2px 6px',background:'var(--bg3)',border:'1px solid var(--br)',borderRadius:3,color:'var(--tx2)'}} title={act.impact}><strong>{act.label}</strong> <span style={{color:'var(--tx3)'}}>· {act.impact}</span></span>)}
+            </div>}
+          </div>;
+        });
+      })()}
     </div>
 
     {/* MC + Sensitivity + Researcher buttons */}
