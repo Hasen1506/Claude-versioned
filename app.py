@@ -30,6 +30,7 @@ from solvers.disaggregate import disaggregate
 from solvers.lot_sizing import solve_lot_sizing
 from solvers.pattern_sensing import sense as demand_sense, list_patterns
 from solvers.forecast import run_forecast
+from solvers.risk import detect_regimes, detect_many
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
@@ -338,6 +339,24 @@ def api_solve_capital():
 def api_forecast():
     try:
         return jsonify(run_forecast(request.json))
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+# ─── Round 4 P6 — HMM Regime Detection (procurement risk) ───
+@app.route('/api/risk/regimes', methods=['POST'])
+def api_risk_regimes():
+    """Detect low-vol / high-vol regimes in price (or any 1-D) series via 2-state Gaussian HMM.
+
+    Two call shapes:
+      single:  {"series":[...], "n_iter":30}
+      batch:   {"rows":[{"name":"PartA","series":[...]}, ...], "n_iter":30}
+    """
+    try:
+        data = request.json or {}
+        if 'rows' in data:
+            return jsonify(detect_many(data))
+        return jsonify(detect_regimes(data.get('series', []), n_iter=int(data.get('n_iter', 30))))
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 

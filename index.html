@@ -930,6 +930,106 @@ function effectiveVariableCost(p){
 }
 function effectiveBom(p){return isBypassMode(p)?[]:(p.bom||[]);}
 
+// ─── Round 4 — Scenario Programming wiring ───
+// A scenario can carry an array of `disruptions` describing parameter perturbations.
+// When a scenario is "armed" (state.activeScenarioId), the next solve call
+// passes the assembled payload through applyScenarioToPayload() before fetch().
+//
+// Disruption schema:
+//   { id, kind, scope:'all'|<productName>|<partName>,
+//     magnitude:number,                // %-delta (e.g. 30 → +30%, -20 → −20%)
+//     leadTimeDeltaDays:number?,       // for supply-delay
+//     yieldDeltaPp:number?,            // for quality-fail (in absolute pp)
+//     fromPeriod:number, untilPeriod:number?,
+//     note:string }
+//
+// kind ∈ {'supply-delay','price-spike','demand-surge','quality-fail','capacity-drop','fx-shock'}
+function disruptionMatchesPart(d,partName){const s=d.scope||'all';return s==='all'||s===partName;}
+function disruptionMatchesProd(d,prodName){const s=d.scope||'all';return s==='all'||s===prodName;}
+function applyScenarioToPayload(payload,scenario){
+  if(!payload||!scenario)return payload;
+  const disr=Array.isArray(scenario.disruptions)?scenario.disruptions:[];
+  if(!disr.length)return payload;
+  // Periods per month — used by fromPeriod/untilPeriod when expressed in months.
+  const T=payload?.params?.periods||52;
+  const wpm=Math.max(1,Math.round(T/12));
+  // Helper resolves period range. If user typed months (≤12), expand to periods.
+  const resolveRange=(d)=>{
+    let f=+d.fromPeriod||0,u=(d.untilPeriod==null||d.untilPeriod==='')?T:+d.untilPeriod;
+    if(d.unit==='month'||d.unit==='months'){f=f*wpm;u=u*wpm;}
+    return [Math.max(0,f),Math.min(T,u)];
+  };
+  disr.forEach(d=>{
+    const m=+d.magnitude||0;
+    const [f,u]=resolveRange(d);
+    if(d.kind==='supply-delay'){
+      const ltDelta=Math.max(0,+d.leadTimeDeltaDays||+d.magnitude||0);
+      // Convert days to periods using grain (assume weekly default).
+      const grain=payload?.params?.time_grain||'weekly';
+      const dPerP=grain==='daily'?1:grain==='monthly'?30:7;
+      const ltDeltaP=Math.max(0,Math.round(ltDelta/dPerP));
+      (payload.products||[]).forEach(p=>{
+        (p.parts||[]).forEach(part=>{
+          if(disruptionMatchesPart(d,part.name)){
+            part.lead_time=(+part.lead_time||0)+ltDeltaP;
+          }
+        });
+      });
+    }else if(d.kind==='price-spike'){
+      const mult=1+m/100;
+      (payload.products||[]).forEach(p=>{
+        (p.parts||[]).forEach(part=>{
+          if(disruptionMatchesPart(d,part.name)){
+            if(part.cost!=null)part.cost=+(part.cost*mult).toFixed(4);
+            if(part.landed_cost!=null)part.landed_cost=+(part.landed_cost*mult).toFixed(4);
+          }
+        });
+      });
+    }else if(d.kind==='demand-surge'){
+      const mult=1+m/100;
+      (payload.products||[]).forEach(p=>{
+        if(disruptionMatchesProd(d,p.name)&&Array.isArray(p.demand)){
+          for(let t=f;t<u&&t<p.demand.length;t++){
+            p.demand[t]=Math.max(0,Math.round((+p.demand[t]||0)*mult));
+          }
+        }
+      });
+    }else if(d.kind==='quality-fail'){
+      // Either pp delta on yield (e.g. -15 = drop 15pp) or %-delta.
+      (payload.products||[]).forEach(p=>{
+        if(disruptionMatchesProd(d,p.name)){
+          const cur=+p.yield_pct||0.95;
+          let next;
+          if(d.yieldDeltaPp!=null&&d.yieldDeltaPp!==''){next=cur+(+d.yieldDeltaPp||0)/100;}
+          else{next=cur*(1+m/100);}
+          p.yield_pct=Math.max(0.1,Math.min(1,+next.toFixed(4)));
+        }
+      });
+    }else if(d.kind==='capacity-drop'){
+      const mult=1+m/100;
+      (payload.products||[]).forEach(p=>{
+        if(disruptionMatchesProd(d,p.name)&&p.capacity!=null){
+          p.capacity=Math.max(1,Math.round((+p.capacity||50)*mult));
+        }
+      });
+    }else if(d.kind==='fx-shock'){
+      // Apply a flat multiplier to landed_cost of imported parts (informational — landed_cost already FX-hedged).
+      const mult=1+m/100;
+      (payload.products||[]).forEach(p=>{
+        (p.parts||[]).forEach(part=>{
+          if(part.landed_cost!=null)part.landed_cost=+(part.landed_cost*mult).toFixed(4);
+        });
+      });
+    }
+  });
+  // Tag the payload so audit/debug can confirm the perturbation reached the solver.
+  payload.params=payload.params||{};
+  payload.params.scenario_id=scenario.id||null;
+  payload.params.scenario_name=scenario.name||'';
+  payload.params.disruption_count=disr.length;
+  return payload;
+}
+
 // P7 — translate warehouse mode (units|area|volume|unlimited) into a single unit count for the solver.
 // Mode is at state.budget.warehouseMode; per-product footprintArea / footprintVolume drive the conversion.
 // `defaultUnits` is used when mode='units' and no explicit value is passed (fallback 5000).
@@ -1191,8 +1291,10 @@ const defaultState={
   assets:[],
   // Currency hedges
   hedges:[],
-  // Scenarios for save/load
+  // Scenarios for save/load. Each scenario may carry a `disruptions[]` array (Round 4).
   scenarios:[],
+  // Round 4 — when set, the next solve mutates the payload via applyScenarioToPayload.
+  activeScenarioId:null,
   // P8 — Risk register: {id, name, probability(1-5), impact(1-5), mitigation, owner, status('open'|'monitoring'|'closed')}
   risks:[
     {id:'r1',name:'Tier-1 supplier default',probability:2,impact:5,mitigation:'Backup supplier qualified; 4 wk safety stock',owner:'Procurement',status:'monitoring'},
@@ -1364,9 +1466,26 @@ function reducer(state,action){
     case 'UPDATE_HEDGE':{const hi=s.hedges.findIndex(h=>h.id===action.id);if(hi>=0){s.hedges=[...s.hedges];s.hedges[hi]={...s.hedges[hi],...action.payload}}break;}
     case 'DELETE_HEDGE':s.hedges=s.hedges.filter(h=>h.id!==action.id);break;
     // Scenarios
-    case 'SAVE_SCENARIO':s.scenarios=[{id:Date.now().toString(36),name:action.name||`Scenario ${s.scenarios.length+1}`,time:new Date().toLocaleString(),data:JSON.parse(JSON.stringify({config:s.config,planning:s.planning,budget:s.budget,production:s.production,products:s.products}))},...s.scenarios].slice(0,20);break;
+    case 'SAVE_SCENARIO':s.scenarios=[{id:Date.now().toString(36),name:action.name||`Scenario ${s.scenarios.length+1}`,time:new Date().toLocaleString(),disruptions:Array.isArray(action.disruptions)?action.disruptions:[],data:JSON.parse(JSON.stringify({config:s.config,planning:s.planning,budget:s.budget,production:s.production,products:s.products}))},...s.scenarios].slice(0,20);break;
     case 'LOAD_SCENARIO':{const sc=s.scenarios.find(x=>x.id===action.id);if(sc&&sc.data){Object.assign(s,sc.data)}break;}
-    case 'DELETE_SCENARIO':s.scenarios=s.scenarios.filter(x=>x.id!==action.id);break;
+    case 'DELETE_SCENARIO':s.scenarios=s.scenarios.filter(x=>x.id!==action.id);if(s.activeScenarioId===action.id)s.activeScenarioId=null;break;
+    // Round 4 — scenario disruption editing
+    case 'ADD_SCENARIO_DISR':{
+      const si=s.scenarios.findIndex(x=>x.id===action.scenarioId);
+      if(si>=0){const sc={...s.scenarios[si]};sc.disruptions=[...(sc.disruptions||[]),{id:Date.now().toString(36),kind:'price-spike',scope:'all',magnitude:20,fromPeriod:0,untilPeriod:null,unit:'period',note:''}];s.scenarios=[...s.scenarios];s.scenarios[si]=sc}
+      break;
+    }
+    case 'UPDATE_SCENARIO_DISR':{
+      const si=s.scenarios.findIndex(x=>x.id===action.scenarioId);
+      if(si>=0){const sc={...s.scenarios[si]};const di=(sc.disruptions||[]).findIndex(d=>d.id===action.disrId);if(di>=0){const next=[...sc.disruptions];next[di]={...next[di],...action.payload};sc.disruptions=next;s.scenarios=[...s.scenarios];s.scenarios[si]=sc}}
+      break;
+    }
+    case 'DELETE_SCENARIO_DISR':{
+      const si=s.scenarios.findIndex(x=>x.id===action.scenarioId);
+      if(si>=0){const sc={...s.scenarios[si]};sc.disruptions=(sc.disruptions||[]).filter(d=>d.id!==action.disrId);s.scenarios=[...s.scenarios];s.scenarios[si]=sc}
+      break;
+    }
+    case 'SET_ACTIVE_SCENARIO':s.activeScenarioId=action.id||null;break;
     // P8 — Risk register reducers
     case 'ADD_RISK':s.risks=[...(s.risks||[]),{id:Date.now().toString(36),name:'New risk',probability:2,impact:2,mitigation:'',owner:'',status:'open'}];break;
     case 'UPDATE_RISK':{const ri=(s.risks||[]).findIndex(r=>r.id===action.id);if(ri>=0){const next=[...s.risks];next[ri]={...next[ri],...action.payload};s.risks=next}break;}
@@ -3473,6 +3592,18 @@ function OptimizeTab({state,dispatch}){
           }
         };
       }
+      // Round 4 — if a scenario is armed, mutate the payload before sending.
+      // Only the solvers whose payload shape carries products[].demand / products[].parts[] are affected.
+      const armedScenario=state.activeScenarioId?(state.scenarios||[]).find(s=>s.id===state.activeScenarioId):null;
+      if(armedScenario){
+        if(['procurement','montecarlo'].includes(solverMode)){
+          payload=applyScenarioToPayload(payload,armedScenario);
+        }else if(solverMode==='pipeline'&&payload.procurement_data){
+          payload.procurement_data=applyScenarioToPayload(payload.procurement_data,armedScenario);
+        }else if(solverMode==='rolling'&&payload.base){
+          payload.base=applyScenarioToPayload(payload.base,armedScenario);
+        }
+      }
       const res=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       const data=await res.json();
       if(data.error){setError(data.error)}else{setResult({...data,_mode:solverMode})}
@@ -4366,16 +4497,7 @@ function OptimizeTab({state,dispatch}){
     </div>
 
     {/* Scenario Save/Load */}
-    <div className="card">
-      <div className="card-title">📊 Scenarios <span className="badge" style={{background:'rgba(167,139,250,.1)',color:'var(--a3)'}}>{state.scenarios.length} saved</span></div>
-      <div style={{display:'flex',gap:8,marginBottom:8}}>
-        <button className="btn btn-primary btn-sm" onClick={()=>{const name=prompt('Scenario name:','Scenario '+(state.scenarios.length+1));if(name)dispatch({type:'SAVE_SCENARIO',name})}}>💾 Save Current</button>
-      </div>
-      {state.scenarios.map(sc=><div key={sc.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 8px',borderBottom:'1px solid var(--br)',fontSize:11}}>
-        <span><strong>{sc.name}</strong> <span style={{color:'var(--tx3)',fontSize:9}}>{sc.time}</span></span>
-        <span><button className="btn btn-secondary btn-sm" onClick={()=>dispatch({type:'LOAD_SCENARIO',id:sc.id})}>Load</button> <button className="btn btn-danger btn-sm" onClick={()=>dispatch({type:'DELETE_SCENARIO',id:sc.id})}>×</button></span>
-      </div>)}
-    </div>
+    <ScenariosCard state={state} dispatch={dispatch}/>
 
     {/* ATP/CTP */}
     <MPSVizCard state={state} dispatch={dispatch}/>
@@ -5225,6 +5347,10 @@ function ProcurementRiskCard({state,dispatch}){
   const cur=state.config.currency;
   const profiles=state.supplierProfiles||{};
   const fxRates=state.config.fxRates||{};
+  // Round 4 — HMM regime detection results, keyed by `${productName}::${partName}`.
+  const [regimes,setRegimes]=useState({});
+  const [regimeBusy,setRegimeBusy]=useState(false);
+  const [regimeErr,setRegimeErr]=useState(null);
 
   // ── Spot-price volatility per BOM row (history-based, simple z-score) ──
   // BOM rows can carry b.priceHistory:[number] (last N quotes). If absent, fall back to costCV which is a stored CV%.
@@ -5303,7 +5429,7 @@ function ProcurementRiskCard({state,dispatch}){
       <strong>1. Spot-price volatility</strong> — flags BOM rows where current quote ≥ 1.5σ above 4-quote rolling mean (or via costCV ≥ 15%). Releases offer 4 choices: <em>release-now / delay-watch / trigger-backup / hedge-with-forward</em>.<br/>
       <strong>2. FX exposure</strong> — for foreign-currency suppliers, computes effective FX = spot × (1−h) + forward × h, where h = supplierProfile.hedgeRatio. <code>landedCost()</code> applies this multiplier to BOM cost so the MILP sees the hedged price.<br/>
       <strong>3. Backup-supplier auto-check</strong> — flags long-LT parts (&gt;2 wk) without a qualified backup; for those WITH backup, computes (LT gap, cost premium, quality) so you can pre-decide failover thresholds.<br/><br/>
-      <strong>HMM regime detection</strong>: deferred to a future risk.py module — would tag periods as low-vol vs high-vol and pre-trigger alerts.
+      <strong>4. HMM regime detection</strong> — Round 4 P6 wiring. For each BOM row with <code>priceHistory[]</code> length ≥ 8, a 2-state Gaussian HMM (Baum-Welch + Viterbi, server-side <code>risk.py</code>) tags every historical period as <strong>low-vol</strong> or <strong>high-vol</strong>. Output: regime tape, σ-ratio, persistence (diagonal of A), current regime. Use it to pre-decide PO timing — release in low-vol windows, hedge or delay in high-vol.
     </SectionInfo></div>
 
     {/* Spot rates editable */}
@@ -5340,6 +5466,55 @@ function ProcurementRiskCard({state,dispatch}){
           </td>
         </tr>)}</tbody>
       </table>}
+    </div>
+
+    {/* HMM regime detection (Round 4 P6) */}
+    <div style={{marginBottom:10,padding:8,background:'var(--bg3)',borderRadius:4}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+        <div style={{fontSize:10,fontWeight:700,color:'var(--a2)'}}>🔬 HMM regime detection</div>
+        <div style={{display:'flex',gap:4}}>
+          <button className="btn btn-primary btn-sm" disabled={regimeBusy} onClick={async()=>{
+            setRegimeBusy(true);setRegimeErr(null);
+            const rows=[];
+            state.products.forEach(p=>{(p.bom||[]).forEach(b=>{
+              const hist=Array.isArray(b.priceHistory)?b.priceHistory.filter(v=>v!=null&&!isNaN(+v)).map(v=>+v):[];
+              if(hist.length>=4)rows.push({name:`${p.name}::${b.name}`,series:hist});
+            })});
+            if(rows.length===0){setRegimeErr('No BOM row has priceHistory[] with ≥4 points. Add quotes via Tab 3 supplier history or import.');setRegimeBusy(false);return;}
+            try{
+              const r=await fetch('/api/risk/regimes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows,n_iter:30})});
+              const d=await r.json();
+              if(d.error){setRegimeErr(d.error);setRegimeBusy(false);return;}
+              const map={};(d.rows||[]).forEach(x=>{map[x.name]=x.result});
+              setRegimes(map);
+            }catch(e){setRegimeErr(e.message)}
+            setRegimeBusy(false);
+          }}>{regimeBusy?'Running…':'Detect regimes'}</button>
+          {Object.keys(regimes).length>0&&<button className="btn btn-secondary btn-sm" onClick={()=>{setRegimes({});setRegimeErr(null)}}>Clear</button>}
+        </div>
+      </div>
+      {regimeErr&&<div style={{fontSize:10,color:'var(--dg)',marginBottom:6}}>⚠ {regimeErr}</div>}
+      {Object.keys(regimes).length===0?
+        <div style={{fontSize:10,color:'var(--tx3)',fontStyle:'italic'}}>Run a 2-state Gaussian HMM (Baum-Welch + Viterbi) over each BOM row's <code>priceHistory[]</code>. Periods are tagged low-vol (green) or high-vol (red). Use it to time PO release.</div>
+      :<table className="data-table" style={{fontSize:10}}>
+        <thead><tr><th>Part (Product)</th><th>Regime tape</th><th>Current</th><th>σ ratio</th><th>Persist (low/high)</th><th>n high</th></tr></thead>
+        <tbody>{Object.entries(regimes).map(([key,r])=>{
+          const states=r.states||[];
+          return <tr key={key}>
+            <td style={{fontFamily:'JetBrains Mono',fontSize:9}}>{key}</td>
+            <td>
+              <div style={{display:'flex',gap:1}}>{states.map((s,i)=>
+                <span key={i} title={`t=${i}: ${s===1?'high-vol':'low-vol'}`} style={{display:'inline-block',width:10,height:14,background:s===1?'var(--dg)':'var(--gn)',opacity:.85,borderRadius:1}}/>
+              )}</div>
+            </td>
+            <td><span style={{padding:'1px 6px',borderRadius:8,fontSize:9,fontWeight:700,background:r.current_regime==='high-vol'?'rgba(248,81,73,.15)':'rgba(63,185,80,.15)',color:r.current_regime==='high-vol'?'var(--dg)':'var(--gn)'}}>{r.current_regime||'—'}</span></td>
+            <td className="num" style={{color:(r.sigma_ratio||1)>3?'var(--dg)':(r.sigma_ratio||1)>1.5?'var(--a4)':'var(--tx3)'}}>{r.sigma_ratio?r.sigma_ratio.toFixed(2)+'×':'—'}</td>
+            <td className="num" style={{fontFamily:'JetBrains Mono',fontSize:9}}>{r.persistence?`${(r.persistence[0]*100).toFixed(0)}% / ${(r.persistence[1]*100).toFixed(0)}%`:'—'}</td>
+            <td className="num">{r.n_high_periods||0}</td>
+          </tr>;
+        })}</tbody>
+      </table>}
+      <div style={{fontSize:9,color:'var(--tx3)',marginTop:4}}>HMM model: 2 Gaussian states · seeds via 1-D k-means on |Δprice| · 30 EM iterations · Viterbi decoding. <em>fallback: stddev split if &lt;8 points</em>.</div>
     </div>
 
     {/* FX exposure */}
@@ -7053,6 +7228,96 @@ function IbpSenseDemo({cur}){
 // ════════════════════════════════════════════════
 // NEW COMPONENTS — MPS · INVENTORY · MILP · INSIGHTS · MULTI-SKU
 // ════════════════════════════════════════════════
+
+// ─── Round 4 — Scenarios card with disruption editor + arm-for-solve toggle ───
+// Each scenario can carry a list of disruptions. When "armed", applyScenarioToPayload()
+// mutates the next /api/solve/* payload (procurement, montecarlo, pipeline, rolling).
+function ScenariosCard({state,dispatch}){
+  const [openId,setOpenId]=useState(null);
+  const armedId=state.activeScenarioId||null;
+  const products=state.products||[];
+  const partNames=Array.from(new Set(products.flatMap(p=>(p.bom||[]).map(b=>b.name)))).sort();
+  const KIND_LABELS={
+    'supply-delay':'Supply delay',
+    'price-spike':'Price spike',
+    'demand-surge':'Demand surge',
+    'quality-fail':'Quality fail',
+    'capacity-drop':'Capacity drop',
+    'fx-shock':'FX shock',
+  };
+  const armedScenario=armedId?(state.scenarios||[]).find(s=>s.id===armedId):null;
+  return <div className="card">
+    <div className="card-title">📊 Scenarios <span className="badge" style={{background:'rgba(167,139,250,.1)',color:'var(--a3)'}}>{state.scenarios.length} saved</span>
+      {armedScenario&&<span className="badge" style={{marginLeft:6,background:'rgba(248,81,73,.15)',color:'var(--dg)'}}>⚡ ARMED: {armedScenario.name} ({(armedScenario.disruptions||[]).length} disr)</span>}
+      <SectionInfo>
+        <strong>Save current state</strong> as a snapshot to LOAD later. <strong>Disruptions</strong> on a scenario are <em>solver perturbations</em>: when you click <strong>ARM</strong>, the next solve mutates the payload — supply-delay bumps part lead times, price-spike multiplies costs, demand-surge multiplies product demand[t], capacity-drop multiplies capacity, quality-fail tweaks yield, fx-shock multiplies landed cost on imports. Scope <code>all</code> applies to every part/SKU; otherwise it matches by name.
+      </SectionInfo>
+    </div>
+    <div style={{display:'flex',gap:8,marginBottom:8}}>
+      <button className="btn btn-primary btn-sm" onClick={()=>{const name=prompt('Scenario name:','Scenario '+(state.scenarios.length+1));if(name)dispatch({type:'SAVE_SCENARIO',name})}}>💾 Save Current State</button>
+      {armedId&&<button className="btn btn-secondary btn-sm" onClick={()=>dispatch({type:'SET_ACTIVE_SCENARIO',id:null})}>Disarm</button>}
+    </div>
+    {state.scenarios.length===0&&<div style={{fontSize:10,color:'var(--tx3)',padding:8,fontStyle:'italic'}}>No scenarios yet. Save the current state, then add disruptions to perturb the next solve.</div>}
+    {state.scenarios.map(sc=>{
+      const isOpen=openId===sc.id;
+      const isArmed=armedId===sc.id;
+      const dCount=(sc.disruptions||[]).length;
+      return <div key={sc.id} style={{borderBottom:'1px solid var(--br)',padding:'6px 4px'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+          <span style={{flex:1,fontSize:11}}>
+            <button className="btn btn-secondary btn-sm" style={{padding:'1px 6px',marginRight:6}} onClick={()=>setOpenId(isOpen?null:sc.id)}>{isOpen?'▾':'▸'}</button>
+            <strong>{sc.name}</strong> <span style={{color:'var(--tx3)',fontSize:9}}>{sc.time}</span>
+            {dCount>0&&<span className="badge" style={{marginLeft:6,background:'rgba(167,139,250,.1)',color:'var(--a3)'}}>{dCount} disruption{dCount>1?'s':''}</span>}
+            {isArmed&&<span className="badge" style={{marginLeft:6,background:'rgba(248,81,73,.15)',color:'var(--dg)'}}>⚡ ARMED</span>}
+          </span>
+          <span style={{display:'flex',gap:4}}>
+            <button className={`btn btn-sm ${isArmed?'btn-primary':'btn-secondary'}`} onClick={()=>dispatch({type:'SET_ACTIVE_SCENARIO',id:isArmed?null:sc.id})} title="Apply this scenario's disruptions to the next solve">{isArmed?'⚡ Disarm':'⚡ Arm'}</button>
+            <button className="btn btn-secondary btn-sm" onClick={()=>dispatch({type:'LOAD_SCENARIO',id:sc.id})}>Load</button>
+            <button className="btn btn-danger btn-sm" onClick={()=>{if(confirm('Delete '+sc.name+'?'))dispatch({type:'DELETE_SCENARIO',id:sc.id})}}>×</button>
+          </span>
+        </div>
+        {isOpen&&<div style={{marginTop:6,padding:8,background:'var(--bg3)',borderRadius:4}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+            <strong style={{fontSize:11,color:'var(--a3)'}}>Solver Disruptions</strong>
+            <button className="btn btn-primary btn-sm" onClick={()=>dispatch({type:'ADD_SCENARIO_DISR',scenarioId:sc.id})}>+ Add disruption</button>
+          </div>
+          {dCount===0&&<div style={{fontSize:10,color:'var(--tx3)',fontStyle:'italic'}}>No disruptions yet. Click <strong>+ Add disruption</strong> to inject a solver perturbation. Without disruptions, ARM has no effect (the scenario only stores a state snapshot for LOAD).</div>}
+          {(sc.disruptions||[]).map(d=>{
+            const upd=(payload)=>dispatch({type:'UPDATE_SCENARIO_DISR',scenarioId:sc.id,disrId:d.id,payload});
+            const del=()=>dispatch({type:'DELETE_SCENARIO_DISR',scenarioId:sc.id,disrId:d.id});
+            const isPart=d.kind==='supply-delay'||d.kind==='price-spike'||d.kind==='fx-shock';
+            const isProd=d.kind==='demand-surge'||d.kind==='quality-fail'||d.kind==='capacity-drop';
+            const scopeOptions=isPart?['all',...partNames]:isProd?['all',...products.map(p=>p.name)]:['all'];
+            return <div key={d.id} style={{display:'grid',gridTemplateColumns:'130px 130px 90px 100px 90px 90px 30px',gap:4,padding:'4px 0',alignItems:'center',borderBottom:'1px dashed var(--br)'}}>
+              <select value={d.kind} onChange={e=>upd({kind:e.target.value})} style={{fontSize:10}}>
+                {Object.entries(KIND_LABELS).map(([k,l])=><option key={k} value={k}>{l}</option>)}
+              </select>
+              <select value={d.scope||'all'} onChange={e=>upd({scope:e.target.value})} style={{fontSize:10}}>
+                {scopeOptions.map(s=><option key={s} value={s}>{s==='all'?'(all)':s}</option>)}
+              </select>
+              {d.kind==='supply-delay'?
+                <NumInput value={+d.leadTimeDeltaDays||0} step="1" onChange={v=>upd({leadTimeDeltaDays:+v||0})} placeholder="LT+ days"/>
+                :d.kind==='quality-fail'&&d.yieldDeltaPp!=null?
+                <NumInput value={+d.yieldDeltaPp||0} step="1" onChange={v=>upd({yieldDeltaPp:+v||0})} placeholder="yield Δpp"/>
+                :<NumInput value={+d.magnitude||0} step="1" onChange={v=>upd({magnitude:+v||0})} placeholder="±%"/>
+              }
+              <NumInput value={+d.fromPeriod||0} step="1" onChange={v=>upd({fromPeriod:+v||0})} placeholder="from"/>
+              <NumInput value={d.untilPeriod==null?'':+d.untilPeriod} step="1" onChange={v=>upd({untilPeriod:v===''||v===null?null:+v})} placeholder="until"/>
+              <select value={d.unit||'period'} onChange={e=>upd({unit:e.target.value})} style={{fontSize:10}}>
+                <option value="period">period</option>
+                <option value="month">month</option>
+              </select>
+              <button className="btn btn-danger btn-sm" onClick={del} title="Remove">×</button>
+            </div>;
+          })}
+          {dCount>0&&<div style={{marginTop:6,fontSize:9,color:'var(--tx3)'}}>
+            Columns: <strong>kind</strong>, <strong>scope</strong>, <strong>magnitude</strong> (LT-days for supply-delay, %Δ for others, or yield-Δpp for quality-fail), <strong>fromPeriod</strong>, <strong>untilPeriod</strong> (blank = horizon end), <strong>unit</strong>.
+          </div>}
+        </div>}
+      </div>;
+    })}
+  </div>;
+}
 
 function MPSVizCard({state,dispatch}){
   const [mpsGran,setMpsGran]=useState('weekly'); // monthly | weekly | daily
