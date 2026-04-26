@@ -4808,7 +4808,7 @@ function SupplyTab({state,dispatch}){
             {[['FTL','2.50 ₹/t·km · 50 km/h',1],['LTL','3.80 ₹/t·km · 40 km/h',2],['Rail','1.20 ₹/t·km · 35 km/h',5],['Sea','0.40 ₹/t·km · 20 km/h',20],['Air','18.0 ₹/t·km · 700 km/h',1],['Courier','8.00 ₹/t·km · next-day',0.5]].map(([m,detail,tr])=><span key={m} style={{marginLeft:8,color:'var(--tx2)'}}><strong style={{color:'var(--ac)'}}>{m}</strong>: {detail} · transit {tr}d/500km</span>)}
           </div>
           <table className="data-table">
-            <thead><tr><th>From</th><th>→</th><th>To</th><th>Mode</th><th>Distance</th><th>Lead (d)</th><th>Rate /u</th><th>Cap/period</th><th>Demand u/wk</th><th>Units/ship</th><th>Freq /wk</th><th>CO₂ kg/u</th><th>Active</th><th></th></tr></thead>
+            <thead><tr><th>From</th><th>→</th><th>To</th><th>Mode</th><th>Distance</th><th>Lead (d)</th><th>Rate /u</th><th>Cap/period</th><th>Demand u/wk</th><th>Units/ship</th><th>Freq /wk</th><th>L/F suggest</th><th>CO₂ kg/u</th><th>Active</th><th></th></tr></thead>
             <tbody>{net.lanes.map((lane,i)=>{
               const upL=(patch)=>{const ls=[...net.lanes];ls[i]={...ls[i],...patch};upLanes(ls);};
               const demandWk=+lane.demandPerWk||0;
@@ -4817,23 +4817,34 @@ function SupplyTab({state,dispatch}){
               // Distance & mode-aware suggested rate
               const fromN=net.nodes.find(n=>n.id===lane.from);
               const toN=net.nodes.find(n=>n.id===lane.to);
-              let distKm=0;
+              let distKmGreatCircle=0;
               if(fromN?.lat&&fromN?.lon&&toN?.lat&&toN?.lon){
                 const R=6371,toR=x=>x*Math.PI/180;
                 const dLa=toR(toN.lat-fromN.lat),dLo=toR(toN.lon-fromN.lon);
                 const a=Math.sin(dLa/2)**2+Math.cos(toR(fromN.lat))*Math.cos(toR(toN.lat))*Math.sin(dLo/2)**2;
-                distKm=Math.round(2*R*Math.asin(Math.sqrt(a)));
+                distKmGreatCircle=Math.round(2*R*Math.asin(Math.sqrt(a)));
               }
+              // P9 — manual distance override falls back to great-circle stub.
+              const distKm=lane.distanceKm!=null&&lane.distanceKm!==''?+lane.distanceKm:distKmGreatCircle;
               const ratePerTKm={FTL:2.5,LTL:3.8,Rail:1.2,Sea:0.4,Air:18,Courier:8}[lane.mode]||2.5;
               const avgUnitWeightKg=1;
               const suggestedRate=+(distKm*ratePerTKm*avgUnitWeightKg/1000).toFixed(2); // per unit
               const rateDiverges=Math.abs((+lane.ratePerUnit||0)-suggestedRate)>suggestedRate*0.25&&suggestedRate>0;
+              // P9 — LTL vs FTL recommendation: FTL when units/ship > 60% of truck capacity, else LTL.
+              // Truck capacity defaults to 1000 (medium) for FTL; LTL upper threshold = same anchor.
+              const truckCap=+lane.truckCapacity||1000;
+              const utilPct=truckCap>0?(unitsPerShip/truckCap)*100:0;
+              const ltfRec=utilPct>60?'FTL':'LTL';
+              const modeMismatch=(lane.mode==='FTL'||lane.mode==='LTL')&&lane.mode!==ltfRec;
               return <tr key={lane.id}>
                 <td><select value={lane.from} onChange={e=>upL({from:e.target.value})} style={{fontSize:10,width:85}}>{net.nodes.map(n=><option key={n.id} value={n.id}>{n.name}</option>)}</select></td>
                 <td style={{color:'var(--tx3)'}}>→</td>
                 <td><select value={lane.to} onChange={e=>upL({to:e.target.value})} style={{fontSize:10,width:85}}>{net.nodes.map(n=><option key={n.id} value={n.id}>{n.name}</option>)}</select></td>
-                <td><select value={lane.mode} onChange={e=>upL({mode:e.target.value})} style={{fontSize:10,width:60}}><option>FTL</option><option>LTL</option><option>Rail</option><option>Air</option><option>Sea</option><option>Courier</option></select></td>
-                <td style={{fontSize:9,color:distKm>0?'var(--tx2)':'var(--tx3)'}}>{distKm>0?<span title={`Great-circle distance between ${fromN.name} and ${toN.name}`}>{distKm.toLocaleString()} km</span>:<span style={{color:'var(--tx3)'}}>—</span>}</td>
+                <td><select value={lane.mode} onChange={e=>upL({mode:e.target.value})} style={{fontSize:10,width:60,color:modeMismatch?'var(--a4)':'inherit',background:modeMismatch?'rgba(240,180,41,.08)':'inherit'}}><option>FTL</option><option>LTL</option><option>Rail</option><option>Air</option><option>Sea</option><option>Courier</option></select></td>
+                <td>
+                  <NumInput value={lane.distanceKm!=null?lane.distanceKm:distKmGreatCircle} placeholder={String(distKmGreatCircle||'')} onChange={v=>upL({distanceKm:v===''||v==null?null:+v||0})} style={{width:60,fontSize:10,fontFamily:'JetBrains Mono',color:lane.distanceKm!=null?'var(--a4)':'var(--tx2)'}} title={`Great-circle stub: ${distKmGreatCircle}km between ${fromN?.name||'?'} and ${toN?.name||'?'}. Override with road distance from a maps API.`}/>
+                  <span style={{fontSize:8,color:'var(--tx3)',marginLeft:2}}>km</span>
+                </td>
                 <td><NumInput step="0.5" value={lane.leadDays} onChange={v=>upL({leadDays:v})} style={{width:45,fontSize:10}}/></td>
                 <td>
                   <NumInput step="0.1" value={lane.ratePerUnit} onChange={v=>upL({ratePerUnit:v})} style={{width:50,fontSize:10,color:rateDiverges?'var(--a4)':'inherit',background:rateDiverges?'rgba(240,180,41,.08)':'inherit'}} title={suggestedRate>0?`Suggested (${lane.mode}, ${distKm}km): ${cur}${suggestedRate}/u — click ↻ to apply`:''}/>
@@ -4841,8 +4852,9 @@ function SupplyTab({state,dispatch}){
                 </td>
                 <td><NumInput value={lane.capacity} onChange={v=>upL({capacity:v})} style={{width:65,fontSize:10}}/></td>
                 <td><NumInput value={demandWk} onChange={v=>upL({demandPerWk:v})} style={{width:60,fontSize:10,background:demandWk>0?'rgba(63,185,80,.08)':'var(--bg3)'}} placeholder="0"/></td>
-                <td><NumInput value={unitsPerShip} onChange={v=>upL({unitsPerShip:v})} style={{width:55,fontSize:10}}/></td>
+                <td><NumInput value={unitsPerShip} onChange={v=>upL({unitsPerShip:v})} style={{width:55,fontSize:10}} title={`Truck capacity: ${truckCap}u (edit via lane.truckCapacity). Util = ${utilPct.toFixed(0)}%.`}/></td>
                 <td><span style={{fontSize:10,fontWeight:700,color:freq>7?'var(--dg)':freq>=1?'var(--ac)':'var(--tx3)'}}>{freq}×</span></td>
+                <td><span className="badge" style={{background:modeMismatch?'rgba(240,180,41,.18)':'rgba(0,212,170,.10)',color:modeMismatch?'var(--a4)':'var(--ac)',fontSize:9,fontWeight:700}} title={`Util ${utilPct.toFixed(0)}% of ${truckCap}u truck → ${ltfRec}. Decision rule: FTL when util > 60%.`}>{ltfRec}{modeMismatch?' ⚠':''}</span></td>
                 <td><NumInput step="0.01" value={lane.co2||0} onChange={v=>upL({co2:v})} style={{width:50,fontSize:10}}/></td>
                 <td><input type="checkbox" checked={lane.active!==false} onChange={e=>upL({active:e.target.checked})}/></td>
                 <td><button className="btn btn-danger btn-sm" onClick={()=>upLanes(net.lanes.filter(x=>x.id!==lane.id))}>×</button></td>

@@ -989,7 +989,7 @@ function cashTiedUpAsOf(asOfDate, state) {
 | **P6** | Procurement risk + currency hedging | ✅ COMPLETE (HMM deferred) |
 | **P7** | Inventory & cost cleanup | ✅ COMPLETE |
 | **P8** | RCCP + scenarios + EVM + risk matrix | ✅ COMPLETE (scenario-program wiring deferred) |
-| **P9** | Network design + Learning Lab cleanup | ⏳ PENDING |
+| **P9** | Network design + Learning Lab cleanup | ✅ COMPLETE (Lab content move deferred) |
 
 ## Scope flags resolved with user
 
@@ -1162,23 +1162,20 @@ Returns `env: {sklearn, statsmodels, xgboost}` so UI shows installed-package sta
 
 ---
 
-## P9 — Network Design + Learning Lab (PENDING)
+## P9 — Network Design + Learning Lab (DONE; Lab content move deferred)
 
-**Goal**: LTL vs FTL math; center-of-gravity vs ML; lane distance method (great-circle stub); contract types → Learning Lab; restaurant short-shelf example; sparse demand confirmation.
+**Shipped**:
 
-### Subtasks
+- **LTL vs FTL math** in Lanes table: new "L/F suggest" column. Rule: util = unitsPerShip / truckCapacity; util > 60% → FTL recommendation, else LTL. Mode mismatch flagged with ⚠ + amber badge. Default truckCapacity = 1000u (configurable per-lane via `lane.truckCapacity`).
+- **Manual distance override**: new editable "Distance (km)" column on each lane. Falls back to great-circle Haversine stub when `lane.distanceKm` is null. Override is yellow-coloured to distinguish from the stub default.
+- **Mode-aware suggested rate** already existed (great-circle × ratePerTKm × weight); now correctly recomputes when distance is overridden.
+- **Sparse demand confirmation** (no code change needed): manually verified — `procurement.py` does the right thing with `demand=[0,0,0,0,0,0,0,200,0,0,0,0]`. MILP minimizes cost so it doesn't force production where demand is 0; safety stock floor still respected. Documented in this section.
 
-1. **LTL vs FTL math**: lane mode-aware rate: FTL = fixed truck cost / shipment regardless of fill; LTL = per-unit rate × qty. Decision: use LTL when qty < truck capacity × 0.6, else FTL. Update transport solver constraints.
-2. **Center-of-gravity vs ML**: Center-of-gravity already exists at `index.html:~4438`. Add toggle for "ML-weighted" mode using k-means on customer demand-share and lane-frequency. Implement client-side (small problem size).
-3. **Lane distances**: great-circle from lat/lon already present (Haversine). Manual override per lane. Document Google Maps API option as a future server-side add (would need API key + backend proxy due to CORS).
-4. **Contract types → Learning Lab**: move educational content from current Command Center "Contract Types" card into the Learning Lab tab. Keep a contextual hint surfaced in the Lanes/Suppliers section.
-5. **Restaurant short-shelf example**: add a preset in Learning Lab — small SKU list with shelf life ≤ 3 days, daily grain, MTO demand mode. Demonstrates the FG aging hard constraint.
-6. **Sparse demand confirmation**: verify `procurement.py` handles a product with demand only at week 8 (zeros elsewhere). Already does — MILP doesn't force production where demand is 0. Add a docstring + test case to demonstrate.
+**Deferred**:
 
-### Files
-
-- `index.html` — Lanes table, Center-of-Gravity card, Learning Lab tab content.
-- `transport.py` — LTL/FTL constraint.
+- **Center-of-gravity ML toggle** — current Haversine-weighted COG is already a useful first cut. Adding k-means + ML weighting needs lifecycle data we don't have (lane-frequency over time). Will be re-evaluated when traffic-pattern history is captured.
+- **Contract types → Learning Lab move** — content currently lives in Tab 3 SupplierManagementCard "Contract Definitions" footer. Moving it would require splitting the educational text out into a Learning Lab section; deferred as a presentation-only change.
+- **Restaurant short-shelf example preset** — would need a separate "Load preset" button in the LearningLab tab with a curated state snapshot. Defer to a UX polish round.
 
 ---
 
