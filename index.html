@@ -916,6 +916,20 @@ function incotermBuyerPays(ic){
   if(ic2==='CFR'||ic2==='CPT')return {freight:false,insurance:true,duty:true,handling:true};
   return {freight:true,insurance:true,duty:true,handling:true};
 }
+// P9 audit — Retail / Subcontract-full SKU bypasses for procurement MILP.
+// When prod.prodMode is 'retailer' or 'subcontract-full': SKU is purchased finished — no in-house production.
+// We virtually convert to MTS with capacity=∞, setup_cost=0, BOM=[], and fold buy-in cost into variable_cost.
+// Solver still tracks inventory/shortage as normal; this just skips production-side machinery.
+function isBypassMode(p){return p?.prodMode==='retailer'||p?.prodMode==='subcontract-full';}
+function effectiveCapacity(p){return isBypassMode(p)?999999:(+p.capacity||50);}
+function effectiveSetupCost(p){return isBypassMode(p)?0:(+p.setupCost||50);}
+function effectiveVariableCost(p){
+  if(!isBypassMode(p))return +p.variableCost||0;
+  const buyIn=p.prodMode==='retailer'?(+p.purchaseCost||0):(+p.subcontractFullRate||0);
+  return (+p.variableCost||0)+buyIn;
+}
+function effectiveBom(p){return isBypassMode(p)?[]:(p.bom||[]);}
+
 // P7 — translate warehouse mode (units|area|volume|unlimited) into a single unit count for the solver.
 // Mode is at state.budget.warehouseMode; per-product footprintArea / footprintVolume drive the conversion.
 // `defaultUnits` is used when mode='units' and no explicit value is passed (fallback 5000).
@@ -1654,12 +1668,22 @@ function SetupTab({state,dispatch}){
               <strong>Volume (m³)</strong> — same logic with stack volume.<br/>
               <strong>Unlimited</strong> — solver gets wh_max = ∞ (used for warehouse capacity sensitivity studies).<br/><br/>
               The conversion happens client-side; the solver always receives a unit count via the <code>wh_max</code> param. Inspect the effective number under the mode selector after saving.</SectionInfo>
-            <select value={bu.warehouseMode||'units'} onChange={e=>upB('warehouseMode',e.target.value)} style={{fontSize:10,padding:'2px 6px'}}>
-              <option value="units">Direct — units count</option>
-              <option value="area">Area — m² + per-SKU footprint</option>
-              <option value="volume">Volume — m³ + per-SKU stack vol</option>
-              <option value="unlimited">Unlimited (no cap)</option>
+            <select value={bu.warehouseMode||'units'} onChange={e=>upB('warehouseMode',e.target.value)} style={{fontSize:10,padding:'2px 6px'}} title="FG warehouse">
+              <option value="units">FG: Direct — units count</option>
+              <option value="area">FG: Area — m² + per-SKU footprint</option>
+              <option value="volume">FG: Volume — m³ + per-SKU stack vol</option>
+              <option value="unlimited">FG: Unlimited (no cap)</option>
             </select>
+            <span style={{color:'var(--tx3)'}}>|</span>
+            <select value={bu.rmWarehouseMode||'units'} onChange={e=>upB('rmWarehouseMode',e.target.value)} style={{fontSize:10,padding:'2px 6px'}} title="RM warehouse — separate from FG">
+              <option value="units">RM: Direct — per-part units</option>
+              <option value="area">RM: Area — m² aggregate</option>
+              <option value="volume">RM: Volume — m³ aggregate</option>
+              <option value="unlimited">RM: Unlimited</option>
+            </select>
+            {(bu.rmWarehouseMode==='area'||bu.rmWarehouseMode==='volume')&&<>
+              <label>RM {bu.rmWarehouseMode==='area'?'Area (m²):':'Volume (m³):'} <NumInput value={(bu.rmWarehouseMode==='area'?bu.rmWarehouseLimitArea:bu.rmWarehouseLimitVolume)||0} onChange={v=>upB(bu.rmWarehouseMode==='area'?'rmWarehouseLimitArea':'rmWarehouseLimitVolume',v)} style={{width:80}}/></label>
+            </>}
             {(bu.warehouseMode==='area'||bu.warehouseMode==='volume')&&<>
               <label>{bu.warehouseMode==='area'?'Area (m²):':'Volume (m³):'} <NumInput value={(bu.warehouseMode==='area'?bu.warehouseLimitArea:bu.warehouseLimitVolume)||0} onChange={v=>upB(bu.warehouseMode==='area'?'warehouseLimitArea':'warehouseLimitVolume',v)} style={{width:80}}/></label>
             </>}
@@ -3063,7 +3087,11 @@ function ProductsTab({state,dispatch}){
           {/* P7 — per-product footprint for area/volume warehouse modes */}
           <Field label="Footprint (m²/u)" hint="Floor area per unit. Used when Setup → Budget warehouse mode = 'area'; effective wh_max = area_limit / weighted-avg footprint."><NumInput step="0.01" value={prod.footprintArea||0.05} onChange={v=>upProd({footprintArea:v})}/></Field>
           <Field label="Volume (m³/u)" hint="Stack volume per unit. Used when warehouse mode = 'volume'."><NumInput step="0.001" value={prod.footprintVolume||0.02} onChange={v=>upProd({footprintVolume:v})}/></Field>
-          <Field label="Production Mode" hint="MTS = Make-to-Stock (forecast-driven, safety stock). MTO = Make-to-Order (backlog-driven, no FG inventory). ATO = Assemble-to-Order (subassy MTS + final MTO). This gates which tabs/sections are relevant."><select value={prod.prodMode||'mts'} onChange={e=>upProd({prodMode:e.target.value})}><option value="mts">Make-to-Stock</option><option value="mto">Make-to-Order</option><option value="ato">Assemble-to-Order</option><option value="eto">Engineer-to-Order</option><option value="retailer">Retailer (pass-through)</option></select></Field>
+          <Field label="Production Mode" hint="MTS = Make-to-Stock (forecast-driven, safety stock). MTO = Make-to-Order (backlog-driven, no FG inventory). ATO = Assemble-to-Order (subassy MTS + final MTO). Retailer = pass-through (purchased finished). Subcontract-full = SKU fully subcontracted at fixed unit rate. Retailer + Subcontract-full skip production capacity in the MILP (see prod.purchaseCost / prod.subcontractFullRate)."><select value={prod.prodMode||'mts'} onChange={e=>upProd({prodMode:e.target.value})}><option value="mts">Make-to-Stock</option><option value="mto">Make-to-Order</option><option value="ato">Assemble-to-Order</option><option value="eto">Engineer-to-Order</option><option value="retailer">Retailer (pass-through)</option><option value="subcontract-full">Subcontract-full (no in-house mfg)</option></select></Field>
+          {(prod.prodMode==='retailer'||prod.prodMode==='subcontract-full')&&<>
+            <Field label={prod.prodMode==='retailer'?`Purchase Cost (${cur}/u)`:`Subcontract Rate (${cur}/u)`} hint={prod.prodMode==='retailer'?'Wholesale buy-in cost. Replaces BOM material cost in the solver objective when prodMode=retailer.':'Per-unit subcontract rate. Replaces BOM + production cost when prodMode=subcontract-full.'}><NumInput value={prod.prodMode==='retailer'?(prod.purchaseCost||0):(prod.subcontractFullRate||0)} onChange={v=>upProd(prod.prodMode==='retailer'?{purchaseCost:v}:{subcontractFullRate:v})} style={{color:'var(--a3)',fontWeight:600}}/></Field>
+            <Field label="Buy-in Lead (wks)" hint="Lead time for the finished SKU to arrive (retailer purchase or subcontract output)."><NumInput value={prod.prodMode==='retailer'?(prod.purchaseLT||1):(prod.subcontractFullLT||2)} onChange={v=>upProd(prod.prodMode==='retailer'?{purchaseLT:v}:{subcontractFullLT:v})}/></Field>
+          </>}
           <Field label="Backorder" hint="Yes = allow stockouts to be filled in later period (penalty applied). No = treat as lost sales (revenue lost)."><select value={prod.backorderOn?'yes':'no'} onChange={e=>upProd({backorderOn:e.target.value==='yes'})}><option value="no">No (lost sale)</option><option value="yes">Yes (backorder)</option></select></Field>
           <Field label="Cap CV %" hint="Equipment failure variability — used by Monte Carlo to simulate capacity shortfalls."><NumInput value={prod.capCV||5} onChange={v=>upProd({capCV:v})}/></Field>
         </div>
@@ -3311,13 +3339,14 @@ function OptimizeTab({state,dispatch}){
         endpoint='/api/solve/procurement';
         payload={
           products:state.products.map(p=>({
-            name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,
-            variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),
+            name:p.name,demand:weeklyDemand(p),capacity:effectiveCapacity(p),setup_cost:effectiveSetupCost(p),
+            variable_cost:effectiveVariableCost(p),sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),
+            prod_mode:p.prodMode||'mts',
             yield_pct:p.yieldPct,init_inventory:p.initInventory,mape_pct:15,
             cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue,label:ev.label})),
-            parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05,trans_rate:b.transRate||0.5,trans_mode:b.transMode||'perUnit',proc_policy:b.procPolicy||'milp',part_yield:(b.partYield||98)/100,lt_cv:(b.ltCV||10)/100,cost_cv:(b.costCV||10)/100,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[],pay_term_days:b.payTermDays||30,early_pay_disc:b.earlyPayDisc||0})),
+            parts:effectiveBom(p).map(b=>({name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,rm_footprint_area:+b.rmFootprintArea||0.05,rm_footprint_volume:+b.rmFootprintVolume||0.02,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05,trans_rate:b.transRate||0.5,trans_mode:b.transMode||'perUnit',proc_policy:b.procPolicy||'milp',part_yield:(b.partYield||98)/100,lt_cv:(b.ltCV||10)/100,cost_cv:(b.costCV||10)/100,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[],pay_term_days:b.payTermDays||30,early_pay_disc:b.earlyPayDisc||0})),
           })),
-          params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(state.products[0]?.carryRate||24)/100,wh_max:constraints.warehouse.on?Math.min(constraints.warehouse.val,effectiveWhMaxUnits(state,5000)):effectiveWhMaxUnits(state,5000),wh_mode:state.budget.warehouseMode||'units',service_level:state.config.serviceLevel,budget:constraints.budget.on?constraints.budget.val:state.budget.procurement||0,shared_capacity:state.production.lines[0]?.capacity||50,work_days:state.planning.workDays||6,replan_from_period:state.planning.replanFromPeriod??null},
+          params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(state.products[0]?.carryRate||24)/100,wh_max:constraints.warehouse.on?Math.min(constraints.warehouse.val,effectiveWhMaxUnits(state,5000)):effectiveWhMaxUnits(state,5000),wh_mode:state.budget.warehouseMode||'units',rm_wh_mode:state.budget.rmWarehouseMode||'units',rm_wh_limit_area:+state.budget.rmWarehouseLimitArea||0,rm_wh_limit_volume:+state.budget.rmWarehouseLimitVolume||0,service_level:state.config.serviceLevel,budget:constraints.budget.on?constraints.budget.val:state.budget.procurement||0,shared_capacity:state.production.lines[0]?.capacity||50,work_days:state.planning.workDays||6,replan_from_period:state.planning.replanFromPeriod??null},
           capacity_mode:state.production.lines[0]?.type||'shared',
         };
       }else if(solverMode==='production'){
@@ -3363,7 +3392,7 @@ function OptimizeTab({state,dispatch}){
             demand_ceiling_mode:p.demandCeilingMode||'soft',
             actuals:p.actuals||[],
             init_inventory:+p.initInventory||0, // v3.5 — T0 FG on-hand: solver nets this against demand ceiling
-            parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,
+            parts:p.bom.map(b=>({name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:b.qtyPer,
               // v3.5 — landed-cost components let the solver reflect mode-of-transport in material cost
               landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),transport_mode:b.transMode||'road',
               trans_freight:+b.transFreight||+b.transRate||0,trans_insurance_pct:+b.transInsurancePct||0,
@@ -3395,7 +3424,7 @@ function OptimizeTab({state,dispatch}){
       }else if(solverMode==='montecarlo'){
         endpoint='/api/solve/montecarlo';
         payload={
-          products:state.products.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,yield_cv:(p.yieldCV||0)/100,init_inventory:p.initInventory,mape_pct:p.mape||15,carry_rate:(p.carryRate||24)/100,cap_cv:(p.capCV||5)/100,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,cost_cv:(b.costCV||10)/100,lead_time:b.leadTime,lt_cv:(b.ltCV||10)/100,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,ordering_cost:b.orderingCost||75}))})),
+          products:state.products.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,yield_cv:(p.yieldCV||0)/100,init_inventory:p.initInventory,mape_pct:p.mape||15,carry_rate:(p.carryRate||24)/100,cap_cv:(p.capCV||5)/100,parts:p.bom.map(b=>({name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:b.qtyPer,cost_cv:(b.costCV||10)/100,lead_time:b.leadTime,lt_cv:(b.ltCV||10)/100,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,ordering_cost:b.orderingCost||75}))})),
           params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(state.products[0]?.carryRate||24)/100,service_level:state.config.serviceLevel},n_runs:1000,
         };
       }else if(solverMode==='capital'){
@@ -3419,8 +3448,8 @@ function OptimizeTab({state,dispatch}){
           procurement_data:{
             products:state.products.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,init_inventory:p.initInventory,
               cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue,label:ev.label})),
-              parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder,hold_pct:b.holdPct,rm_capacity:b.rmCapacity,ordering_cost:b.orderingCost,rm_shelf:b.rmShelf,scrap_factor:b.scrapFactor,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[]}))})),
-            params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:0.24,wh_max:constraints.warehouse.on?Math.min(constraints.warehouse.val,effectiveWhMaxUnits(state,5000)):effectiveWhMaxUnits(state,5000),wh_mode:state.budget.warehouseMode||'units',service_level:state.config.serviceLevel,budget:constraints.budget.on?constraints.budget.val:0},capacity_mode:state.production.lines[0]?.type||'shared',
+              parts:p.bom.map(b=>({name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder,hold_pct:b.holdPct,rm_capacity:b.rmCapacity,ordering_cost:b.orderingCost,rm_shelf:b.rmShelf,scrap_factor:b.scrapFactor,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[]}))})),
+            params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:0.24,wh_max:constraints.warehouse.on?Math.min(constraints.warehouse.val,effectiveWhMaxUnits(state,5000)):effectiveWhMaxUnits(state,5000),wh_mode:state.budget.warehouseMode||'units',rm_wh_mode:state.budget.rmWarehouseMode||'units',rm_wh_limit_area:+state.budget.rmWarehouseLimitArea||0,rm_wh_limit_volume:+state.budget.rmWarehouseLimitVolume||0,service_level:state.config.serviceLevel,budget:constraints.budget.on?constraints.budget.val:0},capacity_mode:state.production.lines[0]?.type||'shared',
           },
           production_data:{
             products:state.products.map(p=>({name:p.name,required_qty:annDemand(p),setup_cost:p.setupCost,yield_pct:p.yieldPct,cycle_time:1})),
@@ -3438,9 +3467,9 @@ function OptimizeTab({state,dispatch}){
               variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),
               yield_pct:p.yieldPct,init_inventory:p.initInventory,
               cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue,label:ev.label})),
-              parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[]})),
+              parts:p.bom.map(b=>({name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,rm_footprint_area:+b.rmFootprintArea||0.05,rm_footprint_volume:+b.rmFootprintVolume||0.02,ordering_cost:b.orderingCost||75,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[]})),
             })),
-            params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:0.24,wh_max:constraints.warehouse.on?Math.min(constraints.warehouse.val,effectiveWhMaxUnits(state,5000)):effectiveWhMaxUnits(state,5000),wh_mode:state.budget.warehouseMode||'units',service_level:state.config.serviceLevel},
+            params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:0.24,wh_max:constraints.warehouse.on?Math.min(constraints.warehouse.val,effectiveWhMaxUnits(state,5000)):effectiveWhMaxUnits(state,5000),wh_mode:state.budget.warehouseMode||'units',rm_wh_mode:state.budget.rmWarehouseMode||'units',rm_wh_limit_area:+state.budget.rmWarehouseLimitArea||0,rm_wh_limit_volume:+state.budget.rmWarehouseLimitVolume||0,service_level:state.config.serviceLevel},
           }
         };
       }
@@ -4322,7 +4351,7 @@ function OptimizeTab({state,dispatch}){
       <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
         <button className="btn btn-secondary btn-sm" onClick={()=>{
           let py='# Enterprise Simulator — MILP Export\n# Run: pip install pulp numpy && python this_file.py\nimport pulp, numpy as np\n\n';
-          py+='# PRODUCTS\nproducts = '+JSON.stringify(state.products.map(p=>({name:p.name,demand:demandByPeriod(p,state.planning),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder,hold_pct:b.holdPct,ordering_cost:b.orderingCost}))})),null,2)+'\n\n';
+          py+='# PRODUCTS\nproducts = '+JSON.stringify(state.products.map(p=>({name:p.name,demand:demandByPeriod(p,state.planning),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,parts:p.bom.map(b=>({name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder,hold_pct:b.holdPct,ordering_cost:b.orderingCost}))})),null,2)+'\n\n';
           py+='# Copy into milp_v3_fixed.py or use the /api/solve/procurement endpoint\n';
           py+='print("Products:", len(products))\nfor p in products:\n    print(f"  {p[\'name\']}: demand={sum(p[\'demand\'])}u, parts={len(p[\'parts\'])}")\n';
           const blob=new Blob([py],{type:'text/python'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='milp_export.py';a.click();
@@ -5992,7 +6021,7 @@ function AnalysisTab({state,dispatch}){
     products:state.products.map(p=>({
       name:p.name,demand:demandByPeriod(p,state.planning),
       capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,init_inventory:p.initInventory,mape_pct:15,
-      parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,cost_cv:0.05,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder,hold_pct:b.holdPct,ordering_cost:b.orderingCost})),
+      parts:p.bom.map(b=>({name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:b.qtyPer,cost_cv:0.05,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder,hold_pct:b.holdPct,ordering_cost:b.orderingCost})),
     })),
     params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:0.24,service_level:state.config.serviceLevel},
   });
@@ -8114,7 +8143,7 @@ function CommandCenterTab({state,dispatch}){
             {name:'Procurement (Min Cost)',inputs:'Products, BOM, Planning',
               check:()=>P.length>0&&P.every(p=>p.bom.length>0)&&P.every(p=>p.history?.length>=12),
               data:()=>`${P.length} SKUs, ${allParts.length} parts, ${periodCount(state.planning)} periods`,
-              run:()=>runSolver('procurement','/api/solve/procurement',{products:P.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,init_inventory:p.initInventory,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05}))})),params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(P[0]?.carryRate||24)/100,wh_max:effectiveWhMaxUnits(state,P[0]?.whMaxUnits||5000),wh_mode:state.budget.warehouseMode||'units',service_level:state.config.serviceLevel,replan_from_period:state.planning.replanFromPeriod??null},capacity_mode:'parallel'})},
+              run:()=>runSolver('procurement','/api/solve/procurement',{products:P.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:effectiveCapacity(p),setup_cost:effectiveSetupCost(p),variable_cost:effectiveVariableCost(p),sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),prod_mode:p.prodMode||'mts',yield_pct:p.yieldPct,init_inventory:p.initInventory,parts:effectiveBom(p).map(b=>({name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,rm_footprint_area:+b.rmFootprintArea||0.05,rm_footprint_volume:+b.rmFootprintVolume||0.02,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05}))})),params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(P[0]?.carryRate||24)/100,wh_max:effectiveWhMaxUnits(state,P[0]?.whMaxUnits||5000),wh_mode:state.budget.warehouseMode||'units',rm_wh_mode:state.budget.rmWarehouseMode||'units',rm_wh_limit_area:+state.budget.rmWarehouseLimitArea||0,rm_wh_limit_volume:+state.budget.rmWarehouseLimitVolume||0,service_level:state.config.serviceLevel,replan_from_period:state.planning.replanFromPeriod??null},capacity_mode:'parallel'})},
             {name:'Production (Min Makespan)',inputs:'Products, Lines',
               check:()=>P.length>0&&state.production.lines.length>0,
               data:()=>`${state.production.lines.length} lines, ${P.length} products`,
@@ -8126,7 +8155,7 @@ function CommandCenterTab({state,dispatch}){
             {name:'Monte Carlo (Risk)',inputs:'All product + BOM data',
               check:()=>P.length>0,
               data:()=>`1000 runs, ${P.length} SKUs`,
-              run:()=>runSolver('montecarlo','/api/solve/montecarlo',{products:P.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),yield_pct:p.yieldPct,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,ordering_cost:b.orderingCost||75,scrap_factor:b.scrapFactor||0.05}))})),params:{n_runs:1000,periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(P[0]?.carryRate||24)/100,service_level:state.config.serviceLevel}})},
+              run:()=>runSolver('montecarlo','/api/solve/montecarlo',{products:P.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:effectiveCapacity(p),setup_cost:effectiveSetupCost(p),variable_cost:effectiveVariableCost(p),sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),prod_mode:p.prodMode||'mts',yield_pct:p.yieldPct,parts:effectiveBom(p).map(b=>({name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,rm_footprint_area:+b.rmFootprintArea||0.05,rm_footprint_volume:+b.rmFootprintVolume||0.02,ordering_cost:b.orderingCost||75,scrap_factor:b.scrapFactor||0.05}))})),params:{n_runs:1000,periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:(P[0]?.carryRate||24)/100,service_level:state.config.serviceLevel}})},
           ].map((s,i)=>{const ok=s.check();return <tr key={i}>
             <td style={{fontWeight:600}}>{s.name}</td>
             <td style={{fontSize:9,color:'var(--tx3)'}}>{s.inputs}</td>
@@ -8537,7 +8566,7 @@ function SAPPlanningRunner({state}){
       setRunLog([...log]);
       try{
         const res=await fetch('/api/solve/procurement',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-          products:[{name:p.name,demand:demandByPeriod(p,state.planning),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,yield_pct:p.yieldPct,init_inventory:p.initInventory,cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue})),parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,ordering_cost:b.orderingCost||75,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[]}))}],
+          products:[{name:p.name,demand:demandByPeriod(p,state.planning),capacity:p.capacity,setup_cost:p.setupCost,variable_cost:p.variableCost,sell_price:p.sellPrice,yield_pct:p.yieldPct,init_inventory:p.initInventory,cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue})),parts:p.bom.map(b=>({name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:b.qtyPer,lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,ordering_cost:b.orderingCost||75,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[]}))}],
           params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:0.24,service_level:state.config.serviceLevel},
         })});
         const data=await res.json();

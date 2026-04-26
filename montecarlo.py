@@ -50,7 +50,10 @@ def run_montecarlo(data, n_runs=500):
             parts = prod.get('parts', [])
             unit_mat_cost = 0
             for part in parts:
-                base_cost = part.get('cost', 1.0)
+                # P6 — prefer landed_cost (home currency, FX-hedged) over raw cost when UI provides it.
+                base_cost = part.get('landed_cost')
+                if base_cost is None:
+                    base_cost = part.get('cost', 1.0)
                 cost_cv = part.get('cost_cv', 0.05)
                 stoch_cost = max(0.01, rng.normal(base_cost, base_cost * cost_cv))
                 unit_mat_cost += stoch_cost * part.get('qty_per', 1.0)

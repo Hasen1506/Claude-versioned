@@ -46,6 +46,13 @@ def solve_procurement(data):
     salvage = params.get('salvage_rate', 0.80)
     service_level = params.get('service_level', 0.95)
     budget = params.get('budget', None)  # optional budget constraint
+    # P7 audit — RM warehouse 4-mode capacity (parallel to FG).
+    # rm_wh_mode ∈ {units, area, volume, unlimited}. Per-part rm_footprint_area / rm_footprint_volume
+    # carry the m²/u or m³/u factor. When mode in {area, volume}, an aggregate constraint
+    # Σ rm_inv[gidx, t] × footprint ≤ rm_wh_limit is added per period. units mode keeps per-part rm_cap.
+    rm_wh_mode = (params.get('rm_wh_mode', 'units') or 'units').lower()
+    rm_wh_limit_area = float(params.get('rm_wh_limit_area', 0) or 0)
+    rm_wh_limit_volume = float(params.get('rm_wh_limit_volume', 0) or 0)
     # P4 — replan from period: lock production = committed actuals for periods 0..replan_from_period-1; re-solve forward.
     # Each product may carry an `actuals_override` array (None where uncommitted).
     replan_from_period = params.get('replan_from_period', None)
@@ -141,9 +148,14 @@ def solve_procurement(data):
         for i, part in enumerate(parts):
             gidx = len(all_parts)
             part_map[(k, i)] = gidx
+            # P6 — prefer landed_cost (home currency, FX-hedged, freight+duty+handling) when UI provides it.
+            # Falls back to raw cost so the solver still works for older payloads without supplier profiles.
+            _base_cost = part.get('landed_cost')
+            if _base_cost is None:
+                _base_cost = part.get('cost', 1.0)
             all_parts.append({
                 'name': part.get('name', f'Part_{k}_{i}'),
-                'cost': part.get('cost', 1.0),
+                'cost': _base_cost,
                 'qty_per': part.get('qty_per', 1.0),
                 'lt': part.get('lead_time', 1),
                 'moq': part.get('moq', 1),
@@ -161,6 +173,8 @@ def solve_procurement(data):
                 'pay_term_days': part.get('pay_term_days', 30),
                 'early_pay_disc': part.get('early_pay_disc', 0),
                 'proc_policy': (part.get('proc_policy') or 'milp').lower(),
+                'rm_footprint_area': float(part.get('rm_footprint_area', 0.05) or 0.05),
+                'rm_footprint_volume': float(part.get('rm_footprint_volume', 0.02) or 0.02),
             })
 
             for t in range(T):
@@ -417,8 +431,22 @@ def solve_procurement(data):
             prob += r[gidx, t] >= moq * o[gidx, t], f"MOQ_{gidx}_{t}"
             prob += r[gidx, t] <= max_ord * o[gidx, t], f"MaxOrd_{gidx}_{t}"
 
-            # RM warehouse capacity
+            # RM warehouse capacity (per-part units cap — always active)
             prob += rm_inv[gidx, t] <= rm_cap, f"RMCap_{gidx}_{t}"
+
+    # P7 audit — aggregate RM warehouse cap (area or volume mode). Adds Σ rm_inv × footprint ≤ limit per period.
+    if rm_wh_mode == 'area' and rm_wh_limit_area > 0:
+        for t in range(T):
+            prob += pulp.lpSum(
+                rm_inv[gidx, t] * part['rm_footprint_area']
+                for gidx, part in enumerate(all_parts)
+            ) <= rm_wh_limit_area, f"RMWHArea_{t}"
+    elif rm_wh_mode == 'volume' and rm_wh_limit_volume > 0:
+        for t in range(T):
+            prob += pulp.lpSum(
+                rm_inv[gidx, t] * part['rm_footprint_volume']
+                for gidx, part in enumerate(all_parts)
+            ) <= rm_wh_limit_volume, f"RMWHVol_{t}"
 
     # Pillar 10 — add RM inventory value into per-period working capital sum. Combined FG+RM ≤ WC.
     if working_capital and working_capital > 0:

@@ -1261,3 +1261,59 @@ SectionInfo                         // <span> with click/hover info popup
 
 *End of Round 3 resume log. Update this section as P4-P9 land so the document stays current.*
 
+---
+
+## Round 3 Post-Audit — wh_max + landed_cost + retail/subcontract bypass
+
+After P9 the user requested an audit of solver wiring for the 4-mode warehouse capacity (FG vs RM) and an evaluation of retail-only / subcontract-only SKUs. Three real gaps were found and fixed:
+
+### Gap 1 — FX hedging didn't reach procurement / Monte Carlo
+
+**Found**: `landed_cost` was only consumed in `profitmix.py`. `procurement.py` and `montecarlo.py` were minimising against raw `b.cost` (supplier currency, no FX hedge, no freight/duty).
+
+**Fixed**:
+- All 10 procurement / MC / sensitivity payload sites now send `landed_cost` per BOM row alongside `cost`.
+- `procurement.py:144` and `montecarlo.py:53` now prefer `landed_cost` when present, fall back to raw `cost` for older payloads.
+- Smoke-tested: importing a `landed_cost: 85` part now raises `material_purchase` in the cost breakdown to ~9000 (vs ~120 raw) — FX hedge correctly flows.
+
+### Gap 2 — RM warehouse only had per-part units cap (no 4-mode)
+
+**Found**: `wh_max` 4-mode (units/area/volume/unlimited) shipped in P7 was FG-only. RM cap was just per-part `b.rmCapacity` in units.
+
+**Fixed**:
+- Setup → Budget block now has a second selector for RM mode + RM area / volume limit inputs.
+- Per-BOM-row `b.rmFootprintArea` (m²/u) + `b.rmFootprintVolume` (m³/u) added with sensible defaults (0.05 / 0.02).
+- `procurement.py` reads `params.rm_wh_mode` + `rm_wh_limit_area` + `rm_wh_limit_volume` and adds an aggregate constraint per period:
+  - `area` → `Σ rm_inv[gidx, t] × rm_footprint_area[gidx] ≤ rm_wh_limit_area`
+  - `volume` → similar with rm_footprint_volume
+  - `units` / `unlimited` → no aggregate (per-part cap remains).
+- Smoke-tested: aggregate area cap of 50 m² holds against a 2-part BOM with footprints 1 + 2 m²/u.
+
+### Gap 3 — `prodMode='retailer'` was UI-only; subcontract-full didn't exist
+
+**Found**:
+- `prodMode='retailer'` rendered in the dropdown but solver treated the SKU as manufactured.
+- Subcontract was only at part level (`b.subcontract`); no SKU-level "this whole SKU is subcontracted" mode.
+
+**Fixed (UI + JS bypass)**:
+- New `prodMode='subcontract-full'` option.
+- New per-SKU fields: `prod.purchaseCost` / `prod.purchaseLT` (retailer); `prod.subcontractFullRate` / `prod.subcontractFullLT` (subcontract-full). Conditionally rendered when prodMode is one of these.
+- New JS helpers `effectiveCapacity / effectiveSetupCost / effectiveVariableCost / effectiveBom` adapt the SKU payload:
+  - capacity → 999999 (unbounded)
+  - setup_cost → 0 (no batching)
+  - variable_cost → original VC + buy-in cost (purchaseCost or subcontractFullRate)
+  - parts → `[]` (BOM excluded)
+- `prod_mode` is also sent so future solver-side logic can branch (currently informational).
+- Applied to the main solver dialog procurement payload + SolverPipelineTab procurement + montecarlo.
+- Smoke-tested: retailer SKU with VC=50, demand 30×12 returned status=Optimal, fill_rate=100%, total_cost=18000 (= 50 × 360u, no setup or BOM cost).
+
+### Side effect
+
+The `landed_cost` injection used a generic anchor `name:b.name,cost:b.cost,qty_per:b.qtyPer,` (10 occurrences) so all procurement-adjacent payloads get the FX hedge by default — including the lot-sizing and shadow-price replicas.
+
+### Still NOT solver-wired (intentionally deferred)
+
+- **Scenario programming** (P8): saved scenarios still need a per-type perturbation pipeline (supply-delay → leadTime, price-spike → cost_event, etc.). The hooks are in place; needs a future round.
+- **HMM regime detection** (P6): low-vol vs high-vol price-time-series classification. Volatility z-score covers the immediate need.
+- **Center-of-gravity ML** (P9): k-means + ML weighting needs traffic-pattern history we don't capture.
+
