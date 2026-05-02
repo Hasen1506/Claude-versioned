@@ -601,6 +601,60 @@ function holidaysInRange(holidays,startIso,nDays){
   return holidays.filter(h=>{const d=new Date(h.date+'T00:00:00');return d>=d0&&d<d1;}).length;
 }
 
+// Round 5 — Disruption application + STALE detection.
+// applyDisruptions(state, asOfDate?) returns a deep-cloned products[] with active disruption
+// patches merged in. Solver runners call this so the payload reflects current disruption state.
+// Patches are last-write-wins ordered by `ts`; expired/cancelled disruptions are skipped.
+// Supported scopes: {productId} | {productId, partId} | {supplierName}.
+// Supported types/patches:
+//   leadTime          → patches part.leadTime
+//   capacity          → patches product.capacity
+//   demandShift       → multiplies product.history by paramPatch.factor (forward-looking)
+//   costShift         → multiplies part.cost by paramPatch.factor
+//   supplierOutage    → sets part.maxOrder to 0 for parts under that supplier (effectively halts orders)
+//   laneClosure       → records on the lane object (informational; transport solver consumes it)
+//   other             → no-op (placeholder)
+function applyDisruptions(state){
+  const list=(state.disruptions||[]).filter(d=>d.status==='active');
+  if(!list.length)return{products:state.products,network:state.network};
+  // Sort oldest-first so newer patches overwrite older ones for the same target.
+  const ordered=[...list].sort((a,b)=>(a.ts||'').localeCompare(b.ts||''));
+  // Deep-clone products so we don't mutate the store.
+  const products=(state.products||[]).map(p=>({...p,bom:(p.bom||[]).map(b=>({...b}))}));
+  const network={...(state.network||{}),lanes:[...((state.network||{}).lanes||[])].map(l=>({...l}))};
+  ordered.forEach(d=>{
+    const sc=d.scope||{},pp=d.paramPatch||{};
+    const pi=sc.productId?products.findIndex(p=>p.id===sc.productId):-1;
+    if(d.type==='leadTime'&&pi>=0&&sc.partId){
+      const bi=products[pi].bom.findIndex(b=>b.id===sc.partId);
+      if(bi>=0)products[pi].bom[bi].leadTime=+pp.leadTime||products[pi].bom[bi].leadTime;
+    }else if(d.type==='capacity'&&pi>=0){
+      products[pi].capacity=+pp.capacity||products[pi].capacity;
+    }else if(d.type==='demandShift'&&pi>=0){
+      const factor=+pp.factor||1;
+      products[pi].history=(products[pi].history||[]).map(v=>Math.round((+v||0)*factor));
+    }else if(d.type==='costShift'&&pi>=0&&sc.partId){
+      const bi=products[pi].bom.findIndex(b=>b.id===sc.partId);
+      const factor=+pp.factor||1;
+      if(bi>=0)products[pi].bom[bi].cost=+(products[pi].bom[bi].cost*factor).toFixed(4);
+    }else if(d.type==='supplierOutage'&&sc.supplierName){
+      products.forEach((p,i)=>{p.bom.forEach((b,bi)=>{
+        if((b.supplierName||b.supplier||'')===sc.supplierName){products[i].bom[bi].maxOrder=0;}
+      });});
+    }else if(d.type==='laneClosure'&&sc.laneId){
+      const li=network.lanes.findIndex(l=>l.id===sc.laneId);
+      if(li>=0)network.lanes[li]._closed=true;
+    }
+  });
+  return{products,network};
+}
+// Round 5 — STALE detector. Returns true when an event in eventLog occurred AFTER planning.lastSolveAt.
+// Used by the solver-mode panel to nudge the user toward a replan.
+function isPlanStale(state){
+  const last=state.planning?.lastSolveAt;
+  if(!last)return (state.eventLog||[]).length>0;
+  return (state.eventLog||[]).some(ev=>(ev.ts||'')>last);
+}
 // Pillar 9 — WACC registry helpers. Client-side math so Calculate always works offline. Writes back to state.config.wacc via dispatch.
 function weightedAvgRate(instruments){
   if(!instruments||!instruments.length)return 0;
@@ -1830,6 +1884,12 @@ const defaultState={
     histMonths:24,sensingMinWeeks:2,sensingAlpha:0.3,
     sensingWindow:2,sensingPctThreshold:15,sensingStdK:2,replanFromPeriod:null,
     frozenWeeks:4,slushyWeeks:12,
+    // Round 5 — rolling horizon cursor. asOfDate represents "now" inside the planner.
+    // Any input change after this date stamps the eventLog. Defaults to horizonStartDate.
+    asOfDate:null,
+    // Round 5 — last successful solve timestamp (ISO). Drives the STALE banner: if any tracked
+    // input changed AFTER lastSolveAt, the UI prompts the user to replan.
+    lastSolveAt:null,
   },
   plant:{state:'TN',city:'Chennai',country:'IN'},
   budget:{master:0,procurement:0,capex:0,logistics:0,marketing:0,scmOpex:0,workingCapital:0,reserve:0,marketingDetail:{cac:0,lifetimeMonths:12,monthlyMarginPerCustomer:0,promoSpend:0,channelSplit:{}}},
@@ -1950,6 +2010,17 @@ const defaultState={
     {id:'sh-emp',   name:'Plant workforce',   category:'internal',  power:2, interest:5, notes:'Shift planning, OT'},
     {id:'sh-3pl',   name:'3PL / Carriers',    category:'supplier',  power:3, interest:3, notes:'Lane commitments'},
   ],
+  // Round 5 — Disruption registry. Each disruption is a typed parameter override active over an
+  // effective window. The solver consumes a patched view of state.products via applyDisruptions().
+  // type ∈ {leadTime, capacity, supplierOutage, demandShift, costShift, laneClosure, other}.
+  // scope identifies the target: {productId, partId, supplierName, laneId} (only the relevant key set).
+  // paramPatch is a flat dict of param→value to override; effectiveFrom/To are ISO dates or period numbers.
+  // status ∈ {active, expired, cancelled}; source ∈ {manual, alert, scenario, integration}.
+  disruptions:[],
+  // Round 5 — Event log: append-only ledger of changes that happened after planning.asOfDate.
+  // Auto-recorded when key product/BOM fields change; manually recorded when a disruption is added.
+  // Each entry: {id, ts, kind, target, before, after, source, note}.
+  eventLog:[],
   // Working capital params
   workingCapital:{dso:30,dpo:45,paymentEvents:[]},
   // Supplier scorecard weights (% — should sum to 100)
@@ -2037,7 +2108,23 @@ function reducer(state,action){
     case 'DELETE_PRODUCT':s.products=s.products.filter(p=>p.id!==action.id);if(s.activeProductId===action.id)s.activeProductId=s.products[0]?.id||null;break;
     case 'UPDATE_PRODUCT':{
       const idx=s.products.findIndex(p=>p.id===action.id);
-      if(idx>=0){s.products=[...s.products];s.products[idx]={...s.products[idx],...action.payload}}
+      if(idx>=0){
+        // Round 5 — auto-record an event for tracked fields. Only fires for changes that
+        // affect planning correctness (capacity, sellPrice, yieldPct, demandMode).
+        const TRACKED=['capacity','sellPrice','yieldPct','demandMode','setupCost','variableCost'];
+        const before=s.products[idx];
+        const changed=TRACKED.filter(k=>k in action.payload && action.payload[k]!==before[k]);
+        s.products=[...s.products];s.products[idx]={...s.products[idx],...action.payload};
+        if(changed.length){
+          const ev={id:'evt-'+Date.now().toString(36)+'-'+Math.floor(Math.random()*999),
+            ts:new Date().toISOString(),kind:'product-edit',
+            target:{productId:action.id,productName:before.name,fields:changed.join(',')},
+            before:Object.fromEntries(changed.map(k=>[k,before[k]])),
+            after:Object.fromEntries(changed.map(k=>[k,action.payload[k]])),
+            source:'manual',note:''};
+          s.eventLog=[...(s.eventLog||[]),ev];
+        }
+      }
       break;
     }
     case 'SET_ACTIVE_PRODUCT':s.activeProductId=action.id;break;
@@ -2153,7 +2240,26 @@ function reducer(state,action){
     }
     case 'UPDATE_BOM_ITEM':{
       const pi=s.products.findIndex(p=>p.id===action.productId);
-      if(pi>=0){s.products=[...s.products];const bom=[...s.products[pi].bom];const bi=bom.findIndex(b=>b.id===action.bomId);if(bi>=0){bom[bi]={...bom[bi],...action.payload};s.products[pi]={...s.products[pi],bom}}}
+      if(pi>=0){
+        s.products=[...s.products];const bom=[...s.products[pi].bom];const bi=bom.findIndex(b=>b.id===action.bomId);
+        if(bi>=0){
+          // Round 5 — auto-record on tracked BOM fields. Limited to the fields that change planning
+          // correctness materially: leadTime, cost, moq, holdPct, partYield, scrapFactor.
+          const TRACKED=['leadTime','cost','moq','holdPct','partYield','scrapFactor','rmCapacity','onHand'];
+          const before=bom[bi];
+          const changed=TRACKED.filter(k=>k in action.payload && action.payload[k]!==before[k]);
+          bom[bi]={...bom[bi],...action.payload};s.products[pi]={...s.products[pi],bom};
+          if(changed.length){
+            const ev={id:'evt-'+Date.now().toString(36)+'-'+Math.floor(Math.random()*999),
+              ts:new Date().toISOString(),kind:'bom-edit',
+              target:{productId:action.productId,partId:action.bomId,partName:before.name,fields:changed.join(',')},
+              before:Object.fromEntries(changed.map(k=>[k,before[k]])),
+              after:Object.fromEntries(changed.map(k=>[k,action.payload[k]])),
+              source:'manual',note:''};
+            s.eventLog=[...(s.eventLog||[]),ev];
+          }
+        }
+      }
       break;
     }
     case 'DELETE_BOM_ITEM':{
@@ -2286,7 +2392,7 @@ function reducer(state,action){
     // Restoring a config-only snapshot dropped planning, production lines, network, budgets,
     // suppliers, contracts, scenarios, risks — half the plan. Now snapshots all durable fields.
     case 'SAVE_VERSION':{
-      const SNAPSHOT_KEYS=['config','products','planning','production','network','budget','supplierProfiles','transportContracts','transportShipments','transportModes','poRecords','assets','risks','stakeholders','scenarios','plant','supplierWeights','lockedPOs'];
+      const SNAPSHOT_KEYS=['config','products','planning','production','network','budget','supplierProfiles','transportContracts','transportShipments','transportModes','poRecords','assets','risks','stakeholders','scenarios','plant','supplierWeights','lockedPOs','disruptions','eventLog'];
       const snap={};SNAPSHOT_KEYS.forEach(k=>{if(s[k]!==undefined)snap[k]=JSON.parse(JSON.stringify(s[k]));});
       s.versions=[{id:'v-'+Date.now().toString(36),time:new Date().toLocaleString(),comment:action.comment||'Manual snapshot',snapshot:snap},...s.versions].slice(0,15);
       break;
@@ -2323,6 +2429,43 @@ function reducer(state,action){
       break;
     }
     case 'UNLOCK_PO':s.lockedPOs=(s.lockedPOs||[]).filter(p=>p.id!==action.id);break;
+    // Round 5 — Disruption registry reducers.
+    case 'ADD_DISRUPTION':{
+      const d={id:'dsr-'+Date.now().toString(36)+'-'+Math.floor(Math.random()*999),
+        type:'leadTime',scope:{},paramPatch:{},
+        effectiveFrom:s.planning?.asOfDate||s.planning?.horizonStartDate||new Date().toISOString().slice(0,10),
+        effectiveTo:null,status:'active',source:'manual',note:'',
+        ts:new Date().toISOString(),...(action.payload||{})};
+      s.disruptions=[...(s.disruptions||[]),d];
+      // Auto-stamp the event log when a disruption lands.
+      s.eventLog=[...(s.eventLog||[]),{id:'evt-'+Date.now().toString(36),ts:d.ts,
+        kind:'disruption-added',target:d.scope,before:null,after:d.paramPatch,source:d.source,
+        note:`${d.type}: ${d.note||'(no note)'}`}];
+      break;
+    }
+    case 'UPDATE_DISRUPTION':{
+      const i=(s.disruptions||[]).findIndex(d=>d.id===action.id);
+      if(i>=0){const next=[...s.disruptions];next[i]={...next[i],...action.payload};s.disruptions=next;}
+      break;
+    }
+    case 'DELETE_DISRUPTION':s.disruptions=(s.disruptions||[]).filter(d=>d.id!==action.id);break;
+    case 'EXPIRE_DISRUPTION':{
+      const i=(s.disruptions||[]).findIndex(d=>d.id===action.id);
+      if(i>=0){const next=[...s.disruptions];next[i]={...next[i],status:'expired'};s.disruptions=next;}
+      break;
+    }
+    // Round 5 — Event log: append-only. UI never edits, only adds. CLEAR_EVENT_LOG resets (admin op).
+    case 'RECORD_EVENT':{
+      const ev={id:'evt-'+Date.now().toString(36)+'-'+Math.floor(Math.random()*999),
+        ts:new Date().toISOString(),kind:'param-change',target:{},before:null,after:null,
+        source:'manual',note:'',...(action.payload||{})};
+      s.eventLog=[...(s.eventLog||[]),ev];
+      break;
+    }
+    case 'CLEAR_EVENT_LOG':s.eventLog=[];break;
+    // Round 5 — solver lifecycle hooks. Stamp lastSolveAt so STALE detection has a baseline.
+    case 'SOLVE_STARTED':s.planning={...s.planning,_solveInProgressAt:new Date().toISOString()};break;
+    case 'SOLVE_FINISHED':s.planning={...s.planning,lastSolveAt:new Date().toISOString(),_solveInProgressAt:null};break;
     // v3.6 — supplier profile registry. Keyed by supplier name (matches BOM.supplierName). Holds scorecard dimensions + contract terms.
     case 'SET_SUPPLIER_PROFILE':{
       const name=action.name;if(!name)break;
@@ -5255,12 +5398,17 @@ function OptimizeTab({state,dispatch}){
 
   const handleSolve=async()=>{
     setSolving(true);setError(null);setResult(null);
+    // Round 5 — apply active disruptions to a deep-clone view of state. Solver runners read
+    // from `viewState.products` / `viewState.network` instead of the raw store, so disruptions
+    // patch the payload without mutating the underlying data.
+    const _patched=applyDisruptions(state);
+    const viewState={...state,products:_patched.products,network:_patched.network};
     try{
       let endpoint,payload;
       if(solverMode==='procurement'){
         endpoint='/api/solve/procurement';
         payload={
-          products:state.products.map(p=>({
+          products:viewState.products.map(p=>({
             name:p.name,demand:weeklyDemand(p),capacity:effectiveCapacity(p),setup_cost:effectiveSetupCost(p),
             variable_cost:effectiveVariableCost(p),sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),
             prod_mode:p.prodMode||'mts',
@@ -5310,6 +5458,49 @@ function OptimizeTab({state,dispatch}){
           abc_service_a_min_pct:constraints.abcServiceA.on?+constraints.abcServiceA.val:0,
           budget_deflate:constraints.budgetDeflate.on,
           inflation_pct_annual:(state.config&&state.config.finance&&state.config.finance.inflationAdjust)?(+state.config.finance.inflationPct||0):0,
+          // Round 5 / MEIO — per-node FG inventory variables. Auto-enables when at least one
+          // DC + one plant exist in the network. When disabled, solver runs the legacy single-pool path.
+          // Each node carries: id, type, capacity (units), carryingRatePct (0-100). Lanes carry source+dest+lt+ratePerUnit.
+          ...(()=>{
+            const nodes=(viewState.network?.nodes||[]).filter(n=>n.type==='plant'||n.type==='wh'||n.type==='warehouse'||n.type==='dc'||n.type==='fg_store');
+            const lanes=(viewState.network?.lanes||[]).filter(l=>!l._closed);
+            const hasPlant=nodes.some(n=>n.type==='plant');
+            const hasDC=nodes.some(n=>n.type==='dc'||n.type==='fg_store');
+            const meio_enabled=hasPlant&&hasDC;
+            if(!meio_enabled)return{meio_enabled:false};
+            return{
+              meio_enabled:true,
+              network_nodes:nodes.map(n=>({
+                id:n.id,type:n.type,name:n.name,
+                capacity:+n.capacity||+n.unitCapacity||999999,
+                carry_rate_pct:n.carryingRatePct==null?24:+n.carryingRatePct,
+                stage:n.stage||(n.type==='plant'?'inbound':n.type==='dc'?'outbound':'outbound'),
+                demand_share:+n.demandShare||0,
+              })),
+              network_lanes:lanes.map(l=>({
+                id:l.id,from:l.fromId||l.from,to:l.toId||l.to,
+                lead_time_periods:Math.max(1,Math.round((+l.leadTimeDays||7)/(state.planning.timeGrain==='daily'?1:state.planning.timeGrain==='monthly'?30:7))),
+                rate_per_unit:+l.ratePerUnit||0,
+                capacity_per_period:+l.capacityPerPeriod||999999,
+              })),
+              // Per-product per-node initial inventory. Sourced from network.locationInventory.
+              node_init_inventory:(()=>{
+                const li=(viewState.network||{}).locationInventory||{};
+                const out={};
+                viewState.products.forEach(p=>{out[p.name]={};});
+                Object.entries(li).forEach(([locId,locInv])=>{
+                  Object.entries(locInv?.products||{}).forEach(([pid,qty])=>{
+                    const prod=viewState.products.find(pp=>pp.id===pid);
+                    if(prod){out[prod.name][locId]=+qty||0;}
+                  });
+                });
+                return out;
+              })(),
+            };
+          })(),
+          // Round 5 — disruption metadata. Solver doesn't directly consume; UI uses the count
+          // to render the "disruptions applied" badge in results.
+          active_disruption_count:(state.disruptions||[]).filter(d=>d.status==='active').length,
           // T4-01 — aggregate shared capacity across ALL lines, not just lines[0].
           shared_capacity:(state.production.lines||[]).reduce((a,l)=>a+(+l.capacity||0),0)||50,
           work_days:state.planning.workDays||6,replan_from_period:state.planning.replanFromPeriod??null,
@@ -5491,7 +5682,11 @@ function OptimizeTab({state,dispatch}){
       }
       const res=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       const data=await res.json();
-      if(data.error){setError(data.error)}else{setResult({...data,_mode:solverMode})}
+      if(data.error){setError(data.error)}else{
+        setResult({...data,_mode:solverMode});
+        // Round 5 — stamp lastSolveAt so the STALE banner clears until the next event lands.
+        dispatch({type:'SOLVE_FINISHED'});
+      }
     }catch(e){setError(e.message)}
     setSolving(false);
   };
@@ -5531,9 +5726,27 @@ function OptimizeTab({state,dispatch}){
       <MRPExplosionPanel state={state}/>
       <RCCPLoadPanel state={state}/>
     </div>
+    {/* Round 5 — STALE banner. Fires when any eventLog entry has ts > planning.lastSolveAt.
+        Solver runs are still permitted but the user is warned that on-screen results may not
+        reflect the latest input edits / disruptions. */}
+    {(()=>{
+      if(!isPlanStale(state))return null;
+      const last=state.planning?.lastSolveAt;
+      const newEvents=(state.eventLog||[]).filter(ev=>!last||(ev.ts||'')>last);
+      const activeDisrupts=(state.disruptions||[]).filter(d=>d.status==='active');
+      return <div className="card" style={{borderColor:'var(--a4)',background:'rgba(248,191,45,.06)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <div style={{fontSize:24}}>⚠</div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:12,fontWeight:700,color:'var(--a4)'}}>Plan is STALE — {newEvents.length} event{newEvents.length===1?'':'s'} since last solve{activeDisrupts.length?` · ${activeDisrupts.length} active disruption${activeDisrupts.length===1?'':'s'}`:''}</div>
+            <div style={{fontSize:10,color:'var(--tx2)',marginTop:2}}>The currently displayed solver results were computed before recent edits or disruptions. Re-run the solver to see the patched plan.</div>
+          </div>
+        </div>
+      </div>;
+    })()}
     {/* Solver Mode Selector */}
     <div className="card">
-      <div className="card-title">⚡ Optimization Engine <span className="badge" style={{background:'rgba(56,189,248,.1)',color:'var(--a2)'}}>MILP · PuLP/CBC</span></div>
+      <div className="card-title">⚡ Optimization Engine <span className="badge" style={{background:'rgba(56,189,248,.1)',color:'var(--a2)'}}>MILP · PuLP/CBC</span>{(state.disruptions||[]).filter(d=>d.status==='active').length>0&&<span className="badge" style={{background:'rgba(248,191,45,.12)',color:'var(--a4)',marginLeft:6}}>⚡ {(state.disruptions||[]).filter(d=>d.status==='active').length} disruption{(state.disruptions||[]).filter(d=>d.status==='active').length===1?'':'s'} applied</span>}</div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))',gap:6,marginBottom:12}}>
         {MODES.map(m=><div key={m.id} onClick={()=>setSolverMode(m.id)} style={{padding:'8px 10px',borderRadius:4,cursor:'pointer',border:`1px solid ${solverMode===m.id?'var(--ac)':'var(--br)'}`,background:solverMode===m.id?'rgba(0,212,170,.08)':'var(--bg3)',textAlign:'center',transition:'all .15s'}}>
           <div style={{fontSize:20}}>{m.icon}</div>
@@ -10092,6 +10305,10 @@ function AnalysisTab({state,dispatch}){
     {/* T9-01 — MRP bucket grid (forward demand · scheduled receipts · L1 + L2) */}
     <MrpBucketGridPanel state={state}/>
 
+    {/* Round 5 — Disruption registry + Event log (rolling-horizon foundation) */}
+    <DisruptionRegistryCard state={state} dispatch={dispatch}/>
+    <EventLogCard state={state} dispatch={dispatch}/>
+
     {/* P8 — Risk Matrix (5×5 P×I) */}
     <RiskMatrixCard state={state} dispatch={dispatch}/>
 
@@ -13236,6 +13453,117 @@ function KpiDashboardPanel({state}){
 }
 
 // T9-03 — Version history with full-state snapshots + restore + delete.
+// Round 5 — DisruptionRegistryCard. Operator manages typed disruptions: leadTime / capacity /
+// demandShift / costShift / supplierOutage / laneClosure. Each disruption is a parameter override
+// applied to a deep-clone of state.products before solving (see applyDisruptions).
+function DisruptionRegistryCard({state,dispatch}){
+  const list=state.disruptions||[];
+  const products=state.products||[];
+  const lanes=(state.network||{}).lanes||[];
+  const supplierNames=Array.from(new Set([].concat(...products.map(p=>(p.bom||[]).map(b=>b.supplierName||b.supplier||'').filter(Boolean)))));
+  const TYPES=[{v:'leadTime',l:'Lead-time change',hint:'Patches part.leadTime to a new value.'},
+    {v:'capacity',l:'Capacity reduction',hint:'Patches product.capacity (units/period).'},
+    {v:'demandShift',l:'Demand shift',hint:'Multiplies product.history by factor (forward-looking).'},
+    {v:'costShift',l:'Cost shift',hint:'Multiplies part.cost by factor.'},
+    {v:'supplierOutage',l:'Supplier outage',hint:'Sets maxOrder=0 for all parts from this supplier.'},
+    {v:'laneClosure',l:'Lane closure',hint:'Marks a lane as closed (informational).'}];
+  const add=()=>dispatch({type:'ADD_DISRUPTION',payload:{type:'leadTime',scope:{},paramPatch:{leadTime:14},note:''}});
+  const upd=(id,patch)=>dispatch({type:'UPDATE_DISRUPTION',id,payload:patch});
+  const del=(id)=>{if(confirm('Delete this disruption?'))dispatch({type:'DELETE_DISRUPTION',id});};
+  const expire=(id)=>dispatch({type:'EXPIRE_DISRUPTION',id});
+  return <div className="card">
+    <div className="card-title">⚡ Disruption Registry <span className="badge" style={{background:list.length?'rgba(248,191,45,.12)':'rgba(0,0,0,.1)',color:list.length?'var(--a4)':'var(--tx3)',marginLeft:6}}>{list.filter(d=>d.status==='active').length} active · {list.length} total</span>
+      <SectionInfo>
+        <strong>What it does:</strong> Captures real-world events that invalidate the current plan — supplier delays, capacity outages, demand shocks, cost moves, lane closures. Each disruption is a typed parameter override active over an effective window.<br/><br/>
+        <strong>How the solver consumes:</strong> Before each solve, <code>applyDisruptions(state)</code> deep-clones <code>state.products</code> + <code>state.network</code> and merges every active disruption's <code>paramPatch</code>. The patched view goes to the procurement / production / MC payloads; the source store is never mutated.<br/><br/>
+        <strong>Last-write-wins:</strong> Disruptions are applied oldest-first by <code>ts</code>, so a newer patch on the same target overrides an older one. Set status to <em>expired</em> to stop applying without losing history.<br/><br/>
+        <strong>Event log:</strong> Adding a disruption stamps the <code>eventLog</code>; the STALE banner above the solver fires when any event lands after the last solve.
+      </SectionInfo>
+    </div>
+    <button className="btn btn-secondary btn-sm" style={{marginBottom:8}} onClick={add}>+ Add disruption</button>
+    {list.length===0?<div style={{fontSize:10,color:'var(--tx3)',padding:'8px 10px',background:'var(--bg3)',borderRadius:3}}>No disruptions logged. Add one when an external event invalidates a planning assumption (e.g. supplier flagged a 2-week LT slip, demand spiked 30%).</div>
+      :<div style={{overflowX:'auto'}}>
+        <table className="data-table" style={{fontSize:10,minWidth:1100}}>
+          <thead><tr><th>Type</th><th>Scope</th><th>Patch</th><th>Effective</th><th>Status</th><th>Source</th><th>Note</th><th></th></tr></thead>
+          <tbody>{list.map(d=>{
+            const t=TYPES.find(x=>x.v===d.type)||TYPES[0];
+            const needsProduct=['leadTime','capacity','demandShift','costShift'].includes(d.type);
+            const needsPart=['leadTime','costShift'].includes(d.type);
+            const needsSupplier=d.type==='supplierOutage';
+            const needsLane=d.type==='laneClosure';
+            const prod=needsProduct?products.find(p=>p.id===d.scope?.productId):null;
+            return <tr key={d.id} style={{opacity:d.status==='active'?1:0.5}}>
+              <td><select value={d.type} onChange={e=>upd(d.id,{type:e.target.value})} title={TYPES.find(x=>x.v===e.target.value)?.hint}>
+                {TYPES.map(x=><option key={x.v} value={x.v} title={x.hint}>{x.l}</option>)}
+              </select></td>
+              <td style={{minWidth:180}}>
+                {needsProduct&&<select value={d.scope?.productId||''} onChange={e=>upd(d.id,{scope:{...d.scope,productId:e.target.value,partId:''}})} style={{fontSize:9,maxWidth:90}}>
+                  <option value="">— product —</option>{products.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>}
+                {needsPart&&prod&&<select value={d.scope?.partId||''} onChange={e=>upd(d.id,{scope:{...d.scope,partId:e.target.value}})} style={{fontSize:9,maxWidth:90,marginLeft:4}}>
+                  <option value="">— part —</option>{(prod.bom||[]).map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>}
+                {needsSupplier&&<select value={d.scope?.supplierName||''} onChange={e=>upd(d.id,{scope:{supplierName:e.target.value}})} style={{fontSize:9}}>
+                  <option value="">— supplier —</option>{supplierNames.map(n=><option key={n} value={n}>{n}</option>)}
+                </select>}
+                {needsLane&&<select value={d.scope?.laneId||''} onChange={e=>upd(d.id,{scope:{laneId:e.target.value}})} style={{fontSize:9}}>
+                  <option value="">— lane —</option>{lanes.map(l=><option key={l.id} value={l.id}>{l.id}</option>)}
+                </select>}
+              </td>
+              <td style={{minWidth:120,fontFamily:'JetBrains Mono',fontSize:10}}>
+                {d.type==='leadTime'&&<NumInput value={d.paramPatch?.leadTime||0} onChange={v=>upd(d.id,{paramPatch:{...d.paramPatch,leadTime:+v}})} style={{width:50}}/>}
+                {d.type==='capacity'&&<NumInput value={d.paramPatch?.capacity||0} onChange={v=>upd(d.id,{paramPatch:{...d.paramPatch,capacity:+v}})} style={{width:60}}/>}
+                {d.type==='demandShift'&&<><NumInput step="0.05" value={d.paramPatch?.factor||1} onChange={v=>upd(d.id,{paramPatch:{...d.paramPatch,factor:+v}})} style={{width:55}}/><span style={{color:'var(--tx3)',marginLeft:4}}>× hist</span></>}
+                {d.type==='costShift'&&<><NumInput step="0.05" value={d.paramPatch?.factor||1} onChange={v=>upd(d.id,{paramPatch:{...d.paramPatch,factor:+v}})} style={{width:55}}/><span style={{color:'var(--tx3)',marginLeft:4}}>× cost</span></>}
+                {d.type==='supplierOutage'&&<span style={{color:'var(--dg)'}}>maxOrder=0</span>}
+                {d.type==='laneClosure'&&<span style={{color:'var(--dg)'}}>lane._closed=true</span>}
+              </td>
+              <td style={{fontSize:9}}>
+                <input type="date" value={d.effectiveFrom||''} onChange={e=>upd(d.id,{effectiveFrom:e.target.value})} style={{width:110,fontSize:9}}/>
+                {d.effectiveTo!=null&&<input type="date" value={d.effectiveTo||''} onChange={e=>upd(d.id,{effectiveTo:e.target.value})} style={{width:110,fontSize:9,marginTop:2}}/>}
+                <button className="btn btn-secondary btn-sm" style={{fontSize:8,padding:'1px 4px',marginTop:2}} onClick={()=>upd(d.id,{effectiveTo:d.effectiveTo?null:new Date().toISOString().slice(0,10)})}>{d.effectiveTo?'open-ended':'+ end'}</button>
+              </td>
+              <td><select value={d.status} onChange={e=>upd(d.id,{status:e.target.value})} style={{fontSize:9,color:d.status==='active'?'var(--gn)':d.status==='expired'?'var(--tx3)':'var(--dg)'}}>
+                <option value="active">active</option><option value="expired">expired</option><option value="cancelled">cancelled</option>
+              </select></td>
+              <td><span style={{fontSize:9,padding:'1px 5px',borderRadius:8,background:d.source==='manual'?'rgba(167,139,250,.1)':'rgba(0,212,170,.1)',color:d.source==='manual'?'var(--a3)':'var(--ac)'}}>{d.source}</span></td>
+              <td><input value={d.note||''} onChange={e=>upd(d.id,{note:e.target.value})} placeholder="Why / context" style={{width:160,fontSize:10}}/></td>
+              <td><button className="btn btn-danger btn-sm" onClick={()=>del(d.id)}>×</button></td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>}
+  </div>;
+}
+// Round 5 — EventLogCard. Append-only ledger. Most rows auto-stamped by ADD_DISRUPTION;
+// auto-record on UPDATE_PRODUCT for tracked fields (leadTime/cost/capacity) is wired below.
+function EventLogCard({state,dispatch}){
+  const log=(state.eventLog||[]).slice().reverse(); // newest first
+  return <div className="card">
+    <div className="card-title">📋 Event Log <span className="badge" style={{background:'rgba(0,0,0,.1)',color:'var(--tx3)',marginLeft:6}}>{log.length} entries</span>
+      <SectionInfo>
+        <strong>What it does:</strong> Append-only ledger of changes that affect planning. Each row records: <code>ts</code> (when), <code>kind</code> (what), <code>target</code> (who), <code>before/after</code> (delta), <code>source</code>.<br/><br/>
+        <strong>Auto-record:</strong> Adding a disruption stamps an entry. Tracked product/BOM fields (leadTime, cost, capacity) auto-record when changed. Manual entries can be added programmatically via <code>RECORD_EVENT</code>.<br/><br/>
+        <strong>STALE:</strong> If any event ts &gt; <code>planning.lastSolveAt</code>, the optimisation tab shows a STALE banner prompting a replan.
+      </SectionInfo>
+      <button className="btn btn-secondary btn-sm" style={{marginLeft:'auto',fontSize:9}} onClick={()=>{if(confirm('Clear the event log? This is an admin-only operation.'))dispatch({type:'CLEAR_EVENT_LOG'});}}>Clear</button>
+    </div>
+    {log.length===0?<div style={{fontSize:10,color:'var(--tx3)',padding:'8px 10px',background:'var(--bg3)',borderRadius:3}}>No events recorded yet.</div>
+      :<div style={{maxHeight:280,overflowY:'auto'}}>
+        <table className="data-table" style={{fontSize:10,width:'100%'}}>
+          <thead><tr><th>When</th><th>Kind</th><th>Target</th><th>Δ</th><th>Source</th><th>Note</th></tr></thead>
+          <tbody>{log.map(ev=><tr key={ev.id}>
+            <td style={{fontFamily:'JetBrains Mono',fontSize:9,color:'var(--tx3)',whiteSpace:'nowrap'}}>{(ev.ts||'').replace('T',' ').slice(0,19)}</td>
+            <td><span style={{fontSize:9,padding:'1px 5px',borderRadius:8,background:'rgba(63,185,80,.1)',color:'var(--gn)'}}>{ev.kind}</span></td>
+            <td style={{fontSize:9,fontFamily:'JetBrains Mono',color:'var(--tx2)'}}>{Object.entries(ev.target||{}).map(([k,v])=>`${k}=${v}`).join(' ')||'—'}</td>
+            <td style={{fontSize:9,fontFamily:'JetBrains Mono'}}>{ev.before!=null?<>{JSON.stringify(ev.before)} → <strong>{JSON.stringify(ev.after)}</strong></>:JSON.stringify(ev.after||{})}</td>
+            <td><span style={{fontSize:9,color:'var(--a3)'}}>{ev.source}</span></td>
+            <td style={{fontSize:9,color:'var(--tx2)'}}>{ev.note}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>}
+  </div>;
+}
 function VersionHistoryCard({state,dispatch}){
   const [comment,setComment]=useState('');
   const versions=state.versions||[];

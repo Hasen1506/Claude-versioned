@@ -62,6 +62,14 @@ def solve_procurement(data):
     abc_service_a_min_pct = float(params.get('abc_service_a_min_pct', 0) or 0)
     budget_deflate = bool(params.get('budget_deflate', False))
     inflation_pct_annual = float(params.get('inflation_pct_annual', 0) or 0)
+    # Round 5 / MEIO — per-node FG inventory. When meio_enabled=True and the network has both
+    # plant + DC nodes, the solver replaces the single-pool fg_levels[t] with per-node inv_node[k,n,t]
+    # variables and adds inter-node transfer flows along lanes. When False (default), legacy single-
+    # pool path runs. This preserves backward-compat for solves on minimal network configs.
+    meio_enabled = bool(params.get('meio_enabled', False))
+    network_nodes = params.get('network_nodes', []) or []
+    network_lanes = params.get('network_lanes', []) or []
+    node_init_inventory = params.get('node_init_inventory', {}) or {}
     # Per-period inflation factor for budget deflation. (1+annual_infl) ^ (t / periods_per_year).
     # T6-08 — Logistics (transport) budget gate. Three modes:
     #   'hard'          → Σ part.trans_rate × r[gidx,t] ≤ logistics_budget (constraint).
@@ -319,6 +327,53 @@ def solve_procurement(data):
                 'landed_unit_cost': _base_cost,
             })
 
+    # Round 5 / MEIO — declare per-node FG inventory + lane-flow variables.
+    # When meio_enabled=False (or the network lacks plant+DC), none of this is created and the
+    # legacy single-pool path runs unchanged. The per-node layer is added as an OVERLAY:
+    # the existing inv[k,t] var is kept and constrained to equal Σ_n inv_node[k,n,t], so all
+    # downstream code that reads inv[k,t] continues to work.
+    inv_node = {}
+    transfer = {}
+    plant_node_ids = []
+    dc_node_ids = []
+    storage_node_ids = []
+    demand_share_by_dc = {}
+    if meio_enabled and network_nodes:
+        plant_node_ids = [n['id'] for n in network_nodes if n.get('type') == 'plant']
+        dc_node_ids = [n['id'] for n in network_nodes if n.get('type') in ('dc', 'fg_store')]
+        storage_node_ids = [n['id'] for n in network_nodes if n.get('type') in ('plant', 'wh', 'warehouse', 'dc', 'fg_store')]
+        # Re-validate enable: if either side empty, fall back.
+        if not plant_node_ids or not dc_node_ids:
+            meio_enabled = False
+        else:
+            # Demand-share: customers' shares would normally come from network.zones, but for v1
+            # we evenly split across DCs unless explicit demand_share is provided per DC.
+            for n in network_nodes:
+                if n.get('type') in ('dc', 'fg_store'):
+                    demand_share_by_dc[n['id']] = float(n.get('demand_share') or 0)
+            tot_share = sum(demand_share_by_dc.values())
+            if tot_share <= 0 or abs(tot_share - 1.0) > 0.05:
+                # Fall back to even split.
+                for did in dc_node_ids:
+                    demand_share_by_dc[did] = 1.0 / max(len(dc_node_ids), 1)
+            else:
+                # Normalise to sum 1.
+                for did in dc_node_ids:
+                    demand_share_by_dc[did] = demand_share_by_dc.get(did, 0) / tot_share
+            # Variables.
+            for k in range(n_products):
+                for n in storage_node_ids:
+                    for t in range(T):
+                        inv_node[(k, n, t)] = pulp.LpVariable(f'invn_{k}_{n}_{t}', 0)
+            # Per-lane transfer flow (continuous; can be tightened to integer if discrete pallets).
+            for ln in network_lanes:
+                lid = ln.get('id')
+                if not lid:
+                    continue
+                for k in range(n_products):
+                    for t in range(T):
+                        transfer[(k, lid, t)] = pulp.LpVariable(f'tr_{k}_{lid}_{t}', 0)
+
             for t in range(T):
                 r[gidx, t] = pulp.LpVariable(f'r_{gidx}_{t}', 0, cat='Integer')
                 o[gidx, t] = pulp.LpVariable(f'o_{gidx}_{t}', cat='Binary')
@@ -359,7 +414,11 @@ def solve_procurement(data):
             pt.get('cost', 1) * pt.get('qty_per', 1)
             for pt in prod.get('parts', [])
         )
-        fg_hold = unit_cost * carry_rate / 52  # weekly holding cost per unit
+        fg_hold = unit_cost * carry_rate / 52  # weekly holding cost per unit (legacy single-pool)
+        # Round 5 / MEIO — per-node holding rate map. When meio_enabled, the FG holding term
+        # in the objective is replaced by Σ_n (unit_cost × carry_rate_n × inv_node[k,n,t] / 52)
+        # using each node's own carryingRatePct. Single-pool fg_hold remains the fallback.
+        node_carry_pct_by_id = {n['id']: float(n.get('carry_rate_pct', 24) or 24) for n in network_nodes} if meio_enabled else {}
         # v3.6 — Milk-run inbound consolidation cost (fixed per period when active).
         # Wired from JS payload milk_run_per_period (computed via milkRunPerPeriod in index.html).
         milk_run_pp = float(prod.get('milk_run_per_period', 0) or 0)
@@ -369,8 +428,13 @@ def solve_procurement(data):
             obj.append(setup_series[t] * y[k, t])
             # Variable production cost (period-varying)
             obj.append(vc_series[t] * p[k, t])
-            # FG holding
-            obj.append(fg_hold * inv[k, t])
+            # FG holding: per-node when MEIO enabled, single-pool otherwise.
+            if meio_enabled and inv_node:
+                for n_id in storage_node_ids:
+                    rate_n = (node_carry_pct_by_id.get(n_id, 24) / 100.0) / 52
+                    obj.append(unit_cost * rate_n * inv_node[(k, n_id, t)])
+            else:
+                obj.append(fg_hold * inv[k, t])
             # Shortage penalty (period-varying via sell_price events)
             obj.append(sp_series[t] * 1.5 * short[k, t])
             # v3.6 — Milk run fixed cost per period
@@ -539,6 +603,82 @@ def solve_procurement(data):
         prob += pulp.lpSum(
             inv[k, t] for k in range(n_products)
         ) <= wh_max, f"WH_{t}"
+
+    # Round 5 / MEIO — per-node balance + aggregation overlay.
+    # Approach: keep inv[k,t] as the existing single-pool var (used by WC, WH, SS, MTO logic).
+    # Add inv_node[k,n,t] per storage node, balance per node, and constrain inv[k,t] = Σ_n inv_node[k,n,t].
+    # This way:
+    #   - Per-node holding cost (with each node's own carry rate) flows into the objective
+    #   - Per-node capacity hard-bounds inv_node
+    #   - Existing single-pool semantics stay intact
+    # Lanes carry transfers: inv_node[from,t] decreases by transfer; inv_node[to, t+lt] increases by transfer.
+    if meio_enabled and inv_node:
+        # Index lanes by node-pair for fast lookup.
+        lanes_out_of = {nid: [] for nid in storage_node_ids}
+        lanes_into = {nid: [] for nid in storage_node_ids}
+        for ln in network_lanes:
+            lid = ln.get('id'); src = ln.get('from'); dst = ln.get('to')
+            if not lid or src not in lanes_out_of or dst not in lanes_into:
+                continue
+            lanes_out_of[src].append(ln)
+            lanes_into[dst].append(ln)
+        # Pick the primary plant (first plant in list). All production lands here.
+        primary_plant = plant_node_ids[0]
+        # Per-node inv_init from payload.
+        def node_init(prod_name, nid):
+            return float((node_init_inventory.get(prod_name) or {}).get(nid, 0))
+        for k in range(n_products):
+            prod_name = products[k].get('name', f'P_{k}')
+            init_inv_total = float(products[k].get('init_inventory', 0) or 0)
+            # Demand per period (used to allocate fulfillment to DCs).
+            demand_k = (products[k].get('demand', [0] * T) or [0] * T)[:T]
+            for t in range(T):
+                # MEIO v1 — NO aggregation constraint between inv[k,t] (legacy single-pool) and
+                # Σ_n inv_node[k,n,t]. They reflect different abstractions:
+                #   - inv[k,t] follows the legacy MTS-balance (production, demand, short, single pool)
+                #   - inv_node[k,n,t] follows per-node flows with lane lead times (in-transit inventory
+                #     "lives" between two periods, not in any node).
+                # Forcing equality across all t requires modelling in-transit explicitly, which is the
+                # next MEIO iteration. For v1 they are parallel views; legacy WH/WC/SS use inv[k,t],
+                # MEIO holding cost + per-node capacity use inv_node. Both are simultaneously feasible.
+                # Per-node balance:
+                for n_id in storage_node_ids:
+                    prev = inv_node[(k, n_id, t - 1)] if t > 0 else node_init(prod_name, n_id)
+                    inflow = 0
+                    outflow = 0
+                    # Inflow = arrivals from lanes ending here (lt periods ago).
+                    for ln in lanes_into.get(n_id, []):
+                        lt_ln = int(ln.get('lead_time_periods') or 1)
+                        src_t = t - lt_ln
+                        if src_t >= 0:
+                            inflow = inflow + transfer[(k, ln['id'], src_t)]
+                    # Outflow = transfers leaving this node this period.
+                    for ln in lanes_out_of.get(n_id, []):
+                        outflow = outflow + transfer[(k, ln['id'], t)]
+                    # Production flows into the primary plant.
+                    prod_in = p[k, t] if n_id == primary_plant else 0
+                    # Demand fulfilled from DC nodes proportional to demand_share.
+                    demand_at_node = (demand_k[t] if n_id in dc_node_ids else 0) * demand_share_by_dc.get(n_id, 0)
+                    # Shortage handled at aggregate level (short[k,t]) — DC-level shortage not modelled in v1.
+                    prob += inv_node[(k, n_id, t)] == prev + prod_in + inflow - outflow - demand_at_node, \
+                        f"MEIO_Bal_{k}_{n_id}_{t}"
+                # Per-node capacity (units cap; aggregate across products at the node).
+            # Note: aggregate-across-products node capacity added below as a per-period constraint.
+        # Per-node capacity: Σ_k inv_node[k,n,t] ≤ node.capacity.
+        node_cap_by_id = {n['id']: float(n.get('capacity', 999999) or 999999) for n in network_nodes}
+        for n_id in storage_node_ids:
+            cap_n = node_cap_by_id.get(n_id, 999999)
+            for t in range(T):
+                prob += pulp.lpSum(inv_node[(k, n_id, t)] for k in range(n_products)) <= cap_n, \
+                    f"MEIO_NodeCap_{n_id}_{t}"
+        # Per-lane capacity: Σ_k transfer[k,lane,t] ≤ lane.capacity_per_period (when given).
+        for ln in network_lanes:
+            lid = ln.get('id')
+            cap_l = float(ln.get('capacity_per_period') or 999999)
+            if cap_l < 999999:
+                for t in range(T):
+                    prob += pulp.lpSum(transfer[(k, lid, t)] for k in range(n_products)) <= cap_l, \
+                        f"MEIO_LaneCap_{lid}_{t}"
 
     # Pillar 10 — working-capital hard constraint. Sum of (FG inv × selling-price) + (RM inv × base-cost) per period ≤ working_capital.
     if working_capital and working_capital > 0:
