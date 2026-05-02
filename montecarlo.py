@@ -10,6 +10,7 @@ Returns: cost distribution, VaR95, CVaR95, fill rate distribution
 """
 import numpy as np
 import time
+import math
 
 
 def run_montecarlo(data, n_runs=500):
@@ -22,6 +23,19 @@ def run_montecarlo(data, n_runs=500):
     service_level = params.get('service_level', 0.95)
     z_map = {0.85: 1.036, 0.90: 1.282, 0.95: 1.645, 0.99: 2.326}
     z = z_map.get(service_level, 1.645)
+
+    # T8-10 — Bivariate-correlated demand & cost shocks.
+    # Real-world: commodity-price spikes often co-occur with demand surges (expansion-phase
+    # correlation typical for FMCG / industrial). Default ρ=0.4 — flip to 0 for legacy
+    # independence behavior. Cholesky decomposition of [[1, ρ], [ρ, 1]] gives:
+    #   L = [[1, 0], [ρ, √(1−ρ²)]]
+    # so we sample two iid N(0,1) variates ε_d, ε_c and form correlated z's:
+    #   z_d = ε_d
+    #   z_c = ρ · ε_d + √(1−ρ²) · ε_c
+    rho = float(params.get('corr_demand_cost', 0.4) or 0.0)
+    rho = max(-0.95, min(0.95, rho))   # bound away from singularity
+    chol_a = rho
+    chol_b = math.sqrt(max(0.0, 1.0 - rho * rho))
 
     rng = np.random.default_rng(42)
     run_costs = []
@@ -42,21 +56,30 @@ def run_montecarlo(data, n_runs=500):
             shelf = prod.get('shelf_life', T)
             fy = prod.get('yield_pct', 0.95)
 
-            # Stochastic demand
-            noise = rng.normal(1.0, mape_pct, T)
-            demand = np.maximum(0, np.round(base_demand * noise)).astype(int)
+            # T8-10 — Correlated noise pair per period: (z_d, z_c) ~ N(0, [[1,ρ],[ρ,1]]).
+            eps_d = rng.standard_normal(T)
+            eps_c = rng.standard_normal(T)
+            z_d = eps_d                       # demand z-score
+            z_c = chol_a * eps_d + chol_b * eps_c  # cost z-score, correlated with demand
+            # Map z-score → multiplier with the per-stream CV (mape for demand; per-part cost_cv for cost).
+            demand_mult = 1.0 + mape_pct * z_d
+            demand = np.maximum(0, np.round(base_demand * demand_mult)).astype(int)
 
-            # Unit material cost
+            # Unit material cost — share the SAME z_c across parts within a period
+            # (commodity correlation: a USD spike hits all parts together).
             parts = prod.get('parts', [])
-            unit_mat_cost = 0
+            unit_mat_cost_pp = np.zeros(T)
             for part in parts:
-                # P6 — prefer landed_cost (home currency, FX-hedged) over raw cost when UI provides it.
                 base_cost = part.get('landed_cost')
                 if base_cost is None:
                     base_cost = part.get('cost', 1.0)
-                cost_cv = part.get('cost_cv', 0.05)
-                stoch_cost = max(0.01, rng.normal(base_cost, base_cost * cost_cv))
-                unit_mat_cost += stoch_cost * part.get('qty_per', 1.0)
+                cost_cv = float(part.get('cost_cv', 0.05) or 0.05)
+                qty_per = float(part.get('qty_per', 1.0) or 1.0)
+                cost_mult = 1.0 + cost_cv * z_c
+                stoch_cost_arr = np.maximum(0.01, base_cost * cost_mult)
+                unit_mat_cost_pp = unit_mat_cost_pp + stoch_cost_arr * qty_per
+            # Period-mean material cost — simulation loop below uses scalar per-period.
+            unit_mat_cost = float(np.mean(unit_mat_cost_pp))
 
             fg_hold_per = unit_mat_cost * carry_rate / 52
             short_penalty = sell_price * 1.5

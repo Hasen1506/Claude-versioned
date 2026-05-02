@@ -1,7 +1,17 @@
 """
-Product Mix / Profit Maximizer LP — Demand-Aware
-==================================================
-The profit maximizer now accounts for:
+Product Mix / Profit Maximizer — TRUE LP (PuLP / CBC)
+======================================================
+This module is a TRUE Linear Program, NOT a greedy margin-per-hour heuristic.
+It builds a `pulp.LpProblem(LpMaximize)` with continuous decision variables
+q[k] (units produced per SKU) and per-line allocations x[k, l], real linear
+constraints (demand ceiling/floor, shared/per-line capacity, budget, material
+availability, warehouse), and emits LP-grade outputs:
+  - Shadow prices (constraint duals via c.pi)
+  - Reduced costs / range-of-optimality (q.dj)
+  - Slack and binding flags
+  - Crossover analysis (price increase needed for excluded SKUs to enter the mix)
+
+Demand-aware features layered on top:
 1. FORECAST-DERIVED demand ceilings (not arbitrary max_demand)
 2. MAPE uncertainty → optimistic/pessimistic scenarios
 3. DEMAND MODE: MTS, MTO, ATO, Seasonal

@@ -29,6 +29,14 @@ def solve_procurement(data):
     cap_mode = data.get('capacity_mode', 'parallel')  # shared or parallel
 
     T = params.get('periods', 52)  # period count at configured grain
+    # T8-03 — Production lines block (id, capacity, hrs_per_period, planned_maintenance, eligible_skus).
+    # Used to derive per-product per-period maintenance scaling so procurement MILP doesn't schedule
+    # production through line-down weeks.
+    lines_block = data.get('lines', []) or []
+    # T8-04 — fill-rate target (decimal, e.g. 0.95). Mode: 'soft' adds penalty term,
+    # 'hard' adds constraint Σshort ≤ (1-target)·Σdemand, 'off' skips.
+    fill_rate_target = float(params.get('fill_rate_target', 0.95) or 0.95)
+    fill_rate_mode = (params.get('fill_rate_mode') or 'soft').lower()
     # Pillar 2 — period grain scales per-period carry cost (annual rate → per-period).
     time_grain = params.get('time_grain', 'weekly')
     periods_per_year = {'daily': 365, 'weekly': 52, 'monthly': 12}.get(time_grain, 52)
@@ -46,6 +54,25 @@ def solve_procurement(data):
     salvage = params.get('salvage_rate', 0.80)
     service_level = params.get('service_level', 0.95)
     budget = params.get('budget', None)  # optional budget constraint
+    # #7 — extended constraint set. Each is 0 / falsy when the UI toggle is off.
+    labor_hours_max = float(params.get('labor_hours_max', 0) or 0)
+    co2_max_per_period = float(params.get('co2_max_per_period', 0) or 0)
+    supplier_concentration_max_pct = float(params.get('supplier_concentration_max_pct', 0) or 0)
+    budget_deflate = bool(params.get('budget_deflate', False))
+    inflation_pct_annual = float(params.get('inflation_pct_annual', 0) or 0)
+    # Per-period inflation factor for budget deflation. (1+annual_infl) ^ (t / periods_per_year).
+    # T6-08 — Logistics (transport) budget gate. Three modes:
+    #   'hard'          → Σ part.trans_rate × r[gidx,t] ≤ logistics_budget (constraint).
+    #   'soft'          → adds 10× penalty per ₹ over budget into objective via auxiliary slack var.
+    #   'unconstrained' → no-op (UI shows warning).
+    # Combined cost feeds Tab 09 KPI variance.
+    logistics_budget = params.get('logistics_budget', None)
+    logistics_mode = (params.get('logistics_mode') or 'soft').lower()
+    # T6 — locked POs from PoReleasePlanCard (Tab 5). Modelled as SCHEDULED RECEIPTS at the
+    # arrival period (release + lead_time), NOT as forced order-release decisions. This matches
+    # MRP semantics: the buying decision is already made; the qty hits RM inventory at arrival
+    # and the solver re-optimises only the residual gap. See `scheduled_receipts` build below.
+    locked_pos = params.get('locked_pos', []) or []
     # P7 audit — RM warehouse 4-mode capacity (parallel to FG).
     # rm_wh_mode ∈ {units, area, volume, unlimited}. Per-part rm_footprint_area / rm_footprint_volume
     # carry the m²/u or m³/u factor. When mode in {area, volume}, an aggregate constraint
@@ -74,6 +101,27 @@ def solve_procurement(data):
         z_map = {0.85: 1.036, 0.90: 1.282, 0.95: 1.645, 0.99: 2.326}
         z = z_map.get(round(service_level, 2), 1.645)
 
+    # T3-08 — ABC/XYZ-driven SS policy. When a product carries abc_class + xyz_class,
+    # the per-product service level (and therefore z) overrides the global default.
+    # Matrix below mirrors the recommendedSSPolicy() matrix in index.html so the
+    # planner UI and the solver agree on policy.
+    abc_xyz_sl = {
+        ('A','X'):0.99,('A','Y'):0.98,('A','Z'):0.97,
+        ('B','X'):0.97,('B','Y'):0.95,('B','Z'):0.92,
+        ('C','X'):0.92,('C','Y'):0.90,('C','Z'):0.85,
+    }
+    def per_product_z(prod):
+        a = (prod.get('abc_class') or '').upper()
+        x = (prod.get('xyz_class') or '').upper()
+        sl = abc_xyz_sl.get((a, x))
+        if sl is None:
+            return z
+        try:
+            from statistics import NormalDist
+            return NormalDist().inv_cdf(max(0.5, min(0.9999, float(sl))))
+        except Exception:
+            return {0.85:1.036,0.90:1.282,0.92:1.405,0.95:1.645,0.97:1.881,0.98:2.054,0.99:2.326}.get(round(sl,2), z)
+
     # Pillar 6 — per-period capacity factor: fraction of the period that is NOT a holiday.
     # Daily:   1.0 if the date is not a holiday, else 0.0.
     # Weekly:  (working_days_in_week - holidays_in_week) / working_days_in_week.
@@ -101,6 +149,56 @@ def solve_procurement(data):
         hols = sum(1 for i in range(7) if (ref + timedelta(days=i)).isoformat() in hol_set)
         return max(0.0, (wdays - hols) / max(wdays, 1))
     cap_factor = [period_factor(t) for t in range(T)]
+
+    # T8-03 — Per-product per-period maintenance factor.
+    # For each product k, find the eligible lines, build each line's per-period scale (1.0 normal,
+    # 0.0 fully down weekly, fractional hourly), then take the AVG across eligible lines.
+    # Avg (not min) because shared/parallel lines distribute load — losing one of three lines
+    # cuts effective capacity to ~67%, not to 0.
+    def _line_period_scales(line):
+        scales = [1.0] * T
+        hpp = float(line.get('hrs_per_period', 0) or 0)
+        for w in line.get('planned_maintenance', []) or []:
+            mode = (w.get('mode') or 'weekly').lower()
+            if mode == 'weekly':
+                fw = max(int(w.get('from_week', 0) or 0) - 1, 0)
+                tw = max(int(w.get('to_week', 0) or 0) - 1, fw)
+                for t in range(fw, min(tw + 1, T)):
+                    scales[t] = 0.0
+            elif mode == 'hourly':
+                # Resolve which period the date falls in; fallback period 0.
+                t_target = 0
+                if horizon_start_date and w.get('date'):
+                    try:
+                        from datetime import date as _date
+                        d = _date.fromisoformat(w['date'])
+                        s_dt = _date.fromisoformat(horizon_start_date)
+                        days_per_p = {'daily': 1, 'monthly': 30}.get(time_grain, 7)
+                        t_target = max(0, min((d - s_dt).days // days_per_p, T - 1))
+                    except Exception:
+                        t_target = 0
+                hrs_lost = float(w.get('hours_lost', 0) or 0)
+                if hpp > 0 and hrs_lost > 0:
+                    scales[t_target] = max(0.0, min(scales[t_target], 1.0 - hrs_lost / hpp))
+        return scales
+    # k -> [factor per t]
+    maint_factor_k = {}
+    if lines_block:
+        line_scales = [_line_period_scales(l) for l in lines_block]
+        for k in range(n_products):
+            eligible_idx = [li for li, l in enumerate(lines_block) if not l.get('eligible_skus') or k in (l.get('eligible_skus') or [])]
+            if not eligible_idx:
+                eligible_idx = list(range(len(lines_block)))  # no constraint → all eligible
+            mf = []
+            for t in range(T):
+                avg = sum(line_scales[li][t] for li in eligible_idx) / max(len(eligible_idx), 1)
+                mf.append(avg)
+            maint_factor_k[k] = mf
+    # Default: 1.0 (no derate) when no lines block.
+    def maint_factor(k, t):
+        if k in maint_factor_k and t < len(maint_factor_k[k]):
+            return maint_factor_k[k][t]
+        return 1.0
 
     # ── Build problem ──
     prob = pulp.LpProblem("Procurement_Optimizer", pulp.LpMinimize)
@@ -131,11 +229,27 @@ def solve_procurement(data):
         fy = prod.get('yield_pct', 0.95)
         short_penalty = sell_price * 1.5  # lost margin + goodwill
 
-        # Safety stock
+        # Safety stock — T3-08 honors per-product ABC/XYZ class when supplied.
+        # T8-05 — Heizer formula honors BOTH demand variance AND lead-time variance:
+        #   SS = Z × √(LT × σ²_d + d̄² × σ²_LT)
+        # where σ_LT = LT × lt_cv (using max LT-CV across BOM parts for this product, since
+        # SS protects against the slowest replenishment path). Falls back to demand-only
+        # when no parts/lt_cv information is available.
         demand_arr = np.array(demand, dtype=float)
         avg_d = max(demand_arr.mean(), 0.1)
         std_d = max(demand_arr.std(), 0.1)
-        ss = max(1, round(z * std_d))
+        z_eff = per_product_z(prod)
+        # Find the bottleneck part: max(LT × (1 + lt_cv)) — the path that drives SS sizing.
+        _parts_for_ss = prod.get('parts', []) or []
+        if _parts_for_ss:
+            lt_for_ss = max(float(pt.get('lead_time', 1) or 1) for pt in _parts_for_ss)
+            lt_cv_for_ss = max(float(pt.get('lt_cv', 0) or 0) for pt in _parts_for_ss)
+        else:
+            lt_for_ss = 1.0
+            lt_cv_for_ss = 0.0
+        sigma_lt = lt_for_ss * lt_cv_for_ss
+        sigma_ltd = math.sqrt(max(lt_for_ss, 1.0) * std_d ** 2 + (avg_d ** 2) * (sigma_lt ** 2))
+        ss = max(1, round(z_eff * sigma_ltd))
 
         for t in range(T):
             p[k, t] = pulp.LpVariable(f'p_{k}_{t}', 0, cap, cat='Integer')
@@ -153,16 +267,20 @@ def solve_procurement(data):
             _base_cost = part.get('landed_cost')
             if _base_cost is None:
                 _base_cost = part.get('cost', 1.0)
+            # T5-09 — VMI parts bypass MOQ / MaxOrder / ord_cost. Supplier replenishes
+            # to target stock-days; solver treats supply as ∞ within RM cap and books
+            # zero ordering admin cost. The PO output flags these as vmi=True.
+            is_vmi = bool(part.get('vmi', False))
             all_parts.append({
                 'name': part.get('name', f'Part_{k}_{i}'),
                 'cost': _base_cost,
                 'qty_per': part.get('qty_per', 1.0),
                 'lt': part.get('lead_time', 1),
-                'moq': part.get('moq', 1),
-                'max_order': part.get('max_order', 9999),
+                'moq': 0 if is_vmi else part.get('moq', 1),
+                'max_order': 999999 if is_vmi else part.get('max_order', 9999),
                 'hold_pct': part.get('hold_pct', carry_rate * 100),
-                'rm_cap': part.get('rm_capacity', 9999),
-                'ord_cost': part.get('ordering_cost', 50),
+                'rm_cap': 999999 if is_vmi else part.get('rm_capacity', 9999),
+                'ord_cost': 0 if is_vmi else part.get('ordering_cost', 50),
                 'rm_shelf': part.get('rm_shelf', T),
                 'product_k': k,
                 'part_i': i,
@@ -175,6 +293,26 @@ def solve_procurement(data):
                 'proc_policy': (part.get('proc_policy') or 'milp').lower(),
                 'rm_footprint_area': float(part.get('rm_footprint_area', 0.05) or 0.05),
                 'rm_footprint_volume': float(part.get('rm_footprint_volume', 0.02) or 0.02),
+                # #2 — UoM-aware capacity. uom = recipe unit (g/ml/L/kg/pcs); purchase_pack = qty per pack
+                # in same uom (e.g. 100 L per drum). Footprint is per-PACK (one drum = one slot), so
+                # rm_inv (in recipe-uom) is divided by purchase_pack to get pack count for capacity check.
+                'uom': str(part.get('uom') or 'u'),
+                'purchase_pack': max(float(part.get('purchase_pack', 1) or 1), 1e-9),
+                # NEW — Fixed-rate transport contract. When True, tier discounts/transport tiers are bypassed.
+                'trans_contract_fixed': bool(part.get('trans_contract_fixed', False)),
+                'trans_contract_rate': float(part.get('trans_contract_rate', 0) or 0),
+                # #7 — per-part CO₂ factor (kg per recipe-uom). Used by CO2_max_per_period constraint.
+                'co2_factor': float(part.get('co2_factor', 0) or 0),
+                # T5-01/05/09 — supplier master metadata threaded through to PO output.
+                'supplier_name': part.get('supplier_name', '') or '',
+                'supplier_state': part.get('supplier_state', '') or '',
+                'supplier_country': part.get('supplier_country', 'IN') or 'IN',
+                'vmi': is_vmi,
+                'vmi_target_stock_days': float(part.get('vmi_target_stock_days', 14) or 14),
+                'vmi_review_freq_days': float(part.get('vmi_review_freq_days', 7) or 7),
+                # raw_unit_cost preserves the un-landed cost so PO output can show both.
+                'raw_unit_cost': part.get('cost', _base_cost),
+                'landed_unit_cost': _base_cost,
             })
 
             for t in range(T):
@@ -242,9 +380,19 @@ def solve_procurement(data):
     tier_indicators = {}  # (gidx,t,tier_i) -> binary
     for gidx, part in enumerate(all_parts):
         base_cost = part['cost']
-        tiers = sorted(part.get('vol_disc', []) or [], key=lambda x: x.get('minQty', 0))
-        trans_tiers = sorted(part.get('trans_tiers', []) or [], key=lambda x: x.get('minQty', 0))
-        default_trans = part.get('trans_rate', 0.0) or 0.0
+        # NEW — Fixed-rate transport contract bypass. When a part has a signed fixed-rate contract,
+        # volume tiers and transport-tier discounts are inert: the contract rate applies regardless of qty.
+        # This matches reality (carrier signed off on a flat rate, won't honour any tiers).
+        contract_fixed = bool(part.get('trans_contract_fixed', False))
+        contract_rate = float(part.get('trans_contract_rate', 0) or 0)
+        if contract_fixed:
+            tiers = []
+            trans_tiers = []
+            default_trans = contract_rate
+        else:
+            tiers = sorted(part.get('vol_disc', []) or [], key=lambda x: x.get('minQty', 0))
+            trans_tiers = sorted(part.get('trans_tiers', []) or [], key=lambda x: x.get('minQty', 0))
+            default_trans = part.get('trans_rate', 0.0) or 0.0
         has_vol = len(tiers) > 1
         has_trans = len(trans_tiers) > 0
         for t in range(T):
@@ -324,8 +472,18 @@ def solve_procurement(data):
         # the LP fixes p[k,t] to that committed value. Periods >= replan_from_period stay free.
         actuals_override = prod.get('actuals_override') or []
 
+        # T8-05 — Heizer SS formula (LT-aware) for the MTO no-build cap below.
         demand_arr = np.array(demand, dtype=float)
-        ss = max(1, round(z * max(demand_arr.std(), 0.1)))
+        avg_d_c = max(demand_arr.mean(), 0.1)
+        std_d_c = max(demand_arr.std(), 0.1)
+        _parts_c = prod.get('parts', []) or []
+        if _parts_c:
+            lt_c = max(float(pt.get('lead_time', 1) or 1) for pt in _parts_c)
+            ltcv_c = max(float(pt.get('lt_cv', 0) or 0) for pt in _parts_c)
+        else:
+            lt_c, ltcv_c = 1.0, 0.0
+        sigma_ltd_c = math.sqrt(max(lt_c, 1.0) * std_d_c ** 2 + (avg_d_c ** 2) * ((lt_c * ltcv_c) ** 2))
+        ss = max(1, round(z * sigma_ltd_c))
 
         for t in range(T):
             d = demand[t] if t < len(demand) else demand[-1]
@@ -337,7 +495,8 @@ def solve_procurement(data):
                 f"InvBal_{k}_{t}"
 
             # C2: Capacity (scaled by per-period working-day factor — Pillar 6 holiday exclusion)
-            eff_cap = cap * cap_factor[t] if t < len(cap_factor) else cap
+            # T8-03 — also scaled by line-maintenance factor (1.0 = no derate, 0.0 = all eligible lines down).
+            eff_cap = cap * (cap_factor[t] if t < len(cap_factor) else 1.0) * maint_factor(k, t)
             prob += p[k, t] <= eff_cap * y[k, t], f"Cap_{k}_{t}"
 
             # C3: Min production (if producing, produce at least 1)
@@ -393,6 +552,51 @@ def solve_procurement(data):
                 p[k, t] for k in range(n_products)
             ) <= eff_shared, f"SharedCap_{t}"
 
+    # T6 — Build scheduled_receipts[gidx][t]: already-purchased POs that arrive in-horizon.
+    # Each locked PO carries {part, qty, releaseDate}. Arrival period = (release - horizon_start)/dpp + lead_time.
+    # Negative arrive_t (PO already arrived before horizon start) is dropped — its qty is assumed already in
+    # init_inventory. Out-of-horizon arrivals (≥ T) are dropped — solver can't act on them.
+    # Backward-compat: if a lock carries an integer `period` field (legacy shape), it's treated as
+    # release_period directly; otherwise the date math runs.
+    from datetime import date as _date
+    name_to_gidx = {part['name']: gidx for gidx, part in enumerate(all_parts)}
+    scheduled_receipts = {gidx: [0] * T for gidx in range(len(all_parts))}
+    if locked_pos and horizon_start_date:
+        try:
+            hz_start = _date.fromisoformat(horizon_start_date)
+        except Exception:
+            hz_start = None
+    else:
+        hz_start = None
+    days_per_period = {'daily': 1, 'monthly': 30}.get(time_grain, 7)
+    for lk in locked_pos:
+        nm = lk.get('part_name') or lk.get('part') or ''
+        if nm not in name_to_gidx:
+            continue
+        gidx = name_to_gidx[nm]
+        lt = all_parts[gidx]['lt']
+        qty = int(lk.get('qty') or 0)
+        if qty <= 0:
+            continue
+        # Resolve release period from explicit `period`, then `releaseDate` against horizon start.
+        rel_p = None
+        if lk.get('period') is not None:
+            try:
+                rel_p = int(lk.get('period'))
+            except Exception:
+                rel_p = None
+        if rel_p is None and hz_start and lk.get('releaseDate'):
+            try:
+                rel_dt = _date.fromisoformat(str(lk['releaseDate'])[:10])
+                rel_p = (rel_dt - hz_start).days // days_per_period
+            except Exception:
+                rel_p = None
+        if rel_p is None:
+            continue
+        arrive_p = rel_p + lt
+        if 0 <= arrive_p < T:
+            scheduled_receipts[gidx][arrive_p] += qty
+
     # RM constraints
     for gidx, part in enumerate(all_parts):
         k = part['product_k']
@@ -406,6 +610,16 @@ def solve_procurement(data):
         qty_per = part['qty_per']
         scrap = part['scrap']
         fy = prod.get('yield_pct', 0.95)
+        # #5 — Yield carry-forward. When yield_actual > yield_pct, prior period's RM had buffer
+        # that wasn't consumed (better-than-expected yield ⇒ less RM needed). Surplus carries
+        # forward as extra inventory entering the next period. yield_carry_frac is the fraction
+        # of prior-period CONSUMED RM that becomes surplus: 1 - yield_pct/yield_actual.
+        # Defensive: planning still uses predicted yield baseline; carry-fwd is a credit on top.
+        y_act = prod.get('yield_actual')
+        y_act = float(y_act) if (y_act is not None) else None
+        yield_carry_frac = 0.0
+        if y_act is not None and y_act > fy and y_act > 0:
+            yield_carry_frac = 1.0 - (fy / y_act)
         effective_qty = qty_per * (1 + scrap) / max(fy, 0.01)
         # Default init RM: enough for lead_time periods of avg demand
         avg_demand_per_t = sum(demand[:T]) / T if T > 0 else 10
@@ -417,11 +631,18 @@ def solve_procurement(data):
             arrive_t = t - lt
             arrived = r[gidx, arrive_t] if arrive_t >= 0 else 0
 
+            # T6 — Scheduled receipts: already-released POs that arrive at this period.
+            # Treated as exogenous inventory bumps; solver re-optimises around them.
+            sched_rcpt = scheduled_receipts[gidx][t]
+
             # RM consumption = production * effective qty per unit
             consumed = p[k, t] * effective_qty
 
+            # #5 — yield carry-forward into period t from period t-1's surplus
+            yield_carry_in = (p[k, t - 1] * effective_qty * yield_carry_frac) if (t > 0 and yield_carry_frac > 0) else 0
+
             prev_rm = rm_inv[gidx, t - 1] if t > 0 else init_rm
-            prob += rm_inv[gidx, t] == prev_rm + arrived - consumed, \
+            prob += rm_inv[gidx, t] == prev_rm + arrived + sched_rcpt + yield_carry_in - consumed, \
                 f"RMBal_{gidx}_{t}"
 
             # RM non-negative (redundant with var bounds but explicit)
@@ -434,17 +655,19 @@ def solve_procurement(data):
             # RM warehouse capacity (per-part units cap — always active)
             prob += rm_inv[gidx, t] <= rm_cap, f"RMCap_{gidx}_{t}"
 
-    # P7 audit — aggregate RM warehouse cap (area or volume mode). Adds Σ rm_inv × footprint ≤ limit per period.
+    # P7 / #2 — aggregate RM warehouse cap (area or volume mode). Footprint is per-PACK
+    # (one drum = one slot), so we divide rm_inv (in recipe-uom) by purchase_pack to get
+    # pack count, then multiply by footprint. For legacy parts where pack=1, behaviour is identical.
     if rm_wh_mode == 'area' and rm_wh_limit_area > 0:
         for t in range(T):
             prob += pulp.lpSum(
-                rm_inv[gidx, t] * part['rm_footprint_area']
+                rm_inv[gidx, t] * (part['rm_footprint_area'] / part['purchase_pack'])
                 for gidx, part in enumerate(all_parts)
             ) <= rm_wh_limit_area, f"RMWHArea_{t}"
     elif rm_wh_mode == 'volume' and rm_wh_limit_volume > 0:
         for t in range(T):
             prob += pulp.lpSum(
-                rm_inv[gidx, t] * part['rm_footprint_volume']
+                rm_inv[gidx, t] * (part['rm_footprint_volume'] / part['purchase_pack'])
                 for gidx, part in enumerate(all_parts)
             ) <= rm_wh_limit_volume, f"RMWHVol_{t}"
 
@@ -457,11 +680,122 @@ def solve_procurement(data):
 
     # Budget constraint (optional)
     if budget and budget > 0:
-        prob += pulp.lpSum(
-            part['cost'] * r[gidx, t]
+        if budget_deflate and inflation_pct_annual > 0:
+            # #7 — Inflation-deflated budget. Per-period cap is divided by (1+infl)^(t/periods_per_year).
+            # Real purchasing power: Σ_per_period spend ≤ budget / (1+infl)^t. Total horizon stays bounded.
+            ann_infl = inflation_pct_annual / 100.0
+            for t in range(T):
+                deflate = (1 + ann_infl) ** (t / max(periods_per_year, 1))
+                period_cap = (budget / max(T, 1)) / max(deflate, 1e-9)
+                prob += pulp.lpSum(
+                    part['cost'] * r[gidx, t]
+                    for gidx, part in enumerate(all_parts)
+                ) <= period_cap, f"BudgetDeflated_{t}"
+        else:
+            prob += pulp.lpSum(
+                part['cost'] * r[gidx, t]
+                for gidx, part in enumerate(all_parts)
+                for t in range(T)
+            ) <= budget, "Budget"
+
+    # #7 — Labor hours constraint. Σ_t (p[k,t] × labor_per_unit) ≤ labor_hours_max per period.
+    if labor_hours_max > 0:
+        labor_per_u_by_k = [float(products[k].get('labor_per_unit', 0) or 0) for k in range(n_products)]
+        if any(lp > 0 for lp in labor_per_u_by_k):
+            for t in range(T):
+                prob += pulp.lpSum(
+                    p[k, t] * labor_per_u_by_k[k] for k in range(n_products)
+                ) <= labor_hours_max, f"LaborHrs_{t}"
+
+    # #7 — CO₂ per-period cap. Σ_part r[gidx,t] × co2_per_unit ≤ co2_max_per_period.
+    # co2_per_unit comes from part-level co2_factor (kg per recipe-uom). Falls back to 0 if not set.
+    if co2_max_per_period > 0:
+        co2_by_g = [float(p_.get('co2_factor', 0) or 0) for p_ in all_parts]
+        if any(c > 0 for c in co2_by_g):
+            for t in range(T):
+                prob += pulp.lpSum(
+                    r[gidx, t] * co2_by_g[gidx] for gidx in range(len(all_parts))
+                ) <= co2_max_per_period, f"CO2_{t}"
+
+    # #7 — Single-supplier concentration cap. Anti-concentration risk control:
+    # Σ spend with supplier S over horizon ≤ (cap%) × total spend over horizon.
+    # We approximate by aggregating all_parts by supplier_name. Linear because both sides scale with r.
+    if supplier_concentration_max_pct > 0 and supplier_concentration_max_pct < 100:
+        sup_to_gidx = {}
+        for gidx, part in enumerate(all_parts):
+            sup = part.get('supplier_name') or 'unknown'
+            sup_to_gidx.setdefault(sup, []).append(gidx)
+        if len(sup_to_gidx) > 1:  # only meaningful with >1 supplier
+            cap_frac = supplier_concentration_max_pct / 100.0
+            total_spend = pulp.lpSum(
+                part['cost'] * r[gidx, t]
+                for gidx, part in enumerate(all_parts)
+                for t in range(T)
+            )
+            for sup, gidxs in sup_to_gidx.items():
+                sup_spend = pulp.lpSum(
+                    all_parts[gidx]['cost'] * r[gidx, t]
+                    for gidx in gidxs
+                    for t in range(T)
+                )
+                # sup_spend ≤ cap_frac × total_spend  ⇒  sup_spend - cap_frac*total_spend ≤ 0
+                prob += sup_spend - cap_frac * total_spend <= 0, f"SupConc_{sup[:20]}"
+
+    # T8-04 — Fill-rate constraint. Only meaningful when backorders are allowed (else short==0
+    # and fill rate is implicitly 100%). Two modes:
+    #   'hard'  : Σshort ≤ (1 − target) × Σdemand     (infeasible if RM/capacity can't meet)
+    #   'soft'  : aux fr_slack ≥ Σshort − cap; penalty 100× into objective.
+    #   'off'   : skip
+    # The target is a horizon-wide aggregate (matches APO/IBP CTM behavior). Per-period
+    # fill-rate would over-constrain because demand can be 0 in some periods.
+    if bo_on and fill_rate_mode != 'off' and fill_rate_target > 0:
+        total_demand_h = sum(
+            sum((products[k].get('demand', [0] * T) or [0] * T)[:T]) for k in range(n_products)
+        )
+        if total_demand_h > 0:
+            short_cap = (1.0 - fill_rate_target) * total_demand_h
+            total_short = pulp.lpSum(short[k, t] for k in range(n_products) for t in range(T))
+            if fill_rate_mode == 'hard':
+                prob += total_short <= short_cap, "FillRateHard"
+            else:  # soft
+                fr_slack = pulp.LpVariable('fill_rate_slack', 0)
+                prob += total_short - fr_slack <= short_cap, "FillRateSoft"
+                # Penalty rate scales with weighted average sell price so it is meaningful.
+                avg_sp = (sum(products[k].get('sell_price', 100) for k in range(n_products))
+                          / max(n_products, 1))
+                prob.objective = prob.objective + 100.0 * avg_sp * fr_slack
+
+    # T6-08 — Logistics (transport) budget gate. Total transport spend = Σ part.trans_rate × r[gidx,t].
+    # This is the inbound-RM transport leg (matches what the JS UI accumulates as freight_spend
+    # for the active lanes touching each part). Outbound transport is layered on top in profitmix
+    # but for procurement we enforce the inbound side only.
+    if logistics_budget is not None and logistics_mode != 'unconstrained':
+        log_spend_terms = [
+            part.get('trans_rate', 0.0) * r[gidx, t]
             for gidx, part in enumerate(all_parts)
             for t in range(T)
-        ) <= budget, "Budget"
+            if part.get('trans_rate', 0.0) > 0
+        ]
+        if log_spend_terms:
+            log_spend = pulp.lpSum(log_spend_terms)
+            if logistics_mode == 'hard' and logistics_budget > 0:
+                prob += log_spend <= logistics_budget, "LogisticsBudgetHard"
+            elif logistics_mode == 'soft':
+                # Slack variable for over-budget; multiplied by 10× into objective.
+                # This makes the budget visible without going infeasible.
+                cap = logistics_budget if logistics_budget > 0 else 0
+                slack = pulp.LpVariable('logistics_overrun', 0)
+                prob += log_spend - slack <= cap, "LogisticsBudgetSoft"
+                # Update existing objective in-place (don't re-emit — PuLP would treat it as a new constraint).
+                prob.objective = prob.objective + 10.0 * slack
+
+    # T6 — Locked POs are now handled as scheduled_receipts in the RM balance loop above.
+    # The earlier forced-release-decision constraint (r[gidx, t] == q) was wrong on two counts:
+    # (1) the JS payload sends releaseDate, not period, so period was always None and locks
+    #     were silently dropped; (2) modelling as a forced release ignored the fact that the
+    #     buying decision is already made — the planner only wants the qty to land in inventory
+    #     at the arrival period, not to constrain the solver's release decision (which would
+    #     double-count if the PO was released before horizon start).
 
     # ── Solve ──
     solver = pulp.PULP_CBC_CMD(
@@ -515,7 +849,8 @@ def solve_procurement(data):
         rm_levels = [round(pulp.value(rm_inv[gidx, t]) or 0, 1) for t in range(T)]
         order_flags = [int(pulp.value(o[gidx, t]) or 0) for t in range(T)]
 
-        # Build PO list
+        # Build PO list — T5-01/06/09 metadata: supplier_name, payment_term_days, landed_cost,
+        # vmi flag. UI's PoReleasePlanCard reads these directly.
         po_list = []
         for t in range(T):
             if orders[t] > 0:
@@ -523,7 +858,15 @@ def solve_procurement(data):
                     'period': t,
                     'arrive_period': t + part['lt'],
                     'quantity': orders[t],
-                    'cost': round(orders[t] * part['cost'], 2),
+                    'cost': round(orders[t] * part['raw_unit_cost'], 2),
+                    'landed_cost': round(orders[t] * part['landed_unit_cost'], 2),
+                    'unit_cost': part['raw_unit_cost'],
+                    'unit_landed_cost': part['landed_unit_cost'],
+                    'supplier_name': part['supplier_name'],
+                    'supplier_state': part['supplier_state'],
+                    'supplier_country': part['supplier_country'],
+                    'payment_term_days': part['pay_term_days'],
+                    'vmi': part['vmi'],
                 })
 
         # v3.2 — compute MILP's realized per-part cost for comparison
@@ -591,7 +934,15 @@ def solve_procurement(data):
             'purchase_orders': po_list,
             'total_ordered': sum(orders),
             'total_cost': round(sum(orders) * part['cost'], 2),
+            'total_landed_cost': round(sum(orders) * part['landed_unit_cost'], 2),
             'num_orders': sum(order_flags),
+            # T5-01/05/09 metadata
+            'supplier_name': part['supplier_name'],
+            'supplier_state': part['supplier_state'],
+            'supplier_country': part['supplier_country'],
+            'payment_term_days': part['pay_term_days'],
+            'vmi': part['vmi'],
+            'vmi_target_stock_days': part['vmi_target_stock_days'],
             # v3.2 additions
             'proc_policy_pref': policy_pref,
             'proc_policy_chosen': chosen,

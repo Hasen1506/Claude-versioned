@@ -21,7 +21,7 @@ def solve_production(data):
     params = data.get('params', {})
 
     T = params.get('periods', 26)
-    ot_cost = params.get('overtime_cost_per_hr', 50)
+    ot_cost_default = params.get('overtime_cost_per_hr', 50)  # T4-04 — fallback when line lacks workers/rate
     hrs_per_shift = params.get('hours_per_shift', 8)
     makespan_weight = params.get('makespan_weight', 0.1)
 
@@ -36,6 +36,22 @@ def solve_production(data):
         lines = [{'id': 'line1', 'name': 'Line 1', 'capacity': 50,
                    'type': 'shared', 'products': list(range(n_prod))}]
         n_lines = 1
+
+    # T4-04 — per-line OT cost helper. OT_cost = workers × hrs × rate × mult.
+    # Falls back to params.overtime_cost_per_hr * hrs when the line lacks workers/rate (old payload).
+    def line_ot_cost_per_hr(l):
+        w = float(l.get('workers_per_shift', 0) or 0)
+        rate = float(l.get('hourly_rate', 0) or 0)
+        mult = float(l.get('ot_mult', 1.5) or 1.5)
+        if w > 0 and rate > 0:
+            return w * rate * mult
+        return ot_cost_default
+    # T4-04 — legal cap on OT hrs/period: maxOtHrsPerWorkerPerWeek × workers × shifts (assumes weekly grain).
+    def line_max_ot_per_period(l):
+        cap = float(l.get('max_ot_hrs_per_worker_per_week', 12) or 12)
+        w = float(l.get('workers_per_shift', 1) or 1)
+        sh = float(l.get('shifts_per_day', 1) or 1)
+        return cap * w * sh
 
     prob = pulp.LpProblem("Production_Scheduler", pulp.LpMinimize)
 
@@ -135,9 +151,11 @@ def solve_production(data):
         for t in range(1, T):
             switch[l, t] = pulp.LpVariable(f'sw_{l}_{t}', 0, cat='Binary')
 
+    # T4-04 — OT upper bound = legal cap (maxOtHrsPerWorkerPerWeek × workers × shifts), per line per period.
     for l in range(n_lines):
+        max_ot = line_max_ot_per_period(lines[l])
         for t in range(T):
-            ot[l, t] = pulp.LpVariable(f'ot_{l}_{t}', 0, hrs_per_shift)
+            ot[l, t] = pulp.LpVariable(f'ot_{l}_{t}', 0, max_ot)
 
     # Objective: minimize setup + overtime + makespan
     obj = []
@@ -147,16 +165,30 @@ def solve_production(data):
             for t in range(T):
                 obj.append(setup_cost * y[k, l, t])
 
-    # Changeover cost
-    changeover_cost = params.get('changeover_cost', 100)
+    # T4-10 — Changeover cost: per-line scalar fallback; SKU-pair matrix when populated.
+    # The MILP variable `switch[l,t]` only counts switches; sku-pair lookup happens via expected-value
+    # average over eligible pairs to keep the model linear (a full from-to changeover MIP would explode).
+    changeover_cost_default = params.get('changeover_cost', 100)
     for l in range(n_lines):
+        line = lines[l]
+        co_matrix = line.get('changeover_matrix', {}) or {}
+        # Mean changeover minutes across all defined pairs on this line; falls back to scalar.
+        co_mins_scalar = float(line.get('changeover_mins', 30) or 30)
+        if co_matrix:
+            pair_vals = [float(co_matrix[fi][ti]) for fi in co_matrix for ti in co_matrix.get(fi, {})]
+            mean_co_min = sum(pair_vals) / max(len(pair_vals), 1) if pair_vals else co_mins_scalar
+        else:
+            mean_co_min = co_mins_scalar
+        # Cost per changeover scales with minutes lost (1 min = 1/60 hr × line OT cost).
+        co_cost_line = changeover_cost_default + (mean_co_min / 60.0) * line_ot_cost_per_hr(line)
         for t in range(1, T):
-            obj.append(changeover_cost * switch[l, t])
+            obj.append(co_cost_line * switch[l, t])
 
-    # Overtime cost
+    # T4-04 — OT cost per line: workers × hrs × hourlyRate × otMult.
     for l in range(n_lines):
+        ot_per_hr = line_ot_cost_per_hr(lines[l])
         for t in range(T):
-            obj.append(ot_cost * ot[l, t])
+            obj.append(ot_per_hr * ot[l, t])
 
     # Makespan penalty (encourage finishing early)
     for k in range(n_prod):
@@ -285,12 +317,22 @@ def solve_production(data):
             for k in range(n_prod) for t in range(T))
         cap = lines[l].get('capacity', 50)
         ot_hrs = sum(pulp.value(ot[l, t]) or 0 for t in range(T))
+        # T4-04 — solver-emitted OT cost breakdown so the capacity-loading panel can show real cash impact.
+        ot_per_hr = line_ot_cost_per_hr(lines[l])
+        ot_cost_total = round(ot_per_hr * ot_hrs, 2)
+        max_ot_period = line_max_ot_per_period(lines[l])
         line_results.append({
             'name': lines[l].get('name', f'L{l}'),
             'active_periods': active,
             'utilization': round(active / max(T, 1) * 100, 1),
             'total_produced': total_produced,
             'overtime_hours': round(ot_hrs, 1),
+            'overtime_cost': ot_cost_total,
+            'overtime_cost_per_hr': round(ot_per_hr, 2),
+            'max_ot_hrs_per_period': round(max_ot_period, 1),
+            'workers_per_shift': lines[l].get('workers_per_shift', 0),
+            'hourly_rate': lines[l].get('hourly_rate', 0),
+            'ot_threshold_pct': lines[l].get('ot_threshold_pct', 80),
             'changeovers': sum(int(pulp.value(switch.get((l, t), 0)) or 0) for t in range(1, T)),
         })
 
