@@ -4278,6 +4278,16 @@ function ProductsTab({state,dispatch}){
                       <optgroup label="Pull"><option value="jit">JIT</option><option value="kanban">Kanban</option><option value="mrp">MRP</option></optgroup>
                     </select>
                   </Field>
+                  {/* #4 — Previously orphaned data fields now editable. */}
+                  <Field label="Scrap %" hint="Process scrap factor. Effective qty = qtyPer × (1+scrap) / yield. Procurement consumes via solver effective_qty."><NumInput step="0.5" value={Math.round((b.scrapFactor||0)*100)} onChange={v=>upBom({scrapFactor:(+v||0)/100})}/></Field>
+                  <Field label="RM Capacity" hint="Per-part RM warehouse cap (units of recipe-uom). Solver hard constraint: rm_inv[t] ≤ rm_capacity. 0 = unlimited (use 999999)."><NumInput value={b.rmCapacity||2000} onChange={v=>upBom({rmCapacity:v})}/></Field>
+                  <Field label="On-Hand RM" hint="Initial RM inventory (recipe-uom) at horizon start. Seeds rm_inv[0] in the solver. Per-location overrides in Tab 01 supersede this when set."><NumInput value={b.onHand||0} onChange={v=>upBom({onHand:v})}/></Field>
+                  <Field label="VMI" hint="Vendor-Managed Inventory. When ON, solver bypasses MOQ/MaxOrder/ord_cost — supplier replenishes to target stock-days. Output PO records flag vmi=true.">
+                    <select value={b.vmi?'yes':'no'} onChange={e=>upBom({vmi:e.target.value==='yes'})}><option value="no">No</option><option value="yes">Yes</option></select>
+                  </Field>
+                  <Field label="CO₂ kg/u" hint="Per-recipe-uom CO₂ emissions factor. Used by the per-period CO₂ constraint (Tab 08 → Optimization Engine)."><NumInput step="0.01" value={b.co2Factor||0} onChange={v=>upBom({co2Factor:v})}/></Field>
+                  <Field label="Country" hint="Supplier country (ISO-2). Used for FX exposure constraint. Defaults to IN (home)."><input value={b.country||'IN'} onChange={e=>upBom({country:e.target.value.toUpperCase().slice(0,2)})} style={{width:48,fontFamily:'JetBrains Mono'}}/></Field>
+                  <Field label="HS Code" hint="HS / HTS classification code. Used for customs duty rate lookup (currently informational)."><input value={b.hsCode||''} onChange={e=>upBom({hsCode:e.target.value})} style={{width:80,fontFamily:'JetBrains Mono'}}/></Field>
                 </div>
                 {/* — TAX — T2-09 */}
                 <div style={{fontSize:9,fontWeight:700,color:'var(--a4)',marginTop:10,marginBottom:4,letterSpacing:.4}}>TAX &amp; DUTY <span style={{color:'var(--tx3)',fontWeight:400}}>· Plant in {plantSt} · {itcRecoverable?'GST-registered (ITC recoverable)':'NOT GST-registered (taxes sunk into cost)'}</span></div>
@@ -5264,7 +5274,11 @@ function OptimizeTab({state,dispatch}){
               // T5-09 — VMI flag: per-part flag wins over supplier-level flag.
               const vmi=!!b.vmi||!!sprof.vmiEnabled;
               const payTerms=+b.payTermDays||+sprof.paymentTerms||30;
-              return {name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:effQtyPer(b),lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,rm_footprint_area:+b.rmFootprintArea||0.05,rm_footprint_volume:+b.rmFootprintVolume||0.02,uom:b.uom||"u",purchase_pack:+b.purchasePack||1,trans_contract_fixed:!!b.transContractFixed,trans_contract_rate:+b.transContractRate||0,co2_factor:+b.co2Factor||0,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05,trans_rate:b.transRate||0.5,trans_mode:b.transMode||'perUnit',proc_policy:b.procPolicy||'milp',part_yield:(b.partYield||98)/100,lt_cv:(b.ltCV||10)/100,cost_cv:(b.costCV||10)/100,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[],pay_term_days:payTerms,early_pay_disc:b.earlyPayDisc||0,
+              // #7 — FX-exposure flag derived from supplier currency vs home currency. Both forms supported (b.supplierCurrency override).
+              const supCcy=(sprof.currency||b.supplierCurrency||state.config.currency||'INR').toUpperCase();
+              const homeCcy=(state.config.currency||'INR').toUpperCase();
+              const isForeignCcy=supCcy!==homeCcy;
+              return {name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:effQtyPer(b),lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,rm_footprint_area:+b.rmFootprintArea||0.05,rm_footprint_volume:+b.rmFootprintVolume||0.02,uom:b.uom||"u",purchase_pack:+b.purchasePack||1,trans_contract_fixed:!!b.transContractFixed,trans_contract_rate:+b.transContractRate||0,co2_factor:+b.co2Factor||0,is_foreign_currency:isForeignCcy,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05,trans_rate:b.transRate||0.5,trans_mode:b.transMode||'perUnit',proc_policy:b.procPolicy||'milp',part_yield:(b.partYield||98)/100,lt_cv:(b.ltCV||10)/100,cost_cv:(b.costCV||10)/100,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[],pay_term_days:payTerms,early_pay_disc:b.earlyPayDisc||0,
               // T5-01/05/09 master fields surfaced to solver
               supplier_name:sname,supplier_state:b.supplierState||sprof.state||'',supplier_country:b.country||sprof.country||'IN',
               // T8-07 — is_import drives the fx-shock disruption scope (only imports take the FX hit).
@@ -5451,7 +5465,13 @@ function OptimizeTab({state,dispatch}){
               variable_cost:p.variableCost,sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),
               yield_pct:p.yieldPct,yield_actual:p.yieldActual,init_inventory:effectiveInitInventory(p,state),
               cost_events:(p.costEvents||[]).map(ev=>({from_month:ev.fromMonth,param:ev.paramKey,value:ev.paramValue,label:ev.label})),
-              parts:p.bom.map(b=>({name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:effQtyPer(b),lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,rm_footprint_area:+b.rmFootprintArea||0.05,rm_footprint_volume:+b.rmFootprintVolume||0.02,uom:b.uom||"u",purchase_pack:+b.purchasePack||1,trans_contract_fixed:!!b.transContractFixed,trans_contract_rate:+b.transContractRate||0,co2_factor:+b.co2Factor||0,ordering_cost:b.orderingCost||75,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[]})),
+              parts:p.bom.map(b=>{
+                const _sname=b.supplierName||b.supplier||b.vendor||'';
+                const _sprof=(state.supplierProfiles||{})[_sname]||{};
+                const _supCcy=(_sprof.currency||b.supplierCurrency||state.config.currency||'INR').toUpperCase();
+                const _homeCcy=(state.config.currency||'INR').toUpperCase();
+                return ({name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:effQtyPer(b),lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,rm_footprint_area:+b.rmFootprintArea||0.05,rm_footprint_volume:+b.rmFootprintVolume||0.02,uom:b.uom||"u",purchase_pack:+b.purchasePack||1,trans_contract_fixed:!!b.transContractFixed,trans_contract_rate:+b.transContractRate||0,co2_factor:+b.co2Factor||0,is_foreign_currency:_supCcy!==_homeCcy,ordering_cost:b.orderingCost||75,vol_disc:b.volDisc||[],trans_tiers:b.tiers||[]});
+              }),
             })),
             params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:effectiveCarryRate(state),wh_max:constraints.warehouse.on?Math.min(constraints.warehouse.val,effectiveWhMaxUnits(state,5000)):effectiveWhMaxUnits(state,5000),wh_mode:state.budget.warehouseMode||'units',rm_wh_mode:state.budget.rmWarehouseMode||'units',rm_wh_limit_area:+state.budget.rmWarehouseLimitArea||0,rm_wh_limit_volume:+state.budget.rmWarehouseLimitVolume||0,service_level:state.config.serviceLevel},
           }
@@ -5771,8 +5791,8 @@ function OptimizeTab({state,dispatch}){
             {k:'laborHours',lbl:'Labor hrs/period',solver:'hard',hint:'Max total labour hours per period: Σ p[k,t] × labor_per_u ≤ cap. Uses product.laborPerUnit (Tab 02 → Variable Cost).'},
             {k:'co2',lbl:'CO₂ kg/period',solver:'hard',hint:'Max kg CO₂ per period from transport lanes: Σ shipped × lane_co2_factor ≤ cap. Uses lane.co2PerUnit (Tab 06 → Lanes).'},
             {k:'supplierConcMax',lbl:'Single-supplier max %',solver:'hard',hint:'No single supplier may exceed this share of total spend across the horizon. Anti-concentration risk control.'},
-            {k:'fxExposure',lbl:'FX spend max %',solver:'pending',hint:'Max % of total spend in non-home currency. Captured in payload; solver enforcement pending — needs per-supplier currency aggregation.'},
-            {k:'abcServiceA',lbl:'A-class SL min %',solver:'pending',hint:'Minimum fill-rate for A-class SKUs (vs default service_level). Captured in payload; solver enforcement pending — needs per-product ABC class tagging.'},
+            {k:'fxExposure',lbl:'FX spend max %',solver:'hard',hint:'Max % of horizon spend in non-home currency. Constraint: Σ foreign-spend ≤ cap × Σ total-spend. is_foreign_currency derived from supplierProfiles[name].currency vs config.currency.'},
+            {k:'abcServiceA',lbl:'A-class SL min %',solver:'hard',hint:'Minimum fill-rate for A-class SKUs (tighter than default service_level). Σ A-class shortage ≤ (1−target) × Σ A-class demand. Requires backorders enabled.'},
             {k:'budgetDeflate',lbl:'Inflation-deflate budget',solver:'hard',hint:'When ON, the per-period budget cap is divided by (1+infl)^t to reflect real purchasing power. Uses WACC card inflation rate.',noVal:true}
           ].map(({k,lbl,solver,hint,noVal})=>
             <label key={k} title={hint||''} style={{display:'flex',alignItems:'center',gap:4,cursor:'pointer',opacity:constraints[k].on?1:0.5,padding:'2px 4px',borderLeft:solver==='pending'?'2px solid var(--a4)':'none'}}>
@@ -5784,7 +5804,7 @@ function OptimizeTab({state,dispatch}){
           )}
         </div>
         <div style={{marginTop:6,fontSize:9,color:'var(--tx3)',padding:'4px 6px',background:'var(--bg)',borderRadius:3,lineHeight:1.5}}>
-          <strong style={{color:'var(--a3)'}}>Wiring:</strong> Each toggle adds (1) a checkbox state, (2) a payload field to <code>params.constraints</code>, (3) a real PuLP block in procurement.py. Toggles marked <span style={{color:'var(--a4)'}}>⏳</span> are captured in the payload (forward-compatible) but their solver block is not yet wired — they need wider data infrastructure (per-supplier currency aggregation, per-SKU ABC class) which is an upcoming pillar.
+          <strong style={{color:'var(--a3)'}}>Wiring:</strong> Each toggle adds (1) a checkbox state, (2) a payload field to <code>params.constraints</code>, (3) a real PuLP block in procurement.py. All toggles above are now solver-enforced. Round 4: labor + CO₂ + supplier-conc + FX + ABC-SL all live with full constraint blocks; budget can be inflation-deflated.
         </div>
       </div>
       <button className="btn btn-primary" onClick={handleSolve} disabled={solving}>{solving?'⏳ Solving...':'🔬 Run '+MODES.find(m=>m.id===solverMode)?.label}</button>

@@ -58,6 +58,8 @@ def solve_procurement(data):
     labor_hours_max = float(params.get('labor_hours_max', 0) or 0)
     co2_max_per_period = float(params.get('co2_max_per_period', 0) or 0)
     supplier_concentration_max_pct = float(params.get('supplier_concentration_max_pct', 0) or 0)
+    fx_exposure_max_pct = float(params.get('fx_exposure_max_pct', 0) or 0)
+    abc_service_a_min_pct = float(params.get('abc_service_a_min_pct', 0) or 0)
     budget_deflate = bool(params.get('budget_deflate', False))
     inflation_pct_annual = float(params.get('inflation_pct_annual', 0) or 0)
     # Per-period inflation factor for budget deflation. (1+annual_infl) ^ (t / periods_per_year).
@@ -303,6 +305,8 @@ def solve_procurement(data):
                 'trans_contract_rate': float(part.get('trans_contract_rate', 0) or 0),
                 # #7 — per-part CO₂ factor (kg per recipe-uom). Used by CO2_max_per_period constraint.
                 'co2_factor': float(part.get('co2_factor', 0) or 0),
+                # #7 — FX-exposure flag. True when supplier currency ≠ home currency. Used by fx_exposure_max_pct.
+                'is_foreign_currency': bool(part.get('is_foreign_currency', False)),
                 # T5-01/05/09 — supplier master metadata threaded through to PO output.
                 'supplier_name': part.get('supplier_name', '') or '',
                 'supplier_state': part.get('supplier_state', '') or '',
@@ -740,6 +744,39 @@ def solve_procurement(data):
                 )
                 # sup_spend ≤ cap_frac × total_spend  ⇒  sup_spend - cap_frac*total_spend ≤ 0
                 prob += sup_spend - cap_frac * total_spend <= 0, f"SupConc_{sup[:20]}"
+
+    # #7 — FX exposure cap. Σ_foreign-spend ≤ cap × Σ_total-spend across the horizon.
+    # is_foreign_currency is derived JS-side from supplierProfiles[name].currency vs config.currency.
+    if fx_exposure_max_pct > 0 and fx_exposure_max_pct < 100:
+        foreign_gidxs = [gidx for gidx, part in enumerate(all_parts) if part.get('is_foreign_currency')]
+        if foreign_gidxs:
+            cap_frac_fx = fx_exposure_max_pct / 100.0
+            total_spend_fx = pulp.lpSum(
+                part['cost'] * r[gidx, t]
+                for gidx, part in enumerate(all_parts)
+                for t in range(T)
+            )
+            foreign_spend = pulp.lpSum(
+                all_parts[gidx]['cost'] * r[gidx, t]
+                for gidx in foreign_gidxs
+                for t in range(T)
+            )
+            prob += foreign_spend - cap_frac_fx * total_spend_fx <= 0, "FXExposureCap"
+
+    # #7 — ABC service-level for A-class SKUs. When set, Σ_short across A-class products ≤
+    # (1 - target_a) × Σ_demand across A-class products. Tighter than the global service_level.
+    # is_class_a comes per-product from JS (p.abcClass === 'A').
+    if abc_service_a_min_pct > 0 and abc_service_a_min_pct < 100 and bo_on:
+        a_class_ks = [k for k in range(n_products) if str(products[k].get('abc_class', '')).upper() == 'A']
+        if a_class_ks:
+            target_a = abc_service_a_min_pct / 100.0
+            total_demand_a = sum(
+                sum((products[k].get('demand', [0] * T) or [0] * T)[:T]) for k in a_class_ks
+            )
+            if total_demand_a > 0:
+                short_cap_a = (1.0 - target_a) * total_demand_a
+                total_short_a = pulp.lpSum(short[k, t] for k in a_class_ks for t in range(T))
+                prob += total_short_a <= short_cap_a, "ABCServiceA"
 
     # T8-04 — Fill-rate constraint. Only meaningful when backorders are allowed (else short==0
     # and fill rate is implicitly 100%). Two modes:
