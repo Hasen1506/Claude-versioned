@@ -281,6 +281,14 @@ def solve_procurement(data):
             # to target stock-days; solver treats supply as ∞ within RM cap and books
             # zero ordering admin cost. The PO output flags these as vmi=True.
             is_vmi = bool(part.get('vmi', False))
+            # Per-part LP variables — declared here so every part has them regardless of MEIO or
+            # tier configuration. (An earlier refactor left this block orphaned under meio_enabled,
+            # which broke solves when a part had no vol_disc / trans_tiers — the no-tier objective
+            # branch reads r[gidx,t] directly and would KeyError.)
+            for t in range(T):
+                r[gidx, t] = pulp.LpVariable(f'r_{gidx}_{t}', 0, cat='Integer')
+                o[gidx, t] = pulp.LpVariable(f'o_{gidx}_{t}', cat='Binary')
+                rm_inv[gidx, t] = pulp.LpVariable(f'rminv_{gidx}_{t}', 0)
             all_parts.append({
                 'name': part.get('name', f'Part_{k}_{i}'),
                 'cost': _base_cost,
@@ -374,13 +382,15 @@ def solve_procurement(data):
                     for t in range(T):
                         transfer[(k, lid, t)] = pulp.LpVariable(f'tr_{k}_{lid}_{t}', 0)
 
-            for t in range(T):
-                r[gidx, t] = pulp.LpVariable(f'r_{gidx}_{t}', 0, cat='Integer')
-                o[gidx, t] = pulp.LpVariable(f'o_{gidx}_{t}', cat='Binary')
-                rm_inv[gidx, t] = pulp.LpVariable(f'rminv_{gidx}_{t}', 0)
-
     # ── Objective function ──
     obj = []
+
+    # Round 6 / MEIO in-transit — precompute per-product FG unit cost so we can apply holding
+    # cost to in-transit inventory on lanes outside the per-k loop. unit_cost = Σ (part.cost × qty_per).
+    unit_cost_by_k = {
+        k: sum(pt.get('cost', 1) * pt.get('qty_per', 1) for pt in prod.get('parts', []))
+        for k, prod in enumerate(products)
+    }
 
     # Helper — expand scalar base into period-indexed series, applying cost_events.
     # Cost events are stepwise: from_month m onwards, param switches to new value.
@@ -633,14 +643,16 @@ def solve_procurement(data):
             # Demand per period (used to allocate fulfillment to DCs).
             demand_k = (products[k].get('demand', [0] * T) or [0] * T)[:T]
             for t in range(T):
-                # MEIO v1 — NO aggregation constraint between inv[k,t] (legacy single-pool) and
+                # MEIO v2 — NO aggregation constraint between inv[k,t] (legacy single-pool) and
                 # Σ_n inv_node[k,n,t]. They reflect different abstractions:
                 #   - inv[k,t] follows the legacy MTS-balance (production, demand, short, single pool)
-                #   - inv_node[k,n,t] follows per-node flows with lane lead times (in-transit inventory
-                #     "lives" between two periods, not in any node).
-                # Forcing equality across all t requires modelling in-transit explicitly, which is the
-                # next MEIO iteration. For v1 they are parallel views; legacy WH/WC/SS use inv[k,t],
-                # MEIO holding cost + per-node capacity use inv_node. Both are simultaneously feasible.
+                #   - inv_node[k,n,t] follows per-node flows with lane lead times
+                #   - in-transit on lanes is modelled separately (Round 6 block below) — units in
+                #     motion carry holding cost on the shipper's balance sheet but don't sit at any node
+                # Forcing equality across all t would require including in-transit in inv[k,t], which
+                # we don't do because legacy WC/WH/SS constraints aren't designed to handle in-motion
+                # stock. For v2 they remain parallel views: legacy WH/WC/SS use inv[k,t]; MEIO holding
+                # cost + per-node capacity use inv_node; in-transit cost uses the transfer expression.
                 # Per-node balance:
                 for n_id in storage_node_ids:
                     prev = inv_node[(k, n_id, t - 1)] if t > 0 else node_init(prod_name, n_id)
@@ -679,6 +691,55 @@ def solve_procurement(data):
                 for t in range(T):
                     prob += pulp.lpSum(transfer[(k, lid, t)] for k in range(n_products)) <= cap_l, \
                         f"MEIO_LaneCap_{lid}_{t}"
+
+        # Round 6 / MEIO in-transit — closes the v1 gap where inventory in motion between nodes
+        # carried no holding cost. Units leaving origin at period s arrive at destination at s+lt;
+        # for periods s, s+1, ..., s+lt-1 the value sits on the shipper's balance sheet (or freight-
+        # forwarder, depending on Incoterms — here we assume FOB Origin / shipper carries WC).
+        # Charge: Σ over lanes,products,periods of unit_cost_k × transit_rate_per_period × in_transit.
+        # in_transit at end-of-period t on lane = Σ_{s ∈ [t-lt+1, t]} transfer[k, lane, s].
+        for ln in network_lanes:
+            lid = ln.get('id')
+            if not lid:
+                continue
+            lt_ln = int(ln.get('lead_time_periods') or 1)
+            if lt_ln <= 0:
+                continue  # instantaneous lane has no in-transit
+            transit_pct = float(ln.get('transit_carry_pct') or 0)
+            if transit_pct <= 0:
+                # Default to origin node's carry rate (shipper-owned WC)
+                src_id = ln.get('from')
+                transit_pct = node_carry_pct_by_id.get(src_id, 24)
+            transit_rate = (transit_pct / 100.0) / 52  # weekly rate
+            for k in range(n_products):
+                uc = unit_cost_by_k.get(k, 0)
+                if uc <= 0:
+                    continue
+                for t in range(T):
+                    lo = max(0, t - lt_ln + 1)
+                    in_t_expr = pulp.lpSum(
+                        transfer[(k, lid, s)] for s in range(lo, t + 1)
+                    )
+                    obj.append(uc * transit_rate * in_t_expr)
+
+        # Round 6 / MEIO in-transit — optional working-capital control: cap units in motion
+        # on a lane at any given time. Useful when ocean freight has finite container capacity
+        # in transit, or when finance imposes a hard ceiling on tied-up WC per route.
+        for ln in network_lanes:
+            lid = ln.get('id')
+            if not lid:
+                continue
+            lt_ln = int(ln.get('lead_time_periods') or 1)
+            cap_intran = float(ln.get('max_in_transit_units') or 0)
+            if cap_intran <= 0 or lt_ln <= 0:
+                continue
+            for t in range(T):
+                lo = max(0, t - lt_ln + 1)
+                prob += pulp.lpSum(
+                    transfer[(k, lid, s)]
+                    for k in range(n_products)
+                    for s in range(lo, t + 1)
+                ) <= cap_intran, f"MEIO_InTransitCap_{lid}_{t}"
 
     # Pillar 10 — working-capital hard constraint. Sum of (FG inv × selling-price) + (RM inv × base-cost) per period ≤ working_capital.
     if working_capital and working_capital > 0:
@@ -1014,12 +1075,26 @@ def solve_procurement(data):
             for n_id in storage_node_ids:
                 node_inventory[n_id] = [round(pulp.value(inv_node[(k, n_id, t)]) or 0, 1) for t in range(T)]
         lane_flows = {}
+        lane_in_transit = {}
         if meio_enabled and transfer:
             for ln in network_lanes:
                 lid = ln.get('id')
                 if not lid:
                     continue
                 lane_flows[lid] = [round(pulp.value(transfer[(k, lid, t)]) or 0, 1) for t in range(T)]
+                # Round 6 — derived in-transit per period (sum of transfers within the last lt window).
+                lt_ln = int(ln.get('lead_time_periods') or 1)
+                if lt_ln <= 0:
+                    lane_in_transit[lid] = [0.0] * T
+                else:
+                    series = []
+                    for t in range(T):
+                        lo = max(0, t - lt_ln + 1)
+                        series.append(round(sum(
+                            (pulp.value(transfer[(k, lid, s)]) or 0)
+                            for s in range(lo, t + 1)
+                        ), 1))
+                    lane_in_transit[lid] = series
 
         product_results.append({
             'name': prod.get('name', f'Product_{k}'),
@@ -1035,6 +1110,8 @@ def solve_procurement(data):
             # MEIO per-node breakdown (only populated when meio_enabled was True).
             'node_inventory': node_inventory,
             'lane_flows': lane_flows,
+            # Round 6 — per-lane in-transit inventory per period (units in motion).
+            'lane_in_transit': lane_in_transit,
         })
 
     material_results = []
@@ -1185,14 +1262,49 @@ def solve_procurement(data):
     meio_summary = None
     if meio_enabled and inv_node:
         node_meta = {n['id']: {'name': n.get('name', n['id']), 'type': n.get('type'), 'capacity': float(n.get('capacity', 0) or 0)} for n in network_nodes}
+        # Round 6 — aggregate in-transit roll-up across all products/lanes/periods.
+        # avg_in_transit_units_per_period = mean over t of (Σ lanes Σ products in_transit[k,lane,t])
+        # in_transit_value_total = Σ products Σ lanes Σ t (unit_cost_k × in_transit[k,lane,t]) — note this
+        # double-counts per-period stock (same units in motion for lt periods); useful as a TIE-UP measure.
+        lane_meta = {ln.get('id'): {
+            'from': ln.get('from'),
+            'to': ln.get('to'),
+            'lead_time_periods': int(ln.get('lead_time_periods') or 1),
+            'transit_carry_pct': float(ln.get('transit_carry_pct') or 0) or float(node_carry_pct_by_id.get(ln.get('from'), 24)),
+        } for ln in network_lanes if ln.get('id')}
+        avg_in_transit = 0.0
+        in_transit_value_period_avg = 0.0
+        if T > 0:
+            tot_units_periods = 0.0
+            tot_value_periods = 0.0
+            for ln in network_lanes:
+                lid = ln.get('id')
+                if not lid:
+                    continue
+                lt_ln = int(ln.get('lead_time_periods') or 1)
+                if lt_ln <= 0:
+                    continue
+                for t in range(T):
+                    lo = max(0, t - lt_ln + 1)
+                    for k in range(n_products):
+                        units_t = sum((pulp.value(transfer[(k, lid, s)]) or 0) for s in range(lo, t + 1))
+                        tot_units_periods += units_t
+                        tot_value_periods += units_t * unit_cost_by_k.get(k, 0)
+            avg_in_transit = round(tot_units_periods / T, 1)
+            in_transit_value_period_avg = round(tot_value_periods / T, 2)
         meio_summary = {
             'enabled': True,
             'plant_node_ids': plant_node_ids,
             'dc_node_ids': dc_node_ids,
             'storage_node_ids': storage_node_ids,
             'node_meta': node_meta,
+            'lane_meta': lane_meta,
             'demand_share_by_dc': demand_share_by_dc,
-            'note': 'v1: legacy single-pool inv[k,t] and per-node inv_node[k,n,t] are parallel views; in-transit inventory not yet modelled.',
+            # Round 6 — in-transit inventory now modelled. Average units in motion across the
+            # horizon + average tied-up working capital per period (units × unit_cost).
+            'avg_in_transit_units': avg_in_transit,
+            'avg_in_transit_value': in_transit_value_period_avg,
+            'note': 'v2: per-node inv_node[k,n,t] + per-lane in-transit (units in motion carry holding cost on shipper). Legacy single-pool inv[k,t] kept for WC/WH/SS constraints.',
         }
 
     return {
