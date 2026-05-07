@@ -1007,6 +1007,20 @@ def solve_procurement(data):
         total_short = sum(shortages)
         fill_rate = round((1 - total_short / max(total_demand, 1)) * 100, 1)
 
+        # Round 5 / MEIO — per-node inventory + per-lane transfer flows when enabled.
+        # Returned as nested dicts for the UI to render the per-node breakdown.
+        node_inventory = {}
+        if meio_enabled and inv_node:
+            for n_id in storage_node_ids:
+                node_inventory[n_id] = [round(pulp.value(inv_node[(k, n_id, t)]) or 0, 1) for t in range(T)]
+        lane_flows = {}
+        if meio_enabled and transfer:
+            for ln in network_lanes:
+                lid = ln.get('id')
+                if not lid:
+                    continue
+                lane_flows[lid] = [round(pulp.value(transfer[(k, lid, t)]) or 0, 1) for t in range(T)]
+
         product_results.append({
             'name': prod.get('name', f'Product_{k}'),
             'production': prod_schedule,
@@ -1018,6 +1032,9 @@ def solve_procurement(data):
             'total_shortage': round(total_short),
             'fill_rate': fill_rate,
             'num_batches': sum(setups),
+            # MEIO per-node breakdown (only populated when meio_enabled was True).
+            'node_inventory': node_inventory,
+            'lane_flows': lane_flows,
         })
 
     material_results = []
@@ -1163,12 +1180,28 @@ def solve_procurement(data):
         ), 2),
     }
 
+    # Round 5 / MEIO — surface a top-level summary block so the UI can render banners + tables
+    # without spelunking products[].node_inventory. Only populated when meio_enabled.
+    meio_summary = None
+    if meio_enabled and inv_node:
+        node_meta = {n['id']: {'name': n.get('name', n['id']), 'type': n.get('type'), 'capacity': float(n.get('capacity', 0) or 0)} for n in network_nodes}
+        meio_summary = {
+            'enabled': True,
+            'plant_node_ids': plant_node_ids,
+            'dc_node_ids': dc_node_ids,
+            'storage_node_ids': storage_node_ids,
+            'node_meta': node_meta,
+            'demand_share_by_dc': demand_share_by_dc,
+            'note': 'v1: legacy single-pool inv[k,t] and per-node inv_node[k,n,t] are parallel views; in-transit inventory not yet modelled.',
+        }
+
     return {
         'status': 'Optimal',
         'total_cost': round(total_cost, 2),
         'cost_breakdown': cost_breakdown,
         'products': product_results,
         'materials': material_results,
+        'meio': meio_summary,
         'solve_time': round(solve_time, 2),
         'periods': T,
         'solver': 'CBC',

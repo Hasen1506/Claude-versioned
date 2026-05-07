@@ -6076,6 +6076,64 @@ function OptimizeTab({state,dispatch}){
       </div>
     </div>)}
 
+    {/* Round 5 / MEIO — Per-node FG inventory + lane flows table. Only renders when the solver
+        ran in MEIO mode (meio_enabled in payload + plant+DC present). */}
+    {result&&result._mode==='procurement'&&result.meio?.enabled&&<div className="card">
+      <div className="card-title">🌐 Multi-Echelon Inventory
+        <span className="badge" style={{background:'rgba(0,212,170,.12)',color:'var(--ac)',marginLeft:6}}>{result.meio.storage_node_ids?.length||0} storage nodes · {result.meio.plant_node_ids?.length||0} plant · {result.meio.dc_node_ids?.length||0} DC</span>
+        <SectionInfo>
+          <strong>What it shows:</strong> Per-node FG inventory across the horizon and inter-node lane flows. The solver decomposed total FG inventory into a per-node view, applied each node's own carry rate to the holding cost, and routed transfers along lanes (with lane lead time honoured).<br/><br/>
+          <strong>v1 limitation:</strong> Legacy single-pool inv[k,t] (used by working-capital, warehouse-cap, safety-stock constraints) and the per-node view are <em>parallel views</em>. In-transit inventory between nodes is not yet modelled — adding it explicitly is the next MEIO iteration.<br/><br/>
+          <strong>Demand allocation:</strong> {result.meio.demand_share_by_dc?Object.entries(result.meio.demand_share_by_dc).map(([n,s])=>`${result.meio.node_meta?.[n]?.name||n}: ${(s*100).toFixed(0)}%`).join(' · '):'evenly split across DCs'}.
+        </SectionInfo>
+      </div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>{result.meio.note}</div>
+      {result.products?.map((p,pi)=>{
+        if(!p.node_inventory||Object.keys(p.node_inventory).length===0)return null;
+        const nodeIds=Object.keys(p.node_inventory);
+        const T=p.inventory?.length||0;
+        const cols=Math.min(T,12);
+        return <div key={`meio-${pi}`} style={{marginTop:pi>0?12:0}}>
+          <div style={{fontSize:11,fontWeight:700,color:'var(--ac)',marginBottom:4}}>◆ {p.name}</div>
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:9,fontFamily:'JetBrains Mono'}}>
+              <thead><tr style={{borderBottom:'1px solid var(--br2)'}}>
+                <th style={{textAlign:'left',padding:'2px 6px',color:'var(--tx3)'}}>Node</th>
+                <th style={{textAlign:'left',padding:'2px 6px',color:'var(--tx3)'}}>Type</th>
+                {Array.from({length:cols}).map((_,t)=><th key={t} style={{textAlign:'right',padding:'2px 4px',color:'var(--tx3)'}}>P{t+1}</th>)}
+                <th style={{textAlign:'right',padding:'2px 6px',color:'var(--tx3)'}}>Avg</th>
+              </tr></thead>
+              <tbody>
+                {nodeIds.map(nid=>{
+                  const meta=result.meio.node_meta?.[nid]||{};
+                  const arr=p.node_inventory[nid]||[];
+                  const avg=arr.length?arr.reduce((a,v)=>a+(+v||0),0)/arr.length:0;
+                  const isPlant=meta.type==='plant';
+                  return <tr key={nid} style={{background:isPlant?'rgba(0,212,170,.04)':'transparent'}}>
+                    <td style={{padding:'2px 6px',color:isPlant?'var(--ac)':'var(--tx2)',fontWeight:600}}>{meta.name||nid}</td>
+                    <td style={{padding:'2px 6px',fontSize:8,color:'var(--tx3)'}}>{meta.type}</td>
+                    {arr.slice(0,cols).map((v,t)=><td key={t} style={{textAlign:'right',padding:'2px 4px',color:v>0?'var(--tx)':'var(--tx3)'}}>{Math.round(v).toLocaleString()}</td>)}
+                    <td style={{textAlign:'right',padding:'2px 6px',color:'var(--a3)',fontWeight:600}}>{Math.round(avg).toLocaleString()}</td>
+                  </tr>;
+                })}
+              </tbody>
+            </table>
+          </div>
+          {Object.keys(p.lane_flows||{}).some(lid=>p.lane_flows[lid].some(v=>v>0))&&<div style={{marginTop:6}}>
+            <div style={{fontSize:9,color:'var(--tx3)',marginBottom:2,fontWeight:600,letterSpacing:.4}}>LANE FLOWS</div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:4}}>
+              {Object.entries(p.lane_flows).filter(([,v])=>v.some(x=>x>0)).map(([lid,v])=>{
+                const total=v.reduce((a,x)=>a+(+x||0),0);
+                return <div key={lid} style={{padding:'3px 6px',background:'var(--bg3)',borderRadius:3,fontSize:9,fontFamily:'JetBrains Mono'}}>
+                  <span style={{color:'var(--tx3)'}}>{lid}:</span> <strong style={{color:'var(--ac)'}}>{Math.round(total).toLocaleString()}u</strong>
+                </div>;
+              })}
+            </div>
+          </div>}
+        </div>;
+      })}
+    </div>}
+
     {/* ─── PO REGISTER (Procurement mode) ─── */}
     {result&&result._mode==='procurement'&&result.materials?.length>0&&<div className="card">
       <div className="card-title">🧾 Purchase Order Register
