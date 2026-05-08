@@ -17,6 +17,141 @@
 
 ---
 
+## A-4. What shipped in Round 12 (Honest Bucket 4 cleanup + R11 backend deferrals)
+
+**Working file sizes after R12:** `procurement.py` 1639 lines (R11 baseline: 1539);
+`index.html` script block 1,272,848 bytes (R11 baseline: 1,271,815; net +1KB).
+
+### A-4.1 — Why R12 was needed
+After R11, the user pushed back on the Bucket 4 audit: "Complete pending
+deferrals 1st then continue. I dont think bucket d was done accurately."
+The honest re-audit found three Bucket 4 items mis-marked as shipped:
+
+- **D1**: R11.D had ADDED a new SOURCE & SUPPLIER section but left the same
+  Source / Supplier State fields ALSO present in the TAX section below ⇒
+  duplicate inputs.
+- **D2**: MPS Monthly view had inline actuals (line 12710) ✓ — but the spec
+  also said "remove the separate card", and the standalone Actuals Entry
+  matrix at line 5947 was kept (just re-badged).
+- **D3**: MTO Orders card was inside Tab 2 product detail panel ✓ — but the
+  spec said "adjacent to Product Parameters", and Fixed & Setup Costs sat
+  between them.
+- **D1 lead-time band** (small/mid/large qty) was carried as a deferral in
+  R11.A-3.7. Never built.
+
+R11 also documented two open backend deferrals: true period-flat charge
+binary, and per-node UoM utilisation reporting.
+
+### A-4.2 — R12.A · D1 dedupe (`index.html`)
+Removed the duplicate `Source` (= supplierType) and `Supplier State` fields
+from the BOM expanded panel TAX section. They live exclusively in the
+SOURCE & SUPPLIER section above (added by R11.D). TAX section retains only
+tax-specific fields (Total GST %, CGST/SGST split, IGST, BCD/SWS for
+imports).
+
+### A-4.3 — R12.B · D2 standalone Actuals Entry card removed
+Replaced the Tab 3 standalone Actuals Entry matrix with a single
+breadcrumb pointing to the MPS Monthly inline column. Sole canonical
+input surface for actuals is now the MPS table; all breach + replan
+controls already lived there.
+
+### A-4.4 — R12.C · D3 MTO Orders relocated
+MTO Orders card now sits DIRECTLY ABOVE Product Parameters in Tab 2 (was
+above Fixed & Setup Costs ⇒ Product Parameters). New order: BOM → Costs →
+Forecast / Demand → Fixed & Setup Costs → **MTO Orders** → Product
+Parameters.
+
+### A-4.5 — R12.D · Lead-time band step-function (FE + BE)
+**Frontend** ([index.html:4945+](index.html#L4945)) — new LEAD-TIME BAND
+section in BOM expanded panel under PROCUREMENT:
+```
+Lead Time (wk)   — scalar fallback (used when smallMax = 0)
+Small Max (qty)  — upper bound for SMALL band
+Small LT (wk)    — lead time when qty ≤ smallMax
+Mid Max (qty)    — upper bound for MID band
+Mid LT (wk)      — lead time when smallMax < qty ≤ midMax
+Large LT (wk)    — lead time when qty > midMax
+```
+Stored on BOM row as `b.ltBand = {smallMax, smallLt, midMax, midLt, largeLt}`.
+Payload key `lead_time_band: {small_max, small_lt, mid_max, mid_lt, large_lt}`,
+null when band disabled.
+
+**Backend** ([procurement.py:401-422](procurement.py#L401-L422), receipt
+cascade rewrite at [procurement.py:1080-1160](procurement.py#L1080-L1160)):
+- Per-(part, period) sub-vars: `a_small`, `a_mid`, `a_large` (Integer ≥ 0)
+  + binaries `b_small`, `b_mid`, `b_large` (declared only when band active).
+- Constraints:
+  - `a_small + a_mid + a_large == r[gidx, t]` (qty conservation)
+  - `b_small + b_mid + b_large == o[gidx, t]` (one band per PO event)
+  - `a_small ≤ small_max × b_small`
+  - `a_mid ≤ mid_max × b_mid`
+  - `a_large ≤ max_order × b_large`
+  - `a_mid ≥ (small_max + 1) × b_mid` (mid band qty must exceed small_max)
+  - `a_large ≥ (mid_max + 1) × b_large` (large band qty must exceed mid_max)
+- Receipt cascade replaces `arrive_t = t − lt` with band-aware sum:
+  `arrived = a_small[t−small_lt] + a_mid[t−mid_lt] + a_large[t−large_lt]`
+- Backward compat: when `lead_time_band` is null OR small_max ≤ 0, scalar
+  `lt` path applies (legacy behavior preserved).
+
+### A-4.6 — R12.E · True flatPeriodic with activation binary (`procurement.py`)
+Closed R11 deferral A-3.7 #1. Old behavior charged the flat fee once per
+PO event via `o[g,t]` — when a single contract had multiple parts, each
+part's PO triggered an independent flat fee in the same period. New
+formulation aggregates per (contract_id, period):
+
+- During the per-part objective loop, flatPeriodic entries are deferred
+  to a `flat_periodic_pending` list (no per-part cost added).
+- After the loop, entries are grouped by (contract_id, period). For each
+  group, declare ONE binary `pflat[contract_id, t]` and link via
+  `pflat ≥ o[gidx, t]` for every part using that contract. Charge
+  `base_rate × pflat` ONCE per (contract, period).
+- Result: a contract attracts exactly one flat fee per period regardless
+  of how many parts on it order. Smoke test (P3 — 2 parts on TC1) pays
+  the flat fee once per active period instead of twice.
+
+### A-4.7 — R12.F · Per-node UoM utilisation reporting (`procurement.py`)
+Closed R11 deferral A-3.7 #2. After the solve, for each storage node
+emit a `node_uom_utilisation` block in `meio_summary`:
+
+```python
+{
+  '<node_id>': {
+    'caps': {'units': N, 'kg': N, 'm3': N, 'L': N},
+    'per_period': [{'period': t, 'units': u, 'kg': k, 'm3': m, 'L': l,
+                    'units_pct': p, 'kg_pct': p, 'm3_pct': p, 'L_pct': p}, ...],
+    'peak_units_pct': max,
+    'peak_kg_pct': max,
+    'peak_m3_pct': max,
+    'peak_L_pct': max,
+  },
+  ...
+}
+```
+
+Caps from `node.storage_cap_*`; per-period inv from `pulp.value(inv_node[k,n,t])`;
+weights / volumes from `products[k].fg_weight_kg_per_unit` / `fg_volume_m3_per_unit`
+(BOM rollup, R11.A). UI can render a per-node, per-UoM heatmap directly.
+
+### A-4.8 — Verification (R12)
+Babel parse ✓ at 1,272,848 bytes. Python smoke matrix:
+
+| # | Path | Status | Cost |
+|---|---|---|---|
+| 1 | Legacy bare-bones (no R8/R9/R10/R11/R12 keys) | Optimal | ₹2,695.36 |
+| 2 | R12 `lead_time_band` only | Optimal | ₹2,739.76 |
+| 3 | R12 flatPeriodic + activation binary, 2 parts share TC1 | Optimal | ₹3,721.81 |
+| 4 | R12 per-node UoM utilisation reporting | emitted (2 nodes, peak ≤60% m³) | n/a |
+| 5 | R12 all features together (band + flatP + UoM caps) | Optimal | ₹2,848.37 |
+
+All paths Optimal · cost deltas match expectations · backward compat
+preserved (legacy bare-bones identical to pre-R12 cost).
+
+### A-4.9 — Remaining R12 deferrals
+None opened. R12 closed all four R11 backend deferrals + four Bucket 4
+items the user flagged as inaccurately marked.
+
+---
+
 ## A-3. What shipped in Round 11 (Pending deferrals from R10 + Bucket 4 polish)
 
 **Working file sizes after R11:** `procurement.py` 1539 lines (R10 baseline: 1485);

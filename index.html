@@ -4943,6 +4943,19 @@ function ProductsTab({state,dispatch}){
                   <Field label="Country" hint="Supplier country (ISO-2). Used for FX exposure constraint. Defaults to IN (home)."><input value={b.country||'IN'} onChange={e=>upBom({country:e.target.value.toUpperCase().slice(0,2)})} style={{width:48,fontFamily:'JetBrains Mono'}}/></Field>
                   <Field label="HS Code" hint="HS / HTS classification code. Used for customs duty rate lookup (currently informational)."><input value={b.hsCode||''} onChange={e=>upBom({hsCode:e.target.value})} style={{width:80,fontFamily:'JetBrains Mono'}}/></Field>
                 </div>
+                {/* R12 / D1 — Lead-time band step-function. Big POs typically take longer to fulfil
+                    (supplier consolidation / production lot run). When enabled, the MILP routes each
+                    receipt qty through one of three bands: small / mid / large — each with its own
+                    lead time. Leaving smallMax = 0 disables the band; solver falls back to scalar leadTime. */}
+                <div style={{fontSize:9,fontWeight:700,color:'var(--a3)',marginTop:8,marginBottom:4,letterSpacing:.4}}>LEAD-TIME BAND <span style={{color:'var(--tx3)',fontWeight:400}}>(R12 / D1 — qty-dependent step-function. Leave Small Max = 0 to use scalar Lead Time only.)</span></div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(115px,1fr))',gap:6}}>
+                  <Field label="Lead Time (wk)" hint="Scalar fallback when band is disabled (Small Max = 0). Solver enters into the receipt cascade as `arrive_t = t − leadTime`."><NumInput value={b.leadTime||1} onChange={v=>upBom({leadTime:v})}/></Field>
+                  <Field label="Small Max (qty)" hint="Upper bound for SMALL band. Receipt qty 1..smallMax → arrives in `Small LT` periods. Set 0 to disable band-step (scalar leadTime applies)."><NumInput value={(b.ltBand&&b.ltBand.smallMax)||0} onChange={v=>upBom({ltBand:{...(b.ltBand||{}),smallMax:+v||0}})}/></Field>
+                  <Field label="Small LT (wk)" hint="Lead time for SMALL band POs. Typically the shortest (in-stock pull, no manufacturing lead)."><NumInput value={(b.ltBand&&b.ltBand.smallLt)||(b.leadTime||1)} onChange={v=>upBom({ltBand:{...(b.ltBand||{}),smallLt:+v||0}})}/></Field>
+                  <Field label="Mid Max (qty)" hint="Upper bound for MID band. POs (smallMax+1)..midMax → arrives in `Mid LT` periods."><NumInput value={(b.ltBand&&b.ltBand.midMax)||0} onChange={v=>upBom({ltBand:{...(b.ltBand||{}),midMax:+v||0}})}/></Field>
+                  <Field label="Mid LT (wk)" hint="Lead time for MID band POs. Supplier needs to consolidate or do a partial production run."><NumInput value={(b.ltBand&&b.ltBand.midLt)||(b.leadTime||1)} onChange={v=>upBom({ltBand:{...(b.ltBand||{}),midLt:+v||0}})}/></Field>
+                  <Field label="Large LT (wk)" hint="Lead time for LARGE band POs (qty > midMax). Full production lot run + freight; typically longest."><NumInput value={(b.ltBand&&b.ltBand.largeLt)||(b.leadTime||1)} onChange={v=>upBom({ltBand:{...(b.ltBand||{}),largeLt:+v||0}})}/></Field>
+                </div>
                 {/* Round 8 — Bucket 2 B6: inline ordering-cost breakdown editor (replaces the gear-icon prompt-chain). */}
                 {b._showOrdBreakdown&&(()=>{
                   const br=b.ordBreakdown||ordBreakdownDefault(b.orderingCost||50);
@@ -4972,13 +4985,9 @@ function ProductsTab({state,dispatch}){
                     </div>
                   </div>;
                 })()}
-                {/* — TAX — T2-09 */}
+                {/* — TAX — T2-09. R12 / D1.dedupe — Source + Supplier State now live in SOURCE & SUPPLIER above; do not repeat here. */}
                 <div style={{fontSize:9,fontWeight:700,color:'var(--a4)',marginTop:10,marginBottom:4,letterSpacing:.4}}>TAX &amp; DUTY <span style={{color:'var(--tx3)',fontWeight:400}}>· Plant in {plantSt} · {itcRecoverable?'GST-registered (ITC recoverable)':'NOT GST-registered (taxes sunk into cost)'}</span></div>
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(115px,1fr))',gap:6}}>
-                  <Field label="Source"><select value={b.supplierType} onChange={e=>upBom({supplierType:e.target.value})}><option value="domestic">Domestic</option><option value="import">Import</option></select></Field>
-                  {b.supplierType==='domestic'&&<Field label="Supplier State" hint={`Supplier's state. Plant is in ${plantSt}. Match → SGST+CGST (intrastate). Different → IGST (interstate).`}><select value={b.supplierState||'TN'} onChange={e=>upBom({supplierState:e.target.value})}>
-                    {['TN','MH','KA','GJ','UP','DL','WB','TG','AP','KL','PB','HR','RJ','MP','BR','OR','JH','CG','AS','UK','HP','GA','TR','MN','ML','NL','MZ','AR','SK','JK','LA','CH','PY','AN','DN','DD','LD'].map(s=><option key={s} value={s}>{s}</option>)}
-                  </select></Field>}
                   {b.supplierType==='domestic'&&<Field label="Total GST %" hint="Editable total. Intrastate splits 50/50 into CGST + SGST. Interstate flows entirely as IGST."><NumInput step="0.5" value={totalGst} onChange={v=>upBom({gstPct:v})}/></Field>}
                   {/* T2-09 — Show CGST + SGST split when intrastate, IGST when interstate. Read-only computed fields. */}
                   {b.supplierType==='domestic'&&isIntra&&<>
@@ -5175,35 +5184,7 @@ function ProductsTab({state,dispatch}){
 
       {/* T3 split — Actuals Entry + Promotions & Events moved to Tab 03 — Demand Planning. */}
 
-      {/* MTO Orders */}
-      <div className="card">
-        <div className="card-title">📋 Make-to-Order (MTO) <span className="badge" style={{background:'rgba(167,139,250,.1)',color:'var(--a3)'}}>{prod.mtoOrders.length} orders</span>
-          <span style={{marginLeft:'auto',fontSize:9,fontWeight:400,color:'var(--tx3)'}}>R9 / C2 — hybrid mode adds MTO qty on top of MTS forecast</span>
-        </div>
-        {/* R9 / C2 — MTS+MTO hybrid toggle. When ON, procurement / MPS demand = MTS forecast + MTO orderbook qty */}
-        <div style={{padding:'6px 8px',background:'var(--bg3)',borderRadius:4,marginBottom:6,display:'flex',alignItems:'center',gap:8}}>
-          <input type="checkbox" id={`mtoOnTop_${activeId}`} checked={!!prod.mtoOnTop} onChange={e=>upProd({mtoOnTop:e.target.checked})}/>
-          <label htmlFor={`mtoOnTop_${activeId}`} style={{fontSize:10,color:'var(--tx2)',cursor:'pointer'}}>
-            <strong style={{color:'var(--a3)'}}>Hybrid demand</strong> — add MTO orders on top of MTS forecast (procurement / MPS use sum). Off = pure MTS (today's behavior); MTO orders shown for tracking only.
-          </label>
-        </div>
-        {prod.mtoOrders.map(o=><div key={o.id} className="bom-row">
-          <Field label="Customer"><input value={o.customer} onChange={e=>dispatch({type:'UPDATE_MTO',productId:activeId,orderId:o.id,payload:{customer:e.target.value}})}/></Field>
-          <Field label="Qty"><NumInput value={o.qty} onChange={v=>dispatch({type:'UPDATE_MTO',productId:activeId,orderId:o.id,payload:{qty:v}})}/></Field>
-          <Field label="Due Month"><select value={o.dueMonth} onChange={e=>dispatch({type:'UPDATE_MTO',productId:activeId,orderId:o.id,payload:{dueMonth:+e.target.value}})}>{MONTHS.map((m,i)=><option key={i} value={i}>{m}</option>)}</select></Field>
-          <button className="btn btn-danger btn-sm" onClick={()=>dispatch({type:'DELETE_MTO',productId:activeId,orderId:o.id})}>×</button>
-        </div>)}
-        <button className="btn btn-secondary btn-sm" onClick={()=>dispatch({type:'ADD_MTO_ORDER',productId:activeId})}>+ Add Order</button>
-        {prod.mtoOnTop&&(()=>{
-          const mtoArr=mtoQtyByPeriod(prod,state.planning);
-          const totalMto=mtoArr.reduce((a,b)=>a+b,0);
-          const mtsArr=demandByPeriod(prod,state.planning);
-          const totalMts=mtsArr.reduce((a,b)=>a+b,0);
-          return totalMto>0?<div style={{marginTop:6,padding:'4px 8px',fontSize:10,background:'rgba(167,139,250,.06)',border:'1px solid rgba(167,139,250,.2)',borderRadius:4,color:'var(--tx2)'}}>
-            ✓ Hybrid demand active: MTS = <strong>{totalMts.toLocaleString()}</strong> · MTO = <strong style={{color:'var(--a3)'}}>{totalMto.toLocaleString()}</strong> · Total = <strong style={{color:'var(--ac)'}}>{(totalMts+totalMto).toLocaleString()}</strong> over {mtoArr.length} periods.
-          </div>:null;
-        })()}
-      </div>
+      {/* R12 / D3 — MTO Orders card moved to sit DIRECTLY ABOVE Product Parameters (further down) so the order book and demand-mode setting are co-located per Bucket 4 spec. */}
 
       {/* v3.4 — Fixed & Setup Costs (grouped; per-SKU own fixed, shared lines). Setup is batch-triggered; Fixed is calendar-triggered. */}
       {(()=>{
@@ -5271,6 +5252,36 @@ function ProductsTab({state,dispatch}){
           </div>
         </div>;
       })()}
+
+      {/* R12 / D3 — MTO Orders card relocated here (was above Fixed & Setup Costs) so it sits directly adjacent to Product Parameters per Bucket 4 D3 spec. */}
+      <div className="card">
+        <div className="card-title">📋 Make-to-Order (MTO) <span className="badge" style={{background:'rgba(167,139,250,.1)',color:'var(--a3)'}}>{prod.mtoOrders.length} orders</span>
+          <span style={{marginLeft:'auto',fontSize:9,fontWeight:400,color:'var(--tx3)'}}>R9 / C2 — hybrid mode adds MTO qty on top of MTS forecast</span>
+        </div>
+        {/* R9 / C2 — MTS+MTO hybrid toggle. When ON, procurement / MPS demand = MTS forecast + MTO orderbook qty */}
+        <div style={{padding:'6px 8px',background:'var(--bg3)',borderRadius:4,marginBottom:6,display:'flex',alignItems:'center',gap:8}}>
+          <input type="checkbox" id={`mtoOnTop_${activeId}`} checked={!!prod.mtoOnTop} onChange={e=>upProd({mtoOnTop:e.target.checked})}/>
+          <label htmlFor={`mtoOnTop_${activeId}`} style={{fontSize:10,color:'var(--tx2)',cursor:'pointer'}}>
+            <strong style={{color:'var(--a3)'}}>Hybrid demand</strong> — add MTO orders on top of MTS forecast (procurement / MPS use sum). Off = pure MTS (today's behavior); MTO orders shown for tracking only.
+          </label>
+        </div>
+        {prod.mtoOrders.map(o=><div key={o.id} className="bom-row">
+          <Field label="Customer"><input value={o.customer} onChange={e=>dispatch({type:'UPDATE_MTO',productId:activeId,orderId:o.id,payload:{customer:e.target.value}})}/></Field>
+          <Field label="Qty"><NumInput value={o.qty} onChange={v=>dispatch({type:'UPDATE_MTO',productId:activeId,orderId:o.id,payload:{qty:v}})}/></Field>
+          <Field label="Due Month"><select value={o.dueMonth} onChange={e=>dispatch({type:'UPDATE_MTO',productId:activeId,orderId:o.id,payload:{dueMonth:+e.target.value}})}>{MONTHS.map((m,i)=><option key={i} value={i}>{m}</option>)}</select></Field>
+          <button className="btn btn-danger btn-sm" onClick={()=>dispatch({type:'DELETE_MTO',productId:activeId,orderId:o.id})}>×</button>
+        </div>)}
+        <button className="btn btn-secondary btn-sm" onClick={()=>dispatch({type:'ADD_MTO_ORDER',productId:activeId})}>+ Add Order</button>
+        {prod.mtoOnTop&&(()=>{
+          const mtoArr=mtoQtyByPeriod(prod,state.planning);
+          const totalMto=mtoArr.reduce((a,b)=>a+b,0);
+          const mtsArr=demandByPeriod(prod,state.planning);
+          const totalMts=mtsArr.reduce((a,b)=>a+b,0);
+          return totalMto>0?<div style={{marginTop:6,padding:'4px 8px',fontSize:10,background:'rgba(167,139,250,.06)',border:'1px solid rgba(167,139,250,.2)',borderRadius:4,color:'var(--tx2)'}}>
+            ✓ Hybrid demand active: MTS = <strong>{totalMts.toLocaleString()}</strong> · MTO = <strong style={{color:'var(--a3)'}}>{totalMto.toLocaleString()}</strong> · Total = <strong style={{color:'var(--ac)'}}>{(totalMts+totalMto).toLocaleString()}</strong> over {mtoArr.length} periods.
+          </div>:null;
+        })()}
+      </div>
 
       {/* Product Settings */}
       <div className="card">
@@ -5944,21 +5955,10 @@ function DemandTab({state,dispatch}){
           </div>
         </div>
 
-        {/* Actuals Entry (kept here so demand-vs-actual tracking lives with the demand plan) */}
-        <div className="card" style={{borderLeft:'3px solid var(--a2)'}}>
-          <div className="card-title">📥 Actuals Entry <span className="badge" style={{background:'rgba(56,189,248,.1)',color:'var(--a2)'}}>config + breach lives in MPS</span>
-            <SectionInfo><strong>What it does:</strong> Quick per-product matrix to enter actuals against the consensus forecast. Deviations highlight (>20% red, >10% amber, ≤10% green).<br/><br/><strong>Where the engine lives:</strong> Tab 07 → Master Production Schedule. That card owns the breach-detection thresholds, side-by-side planned-vs-actual, and replan controls. This is the input surface only.</SectionInfo>
-          </div>
-          <div className="month-grid">
-            {Array.from({length:Math.min(fcShape.n,12)},(_,i)=>i).map(i=>{
-              const act=prod.actuals?.[i];const fct=consensusForecast[i]||0;const dev=act!==null&&act!==undefined&&fct>0?((act-fct)/fct*100).toFixed(0):null;
-              return <div key={i} className="month-cell" style={{borderColor:act!==null&&act!==undefined?(Math.abs(dev)>20?'var(--dg)':Math.abs(dev)>10?'var(--a4)':'var(--gn)'):'var(--br)'}}>
-                <label>{MONTHS[i%12]} <span style={{color:'var(--ac)',fontSize:9}}>(c:{fct})</span></label>
-                <NumInput placeholder="—" value={act!==null&&act!==undefined?act:''} onChange={v=>dispatch({type:'UPDATE_ACTUAL',productId:activeId,month:i,value:v===''||v===null?null:+v||0})}/>
-                {dev!==null&&<div style={{fontSize:8,color:Math.abs(+dev)>20?'var(--dg)':Math.abs(+dev)>10?'var(--a4)':'var(--gn)',fontWeight:600}}>{+dev>0?'+':''}{dev}%</div>}
-              </div>;
-            })}
-          </div>
+        {/* R12 / D2 — Standalone Actuals Entry card removed. Sole canonical input surface is now MPS Monthly view (Tab 07).
+            Breadcrumb retained so users browsing the demand tab know where to enter actuals. */}
+        <div style={{padding:'8px 12px',background:'rgba(56,189,248,.06)',border:'1px dashed var(--a2)',borderRadius:4,fontSize:10,color:'var(--tx2)'}}>
+          📥 <strong style={{color:'var(--a2)'}}>Actuals entry moved.</strong> Enter per-period actuals in the inline column on the <strong>MPS Monthly view</strong> (Tab 07). Deviations + breach detection + replan controls all live there.
         </div>
       </div>
     </div>
@@ -13571,7 +13571,9 @@ function CommandCenterTab({state,dispatch}){
                 const tAnchor=state.planning.enableTerminalAnchor?terminalAnchorUnits(b,p,state):0;
                 return {name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:effQtyPer(b),lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,rm_footprint_area:+b.rmFootprintArea||0.05,rm_footprint_volume:+b.rmFootprintVolume||0.02,uom:b.uom||"u",purchase_pack:+b.purchasePack||1,trans_contract_fixed:!!b.transContractFixed,trans_contract_rate:+b.transContractRate||0,co2_factor:+b.co2Factor||0,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05,supplier_name:sname,vmi:vmi,vmi_target_stock_days:+(sprof.vmiTargetStockDays||14),pay_term_days:+b.payTermDays||+sprof.paymentTerms||30,min_coverage_periods:minCovPeriods,terminal_anchor_units:tAnchor,
                   /* R10 / Bucket 2 — transport mode/contract refs threaded to backend */
-                  default_trans_mode_code:b.defaultTransModeCode||'LTL',fallback_trans_mode_code:b.fallbackTransModeCode||'Air',transport_contract_id:b.transportContractId||null,source_location_id:b.sourceLocationId||null,distance_km:+b.distanceKm||+state.config?.defaultLaneKm||500,weight_kg:+b.weightKg||0,volume_cbm:+b.volumeCbm||0,density_kg_per_l:+b.densityKgPerL||0};
+                  default_trans_mode_code:b.defaultTransModeCode||'LTL',fallback_trans_mode_code:b.fallbackTransModeCode||'Air',transport_contract_id:b.transportContractId||null,source_location_id:b.sourceLocationId||null,distance_km:+b.distanceKm||+state.config?.defaultLaneKm||500,weight_kg:+b.weightKg||0,volume_cbm:+b.volumeCbm||0,density_kg_per_l:+b.densityKgPerL||0,
+                  /* R12 / D1 — Lead-time band (qty-dependent step-function). Null when smallMax = 0 (band disabled, scalar leadTime applies). */
+                  lead_time_band:(b.ltBand&&+b.ltBand.smallMax>0)?{small_max:+b.ltBand.smallMax||0,small_lt:+b.ltBand.smallLt||+b.leadTime||1,mid_max:+b.ltBand.midMax||0,mid_lt:+b.ltBand.midLt||+b.leadTime||1,large_lt:+b.ltBand.largeLt||+b.leadTime||1}:null};
               })}}),params:{periods:eh.enabled?eh.effective:periodCount(state.planning),committed_periods:eh.committed,effective_periods:eh.effective,horizon_buffer:eh.buffer,enable_terminal_anchor:!!state.planning.enableTerminalAnchor,enable_min_coverage:!!state.planning.enableMinCoverageGate,time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:effectiveCarryRate(state),wh_max:effectiveWhMaxUnits(state,P[0]?.whMaxUnits||5000),wh_mode:state.budget.warehouseMode||'units',rm_wh_mode:state.budget.rmWarehouseMode||'units',rm_wh_limit_area:+state.budget.rmWarehouseLimitArea||0,rm_wh_limit_volume:+state.budget.rmWarehouseLimitVolume||0,service_level:state.config.serviceLevel,replan_from_period:state.planning.replanFromPeriod??null,locked_pos:state.lockedPOs||[],logistics_budget:+(state.budget&&state.budget.logistics)||0,logistics_mode:state.budget&&state.budget.logisticsMode||'soft',
                   /* R10 / Bucket 2 — transport state for backend mode-aware lot sizing */
                   transport_modes:(state.transportModes||[]).map(m=>({id:m.id,code:m.code,name:m.name,rate_per_tonne_km:+m.ratePerTonneKm||0,truck_capacity_kg:+m.truckCapacityKg||0,truck_capacity_m3:+m.truckCapacityM3||0})),

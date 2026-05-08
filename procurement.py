@@ -333,6 +333,11 @@ def solve_procurement(data):
     r = {}   # RM orders
     o = {}   # RM order binary
     rm_inv = {}  # RM inventory
+    # R12 / D1 — Per-part lead-time band sub-vars, keyed by [gidx][t]. Populated in the
+    # part-loop below only when the part declares a lead_time_band with small_max > 0.
+    # When unpopulated for a gidx, the receipt cascade falls back to scalar lt.
+    ltband_a_small, ltband_a_mid, ltband_a_large = {}, {}, {}
+    ltband_b_small, ltband_b_mid, ltband_b_large = {}, {}, {}
 
     all_parts = []
     part_map = {}  # (product_idx, part_idx) -> global part index
@@ -401,6 +406,25 @@ def solve_procurement(data):
                 r[gidx, t] = pulp.LpVariable(f'r_{gidx}_{t}', 0, cat='Integer')
                 o[gidx, t] = pulp.LpVariable(f'o_{gidx}_{t}', cat='Binary')
                 rm_inv[gidx, t] = pulp.LpVariable(f'rminv_{gidx}_{t}', 0)
+            # R12 / D1 — Per-part band sub-vars. Indexed off the same gidx so they share the same
+            # supplier/part identity; only declared when lead_time_band is configured for this part.
+            # ltband_a / ltband_b are stored on a side dict keyed by gidx so the receipt cascade
+            # below can find them; legacy parts (band=None) just use scalar lt.
+            _band = part.get('lead_time_band') or None
+            if _band and float(_band.get('small_max', 0) or 0) > 0:
+                ltband_a_small[gidx] = {}
+                ltband_a_mid[gidx] = {}
+                ltband_a_large[gidx] = {}
+                ltband_b_small[gidx] = {}
+                ltband_b_mid[gidx] = {}
+                ltband_b_large[gidx] = {}
+                for t in range(T):
+                    ltband_a_small[gidx][t] = pulp.LpVariable(f'asml_{gidx}_{t}', 0, cat='Integer')
+                    ltband_a_mid[gidx][t] = pulp.LpVariable(f'amid_{gidx}_{t}', 0, cat='Integer')
+                    ltband_a_large[gidx][t] = pulp.LpVariable(f'alrg_{gidx}_{t}', 0, cat='Integer')
+                    ltband_b_small[gidx][t] = pulp.LpVariable(f'bsml_{gidx}_{t}', cat='Binary')
+                    ltband_b_mid[gidx][t] = pulp.LpVariable(f'bmid_{gidx}_{t}', cat='Binary')
+                    ltband_b_large[gidx][t] = pulp.LpVariable(f'blrg_{gidx}_{t}', cat='Binary')
             all_parts.append({
                 'name': part.get('name', f'Part_{k}_{i}'),
                 'cost': _base_cost,
@@ -462,6 +486,16 @@ def solve_procurement(data):
                 'weight_kg': float(part.get('weight_kg', 0) or 0),
                 'volume_cbm': float(part.get('volume_cbm', 0) or 0),
                 'density_kg_per_l': float(part.get('density_kg_per_l', 0) or 0),
+                # ─── R12 / D1 — Lead-time band (qty-dependent step-function) ───
+                # When provided, splits each PO receipt qty into one of three bands by size:
+                #   small (1..small_max)   → small_lt
+                #   mid   (small_max+1..mid_max) → mid_lt
+                #   large (qty > mid_max)  → large_lt
+                # Backend models this via three sub-receipt vars summing to r[g,t], gated by
+                # band-specific binaries (sum = o[g,t]). The receipt cascade then sums each
+                # band's a[g,t] into the inventory balance at the band-specific lag.
+                # When None or small_max <= 0, scalar 'lt' applies as before.
+                'lead_time_band': part.get('lead_time_band') or None,
             })
 
     # Round 5 / MEIO — declare per-node FG inventory + lane-flow variables.
@@ -585,6 +619,10 @@ def solve_procurement(data):
     # (assumes solver will tend toward larger batches when discount dominates holding).
     # For piecewise-linear exact MILP discount modelling, we use tier-indicator binaries.
     tier_indicators = {}  # (gidx,t,tier_i) -> binary
+    # R12 — flatPeriodic pending entries. Collected during the per-part loop so that after
+    # the loop we can aggregate charges per (contract_id, period) and add ONE flat fee
+    # regardless of how many parts share that contract.
+    flat_periodic_pending = []  # list of (tc_id, gidx, t, base_rate)
     for gidx, part in enumerate(all_parts):
         base_cost = part['cost']
         # NEW — Fixed-rate transport contract bypass. When a part has a signed fixed-rate contract,
@@ -700,12 +738,14 @@ def solve_procurement(data):
                 elif basis == 'perTrip':
                     per_po_rate = base_rate
                 elif basis == 'flatPeriodic':
-                    # Flat charge per period when any PO is placed for this part on this contract.
-                    # base_rate is interpreted as the period-flat fee; charged per-period via o[g,t]
-                    # (LP will aggregate multiple POs into single period — accept that as a known
-                    # approximation; tightening would require a per-period activation binary).
-                    per_po_rate = base_rate
-                # R11.C — tighter min-charge enforcement via slack var (works for ALL bases).
+                    # R12 — TRUE period-flat charge: one fee per (contract, period) regardless of how
+                    # many parts on the same contract order in that period. Tracked separately below;
+                    # do NOT route through the per-part eff_charge slack-var (that would double-count
+                    # when multiple parts share a contract).
+                    flat_periodic_pending.append((tc_id, gidx, t, base_rate))
+                    # Force per_po_rate=0 so the per-part eff_charge below does NOT also charge the flat fee.
+                    per_po_rate = 0.0
+                # R11.C — tighter min-charge enforcement via slack var (works for non-flatPeriodic bases).
                 min_ch = float(tc.get('min_charge', 0) or 0)
                 if min_ch > 0 or per_unit_rate > 0 or per_po_rate > 0:
                     eff_charge = pulp.LpVariable(f'tcost_{gidx}_{t}', lowBound=0)
@@ -716,6 +756,27 @@ def solve_procurement(data):
                     if min_ch > 0:
                         prob += eff_charge >= min_ch * o[gidx, t], f"TCostMin_{gidx}_{t}"
                     obj.append(eff_charge)
+
+    # ─── R12 — TRUE per-(contract, period) flatPeriodic charge with activation binary ───
+    # Aggregates flat_periodic_pending across parts: when multiple parts share a contract,
+    # only ONE flat fee is charged per period regardless of how many parts order. The
+    # activation binary `pflat[contract_id, t]` is forced to 1 by any contributing PO via
+    # the linking constraint pflat >= o[gidx, t]. base_rate is taken from the first entry
+    # for that (contract_id, t) — they should all be equal since it's a contract attribute.
+    if flat_periodic_pending:
+        from collections import defaultdict as _dd
+        flat_periodic_by_ct = _dd(list)  # (contract_id, t) -> list of (gidx, base_rate)
+        for (tc_id, gidx_, t_, base_rate_) in flat_periodic_pending:
+            flat_periodic_by_ct[(tc_id, t_)].append((gidx_, base_rate_))
+        for (tc_id, t_), entries in flat_periodic_by_ct.items():
+            base_rate_use = entries[0][1] if entries else 0.0
+            if base_rate_use <= 0:
+                continue
+            pflat_var = pulp.LpVariable(f'pflat_{tc_id}_{t_}', cat='Binary')
+            for (gidx_, _br) in entries:
+                # If this part places a PO in period t, the flat charge MUST fire.
+                prob += pflat_var >= o[gidx_, t_], f"FlatPeriodic_{tc_id}_{gidx_}_{t_}"
+            obj.append(base_rate_use * pflat_var)
 
     # Fixed overhead
     obj.append(fixed_daily * T)
@@ -1045,10 +1106,31 @@ def solve_procurement(data):
         default_init_rm = max(0, round(avg_demand_per_t * effective_qty * (lt + 1)))
         init_rm = part.get('init_inventory', default_init_rm)
 
+        # R12 / D1 — Determine per-band lead times for this part (or fall back to scalar).
+        _ltb = part.get('lead_time_band') or None
+        _band_active = bool(_ltb and float(_ltb.get('small_max', 0) or 0) > 0 and gidx in ltband_a_small)
+        if _band_active:
+            sm_max = int(float(_ltb.get('small_max', 0) or 0))
+            md_max = int(float(_ltb.get('mid_max', 0) or 0))
+            sm_lt = int(float(_ltb.get('small_lt', lt) or lt))
+            md_lt = int(float(_ltb.get('mid_lt', lt) or lt))
+            lg_lt = int(float(_ltb.get('large_lt', lt) or lt))
         for t in range(T):
-            # RM arrives lt periods after ordering
-            arrive_t = t - lt
-            arrived = r[gidx, arrive_t] if arrive_t >= 0 else 0
+            # R12 / D1 — Band-aware arrival: when enabled, arrival at t is the sum of band-specific
+            # qtys placed at lagged periods (t − band_lt). When disabled, the legacy scalar-lt path
+            # applies: arrival = r[gidx, t-lt].
+            if _band_active:
+                arrived = 0
+                if t - sm_lt >= 0:
+                    arrived = arrived + ltband_a_small[gidx][t - sm_lt]
+                if t - md_lt >= 0:
+                    arrived = arrived + ltband_a_mid[gidx][t - md_lt]
+                if t - lg_lt >= 0:
+                    arrived = arrived + ltband_a_large[gidx][t - lg_lt]
+            else:
+                # RM arrives lt periods after ordering (scalar fallback)
+                arrive_t = t - lt
+                arrived = r[gidx, arrive_t] if arrive_t >= 0 else 0
 
             # T6 — Scheduled receipts: already-released POs that arrive at this period.
             # Treated as exogenous inventory bumps; solver re-optimises around them.
@@ -1070,6 +1152,30 @@ def solve_procurement(data):
             # MOQ: if ordering, order at least MOQ
             prob += r[gidx, t] >= moq * o[gidx, t], f"MOQ_{gidx}_{t}"
             prob += r[gidx, t] <= max_ord * o[gidx, t], f"MaxOrd_{gidx}_{t}"
+
+            # R12 / D1 — Band split + sizing constraints (only when band is active).
+            if _band_active:
+                # Sum of band qtys = total receipt qty.
+                prob += (ltband_a_small[gidx][t] + ltband_a_mid[gidx][t] + ltband_a_large[gidx][t]
+                         == r[gidx, t]), f"LTBand_QtySum_{gidx}_{t}"
+                # Sum of band binaries = order indicator (at most one band fires per PO event).
+                prob += (ltband_b_small[gidx][t] + ltband_b_mid[gidx][t] + ltband_b_large[gidx][t]
+                         == o[gidx, t]), f"LTBand_BinSum_{gidx}_{t}"
+                # Upper bounds — qty in band only when its binary is on.
+                prob += ltband_a_small[gidx][t] <= sm_max * ltband_b_small[gidx][t], f"LTBand_SmCap_{gidx}_{t}"
+                if md_max > 0:
+                    prob += ltband_a_mid[gidx][t] <= md_max * ltband_b_mid[gidx][t], f"LTBand_MdCap_{gidx}_{t}"
+                else:
+                    # No mid band defined → mid binary must be 0.
+                    prob += ltband_b_mid[gidx][t] == 0, f"LTBand_MdOff_{gidx}_{t}"
+                prob += ltband_a_large[gidx][t] <= max_ord * ltband_b_large[gidx][t], f"LTBand_LgCap_{gidx}_{t}"
+                # Lower bounds — when a band fires, qty must exceed the previous band's max.
+                # Mid-band qty must exceed sm_max (so mid binary really means "qty > sm_max").
+                if md_max > 0:
+                    prob += ltband_a_mid[gidx][t] >= (sm_max + 1) * ltband_b_mid[gidx][t], f"LTBand_MdLo_{gidx}_{t}"
+                # Large-band qty must exceed mid_max (or sm_max if no mid).
+                _lg_threshold = max(md_max, sm_max)
+                prob += ltband_a_large[gidx][t] >= (_lg_threshold + 1) * ltband_b_large[gidx][t], f"LTBand_LgLo_{gidx}_{t}"
 
             # RM warehouse capacity (per-part units cap — always active)
             prob += rm_inv[gidx, t] <= rm_cap, f"RMCap_{gidx}_{t}"
@@ -1533,6 +1639,57 @@ def solve_procurement(data):
                         tot_value_periods += units_t * unit_cost_by_k.get(k, 0)
             avg_in_transit = round(tot_units_periods / T, 1)
             in_transit_value_period_avg = round(tot_value_periods / T, 2)
+        # ─── R12 — Per-node, per-UoM utilisation reporting ───
+        # For each storage node and period, compute realized inventory across all UoMs
+        # (units, kg, m³, L) and the % utilisation against the configured caps. UI can
+        # render utilisation tables / heat-maps without re-deriving from raw inv_node.
+        node_uom_utilisation = {}
+        for n in network_nodes:
+            n_id = n.get('id')
+            if n_id not in storage_node_ids:
+                continue
+            cap_units = float(n.get('storage_cap_units', 0) or 0)
+            cap_kg_n = float(n.get('storage_cap_kg', 0) or 0)
+            cap_l_n = float(n.get('storage_cap_l', 0) or 0)
+            cap_m3_n = float(n.get('storage_cap_m3', 0) or 0)
+            legacy_cap_n = float(n.get('capacity', 0) or 0)
+            effective_units_cap_n = cap_units if cap_units > 0 else (legacy_cap_n if legacy_cap_n > 0 else 0)
+            per_period = []
+            for t in range(T):
+                u_total = 0.0
+                kg_total = 0.0
+                m3_total = 0.0
+                for k in range(n_products):
+                    qty = pulp.value(inv_node[(k, n_id, t)]) or 0
+                    u_total += qty
+                    kg_total += fg_weight_by_k.get(k, 0) * qty
+                    m3_total += fg_volume_by_k.get(k, 0) * qty
+                l_total = m3_total * 1000.0
+                per_period.append({
+                    'period': t,
+                    'units': round(u_total, 1),
+                    'kg': round(kg_total, 2),
+                    'm3': round(m3_total, 4),
+                    'L': round(l_total, 1),
+                    'units_pct': round(u_total / effective_units_cap_n * 100, 1) if effective_units_cap_n > 0 else None,
+                    'kg_pct': round(kg_total / cap_kg_n * 100, 1) if cap_kg_n > 0 else None,
+                    'm3_pct': round(m3_total / cap_m3_n * 100, 1) if cap_m3_n > 0 else None,
+                    'L_pct': round(l_total / cap_l_n * 100, 1) if cap_l_n > 0 else None,
+                })
+            node_uom_utilisation[n_id] = {
+                'caps': {
+                    'units': effective_units_cap_n,
+                    'kg': cap_kg_n,
+                    'm3': cap_m3_n,
+                    'L': cap_l_n,
+                },
+                'per_period': per_period,
+                'peak_units_pct': max((row['units_pct'] for row in per_period if row['units_pct'] is not None), default=None),
+                'peak_kg_pct': max((row['kg_pct'] for row in per_period if row['kg_pct'] is not None), default=None),
+                'peak_m3_pct': max((row['m3_pct'] for row in per_period if row['m3_pct'] is not None), default=None),
+                'peak_L_pct': max((row['L_pct'] for row in per_period if row['L_pct'] is not None), default=None),
+            }
+
         meio_summary = {
             'enabled': True,
             'plant_node_ids': plant_node_ids,
@@ -1545,7 +1702,10 @@ def solve_procurement(data):
             # horizon + average tied-up working capital per period (units × unit_cost).
             'avg_in_transit_units': avg_in_transit,
             'avg_in_transit_value': in_transit_value_period_avg,
-            'note': 'v2: per-node inv_node[k,n,t] + per-lane in-transit (units in motion carry holding cost on shipper). Legacy single-pool inv[k,t] kept for WC/WH/SS constraints.',
+            # R12 — per-node, per-UoM realised utilisation + peak %. Closes the R11 deferral
+            # ("solver applies caps but doesn't emit a per-node weight/volume utilisation table").
+            'node_uom_utilisation': node_uom_utilisation,
+            'note': 'v3: per-node inv_node[k,n,t] + per-lane in-transit + R12 per-UoM utilisation. Legacy single-pool inv[k,t] kept for WC/WH/SS constraints.',
         }
 
     return {
