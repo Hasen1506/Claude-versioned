@@ -99,6 +99,118 @@ def solve_procurement(data):
         except Exception:
             replan_from_period = None
 
+    # ───────────────────────────────────────────────────────────────────────
+    # R10 — Bucket 3 (C1) backend wiring: end-of-horizon distortion controls.
+    # ───────────────────────────────────────────────────────────────────────
+    # When the frontend ships effective_periods > committed_periods, the MILP
+    # solves over T_effective so it can "see" demand in the buffer window
+    # (frozen / slushy / liquid time-fence — APICS). PO releases inside the
+    # buffer are zeroed in the output so only committed-window decisions are
+    # exposed downstream. This kills end-of-horizon tail-PO distortion.
+    committed_periods = params.get('committed_periods')
+    effective_periods = params.get('effective_periods')
+    horizon_buffer = int(params.get('horizon_buffer') or 0)
+    if committed_periods is not None:
+        try:
+            committed_periods = int(committed_periods)
+        except Exception:
+            committed_periods = None
+    if effective_periods is not None:
+        try:
+            effective_periods = int(effective_periods)
+        except Exception:
+            effective_periods = None
+    # Solve over effective when the new keys are present and demand arrays are long
+    # enough; otherwise fall back to T = params['periods'] (legacy behavior).
+    if effective_periods and effective_periods > T:
+        T = effective_periods
+    # T_committed defines the output-display window; defaults to T (full horizon)
+    # when the frontend hasn't opted in.
+    T_committed = int(committed_periods) if committed_periods else T
+    T_committed = max(1, min(T_committed, T))
+
+    enable_terminal_anchor = bool(params.get('enable_terminal_anchor', False))
+    enable_min_coverage = bool(params.get('enable_min_coverage', False))
+
+    # ───────────────────────────────────────────────────────────────────────
+    # R10 — Bucket 2 (B3/B4) backend wiring: transport mode + contract.
+    # ───────────────────────────────────────────────────────────────────────
+    # When the payload includes transport_modes[] + transport_contracts[] +
+    # per-BOM transport refs, the solver computes per-shipment freight cost
+    # (FTL/LTL/Air rate basis: tonneKm/m3Km/unitKm/perTrip/flatPeriodic) and
+    # feeds it into the lot-sizing economics. Otherwise we fall back to
+    # landed_cost (legacy single-source unit cost) — fully backward compatible.
+    transport_modes = params.get('transport_modes', []) or []
+    transport_contracts = params.get('transport_contracts', []) or []
+    transport_disruptions = params.get('transport_disruptions', []) or []
+    default_lane_km = float(params.get('default_lane_km', 500) or 500)
+    fill_threshold = float(params.get('transport_fill_threshold', 0.6) or 0.6)
+    transport_modes_by_code = {m.get('code'): m for m in transport_modes if m.get('code')}
+    transport_modes_by_id = {m.get('id'): m for m in transport_modes if m.get('id')}
+    transport_contracts_by_id = {c.get('id'): c for c in transport_contracts if c.get('id')}
+
+    def _qty_in_uom(part, qty, uom):
+        """Mirror of JS partQtyIn(b, qty, uom) — converts qty (recipe-uom) to
+        kg / m³ / L / units using density + per-unit weight/volume on part."""
+        if qty is None or not (isinstance(qty, (int, float)) or hasattr(qty, '__float__')):
+            return None
+        if uom == 'units':
+            return qty
+        if uom == 'kg':
+            return qty * float(part.get('weight_kg', 0) or 0)
+        if uom == 'm3':
+            return qty * float(part.get('volume_cbm', 0) or 0)
+        if uom == 'L':
+            m3 = float(part.get('volume_cbm', 0) or 0)
+            if m3 > 0:
+                return qty * m3 * 1000.0
+            dens = float(part.get('density_kg_per_l', 0) or 0)
+            wt = float(part.get('weight_kg', 0) or 0)
+            if dens > 0 and wt > 0:
+                return qty * (wt / dens)
+        return None
+
+    def _shipment_cost(part, qty, distance_km, mode, contract):
+        """Mirror of JS transportShipmentCost. Returns ₹ per shipment for `qty`
+        of `part` over `distance_km` using `mode` rate × `contract` multiplier."""
+        if not mode or not contract:
+            return 0.0
+        base_rate = float(mode.get('rate_per_tonne_km', 0) or 0) * float(contract.get('rate_mult', 1) or 1)
+        km = float(distance_km or 0)
+        basis = (contract.get('rate_basis') or 'tonneKm')
+        cost = 0.0
+        if basis == 'tonneKm':
+            tonnes = (_qty_in_uom(part, qty, 'kg') or 0) / 1000.0
+            cost = base_rate * tonnes * km
+        elif basis == 'm3Km':
+            m3 = _qty_in_uom(part, qty, 'm3') or 0
+            cost = base_rate * m3 * km
+        elif basis == 'unitKm':
+            cost = base_rate * float(qty or 0) * km
+        elif basis == 'perTrip':
+            cost = base_rate
+        elif basis == 'flatPeriodic':
+            cost = 0.0
+        min_ch = float(contract.get('min_charge', 0) or 0)
+        return max(cost, min_ch)
+
+    def _pick_mode(part, qty):
+        """Mirror of JS pickTransportMode. Picks default mode; if active disruption
+        targets the default mode, switches to fallback. Returns (mode_obj, reason)."""
+        def_code = part.get('default_trans_mode_code') or 'LTL'
+        fb_code = part.get('fallback_trans_mode_code') or 'Air'
+        mode = transport_modes_by_code.get(def_code) or (transport_modes[0] if transport_modes else None)
+        reason = 'default'
+        # Disruption fallback: if any active disruption matches mode code or scope
+        for d in transport_disruptions:
+            if not d.get('active'):
+                continue
+            if (d.get('mode_code') == def_code) or (d.get('scope') == 'transport-mode' and d.get('scope_id') == (mode or {}).get('id')):
+                fb = transport_modes_by_code.get(fb_code)
+                if fb:
+                    return fb, 'disruption-fallback'
+        return mode, reason
+
     n_products = len(products)
     if not n_products:
         return {'error': 'No products provided'}
@@ -333,6 +445,23 @@ def solve_procurement(data):
                 # raw_unit_cost preserves the un-landed cost so PO output can show both.
                 'raw_unit_cost': part.get('cost', _base_cost),
                 'landed_unit_cost': _base_cost,
+                # ─── R10 / Bucket 3 — end-of-horizon distortion controls (per-part) ───
+                # terminal_anchor_units: forces rm_inv[g, T_committed-1] >= this value when
+                # enable_terminal_anchor=True. Frontend computes via terminalAnchorUnits()
+                # = SS_part + avg_part_demand × LT_periods.
+                'terminal_anchor_units': float(part.get('terminal_anchor_units', 0) or 0),
+                # min_coverage_periods: forces r[g,t] >= avg_part_demand × min_coverage_periods × o[g,t]
+                # when enable_min_coverage=True. Per-part gate against tiny tail-end POs.
+                'min_coverage_periods': int(part.get('min_coverage_periods', 0) or 0),
+                # ─── R10 / Bucket 2 — transport mode + contract refs (per-part) ───
+                'default_trans_mode_code': str(part.get('default_trans_mode_code') or 'LTL'),
+                'fallback_trans_mode_code': str(part.get('fallback_trans_mode_code') or 'Air'),
+                'transport_contract_id': part.get('transport_contract_id') or None,
+                'source_location_id': part.get('source_location_id') or None,
+                'distance_km': float(part.get('distance_km', default_lane_km) or default_lane_km),
+                'weight_kg': float(part.get('weight_kg', 0) or 0),
+                'volume_cbm': float(part.get('volume_cbm', 0) or 0),
+                'density_kg_per_l': float(part.get('density_kg_per_l', 0) or 0),
             })
 
     # Round 5 / MEIO — declare per-node FG inventory + lane-flow variables.
@@ -530,6 +659,40 @@ def solve_procurement(data):
             # RM holding (use base cost as proxy for holding valuation)
             rm_hold = base_cost * (part['hold_pct'] / 100) / 52
             obj.append(rm_hold * rm_inv[gidx, t])
+
+            # ─── R10 / Bucket 2 (B3/B4) — mode-aware transport cost ───
+            # When the BOM row has transport_contract_id wired to a known contract,
+            # add per-shipment freight cost computed from rate basis × distance × qty.
+            # Linearised: per-unit basis (tonneKm/m3Km/unitKm) → r[gidx,t] coefficient;
+            # per-PO basis (perTrip) → o[gidx,t] coefficient.
+            # Note: this is ADDITIVE to legacy trans_rate — set trans_rate=0 OR fold
+            # freight into ord_cost via UI's "↺ Freight from mode" button to avoid
+            # double-count. Min-charge is approximated as a per-PO floor (added to o[]).
+            tc_id = part.get('transport_contract_id')
+            tc = transport_contracts_by_id.get(tc_id) if tc_id else None
+            tmode, tmode_reason = _pick_mode(part, 1) if tc else (None, None)
+            if tc and tmode:
+                base_rate = float(tmode.get('rate_per_tonne_km', 0) or 0) * float(tc.get('rate_mult', 1) or 1)
+                km = float(part.get('distance_km', default_lane_km) or default_lane_km)
+                basis = (tc.get('rate_basis') or 'tonneKm')
+                per_unit_rate = 0.0
+                per_po_rate = 0.0
+                if basis == 'tonneKm':
+                    per_unit_rate = base_rate * km * (float(part.get('weight_kg', 0) or 0) / 1000.0)
+                elif basis == 'm3Km':
+                    per_unit_rate = base_rate * km * float(part.get('volume_cbm', 0) or 0)
+                elif basis == 'unitKm':
+                    per_unit_rate = base_rate * km
+                elif basis == 'perTrip':
+                    per_po_rate = base_rate
+                # min_charge: enforce per-PO floor (best-effort; tighter floors may need a slack var)
+                min_ch = float(tc.get('min_charge', 0) or 0)
+                if min_ch > 0 and per_po_rate < min_ch:
+                    per_po_rate = min_ch
+                if per_unit_rate > 0:
+                    obj.append(per_unit_rate * r[gidx, t])
+                if per_po_rate > 0:
+                    obj.append(per_po_rate * o[gidx, t])
 
     # Fixed overhead
     obj.append(fixed_daily * T)
@@ -860,6 +1023,27 @@ def solve_procurement(data):
             # RM warehouse capacity (per-part units cap — always active)
             prob += rm_inv[gidx, t] <= rm_cap, f"RMCap_{gidx}_{t}"
 
+            # ─── R10 / C1.d — Min-coverage gate (per-part) ───
+            # Each PO must cover ≥ avg_part_demand × min_coverage_periods × o[g,t].
+            # Suppresses tiny tail-end POs when min_coverage_periods is set per part.
+            # `avg_part_demand_periods` is computed in recipe-uom (qty_per × avg_dem).
+            if enable_min_coverage:
+                mcp = int(part.get('min_coverage_periods', 0) or 0)
+                if mcp > 0:
+                    cov_min = float(avg_demand_per_t * effective_qty * mcp)
+                    if cov_min > 0:
+                        prob += r[gidx, t] >= cov_min * o[gidx, t], f"MinCov_{gidx}_{t}"
+
+        # ─── R10 / C1.b — Terminal inventory anchor (per-part) ───
+        # rm_inv[g, T_committed-1] >= terminal_anchor_units. Without this anchor,
+        # cost-min MILP drives ending inv → 0, forcing tiny last-period POs.
+        # Anchor at T_committed-1 (NOT T-1) so the buffer window doesn't dilute it.
+        if enable_terminal_anchor:
+            ta = float(part.get('terminal_anchor_units', 0) or 0)
+            if ta > 0:
+                anchor_t = max(0, T_committed - 1)
+                prob += rm_inv[gidx, anchor_t] >= ta, f"TermAnchor_{gidx}"
+
     # P7 / #2 — aggregate RM warehouse cap (area or volume mode). Footprint is per-PACK
     # (one drum = one slot), so we divide rm_inv (in recipe-uom) by purchase_pack to get
     # pack count, then multiply by footprint. For legacy parts where pack=1, behaviour is identical.
@@ -1055,16 +1239,22 @@ def solve_procurement(data):
     # ── Extract results ──
     total_cost = pulp.value(prob.objective)
 
+    # ── R10 / C1.a — Trim outputs to T_committed window ──
+    # MILP solved over T (which is `effective_periods` when the user opted in).
+    # Display + downstream consumers only see the committed window so PO
+    # releases / inventory / shortages in the buffer don't leak through.
+    T_out = min(T_committed, T)
+
     product_results = []
     for k, prod in enumerate(products):
-        demand = prod.get('demand', [0] * T)[:T]
-        prod_schedule = [int(pulp.value(p[k, t]) or 0) for t in range(T)]
-        inv_levels = [round(pulp.value(inv[k, t]) or 0, 1) for t in range(T)]
-        shortages = [round(pulp.value(short[k, t]) or 0, 1) for t in range(T)]
-        setups = [int(pulp.value(y[k, t]) or 0) for t in range(T)]
+        demand = prod.get('demand', [0] * T)[:T_out]
+        prod_schedule = [int(pulp.value(p[k, t]) or 0) for t in range(T_out)]
+        inv_levels = [round(pulp.value(inv[k, t]) or 0, 1) for t in range(T_out)]
+        shortages = [round(pulp.value(short[k, t]) or 0, 1) for t in range(T_out)]
+        setups = [int(pulp.value(y[k, t]) or 0) for t in range(T_out)]
 
         total_prod = sum(prod_schedule)
-        total_demand = sum(demand[:T])
+        total_demand = sum(demand)
         total_short = sum(shortages)
         fill_rate = round((1 - total_short / max(total_demand, 1)) * 100, 1)
 
@@ -1073,7 +1263,7 @@ def solve_procurement(data):
         node_inventory = {}
         if meio_enabled and inv_node:
             for n_id in storage_node_ids:
-                node_inventory[n_id] = [round(pulp.value(inv_node[(k, n_id, t)]) or 0, 1) for t in range(T)]
+                node_inventory[n_id] = [round(pulp.value(inv_node[(k, n_id, t)]) or 0, 1) for t in range(T_out)]
         lane_flows = {}
         lane_in_transit = {}
         if meio_enabled and transfer:
@@ -1081,14 +1271,14 @@ def solve_procurement(data):
                 lid = ln.get('id')
                 if not lid:
                     continue
-                lane_flows[lid] = [round(pulp.value(transfer[(k, lid, t)]) or 0, 1) for t in range(T)]
+                lane_flows[lid] = [round(pulp.value(transfer[(k, lid, t)]) or 0, 1) for t in range(T_out)]
                 # Round 6 — derived in-transit per period (sum of transfers within the last lt window).
                 lt_ln = int(ln.get('lead_time_periods') or 1)
                 if lt_ln <= 0:
-                    lane_in_transit[lid] = [0.0] * T
+                    lane_in_transit[lid] = [0.0] * T_out
                 else:
                     series = []
-                    for t in range(T):
+                    for t in range(T_out):
                         lo = max(0, t - lt_ln + 1)
                         series.append(round(sum(
                             (pulp.value(transfer[(k, lid, s)]) or 0)
@@ -1116,14 +1306,14 @@ def solve_procurement(data):
 
     material_results = []
     for gidx, part in enumerate(all_parts):
-        orders = [int(pulp.value(r[gidx, t]) or 0) for t in range(T)]
-        rm_levels = [round(pulp.value(rm_inv[gidx, t]) or 0, 1) for t in range(T)]
-        order_flags = [int(pulp.value(o[gidx, t]) or 0) for t in range(T)]
+        orders = [int(pulp.value(r[gidx, t]) or 0) for t in range(T_out)]
+        rm_levels = [round(pulp.value(rm_inv[gidx, t]) or 0, 1) for t in range(T_out)]
+        order_flags = [int(pulp.value(o[gidx, t]) or 0) for t in range(T_out)]
 
         # Build PO list — T5-01/06/09 metadata: supplier_name, payment_term_days, landed_cost,
         # vmi flag. UI's PoReleasePlanCard reads these directly.
         po_list = []
-        for t in range(T):
+        for t in range(T_out):
             if orders[t] > 0:
                 po_list.append({
                     'period': t,
@@ -1315,7 +1505,12 @@ def solve_procurement(data):
         'materials': material_results,
         'meio': meio_summary,
         'solve_time': round(solve_time, 2),
-        'periods': T,
+        'periods': T_out,                # R10 / C1.a — committed window for display
+        'effective_periods': T,          # R10 / C1.a — actual MILP horizon (T_user + buffer)
+        'committed_periods': T_committed, # R10 / C1.a — confirms what was clipped
+        'horizon_buffer': max(0, T - T_committed), # R10 / C1.a — buffer-only periods clipped
+        'r10_terminal_anchor': bool(enable_terminal_anchor),
+        'r10_min_coverage': bool(enable_min_coverage),
         'solver': 'CBC',
         # P4 — echo replan context so UI knows the solver honoured the lock.
         'replan_from_period': replan_from_period,

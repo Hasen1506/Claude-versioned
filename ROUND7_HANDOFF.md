@@ -17,6 +17,118 @@
 
 ---
 
+## A-2. What shipped in Round 10 (Backend wiring for R8/R9 — `procurement.py`)
+
+**Working file size after R10:** `procurement.py` 1485 lines (R9 baseline: 1328).
+**Frontend payload size after R10:** index.html script block 1,267,815 bytes
+(R9 baseline: 1,266,505; net +1.3KB — minimal because R8/R9 already shaped most fields).
+
+### A-2.1 — Why R10 was needed
+R8 (Bucket 2 — transport coherence) and R9 (Bucket 3 — horizon controls)
+shipped UI + payload-only. The Python solver `procurement.py` ignored every
+new key. The user flagged this directly: "All 3 buckets and you are
+explicitly marking implemented only on UI, wtf?". R10 closes the loop.
+
+### A-2.2 — `procurement.py` param parsing block (top, after legacy parse)
+- New params (with safe defaults so legacy payloads still solve):
+  `committed_periods`, `effective_periods`, `horizon_buffer`,
+  `enable_terminal_anchor`, `enable_min_coverage`,
+  `transport_modes`, `transport_contracts`, `transport_disruptions`,
+  `default_lane_km`, `transport_fill_threshold`.
+- New helper closures (Python ports of the JS R8 helpers):
+  - `_qty_in_uom(part, qty, uom)` ≡ JS `partQtyIn`
+  - `_shipment_cost(part, qty, distance_km, mode, contract)` ≡ JS `transportShipmentCost`
+  - `_pick_mode(part, qty)` ≡ JS `pickTransportMode` (with disruption fallback)
+- T (horizon length for MILP) is SET TO `effective_periods` when supplied —
+  the solver "sees" buffer demand. `T_committed` defines the output window.
+
+### A-2.3 — Per-part R10 fields read in BOM loop
+Added to `all_parts.append({...})`:
+- `terminal_anchor_units` (R9 / C1.b)
+- `min_coverage_periods` (R9 / C1.d)
+- `default_trans_mode_code`, `fallback_trans_mode_code`,
+  `transport_contract_id`, `source_location_id`, `distance_km`,
+  `weight_kg`, `volume_cbm`, `density_kg_per_l` (R8 / B3-B5)
+
+### A-2.4 — Terminal-anchor MILP constraint (R10.3)
+```python
+if enable_terminal_anchor:
+    ta = float(part.get('terminal_anchor_units', 0) or 0)
+    if ta > 0:
+        anchor_t = max(0, T_committed - 1)
+        prob += rm_inv[gidx, anchor_t] >= ta, f"TermAnchor_{gidx}"
+```
+Anchored at `T_committed - 1` (NOT `T - 1`) so the buffer window doesn't
+dilute the anchor. Without this, MILP drives ending inv → 0 even when the
+buffer is present.
+
+### A-2.5 — Min-coverage MILP constraint (R10.4)
+```python
+if enable_min_coverage:
+    mcp = int(part.get('min_coverage_periods', 0) or 0)
+    if mcp > 0:
+        cov_min = float(avg_demand_per_t * effective_qty * mcp)
+        if cov_min > 0:
+            prob += r[gidx, t] >= cov_min * o[gidx, t], f"MinCov_{gidx}_{t}"
+```
+Per-period: each PO must cover ≥ `avg_demand × min_coverage_periods × qty_per`
+in recipe-uom. Suppresses tiny tail-end POs.
+
+### A-2.6 — Mode-aware transport cost (R10.5)
+After the legacy tier/freight objective terms, when a part has
+`transport_contract_id` wired to a known contract:
+- **tonneKm**: `per_unit_rate = base_rate × km × (weight_kg / 1000)`
+- **m3Km**: `per_unit_rate = base_rate × km × volume_cbm`
+- **unitKm**: `per_unit_rate = base_rate × km`
+- **perTrip**: `per_po_rate = base_rate` (added to `o[g,t]` coefficient)
+- **flatPeriodic**: skipped (handled at periodic level — TODO)
+Then: `obj.append(per_unit_rate × r[g,t])` and/or `obj.append(per_po_rate × o[g,t])`.
+`min_charge` enforced as a per-PO floor when basis is perTrip.
+**Additive to legacy `trans_rate`** — to avoid double-count, set
+`b.trans_rate=0` OR use the UI's "↺ Freight from mode" button (R9 / C1.e).
+
+### A-2.7 — Output trimming to T_committed (R10.6)
+`T_out = min(T_committed, T)`. All result extraction loops now use
+`range(T_out)` instead of `range(T)`:
+- `prod_schedule`, `inv_levels`, `shortages`, `setups` per product
+- `node_inventory`, `lane_flows`, `lane_in_transit` (MEIO)
+- `orders`, `rm_levels`, `order_flags`, `po_list` per material
+Top-level result returns `'periods': T_out` plus the new diagnostic keys
+`effective_periods`, `committed_periods`, `horizon_buffer`,
+`r10_terminal_anchor`, `r10_min_coverage`. PO releases scheduled in the
+buffer window are simply not emitted.
+
+### A-2.8 — Frontend payload now sends transport state (R10.7)
+The procurement payload at the Command Center call site now includes:
+- `transport_modes[]` from `state.transportModes` (id, code, name, rate, truck caps)
+- `transport_contracts[]` from `state.transportContracts` (id, basis, mult, min_charge)
+- `transport_disruptions[]` from active `state.disruptions` filtered to mode-scope
+- `default_lane_km` and `transport_fill_threshold` from config
+And per-BOM:
+- `default_trans_mode_code`, `fallback_trans_mode_code`,
+  `transport_contract_id`, `source_location_id`, `distance_km`,
+  `weight_kg`, `volume_cbm`, `density_kg_per_l`
+
+### A-2.9 — Verification (R10)
+- Babel parse ✓ at 1,267,815 bytes
+- Python `import procurement` ✓
+- Smoke solve with R10 toggles ON: `Optimal`, periods returned = 10
+  (committed), effective = 12, buffer = 2, both r10 flags True, total cost ~₹13,330
+- Legacy payload (no R10 keys): `Optimal`, periods = 8, total cost ~₹353
+  → backward compatible
+
+### A-2.10 — Known limitations / deferred from R10
+- **Per-node UoM-aware storage caps** from `state.network.nodes[i].storageCapacity`
+  ({units, kg, L, m³}) are NOT enforced as per-node MILP constraints in R10.
+  R6 MEIO uses an aggregate cap; we still send `network_nodes[].capacity`
+  via existing MEIO path. Per-UoM, per-node caps deferred to R11.
+- **`flatPeriodic` rate basis** is ignored in objective (would need a
+  periodic charge variable). Documented; not wired.
+- **Min-charge for non-`perTrip` bases** is approximated; tighter min-charge
+  enforcement would need a slack variable per PO.
+
+---
+
 ## A-1. What shipped in Round 9 (Bucket 3 — Solver / Forecasting / Horizon coherence)
 
 **Working file size after R9:** 1,266,505 bytes (R8 baseline: 1,232,850; net +33KB).
@@ -131,22 +243,21 @@
 - All toggles default OFF — backward compatible. Existing payloads unchanged
   unless user opts in via Tab 1 controls.
 
-### A-1.15 — Backend wiring status
-- Frontend ships new payload keys: `committed_periods`, `effective_periods`,
-  `horizon_buffer`, `enable_terminal_anchor`, `enable_min_coverage`,
-  `min_coverage_periods` (per part), `terminal_anchor_units` (per part).
-- **`procurement.py` does not yet read these.** Frontend display + payload
-  are correct; backend is a no-op for the new keys (ignored). To activate:
-  add constraints in `procurement.py` for terminal anchor (`I[k,T-1] >= ta`)
-  and min coverage (`x[g,t] >= cov_min * o[g,t]`). Trim output to
-  `committed_periods` window for display.
+### A-1.15 — Backend wiring status (✅ SHIPPED IN R10 — see section A-2)
+
+R10 wired the previously frontend-only R8/R9 features into `procurement.py`.
+Earlier R8/R9 commits sent the payload keys but the solver ignored them; R10
+adds the actual MILP constraints + output trimming + transport-cost objective
+terms.
 
 ### A-1.16 — NOT shipped in R9 (legitimately deferred)
 - ML weather/exogenous-feature forecasting (parked indefinitely; section E1)
 - True Tobit lost-sales estimator (parked; section E2)
 - Air-fallback spot-market pricing (parked; section E3)
 - True drift detector with concept-drift tests (parked; section E4)
-- Backend MILP changes for terminal anchor + min-coverage (deferred — see A-1.15)
+- Per-node UoM-aware storage caps from `state.network.nodes[i].storageCapacity`
+  enforced as MILP constraints (R10 sends the data only as MEIO `network_nodes`
+  capacity; per-UoM caps still rely on legacy `rm_wh_mode` aggregate cap)
 
 ---
 
