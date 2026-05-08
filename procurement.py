@@ -660,14 +660,28 @@ def solve_procurement(data):
             rm_hold = base_cost * (part['hold_pct'] / 100) / 52
             obj.append(rm_hold * rm_inv[gidx, t])
 
-            # ─── R10 / Bucket 2 (B3/B4) — mode-aware transport cost ───
+            # ─── R10 + R11 / Bucket 2 (B3/B4/B5) — mode-aware transport cost ───
             # When the BOM row has transport_contract_id wired to a known contract,
             # add per-shipment freight cost computed from rate basis × distance × qty.
-            # Linearised: per-unit basis (tonneKm/m3Km/unitKm) → r[gidx,t] coefficient;
-            # per-PO basis (perTrip) → o[gidx,t] coefficient.
+            #
+            # Rate-basis matrix (R11):
+            #   tonneKm     → per_unit_rate = base × km × (weight_kg/u / 1000)        [per-unit r[g,t]]
+            #   m3Km        → per_unit_rate = base × km × volume_m3/u                  [per-unit r[g,t]]
+            #   unitKm      → per_unit_rate = base × km                                 [per-unit r[g,t]]
+            #   perTrip     → per_po_rate = base                                        [per-PO o[g,t]]
+            #   flatPeriodic→ per-period flat charge for periods with at least one PO   [per-PO o[g,t] approx]
+            #
+            # R11.C tighter min-charge enforcement: for ALL bases (not just perTrip),
+            # introduce eff_charge[g,t] LpVariable with TWO lower bounds —
+            #   eff_charge >= per_unit_rate × r[g,t]    (linear cost from qty)
+            #   eff_charge >= min_charge × o[g,t]       (min-charge floor when ordering)
+            # The objective minimizes eff_charge, so the tighter of the two binds.
+            # When min_ch=0 and only per_unit_rate>0, this collapses to the legacy
+            # per-unit cost. When min_ch>0 and qty is small, the floor binds.
+            #
             # Note: this is ADDITIVE to legacy trans_rate — set trans_rate=0 OR fold
             # freight into ord_cost via UI's "↺ Freight from mode" button to avoid
-            # double-count. Min-charge is approximated as a per-PO floor (added to o[]).
+            # double-count.
             tc_id = part.get('transport_contract_id')
             tc = transport_contracts_by_id.get(tc_id) if tc_id else None
             tmode, tmode_reason = _pick_mode(part, 1) if tc else (None, None)
@@ -685,14 +699,23 @@ def solve_procurement(data):
                     per_unit_rate = base_rate * km
                 elif basis == 'perTrip':
                     per_po_rate = base_rate
-                # min_charge: enforce per-PO floor (best-effort; tighter floors may need a slack var)
+                elif basis == 'flatPeriodic':
+                    # Flat charge per period when any PO is placed for this part on this contract.
+                    # base_rate is interpreted as the period-flat fee; charged per-period via o[g,t]
+                    # (LP will aggregate multiple POs into single period — accept that as a known
+                    # approximation; tightening would require a per-period activation binary).
+                    per_po_rate = base_rate
+                # R11.C — tighter min-charge enforcement via slack var (works for ALL bases).
                 min_ch = float(tc.get('min_charge', 0) or 0)
-                if min_ch > 0 and per_po_rate < min_ch:
-                    per_po_rate = min_ch
-                if per_unit_rate > 0:
-                    obj.append(per_unit_rate * r[gidx, t])
-                if per_po_rate > 0:
-                    obj.append(per_po_rate * o[gidx, t])
+                if min_ch > 0 or per_unit_rate > 0 or per_po_rate > 0:
+                    eff_charge = pulp.LpVariable(f'tcost_{gidx}_{t}', lowBound=0)
+                    if per_unit_rate > 0:
+                        prob += eff_charge >= per_unit_rate * r[gidx, t], f"TCostUnit_{gidx}_{t}"
+                    if per_po_rate > 0:
+                        prob += eff_charge >= per_po_rate * o[gidx, t], f"TCostPO_{gidx}_{t}"
+                    if min_ch > 0:
+                        prob += eff_charge >= min_ch * o[gidx, t], f"TCostMin_{gidx}_{t}"
+                    obj.append(eff_charge)
 
     # Fixed overhead
     obj.append(fixed_daily * T)
@@ -839,13 +862,41 @@ def solve_procurement(data):
                         f"MEIO_Bal_{k}_{n_id}_{t}"
                 # Per-node capacity (units cap; aggregate across products at the node).
             # Note: aggregate-across-products node capacity added below as a per-period constraint.
-        # Per-node capacity: Σ_k inv_node[k,n,t] ≤ node.capacity.
-        node_cap_by_id = {n['id']: float(n.get('capacity', 999999) or 999999) for n in network_nodes}
-        for n_id in storage_node_ids:
-            cap_n = node_cap_by_id.get(n_id, 999999)
+        # ─── R11.A — Per-node UoM-aware FG storage caps. ───
+        # Each node ships {storage_cap_units, storage_cap_kg, storage_cap_l, storage_cap_m3}
+        # from frontend (R11). 0 = unconstrained in that dimension. Per-product
+        # `fg_weight_kg_per_unit` and `fg_volume_m3_per_unit` are rolled up from BOM
+        # (Σ b.qty_per × b.weight_kg / b.volume_cbm). Liters cap derives from m³ × 1000
+        # if the L cap is set independently. Backward-compat: when a node only carries
+        # legacy `capacity`, falls through to single units cap (existing behavior).
+        # When NO UoM caps are set on a node and `capacity` is also missing,
+        # treat as unconstrained (999999 units).
+        fg_weight_by_k = {k: float((products[k] or {}).get('fg_weight_kg_per_unit', 0) or 0) for k in range(n_products)}
+        fg_volume_by_k = {k: float((products[k] or {}).get('fg_volume_m3_per_unit', 0) or 0) for k in range(n_products)}
+        for n in network_nodes:
+            n_id = n.get('id')
+            if n_id not in storage_node_ids:
+                continue
+            cap_units = float(n.get('storage_cap_units', 0) or 0)
+            cap_kg = float(n.get('storage_cap_kg', 0) or 0)
+            cap_l = float(n.get('storage_cap_l', 0) or 0)
+            cap_m3 = float(n.get('storage_cap_m3', 0) or 0)
+            legacy_cap = float(n.get('capacity', 0) or 0)
+            # Pick effective units cap: prefer UoM-aware cap; fall back to legacy.
+            effective_units_cap = cap_units if cap_units > 0 else (legacy_cap if legacy_cap > 0 else 999999)
             for t in range(T):
-                prob += pulp.lpSum(inv_node[(k, n_id, t)] for k in range(n_products)) <= cap_n, \
-                    f"MEIO_NodeCap_{n_id}_{t}"
+                prob += pulp.lpSum(inv_node[(k, n_id, t)] for k in range(n_products)) <= effective_units_cap, \
+                    f"MEIO_NodeCap_units_{n_id}_{t}"
+                if cap_kg > 0:
+                    prob += pulp.lpSum(fg_weight_by_k.get(k, 0) * inv_node[(k, n_id, t)] for k in range(n_products)) <= cap_kg, \
+                        f"MEIO_NodeCap_kg_{n_id}_{t}"
+                if cap_m3 > 0:
+                    prob += pulp.lpSum(fg_volume_by_k.get(k, 0) * inv_node[(k, n_id, t)] for k in range(n_products)) <= cap_m3, \
+                        f"MEIO_NodeCap_m3_{n_id}_{t}"
+                if cap_l > 0:
+                    # L cap = volume in liters; converted from m³/unit × 1000.
+                    prob += pulp.lpSum(fg_volume_by_k.get(k, 0) * 1000.0 * inv_node[(k, n_id, t)] for k in range(n_products)) <= cap_l, \
+                        f"MEIO_NodeCap_l_{n_id}_{t}"
         # Per-lane capacity: Σ_k transfer[k,lane,t] ≤ lane.capacity_per_period (when given).
         for ln in network_lanes:
             lid = ln.get('id')

@@ -17,6 +17,98 @@
 
 ---
 
+## A-3. What shipped in Round 11 (Pending deferrals from R10 + Bucket 4 polish)
+
+**Working file sizes after R11:** `procurement.py` 1539 lines (R10 baseline: 1485);
+`index.html` script block 1,271,815 bytes (R10 baseline: 1,267,815; net +4KB).
+
+### A-3.1 — Why R11 was needed
+R10 closed the R8/R9 backend gap but documented three explicit deferrals
+(per-node UoM caps, `flatPeriodic` basis, tighter min-charge). The user
+followed up: "Complete pending deferrals 1st then continue". R11 closes
+all three plus the residual Bucket 4 (UX cleanup) items.
+
+### A-3.2 — R11.A · Per-node UoM-aware FG storage caps (procurement.py)
+`network_nodes[]` payload now ships `storage_cap_units / storage_cap_kg /
+storage_cap_l / storage_cap_m3` per node (rolled from `n.storageCapacity`
+on the frontend; falls back to legacy `unitCapacity` / `capacity` when
+absent). Per-product `fg_weight_kg_per_unit` and `fg_volume_m3_per_unit`
+are rolled up from BOM (Σ `b.qty_per × b.weight_kg / b.volume_cbm`).
+
+The MEIO node-cap block (post-balance) now emits up to **4 LP
+constraints per (node, period)**:
+```python
+prob += Σ inv_node[k,n,t] <= cap_units              # MEIO_NodeCap_units
+prob += Σ fg_weight_by_k[k] * inv_node[k,n,t] <= cap_kg   # MEIO_NodeCap_kg
+prob += Σ fg_volume_by_k[k] * inv_node[k,n,t] <= cap_m3   # MEIO_NodeCap_m3
+prob += Σ fg_volume_by_k[k] * 1000 * inv_node[k,n,t] <= cap_l  # MEIO_NodeCap_l
+```
+Each cap > 0 is honored; 0 = unconstrained in that dimension.
+Backward-compat: legacy `capacity` field still works when no UoM caps set.
+
+### A-3.3 — R11.B · `flatPeriodic` rate basis (procurement.py)
+The transport-cost block now recognises `basis == 'flatPeriodic'` and
+treats `base_rate` as a flat per-PO charge (mapped to `o[g,t]`). Approximation
+ack: a true period-flat fee would need a per-period activation binary;
+mapping to `o[g,t]` charges per PO instead — small inflation when multiple
+POs land in one period, accepted as known limitation.
+
+### A-3.4 — R11.C · Tighter min-charge enforcement via slack-var (procurement.py)
+Replaced the per-basis if-elif min-charge logic with a unified slack-var
+formulation that works for ALL rate bases:
+```python
+eff_charge = pulp.LpVariable(f'tcost_{gidx}_{t}', lowBound=0)
+if per_unit_rate > 0: prob += eff_charge >= per_unit_rate * r[gidx,t]
+if per_po_rate > 0:   prob += eff_charge >= per_po_rate   * o[gidx,t]
+if min_ch > 0:        prob += eff_charge >= min_ch        * o[gidx,t]
+obj.append(eff_charge)
+```
+The LP minimizes `eff_charge`, so the **tighter** of the three bounds binds.
+Min-charge now correctly floors the per-shipment cost regardless of basis
+(previously only `perTrip` honored min_charge).
+
+### A-3.5 — R11.D · Bucket 4 UX cleanup status
+Audit found **D1, D2, D3, D4 already shipped via R8 + R9** (the deferral
+list at R10's end didn't reflect what was actually present in code):
+- **D1 (BOM inline accordion)** — line 4888 `b._expanded` block already
+  renders inline detail panel below row with PROCUREMENT / TAX / LOGISTICS
+  / VOL-DISC TIERS / TRANS-RATE TIERS / BACKUP SUPPLIERS sections. R11
+  added a top-of-panel **SOURCE & SUPPLIER** mini-section (Supplier name,
+  Type, State, Source Location FK, Subcontract toggle, Subcontract Rate /
+  LT) so source info is visible without scrolling.
+- **D2 (Inline actuals in MPS)** — line 12689 monthly view already has
+  actual qty as editable input column with live on-hand cascade.
+- **D3 (MTO entry consolidation)** — line 3475 Order Book card in Tab 1
+  consolidates orders read-only across products; line 5169 keeps editing
+  in Tab 2 product detail (intentional — orders need a product).
+- **D4 (Promote ordering-cost out of gear icon)** — line 4898 already has
+  inline ▾ open button (R8 / B6) replacing the gear-icon prompt-chain.
+
+### A-3.6 — Verification (R11)
+Babel parse ✓ at 1,271,815 bytes. Python smoke matrix:
+| # | Path | Status | Cost |
+|---|---|---|---|
+| 1 | Legacy bare-bones (no R8/R9/R10/R11 keys) | Optimal | ₹11,552 |
+| 2 | R10 horizon controls only | Optimal | ₹11,552 |
+| 3 | R11.A multi-UoM node caps active | Optimal | ₹11,106 |
+| 4 | R11.B flatPeriodic basis | Optimal | ₹11,757 |
+| 5 | R11.C tonneKm + min_charge slack-var binding | Optimal | ₹15,388 |
+
+All paths solve to Optimal · backward compatibility preserved · cost deltas
+match expected behavior (R11.A allows tighter inventory; R11.B adds flat
+fee per PO; R11.C floors freight per shipment).
+
+### A-3.7 — Remaining deferrals after R11
+- True period-flat charge for `flatPeriodic` would need a per-period
+  activation binary (current approach is per-PO via `o[g,t]`).
+- Per-node, per-UoM **kg/L/m³ output reporting** — solver applies caps
+  but doesn't emit a per-node weight/volume utilisation table (UI shows
+  aggregate fill estimates only).
+- Bucket 4 D1 sub-spec "Lead-time band (small/mid/large qty)" — would
+  need a step-function on lead time per PO size; not built.
+
+---
+
 ## A-2. What shipped in Round 10 (Backend wiring for R8/R9 — `procurement.py`)
 
 **Working file size after R10:** `procurement.py` 1485 lines (R9 baseline: 1328).

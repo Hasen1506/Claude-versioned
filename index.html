@@ -4889,6 +4889,27 @@ function ProductsTab({state,dispatch}){
                 <div style={{fontSize:11,fontWeight:700,color:levelColors[level],marginBottom:8,display:'flex',alignItems:'center',gap:8}}>
                   📋 Detail · {b.name||'Part'} <span className="badge" style={{background:'var(--bg3)',color:'var(--tx3)',fontSize:9}}>L{level}</span>
                 </div>
+                {/* R11.D — Bucket 4 D1: top-of-panel SOURCE & SUPPLIER summary. Surfaces supplier name + location FK
+                    (from R8 Bucket 2 B5) at the TOP so the user can see the upstream origin without scrolling. */}
+                <div style={{fontSize:9,fontWeight:700,color:'var(--a4)',marginTop:4,marginBottom:4,letterSpacing:.4}}>SOURCE &amp; SUPPLIER</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:6,marginBottom:6}}>
+                  <Field label="Supplier" hint="Supplier or vendor name. Drives FX exposure (via Country), payment terms (via Supplier Profiles in Tab 1), and VMI eligibility."><input value={b.supplierName||b.supplier||b.vendor||''} placeholder="e.g. ACME Steel" onChange={e=>upBom({supplierName:e.target.value,supplier:e.target.value})}/></Field>
+                  <Field label="Type" hint="Domestic = same-country GST routing (CGST/SGST or IGST by state). Import = customs duty + import IGST.">
+                    <select value={b.supplierType||'domestic'} onChange={e=>upBom({supplierType:e.target.value})}><option value="domestic">Domestic</option><option value="import">Import</option></select>
+                  </Field>
+                  {b.supplierType==='domestic'&&<Field label="State" hint="Supplier state (TN/MH/KA/etc.). Drives intra/interstate GST split. Plant state from Tab 1 → Plant section."><input value={b.supplierState||'TN'} onChange={e=>upBom({supplierState:e.target.value.toUpperCase().slice(0,2)})} style={{fontFamily:'JetBrains Mono'}}/></Field>}
+                  <Field label="Source Location" hint="R8 / Bucket 2 B5 — links this BOM row to a network node (master location ID). Drives lane lookup + per-node init inventory.">
+                    <select value={b.sourceLocationId||''} onChange={e=>upBom({sourceLocationId:e.target.value||null})} style={{width:'100%',fontSize:10}}>
+                      <option value="">— manual —</option>
+                      {nodes.filter(n=>n.type==='supplier'||n.type==='plant'||n.type==='wh').map(n=><option key={n.id} value={n.id}>{n.name} ({n.type}{n.state?'-'+n.state:''})</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Subcontract" hint="When ON, this part is outsourced (job-work / toll manufacturing). Subcontract rate + lead time replace base cost in solver.">
+                    <select value={b.subcontract?'yes':'no'} onChange={e=>upBom({subcontract:e.target.value==='yes'})}><option value="no">No</option><option value="yes">Yes</option></select>
+                  </Field>
+                  {b.subcontract&&<Field label={`Sub Rate (${cur}/u)`}><NumInput step="0.01" value={b.subcontractRate||0} onChange={v=>upBom({subcontractRate:v})}/></Field>}
+                  {b.subcontract&&<Field label="Sub LT (wk)"><NumInput value={b.subcontractLT||0} onChange={v=>upBom({subcontractLT:v})}/></Field>}
+                </div>
                 {/* — PROCUREMENT — */}
                 <div style={{fontSize:9,fontWeight:700,color:'var(--a3)',marginTop:4,marginBottom:4,letterSpacing:.4}}>PROCUREMENT</div>
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(115px,1fr))',gap:6}}>
@@ -6083,13 +6104,22 @@ function OptimizeTab({state,dispatch}){
             if(!meio_enabled)return{meio_enabled:false};
             return{
               meio_enabled:true,
-              network_nodes:nodes.map(n=>({
-                id:n.id,type:n.type,name:n.name,
-                capacity:+n.capacity||+n.unitCapacity||999999,
-                carry_rate_pct:n.carryingRatePct==null?24:+n.carryingRatePct,
-                stage:n.stage||(n.type==='plant'?'inbound':n.type==='dc'?'outbound':'outbound'),
-                demand_share:+n.demandShare||0,
-              })),
+              network_nodes:nodes.map(n=>{
+                // R11.A — multi-UoM storage capacity per node. 0 = unconstrained in that dim.
+                // Falls back to legacy single-cap (units only) when storageCapacity not set.
+                const sc=n.storageCapacity||{units:+n.unitCapacity||+n.capacity||0,kg:0,L:0,m3:0};
+                return{
+                  id:n.id,type:n.type,name:n.name,
+                  capacity:+n.capacity||+n.unitCapacity||999999,
+                  storage_cap_units:+sc.units||0,
+                  storage_cap_kg:+sc.kg||0,
+                  storage_cap_l:+sc.L||0,
+                  storage_cap_m3:+sc.m3||0,
+                  carry_rate_pct:n.carryingRatePct==null?24:+n.carryingRatePct,
+                  stage:n.stage||(n.type==='plant'?'inbound':n.type==='dc'?'outbound':'outbound'),
+                  demand_share:+n.demandShare||0,
+                };
+              }),
               network_lanes:lanes.map(l=>({
                 id:l.id,from:l.fromId||l.from,to:l.toId||l.to,
                 lead_time_periods:Math.max(1,Math.round((+l.leadTimeDays||7)/(state.planning.timeGrain==='daily'?1:state.planning.timeGrain==='monthly'?30:7))),
@@ -13525,7 +13555,13 @@ function CommandCenterTab({state,dispatch}){
             {name:'Procurement (Min Cost)',inputs:'Products, BOM, Planning',
               check:()=>P.length>0&&P.every(p=>p.bom.length>0)&&P.every(p=>p.history?.length>=12),
               data:()=>`${P.length} SKUs, ${allParts.length} parts, ${eh.committed} periods${eh.enabled?` (+${eh.buffer} buffer = ${eh.effective} eff)`:''}`,
-              run:()=>runSolver('procurement','/api/solve/procurement',{products:P.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:effectiveCapacity(p),setup_cost:effectiveSetupCost(p),variable_cost:effectiveVariableCost(p),sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),prod_mode:p.prodMode||'mts',yield_pct:p.yieldPct,yield_actual:p.yieldActual,init_inventory:effectiveInitInventory(p,state),parts:effectiveBom(p).map(b=>{
+              run:()=>runSolver('procurement','/api/solve/procurement',{products:P.map(p=>{
+                // R11.A — FG weight/volume per unit, rolled up from BOM (Σ qtyPer × weightKg / volumeCbm).
+                // Used by backend to enforce per-node storage caps in kg/L/m³ in addition to units.
+                const _bom=effectiveBom(p);
+                const fgWeightKg=_bom.reduce((s,b)=>s+(+effQtyPer(b)||0)*(+b.weightKg||0),0);
+                const fgVolumeM3=_bom.reduce((s,b)=>s+(+effQtyPer(b)||0)*(+b.volumeCbm||0),0);
+                return{name:p.name,demand:weeklyDemand(p),capacity:effectiveCapacity(p),setup_cost:effectiveSetupCost(p),variable_cost:effectiveVariableCost(p),sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),prod_mode:p.prodMode||'mts',yield_pct:p.yieldPct,yield_actual:p.yieldActual,init_inventory:effectiveInitInventory(p,state),fg_weight_kg_per_unit:fgWeightKg,fg_volume_m3_per_unit:fgVolumeM3,parts:_bom.map(b=>{
                 const sname=b.supplierName||b.supplier||b.vendor||'';
                 const sprof=(state.supplierProfiles||{})[sname]||{};
                 const vmi=!!b.vmi||!!sprof.vmiEnabled;
@@ -13536,7 +13572,7 @@ function CommandCenterTab({state,dispatch}){
                 return {name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:effQtyPer(b),lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,rm_footprint_area:+b.rmFootprintArea||0.05,rm_footprint_volume:+b.rmFootprintVolume||0.02,uom:b.uom||"u",purchase_pack:+b.purchasePack||1,trans_contract_fixed:!!b.transContractFixed,trans_contract_rate:+b.transContractRate||0,co2_factor:+b.co2Factor||0,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05,supplier_name:sname,vmi:vmi,vmi_target_stock_days:+(sprof.vmiTargetStockDays||14),pay_term_days:+b.payTermDays||+sprof.paymentTerms||30,min_coverage_periods:minCovPeriods,terminal_anchor_units:tAnchor,
                   /* R10 / Bucket 2 — transport mode/contract refs threaded to backend */
                   default_trans_mode_code:b.defaultTransModeCode||'LTL',fallback_trans_mode_code:b.fallbackTransModeCode||'Air',transport_contract_id:b.transportContractId||null,source_location_id:b.sourceLocationId||null,distance_km:+b.distanceKm||+state.config?.defaultLaneKm||500,weight_kg:+b.weightKg||0,volume_cbm:+b.volumeCbm||0,density_kg_per_l:+b.densityKgPerL||0};
-              })})),params:{periods:eh.enabled?eh.effective:periodCount(state.planning),committed_periods:eh.committed,effective_periods:eh.effective,horizon_buffer:eh.buffer,enable_terminal_anchor:!!state.planning.enableTerminalAnchor,enable_min_coverage:!!state.planning.enableMinCoverageGate,time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:effectiveCarryRate(state),wh_max:effectiveWhMaxUnits(state,P[0]?.whMaxUnits||5000),wh_mode:state.budget.warehouseMode||'units',rm_wh_mode:state.budget.rmWarehouseMode||'units',rm_wh_limit_area:+state.budget.rmWarehouseLimitArea||0,rm_wh_limit_volume:+state.budget.rmWarehouseLimitVolume||0,service_level:state.config.serviceLevel,replan_from_period:state.planning.replanFromPeriod??null,locked_pos:state.lockedPOs||[],logistics_budget:+(state.budget&&state.budget.logistics)||0,logistics_mode:state.budget&&state.budget.logisticsMode||'soft',
+              })}}),params:{periods:eh.enabled?eh.effective:periodCount(state.planning),committed_periods:eh.committed,effective_periods:eh.effective,horizon_buffer:eh.buffer,enable_terminal_anchor:!!state.planning.enableTerminalAnchor,enable_min_coverage:!!state.planning.enableMinCoverageGate,time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:effectiveCarryRate(state),wh_max:effectiveWhMaxUnits(state,P[0]?.whMaxUnits||5000),wh_mode:state.budget.warehouseMode||'units',rm_wh_mode:state.budget.rmWarehouseMode||'units',rm_wh_limit_area:+state.budget.rmWarehouseLimitArea||0,rm_wh_limit_volume:+state.budget.rmWarehouseLimitVolume||0,service_level:state.config.serviceLevel,replan_from_period:state.planning.replanFromPeriod??null,locked_pos:state.lockedPOs||[],logistics_budget:+(state.budget&&state.budget.logistics)||0,logistics_mode:state.budget&&state.budget.logisticsMode||'soft',
                   /* R10 / Bucket 2 — transport state for backend mode-aware lot sizing */
                   transport_modes:(state.transportModes||[]).map(m=>({id:m.id,code:m.code,name:m.name,rate_per_tonne_km:+m.ratePerTonneKm||0,truck_capacity_kg:+m.truckCapacityKg||0,truck_capacity_m3:+m.truckCapacityM3||0})),
                   transport_contracts:(state.transportContracts||[]).map(c=>({id:c.id,name:c.name,rate_basis:c.rateBasis||'tonneKm',rate_mult:+c.rateMult||1,min_charge:+c.minCharge||0})),
