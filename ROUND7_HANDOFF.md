@@ -17,6 +17,139 @@
 
 ---
 
+## A-6. What shipped in Round 13.5 (Tab 4 Phase 1b — Cycle-time + OEE provenance + parallelism cleanup)
+
+**Working file sizes after R13.5:** `index.html` script block ≈ 1,288,899 bytes
+(R13 baseline: 1,278,520; net +10.1KB). `procurement.py` unchanged. `production.py`
+unchanged (already had `op.get('parallelism', 1)` so frontend payload removal is
+backwards-compatible). No backend deltas.
+
+### A-6.1 — Why R13.5 (Phase 1b)
+
+R13 fixed registry↔topology drift (A1–A3). The next layer of confusion in Tab 4
+was that **the same conceptual quantity had three different sources of truth**:
+
+- **Cycle time** had three: explicit override → Σ stage cycleMin → product.cycleTime
+  fallback. The resolver `lineCycleMin` returned only a number, so the UI couldn't
+  surface which source was being used.
+- **Line OEE** had three: explicit `oeeAvailability/oeePerformance/oeeQuality` fields
+  on the line, weighted-average across stages, or hardcoded 76.6%. Users entered
+  values into the line-level fields not realising stages also existed and that the
+  derivation ignored their inputs in some paths.
+- **`op.parallelism`** had been removed from the routing UI in v3.4 (per the
+  comment "parallelism is more lines"), but the field was still serialized to the
+  backend at `index.html:6168` even though no UI ever set it.
+
+### A-6.2 — R13.5.A4 · `resolveCycleTime → {value, source, stageCount}` (`index.html:7641`)
+
+New resolver replaces the old `lineCycleMin`. Returns:
+```js
+{ value: <minutes>, source: 'override' | 'stageSum' | 'productFallback', stageCount: <n> }
+```
+
+`lineCycleMin` is preserved as a thin scalar wrapper (`resolveCycleTime(...).value`)
+so older call sites keep working unchanged. Card ⑥ (Line × Product cycle override)
+now renders a per-cell provenance badge below each input:
+
+- **override** (yellow chip) — cell explicitly filled
+- **Σ N stages** (cyan chip) — derived from card ⑤ stage sequence; N = count of
+  stages on the SKU's mapped sequence
+- **fallback** (grey chip) — no stage mapping yet → `product.cycleTime`
+
+Tooltips on each cell explain which source is in use and what would be used if
+the cell were blanked. Card help text rewritten to explain the badges.
+
+### A-6.3 — R13.5.A5 · `resolveLineOEE → {value, source, stageCount}` (`index.html:7660`)
+
+New resolver replaces the old `lineOEE`. Returns:
+```js
+{ value: <decimal 0..1>, source: 'lineFields' | 'stageProduct' | 'default', stageCount: <n> }
+```
+
+Resolution priority:
+1. `line.oeeMode === 'manual'` and A/P/Q filled → use `(A/100)·(P/100)·(Q/100)`
+2. else if line has stages in card ③ → `Π(stage.oeePct/100)` (serial composition)
+3. else if A/P/Q filled → use them
+4. else → 0.85·0.92·0.98 = 76.6% legacy default
+
+Card ② Line Registry surfaces the source as a chip in the Composite cell:
+- **Manual A·P·Q** (yellow) — explicit override
+- **Π N stages** (cyan) — derived from topology
+- **default** (grey) — no info available
+
+Auto/Man toggle button in the Composite cell flips `oeeMode`. When Auto and
+stages exist, A/P/Q columns dim (opacity 0.45) with hover tooltip "Advisory:
+stages exist on this line, so the Composite is derived from Π(stage.oeePct).
+Toggle Manual to use this column."
+
+**Migration safety:** The seed has `oeeAvailability:85,oeePerformance:92,oeeQuality:98`
+which under the new Π formula would jump from showing 75% (old weighted avg) to
+30.5% (Π across 4 stages with oeePct of 78/72/68/80). To prevent that surprise
+for users with persisted state, the seed and `addLine` now include
+`oeeMode: 'manual'`, and a one-shot mount-time migration in `App` sets
+`oeeMode: 'manual'` on any persisted line that has explicit A/P/Q but no
+`oeeMode`. Users opt into stage-derived OEE by clicking the Auto button.
+
+### A-6.4 — R13.5.A7 · Shared-stage changeover banner (`index.html:8085+`)
+
+Card ⑦ (Changeover Matrix) now detects when any line in the topology has a
+stage tagged to a shared work-center (`stage.sharedStageId` set). If so:
+
+- A yellow banner at the top of the card explains the limitation: per-line
+  changeover entries treat the swap as if only the host line was affected, but
+  a real changeover at a shared booth (e.g. powder coat) blocks every line that
+  consumes from the pool. Phase 3 (D-series) will split per-line vs per-pool
+  changeover into separate fields.
+- Each affected line's section header shows a "shared N" chip with the count
+  of shared-stage members and a tooltip listing which stages are pooled.
+
+This is a **transparency note**, not a functional change. The solver still uses
+the per-line matrix; users can now see when that's likely an upper bound.
+
+### A-6.5 — R13.5.A6 · `op.parallelism` removed from frontend payload (`index.html:6168`)
+
+Profit-mix solver payload no longer includes `op.parallelism`. The field was
+never set by any UI control in v3.4 (the routing card creates ops without it
+since R7), so this is a dead-code cleanup. `production.py` line 90 already had
+`par = max(op.get('parallelism', 1), 1)` so the backend silently defaults to 1.
+Routing-DAG comment at `index.html:2096` updated to drop `parallelism` from the
+op-shape gloss with a Phase-1b note explaining v3.4 semantics: "parallel
+production = more lines via skuMap.lineId, not stations within a line."
+
+### A-6.6 — R13.5 verification
+
+1. **Babel parse**: clean at 1,288,899 bytes.
+2. **Cycle provenance**: with default seed (1 line, 4 stages, no SKU↔Line stage
+   sequences in card ⑤ yet), all card ⑥ cells should render `fallback` chip
+   showing 19 min/u. After adding a stage sequence in card ⑤, the same cells
+   re-render as `Σ 4 stages` showing the sum. After typing into a cell, that
+   cell re-renders as `override` with yellow tinting.
+3. **OEE provenance**: default seed → Composite shows 76.6% with `Manual A·P·Q`
+   chip (because of `oeeMode:'manual'` migration). Click "Auto" → Composite
+   recomputes to 30.5% with `Π 4 stages` chip and A/P/Q columns dim. Click
+   "Man" → reverts to 76.6%.
+4. **Shared-stage banner**: default seed has S3 Powder Coat → SH-PC shared.
+   Card ⑦ shows yellow banner + "shared 1" chip on Line 1's section.
+5. **No regressions**: profit-mix solver, procurement solver, production solver
+   all still produce identical outputs (resolver shims preserve the scalar
+   contract; payload `parallelism` field removal triggers backend default to 1
+   which was the only value ever sent).
+
+### A-6.7 — Deferred (still open after R13.5)
+
+Phase 2 / Phase 3 / Phase 4 / Phase 5 — see § A-5.6 below.
+
+One small Phase-1b carryover that did NOT ship: **merging cards ⑥ + ⑦ into a
+single "Line × Product Throughput Matrix"** as the original plan suggested.
+On reflection, the two cards have very different shapes (⑥ is SKU × Line with
+a default column; ⑦ is per-line, SKU × SKU) so a forced merge would compress
+two clear matrices into one cluttered one. The provenance badges already
+solve the "where does the number come from" problem without merging the cards.
+If a user asks for the merge later, the resolver functions are now in place to
+support it cleanly.
+
+---
+
 ## A-5. What shipped in Round 13 (Tab 4 Phase 1a — UI coherence)
 
 **Working file sizes after R13:** `index.html` script block 1,278,520 bytes
@@ -98,17 +231,9 @@ allows ONE line per SKU; multi-line concurrency is a Phase-2 deferral.
 
 No backend changes; profitmix/procurement/production solvers unchanged.
 
-### A-5.6 — Deferred (Phases 1b → 4 still open)
+### A-5.6 — Deferred (Phases 2 → 5 still open after R13.5)
 
-**Phase 1b — Cycle-time + OEE provenance**
-- A4: `resolveCycleTime(productId, lineId, state) → {value, source}` resolver;
-  merge ④+⑥+⑦ cards into one Throughput Matrix with provenance badges.
-- A5: `resolveLineOEE(lineId, state) = Π(stage.oeePct/100)`. Mark line-level
-  availability/performance/quality fields as derived; banner on line registry.
-- A7: Shared-stage changeover — when `stage.sharedStageId` set, changeover
-  attaches to the shared work-center, not the per-line matrix.
-- A6: Decide on `op.parallelism` — expose as "concurrent lines" multiplier
-  on skuMap rows OR remove orphaned solver hookup at `index.html:6166`.
+(Phase 1b shipped in R13.5 — see § A-6 below.)
 
 **Phase 2 — Workforce + Asset → Line wiring**
 - B1–B5: New `state.production.workforce` branch (`salariedHeadcount`,

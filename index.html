@@ -2093,7 +2093,9 @@ const defaultSKU=()=>({
   outRate:2.0,outMode:'perUnit',outShipCost:50,
   prodMode:'mts',
   // v3.0 — per-product routing (operations DAG). Empty = use fallback capacity.
-  // Each op: {id, seq, name, workCenter, lineId, cycleTimeMin, setupMin, yieldPct, parallelism, predecessor}
+  // Each op: {id, seq, name, workCenter, lineId, cycleTimeMin, setupMin, yieldPct, predecessor}
+  // R13 Phase 1b · A6 — `parallelism` removed (orphaned: never set in UI; backend defaults to 1).
+  // In v3.4, parallel production = "more lines" via skuMap.lineId, not stations within a single line.
   routing:[],
   lineMode:'shared', // shared | dedicated | flexible-sequential | flexible-parallel
   history:[120,135,128,140,155,148,162,170,158,145,138,150,125,140,132,148,160,152,168,175,162,150,142,155],
@@ -2208,9 +2210,11 @@ const defaultState={
     //   oeeAvailability/oeePerformance/oeeQuality : line-level OEE percentages
     //     (Per-product OEE on `defaultSKU()` is now treated as a fallback only.)
     //   changeoverMatrix : { [fromSkuId]: { [toSkuId]: minutes } } — per-line SKU→SKU sequencing penalty
+    // R13 Phase 1b · A5 — `oeeMode: 'manual'` defaults the Composite to A·P·Q from this row (preserves the seeded 76.6%).
+    // Toggle to 'auto' in the UI to derive Composite = Π(stage.oeePct/100) from the topology in card ③.
     lines:[{id:'line1',name:'Line 1',type:'shared',capacity:50,shiftsPerDay:1,hoursPerShift:8,breakMins:30,
       workersPerShift:6,hourlyRate:120,otMult:1.5,otThresholdPct:85,maxOtHrsPerWorkerPerWeek:12,
-      oeeAvailability:85,oeePerformance:92,oeeQuality:98,
+      oeeAvailability:85,oeePerformance:92,oeeQuality:98,oeeMode:'manual',
       changeoverMins:30,changeoverMatrix:{},
       eligibleProducts:[],dedicated:false,plannedMaintenance:[]}],
     // Pillar 12 — Production Architecture topology. Stages are sequenced operations within a line; each
@@ -6165,7 +6169,8 @@ function OptimizeTab({state,dispatch}){
         endpoint='/api/solve/production';
         payload={
           products:state.products.map(p=>({name:p.name,required_qty:annDemand(p),setup_cost:p.setupCost,yield_pct:p.yieldPct,cycle_time:(p.cycleTime||19)/60,capacity_per_week:p.capacity,mape_pct:p.mape||15,
-            routing:(p.routing||[]).map(op=>({op_id:op.id,seq:op.seq,name:op.name,line_id:op.lineId,work_center:op.workCenter,cycle_time_min:op.cycleTimeMin,setup_min:op.setupMin,yield_pct:op.yieldPct,parallelism:op.parallelism})),
+            // R13 Phase 1b · A6 — parallelism removed from payload (orphaned in v3.4); production.py defaults to 1.
+            routing:(p.routing||[]).map(op=>({op_id:op.id,seq:op.seq,name:op.name,line_id:op.lineId,work_center:op.workCenter,cycle_time_min:op.cycleTimeMin,setup_min:op.setupMin,yield_pct:op.yieldPct})),
             oee:((p.oeeAvailability||85)*(p.oeePerformance||92)*(p.oeeQuality||98))/1000000,
             line_mode:p.lineMode||'shared'})),
           lines:state.production.lines.map((l,i)=>{
@@ -7633,15 +7638,15 @@ for k, prod in enumerate(products):
 // T4 — Production helpers (Tab 04)
 // ════════════════════════════════════════════════
 
-// T4-06 — Sparse Line × Product cycle-time resolver.
+// T4-06 / R13 Phase 1b · A4 — Sparse Line × Product cycle-time resolver returning {value, source}.
 // Resolution priority: explicit override on the product → sum of stage cycle times for the SKU's stage sequence
 //   on this line → product.cycleTime fallback → 19 (legacy default).
-// We deliberately keep storage SPARSE (overrides only) so a 50×8 plant doesn't carry 400 cells of duplicates,
-// matching SAP PP routings (operation-level overrides on the routing, not a flat product×line table).
-function lineCycleMin(prod, line, topo, skuMap){
-  if(!prod || !line) return prod?.cycleTime || 19;
+// Storage is SPARSE (overrides only) to match SAP PP routings (operation-level overrides on the routing,
+// not a flat product×line table). The `source` field drives provenance badges in card ⑥.
+function resolveCycleTime(prod, line, topo, skuMap){
+  if(!prod || !line) return {value: prod?.cycleTime || 19, source:'productFallback', stageCount:0};
   const ov = prod.lineCycleOverrides||{};
-  if(ov[line.id]!=null && +ov[line.id]>0) return +ov[line.id];
+  if(ov[line.id]!=null && +ov[line.id]>0) return {value:+ov[line.id], source:'override', stageCount:0};
   const map = (skuMap||[]).find(m=>m.skuId===prod.id && m.lineId===line.id);
   const lineTopo = (topo?.lines||[]).find(L=>L.id===line.id);
   if(map && lineTopo){
@@ -7649,25 +7654,37 @@ function lineCycleMin(prod, line, topo, skuMap){
     const stagesOnSeq = (lineTopo.stages||[]).filter(s=>seqIds.includes(s.id));
     if(stagesOnSeq.length){
       const total = stagesOnSeq.reduce((a,s)=>a + (+s.cycleMin||0), 0);
-      if(total>0) return total;
+      if(total>0) return {value: total, source:'stageSum', stageCount: stagesOnSeq.length};
     }
   }
-  return prod.cycleTime || 19;
+  return {value: prod.cycleTime || 19, source:'productFallback', stageCount:0};
 }
+// Backwards-compatible scalar wrapper — older call sites read just the number.
+function lineCycleMin(prod, line, topo, skuMap){ return resolveCycleTime(prod,line,topo,skuMap).value; }
 
-// T4-07 — Composite line OEE = availability × performance × quality.
-function lineOEE(line, topo){
-  if(!line) return 0.85*0.92*0.98;
-  const a = +line.oeeAvailability, p = +line.oeePerformance, q = +line.oeeQuality;
-  if(!isNaN(a) && !isNaN(p) && !isNaN(q)) return (a/100)*(p/100)*(q/100);
+// T4-07 / R13 Phase 1b · A5 — Composite line OEE returning {value, source}.
+// When stages exist, derive Π(stage.oeePct/100) (serial composition: each stage's losses compound).
+// Per-line A/P/Q fields become advisory unless `oeeMode === 'manual'`, in which case they take precedence.
+// This makes the stage table the single source of truth and prevents A/P/Q ↔ stage drift.
+function resolveLineOEE(line, topo){
+  const fallback = 0.85*0.92*0.98;
+  if(!line) return {value: fallback, source:'default', stageCount:0};
   const lineTopo = (topo?.lines||[]).find(L=>L.id===line.id);
-  if(lineTopo && lineTopo.stages?.length){
-    let num=0, den=0;
-    lineTopo.stages.forEach(s=>{ num += (+s.oeePct||75)*(+s.machines||1); den += (+s.machines||1); });
-    return den>0 ? (num/den)/100 : 0.85*0.92*0.98;
+  const hasStages = !!(lineTopo && lineTopo.stages?.length);
+  if(line.oeeMode==='manual'){
+    const a=+line.oeeAvailability, p=+line.oeePerformance, q=+line.oeeQuality;
+    if(!isNaN(a)&&!isNaN(p)&&!isNaN(q)) return {value:(a/100)*(p/100)*(q/100), source:'lineFields', stageCount:0};
   }
-  return 0.85*0.92*0.98;
+  if(hasStages){
+    const product = lineTopo.stages.reduce((acc,s)=>acc*((+s.oeePct||75)/100), 1);
+    return {value: product, source:'stageProduct', stageCount: lineTopo.stages.length};
+  }
+  const a=+line.oeeAvailability, p=+line.oeePerformance, q=+line.oeeQuality;
+  if(!isNaN(a)&&!isNaN(p)&&!isNaN(q)) return {value:(a/100)*(p/100)*(q/100), source:'lineFields', stageCount:0};
+  return {value: fallback, source:'default', stageCount:0};
 }
+// Backwards-compatible scalar wrapper.
+function lineOEE(line, topo){ return resolveLineOEE(line,topo).value; }
 
 // T4-08 — Planned maintenance hours lost on a given line for a given period.
 function maintHoursLost(line, periodIdx, planning){
@@ -7813,9 +7830,11 @@ function ProductionArchitectureTab({state,dispatch}){
     const id='L'+Math.random().toString(36).slice(2,6);
     // T4-09 — also seed a matching solver-line entry so SKU↔Line mapping doesn't go stale.
     setTopo({...topo,lines:[...topo.lines,{id,name:`Line ${topo.lines.length+1}`,stages:[{id:'S'+Math.random().toString(36).slice(2,6),name:'Stage 1',machines:1,workers:1,cycleMin:5,oeePct:75,canOutsource:false,outsourceCostPerUnit:0,outsourceLeadDays:0,sharedStageId:null}]}]});
+    // R13 Phase 1b · A5 — new lines start in `oeeMode:'manual'` so the initial Composite reflects A·P·Q (76.6%).
+    // Once the user adds stages in card ③, they can flip Auto to derive Composite = Π(stage.oeePct/100).
     setLines([...lines,{id,name:`Line ${lines.length+1}`,type:'shared',capacity:50,shiftsPerDay:1,hoursPerShift:8,breakMins:30,
       workersPerShift:6,hourlyRate:120,otMult:1.5,otThresholdPct:85,maxOtHrsPerWorkerPerWeek:12,
-      oeeAvailability:85,oeePerformance:92,oeeQuality:98,
+      oeeAvailability:85,oeePerformance:92,oeeQuality:98,oeeMode:'manual',
       changeoverMins:30,changeoverMatrix:{},
       eligibleProducts:[],dedicated:false,plannedMaintenance:[]}]);
   };
@@ -7900,9 +7919,15 @@ function ProductionArchitectureTab({state,dispatch}){
             </tr>
           </thead>
           <tbody>{lines.map(L=>{
-            const oee=lineOEE(L,topo);
+            const oeeRes=resolveLineOEE(L,topo);
+            const oee=oeeRes.value;
+            const oeeAdvisory=oeeRes.source==='stageProduct';  // line-level A/P/Q is not consumed → advisory
+            const oeeBadge=oeeRes.source==='stageProduct'?{label:`Π ${oeeRes.stageCount} stage${oeeRes.stageCount===1?'':'s'}`,color:'var(--ac)',bg:'rgba(56,189,248,.12)',title:'Composite is the multiplicative product of stage OEEs from the topology — A/P/Q columns are advisory. Toggle Manual to override.'}
+                      :oeeRes.source==='lineFields'?{label:'Manual A·P·Q',color:'var(--a4)',bg:'rgba(240,180,41,.12)',title:'Composite is computed from the explicit A/P/Q columns on this line.'}
+                      :{label:'default',color:'var(--tx3)',bg:'rgba(140,140,160,.10)',title:'No stages and no explicit A/P/Q — using the legacy default 76.6%.'};
             const netHrsDay=lineNetHrsPerWorkDay(L);
             const netHrs=netHrsDay*wd;
+            const oeeAdvisoryStyle=oeeAdvisory?{opacity:0.45}:{};
             return <tr key={L.id}>
               <td style={{fontWeight:700,color:'var(--ac)'}}><input value={L.name||''} onChange={e=>renameLine(L.id,e.target.value)} style={{width:90,fontSize:10,fontWeight:700}} title="Renaming here also updates the topology card below."/></td>
               <td><NumInput min={1} max={3} value={L.shiftsPerDay||1} onChange={v=>upSolverLine(L.id,{shiftsPerDay:v})} style={{width:40,fontSize:10}}/></td>
@@ -7913,10 +7938,16 @@ function ProductionArchitectureTab({state,dispatch}){
               <td><NumInput value={L.hourlyRate||0} onChange={v=>upSolverLine(L.id,{hourlyRate:v})} style={{width:55,fontSize:10}}/></td>
               <td><NumInput step="0.1" min={1} max={3} value={L.otMult||1.5} onChange={v=>upSolverLine(L.id,{otMult:v})} style={{width:40,fontSize:10}}/></td>
               <td><NumInput value={L.maxOtHrsPerWorkerPerWeek||12} onChange={v=>upSolverLine(L.id,{maxOtHrsPerWorkerPerWeek:v})} style={{width:42,fontSize:10}}/></td>
-              <td><NumInput value={L.oeeAvailability??85} onChange={v=>upSolverLine(L.id,{oeeAvailability:v})} style={{width:42,fontSize:10}}/></td>
-              <td><NumInput value={L.oeePerformance??92} onChange={v=>upSolverLine(L.id,{oeePerformance:v})} style={{width:42,fontSize:10}}/></td>
-              <td><NumInput value={L.oeeQuality??98} onChange={v=>upSolverLine(L.id,{oeeQuality:v})} style={{width:42,fontSize:10}}/></td>
-              <td className="num" style={{color:oee>=0.75?'var(--gn)':oee>=0.6?'var(--a4)':'var(--dg)',fontWeight:700}}>{(oee*100).toFixed(1)}%</td>
+              <td style={oeeAdvisoryStyle} title={oeeAdvisory?'Advisory: stages exist on this line, so the Composite is derived from Π(stage.oeePct). Toggle Manual to use this column.':'Availability % — fraction of scheduled time the line is up.'}><NumInput value={L.oeeAvailability??85} onChange={v=>upSolverLine(L.id,{oeeAvailability:v})} style={{width:42,fontSize:10}}/></td>
+              <td style={oeeAdvisoryStyle} title={oeeAdvisory?'Advisory: stages exist on this line, so the Composite is derived from Π(stage.oeePct). Toggle Manual to use this column.':'Performance % — fraction of design speed when running.'}><NumInput value={L.oeePerformance??92} onChange={v=>upSolverLine(L.id,{oeePerformance:v})} style={{width:42,fontSize:10}}/></td>
+              <td style={oeeAdvisoryStyle} title={oeeAdvisory?'Advisory: stages exist on this line, so the Composite is derived from Π(stage.oeePct). Toggle Manual to use this column.':'Quality % — fraction of good units out of total.'}><NumInput value={L.oeeQuality??98} onChange={v=>upSolverLine(L.id,{oeeQuality:v})} style={{width:42,fontSize:10}}/></td>
+              <td className="num" style={{color:oee>=0.75?'var(--gn)':oee>=0.6?'var(--a4)':'var(--dg)',fontWeight:700}}>
+                {(oee*100).toFixed(1)}%
+                <div style={{marginTop:2,display:'flex',gap:3,alignItems:'center',justifyContent:'center'}}>
+                  <span title={oeeBadge.title} style={{fontSize:8,padding:'1px 4px',borderRadius:2,background:oeeBadge.bg,color:oeeBadge.color,fontWeight:600}}>{oeeBadge.label}</span>
+                  <button onClick={()=>upSolverLine(L.id,{oeeMode:L.oeeMode==='manual'?'auto':'manual'})} title={L.oeeMode==='manual'?'Switch back to deriving Composite from stages (when stages exist).':'Switch to using the explicit A/P/Q columns on this row.'} style={{fontSize:8,padding:'0 4px',border:'1px solid var(--br)',background:L.oeeMode==='manual'?'rgba(240,180,41,.12)':'transparent',color:L.oeeMode==='manual'?'var(--a4)':'var(--tx3)',cursor:'pointer',borderRadius:2,fontWeight:600}}>{L.oeeMode==='manual'?'Man':'Auto'}</button>
+                </div>
+              </td>
               <td className="num" style={{color:'var(--a2)',fontWeight:600}}>{netHrs.toFixed(1)}h<SectionInfo title="Net hrs/wk derivation"><strong>Net hrs/day</strong> = (shifts × hrs/shift) − (breakMins × shifts / 60)<br/>= ({(+L.shiftsPerDay||1)} × {(+L.hoursPerShift||8)}) − ({(+L.breakMins||30)} × {(+L.shiftsPerDay||1)} / 60)<br/>= <strong>{netHrsDay.toFixed(2)} hrs/day</strong><br/><br/><strong>Net hrs/wk</strong> = net hrs/day × workDays/wk<br/>= {netHrsDay.toFixed(2)} × {wd}<br/>= <strong style={{color:'var(--ac)'}}>{netHrs.toFixed(2)} hrs/week</strong><br/><br/><span style={{fontSize:10,color:'var(--tx2)'}}>Workdays/wk is set in <em>Tab 1 → Planning Calendar</em>. Breaks are deducted once per shift.</span></SectionInfo></td>
               <td>{lines.length>1&&<button className="btn btn-danger btn-sm" onClick={()=>delLine(L.id)}>×</button>}</td>
             </tr>;
@@ -7927,7 +7958,7 @@ function ProductionArchitectureTab({state,dispatch}){
       <div style={{fontSize:9,color:'var(--tx3)',marginTop:6,padding:'5px 8px',background:'var(--bg3)',borderRadius:3}}>
         <strong>OT cost formula:</strong> OT_cost = workers × OT_hrs × rate × mult.<br/>
         <strong>OT eligibility:</strong> solver only requests OT when line utilisation &gt; threshold %. Below threshold, regular-hour production is preferred.<br/>
-        <strong>OEE composite</strong> = Availability × Performance × Quality. Industry world-class ≥ 85%.
+        <strong>OEE composite (R13 · A5):</strong> when the line has stages defined in card ③, Composite = Π(stage.oeePct/100) — serial composition across the topology. The A/P/Q columns become advisory (dimmed) and the badge under Composite shows <span style={{padding:'1px 4px',background:'rgba(56,189,248,.12)',color:'var(--ac)',borderRadius:2,fontWeight:600}}>Π N stages</span>. Click <em>Auto</em>/<em>Man</em> to toggle: Manual mode uses A·P·Q from this row instead. Industry world-class composite ≥ 85%.
       </div>
     </CollapsibleCard>
 
@@ -8034,20 +8065,32 @@ function ProductionArchitectureTab({state,dispatch}){
       </table>
     </CollapsibleCard>
 
-    {/* T4-06 — Sparse Line × Product cycle override matrix. Default = derived from stage seq + product cycleTime. */}
+    {/* T4-06 / R13 Phase 1b · A4 — Sparse Line × Product cycle override matrix with provenance badges per cell. */}
     <CollapsibleCard title="⑥ Line × Product cycle time (sparse override)" defaultOpen={false} accent="var(--a3)"
       badge={(()=>{const overrides=state.products.reduce((a,p)=>a+Object.keys(p.lineCycleOverrides||{}).length,0);return `${overrides} explicit override${overrides===1?'':'s'}`;})()}
-      info={<><strong>T4-06 — sparse, not dense.</strong> Per SAP PP routings, cycle time on a (product, line) pair has 3 sources, in priority order: (1) explicit override below, (2) Σ stage cycleMin for the SKU's stage sequence on that line (from § Lines × Stages), (3) product.cycleTime as a fallback. Leave a cell <em>blank</em> to use the derivation — only fill it when a specific line genuinely runs the SKU faster/slower than the stage math implies (e.g. older line retrofit, special tooling). 50 SKUs × 8 lines = 400 cells; you should rarely fill more than 5–10% of them.</>}>
+      info={<><strong>T4-06 — sparse, not dense.</strong> Per SAP PP routings, cycle time on a (product, line) pair has 3 sources, in priority order: (1) explicit override below, (2) Σ stage cycleMin for the SKU's stage sequence on that line (from § Lines × Stages — requires a row in card ⑤ Map SKUs to Lines with a stage sequence), (3) product.cycleTime as a fallback. Each cell shows a provenance badge of which source the resolver picked: <span style={{padding:'1px 4px',background:'rgba(240,180,41,.12)',color:'var(--a4)',borderRadius:2,fontWeight:600}}>override</span> · <span style={{padding:'1px 4px',background:'rgba(56,189,248,.12)',color:'var(--ac)',borderRadius:2,fontWeight:600}}>stageSum</span> · <span style={{padding:'1px 4px',background:'rgba(140,140,160,.12)',color:'var(--tx3)',borderRadius:2,fontWeight:600}}>productFallback</span>. Leave a cell <em>blank</em> to use the derivation — only fill it when a specific line genuinely runs the SKU faster/slower than the stage math implies (older line retrofit, special tooling). 50 SKUs × 8 lines = 400 cells; you should rarely fill more than 5–10% of them.</>}>
       <div style={{overflowX:'auto'}}>
         <table className="data-table" style={{fontSize:10}}>
-          <thead><tr><th style={{minWidth:140,textAlign:'left',position:'sticky',left:0,background:'var(--bg2)',zIndex:1}}>SKU ↓ / Line →</th>{topo.lines.map(L=><th key={L.id} style={{minWidth:90}}>{L.name}</th>)}<th>Default (min/u)</th></tr></thead>
+          <thead><tr><th style={{minWidth:140,textAlign:'left',position:'sticky',left:0,background:'var(--bg2)',zIndex:1}}>SKU ↓ / Line →</th>{topo.lines.map(L=><th key={L.id} style={{minWidth:110}}>{L.name}</th>)}<th>Default (min/u)</th></tr></thead>
           <tbody>{state.products.map(p=>{
             const overrides=p.lineCycleOverrides||{};
             return <tr key={p.id}>
               <td style={{textAlign:'left',fontWeight:600,position:'sticky',left:0,background:'var(--bg2)'}}>{p.name}</td>
               {topo.lines.map(L=>{
                 const ov=overrides[L.id];
-                const derived=lineCycleMin({...p,lineCycleOverrides:{}},L,topo,skuMap);
+                // Resolve as if no override on this line — that gives us the underlying source the cell would fall back to.
+                const baseRes=resolveCycleTime({...p,lineCycleOverrides:{}},L,topo,skuMap);
+                const liveRes=resolveCycleTime(p,L,topo,skuMap);
+                const derived=baseRes.value;
+                const baseSrc=baseRes.source;  // what would be used if blank
+                const liveSrc=liveRes.source;  // what is actually used now
+                const badge=liveSrc==='override'?{label:'override',color:'var(--a4)',bg:'rgba(240,180,41,.12)'}
+                          :liveSrc==='stageSum'?{label:`Σ ${baseRes.stageCount} stages`,color:'var(--ac)',bg:'rgba(56,189,248,.12)'}
+                          :{label:'fallback',color:'var(--tx3)',bg:'rgba(140,140,160,.10)'};
+                const tooltip=ov!=null
+                  ? `Override: ${ov} min/u. If blank, would use ${baseSrc==='stageSum'?`stage sum (${derived.toFixed(1)})`:`product fallback (${derived.toFixed(1)})`}.`
+                  : baseSrc==='stageSum' ? `Stage sum across ${baseRes.stageCount} stage${baseRes.stageCount===1?'':'s'} = ${derived.toFixed(1)} min/u. Type to override.`
+                  : `No stage sequence in card ⑤ for this (SKU, line) — using product.cycleTime (${derived.toFixed(1)} min/u). Type to override, or add a mapping in card ⑤.`;
                 return <td key={L.id} style={{textAlign:'center'}}>
                   <input type="number" min={0} step={0.5} value={ov??''} placeholder={derived.toFixed(1)}
                     style={{width:60,textAlign:'right',fontSize:10,
@@ -8055,13 +8098,16 @@ function ProductionArchitectureTab({state,dispatch}){
                       fontWeight:ov!=null?700:400,
                       background:ov!=null?'rgba(240,180,41,.08)':'transparent',
                       border:'1px solid '+(ov!=null?'var(--a4)':'var(--br)')}}
-                    title={ov!=null?`Override: ${ov} min/u (line stage math says ${derived.toFixed(1)})`:`Derived from stage cycle sum: ${derived.toFixed(1)} min/u. Type to override.`}
+                    title={tooltip}
                     onChange={e=>{
                       const v=e.target.value;
                       const next={...overrides};
                       if(v===''||+v<=0) delete next[L.id]; else next[L.id]=+v;
                       dispatch({type:'UPDATE_PRODUCT',id:p.id,payload:{lineCycleOverrides:next}});
                     }}/>
+                  <div style={{marginTop:2}} title={tooltip}>
+                    <span style={{fontSize:8,padding:'1px 4px',borderRadius:2,background:badge.bg,color:badge.color,fontWeight:600}}>{badge.label}</span>
+                  </div>
                 </td>;
               })}
               <td className="num" style={{color:'var(--tx3)',fontSize:9}}>{p.cycleTime||19}</td>
@@ -8070,17 +8116,34 @@ function ProductionArchitectureTab({state,dispatch}){
         </table>
       </div>
       <div style={{fontSize:9,color:'var(--tx3)',marginTop:6,padding:'5px 8px',background:'var(--bg3)',borderRadius:3}}>
-        <strong>Reading the table:</strong> Greyed value = the derivation result (read-only display). Yellow value = your override. Blank cell = "use the derivation". This matches SAP PP MAPL routing-operation overrides — you don't store a row for every (material, work-center) combination, only the deltas.
+        <strong>Reading the table (R13 · A4):</strong> Each cell shows the cycle time the resolver picked plus a provenance badge. <span style={{padding:'1px 4px',background:'rgba(240,180,41,.12)',color:'var(--a4)',borderRadius:2,fontWeight:600}}>override</span> = your explicit value. <span style={{padding:'1px 4px',background:'rgba(56,189,248,.12)',color:'var(--ac)',borderRadius:2,fontWeight:600}}>Σ N stages</span> = sum of cycleMin across the stage sequence in card ⑤. <span style={{padding:'1px 4px',background:'rgba(140,140,160,.12)',color:'var(--tx3)',borderRadius:2,fontWeight:600}}>fallback</span> = no mapping yet → using product.cycleTime; add the SKU↔line row in card ⑤ to switch to stageSum. This is the same resolver consumed by the throughput math in card ⑧, the OEE/capacity table in card ⑧, and the procurement/profit-mix solvers.
       </div>
     </CollapsibleCard>
 
-    {/* T4-10 — Per-line SKU→SKU changeover matrix. Defaults to line.changeoverMins scalar; overrides are sparse. */}
+    {/* T4-10 / R13 Phase 1b · A7 — Per-line SKU→SKU changeover matrix. Defaults to line.changeoverMins scalar; overrides are sparse.
+        When the line's stage sequence touches a shared work-center, the *real* changeover happens at that shared resource —
+        a banner surfaces this, since per-line cells double-count if two lines that share a booth changeover at the same time. */}
     <CollapsibleCard title="⑦ Changeover Matrix (per line, SKU → SKU)" defaultOpen={false} accent="var(--a4)" badge={`${lines.length} line${lines.length===1?'':'s'} × ${state.products.length}² pairs`}
-      info={<><strong>T4-10:</strong> Switching from SKU A to SKU B on a line takes setup minutes (tooling change, fixture swap, line purge, FAI). The single scalar <code>changeoverMins</code> is the default; fill cells below for SKU pairs that take longer (steel→stainless, painted→unpainted, OE→aftermarket grade). Diagonal = 0 (same SKU = no changeover). Solver uses the matrix instead of the scalar when populated.</>}>
+      info={<><strong>T4-10:</strong> Switching from SKU A to SKU B on a line takes setup minutes (tooling change, fixture swap, line purge, FAI). The single scalar <code>changeoverMins</code> is the default; fill cells below for SKU pairs that take longer (steel→stainless, painted→unpainted, OE→aftermarket grade). Diagonal = 0 (same SKU = no changeover). Solver uses the matrix instead of the scalar when populated. <strong>Phase 1b · A7:</strong> when a line's stage sequence includes a shared work-center, changeovers there block <em>all</em> lines that draw from that pool — see the per-line banner. Phase 3 will move shared-stage changeover from the per-line matrix into the shared-stage record.</>}>
+      {(()=>{
+        const sharedConsumers=(topo.lines||[]).reduce((acc,L)=>{
+          const sharedIds=(L.stages||[]).filter(s=>s.sharedStageId).map(s=>s.sharedStageId);
+          if(sharedIds.length) acc[L.id]=sharedIds;
+          return acc;
+        },{});
+        return Object.keys(sharedConsumers).length>0?
+          <div style={{fontSize:9,color:'var(--a4)',padding:'5px 8px',marginBottom:10,background:'rgba(240,180,41,.08)',border:'1px solid rgba(240,180,41,.25)',borderRadius:3}}>
+            ⚠️ <strong>Shared work-center detected.</strong> {Object.keys(sharedConsumers).length} line{Object.keys(sharedConsumers).length===1?'':'s'} include{Object.keys(sharedConsumers).length===1?'s':''} stages tagged to a pooled resource (card ④). Per-line changeover entries below approximate single-line setup, but a real SKU swap at a shared booth blocks every line that consumes from it concurrently. Treat these rows as upper bounds until Phase 3 splits per-line vs per-pool changeover.
+          </div>:null;
+      })()}
       {lines.map(line=>{
         const matrix=line.changeoverMatrix||{};
+        const lineTopo=(topo.lines||[]).find(L=>L.id===line.id);
+        const sharedStagesOnLine=(lineTopo?.stages||[]).filter(s=>s.sharedStageId);
         return <div key={line.id} style={{marginBottom:14}}>
-          <div style={{fontSize:11,fontWeight:700,color:'var(--ac)',marginBottom:4}}>{line.name} <span style={{fontSize:9,color:'var(--tx3)',fontWeight:400}}>· default scalar = {line.changeoverMins||30} min</span></div>
+          <div style={{fontSize:11,fontWeight:700,color:'var(--ac)',marginBottom:4}}>{line.name} <span style={{fontSize:9,color:'var(--tx3)',fontWeight:400}}>· default scalar = {line.changeoverMins||30} min</span>
+            {sharedStagesOnLine.length>0&&<span title={`This line has ${sharedStagesOnLine.length} shared stage(s): ${sharedStagesOnLine.map(s=>s.name).join(', ')}. Changeover at the shared resource blocks every line that consumes from it.`} style={{marginLeft:8,fontSize:8,padding:'1px 5px',background:'rgba(240,180,41,.12)',color:'var(--a4)',borderRadius:2,fontWeight:600}}>shared {sharedStagesOnLine.length}</span>}
+          </div>
           <div style={{overflowX:'auto'}}>
             <table className="data-table" style={{fontSize:10}}>
               <thead><tr><th style={{position:'sticky',left:0,background:'var(--bg2)',zIndex:1,textAlign:'left',minWidth:120}}>From ↓ / To →</th>{state.products.map(to=><th key={to.id} style={{minWidth:80}}>{to.name}</th>)}</tr></thead>
@@ -15584,6 +15647,20 @@ function App(){
       }
     });
     if(changed) dispatch({type:'SET_PRODUCTION',payload:{topology:{...topo,lines:next}}});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
+
+  // R13 Phase 1b · A5 — One-shot migration: pre-Phase-1b lines have explicit A/P/Q seeded but no
+  // `oeeMode` field. resolveLineOEE would derive Π(stages) for them and surprise users with a
+  // big drop in displayed Composite. Default missing oeeMode to 'manual' so persisted state keeps
+  // showing A·P·Q-based composite; user toggles Auto in the UI when ready to derive from stages.
+  useEffect(()=>{
+    const lines=state.production?.lines||[];
+    if(!lines.length) return;
+    const needs=lines.some(L=>L.oeeMode==null && (L.oeeAvailability!=null||L.oeePerformance!=null||L.oeeQuality!=null));
+    if(!needs) return;
+    const next=lines.map(L=>L.oeeMode==null && (L.oeeAvailability!=null||L.oeePerformance!=null||L.oeeQuality!=null)?{...L,oeeMode:'manual'}:L);
+    dispatch({type:'SET_PRODUCTION',payload:{lines:next}});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
 
