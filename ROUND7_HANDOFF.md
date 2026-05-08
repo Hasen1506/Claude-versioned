@@ -17,6 +17,139 @@
 
 ---
 
+## A-1. What shipped in Round 9 (Bucket 3 — Solver / Forecasting / Horizon coherence)
+
+**Working file size after R9:** 1,266,505 bytes (R8 baseline: 1,232,850; net +33KB).
+
+### A-1.1 — C1.a · Effective horizon vs committed horizon
+- New helpers: `maxBomLeadTimePeriods(state)`, `effectiveHorizonInfo(state)`,
+  `padDemandToLength(arr, L, history)` — top-level near `periodCount`.
+- `state.planning.useEffectiveHorizon: false` (default), `eoqBufferPeriods: 2`.
+- Tab 1 Setup gets a new "🛡️ End-of-Horizon Distortion Controls" mini-card
+  with 4 toggles + live committed/buffer/effective chip.
+- Procurement payload `params.periods = effective` when ON; sends
+  `committed_periods`, `effective_periods`, `horizon_buffer` so backend (or
+  post-processing) can hide buffer-period POs.
+- Demand arrays padded with SES forecast (NOT zeros — zero-padding causes its
+  own distortion).
+
+### A-1.2 — C1.b · Terminal inventory anchor
+- Helper `terminalAnchorUnits(part, product, state)` =
+  `SS_part + avg_part_demand × LT_periods`. Uses existing
+  `safetyStockUnits` + `effQtyPer`.
+- Toggle `state.planning.enableTerminalAnchor` (default OFF). When ON, each
+  BOM part in the procurement payload carries `terminal_anchor_units`.
+
+### A-1.3 — C1.c · Setup cost as fixed-charge in MILP (verified)
+- `procurement.py:438` (product setup): `obj.append(setup_series[t] * y[k,t])`
+- `procurement.py:529` (part ord cost): `obj.append(part['ord_cost'] * o[gidx,t])`
+- Both binary-indicator-anchored. **No code change needed** — formulation
+  was already correct. Verification documented here for future audits.
+
+### A-1.4 — C1.d · Min-coverage gate
+- Per-part `b.minCoverageDays` field added in BOM editor (PROCUREMENT block,
+  default 0 = no gate).
+- Toggle `state.planning.enableMinCoverageGate` (default OFF). When ON, each
+  BOM part's `min_coverage_periods = ceil(minCoverageDays / periodDays)` is
+  sent in the payload.
+
+### A-1.5 — C1.e · Composite mode-dependent ordering cost
+- BOM ordBreakdown editor (R8 B6) gains a "↺ Freight from mode" button that
+  pulls `freightFixed` from the chosen transport mode + contract via
+  `transportShipmentCost(...)` helper (R8 B4). Bridges B2/B3 contracts to
+  lot-sizing.
+
+### A-1.6 — C2 · MTO + MTS hybrid per SKU
+- Helpers `mtoQtyByPeriod(product, planning)` and `effectiveDemand(...)`.
+  Hybrid mode opt-in per product via `prod.mtoOnTop = true`.
+- MTO orders distribute by `dueMonth` to the matching grain-period
+  (mid-month placement for weekly/daily).
+- Tab 2 MTO card has a hybrid toggle + live total breakdown (MTS + MTO = total).
+- Procurement payload's `weeklyDemand(p)` now uses `effectiveDemand`.
+
+### A-1.7 — C3 · Lost-sales proxy (simple, not Tobit)
+- Helper `inferredLostSales(product, planning)`: when actual/forecast < 0.7,
+  treats the gap as inferred lost sales. Returns `{byPeriod, total, count}`.
+- New "🩸 Lost Sales (Proxy)" card on Tab 9 Analysis showing per-product:
+  periods with lost, total units, lost revenue, % of demand.
+- Threshold (0.7) is heuristic — not a statistical inference. True Tobit /
+  censored-demand estimator deferred indefinitely (see section E).
+
+### A-1.8 — C4 · Drift-detector-light + retrain cadence
+- Helper `detectDriftLight(product, planning, opts)`. Compares last-N
+  residual std-dev to historical std-dev. Ratio > 1.5 → flags drift.
+- Per-product fields: `retrainCadence` (daily/weekly/monthly),
+  `lastRetrained` (ISO date).
+- Tab 3 forecast competition card gets a drift chip with cadence selector
+  and "↻ Retrain Now" button. Button POSTs to `/api/forecast/retrain`
+  (already accepts `{sku_id, cadence}`).
+
+### A-1.9 — C5 · Demand-sensing breach chip + sigma explainer
+- Helper `countSensingBreaches(state)` — # SKUs with last-window deviation
+  > k×σ or > pct% (lightweight version of MPS sensing logic).
+- Masthead chip "📡 SENSE × N" appears when breaches > 0; click → jump to
+  Tab 9 Analysis. Hidden when 0.
+- Tab 9 Demand Sensing card gets a "📐 Why 2σ?" explainer paragraph
+  citing α, threshold, full-resolve cadence (`sensingResolveAfter`).
+
+### A-1.10 — C6 · Tab 4 MPS unified drill-down
+- New 4th `mpsGran` mode `'unified'` alongside monthly/weekly/daily.
+- Single hierarchical table: month rows → click ▸ to expand into 4 weeks →
+  click ▸ on a week to expand into `workDays` days. Reuses existing
+  `expandedWeek` state + new `expandedMonth` state.
+- Working-day rendering skips weekends + holidays via parent calendar logic.
+
+### A-1.11 — C7 · Lifecycle curve clarification
+- Tab 3 Lifecycle Curve card now shows a 5-stage flow diagram:
+  History → Statistical → Lifecycle × → Promo → Override → Consensus.
+- Override-conflict gate: warns when override exists in a period with
+  lifecycle ≠ 1.0 (override replaces, not multiplies — design intent).
+- Card title gains "(Forecast Pipeline · stage 3 of 5)" to set context.
+
+### A-1.12 — C8 · Solver result transparency panel
+- New "🔍 WHAT THE SOLVER SAW" card under Command Center Results Summary.
+- 8 transparency tiles: procurement budget used/cap, WC binding,
+  logistics mode + over-spend, R9/C1 horizon, terminal anchor, min-coverage
+  gate, active disruptions count, MTO+MTS hybrid SKU count.
+- Reads `state.solverResults` + `eh` + state toggles. Empty fields mean
+  backend didn't echo that key back.
+
+### A-1.13 — Top-level helpers added (R9)
+- `maxBomLeadTimePeriods(state)` → number
+- `effectiveHorizonInfo(state)` → `{committed, buffer, effective, maxLT, eoqBuf, enabled}`
+- `padDemandToLength(arr, L, history)` → array (SES-extended)
+- `terminalAnchorUnits(part, product, state)` → number
+- `mtoQtyByPeriod(product, planning)` → array
+- `effectiveDemand(product, planning, rollingPatch)` → array
+- `inferredLostSales(product, planning)` → `{byPeriod, total, count}`
+- `detectDriftLight(product, planning, opts)` → `{drifted, recentStd, histStd, ratio, enoughData}`
+- `countSensingBreaches(state)` → number
+
+### A-1.14 — Verification (R9)
+- Babel parse: ✓ at 1,266,505 bytes
+- 6 smoke tests pass (effective horizon math, demand padding, MTO grain placement)
+- All toggles default OFF — backward compatible. Existing payloads unchanged
+  unless user opts in via Tab 1 controls.
+
+### A-1.15 — Backend wiring status
+- Frontend ships new payload keys: `committed_periods`, `effective_periods`,
+  `horizon_buffer`, `enable_terminal_anchor`, `enable_min_coverage`,
+  `min_coverage_periods` (per part), `terminal_anchor_units` (per part).
+- **`procurement.py` does not yet read these.** Frontend display + payload
+  are correct; backend is a no-op for the new keys (ignored). To activate:
+  add constraints in `procurement.py` for terminal anchor (`I[k,T-1] >= ta`)
+  and min coverage (`x[g,t] >= cov_min * o[g,t]`). Trim output to
+  `committed_periods` window for display.
+
+### A-1.16 — NOT shipped in R9 (legitimately deferred)
+- ML weather/exogenous-feature forecasting (parked indefinitely; section E1)
+- True Tobit lost-sales estimator (parked; section E2)
+- Air-fallback spot-market pricing (parked; section E3)
+- True drift detector with concept-drift tests (parked; section E4)
+- Backend MILP changes for terminal anchor + min-coverage (deferred — see A-1.15)
+
+---
+
 ## A0. What shipped in Round 8 (Bucket 2 — BOM ↔ Locations ↔ Transport coherence)
 
 **Working file size after R8:** 1,232,850 bytes (R7 baseline: 1,208,847; net +24KB).
@@ -298,7 +431,7 @@ making them unusable."
 
 ---
 
-## C. Bucket 3 — Solver / Forecasting / Horizon coherence (READY TO BUILD)
+## C. Bucket 3 — Solver / Forecasting / Horizon coherence (✅ SHIPPED IN R9 — see section A-1)
 
 ### C1. Horizon scoping correctness — end-of-horizon distortion fix
 **Why:** User said "I may have chosen period from next 3 months then what

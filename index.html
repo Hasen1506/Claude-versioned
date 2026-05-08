@@ -1702,6 +1702,158 @@ function grainLabel(pl){const g=pl?.timeGrain||'weekly';return g==='daily'?'days
 // Period-to-annualization multiplier: periods-per-year for the configured grain.
 function periodsPerYear(pl){const g=pl?.timeGrain||'weekly';return g==='daily'?365:g==='monthly'?12:52;}
 
+// R9 / C1.a — Effective horizon vs committed horizon.
+// Solver sees committed + buffer (so it can make economical lot-size decisions
+// near the edge); display + commit decisions inside committed only. APICS calls
+// this "frozen / slushy / liquid time fence".
+function maxBomLeadTimePeriods(state){
+  let m=0;
+  (state.products||[]).forEach(p=>(p.bom||[]).forEach(b=>{const lt=+b.leadTime||0;if(lt>m)m=lt;}));
+  return m;
+}
+function effectiveHorizonInfo(state){
+  const committed=periodCount(state.planning);
+  const useEff=!!state.planning?.useEffectiveHorizon;
+  const eoqBuf=Math.max(0,Math.round(+state.planning?.eoqBufferPeriods||0));
+  const maxLT=maxBomLeadTimePeriods(state);
+  const buffer=useEff?(maxLT+eoqBuf):0;
+  return {committed, buffer, effective:committed+buffer, maxLT, eoqBuf, enabled:useEff};
+}
+// Pad a demand array to length L using SES on the supplied history (defaults to
+// last-known-value if history empty). Avoids zero-padding which causes its own
+// distortion (solver thinks "no demand" → no need to pre-build → tail-end PO).
+function padDemandToLength(arr,L,history){
+  const a=Array.isArray(arr)?arr.slice():[];
+  if(a.length>=L)return a.slice(0,L);
+  const need=L-a.length;
+  if(need<=0)return a;
+  // Simple SES on combined (history + arr) for the extension
+  const combined=(history||[]).concat(a).filter(v=>isFinite(+v));
+  if(!combined.length){a.push(...Array(need).fill(0));return a;}
+  let s=combined[0];const alpha=0.3;
+  combined.forEach(v=>{s=alpha*(+v||0)+(1-alpha)*s;});
+  // Use rounded SES level for buffer periods
+  const level=Math.max(0,Math.round(s));
+  for(let i=0;i<need;i++)a.push(level);
+  return a;
+}
+// R9 / C2 — MTO + MTS hybrid demand. Distribute mtoOrders[].qty into per-period
+// buckets at the configured grain (orders are stored as dueMonth ∈ [0,11]; project
+// to weekly/daily by mid-month placement). Returns array of length periodCount.
+function mtoQtyByPeriod(product,planning){
+  const N=periodCount(planning);
+  const out=Array(N).fill(0);
+  if(!product||!Array.isArray(product.mtoOrders))return out;
+  const grain=planning?.timeGrain||'weekly';
+  product.mtoOrders.forEach(o=>{
+    const m=Math.max(0,Math.min(11,+o.dueMonth||0));
+    const q=+o.qty||0;
+    if(q<=0)return;
+    let idx=0;
+    if(grain==='monthly')idx=m;
+    else if(grain==='weekly')idx=m*4+2; // mid-month week
+    else idx=m*30+15; // mid-month day
+    if(idx>=0&&idx<N)out[idx]+=q;
+  });
+  return out;
+}
+// Combined demand: history-based MTS forecast + MTO orderbook (when mtoOnTop=true).
+function effectiveDemand(product,planning,rollingPatch){
+  const mts=demandByPeriod(product,planning,rollingPatch);
+  if(!product?.mtoOnTop)return mts;
+  const mto=mtoQtyByPeriod(product,planning);
+  return mts.map((v,i)=>(+v||0)+(+mto[i]||0));
+}
+// R9 / C5 — Demand-sensing breach detector. Lightweight version of the per-MPS
+// logic above. Returns # SKUs in breach (last-window deviation > k×σ or > pct%).
+function countSensingBreaches(state){
+  if(!state||!Array.isArray(state.products))return 0;
+  const senseWindow=state.planning?.sensingWindow||2;
+  const sensePct=state.planning?.sensingPctThreshold||15;
+  const senseK=state.planning?.sensingStdK||2;
+  const sensingMin=state.planning?.sensingMinWeeks||2;
+  let breaches=0;
+  state.products.forEach(p=>{
+    const filled=(p.actuals||[]).map((a,i)=>({a,i})).filter(x=>x.a!==null&&x.a!==undefined);
+    if(filled.length<sensingMin)return;
+    const consensus=p.overrides?.map((ov,i)=>ov!==null&&ov!==undefined?ov:(p.history?.[i]||0))||p.history||[];
+    const window=filled.slice(-senseWindow);
+    if(window.length<senseWindow)return;
+    const devs=window.map(({a,i})=>a-(consensus[i]||0));
+    const meanFc=window.reduce((s,{i})=>s+(consensus[i]||0),0)/window.length||1;
+    const sigma=Math.sqrt(devs.reduce((s,d)=>s+d*d,0)/window.length);
+    const absDev=Math.abs(devs.reduce((s,d)=>s+d,0)/window.length);
+    const threshold=Math.max(Math.abs(meanFc)*sensePct/100,senseK*sigma);
+    if(absDev>threshold&&threshold>0)breaches++;
+  });
+  return breaches;
+}
+// R9 / C4 — Drift-detector-light. Compares last-window residual std-dev to
+// historical residual std-dev. If recent > 1.5× historical, flag drift.
+// Returns {drifted, recentStd, histStd, ratio}.
+function detectDriftLight(product,planning,opts){
+  const recentN=Math.max(2,(opts&&opts.recentN)||4);
+  const out={drifted:false,recentStd:0,histStd:0,ratio:0,enoughData:false};
+  if(!product)return out;
+  const fcst=demandByPeriod(product,planning);
+  const acts=product.actuals||[];
+  const residuals=[];
+  for(let i=0;i<Math.min(fcst.length,acts.length);i++){
+    if(acts[i]==null)continue;
+    residuals.push((+acts[i]||0)-(+fcst[i]||0));
+  }
+  if(residuals.length<recentN+2)return out;
+  out.enoughData=true;
+  const recent=residuals.slice(-recentN);
+  const hist=residuals.slice(0,-recentN);
+  const std=arr=>{const m=arr.reduce((a,b)=>a+b,0)/arr.length;return Math.sqrt(arr.reduce((s,v)=>s+(v-m)**2,0)/arr.length);};
+  out.recentStd=std(recent);
+  out.histStd=std(hist);
+  out.ratio=out.histStd>0?out.recentStd/out.histStd:0;
+  out.drifted=out.ratio>1.5;
+  return out;
+}
+// R9 / C3 — Lost-sales proxy. Censored-demand (Tobit) deferred per user choice.
+// Heuristic: when actual_t is recorded AND forecast_t > actual_t AND fill ratio
+// < 0.7 (sign of stock-out), treat the gap as inferred lost sales. This is a
+// rough proxy — not a true Tobit estimator. Returns {byPeriod, total, count}.
+function inferredLostSales(product,planning){
+  const out={byPeriod:[],total:0,count:0};
+  if(!product)return out;
+  const actuals=product.actuals||[];
+  const fcst=demandByPeriod(product,planning); // canonical forecast
+  const N=Math.max(actuals.length,fcst.length);
+  for(let i=0;i<N;i++){
+    const a=actuals[i];
+    const f=+fcst[i]||0;
+    if(a==null||!isFinite(+a))continue;
+    if(f<=0)continue;
+    const ratio=(+a||0)/f;
+    if(ratio>=0.7){out.byPeriod.push(0);continue;}
+    const lost=Math.max(0,f-(+a||0));
+    out.byPeriod.push(lost);
+    out.total+=lost;
+    if(lost>0)out.count++;
+  }
+  return out;
+}
+// R9 / C1.b — Terminal inventory anchor units per part.
+// Anchor = SS_units + (avg_daily_demand × replenishment_lead_time_in_periods).
+// Without anchor, MILP drives ending inv → 0 → forces tiny tail-end PO.
+function terminalAnchorUnits(part,product,state){
+  if(!part||!product)return 0;
+  const z=zVal(+(state.config?.serviceLevel||0.95));
+  const ltP=+part.leadTime||0;
+  const dem=demandByPeriod(product,state.planning);
+  const avgDem=dem.reduce((a,b)=>a+(+b||0),0)/Math.max(1,dem.length);
+  const partsPerUnit=effQtyPer(part);
+  const avgPartDemand=avgDem*partsPerUnit;
+  // Safety stock proxy at part level (use product's SS scaled by qty/unit)
+  const ssProd=safetyStockUnits(product,ltP*7,z); // weeks proxy
+  const ssPart=ssProd*partsPerUnit;
+  return Math.max(0,Math.round(ssPart+avgPartDemand*ltP));
+}
+
 // T1-01 — MSME classification per MSMED Act 2024 thresholds (Budget '24 doubled limits).
 // Both criteria must hold; if either exceeds bracket → next bracket up.
 //   Micro:  investment ≤ ₹2.5cr  AND turnover ≤ ₹10cr
@@ -1974,6 +2126,9 @@ const TATA_PRECISION_DEMO={
     timeGrain:'weekly',histMonths:24,sensingMinWeeks:2,sensingAlpha:0.3,
     sensingWindow:2,sensingPctThreshold:15,sensingStdK:2,replanFromPeriod:null,
     frozenWeeks:2,slushyWeeks:8,
+    // R9 / C1 — End-of-horizon distortion controls (APICS frozen/slushy/liquid time-fence).
+    useEffectiveHorizon:false,eoqBufferPeriods:2,
+    enableTerminalAnchor:false,enableMinCoverageGate:false,
   },
   plant:{state:'TN',city:'Chennai',country:'IN'},
   // T6-08 — logisticsMode controls whether logistics budget is enforced as solver constraint.
@@ -2954,6 +3109,41 @@ function SetupTab({state,dispatch}){
           const holDays=holidaysInRange(holList,pl.horizonStartDate,weeksInHorizon*7);
           return <div style={{marginTop:6,fontSize:10,color:'var(--tx2)',padding:'4px 8px',background:'var(--bg3)',borderRadius:4}}>
             📅 Horizon: <strong style={{color:'var(--ac)'}}>{T} {gLabel}</strong> ≈ <strong>{Math.max(0,totalDays-holDays)} working days</strong> ({wd}d/wk × {weeksInHorizon}wk − {holDays} holidays in window − weekends). Start: <strong>{pl.horizonStartDate||'today'}</strong>.
+          </div>;
+        })()}
+        {/* R9 / C1 — End-of-horizon distortion controls (effective vs committed horizon, terminal anchor, min-coverage gate). */}
+        {(()=>{
+          const eh=effectiveHorizonInfo(state);
+          return <div style={{marginTop:8,padding:8,background:'var(--bg3)',borderRadius:4,border:'1px solid var(--br2)'}}>
+            <div style={{fontSize:10,fontWeight:600,color:'var(--ac)',marginBottom:4}}>
+              🛡️ End-of-Horizon Distortion Controls <span style={{fontWeight:400,color:'var(--tx3)',fontSize:9}}>— APICS frozen / slushy / liquid time-fence. Prevents tiny tail-end POs incurring full ordering cost.</span>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:8}}>
+              <Field label="Use Effective Horizon" hint="Solver sees committed + LT + EOQ buffer (so tail-end demand has visible follow-on demand). Only commit decisions inside committed window. Off = solver sees committed only (today's behavior).">
+                <select value={pl.useEffectiveHorizon?'on':'off'} onChange={e=>upP('useEffectiveHorizon',e.target.value==='on')}>
+                  <option value="off">Off (legacy)</option>
+                  <option value="on">On (extend solver window)</option>
+                </select>
+              </Field>
+              <Field label={`EOQ Buffer (${gLabel})`} hint="Extra periods beyond max-LT, so the solver can amortize ordering cost across follow-on demand. Default 2. Set to 0 to use only LT buffer.">
+                <NumInput min={0} max={26} value={pl.eoqBufferPeriods??2} onChange={v=>upP('eoqBufferPeriods',v)} disabled={!pl.useEffectiveHorizon}/>
+              </Field>
+              <Field label="Terminal Inventory Anchor" hint="Force ending inventory at committed horizon ≥ SS + LT × avgDemand. Without this, MILP drives endingInv→0, which forces tiny last-period POs. Default off.">
+                <select value={pl.enableTerminalAnchor?'on':'off'} onChange={e=>upP('enableTerminalAnchor',e.target.value==='on')}>
+                  <option value="off">Off</option>
+                  <option value="on">On</option>
+                </select>
+              </Field>
+              <Field label="Min-Coverage Gate" hint="Each PO must cover ≥ max(MOQ, 0.5×EOQ, minCoverageDays × avgDemand). Per-part minCoverageDays editable in BOM row. Use sparingly — over-tight values suppress legit small replenishments.">
+                <select value={pl.enableMinCoverageGate?'on':'off'} onChange={e=>upP('enableMinCoverageGate',e.target.value==='on')}>
+                  <option value="off">Off</option>
+                  <option value="on">On</option>
+                </select>
+              </Field>
+            </div>
+            {pl.useEffectiveHorizon&&<div style={{marginTop:6,fontSize:10,padding:'4px 8px',background:'var(--bg2)',borderRadius:4,color:'var(--tx2)'}}>
+              📊 Committed: <strong style={{color:'var(--ac)'}}>{eh.committed} {gLabel}</strong> · Buffer: <strong style={{color:'var(--a3)'}}>+{eh.buffer} ({eh.maxLT} max-LT + {eh.eoqBuf} EOQ)</strong> · Effective solver window: <strong style={{color:'var(--a2)'}}>{eh.effective} {gLabel}</strong>. PO releases inside committed only; buffer demand padded with SES forecast.
+            </div>}
           </div>;
         })()}
         </>;
@@ -4711,6 +4901,7 @@ function ProductsTab({state,dispatch}){
                   <Field label="RM Shelf (d)"><NumInput value={b.rmShelf||90} onChange={v=>upBom({rmShelf:v})}/></Field>
                   <Field label="Cost CV%"><NumInput value={b.costCV||10} onChange={v=>upBom({costCV:v})}/></Field>
                   <Field label="Pay Days"><NumInput value={b.payTermDays||30} onChange={v=>upBom({payTermDays:v})}/></Field>
+                  <Field label="Min Cov (days)" hint="R9 / C1.d — Min-coverage gate: PO must cover ≥ minCoverageDays × avgDemand. Active only when Tab1 → 'Min-Coverage Gate' is ON. Default 0 (no gate). Use sparingly: high values suppress small replenishments for slow-movers."><NumInput value={b.minCoverageDays||0} onChange={v=>upBom({minCoverageDays:v})}/></Field>
                   <Field label="Lot-Sizing Rule" hint="Per-part procurement policy. AUTO evaluates ALL policies and picks the cheapest. MILP = solved jointly across all parts; others = closed-form / heuristic on this part alone.">
                     <select value={b.procPolicy||'auto'} onChange={e=>upBom({procPolicy:e.target.value})}>
                       <optgroup label="Auto"><option value="auto">Auto (cheapest)</option></optgroup>
@@ -4736,11 +4927,25 @@ function ProductsTab({state,dispatch}){
                   const br=b.ordBreakdown||ordBreakdownDefault(b.orderingCost||50);
                   const setBr=(patch)=>{const next={...br,...patch};upBom({ordBreakdown:next,orderingCost:(+next.admin||0)+(+next.freightFixed||0)+(+next.receivingQC||0)+(+next.setup||0)})};
                   const total=(+br.admin||0)+(+br.freightFixed||0)+(+br.receivingQC||0)+(+br.setup||0);
+                  // R9 / C1.e — Mode-dependent freight estimator: pick truck-fill assumption from current MOQ qty
+                  // and chosen transport mode, then compute freight as one-shipment cost.
+                  const recomputeFreight=()=>{
+                    const modes=state.transportModes||[];
+                    const contracts=state.transportContracts||[];
+                    const defCode=b.defaultTransModeCode||'LTL';
+                    const mode=modes.find(m=>m.code===defCode)||modes.find(m=>m.code==='LTL')||modes[0];
+                    const contract=contracts.find(c=>c.id===b.transportContractId)||contracts[0];
+                    if(!mode||!contract){alert('No transport mode/contract configured. Set Tab 1 → Transport Modes & Contracts first.');return;}
+                    const qtyAvg=Math.max(+b.moq||50,+b.purchasePack||1);
+                    const distKm=+state.config?.defaultLaneKm||500;
+                    const fc=transportShipmentCost({qty:qtyAvg,b,distanceKm:distKm,mode,contract});
+                    setBr({freightFixed:Math.round(fc)});
+                  };
                   return <div style={{padding:'8px 10px',marginTop:6,marginBottom:4,background:'rgba(0,212,170,.04)',border:'1px dashed var(--ac)',borderRadius:4}}>
-                    <div style={{fontSize:10,fontWeight:700,color:'var(--ac)',marginBottom:6,letterSpacing:.4}}>⚙ ORDERING-COST S BREAKDOWN <span style={{fontSize:9,fontWeight:400,color:'var(--tx3)'}}>· Σ = {cur}{total.toFixed(0)} per PO</span></div>
+                    <div style={{fontSize:10,fontWeight:700,color:'var(--ac)',marginBottom:6,letterSpacing:.4,display:'flex',alignItems:'center',gap:8}}>⚙ ORDERING-COST S BREAKDOWN <span style={{fontSize:9,fontWeight:400,color:'var(--tx3)'}}>· Σ = {cur}{total.toFixed(0)} per PO</span><button onClick={recomputeFreight} style={{marginLeft:'auto',fontSize:9,padding:'2px 8px',background:'var(--bg3)',color:'var(--a3)',border:'1px solid var(--br)',borderRadius:3,cursor:'pointer',fontWeight:600}} title="R9 / C1.e — pull Freight-fixed from selected transport mode + contract (Bucket 2 wiring)">↺ Freight from mode</button></div>
                     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:6}}>
                       <Field label={`Admin (${cur}/PO)`} hint="Buyer time, PO approval workflow, ERP transaction cost. Typical: ₹500-2000 in mid-sized orgs."><NumInput value={+br.admin||0} onChange={v=>setBr({admin:v})}/></Field>
-                      <Field label={`Freight-fixed (${cur}/PO)`} hint="LTL/FTL fixed cost per shipment regardless of qty (truck booking, lane setup). Bridges to Bucket 2 B3/B4 mode-dependent S."><NumInput value={+br.freightFixed||0} onChange={v=>setBr({freightFixed:v})}/></Field>
+                      <Field label={`Freight-fixed (${cur}/PO)`} hint="LTL/FTL fixed cost per shipment regardless of qty (truck booking, lane setup). Click '↺ Freight from mode' to pull from R8 transport mode + contract — bridges B2/B3 to lot-sizing."><NumInput value={+br.freightFixed||0} onChange={v=>setBr({freightFixed:v})}/></Field>
                       <Field label={`Receiving + QC (${cur}/PO)`} hint="Dock labor, inbound inspection, putaway. Per-shipment cost."><NumInput value={+br.receivingQC||0} onChange={v=>setBr({receivingQC:v})}/></Field>
                       <Field label={`Setup (${cur}/PO)`} hint="Supplier changeover / one-time line setup amortised per order. Often 0 for repeat suppliers."><NumInput value={+br.setup||0} onChange={v=>setBr({setup:v})}/></Field>
                     </div>
@@ -4951,7 +5156,16 @@ function ProductsTab({state,dispatch}){
 
       {/* MTO Orders */}
       <div className="card">
-        <div className="card-title">📋 Make-to-Order (MTO) <span className="badge" style={{background:'rgba(167,139,250,.1)',color:'var(--a3)'}}>{prod.mtoOrders.length} orders</span></div>
+        <div className="card-title">📋 Make-to-Order (MTO) <span className="badge" style={{background:'rgba(167,139,250,.1)',color:'var(--a3)'}}>{prod.mtoOrders.length} orders</span>
+          <span style={{marginLeft:'auto',fontSize:9,fontWeight:400,color:'var(--tx3)'}}>R9 / C2 — hybrid mode adds MTO qty on top of MTS forecast</span>
+        </div>
+        {/* R9 / C2 — MTS+MTO hybrid toggle. When ON, procurement / MPS demand = MTS forecast + MTO orderbook qty */}
+        <div style={{padding:'6px 8px',background:'var(--bg3)',borderRadius:4,marginBottom:6,display:'flex',alignItems:'center',gap:8}}>
+          <input type="checkbox" id={`mtoOnTop_${activeId}`} checked={!!prod.mtoOnTop} onChange={e=>upProd({mtoOnTop:e.target.checked})}/>
+          <label htmlFor={`mtoOnTop_${activeId}`} style={{fontSize:10,color:'var(--tx2)',cursor:'pointer'}}>
+            <strong style={{color:'var(--a3)'}}>Hybrid demand</strong> — add MTO orders on top of MTS forecast (procurement / MPS use sum). Off = pure MTS (today's behavior); MTO orders shown for tracking only.
+          </label>
+        </div>
         {prod.mtoOrders.map(o=><div key={o.id} className="bom-row">
           <Field label="Customer"><input value={o.customer} onChange={e=>dispatch({type:'UPDATE_MTO',productId:activeId,orderId:o.id,payload:{customer:e.target.value}})}/></Field>
           <Field label="Qty"><NumInput value={o.qty} onChange={v=>dispatch({type:'UPDATE_MTO',productId:activeId,orderId:o.id,payload:{qty:v}})}/></Field>
@@ -4959,6 +5173,15 @@ function ProductsTab({state,dispatch}){
           <button className="btn btn-danger btn-sm" onClick={()=>dispatch({type:'DELETE_MTO',productId:activeId,orderId:o.id})}>×</button>
         </div>)}
         <button className="btn btn-secondary btn-sm" onClick={()=>dispatch({type:'ADD_MTO_ORDER',productId:activeId})}>+ Add Order</button>
+        {prod.mtoOnTop&&(()=>{
+          const mtoArr=mtoQtyByPeriod(prod,state.planning);
+          const totalMto=mtoArr.reduce((a,b)=>a+b,0);
+          const mtsArr=demandByPeriod(prod,state.planning);
+          const totalMts=mtsArr.reduce((a,b)=>a+b,0);
+          return totalMto>0?<div style={{marginTop:6,padding:'4px 8px',fontSize:10,background:'rgba(167,139,250,.06)',border:'1px solid rgba(167,139,250,.2)',borderRadius:4,color:'var(--tx2)'}}>
+            ✓ Hybrid demand active: MTS = <strong>{totalMts.toLocaleString()}</strong> · MTO = <strong style={{color:'var(--a3)'}}>{totalMto.toLocaleString()}</strong> · Total = <strong style={{color:'var(--ac)'}}>{(totalMts+totalMto).toLocaleString()}</strong> over {mtoArr.length} periods.
+          </div>:null;
+        })()}
       </div>
 
       {/* v3.4 — Fixed & Setup Costs (grouped; per-SKU own fixed, shared lines). Setup is batch-triggered; Fixed is calendar-triggered. */}
@@ -5441,14 +5664,38 @@ function DemandTab({state,dispatch}){
           })()}
         </div>
 
-        {/* T3-09 — Lifecycle Curves */}
+        {/* T3-09 — Lifecycle Curves · R9 / C7: explicit pipeline stage + override gating */}
         <div className="card" style={{borderLeft:`3px solid ${lifecycleStage==='ramp'?'var(--gn)':lifecycleStage==='phaseout'?'var(--dg)':'var(--tx3)'}`}}>
-          <div className="card-title">🔄 Lifecycle Curve
+          <div className="card-title">🔄 Lifecycle Curve <span style={{fontSize:9,color:'var(--tx3)',fontWeight:400,marginLeft:4}}>(Forecast Pipeline · stage 3 of 5)</span>
             <span className="badge" style={{background:lifecycleStage==='ramp'?'rgba(63,185,80,.1)':lifecycleStage==='phaseout'?'rgba(220,53,69,.1)':'rgba(140,140,140,.1)',color:lifecycleStage==='ramp'?'var(--gn)':lifecycleStage==='phaseout'?'var(--dg)':'var(--tx3)',marginLeft:6,fontWeight:700}}>{lifecycleStage}</span>
-            <span style={{marginLeft:'auto',fontSize:9,color:'var(--tx3)',fontWeight:400}}>Adjusts statistical forecast BEFORE override</span>
+            <span style={{marginLeft:'auto',fontSize:9,color:'var(--tx3)',fontWeight:400}}>Multiplier applied to statistical baseline · overrides supersede per-period</span>
           </div>
+          {/* R9 / C7 — explicit pipeline flow diagram so users understand WHEN lifecycle fires */}
+          <div style={{padding:'6px 10px',marginBottom:8,background:'var(--bg3)',borderRadius:4,border:'1px solid var(--br2)',fontSize:9,display:'flex',gap:4,alignItems:'center',flexWrap:'wrap'}}>
+            <span style={{fontWeight:700,color:'var(--ac)'}}>Forecast Pipeline:</span>
+            <span style={{padding:'2px 6px',background:'rgba(167,139,250,.1)',color:'var(--a3)',borderRadius:3,fontWeight:600}}>① History</span>
+            <span style={{color:'var(--tx3)'}}>→</span>
+            <span style={{padding:'2px 6px',background:'rgba(56,189,248,.1)',color:'var(--a2)',borderRadius:3,fontWeight:600}}>② Statistical baseline</span>
+            <span style={{color:'var(--tx3)'}}>→</span>
+            <span style={{padding:'2px 6px',background:lifecycleStage==='steady'?'rgba(140,140,140,.1)':'rgba(63,185,80,.15)',color:lifecycleStage==='steady'?'var(--tx3)':'var(--gn)',borderRadius:3,fontWeight:700,border:lifecycleStage!=='steady'?'1px solid var(--gn)':undefined}}>③ Lifecycle ×{lifecycleStage==='steady'?'1.00':lifecycleMult.length?(lifecycleMult.reduce((a,b)=>a+b,0)/lifecycleMult.length).toFixed(2):'1.00'}</span>
+            <span style={{color:'var(--tx3)'}}>→</span>
+            <span style={{padding:'2px 6px',background:'rgba(240,180,41,.1)',color:'var(--a4)',borderRadius:3,fontWeight:600}}>④ Promo lift</span>
+            <span style={{color:'var(--tx3)'}}>→</span>
+            <span style={{padding:'2px 6px',background:'rgba(248,81,73,.1)',color:'var(--dg)',borderRadius:3,fontWeight:600}}>⑤ Sales Override</span>
+            <span style={{color:'var(--tx3)'}}>→</span>
+            <span style={{padding:'2px 6px',background:'rgba(0,212,170,.15)',color:'var(--ac)',borderRadius:3,fontWeight:700,border:'1px solid var(--ac)'}}>🎯 Consensus → MILP</span>
+          </div>
+          {/* R9 / C7 — gate against double-application: warn when override exists in lifecycle window */}
+          {(()=>{
+            const overrideMask=Array.from({length:fcShape.n},(_,i)=>(prod.overrides||[])[i]!=null&&(prod.overrides||[])[i]!=='');
+            const lifecycleActive=lifecycleStage!=='steady';
+            const conflictPeriods=overrideMask.filter((b,i)=>b&&Math.abs((lifecycleMult[i]||1)-1)>0.01).length;
+            return lifecycleActive&&conflictPeriods>0?<div style={{padding:'6px 10px',marginBottom:8,background:'rgba(240,180,41,.08)',border:'1px solid var(--a4)',borderRadius:4,fontSize:10,color:'var(--a4)'}}>
+              ⚠ <strong>Override gate:</strong> {conflictPeriods} period(s) have BOTH lifecycle multiplier ≠ 1.0 AND a sales override. Overrides win at stage ⑤ (replace, not multiply) — lifecycle is effectively bypassed for those periods. This is by design: overrides are the human's final say.
+            </div>:null;
+          })()}
           <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6,padding:'5px 8px',background:'var(--bg3)',borderRadius:3}}>
-            <strong>Ramp-up</strong> (NPI / launch): logistic S-curve from 0 → 1 over the ramp window. <strong>Steady-state</strong> (default): no adjustment. <strong>Phase-out</strong> (EOL): exponential decay from 1 → 0 starting at the chosen period. Multiplier applies to the statistical forecast row of the consensus table — overrides still win where set.
+            <strong>Ramp-up</strong> (NPI / launch): logistic S-curve from 0 → 1 over the ramp window. <strong>Steady-state</strong> (default): no adjustment. <strong>Phase-out</strong> (EOL): exponential decay from 1 → 0 starting at the chosen period. Multiplier applies to the statistical forecast row of the consensus table — overrides still win where set (stage ⑤ replaces, not multiplies).
           </div>
           <div className="grid4">
             <Field label="Stage" hint="Ramp/Steady/Phase-out determines the multiplier curve applied to the statistical forecast.">
@@ -5540,6 +5787,27 @@ function DemandTab({state,dispatch}){
             <KPI label={`${fcShape.n}-mo Consensus`} value={consensusForecast.reduce((a,b)=>a+b,0).toLocaleString()} sub={`incl. lifecycle ×${(lifecycleMult.reduce((a,b)=>a+b,0)/lifecycleMult.length).toFixed(2)} + promos`} color="var(--ac)"/>
             <KPI label="Holdout MAPE" value={`${bestModel.mape}%`} sub={bestModel.mape<10?'Excellent':bestModel.mape<20?'Good':'Needs review'} color={bestModel.mape<10?'var(--gn)':bestModel.mape<20?'var(--a4)':'var(--dg)'}/>
           </div>}
+          {/* R9 / C4 — Drift detector + retrain cadence chip. */}
+          {(()=>{
+            const dr=detectDriftLight(prod,planning);
+            const cad=prod.retrainCadence||'monthly';
+            const last=prod.lastRetrained;
+            const retrainNow=async()=>{
+              try{await fetch('/api/forecast/retrain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sku_id:prod.id,cadence:cad})});}catch(e){}
+              upProd({lastRetrained:new Date().toISOString().slice(0,10)});
+            };
+            return <div style={{padding:'6px 8px',background:dr.drifted?'rgba(220,53,69,.08)':'var(--bg3)',border:`1px solid ${dr.drifted?'var(--dg)':'var(--br2)'}`,borderRadius:4,marginTop:6,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+              <strong style={{fontSize:10,color:dr.drifted?'var(--dg)':'var(--ac)'}}>{dr.drifted?'⚠ DRIFT DETECTED':'✓ Forecast residuals stable'}</strong>
+              {dr.enoughData?<span style={{fontSize:9,color:'var(--tx3)'}}>recent σ {dr.recentStd.toFixed(1)} vs historical σ {dr.histStd.toFixed(1)} (ratio {dr.ratio.toFixed(2)}× — flags at 1.50)</span>:<span style={{fontSize:9,color:'var(--tx3)'}}>need ≥6 actuals to detect drift</span>}
+              <span style={{marginLeft:'auto',display:'flex',gap:6,alignItems:'center',fontSize:9,color:'var(--tx2)'}}>
+                Cadence: <select value={cad} onChange={e=>upProd({retrainCadence:e.target.value})} style={{fontSize:9,padding:'1px 4px'}}>
+                  <option value="daily">daily</option><option value="weekly">weekly</option><option value="monthly">monthly</option>
+                </select>
+                <span>{last?`last: ${last}`:'never trained'}</span>
+                <button onClick={retrainNow} className="btn btn-secondary btn-sm" style={{fontSize:9,padding:'2px 8px'}} title="POST /api/forecast/retrain — bumps lastRetrained timestamp.">↻ Retrain Now</button>
+              </span>
+            </div>;
+          })()}
           <div style={{fontSize:10,color:'var(--tx3)',marginBottom:4}}>Click a row for formula + fitted coefficients. Forecast cells show the full {fcShape.n}-month horizon.</div>
           <div className="fcst-table" style={{overflowX:'auto'}}>
             <table className="data-table">
@@ -11377,6 +11645,31 @@ function AnalysisTab({state,dispatch}){
       </table>
     </div>}
 
+    {/* R9 / C3 — Lost-Sales Estimator (simple proxy, not Tobit). */}
+    {state.products.some(p=>(p.actuals||[]).some(a=>a!==null&&a!==undefined))&&<div className="card">
+      <div className="card-title">🩸 Lost Sales (Proxy) <span className="badge" style={{background:'rgba(220,53,69,.1)',color:'var(--dg)'}}>R9 / C3</span>
+        <SectionInfo><strong>What it does:</strong> Per-period heuristic: when actual {'<'} 0.7×forecast (sign of stock-out), inferred lost = forecast − actual.<br/><strong>Why proxy:</strong> True Tobit / censored-demand estimator deferred. This is a quick estimate, not a statistical inference.<br/><strong>Action:</strong> If lost &gt; 5% of total demand, raise safety stock or reduce lead time.</SectionInfo>
+      </div>
+      <table className="data-table">
+        <thead><tr><th>Product</th><th>Periods w/ Lost</th><th>Total Lost (units)</th><th>Lost Revenue</th><th>% of Demand</th></tr></thead>
+        <tbody>{state.products.map(p=>{
+          const ls=inferredLostSales(p,state.planning);
+          if(ls.total<=0)return null;
+          const totalDem=(p.actuals||[]).reduce((s,a)=>s+(+a||0),0)+ls.total;
+          const pct=totalDem>0?(ls.total/totalDem*100):0;
+          const lostRev=ls.total*(+p.sellPrice||0);
+          return <tr key={p.id}>
+            <td style={{fontWeight:600}}>{p.name}</td>
+            <td className="num">{ls.count}</td>
+            <td className="num" style={{color:'var(--dg)',fontWeight:700}}>{Math.round(ls.total).toLocaleString()}</td>
+            <td className="num" style={{color:'var(--dg)',fontWeight:700}}>{cur}{Math.round(lostRev).toLocaleString()}</td>
+            <td className="num" style={{color:pct>5?'var(--dg)':'var(--tx2)'}}>{pct.toFixed(1)}%</td>
+          </tr>;
+        })}</tbody>
+      </table>
+      <div style={{fontSize:9,color:'var(--tx3)',marginTop:4}}>Heuristic: lost[t] = max(0, forecast − actual) only when actual/forecast {'<'} 0.7. Threshold can be tuned later. True censored-demand estimator (Tobit) deferred indefinitely.</div>
+    </div>}
+
     {/* S&OP Gap Analysis */}
     <div className="card">
       <div className="card-title">📋 S&OP Gap Analysis</div>
@@ -11710,6 +12003,11 @@ function LearningLab({state}){
     </S>
 
     <S id="sensing" title="📡 Demand Sensing — What's Wired, What's Not" color="var(--ac)">
+      {/* R9 / C5 — sigma explainer: why 2σ, what it means, what to do. */}
+      <div style={{marginBottom:10,padding:10,background:'rgba(0,212,170,.06)',border:'1px solid var(--ac)',borderRadius:4,fontSize:11,color:'var(--tx)'}}>
+        <div style={{fontSize:11,fontWeight:700,color:'var(--ac)',marginBottom:4}}>📐 Why 2σ? (one-paragraph explainer)</div>
+        Forecast residuals (actual − forecast) are assumed roughly Gaussian with std-dev σ estimated on history. Under that assumption, an isolated <strong>|error| {'>'} 2σ</strong> has only ≈5% probability — repeated 2σ breaches in <strong>{state.planning?.sensingWindow||2}+ consecutive periods</strong> mean the model is structurally <em>broken</em>, not just unlucky. <strong>Action:</strong> blend the sensed signal at α = <strong>{state.planning?.sensingAlpha||0.3}</strong> (configurable in Tab 1) and trigger rolling-horizon re-plan. After <strong>{state.planning?.sensingResolveAfter||4}</strong> consecutive breaches, escalate to a full MILP re-solve. False-alarm rate at 2σ is ~0.25% vs ~32% at 1σ — the higher threshold trades miss-rate for stability.
+      </div>
       <p><strong>What IS implemented (v3.1):</strong> Classical exponential smoothing on the MPS — sensed_next = α × last_actual + (1 − α) × prior_forecast, with α tunable in Tab 2C (default 0.3). When the sensed forecast drifts from consensus by more than the sensing threshold, the MPS re-plans. The transport optimizer also consults the sensed forecast to decide air vs sea overrides.</p>
       <p style={{marginTop:6}}><strong>SPC tripwire (rule of thumb):</strong> When |actual − forecast| exceeds 2σ for 2+ consecutive periods, it's a genuine regime change (not noise) — trigger replan. This is a Shewhart/Western-Electric rule; false-alarm rate is ~0.25% vs 32% at 1σ.</p>
       <p style={{marginTop:6}}>The transport leg specifically: if sensed spike AND stock won't last sea freight arrival, compute:</p>
@@ -12058,6 +12356,7 @@ function MPSVizCard({state,dispatch}){
   const [selSKU,setSelSKU]=useState(-1); // v3.3.3 — -1 = aggregate all SKUs, 0+ = single SKU
   const [prodOverrides,setProdOverrides]=useState({}); // week/day index → user qty
   const [expandedWeek,setExpandedWeek]=React.useState(null); // v3.3.3 — click week to show days
+  const [expandedMonth,setExpandedMonth]=React.useState(null); // R9 / C6 — unified drill-down: month → weeks → days
   const products=state.products;
   // v3.3.3 — aggregate mode synthesizes a pseudo-SKU summing all products
   const aggregateMode=selSKU===-1&&products.length>1;
@@ -12208,7 +12507,7 @@ function MPSVizCard({state,dispatch}){
 
     {/* Controls row */}
     <div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center',flexWrap:'wrap'}}>
-      {['monthly','weekly','daily'].map(v=><button key={v} className={`btn btn-sm ${mpsGran===v?'btn-primary':'btn-secondary'}`} onClick={()=>setMpsGran(v)}>{v.charAt(0).toUpperCase()+v.slice(1)}</button>)}
+      {['unified','monthly','weekly','daily'].map(v=><button key={v} className={`btn btn-sm ${mpsGran===v?'btn-primary':'btn-secondary'}`} onClick={()=>setMpsGran(v)} title={v==='unified'?'R9 / C6 — single drill-down: month → click ▸ to expand to weeks → click ▸ on week to expand to working days (skips weekends + holidays)':v.charAt(0).toUpperCase()+v.slice(1)+' view'}>{v.charAt(0).toUpperCase()+v.slice(1)}</button>)}
       {mpsGran==='daily'&&<select value={dailyWeeks} onChange={e=>setDailyWeeks(+e.target.value)} style={{fontSize:10,padding:'3px 6px'}} title="Number of weeks to show daily">
         {[1,2,4,8,12].map(n=><option key={n} value={n}>{n} wk ({n*workDays}d)</option>)}
       </select>}
@@ -12279,6 +12578,81 @@ function MPSVizCard({state,dispatch}){
     </div>}
     {!sensingActive&&<div style={{marginBottom:8,padding:'4px 10px',background:'var(--bg3)',borderRadius:4,fontSize:9,color:'var(--tx3)'}}>
       📡 Demand Sensing inactive — enter {sensingMin} periods of actuals (in this card or in Tab 2 → Products & Demand) to activate. (α={sensingAlpha})
+    </div>}
+
+    {/* R9 / C6 — UNIFIED drill-down: month → weeks → working days. */}
+    {mpsGran==='unified'&&<div style={{overflowX:'auto'}}>
+      <div style={{fontSize:9,color:'var(--tx3)',marginBottom:4}}>Click ▸ on a month to expand its weeks · click ▸ on a week to expand its working days · weekends + gazetted holidays excluded · per-cell production editable.</div>
+      <table className="data-table">
+        <thead><tr><th></th><th>Period</th><th>Demand</th><th style={{color:'var(--ac)'}}>Production ✏</th><th>Δ</th><th>On-Hand</th><th>Zone</th></tr></thead>
+        <tbody>{(()=>{
+          const rows=[];
+          let invCursor=prod.initInventory||0;
+          mMPS.forEach((mo,mIdx)=>{
+            const mOpen=expandedMonth===mIdx;
+            invCursor=Math.max(0,invCursor+mo.realizedProd-mo.demand);
+            const ohRisk=invCursor<=0?'stockout':invCursor<10?'low':invCursor<30?'caution':'ok';
+            const ohColor=ohRisk==='stockout'||ohRisk==='low'?'var(--dg)':ohRisk==='caution'?'var(--a4)':'var(--gn)';
+            rows.push(<tr key={`m${mIdx}`} style={{background:mOpen?'rgba(0,212,170,.06)':'transparent',cursor:'pointer'}} onClick={()=>setExpandedMonth(mOpen?null:mIdx)}>
+              <td style={{width:18,color:'var(--a3)',fontWeight:700,textAlign:'center'}}>{mOpen?'▼':'▸'}</td>
+              <td style={{fontWeight:700}}>{mo.month}</td>
+              <td className="num">{mo.demand.toLocaleString()}</td>
+              <td className="num" style={{color:'var(--ac)'}}>{mo.production.toLocaleString()}</td>
+              <td className="num" style={{color:'var(--tx3)',fontSize:9}}>—</td>
+              <td className="num" style={{color:ohColor,fontWeight:700}}>{invCursor.toLocaleString()}</td>
+              <td style={{fontSize:9,color:'var(--tx3)'}}>monthly</td>
+            </tr>);
+            if(mOpen){
+              // Show weeks within this month (4 weeks per month, by index).
+              const wkStart=mIdx*4;const wkEnd=Math.min(wkStart+4,wMPS.length);
+              for(let wi=wkStart;wi<wkEnd;wi++){
+                const wk=wMPS[wi];if(!wk)continue;
+                const wOpen=expandedWeek===wk.wIdx;
+                const delta=wk.production-wk.baseProd;
+                rows.push(<tr key={`uw${wi}`} style={{background:wOpen?'rgba(56,189,248,.05)':'var(--bg3)'}}>
+                  <td style={{width:18,paddingLeft:14,color:'var(--a2)',fontWeight:700,textAlign:'center',cursor:'pointer'}} onClick={()=>setExpandedWeek(wOpen?null:wk.wIdx)}>{wOpen?'▼':'▸'}</td>
+                  <td style={{fontFamily:'JetBrains Mono',fontSize:9,color:'var(--a2)',paddingLeft:18}}>↳ {wk.week}</td>
+                  <td className="num" style={{fontSize:9}}>{wk.demand}</td>
+                  <td className="num">
+                    <input type="number" min={0} value={wk.productionInput}
+                      style={{width:55,textAlign:'right',fontSize:9,color:wk.isOverridden?'var(--a4)':'var(--ac)',fontWeight:600,background:wk.isOverridden?'rgba(240,180,41,.08)':'transparent',border:'1px solid '+(wk.isOverridden?'var(--a4)':'transparent'),borderRadius:3,padding:'1px 4px',cursor:wk.isFrozen?'not-allowed':'text',opacity:wk.isFrozen?0.6:1}}
+                      readOnly={wk.isFrozen}
+                      onChange={e=>!wk.isFrozen&&setOverride(`w${wk.wIdx}`,e.target.value)}/>
+                  </td>
+                  <td className="num" style={{color:delta>0?'var(--gn)':delta<0?'var(--dg)':'var(--tx3)',fontSize:9}}>{delta>0?'+':''}{delta||'—'}</td>
+                  <td className="num" style={{fontSize:9,color:'var(--tx3)'}}>—</td>
+                  <td style={{fontSize:8,color:wk.isFrozen?'var(--dg)':wk.isSlushy?'var(--a4)':'var(--gn)'}}>{wk.isFrozen?'🔒 Frozen':wk.isSlushy?'🟡 Slushy':'🟢 Open'}</td>
+                </tr>);
+                if(wOpen){
+                  // Daily expansion — workDays only (weekends + holidays auto-skipped via the parent calendar logic).
+                  const wkDemand=wk.demand,wkProd=wk.production;
+                  const dailyDem=Math.floor(wkDemand/workDays),demRem=wkDemand-dailyDem*workDays;
+                  const dailyProd=Math.floor(wkProd/workDays),prodRem=wkProd-dailyProd*workDays;
+                  for(let dd=0;dd<workDays;dd++){
+                    const dKey=`d_w${wk.wIdx}_${dd}`;
+                    const ov=prodOverrides[dKey];
+                    const baseDemD=dailyDem+(dd<demRem?1:0);
+                    const baseProdD=dailyProd+(dd<prodRem?1:0);
+                    const prodD=ov!==undefined&&ov!==''?+ov:baseProdD;
+                    const dayCap=(prod.capacity||50)/workDays;
+                    const util=Math.round(prodD/Math.max(dayCap,1)*100);
+                    rows.push(<tr key={`ud${wi}_${dd}`} style={{background:'var(--bg2)'}}>
+                      <td></td>
+                      <td style={{fontSize:8,color:'var(--tx3)',paddingLeft:32}}>↳↳ {dayNames[dd]}</td>
+                      <td className="num" style={{fontSize:8}}>{baseDemD}</td>
+                      <td className="num"><input type="number" min={0} value={ov!==undefined?ov:baseProdD} style={{width:50,textAlign:'right',fontSize:8,color:ov!==undefined?'var(--a4)':'var(--a3)',fontWeight:600,background:ov!==undefined?'rgba(240,180,41,.06)':'transparent',border:'1px solid '+(ov!==undefined?'var(--a4)':'transparent'),borderRadius:2,padding:'1px 3px',opacity:wk.isFrozen?0.6:1}} readOnly={wk.isFrozen} onChange={e=>!wk.isFrozen&&setOverride(dKey,e.target.value)}/></td>
+                      <td className="num" style={{fontSize:8,color:util>100?'var(--dg)':util>80?'var(--a4)':'var(--gn)'}}>util {util}%</td>
+                      <td className="num" style={{fontSize:8,color:'var(--tx3)'}}>cap {Math.round(dayCap)}u</td>
+                      <td style={{fontSize:7,color:'var(--tx3)'}}>{((prodD*(prod.cycleTime||19))/60).toFixed(1)}h</td>
+                    </tr>);
+                  }
+                }
+              }
+            }
+          });
+          return rows;
+        })()}</tbody>
+      </table>
     </div>}
 
     {/* MONTHLY view — base plan + editable actuals row + auto-replan on miss (v3.5) */}
@@ -13098,7 +13472,11 @@ function CommandCenterTab({state,dispatch}){
     setSolving(null);
   };
 
-  const weeklyDemand=p=>demandByPeriod(p,state.planning); // Pillar 7 — single source
+  const eh=effectiveHorizonInfo(state); // R9 / C1 — committed vs effective horizon
+  const weeklyDemand=p=>{
+    const base=effectiveDemand(p,state.planning); // R9 / C2 — MTS + (optional) MTO orderbook
+    return eh.enabled?padDemandToLength(base,eh.effective,p.history||[]):base;
+  };
   const annDem=p=>(p.history||[]).slice(-12).reduce((a,b)=>a+b,0);
 
   return <div className="animate-in">
@@ -13146,13 +13524,17 @@ function CommandCenterTab({state,dispatch}){
           {[
             {name:'Procurement (Min Cost)',inputs:'Products, BOM, Planning',
               check:()=>P.length>0&&P.every(p=>p.bom.length>0)&&P.every(p=>p.history?.length>=12),
-              data:()=>`${P.length} SKUs, ${allParts.length} parts, ${periodCount(state.planning)} periods`,
+              data:()=>`${P.length} SKUs, ${allParts.length} parts, ${eh.committed} periods${eh.enabled?` (+${eh.buffer} buffer = ${eh.effective} eff)`:''}`,
               run:()=>runSolver('procurement','/api/solve/procurement',{products:P.map(p=>({name:p.name,demand:weeklyDemand(p),capacity:effectiveCapacity(p),setup_cost:effectiveSetupCost(p),variable_cost:effectiveVariableCost(p),sell_price:p.sellPrice,shelf_life_days:p.shelfLife,shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),demand_mode:p.demandMode||"mts-weekly",milk_run_per_period:milkRunPerPeriod(p),actuals_override:(p.actuals||null),prod_mode:p.prodMode||'mts',yield_pct:p.yieldPct,yield_actual:p.yieldActual,init_inventory:effectiveInitInventory(p,state),parts:effectiveBom(p).map(b=>{
                 const sname=b.supplierName||b.supplier||b.vendor||'';
                 const sprof=(state.supplierProfiles||{})[sname]||{};
                 const vmi=!!b.vmi||!!sprof.vmiEnabled;
-                return {name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:effQtyPer(b),lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,rm_footprint_area:+b.rmFootprintArea||0.05,rm_footprint_volume:+b.rmFootprintVolume||0.02,uom:b.uom||"u",purchase_pack:+b.purchasePack||1,trans_contract_fixed:!!b.transContractFixed,trans_contract_rate:+b.transContractRate||0,co2_factor:+b.co2Factor||0,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05,supplier_name:sname,vmi:vmi,vmi_target_stock_days:+(sprof.vmiTargetStockDays||14),pay_term_days:+b.payTermDays||+sprof.paymentTerms||30};
-              })})),params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:effectiveCarryRate(state),wh_max:effectiveWhMaxUnits(state,P[0]?.whMaxUnits||5000),wh_mode:state.budget.warehouseMode||'units',rm_wh_mode:state.budget.rmWarehouseMode||'units',rm_wh_limit_area:+state.budget.rmWarehouseLimitArea||0,rm_wh_limit_volume:+state.budget.rmWarehouseLimitVolume||0,service_level:state.config.serviceLevel,replan_from_period:state.planning.replanFromPeriod??null,locked_pos:state.lockedPOs||[],logistics_budget:+(state.budget&&state.budget.logistics)||0,logistics_mode:state.budget&&state.budget.logisticsMode||'soft'},capacity_mode:'parallel'})},
+                const minCovDays=+b.minCoverageDays||0;
+                const periodDays=(state.planning.timeGrain==='daily')?1:(state.planning.timeGrain==='monthly')?30:7;
+                const minCovPeriods=state.planning.enableMinCoverageGate?Math.ceil(minCovDays/periodDays):0;
+                const tAnchor=state.planning.enableTerminalAnchor?terminalAnchorUnits(b,p,state):0;
+                return {name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:effQtyPer(b),lead_time:b.leadTime,moq:b.moq,max_order:b.maxOrder||500,hold_pct:b.holdPct||24,rm_capacity:b.rmCapacity||2000,rm_footprint_area:+b.rmFootprintArea||0.05,rm_footprint_volume:+b.rmFootprintVolume||0.02,uom:b.uom||"u",purchase_pack:+b.purchasePack||1,trans_contract_fixed:!!b.transContractFixed,trans_contract_rate:+b.transContractRate||0,co2_factor:+b.co2Factor||0,ordering_cost:b.orderingCost||75,rm_shelf:b.rmShelf||90,scrap_factor:b.scrapFactor||0.05,supplier_name:sname,vmi:vmi,vmi_target_stock_days:+(sprof.vmiTargetStockDays||14),pay_term_days:+b.payTermDays||+sprof.paymentTerms||30,min_coverage_periods:minCovPeriods,terminal_anchor_units:tAnchor};
+              })})),params:{periods:eh.enabled?eh.effective:periodCount(state.planning),committed_periods:eh.committed,effective_periods:eh.effective,horizon_buffer:eh.buffer,enable_terminal_anchor:!!state.planning.enableTerminalAnchor,enable_min_coverage:!!state.planning.enableMinCoverageGate,time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:effectiveCarryRate(state),wh_max:effectiveWhMaxUnits(state,P[0]?.whMaxUnits||5000),wh_mode:state.budget.warehouseMode||'units',rm_wh_mode:state.budget.rmWarehouseMode||'units',rm_wh_limit_area:+state.budget.rmWarehouseLimitArea||0,rm_wh_limit_volume:+state.budget.rmWarehouseLimitVolume||0,service_level:state.config.serviceLevel,replan_from_period:state.planning.replanFromPeriod??null,locked_pos:state.lockedPOs||[],logistics_budget:+(state.budget&&state.budget.logistics)||0,logistics_mode:state.budget&&state.budget.logisticsMode||'soft'},capacity_mode:'parallel'})},
             {name:'Production (Min Makespan)',inputs:'Products, Lines',
               check:()=>P.length>0&&state.production.lines.length>0,
               data:()=>`${state.production.lines.length} lines, ${P.length} products`,
@@ -13179,6 +13561,21 @@ function CommandCenterTab({state,dispatch}){
         {Object.entries(results).map(([k,v])=><div key={k} style={{fontSize:10,color:v.error?'var(--dg)':'var(--tx2)',marginBottom:2}}>
           <strong>{k}:</strong> {v.error||`${v.status||'OK'} — ${v.total_cost?`${cur}${Math.round(v.total_cost).toLocaleString()} total cost`:''}${v.total_profit?`${cur}${Math.round(v.total_profit).toLocaleString()} profit`:''}${v.avg_cost?`${cur}${Math.round(v.avg_cost).toLocaleString()} avg cost, VaR₉₅: ${cur}${Math.round(v.var_95||0).toLocaleString()}`:''} (${v.solve_time||'?'}s)`}
         </div>)}
+      </div>}
+      {/* R9 / C8 — Solver result transparency: shows what was sent + which guards fired. */}
+      {Object.keys(results).length>0&&<div style={{marginTop:8,padding:10,background:'rgba(0,212,170,.04)',border:'1px dashed var(--ac)',borderRadius:4}}>
+        <div style={{fontSize:10,fontWeight:700,color:'var(--ac)',marginBottom:6,letterSpacing:.4}}>🔍 WHAT THE SOLVER SAW <span style={{fontSize:9,fontWeight:400,color:'var(--tx3)'}}>· R9 / C8 transparency panel</span></div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:8,fontSize:10}}>
+          <div><strong style={{color:'var(--tx2)'}}>Procurement budget</strong><br/><span style={{color:'var(--tx3)'}}>used: {cur}{Math.round(results.procurement?.total_cost||0).toLocaleString()} / cap: {cur}{(+(state.budget?.procurement)||0).toLocaleString()}{(+(state.budget?.procurement)||0)>0?` (${Math.min(100,Math.round(((+(results.procurement?.total_cost)||0)/(+(state.budget?.procurement)||1))*100))}%)`:''}</span></div>
+          <div><strong style={{color:'var(--tx2)'}}>Working-capital limit</strong><br/><span style={{color:results.procurement?.wc_binding?'var(--dg)':'var(--gn)'}}>{results.procurement?.wc_binding?'⚠ binding':'✓ slack'}</span> · cap {cur}{(+(state.budget?.workingCapital)||0).toLocaleString()}</div>
+          <div><strong style={{color:'var(--tx2)'}}>Logistics mode</strong><br/><span style={{color:'var(--tx3)'}}>{state.budget?.logisticsMode||'soft'} · budget {cur}{(+(state.budget?.logistics)||0).toLocaleString()}{results.procurement?.logistics_overspend?` · over by ${cur}${Math.round(results.procurement.logistics_overspend).toLocaleString()}`:''}</span></div>
+          <div><strong style={{color:'var(--tx2)'}}>Horizon (R9 / C1)</strong><br/><span style={{color:eh.enabled?'var(--ac)':'var(--tx3)'}}>{eh.enabled?`Effective ${eh.effective} · Committed ${eh.committed} · Buffer +${eh.buffer}`:`Single horizon: ${eh.committed} (effective-horizon mode OFF)`}</span></div>
+          <div><strong style={{color:'var(--tx2)'}}>Terminal anchor (R9 / C1.b)</strong><br/><span style={{color:state.planning?.enableTerminalAnchor?'var(--gn)':'var(--tx3)'}}>{state.planning?.enableTerminalAnchor?'✓ ON · forces endingInv ≥ SS+LT×avgDemand':'OFF (default)'}</span></div>
+          <div><strong style={{color:'var(--tx2)'}}>Min-coverage gate (R9 / C1.d)</strong><br/><span style={{color:state.planning?.enableMinCoverageGate?'var(--gn)':'var(--tx3)'}}>{state.planning?.enableMinCoverageGate?'✓ ON · per-part minCoverageDays in BOM':'OFF (default)'}</span></div>
+          <div><strong style={{color:'var(--tx2)'}}>Active disruptions (R5)</strong><br/><span style={{color:'var(--tx3)'}}>{(state.disruptions||[]).filter(d=>d.active).length} active{(state.disruptions||[]).filter(d=>d.active).length>0?` · ${(state.disruptions||[]).filter(d=>d.active).map(d=>d.type||d.kind).slice(0,3).join(', ')}`:''}</span></div>
+          <div><strong style={{color:'var(--tx2)'}}>MTO+MTS hybrid (R9 / C2)</strong><br/><span style={{color:'var(--tx3)'}}>{P.filter(p=>p.mtoOnTop).length} of {P.length} SKUs in hybrid mode</span></div>
+        </div>
+        <div style={{fontSize:9,color:'var(--tx3)',marginTop:6}}>This panel surfaces what flowed INTO the solver (params + guards). Empty fields mean the backend didn't echo that value back; toggles reflect frontend payload state at submit time.</div>
       </div>}
     </div>
 
@@ -15121,6 +15518,12 @@ function App(){
         <span className="mast-chip">{state.config.fyLabel||state.config.fiscalYear||'FY'}</span>
         <span className={`mast-chip ${connected?'ok':'err'}`}>{connected?'MILP ONLINE':'OFFLINE'}</span>
         <span className="mast-live">LIVE</span>
+        {/* R9 / C5 — Demand-sensing breach chip. Click → jump to Tab 9 Demand Sensing. */}
+        {(()=>{
+          const breaches=countSensingBreaches(state);
+          if(breaches===0)return null;
+          return <span onClick={()=>window.dispatchEvent(new CustomEvent('esim:setActiveTab',{detail:'analysis'}))} className="mast-chip" style={{background:'rgba(220,53,69,.15)',color:'var(--dg)',cursor:'pointer',fontWeight:700,border:'1px solid var(--dg)'}} title={`${breaches} SKU${breaches>1?'s':''} in sensing breach (deviation > ${state.planning.sensingStdK||2}σ or ${state.planning.sensingPctThreshold||15}%). Click to investigate.`}>📡 SENSE × {breaches}</span>;
+        })()}
       </div>
       <LiveCascadeIndicator state={state}/>
       <div className="mast-right">
