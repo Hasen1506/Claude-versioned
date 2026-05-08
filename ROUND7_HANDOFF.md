@@ -17,6 +17,118 @@
 
 ---
 
+## A-7. What shipped in Round 13.6 (Tab 4 Phase 1a/1b — Backend wiring)
+
+**Working file sizes after R13.6:** `index.html` script block ≈ 1,291,407 bytes
+(R13.5: 1,288,899; net +2.5KB — three frontend payload helpers + per-line cycle/OEE
+fields). `profitmix.py` +20 lines (per-(SKU, line) cycle + line OEE in capacity
+constraint, OEE-derated utilization in result extraction, `cycle_hrs_per_unit`
+echoed per-SKU). `production.py` +33 lines (`_line_oee` + `_cycle_min_by_sku`
+helpers, routing-free path now uses cycle_time_by_sku_min × hrs × OEE / ct,
+routing path now uses line.oee instead of product.oee). `procurement.py` unchanged
+(does not consume cycle time or OEE).
+
+### A-7.1 — Why R13.6 was needed
+
+Phase 1a (R13) and Phase 1b (R13.5) shipped frontend-only — `resolveCycleTime`,
+`resolveLineOEE`, and the new `skuMap` registry/topology integration all lived in
+`index.html` only. The backend solvers continued to read scalar product-level
+`cycle_time` and `oee` from the payload, so per-line overrides + stage-sum cycle
+times + Π-of-stage OEE never reached the LP/MILP — UI showed correct provenance
+but the optimizer ignored it.
+
+R13.6 closes that gap. It is purely backend wiring + matching frontend payload
+fields. No new UI, no schema migration, no behavioral change for users who haven't
+populated stage tables / skuMap / per-line cycle overrides (legacy payloads still
+solve identically — backward compat verified).
+
+### A-7.2 — R13.6.A4 · Per-(SKU, line) cycle time reaches profitmix
+
+Frontend payload (`index.html:6217+` — profitmix block) now sends per line:
+```js
+cycle_time_by_sku_min: cycleMinByIdxForLine(l, state.products, _topo, _skuMap)
+```
+where the helper (`index.html:7689+`) is:
+```js
+function cycleMinByIdxForLine(line, products, topo, skuMap){
+  const out={};
+  const eligible=eligibleSkuIdxForLine(line, products, skuMap);
+  eligible.forEach(k=>{ out[k]=resolveCycleTime(products[k], line, topo, skuMap).value; });
+  return out;
+}
+```
+
+`profitmix.py:251+` consumes it via `_cycle_hrs_for_line(k, line)` which divides
+minutes by 60. Falls back to the scalar `cycle_times[k]` when the new field is
+absent. The line-hours capacity constraint and the result-extraction utilization
+both use this helper — they no longer disagree.
+
+### A-7.3 — R13.6.A5 · Per-line OEE reaches both solvers
+
+Frontend now sends `oee: resolveLineOEE(l, _topo).value` per line in both
+profitmix and production payloads. Source is whatever the resolver decides —
+`Π(stage.oeePct/100)` when `oeeMode==='auto'` and stages exist, A·P·Q when
+`'manual'`, default A·P·Q otherwise.
+
+`profitmix.py`: `line_cap_hrs = avail * weeks * oee` (was `avail * weeks` flat).
+**Semantic shift**: profit-mix LP now operates on OEE-derated capacity. Older
+payloads without `oee` default to 1.0 (no derate) — backward-compatible. The
+result `line_allocation[i].oee` field is echoed for UI display.
+
+`production.py:69+`: New `_line_oee(l, prod)` prefers `lines[l].oee` over
+`prod.oee`. Used in both:
+- Routing-bottleneck path (was `oee = prod.get('oee', ...)`)
+- New no-routing path (computes capacity from `cycle_time_by_sku_min[k]` × hrs ×
+  OEE / ct instead of falling back to flat `lines[l].capacity` immediately)
+
+### A-7.4 — R13.6.A2 · skuMap-aware eligibility
+
+Frontend helper `eligibleSkuIdxForLine(line, products, skuMap)` (`index.html:7689+`)
+returns the **union** of `line.eligibleProducts` and skuMap entries pointing at
+this line. Both profitmix and production line payloads now use it. When neither
+field is populated, falls back to "all SKUs allowed" (preserves the pre-R12
+default).
+
+This is the link that makes Phase 1a's `skuMap` actually drive the solver. Before
+R13.6 you could "Map SKU A to Line 2" in the UI and the LP would still ignore it
+unless Line 2's `eligibleProducts` was also populated.
+
+### A-7.5 — R13.6.A7 · Shared-stage IDs surfaced (informational)
+
+Both solvers now receive `shared_stage_ids: [...]` per line (frontend helper
+`sharedStageIdsOnLine`). `profitmix.py` echoes the list in `line_allocation[i]`.
+`production.py` echoes it in `lines[i]` results. Neither solver yet treats
+shared work-centers differently — the field is plumbed for the upcoming
+Phase 3 "shared-stage as pooled capacity" change so the UI can mark the affected
+lines once the math lands.
+
+### A-7.6 — R13.6 verification
+
+1. **Babel parse**: `index.html` parses clean at 1,291,407 bytes.
+2. **Profitmix smoke (new fields)**: 2-SKU 1-line problem with `oee=0.7`,
+   `cycle_time_by_sku_min={0:30, 1:60}`. Result: `Optimal`, 80hrs × 13wk × 0.7 =
+   728 hrs available; A=330 units × 0.5hrs + B=264 × 1.0hrs = 429 hrs used.
+   Cycle map overrode the product-level scalars (1.0, 1.5) — wiring confirmed.
+3. **Production smoke (no routing path)**: same shape, `oee=0.5`, A required 100,
+   B required 80, periods=4 → `Optimal`, line shows `oee:0.5`,
+   `shared_stage_ids:['SH-PC']`, util 100%.
+4. **Production smoke (routing path)**: `oee=0.5` echoed in line result (was
+   previously product-level).
+5. **Backward-compat**: old-style payloads (no `cycle_time_by_sku_min`, no `oee`)
+   solve `Optimal` for both solvers. Profitmix returns identical profit to pre-R13.6
+   when these fields are absent. ✓
+
+### A-7.7 — R13.6 deferred
+
+Phase 2 / Phase 3 / Phase 4 / Phase 5 — see § A-5.6.
+
+One Phase-3 dependency surfaced during R13.6: the `shared_stage_ids` field
+is now plumbed but unused in the solver math. When Phase 3 lands the pooled-
+capacity constraint, it can read this field directly without further frontend
+changes.
+
+---
+
 ## A-6. What shipped in Round 13.5 (Tab 4 Phase 1b — Cycle-time + OEE provenance + parallelism cleanup)
 
 **Working file sizes after R13.5:** `index.html` script block ≈ 1,288,899 bytes

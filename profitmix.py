@@ -247,16 +247,35 @@ def solve_profitmix(data):
 
     # Shared capacity (machine-hours)
     cycle_times = [p.get('cycle_time', 1) for p in products]
+
+    # R13 Phase 1b backend wiring · A4/A5 — per-(SKU, line) cycle time + per-line OEE.
+    # Frontend resolves cycle time using override → Σ stage cycleMin → product fallback, and OEE
+    # using stage product or A/P/Q. When `cycle_time_by_sku_min[k]` is present, prefer it (in minutes,
+    # converted to hours here). When `oee` is present, derate available hours by it. Both fields are
+    # OPTIONAL — payloads from older builds without these fields fall back to the previous behavior.
+    def _cycle_hrs_for_line(k, line):
+        by_sku = line.get('cycle_time_by_sku_min', {}) or {}
+        if not by_sku:
+            return cycle_times[k]
+        # JSON keys may be int or stringified int.
+        v = by_sku.get(k)
+        if v is None:
+            v = by_sku.get(str(k))
+        if v is None or float(v) <= 0:
+            return cycle_times[k]
+        return float(v) / 60.0
+
     if has_line_pool:
-        # v3.4 — per-line hours budget. Σ_k cycle[k] * x[k,l] ≤ avail_hrs[l]
+        # v3.4 — per-line hours budget. Σ_k cycle[k,l] * x[k,l] ≤ avail_hrs[l] × oee[l]
         for li, line in enumerate(lines_pool):
             avail = line.get('avail_hrs_per_week', line.get('avail_hrs', 0))
+            oee = float(line.get('oee') or 1.0)
             # weekly → scale by planning horizon weeks (infer from horizon_days/7)
             weeks = max(1, round((30 * planning_horizon_months / 7) if planning_horizon_months > 0 else 4.33))
-            line_cap_hrs = avail * weeks
+            line_cap_hrs = avail * weeks * oee
             c_name = f"LineHrs_{li}"
             prob += pulp.lpSum(
-                cycle_times[k] * x[(k, li)] for k in range(n) if (k, li) in x
+                _cycle_hrs_for_line(k, line) * x[(k, li)] for k in range(n) if (k, li) in x
             ) <= line_cap_hrs, c_name
             constraint_names[f"Line hrs: {line.get('name', f'L{li}')}"] = c_name
     else:
@@ -440,21 +459,24 @@ def solve_profitmix(data):
     if has_line_pool:
         for li, line in enumerate(lines_pool):
             avail = line.get('avail_hrs_per_week', line.get('avail_hrs', 0))
+            oee = float(line.get('oee') or 1.0)
             weeks = max(1, round((30 * planning_horizon_months / 7) if planning_horizon_months > 0 else 4.33))
-            line_cap_hrs = avail * weeks
+            # R13 Phase 1b — utilization shown against the OEE-derated capacity actually used in the LP.
+            line_cap_hrs = avail * weeks * oee
             line_hrs_used = 0
             per_sku = []
             for k in range(n):
                 if (k, li) in x:
                     qty_on_line = pulp.value(x[(k, li)]) or 0
                     if qty_on_line > 0.01:
-                        hrs = qty_on_line * cycle_times[k]
+                        hrs = qty_on_line * _cycle_hrs_for_line(k, line)
                         line_hrs_used += hrs
                         per_sku.append({
                             'sku': products[k].get('name', f'P{k}'),
                             'sku_idx': k,
                             'quantity': round(qty_on_line, 1),
                             'hours': round(hrs, 2),
+                            'cycle_hrs_per_unit': round(_cycle_hrs_for_line(k, line), 4),
                         })
             line_allocation.append({
                 'line_id': line.get('id', f'L{li}'),
@@ -462,8 +484,10 @@ def solve_profitmix(data):
                 'skus': per_sku,
                 'hours_used': round(line_hrs_used, 2),
                 'hours_available': round(line_cap_hrs, 2),
+                'oee': round(oee, 4),
                 'utilization_pct': round(line_hrs_used / max(line_cap_hrs, 0.01) * 100, 1),
                 'dedicated': bool(line.get('dedicated', False)),
+                'shared_stage_ids': line.get('shared_stage_ids', []),
             })
             line_utilization.append({
                 'line': line.get('name', f'L{li}'),

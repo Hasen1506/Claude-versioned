@@ -65,24 +65,59 @@ def solve_production(data):
     # completion[k] = last period product k is produced
     completion = {}
 
-    # Helper — for each (product, line) compute the effective capacity per period
-    # based on routing (bottleneck op) when routing is defined, else fall back to line capacity.
+    # Helper — for each (product, line) compute the effective capacity per period.
+    # Resolution order (R13 Phase 1b backend wiring · A4/A5):
+    #   1. Routing ops on this line (legacy SAP-style routing) — bottleneck wins.
+    #   2. line.cycle_time_by_sku_min[k] — frontend-resolved per-(SKU, line) cycle from
+    #      override → Σ stage cycleMin → product fallback. Used when no routing.
+    #   3. lines[l].capacity — flat units/period cap (legacy fallback).
+    # OEE source preference: lines[l].oee (resolveLineOEE on the frontend) → prod.oee → default.
+    def _line_oee(l, prod):
+        v = lines[l].get('oee')
+        if v is not None:
+            try:
+                vf = float(v)
+                if vf > 0:
+                    return vf
+            except (TypeError, ValueError):
+                pass
+        return prod.get('oee', 0.85 * 0.92 * 0.98)
+
+    def _cycle_min_by_sku(l, k):
+        by_sku = lines[l].get('cycle_time_by_sku_min', {}) or {}
+        if not by_sku:
+            return None
+        v = by_sku.get(k)
+        if v is None:
+            v = by_sku.get(str(k))
+        try:
+            vf = float(v)
+            return vf if vf > 0 else None
+        except (TypeError, ValueError):
+            return None
+
     def _route_cap(k, l):
         """Return (units_per_period, eligible_bool, route_yield)."""
         prod = products[k]
         route = prod.get('routing') or []
         line_id = lines[l].get('id', f'line{l}')
+        hrs_per_period = params.get('hrs_per_period', 40)  # weekly hrs available
+        line_oee = _line_oee(l, prod)
         if not route:
+            # No routing — try frontend-resolved per-(SKU, line) cycle next, else fall back to line capacity.
+            ct_min = _cycle_min_by_sku(l, k)
+            if ct_min is not None:
+                units = (hrs_per_period * 60 * line_oee) / ct_min
+                return int(units), True, prod.get('yield_pct', 0.95)
             return lines[l].get('capacity', 50), True, prod.get('yield_pct', 0.95)
         # Ops assigned to this line
         ops_on_line = [op for op in route if op.get('line_id') == line_id or op.get('lineId') == line_id]
         if not ops_on_line:
             # line isn't part of this product's routing → ineligible
             return 0, False, 0
-        # Bottleneck op on this line — lowest throughput
-        hrs_per_period = params.get('hrs_per_period', 40)  # weekly hrs available
-        oee = prod.get('oee', 0.85 * 0.92 * 0.98)
-        min_per_period = hrs_per_period * 60 * oee
+        # Bottleneck op on this line — lowest throughput. OEE comes from the line, not the product,
+        # so a stage retrofit on Line 2 doesn't get inherited by Line 1.
+        min_per_period = hrs_per_period * 60 * line_oee
         throughputs = []
         y_mult = 1.0
         for op in ops_on_line:
@@ -334,6 +369,9 @@ def solve_production(data):
             'hourly_rate': lines[l].get('hourly_rate', 0),
             'ot_threshold_pct': lines[l].get('ot_threshold_pct', 80),
             'changeovers': sum(int(pulp.value(switch.get((l, t), 0)) or 0) for t in range(1, T)),
+            # R13 Phase 1b — echo the resolved line OEE + pooled work-center membership for UI banners.
+            'oee': round(float(lines[l].get('oee') or 0), 4),
+            'shared_stage_ids': lines[l].get('shared_stage_ids', []),
         })
 
     return {

@@ -6174,9 +6174,13 @@ function OptimizeTab({state,dispatch}){
             oee:((p.oeeAvailability||85)*(p.oeePerformance||92)*(p.oeeQuality||98))/1000000,
             line_mode:p.lineMode||'shared'})),
           lines:state.production.lines.map((l,i)=>{
-            const ep=l.eligibleProducts||[];
+            // R13 Phase 1a/1b backend wiring — eligible_skus = union(line.eligibleProducts, skuMap),
+            // cycle_time_by_sku_min from resolveCycleTime, oee from resolveLineOEE.
+            const _topo=state.production.topology||{lines:[]};
+            const _skuMap=state.production.skuMap||[];
+            const eligibleIdx=eligibleSkuIdxForLine(l,state.products,_skuMap);
+            const ctByIdx=cycleMinByIdxForLine(l,state.products,_topo,_skuMap);
             const skuIdxById={};state.products.forEach((p,k)=>{skuIdxById[p.id]=k});
-            const eligibleIdx=ep.length?ep.map(pid=>skuIdxById[pid]).filter(x=>x!=null):state.products.map((_,k)=>k);
             // T4-04/T4-10 — wire workers, hourly rate, OT threshold/cap, line OEE, and SKU-pair changeover matrix.
             // T4-10 — translate changeover matrix from {fromSkuId: {toSkuId: min}} into index-keyed for the solver.
             const coMatrixIdx={};
@@ -6200,6 +6204,9 @@ function OptimizeTab({state,dispatch}){
               oee_availability:+l.oeeAvailability||85,
               oee_performance:+l.oeePerformance||92,
               oee_quality:+l.oeeQuality||98,
+              oee:resolveLineOEE(l,_topo).value,
+              cycle_time_by_sku_min:ctByIdx,
+              shared_stage_ids:sharedStageIdsOnLine(l,_topo),
               changeover_mins:l.changeoverMins||30,
               changeover_matrix:coMatrixIdx,
               planned_maintenance:(l.plannedMaintenance||[]).map(w=>w.mode==='hourly'?{mode:'hourly',date:w.date,hours_lost:+(w.hoursLost||0),reason:w.reason||''}:{mode:'weekly',from_week:+(w.fromWeek||0),to_week:+(w.toWeek||0),reason:w.reason||''}),
@@ -6214,12 +6221,20 @@ function OptimizeTab({state,dispatch}){
         const unit=state.planning.planningUnit||'weekly';
         const horizonMonths=Math.max(1,Math.min(24,Math.ceil(periodCount(state.planning)*(unit==='weekly'?7:unit==='daily'?1:30)/30.5)));
         // v3.4 — per-line eligibility. lines[] carries per-line avail_hrs + which SKU indices it can run.
-        const skuIdxById={};state.products.forEach((p,i)=>{skuIdxById[p.id]=i});
+        // R13 Phase 1a/1b backend wiring — eligible_skus = union(line.eligibleProducts, skuMap),
+        // cycle_time_by_sku_min comes from resolveCycleTime so per-line overrides + stage sums reach
+        // the LP, oee from resolveLineOEE so capacity hours are derated by real-world losses.
+        const _topo=state.production.topology||{lines:[]};
+        const _skuMap=state.production.skuMap||[];
         const linesPayload=(state.production.lines||[]).map(l=>{
-          const ep=l.eligibleProducts||[];
-          const eligibleIdx=ep.length?ep.map(pid=>skuIdxById[pid]).filter(i=>i!=null):state.products.map((_,i)=>i);
+          const eligibleIdx=eligibleSkuIdxForLine(l,state.products,_skuMap);
+          const ctByIdx=cycleMinByIdxForLine(l,state.products,_topo,_skuMap);
           const wkHrs=((+l.shiftsPerDay||2)*(+l.hoursPerShift||8)-(+l.breakMins||30)*(+l.shiftsPerDay||2)/60)*(state.planning.workDays||6);
-          return{id:l.id,name:l.name,avail_hrs_per_week:wkHrs,eligible_skus:eligibleIdx,dedicated:!!l.dedicated,changeover_mins:+l.changeoverMins||30};
+          return{id:l.id,name:l.name,avail_hrs_per_week:wkHrs,eligible_skus:eligibleIdx,
+            cycle_time_by_sku_min:ctByIdx,
+            oee:resolveLineOEE(l,_topo).value,
+            shared_stage_ids:sharedStageIdsOnLine(l,_topo),
+            dedicated:!!l.dedicated,changeover_mins:+l.changeoverMins||30};
         });
         payload={
           demand_mode:demandMode,
@@ -7685,6 +7700,33 @@ function resolveLineOEE(line, topo){
 }
 // Backwards-compatible scalar wrapper.
 function lineOEE(line, topo){ return resolveLineOEE(line,topo).value; }
+
+// R13 Phase 1a/1b backend wiring · helpers consumed by /api/solve payload assemblers.
+//   eligibleSkuIdxForLine — union of legacy `line.eligibleProducts` and explicit `skuMap` entries.
+//     Falls back to "all SKUs allowed" when neither is populated (preserves pre-R12 behavior).
+//   cycleMinByIdxForLine — { skuIdx: minutes/unit } using resolveCycleTime so per-line overrides + stage-sum
+//     reach the solvers (was previously a flat product-level scalar in the payload).
+//   sharedStageIdsOnLine — list of pooled work-center IDs touched by this line; surfaced for transparency
+//     (Phase 1b A7 = banner-only; functional pooling deferred to Phase 3).
+function eligibleSkuIdxForLine(line, products, skuMap){
+  const idxById={}; products.forEach((p,k)=>{idxById[p.id]=k});
+  const fromEP=(line.eligibleProducts||[]).map(pid=>idxById[pid]).filter(i=>i!=null);
+  const fromSM=(skuMap||[]).filter(m=>m.lineId===line.id).map(m=>idxById[m.skuId]).filter(i=>i!=null);
+  const both=[...fromEP, ...fromSM];
+  if(!both.length) return products.map((_,k)=>k);
+  return Array.from(new Set(both));
+}
+function cycleMinByIdxForLine(line, products, topo, skuMap){
+  const out={};
+  const eligible=eligibleSkuIdxForLine(line, products, skuMap);
+  eligible.forEach(k=>{ out[k]=resolveCycleTime(products[k], line, topo, skuMap).value; });
+  return out;
+}
+function sharedStageIdsOnLine(line, topo){
+  const lineTopo=(topo?.lines||[]).find(L=>L.id===line.id);
+  if(!lineTopo) return [];
+  return Array.from(new Set((lineTopo.stages||[]).map(s=>s.sharedStageId).filter(x=>x)));
+}
 
 // T4-08 — Planned maintenance hours lost on a given line for a given period.
 function maintHoursLost(line, periodIdx, planning){
