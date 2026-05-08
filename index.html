@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Enterprise Simulator v3.3</title>
+<title>Enterprise Simulator v3.4</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,700&family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Fraunces:ital,wght@0,400;0,600;0,700;0,900;1,400;1,700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -686,21 +686,26 @@ function computeWACC(finance,config){
 function npvLocal(flows,waccPct,periodsPerYear){
   const r=(+waccPct||0)/100/Math.max(periodsPerYear||1,1);
   const npv=flows.reduce((a,cf,t)=>a+(+cf||0)/Math.pow(1+r,t),0);
-  return{npv,irr:irrLocal(flows,periodsPerYear),flows,waccPct,periodsPerYear:periodsPerYear||1};
+  const irrInfo=irrLocalDetailed(flows,periodsPerYear);
+  return{npv,irr:irrInfo.rate,irrConverged:irrInfo.converged,irrDiverged:irrInfo.diverged,flows,waccPct,periodsPerYear:periodsPerYear||1};
 }
-// B4 — IRR with multi-root detection. Newton-Raphson finds *one* root from r=0.1 starting guess.
-// For non-conventional cash flows (sign changes >1), multiple IRRs may exist (Descartes' rule). Caller can read .multipleRoots.
+// B4 — IRR scalar return for legacy callers. Same Newton-Raphson; sentinel −50% on divergence.
 function irrLocal(flows,periodsPerYear){
-  let r=0.1;const ppy=periodsPerYear||1;
+  return irrLocalDetailed(flows,periodsPerYear).rate;
+}
+// IRR with explicit convergence reporting. Returns {rate%, converged, diverged}.
+// rate is null when divergence is detected so callers can render "n/a" instead of a misleading −50%.
+function irrLocalDetailed(flows,periodsPerYear){
+  let r=0.1;const ppy=periodsPerYear||1;let converged=false,diverged=false;
   for(let i=0;i<40;i++){
     let f=0,fp=0;
     flows.forEach((cf,t)=>{const v=+cf||0;f+=v/Math.pow(1+r,t);fp+=-t*v/Math.pow(1+r,t+1);});
-    if(Math.abs(fp)<1e-9)break;
+    if(Math.abs(fp)<1e-9){diverged=true;break;}
     const dr=f/fp;r-=dr;
-    if(!isFinite(r)||r<-0.99){r=-0.5;break;}
-    if(Math.abs(dr)<1e-7)break;
+    if(!isFinite(r)||r<-0.99){diverged=true;break;}
+    if(Math.abs(dr)<1e-7){converged=true;break;}
   }
-  return r*100*ppy;
+  return diverged?{rate:null,converged:false,diverged:true}:{rate:r*100*ppy,converged,diverged:false};
 }
 // B4 — count sign changes in a flow array. >1 means non-conventional → multiple-IRR risk.
 function irrSignChanges(flows){
@@ -745,7 +750,13 @@ function calcOrderingCost(b){
 // Industry mix (Stock-Lambert Logistics Management): Admin 25%, Freight-fixed 50%, Receiving/QC 15%, Setup 10% when unknown.
 function ordBreakdownDefault(scalar){
   const s=+scalar||0;
-  return{admin:Math.round(s*0.25),freightFixed:Math.round(s*0.50),receivingQC:Math.round(s*0.15),setup:Math.round(s*0.10)};
+  // Round 3 components, then make freightFixed (the largest by industry-mix convention)
+  // absorb rounding drift so admin+freight+QC+setup === scalar exactly.
+  const admin=Math.round(s*0.25);
+  const receivingQC=Math.round(s*0.15);
+  const setup=Math.round(s*0.10);
+  const freightFixed=Math.max(0,s-admin-receivingQC-setup);
+  return{admin,freightFixed,receivingQC,setup};
 }
 // Pillar 15 — payment ledger helpers. Each event = {id, supplierId, partId, poId, releaseDate (ISO), amount, paymentTermDays, dueDate (computed), confirmedStatus, actualPaymentDate, notes}.
 // Default assumption: paid on dueDate (last day of terms). User can confirm 'on-time' / 'early' / 'late' with actualPaymentDate override.
@@ -795,7 +806,10 @@ function effectiveShelfDays(days,planning){return shelfLifeToPeriods(days,planni
 function milkRunPerPeriod(prod){
   const mode=prod?.milkRunMode||'off';if(mode==='off')return 0;
   const cost=+prod.milkRunCost||0,freq=+prod.milkRunFreq||1;
-  const supCount=new Set((prod.bom||[]).map(b=>b.supplierName||b.supplier||b.vendor).filter(Boolean)).size||(prod.bom||[]).length||0;
+  // Distinct named suppliers; if none are named, treat the whole BOM as a single unknown supplier
+  // (a milk run with no named vendors collapses to one stop, not bom.length stops).
+  const namedCount=new Set((prod.bom||[]).map(b=>b.supplierName||b.supplier||b.vendor).filter(Boolean)).size;
+  const supCount=namedCount>0?namedCount:((prod.bom||[]).length>0?1:0);
   if(mode==='perTrip')return cost*freq;
   if(mode==='perPeriod')return cost;
   if(mode==='perSupplier')return cost*freq*supCount;
@@ -812,6 +826,26 @@ function zVal(p){
   if(p<pLow){q=Math.sqrt(-2*Math.log(p));return (((((cc[0]*q+cc[1])*q+cc[2])*q+cc[3])*q+cc[4])*q+cc[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);}
   if(p<=pHigh){q=p-0.5;r=q*q;return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q/(((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);}
   q=Math.sqrt(-2*Math.log(1-p));return -(((((cc[0]*q+cc[1])*q+cc[2])*q+cc[3])*q+cc[4])*q+cc[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+}
+// Canonical Safety Stock. SS = z × σ_monthly × √(LT_months). Inputs:
+//   product: {history:[]} — monthly history. σ derived from history; if too sparse,
+//            mapeFallback (default 15%) × mean is used as a relative-σ proxy.
+//   leadTimeWeeks: max BOM lead time in WEEKS (we accept weeks because that's what
+//            BOM editors store; converted to months via /4.33 here).
+//   z: zVal(serviceLevel)
+// Returns SS in monthly units (whole units, ≥0). Three call sites previously had
+// inconsistent unit conventions — route them all through here.
+function safetyStockUnits(product,leadTimeWeeks,z){
+  const h=(product&&product.history)||[];
+  const n=h.length;
+  if(!n)return 0;
+  const mu=h.reduce((a,b)=>a+(+b||0),0)/n;
+  const sigmaHist=Math.sqrt(h.reduce((s,v)=>s+Math.pow((+v||0)-mu,2),0)/n);
+  // If history std-dev collapses (very flat or 1-2 points), fall back to MAPE × mean.
+  const mapePct=+(product?.mape)||15;
+  const sigma=sigmaHist>0?sigmaHist:(mapePct/100)*mu;
+  const ltMonths=Math.max(0,(+leadTimeWeeks||0)/4.33);
+  return Math.max(0,Math.round((+z||0)*sigma*Math.sqrt(ltMonths)));
 }
 // Pillar 7 — canonical demand disaggregation. Returns `periodCount(planning)` values from product.history projected onto the configured grain. Procurement / MPS / S&OP all call this — never re-implement.
 // Monthly weights: 27/27/23/23% match the solver's legacy weeklyDemand.
@@ -1159,6 +1193,109 @@ function cascadedMatCost(bom){
     return children.reduce((s,c)=>s+calc(c,visited,depth+1),0)*effQtyPer(item);
   };
   return (byParent['__root__']||[]).reduce((s,r)=>s+calc(r,new Set(),0),0);
+}
+// Round 8 — Bucket 2 B2: per-node multi-UoM storage capacity helpers.
+// `nodeCapacityFor(node, uom)` returns the constraint in the requested unit.
+//   uom ∈ {'units','kg','L','m3'}. 0 = unconstrained in that dimension.
+//   Backward-compat: if `storageCapacity` is absent, falls back to legacy `unitCapacity`/`capacity`
+//   (treated as 'units' only; other UoMs return 0 = unconstrained).
+function nodeCapacityFor(node,uom){
+  if(!node)return 0;
+  const sc=node.storageCapacity;
+  if(sc&&typeof sc==='object'){
+    const v=+sc[uom];
+    return isFinite(v)?v:0;
+  }
+  if(uom==='units')return +node.unitCapacity||+node.capacity||0;
+  return 0;
+}
+// Round 8 — Bucket 2 B4: FTL/LTL auto-pick + disruption-driven fallback.
+//   `pickTransportMode({qty, b, modes, defaultModeCode, fallbackModeCode, disruptions, fillThreshold})`
+//   Returns {mode, reason, fillKg, fillM3, capacityKg, capacityM3, tripsNeeded}.
+//   - Reason ∈ {'default', 'auto-upgrade-ftl', 'disruption-fallback', 'truck-overflow', 'no-truck-mode'}.
+//   - fillThreshold default 0.6 → ≥60% fill on either dim triggers FTL upgrade from LTL.
+function pickTransportMode({qty,b,modes,defaultModeCode,fallbackModeCode,disruptions,fillThreshold}){
+  modes=modes||[];
+  const FTL=modes.find(m=>m.code==='FTL');
+  const LTL=modes.find(m=>m.code==='LTL');
+  const findMode=(code)=>modes.find(m=>m.code===code)||modes.find(m=>(m.bomVocab||'').toLowerCase()===String(code||'').toLowerCase());
+  const def=findMode(defaultModeCode)||LTL||FTL||modes[0];
+  const wt=(partQtyIn(b,qty,'kg')||0);
+  const vol=(partQtyIn(b,qty,'m3')||0);
+  // 1. Disruption check on default mode
+  const blocked=(disruptions||[]).some(d=>d&&(d.active!==false)&&((d.modeCode&&d.modeCode===def?.code)||(d.scope==='transport-mode'&&d.scopeId===def?.id)));
+  if(blocked){
+    const fb=findMode(fallbackModeCode)||findMode('Air')||def;
+    return {mode:fb,reason:'disruption-fallback',fillKg:wt,fillM3:vol,capacityKg:+fb?.truckCapacityKg||0,capacityM3:+fb?.truckCapacityM3||0,tripsNeeded:1};
+  }
+  // 2. FTL/LTL fill auto-pick: only when default is a truck mode (LTL or FTL)
+  const isTruck=def&&(def.code==='LTL'||def.code==='FTL');
+  if(!isTruck||!FTL){
+    return {mode:def,reason:'default',fillKg:wt,fillM3:vol,capacityKg:+def?.truckCapacityKg||0,capacityM3:+def?.truckCapacityM3||0,tripsNeeded:1};
+  }
+  const capKg=+FTL.truckCapacityKg||0;
+  const capM3=+FTL.truckCapacityM3||0;
+  const fillRatioKg=capKg>0?wt/capKg:0;
+  const fillRatioM3=capM3>0?vol/capM3:0;
+  const thresh=+fillThreshold||0.6;
+  const fillRatio=Math.max(fillRatioKg,fillRatioM3);
+  if(fillRatio>1){
+    const tripsNeeded=Math.ceil(fillRatio);
+    return {mode:FTL,reason:'truck-overflow',fillKg:wt,fillM3:vol,capacityKg:capKg,capacityM3:capM3,tripsNeeded};
+  }
+  if(fillRatio>=thresh){
+    return {mode:FTL,reason:def.code==='LTL'?'auto-upgrade-ftl':'default',fillKg:wt,fillM3:vol,capacityKg:capKg,capacityM3:capM3,tripsNeeded:1};
+  }
+  return {mode:LTL||def,reason:'default',fillKg:wt,fillM3:vol,capacityKg:capKg,capacityM3:capM3,tripsNeeded:1};
+}
+// Round 8 — Bucket 2 B3: compute shipment freight cost from a transport contract + mode.
+//   `transportShipmentCost({qty, b, distanceKm, mode, contract})` returns ₹.
+//   - rateBasis 'tonneKm': mode.ratePerTonneKm × contract.rateMult × tonnes × km
+//   - rateBasis 'm3Km':    mode.ratePerTonneKm × contract.rateMult × m³     × km   (treats mode rate as per-m³·km — assumes mode rate field is repurposed)
+//   - rateBasis 'unitKm':  mode.ratePerTonneKm × contract.rateMult × units  × km
+//   - rateBasis 'perTrip': flat (mode.ratePerTonneKm × contract.rateMult)   ignoring qty/distance — interpret rate as ₹/trip
+//   - rateBasis 'flatPeriodic': returns 0 here — caller must amortise contract subscription separately
+//   Final = max(computed, contract.minCharge).
+function transportShipmentCost({qty,b,distanceKm,mode,contract}){
+  const m=mode||{};
+  const c=contract||{};
+  const baseRate=(+m.ratePerTonneKm||0)*(+c.rateMult||1);
+  const km=+distanceKm||0;
+  const basis=c.rateBasis||'tonneKm';
+  let cost=0;
+  if(basis==='tonneKm'){
+    const tonnes=(partQtyIn(b,qty,'kg')||0)/1000;
+    cost=baseRate*tonnes*km;
+  }else if(basis==='m3Km'){
+    const m3=partQtyIn(b,qty,'m3')||0;
+    cost=baseRate*m3*km;
+  }else if(basis==='unitKm'){
+    cost=baseRate*(+qty||0)*km;
+  }else if(basis==='perTrip'){
+    cost=baseRate; // interpret as ₹/trip
+  }else if(basis==='flatPeriodic'){
+    cost=0; // amortised at the period level by the caller
+  }
+  const minCh=+c.minCharge||0;
+  return Math.max(cost,minCh);
+}
+// Round 8 — Bucket 2 B2: convert qty of a BOM part to a given UoM using its physical attributes.
+// `partQtyIn(b, qty, uom)` — uom ∈ {'units','kg','L','m3'}. Returns NaN if conversion not derivable.
+function partQtyIn(b,qty,uom){
+  if(!b||!isFinite(qty))return NaN;
+  if(uom==='units')return qty;
+  if(uom==='kg')return qty*(+b.weightKg||0);
+  if(uom==='m3')return qty*(+b.volumeCbm||0);
+  if(uom==='L'){
+    // Prefer densityKgPerL if user set it; else derive from m3 (1000 L/m3); else from weight+density would loop.
+    const m3=+b.volumeCbm||0;
+    if(m3>0)return qty*m3*1000;
+    const dens=+b.densityKgPerL||0;
+    const wt=+b.weightKg||0;
+    if(dens>0&&wt>0)return qty*(wt/dens);
+    return NaN;
+  }
+  return NaN;
 }
 function landedCost(b,config,plant,profiles){
   if(!b)return 0;
@@ -1752,6 +1889,35 @@ function lifecycleCurve(stage,n,opts){
 // ════════════════════════════════════════════════
 // DEFAULT DATA
 // ════════════════════════════════════════════════
+// Single source of truth for a fresh BOM line. Used by defaultSKU() and by ADD_BOM_ITEM
+// — keep them aligned so runtime-added parts have the same fields the solver expects.
+const defaultBOM=(overrides)=>({
+  id:Date.now().toString(36)+Math.random().toString(36).slice(2,4),
+  name:'New Part',qtyPer:1,uom:'u',purchasePack:1,scrapFactor:0,
+  cost:5,costCV:10,nextCost:5,changeDay:999,
+  moq:10,maxOrder:500,leadTime:1,ltCV:10,
+  holdPct:24,rmShelf:90,rmCapacity:1000,orderingCost:50,
+  partYield:98,
+  transRate:0.5,transMode:'road',
+  // Round 8 — Bucket 2 B4: defaults for FTL/LTL auto-pick + air fallback.
+  defaultTransModeCode:'LTL',fallbackTransModeCode:'Air',
+  airRateBandMin:0,airRateBandMax:0,
+  // Round 8 — Bucket 2 B5: FK links to source location + transport contract.
+  sourceLocationId:'',transportContractId:'',
+  transFreight:0.5,transInsurancePct:0.5,transDutyPct:0,transHandlingPerUnit:0,transFuelPct:0,
+  weightKg:1.0,volumeCbm:0.005,densityKgPerL:0,
+  originCity:'',destCity:'',
+  volDisc:[{minQty:0,pct:0}],
+  tiers:[{minQty:0,rate:0.5}],
+  payTermDays:30,earlyPayDisc:0,
+  vmi:false,onHand:0,
+  procPolicy:'auto',
+  supplierName:'',
+  supplierType:'domestic',supplierState:'TN',country:'IN',incoterm:'',hsCode:'',gstPct:18,igstPct:18,bcdPct:7.5,swsPct:10,
+  backupSupplier:'',backupCost:0,backupLeadTime:0,backupActivation:'manual',
+  subcontract:false,subcontractRate:0,subcontractLT:0,
+  ...(overrides||{})
+});
 const defaultSKU=()=>({
   id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),
   name:'New Product',category:'Finished Good',shelfLife:75,
@@ -1782,27 +1948,7 @@ const defaultSKU=()=>({
   actuals:Array(12).fill(null), // actual demand per month (for sensing)
   overrides:Array(12).fill(null),
   events:[], // [{id,month,week,type:'promo'|'stockout'|'launch',pct,name}]
-  bom:[{
-    id:Date.now().toString(36),name:'Raw Material A',qtyPer:2,uom:'u',purchasePack:1,scrapFactor:0.05,
-    cost:10,costCV:10,nextCost:10,changeDay:999, // contract renegotiation
-    moq:50,maxOrder:500,leadTime:2,ltCV:10, // lead time CV%
-    holdPct:24,rmShelf:90,rmCapacity:2000,orderingCost:75,
-    partYield:98, // part-level yield %
-    transRate:0.5,transMode:'road', // road | rail | sea | air | multimodal | contract
-    // v3.5 — landed-cost breakdown per BOM line. Landed = cost + freight·(1+fuel%) + cost·ins% + (cost+freight)·duty% + handlingPerUnit
-    transFreight:0.5,transInsurancePct:0.5,transDutyPct:0,transHandlingPerUnit:0,transFuelPct:0,
-    weightKg:1.0,volumeCbm:0.005, // per-unit shipping dims — transport solver uses these for mode selection
-    originCity:'',destCity:'', // lane endpoints (empty destCity => use state.config.city as factory)
-    volDisc:[{minQty:0,pct:0}], // volume discount tiers
-    tiers:[{minQty:0,rate:0.5}], // transport rate tiers
-    payTermDays:30,earlyPayDisc:0, // payment terms
-    vmi:false, // vendor managed inventory
-    onHand:0, // initial RM inventory
-    procPolicy:'auto', // v3.2: auto evaluates all & picks cheapest; also accepts milp/lfl/eoq/foq/poq/minmax/epq/ww/silvermeal/ppb/luc/ltc/jit/kanban/mrp
-    supplierType:'domestic',supplierState:'TN',country:'IN',incoterm:'',hsCode:'',gstPct:18,igstPct:18,bcdPct:7.5,swsPct:10,
-    backupSupplier:'',backupCost:0,backupLeadTime:0,backupActivation:'manual',
-    subcontract:false,subcontractRate:0,subcontractLT:0,
-  }],
+  bom:[defaultBOM({name:'Raw Material A',qtyPer:2,scrapFactor:0.05,cost:10,nextCost:10,moq:50,leadTime:2,rmCapacity:2000,orderingCost:75})],
   mtoOrders:[], // [{id,customer,qty,dueMonth,product}]
   costEvents:[], // [{id,fromMonth,label,paramKey,paramValue}]
   // v3.5 — distribution channel. Which DCs serve this SKU, and the demand split across customer zones.
@@ -1822,7 +1968,7 @@ const TATA_PRECISION_DEMO={
     fxRates:{USD:83.2,EUR:89.5,JPY:0.55,GBP:104.0,CNY:11.5,SGD:62.0},
   },
   planning:{
-    startMonth:3,periods:52,workDays:6,indianHolidays:true,
+    periods:52,workDays:6,indianHolidays:true,
     horizonLength:52,horizonUnit:'weeks',horizonStartDate:'2026-01-01',
     holidays:HOLIDAYS_IN_2026,
     timeGrain:'weekly',histMonths:24,sensingMinWeeks:2,sensingAlpha:0.3,
@@ -1871,12 +2017,16 @@ const defaultState={
     investmentCr:0,      // ₹ Crores in plant & machinery
     msmeClass:'medium',  // 'micro' | 'small' | 'medium' | 'large'  (auto-derived but editable)
     msmeManual:false,    // when true, user override; auto-derivation disabled
+    // Round 7 — App-level mode toggle. 'operational' shows full SCM tab strip; 'finance' shows
+    // a focused subset (setup read-only, finance, invest, command, learn) for the
+    // Project/Finance audience. Persisted via the same localStorage path as the rest of config.
+    viewMode:'operational',
   },
   audit:[],
   rbac:{role:'planner',user:'demo@enterprise.sim'},
   auditOpen:false,
   planning:{
-    startMonth:0,periods:52,workDays:6,
+    periods:52,workDays:6,
     indianHolidays:true,planningUnit:'weekly',
     timeGrain:'weekly',
     horizonLength:52,horizonUnit:'weeks',horizonStartDate:'2026-01-01',
@@ -1949,11 +2099,12 @@ const defaultState={
   // T1-05 — Transport Mode master. Single registry consumed by both lanes and BOM rows.
   // Defaults seed Indian-market typical rates. `bomVocab` maps abstract BOM mode ('road') to operational lane mode ('FTL').
   transportModes:[
-    {id:'tm-ftl',code:'FTL',name:'Full Truck Load',ratePerTonneKm:2.5,leadDaysPer500Km:1,co2KgPerUnit:0.10,bomVocab:'road',applicability:{lane:true,bom:true}},
-    {id:'tm-ltl',code:'LTL',name:'Less Than Truck Load',ratePerTonneKm:3.8,leadDaysPer500Km:2,co2KgPerUnit:0.08,bomVocab:'road',applicability:{lane:true,bom:true}},
+    // Round 8 — Bucket 2 B4: FTL/LTL/Air carry truckCapacity (kg + m³) for auto-pick. truckCapacity:0 = no truck (rail/sea/courier sized differently).
+    {id:'tm-ftl',code:'FTL',name:'Full Truck Load',ratePerTonneKm:2.5,leadDaysPer500Km:1,co2KgPerUnit:0.10,bomVocab:'road',truckCapacityKg:16000,truckCapacityM3:80,applicability:{lane:true,bom:true}},
+    {id:'tm-ltl',code:'LTL',name:'Less Than Truck Load',ratePerTonneKm:3.8,leadDaysPer500Km:2,co2KgPerUnit:0.08,bomVocab:'road',truckCapacityKg:0,truckCapacityM3:0,applicability:{lane:true,bom:true}},
     {id:'tm-rail',code:'Rail',name:'Rail Freight',ratePerTonneKm:1.2,leadDaysPer500Km:5,co2KgPerUnit:0.05,bomVocab:'rail',applicability:{lane:true,bom:true}},
     {id:'tm-sea',code:'Sea',name:'Sea Freight',ratePerTonneKm:0.4,leadDaysPer500Km:20,co2KgPerUnit:0.03,bomVocab:'sea',applicability:{lane:true,bom:true}},
-    {id:'tm-air',code:'Air',name:'Air Freight',ratePerTonneKm:18.0,leadDaysPer500Km:1,co2KgPerUnit:0.50,bomVocab:'air',applicability:{lane:true,bom:true}},
+    {id:'tm-air',code:'Air',name:'Air Freight',ratePerTonneKm:18.0,leadDaysPer500Km:1,co2KgPerUnit:0.50,bomVocab:'air',truckCapacityKg:5000,truckCapacityM3:30,applicability:{lane:true,bom:true}},
     {id:'tm-courier',code:'Courier',name:'Courier / Parcel',ratePerTonneKm:8.0,leadDaysPer500Km:0.5,co2KgPerUnit:0.12,bomVocab:'road',applicability:{lane:true,bom:false}},
     {id:'tm-multi',code:'Multimodal',name:'Multimodal',ratePerTonneKm:1.8,leadDaysPer500Km:6,co2KgPerUnit:0.07,bomVocab:'multimodal',applicability:{lane:true,bom:true}},
     {id:'tm-3pl',code:'3PL',name:'3PL Managed',ratePerTonneKm:3.2,leadDaysPer500Km:2,co2KgPerUnit:0.09,bomVocab:'road',applicability:{lane:true,bom:false}},
@@ -1961,10 +2112,11 @@ const defaultState={
   // T1-06 — Transport Contract master. Each contract is assigned to a lane via lane.contractId.
   // kind: 'spot' | 'fixed-period' | 'volume-commit' | 'take-or-pay'
   transportContracts:[
-    {id:'tc-spot',name:'Spot Market',kind:'spot',rateMult:1.00,minVolumeUnits:0,commitUntil:'',commitVolume:0,minPayPct:0,notes:'Daily market rate. No commitment.'},
-    {id:'tc-fpa',name:'Fixed-Price Annual',kind:'fixed-period',rateMult:0.92,minVolumeUnits:5000,commitUntil:'2026-12-31',commitVolume:0,minPayPct:0,notes:'Locked rate for the calendar year.'},
-    {id:'tc-vc',name:'Volume Commit',kind:'volume-commit',rateMult:0.85,minVolumeUnits:0,commitUntil:'',commitVolume:50000,minPayPct:0,notes:'Tiered discount above commitment volume.'},
-    {id:'tc-top',name:'Take-or-Pay',kind:'take-or-pay',rateMult:0.78,minVolumeUnits:0,commitUntil:'',commitVolume:80000,minPayPct:80,notes:'Pay 80% of capacity even if not used.'},
+    // Round 8 — Bucket 2 B3: contracts now carry rateBasis (tonneKm | m3Km | unitKm | perTrip | flatPeriodic) and minCharge per shipment.
+    {id:'tc-spot',name:'Spot Market',kind:'spot',rateMult:1.00,rateBasis:'tonneKm',minCharge:0,minVolumeUnits:0,commitUntil:'',commitVolume:0,minPayPct:0,notes:'Daily market rate. No commitment.'},
+    {id:'tc-fpa',name:'Fixed-Price Annual',kind:'fixed-period',rateMult:0.92,rateBasis:'tonneKm',minCharge:500,minVolumeUnits:5000,commitUntil:'2026-12-31',commitVolume:0,minPayPct:0,notes:'Locked rate for the calendar year.'},
+    {id:'tc-vc',name:'Volume Commit',kind:'volume-commit',rateMult:0.85,rateBasis:'tonneKm',minCharge:1000,minVolumeUnits:0,commitUntil:'',commitVolume:50000,minPayPct:0,notes:'Tiered discount above commitment volume.'},
+    {id:'tc-top',name:'Take-or-Pay',kind:'take-or-pay',rateMult:0.78,rateBasis:'perTrip',minCharge:8000,minVolumeUnits:0,commitUntil:'',commitVolume:80000,minPayPct:80,notes:'Pay 80% of capacity even if not used. Per-trip pricing for dedicated lanes.'},
   ],
   // T6-04/05 — outbound shipment ledger. One record = one consignment with planned vs actual qty/cost.
   // Shape: {id, contractId, laneId, period (ISO yyyy-mm or yyyy-mm-dd), mode,
@@ -2045,7 +2197,13 @@ const defaultState={
       {id:'d1',kind:'bank-loan',principal:50000000,ratePct:8.5,tenorYears:5,notes:'WCTL @ AA+'},
       {id:'d2',kind:'nc-debenture',principal:30000000,ratePct:7.2,tenorYears:7,notes:'5yr listed NCD'}
     ],
-    inflationAdjust:false,inflationPct:0.5
+    inflationAdjust:false,inflationPct:0.5,
+    // Round 7 — equity tranches with opportunity-cost tagging (Fisher real-return)
+    equitySources:[],
+    // Round 7 — debt schedule with DSCR/DSRA/CADS modeling
+    debtSchedule:[],
+    // Round 7 — Cash Flow Builder persistent inputs (drives Investment Decision tab)
+    cfBuilder:{grain:'yearly',horizon:5,rows:[]}
   },
   // SAP Mode (v3.0) — enterprise-scale extension
   sap:{enabled:false,plants:[],dcs:[],lanes:[],skuCount:0,mlSensing:false,tcodes:{}},
@@ -2053,9 +2211,10 @@ const defaultState={
   // T1-02 — primary plant flag drives state.plant.state denormalization for legacy code paths.
   network:{
     nodes:[
-      {id:'plant1',type:'plant',name:'Plant 1',location:'Chennai',state:'TN',lat:13.08,lon:80.27,capacity:1000,unitCapacity:1000,carryingRatePct:24,primary:true},
-      {id:'dc1',type:'dc',name:'DC-North',location:'Delhi',state:'DL',lat:28.7,lon:77.1,capacity:5000,unitCapacity:5000,carryingRatePct:24},
-      {id:'cust1',type:'customer',name:'Region West',location:'Mumbai',state:'MH',lat:19.08,lon:72.88,demandShare:0.4},
+      // Round 8 — Bucket 2 B1+B2: each node tagged with `direction` and (for storage nodes) multi-UoM `storageCapacity`. 0 = unconstrained in that UoM.
+      {id:'plant1',type:'plant',direction:'both',name:'Plant 1',location:'Chennai',state:'TN',lat:13.08,lon:80.27,capacity:1000,unitCapacity:1000,storageCapacity:{units:1000,kg:50000,L:0,m3:1500},carryingRatePct:24,primary:true},
+      {id:'dc1',type:'dc',direction:'both',name:'DC-North',location:'Delhi',state:'DL',lat:28.7,lon:77.1,capacity:5000,unitCapacity:5000,storageCapacity:{units:5000,kg:200000,L:0,m3:6000},carryingRatePct:24},
+      {id:'cust1',type:'customer',direction:'outbound',name:'Region West',location:'Mumbai',state:'MH',lat:19.08,lon:72.88,demandShare:0.4},
     ],
     lanes:[
       {id:'l1',from:'plant1',to:'dc1',mode:'FTL',leadDays:3,ratePerUnit:2.5,capacity:1000,co2:0.12,active:true,contractId:'tc-spot'},
@@ -2142,7 +2301,12 @@ function reducer(state,action){
     }
     // T1-02..T1-04 — granular node CRUD. Mirrors of the Tab 4 editor live on Tab 1; both write here.
     case 'ADD_NETWORK_NODE':{
-      const node={id:'n'+Date.now().toString(36),type:'dc',name:`Node ${(s.network?.nodes||[]).length+1}`,location:'',state:'TN',lat:0,lon:0,capacity:1000,unitCapacity:1000,carryingRatePct:24,...(action.payload||{})};
+      // Round 8 — Bucket 2 B1: default `direction` by type. supplier→inbound, customer→outbound, plant/wh/dc→both.
+      const _t=(action.payload&&action.payload.type)||'dc';
+      const _dir=_t==='supplier'?'inbound':_t==='customer'?'outbound':'both';
+      // Round 8 — Bucket 2 B2: storage nodes get a multi-UoM capacity object. 0 = unconstrained in that dim.
+      const _sc=(_t==='plant'||_t==='wh'||_t==='dc')?{units:1000,kg:0,L:0,m3:0}:undefined;
+      const node={id:'n'+Date.now().toString(36),type:'dc',direction:_dir,name:`Node ${(s.network?.nodes||[]).length+1}`,location:'',state:'TN',lat:0,lon:0,capacity:1000,unitCapacity:1000,carryingRatePct:24,...(_sc?{storageCapacity:_sc}:{}),...(action.payload||{})};
       s.network={...(s.network||{}),nodes:[...(s.network?.nodes||[]),node]};
       // If this is the first plant added, mark it primary.
       if(node.type==='plant'&&!(s.network.nodes||[]).some(n=>n.type==='plant'&&n.primary&&n.id!==node.id)){
@@ -2198,7 +2362,7 @@ function reducer(state,action){
     case 'UPDATE_TRANSPORT_MODE':s.transportModes=(s.transportModes||[]).map(m=>m.id===action.id?{...m,...action.payload}:m);break;
     case 'DELETE_TRANSPORT_MODE':s.transportModes=(s.transportModes||[]).filter(m=>m.id!==action.id);break;
     // T1-06 — Transport Contract master CRUD
-    case 'ADD_TRANSPORT_CONTRACT':s.transportContracts=[...(s.transportContracts||[]),{id:'tc-'+Date.now().toString(36),name:'New Contract',kind:'spot',rateMult:1.0,minVolumeUnits:0,commitUntil:'',commitVolume:0,minPayPct:0,notes:'',...(action.payload||{})}];break;
+    case 'ADD_TRANSPORT_CONTRACT':s.transportContracts=[...(s.transportContracts||[]),{id:'tc-'+Date.now().toString(36),name:'New Contract',kind:'spot',rateMult:1.0,rateBasis:'tonneKm',minCharge:0,minVolumeUnits:0,commitUntil:'',commitVolume:0,minPayPct:0,notes:'',...(action.payload||{})}];break;
     case 'UPDATE_TRANSPORT_CONTRACT':s.transportContracts=(s.transportContracts||[]).map(c=>c.id===action.id?{...c,...action.payload}:c);break;
     case 'DELETE_TRANSPORT_CONTRACT':s.transportContracts=(s.transportContracts||[]).filter(c=>c.id!==action.id);break;
     // T6-04/05 — Transport shipment ledger CRUD (planned vs actual per consignment)
@@ -2226,16 +2390,7 @@ function reducer(state,action){
     }
     case 'ADD_BOM_ITEM':{
       const idx=s.products.findIndex(p=>p.id===action.productId);
-      if(idx>=0){s.products=[...s.products];s.products[idx]={...s.products[idx],bom:[...s.products[idx].bom,{
-        id:Date.now().toString(36),name:'New Part',qtyPer:1,uom:'u',purchasePack:1,scrapFactor:0,cost:5,costCV:10,nextCost:5,changeDay:999,
-        moq:10,maxOrder:500,leadTime:1,ltCV:10,holdPct:24,rmShelf:90,rmCapacity:1000,orderingCost:50,
-        partYield:98,transRate:0.5,transMode:'perUnit',
-        volDisc:[{minQty:0,pct:0}],tiers:[{minQty:0,rate:0.5}],
-        payTermDays:30,earlyPayDisc:0,vmi:false,onHand:0,
-        supplierType:'domestic',supplierState:'TN',country:'IN',incoterm:'',hsCode:'',gstPct:18,igstPct:18,bcdPct:7.5,swsPct:10,
-        backupSupplier:'',backupCost:0,backupLeadTime:0,backupActivation:'manual',
-        subcontract:false,subcontractRate:0,subcontractLT:0,
-      }]}}
+      if(idx>=0){s.products=[...s.products];s.products[idx]={...s.products[idx],bom:[...s.products[idx].bom,defaultBOM()]}}
       break;
     }
     case 'UPDATE_BOM_ITEM':{
@@ -2480,6 +2635,62 @@ function reducer(state,action){
     case 'ADD_DEBT_INSTRUMENT':s.finance={...(s.finance||{}),debtInstruments:[...(s.finance?.debtInstruments||[]),{id:'d'+Date.now().toString(36),kind:'bank-loan',principal:0,ratePct:9,tenorYears:5,notes:'',...(action.payload||{})}]};break;
     case 'DEL_DEBT_INSTRUMENT':s.finance={...(s.finance||{}),debtInstruments:(s.finance?.debtInstruments||[]).filter(i=>i.id!==action.id)};break;
     case 'UPDATE_DEBT_INSTRUMENT':s.finance={...(s.finance||{}),debtInstruments:(s.finance?.debtInstruments||[]).map(i=>i.id===action.id?{...i,...action.payload}:i)};break;
+    // Round 7 — equity tranches (opportunity-cost overlay) + debt schedule (DSCR/DSRA/CADS) +
+    // cash flow builder rows. All live under state.finance so they persist with the rest.
+    case 'ADD_EQUITY_SOURCE':s.finance={...(s.finance||{}),equitySources:[...(s.finance?.equitySources||[]),{id:'eq-'+Date.now().toString(36),name:'New Tranche',amount:0,sourceType:'own_savings',altReturnPct:8,inflationPct:6,notes:'',...(action.payload||{})}]};break;
+    case 'UPDATE_EQUITY_SOURCE':s.finance={...(s.finance||{}),equitySources:(s.finance?.equitySources||[]).map(e=>e.id===action.id?{...e,...action.payload}:e)};break;
+    case 'DELETE_EQUITY_SOURCE':s.finance={...(s.finance||{}),equitySources:(s.finance?.equitySources||[]).filter(e=>e.id!==action.id)};break;
+    case 'ADD_DEBT_TRANCHE':s.finance={...(s.finance||{}),debtSchedule:[...(s.finance?.debtSchedule||[]),{id:'dt-'+Date.now().toString(36),name:'New Tranche',amount:0,tenureYears:5,repaymentType:'emi',couponPct:9,dsraMonths:6,drawdownYear:1,...(action.payload||{})}]};break;
+    case 'UPDATE_DEBT_TRANCHE':s.finance={...(s.finance||{}),debtSchedule:(s.finance?.debtSchedule||[]).map(d=>d.id===action.id?{...d,...action.payload}:d)};break;
+    case 'DELETE_DEBT_TRANCHE':s.finance={...(s.finance||{}),debtSchedule:(s.finance?.debtSchedule||[]).filter(d=>d.id!==action.id)};break;
+    // Round 7 — cash flow builder rows (per-period revenue/opex/capex/dWC/depr/terminal)
+    case 'SET_CFB':s.finance={...(s.finance||{}),cfBuilder:{...(s.finance?.cfBuilder||{grain:'yearly',horizon:5,rows:[]}),...action.payload}};break;
+    case 'CFB_ADD_ROW':{
+      const cfb=s.finance?.cfBuilder||{grain:'yearly',horizon:5,rows:[]};
+      const row={id:'cfr-'+Date.now().toString(36),period:(cfb.rows||[]).length,revenue:0,opex:0,capex:0,dWC:0,depreciation:0,terminal:0,...(action.payload||{})};
+      s.finance={...(s.finance||{}),cfBuilder:{...cfb,rows:[...(cfb.rows||[]),row]}};
+      break;
+    }
+    case 'CFB_UPDATE_ROW':{
+      const cfb=s.finance?.cfBuilder||{grain:'yearly',horizon:5,rows:[]};
+      s.finance={...(s.finance||{}),cfBuilder:{...cfb,rows:(cfb.rows||[]).map(r=>r.id===action.id?{...r,...action.payload}:r)}};
+      break;
+    }
+    case 'CFB_DELETE_ROW':{
+      const cfb=s.finance?.cfBuilder||{grain:'yearly',horizon:5,rows:[]};
+      s.finance={...(s.finance||{}),cfBuilder:{...cfb,rows:(cfb.rows||[]).filter(r=>r.id!==action.id)}};
+      break;
+    }
+    // Round 7 — asset componentisation (per-component life + method, allocation_pct sums ≤100)
+    case 'ADD_ASSET_COMPONENT':{
+      const ai=s.assets.findIndex(a=>a.id===action.id);
+      if(ai>=0){
+        s.assets=[...s.assets];
+        const comps=[...(s.assets[ai].components||[])];
+        comps.push({id:'cmp-'+Date.now().toString(36),name:action.payload?.name||'Component',allocationPct:action.payload?.allocationPct||0,usefulLife:action.payload?.usefulLife||10,method:action.payload?.method||'SLM',wdvRate:action.payload?.wdvRate||20});
+        s.assets[ai]={...s.assets[ai],components:comps};
+      }
+      break;
+    }
+    case 'UPDATE_ASSET_COMPONENT':{
+      const ai=s.assets.findIndex(a=>a.id===action.id);
+      if(ai>=0){
+        s.assets=[...s.assets];
+        const comps=(s.assets[ai].components||[]).map(c=>c.id===action.cmpId?{...c,...action.payload}:c);
+        s.assets[ai]={...s.assets[ai],components:comps};
+      }
+      break;
+    }
+    case 'DELETE_ASSET_COMPONENT':{
+      const ai=s.assets.findIndex(a=>a.id===action.id);
+      if(ai>=0){
+        s.assets=[...s.assets];
+        s.assets[ai]={...s.assets[ai],components:(s.assets[ai].components||[]).filter(c=>c.id!==action.cmpId)};
+      }
+      break;
+    }
+    // Round 7 — App-level view mode toggle (operational | finance)
+    case 'SET_VIEW_MODE':s.config={...s.config,viewMode:action.mode==='finance'?'finance':'operational'};break;
     case 'SET_BUDGET':s.budget={...(s.budget||{}),...action.payload};break;
     // Audit log + RBAC (v3.3 governance stubs)
     case 'AUDIT':s.audit=[{t:new Date().toLocaleTimeString(),u:s.rbac?.user||'anon',a:action.action,target:action.target||''},...(s.audit||[])].slice(0,120);break;
@@ -2792,8 +3003,62 @@ function SetupTab({state,dispatch}){
       const counts={plant:0,wh:0,dc:0,customer:0,supplier:0};
       nodes.forEach(n=>{counts[n.type]=(counts[n.type]||0)+1});
       const STATES=['TN','MH','KA','GJ','UP','DL','WB','TG','AP','KL','PB','HR','RJ','MP','BR','OR','JH','CG','AS','UK','HP','GA','TR','MN','ML','NL','MZ','AR','SK','JK','LA','CH','PY','AN','DN','DD','LD'];
-      return <div className="card"><div className="card-title">📍 Locations Master <span className="badge" style={{background:'rgba(63,185,80,.1)',color:'var(--gn)',marginLeft:8}}>{nodes.length} sites · {counts.plant} plant · {counts.wh||0} wh · {counts.dc} DC · {counts.customer} customer</span><SectionInfo><strong>What it does:</strong> Single authoritative master for every physical site in the supply chain. Plants, warehouses, DCs, customers, suppliers all live in <code>state.network.nodes</code>.<br/><br/><strong>Drives:</strong> Lane endpoints (Tab 4), supplier intra/interstate GST routing, transport allocation, COG analysis, per-location on-hand seed (below). The plant flagged <strong>primary</strong> denormalises into <code>state.plant.state</code> for legacy code paths (landed-cost helper, supplier-state UI).<br/><br/><strong>Editor parity:</strong> Tab 4 has a richer lanes-aware editor; both edit the same store, so changes here propagate.</SectionInfo></div>
-        <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Edit type, name, state (for tax routing), lat/lon, capacity, and storage cost per location. <strong>Storage cost</strong> on warehouses/DCs is layered on top of carry rate when computing per-location holding cost.</div>
+      // Round 8 — Bucket 2 B1: derive default direction by type for legacy nodes that pre-date the field.
+      const dirOf=(n)=>n.direction||(n.type==='supplier'?'inbound':n.type==='customer'?'outbound':'both');
+      const inboundNodes=nodes.filter(n=>{const d=dirOf(n);return d==='inbound'||d==='both'});
+      const outboundNodes=nodes.filter(n=>{const d=dirOf(n);return d==='outbound'||d==='both'});
+      const inboundOnly=nodes.filter(n=>dirOf(n)==='inbound').length;
+      const outboundOnly=nodes.filter(n=>dirOf(n)==='outbound').length;
+      const bothCount=nodes.filter(n=>dirOf(n)==='both').length;
+      const renderRow=(n)=>{
+        const isStorage=n.type==='plant'||n.type==='wh'||n.type==='dc';
+        const isCustomer=n.type==='customer';
+        const isPlant=n.type==='plant';
+        const d=dirOf(n);
+        const sc=n.storageCapacity||{units:n.unitCapacity||0,kg:0,L:0,m3:0};
+        const setSc=(patch)=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{storageCapacity:{...sc,...patch}}});
+        const mainRow=<tr key={n.id} style={isPlant&&n.primary?{background:'rgba(63,185,80,.04)'}:undefined}>
+          <td>{isStorage?<button onClick={()=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{_expanded:!n._expanded}})} style={{background:'none',border:'none',color:'var(--tx2)',cursor:'pointer',fontSize:11,padding:0,marginRight:3,width:14}} title="Expand: edit per-UoM storage capacity (Round 8)">{n._expanded?'▾':'▸'}</button>:null}<select value={n.type} onChange={e=>{const t=e.target.value;const newDir=t==='supplier'?'inbound':t==='customer'?'outbound':'both';dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{type:t,direction:newDir}})}} style={{fontSize:10}}>
+            <option value="plant">Plant</option><option value="wh">Warehouse</option><option value="dc">DC</option><option value="customer">Customer</option><option value="supplier">Supplier</option>
+          </select></td>
+          <td><select value={d} onChange={e=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{direction:e.target.value}})} style={{fontSize:10,width:75}} title="Inbound = receives stock (suppliers, plants, WHs receiving). Outbound = ships stock (customers, plants, WHs shipping). Both = bidirectional.">
+            <option value="inbound">📥 in</option><option value="outbound">📤 out</option><option value="both">🔄 both</option>
+          </select></td>
+          <td><input value={n.name||''} onChange={e=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{name:e.target.value}})} style={{width:110,fontSize:10}}/></td>
+          <td><input value={n.location||''} onChange={e=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{location:e.target.value}})} placeholder="city" style={{width:90,fontSize:10}}/></td>
+          <td>{isStorage||n.type==='supplier'
+            ?<select value={n.state||'TN'} onChange={e=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{state:e.target.value}})} style={{fontSize:10,width:60}}>{STATES.map(s=><option key={s} value={s}>{s}</option>)}</select>
+            :<span style={{fontSize:9,color:'var(--tx3)'}}>—</span>}
+          </td>
+          <td><NumInput step="0.01" value={n.lat||0} onChange={v=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{lat:v}})} style={{width:55,fontSize:10}}/></td>
+          <td><NumInput step="0.01" value={n.lon||0} onChange={v=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{lon:v}})} style={{width:55,fontSize:10}}/></td>
+          <td>{isStorage?<NumInput value={n.unitCapacity||n.capacity||0} onChange={v=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{unitCapacity:v,capacity:v}})} style={{width:75,fontSize:10}}/>:<span style={{fontSize:9,color:'var(--tx3)'}}>—</span>}</td>
+          <td>{(n.type==='wh'||n.type==='dc')?<NumInput step="0.01" value={n.storageCostPerUnitPerDay||0} onChange={v=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{storageCostPerUnitPerDay:v}})} style={{width:60,fontSize:10}} title="Per-unit per-day storage charge for this location. Layered on top of carry rate."/>:<span style={{fontSize:9,color:'var(--tx3)'}}>—</span>}</td>
+          <td>{isPlant?<input type="radio" name="primaryPlant" checked={!!n.primary} onChange={()=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{primary:true}})} title="Primary plant — its state syncs to legacy state.plant.state for tax routing."/>:<span style={{fontSize:9,color:'var(--tx3)'}}>—</span>}</td>
+          <td>{isCustomer?<NumInput step="0.01" min={0} max={1} value={n.demandShare||0} onChange={v=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{demandShare:v}})} style={{width:55,fontSize:10}} title="Demand fraction (0-1). Σ across customers should = 1."/>:<span style={{fontSize:9,color:'var(--tx3)'}}>—</span>}</td>
+          <td><button className="btn btn-danger btn-sm" onClick={()=>dispatch({type:'DELETE_NETWORK_NODE',id:n.id})}>×</button></td>
+        </tr>;
+        if(!isStorage||!n._expanded)return mainRow;
+        const expRow=<tr key={n.id+'-x'} style={{background:'rgba(79,168,240,.04)'}}>
+          <td colSpan={12} style={{padding:'8px 12px',fontSize:10}}>
+            <div style={{display:'flex',gap:12,flexWrap:'wrap',alignItems:'center'}}>
+              <strong style={{color:'var(--a2)'}}>📏 Multi-UoM storage cap for {n.name}</strong>
+              <span style={{color:'var(--tx3)',fontSize:9}}>0 = unconstrained in that dimension. Solver will check on-hand against ALL non-zero caps (any breach = infeasible).</span>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4, 1fr)',gap:8,marginTop:6}}>
+              <Field label="Units (u)" hint="Capacity in discrete units. Inherits from legacy unitCapacity."><NumInput value={+sc.units||0} onChange={v=>setSc({units:v})}/></Field>
+              <Field label="Weight (kg)" hint="Total weight capacity. Useful for floor-load constraints."><NumInput value={+sc.kg||0} onChange={v=>setSc({kg:v})}/></Field>
+              <Field label="Liquid (L)" hint="Total liquid volume capacity. For tank/IBC storage of fluids/chemicals."><NumInput value={+sc.L||0} onChange={v=>setSc({L:v})}/></Field>
+              <Field label="Volume (m³)" hint="Total cubic-metre capacity. For palletised/bulk solid storage."><NumInput value={+sc.m3||0} onChange={v=>setSc({m3:v})}/></Field>
+            </div>
+            <div style={{fontSize:9,color:'var(--tx3)',marginTop:4,fontFamily:'JetBrains Mono'}}>Per-part conversion: BOM row's <code>weightKg</code> × qty → kg used; <code>volumeCbm</code> × qty → m³ used; <code>volumeCbm</code> × 1000 (or <code>weightKg</code>÷<code>densityKgPerL</code>) → L used.</div>
+          </td>
+        </tr>;
+        return [mainRow,expRow];
+      };
+      const tableHead=<thead><tr><th>Type</th><th>Dir</th><th>Name</th><th>Location</th><th>State</th><th>Lat</th><th>Lon</th><th>Capacity (u)</th><th>Storage ₹/u/day</th><th>Primary</th><th>Demand %</th><th></th></tr></thead>;
+      return <div className="card"><div className="card-title">📍 Locations Master <span className="badge" style={{background:'rgba(63,185,80,.1)',color:'var(--gn)',marginLeft:8}}>{nodes.length} sites · {counts.plant} plant · {counts.wh||0} wh · {counts.dc} DC · {counts.customer} customer</span> <span className="badge" style={{background:'rgba(79,168,240,.1)',color:'var(--a2)',marginLeft:4}} title="Round 8 — direction classification">📥 {inboundOnly} in · 🔄 {bothCount} both · 📤 {outboundOnly} out</span><SectionInfo><strong>What it does:</strong> Single authoritative master for every physical site in the supply chain. Plants, warehouses, DCs, customers, suppliers all live in <code>state.network.nodes</code>.<br/><br/><strong>Drives:</strong> Lane endpoints (Tab 4), supplier intra/interstate GST routing, transport allocation, COG analysis, per-location on-hand seed (below). The plant flagged <strong>primary</strong> denormalises into <code>state.plant.state</code> for legacy code paths (landed-cost helper, supplier-state UI).<br/><br/><strong>Round 8 — Direction:</strong> Each site is classified as <em>inbound</em> (receives stock; suppliers default), <em>outbound</em> (ships stock; customers default), or <em>both</em> (plants/WHs/DCs default). The same physical node appears in both views when 'both' — that's intended; bidirectional sites are listed twice for clarity.<br/><br/><strong>Editor parity:</strong> Tab 4 has a richer lanes-aware editor; both edit the same store, so changes here propagate.</SectionInfo></div>
+        <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Edit type, direction, name, state (for tax routing), lat/lon, capacity, and storage cost per location. <strong>Storage cost</strong> on warehouses/DCs is layered on top of carry rate when computing per-location holding cost.</div>
         <div style={{display:'flex',gap:6,marginBottom:6,flexWrap:'wrap',alignItems:'center'}}>
           <button className="btn btn-secondary btn-sm" onClick={()=>dispatch({type:'ADD_NETWORK_NODE',payload:{type:'plant'}})}>+ Plant</button>
           <button className="btn btn-secondary btn-sm" onClick={()=>dispatch({type:'ADD_NETWORK_NODE',payload:{type:'wh'}})}>+ Warehouse</button>
@@ -2802,34 +3067,14 @@ function SetupTab({state,dispatch}){
           <button className="btn btn-secondary btn-sm" onClick={()=>dispatch({type:'ADD_NETWORK_NODE',payload:{type:'supplier'}})}>+ Supplier</button>
           <span style={{fontSize:9,color:'var(--tx3)',marginLeft:'auto'}}>Lanes between these locations are configured in Tab 4.</span>
         </div>
-        <div style={{overflowX:'auto'}}>
-        <table className="data-table" style={{fontSize:10}}>
-          <thead><tr><th>Type</th><th>Name</th><th>Location</th><th>State</th><th>Lat</th><th>Lon</th><th>Capacity (u)</th><th>Storage ₹/u/day</th><th>Primary</th><th>Demand %</th><th></th></tr></thead>
-          <tbody>{nodes.map(n=>{
-            const isStorage=n.type==='plant'||n.type==='wh'||n.type==='dc';
-            const isCustomer=n.type==='customer';
-            const isPlant=n.type==='plant';
-            return <tr key={n.id} style={isPlant&&n.primary?{background:'rgba(63,185,80,.04)'}:undefined}>
-              <td><select value={n.type} onChange={e=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{type:e.target.value}})} style={{fontSize:10}}>
-                <option value="plant">Plant</option><option value="wh">Warehouse</option><option value="dc">DC</option><option value="customer">Customer</option><option value="supplier">Supplier</option>
-              </select></td>
-              <td><input value={n.name||''} onChange={e=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{name:e.target.value}})} style={{width:110,fontSize:10}}/></td>
-              <td><input value={n.location||''} onChange={e=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{location:e.target.value}})} placeholder="city" style={{width:90,fontSize:10}}/></td>
-              <td>{isStorage||n.type==='supplier'
-                ?<select value={n.state||'TN'} onChange={e=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{state:e.target.value}})} style={{fontSize:10,width:60}}>{STATES.map(s=><option key={s} value={s}>{s}</option>)}</select>
-                :<span style={{fontSize:9,color:'var(--tx3)'}}>—</span>}
-              </td>
-              <td><NumInput step="0.01" value={n.lat||0} onChange={v=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{lat:v}})} style={{width:55,fontSize:10}}/></td>
-              <td><NumInput step="0.01" value={n.lon||0} onChange={v=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{lon:v}})} style={{width:55,fontSize:10}}/></td>
-              <td>{isStorage?<NumInput value={n.unitCapacity||n.capacity||0} onChange={v=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{unitCapacity:v,capacity:v}})} style={{width:75,fontSize:10}}/>:<span style={{fontSize:9,color:'var(--tx3)'}}>—</span>}</td>
-              <td>{(n.type==='wh'||n.type==='dc')?<NumInput step="0.01" value={n.storageCostPerUnitPerDay||0} onChange={v=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{storageCostPerUnitPerDay:v}})} style={{width:60,fontSize:10}} title="Per-unit per-day storage charge for this location. Layered on top of carry rate."/>:<span style={{fontSize:9,color:'var(--tx3)'}}>—</span>}</td>
-              <td>{isPlant?<input type="radio" name="primaryPlant" checked={!!n.primary} onChange={()=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{primary:true}})} title="Primary plant — its state syncs to legacy state.plant.state for tax routing."/>:<span style={{fontSize:9,color:'var(--tx3)'}}>—</span>}</td>
-              <td>{isCustomer?<NumInput step="0.01" min={0} max={1} value={n.demandShare||0} onChange={v=>dispatch({type:'UPDATE_NETWORK_NODE',id:n.id,payload:{demandShare:v}})} style={{width:55,fontSize:10}} title="Demand fraction (0-1). Σ across customers should = 1."/>:<span style={{fontSize:9,color:'var(--tx3)'}}>—</span>}</td>
-              <td><button className="btn btn-danger btn-sm" onClick={()=>dispatch({type:'DELETE_NETWORK_NODE',id:n.id})}>×</button></td>
-            </tr>;
-          })}</tbody>
-        </table>
-        </div>
+        <div style={{fontSize:10,fontWeight:700,color:'var(--a2)',marginBottom:4,padding:'4px 6px',background:'rgba(79,168,240,.06)',borderRadius:3,borderLeft:'2px solid var(--a2)'}}>📥 INBOUND NETWORK <span style={{fontSize:9,fontWeight:400,color:'var(--tx3)'}}>· {inboundNodes.length} sites that receive stock (suppliers + plants/WHs/DCs marked 'both' or 'inbound')</span></div>
+        {inboundNodes.length===0?<div style={{fontSize:10,color:'var(--tx3)',padding:'5px 8px',background:'var(--bg3)',borderRadius:3,marginBottom:8}}>No inbound sites. Add a supplier or mark a plant/WH as direction = inbound/both.</div>:<div style={{overflowX:'auto',marginBottom:10}}>
+          <table className="data-table" style={{fontSize:10}}>{tableHead}<tbody>{inboundNodes.map(renderRow)}</tbody></table>
+        </div>}
+        <div style={{fontSize:10,fontWeight:700,color:'var(--gn)',marginBottom:4,padding:'4px 6px',background:'rgba(63,185,80,.06)',borderRadius:3,borderLeft:'2px solid var(--gn)'}}>📤 OUTBOUND NETWORK <span style={{fontSize:9,fontWeight:400,color:'var(--tx3)'}}>· {outboundNodes.length} sites that ship stock (customers + plants/WHs/DCs marked 'both' or 'outbound')</span></div>
+        {outboundNodes.length===0?<div style={{fontSize:10,color:'var(--tx3)',padding:'5px 8px',background:'var(--bg3)',borderRadius:3}}>No outbound sites. Add a customer or mark a plant/WH as direction = outbound/both.</div>:<div style={{overflowX:'auto'}}>
+          <table className="data-table" style={{fontSize:10}}>{tableHead}<tbody>{outboundNodes.map(renderRow)}</tbody></table>
+        </div>}
         {(()=>{
           const plants=nodes.filter(n=>n.type==='plant');
           const customers=nodes.filter(n=>n.type==='customer');
@@ -2892,13 +3137,15 @@ function SetupTab({state,dispatch}){
         <div style={{fontSize:11,fontWeight:600,color:'var(--tx2)',marginBottom:4}}>Modes</div>
         <div style={{overflowX:'auto'}}>
         <table className="data-table" style={{fontSize:10,marginBottom:10}}>
-          <thead><tr><th>Code</th><th>Name</th><th>₹/t·km</th><th>Lead d/500km</th><th>CO₂ kg/u</th><th>BOM vocab</th><th>Used by lane</th><th>Used by BOM</th><th></th></tr></thead>
+          <thead><tr><th>Code</th><th>Name</th><th>₹/t·km</th><th>Lead d/500km</th><th>CO₂ kg/u</th><th title="Round 8 — truck capacity (kg) for FTL/LTL auto-pick. 0 = not a truck mode (rail/sea/courier).">Truck kg</th><th title="Round 8 — truck capacity (m³) for FTL/LTL auto-pick.">Truck m³</th><th>BOM vocab</th><th>Used by lane</th><th>Used by BOM</th><th></th></tr></thead>
           <tbody>{tm.map(m=><tr key={m.id}>
             <td><input value={m.code} onChange={e=>dispatch({type:'UPDATE_TRANSPORT_MODE',id:m.id,payload:{code:e.target.value}})} style={{width:60,fontSize:10}}/></td>
             <td><input value={m.name} onChange={e=>dispatch({type:'UPDATE_TRANSPORT_MODE',id:m.id,payload:{name:e.target.value}})} style={{width:130,fontSize:10}}/></td>
             <td><NumInput step="0.1" value={m.ratePerTonneKm} onChange={v=>dispatch({type:'UPDATE_TRANSPORT_MODE',id:m.id,payload:{ratePerTonneKm:v}})} style={{width:55,fontSize:10}}/></td>
             <td><NumInput step="0.5" value={m.leadDaysPer500Km} onChange={v=>dispatch({type:'UPDATE_TRANSPORT_MODE',id:m.id,payload:{leadDaysPer500Km:v}})} style={{width:50,fontSize:10}}/></td>
             <td><NumInput step="0.01" value={m.co2KgPerUnit} onChange={v=>dispatch({type:'UPDATE_TRANSPORT_MODE',id:m.id,payload:{co2KgPerUnit:v}})} style={{width:55,fontSize:10}}/></td>
+            <td><NumInput value={m.truckCapacityKg||0} onChange={v=>dispatch({type:'UPDATE_TRANSPORT_MODE',id:m.id,payload:{truckCapacityKg:v}})} style={{width:65,fontSize:10}} title="Round 8 — truck weight cap (kg). FTL=16000, LTL=0 (small parcels), Air=5000."/></td>
+            <td><NumInput step="0.5" value={m.truckCapacityM3||0} onChange={v=>dispatch({type:'UPDATE_TRANSPORT_MODE',id:m.id,payload:{truckCapacityM3:v}})} style={{width:55,fontSize:10}} title="Round 8 — truck volume cap (m³). FTL=80, Air=30."/></td>
             <td><select value={m.bomVocab||'road'} onChange={e=>dispatch({type:'UPDATE_TRANSPORT_MODE',id:m.id,payload:{bomVocab:e.target.value}})} style={{fontSize:10,width:80}}>
               <option value="road">road</option><option value="rail">rail</option><option value="sea">sea</option><option value="air">air</option><option value="multimodal">multimodal</option><option value="contract">contract</option>
             </select></td>
@@ -2912,13 +3159,17 @@ function SetupTab({state,dispatch}){
         <div style={{fontSize:11,fontWeight:600,color:'var(--tx2)',marginBottom:4}}>Contract Types</div>
         <div style={{overflowX:'auto'}}>
         <table className="data-table" style={{fontSize:10}}>
-          <thead><tr><th>Name</th><th>Kind</th><th>Rate × mode</th><th>Min vol (u)</th><th>Commit until</th><th>Commit vol (u)</th><th>Take-or-Pay %</th><th>Notes</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Kind</th><th>Rate × mode</th><th title="Round 8 — rate basis">Basis</th><th title="Round 8 — minimum charge per shipment regardless of qty">Min charge</th><th>Min vol (u)</th><th>Commit until</th><th>Commit vol (u)</th><th>Take-or-Pay %</th><th>Notes</th><th></th></tr></thead>
           <tbody>{tc.map(c=><tr key={c.id}>
             <td><input value={c.name} onChange={e=>dispatch({type:'UPDATE_TRANSPORT_CONTRACT',id:c.id,payload:{name:e.target.value}})} style={{width:130,fontSize:10}}/></td>
             <td><select value={c.kind} onChange={e=>dispatch({type:'UPDATE_TRANSPORT_CONTRACT',id:c.id,payload:{kind:e.target.value}})} style={{fontSize:10,width:120}}>
               <option value="spot">Spot</option><option value="fixed-period">Fixed-Price Period</option><option value="volume-commit">Volume-Commit</option><option value="take-or-pay">Take-or-Pay</option>
             </select></td>
             <td><NumInput step="0.01" value={c.rateMult} onChange={v=>dispatch({type:'UPDATE_TRANSPORT_CONTRACT',id:c.id,payload:{rateMult:v}})} style={{width:55,fontSize:10}} title="Multiplier on the mode's ratePerTonneKm. 0.85 = 15% discount."/></td>
+            <td><select value={c.rateBasis||'tonneKm'} onChange={e=>dispatch({type:'UPDATE_TRANSPORT_CONTRACT',id:c.id,payload:{rateBasis:e.target.value}})} style={{fontSize:10,width:90}} title="Round 8 — rate basis. tonneKm = ₹/(t·km), default. m3Km/unitKm = volumetric or per-unit billing. perTrip = flat ₹ per shipment regardless of qty/distance. flatPeriodic = subscription-style ₹/period.">
+              <option value="tonneKm">t·km</option><option value="m3Km">m³·km</option><option value="unitKm">u·km</option><option value="perTrip">per trip</option><option value="flatPeriodic">flat/period</option>
+            </select></td>
+            <td><NumInput value={c.minCharge||0} onChange={v=>dispatch({type:'UPDATE_TRANSPORT_CONTRACT',id:c.id,payload:{minCharge:v}})} style={{width:65,fontSize:10}} title={`Round 8 — Minimum charge per shipment (${cur}). 0 = no minimum. If computed cost < minCharge, minCharge applies.`}/></td>
             <td>{c.kind==='fixed-period'?<NumInput value={c.minVolumeUnits||0} onChange={v=>dispatch({type:'UPDATE_TRANSPORT_CONTRACT',id:c.id,payload:{minVolumeUnits:v}})} style={{width:65,fontSize:10}}/>:<span style={{color:'var(--tx3)'}}>—</span>}</td>
             <td>{c.kind==='fixed-period'?<input type="date" value={c.commitUntil||''} onChange={e=>dispatch({type:'UPDATE_TRANSPORT_CONTRACT',id:c.id,payload:{commitUntil:e.target.value}})} style={{fontSize:10}}/>:<span style={{color:'var(--tx3)'}}>—</span>}</td>
             <td>{(c.kind==='volume-commit'||c.kind==='take-or-pay')?<NumInput value={c.commitVolume||0} onChange={v=>dispatch({type:'UPDATE_TRANSPORT_CONTRACT',id:c.id,payload:{commitVolume:v}})} style={{width:70,fontSize:10}}/>:<span style={{color:'var(--tx3)'}}>—</span>}</td>
@@ -3105,7 +3356,9 @@ function HistoryPanel({prod,upProd,state,dispatch,activeId}){
     if(prod.historyWeekly&&prod.historyWeekly.length)return prod.historyWeekly;
     const h=prod.history||[];
     const wks=[];
-    h.forEach(mo=>{const w=Math.round(mo/4);wks.push(w,w,w,mo-3*w)});
+    // Floor (not round) the weekly base so the 4th-week residual is always non-negative.
+    // Math.round can produce e.g. mo=2 → w=1, residual=2-3=-1 (negative weekly demand).
+    h.forEach(mo=>{const m=Math.max(0,+mo||0);const w=Math.floor(m/4);wks.push(w,w,w,m-3*w);});
     return wks;
   },[prod.history,prod.historyWeekly]);
   const histDaily=useMemo(()=>{
@@ -3185,7 +3438,10 @@ function HistoryPanel({prod,upProd,state,dispatch,activeId}){
       </label>
       <button className="btn btn-secondary btn-sm" onClick={()=>{
         const h=prod.history||[];const rows=[['Month','Demand']];
-        h.forEach((v,i)=>{const yr=2024+Math.floor(i/12);const mo=(i%12)+1;rows.push([`${yr}-${String(mo).padStart(2,'0')}-01`,v]);});
+        // Anchor history start to the planning horizon. Falls back to current year if missing.
+        const anchor=state.planning?.horizonStartDate?new Date(state.planning.horizonStartDate):new Date();
+        const baseYr=anchor.getFullYear();const baseMo=anchor.getMonth(); // 0-indexed
+        h.forEach((v,i)=>{const total=baseMo+i;const yr=baseYr+Math.floor(total/12);const mo=(total%12)+1;rows.push([`${yr}-${String(mo).padStart(2,'0')}-01`,v]);});
         const csv=rows.map(r=>r.join(',')).join('\n');
         const blob=new Blob([csv],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${prod.name||'demand'}-history.csv`;a.click();
       }} title="Download current history as CSV template for reference / editing">📥 Export</button>
@@ -4395,6 +4651,49 @@ function ProductsTab({state,dispatch}){
                   <button className="btn btn-danger btn-sm" onClick={()=>dispatch({type:'DELETE_BOM_ITEM',productId:activeId,bomId:b.id})}>×</button>
                 </div>
               </div>
+              {/* Round 8 — Bucket 2 B5: inline landed-cost waterfall + source/contract FK editors. Toggled by 📦 chip. */}
+              {b._showLanded&&<div style={{marginLeft:indent+12,padding:'8px 10px',marginBottom:6,background:'rgba(248,191,45,.05)',border:'1px dashed var(--a4)',borderRadius:4}}>
+                <div style={{fontSize:10,fontWeight:700,color:'var(--a4)',marginBottom:6,letterSpacing:.4}}>📦 LANDED COST WATERFALL · {b.name}</div>
+                {(()=>{
+                  const br=landedCostBreakdown(b,state.config,state.plant,state.supplierProfiles)||{};
+                  const total=br.total||(landedCost(b,state.config,state.plant,state.supplierProfiles)||0);
+                  const baseCost=+b.cost||0;
+                  const components=[
+                    {label:'Base cost',value:br.base??baseCost,color:'var(--tx2)'},
+                    {label:'Freight + fuel',value:br.freight||0,color:'var(--a2)'},
+                    {label:'Insurance',value:br.insurance||0,color:'var(--a2)'},
+                    {label:'Duty (BCD/SWS/etc)',value:br.duty||br.bcd||0,color:'var(--a4)'},
+                    {label:'Handling',value:br.handling||0,color:'var(--tx2)'},
+                    {label:'GST/IGST sunk',value:br.gstSunk||0,color:'var(--dg)'},
+                  ];
+                  return <>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:6,fontSize:10,fontFamily:'JetBrains Mono'}}>
+                      {components.map(c=>c.value>0&&<div key={c.label} style={{padding:'3px 6px',background:'var(--bg3)',borderRadius:3,borderLeft:`2px solid ${c.color}`}}>
+                        <div style={{fontSize:8,color:'var(--tx3)'}}>{c.label}</div>
+                        <div style={{color:c.color,fontWeight:600}}>{cur}{(+c.value).toFixed(2)}</div>
+                      </div>)}
+                      <div style={{padding:'3px 6px',background:'rgba(63,185,80,.1)',borderRadius:3,borderLeft:'2px solid var(--gn)'}}>
+                        <div style={{fontSize:8,color:'var(--tx3)'}}>= Landed</div>
+                        <div style={{color:'var(--gn)',fontWeight:700}}>{cur}{total.toFixed(2)}/u</div>
+                      </div>
+                    </div>
+                  </>;
+                })()}
+                <div style={{display:'grid',gridTemplateColumns:'repeat(2, 1fr)',gap:6,marginTop:8,paddingTop:6,borderTop:'1px dashed var(--br)'}}>
+                  <Field label="Source location" hint="Round 8 — Bucket 2 B5: pin this part to a network node (supplier/plant/wh). Drives lane lookup + landed-cost transport leg.">
+                    <select value={b.sourceLocationId||''} onChange={e=>upBom({sourceLocationId:e.target.value})} style={{fontSize:10}}>
+                      <option value="">—  none —</option>
+                      {(state.network?.nodes||[]).filter(n=>{const d=n.direction||(n.type==='supplier'?'inbound':n.type==='customer'?'outbound':'both');return d==='inbound'||d==='both'}).map(n=><option key={n.id} value={n.id}>{n.name} ({n.type})</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Transport contract" hint="Round 8 — Bucket 2 B5: pin this part's freight to a specific contract from Tab 1 (Spot / Fixed / Volume-Commit / Take-or-Pay). When set, landed-cost calc uses this contract's rateBasis + rateMult + minCharge.">
+                    <select value={b.transportContractId||''} onChange={e=>upBom({transportContractId:e.target.value})} style={{fontSize:10}}>
+                      <option value="">—  spot (default) —</option>
+                      {(state.transportContracts||[]).map(c=><option key={c.id} value={c.id}>{c.name} ({c.rateBasis||'tonneKm'}{c.rateMult&&c.rateMult!==1?` · ×${c.rateMult}`:''})</option>)}
+                    </select>
+                  </Field>
+                </div>
+              </div>}
               {/* T2-03 — full-width DETAIL CARD. Rendered when b._expanded is true (also opened by clicking the part name in the BOM formula at top). */}
               {b._expanded&&<div style={{marginLeft:indent+12,padding:'10px 12px',marginBottom:8,background:'var(--bg2)',borderLeft:`3px dashed ${levelColors[level]||'var(--br)'}`,borderRadius:4}}>
                 <div style={{fontSize:11,fontWeight:700,color:levelColors[level],marginBottom:8,display:'flex',alignItems:'center',gap:8}}>
@@ -4405,8 +4704,8 @@ function ProductsTab({state,dispatch}){
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(115px,1fr))',gap:6}}>
                   <Field label="LT CV%"><NumInput value={b.ltCV||10} onChange={v=>upBom({ltCV:v})}/></Field>
                   <Field label="Max Ord"><NumInput value={b.maxOrder||500} onChange={v=>upBom({maxOrder:v})}/></Field>
-                  <Field label={`Ord Cost S (${cur})`} hint="TOTAL fixed cost per PO event (Silver-Pyke-Peterson / APICS): Admin + Freight-Fixed + Receiving/QC + Setup. Per-unit transport is SEPARATE. Click ⚙ to edit breakdown."><NumInput value={calcOrderingCost(b)||b.orderingCost||50} onChange={v=>upBom({orderingCost:v,ordBreakdown:ordBreakdownDefault(v)})}/></Field>
-                  <Field label="⚙ Breakdown" hint="Edit S breakdown: admin / freight-fixed / receiving+QC / setup."><button style={{fontSize:10,padding:'2px 8px',cursor:'pointer',background:'var(--bg3)',color:'var(--tx2)',border:'1px solid var(--br)',borderRadius:3}} onClick={()=>{const br=b.ordBreakdown||ordBreakdownDefault(b.orderingCost||50);const admin=+prompt(`Admin (buyer time, PO approval) — ${cur}/PO`,br.admin)||br.admin;const fr=+prompt(`Freight-Fixed (LTL/FTL fixed per shipment) — ${cur}/PO`,br.freightFixed)||br.freightFixed;const rc=+prompt(`Receiving+QC (dock + inspection) — ${cur}/PO`,br.receivingQC)||br.receivingQC;const su=+prompt(`Setup (supplier changeover) — ${cur}/PO`,br.setup)||br.setup;const next={admin,freightFixed:fr,receivingQC:rc,setup:su};const total=admin+fr+rc+su;upBom({ordBreakdown:next,orderingCost:total});}}>edit ⚙</button></Field>
+                  <Field label={`Ord Cost S (${cur})`} hint="TOTAL fixed cost per PO event (Silver-Pyke-Peterson / APICS): Admin + Freight-Fixed + Receiving/QC + Setup. Per-unit transport is SEPARATE."><NumInput value={calcOrderingCost(b)||b.orderingCost||50} onChange={v=>upBom({orderingCost:v,ordBreakdown:ordBreakdownDefault(v)})}/></Field>
+                  <Field label="Breakdown" hint="Round 8 — Bucket 2 B6: replaced the gear-icon prompt cycle with an inline expand. Click ▾ to edit each S component (admin / freight-fixed / receiving+QC / setup)."><button style={{fontSize:10,padding:'2px 8px',cursor:'pointer',background:b._showOrdBreakdown?'var(--ac)':'var(--bg3)',color:b._showOrdBreakdown?'#000':'var(--tx2)',border:'1px solid var(--br)',borderRadius:3,fontWeight:600}} onClick={()=>upBom({_showOrdBreakdown:!b._showOrdBreakdown})}>{b._showOrdBreakdown?'▴ hide':'▾ open'}</button></Field>
                   <Field label="Hold%/yr"><NumInput value={b.holdPct||24} onChange={v=>upBom({holdPct:v})}/></Field>
                   <Field label="Yield%"><NumInput value={b.partYield||98} onChange={v=>upBom({partYield:v})}/></Field>
                   <Field label="RM Shelf (d)"><NumInput value={b.rmShelf||90} onChange={v=>upBom({rmShelf:v})}/></Field>
@@ -4432,6 +4731,21 @@ function ProductsTab({state,dispatch}){
                   <Field label="Country" hint="Supplier country (ISO-2). Used for FX exposure constraint. Defaults to IN (home)."><input value={b.country||'IN'} onChange={e=>upBom({country:e.target.value.toUpperCase().slice(0,2)})} style={{width:48,fontFamily:'JetBrains Mono'}}/></Field>
                   <Field label="HS Code" hint="HS / HTS classification code. Used for customs duty rate lookup (currently informational)."><input value={b.hsCode||''} onChange={e=>upBom({hsCode:e.target.value})} style={{width:80,fontFamily:'JetBrains Mono'}}/></Field>
                 </div>
+                {/* Round 8 — Bucket 2 B6: inline ordering-cost breakdown editor (replaces the gear-icon prompt-chain). */}
+                {b._showOrdBreakdown&&(()=>{
+                  const br=b.ordBreakdown||ordBreakdownDefault(b.orderingCost||50);
+                  const setBr=(patch)=>{const next={...br,...patch};upBom({ordBreakdown:next,orderingCost:(+next.admin||0)+(+next.freightFixed||0)+(+next.receivingQC||0)+(+next.setup||0)})};
+                  const total=(+br.admin||0)+(+br.freightFixed||0)+(+br.receivingQC||0)+(+br.setup||0);
+                  return <div style={{padding:'8px 10px',marginTop:6,marginBottom:4,background:'rgba(0,212,170,.04)',border:'1px dashed var(--ac)',borderRadius:4}}>
+                    <div style={{fontSize:10,fontWeight:700,color:'var(--ac)',marginBottom:6,letterSpacing:.4}}>⚙ ORDERING-COST S BREAKDOWN <span style={{fontSize:9,fontWeight:400,color:'var(--tx3)'}}>· Σ = {cur}{total.toFixed(0)} per PO</span></div>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:6}}>
+                      <Field label={`Admin (${cur}/PO)`} hint="Buyer time, PO approval workflow, ERP transaction cost. Typical: ₹500-2000 in mid-sized orgs."><NumInput value={+br.admin||0} onChange={v=>setBr({admin:v})}/></Field>
+                      <Field label={`Freight-fixed (${cur}/PO)`} hint="LTL/FTL fixed cost per shipment regardless of qty (truck booking, lane setup). Bridges to Bucket 2 B3/B4 mode-dependent S."><NumInput value={+br.freightFixed||0} onChange={v=>setBr({freightFixed:v})}/></Field>
+                      <Field label={`Receiving + QC (${cur}/PO)`} hint="Dock labor, inbound inspection, putaway. Per-shipment cost."><NumInput value={+br.receivingQC||0} onChange={v=>setBr({receivingQC:v})}/></Field>
+                      <Field label={`Setup (${cur}/PO)`} hint="Supplier changeover / one-time line setup amortised per order. Often 0 for repeat suppliers."><NumInput value={+br.setup||0} onChange={v=>setBr({setup:v})}/></Field>
+                    </div>
+                  </div>;
+                })()}
                 {/* — TAX — T2-09 */}
                 <div style={{fontSize:9,fontWeight:700,color:'var(--a4)',marginTop:10,marginBottom:4,letterSpacing:.4}}>TAX &amp; DUTY <span style={{color:'var(--tx3)',fontWeight:400}}>· Plant in {plantSt} · {itcRecoverable?'GST-registered (ITC recoverable)':'NOT GST-registered (taxes sunk into cost)'}</span></div>
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(115px,1fr))',gap:6}}>
@@ -4577,9 +4891,39 @@ function ProductsTab({state,dispatch}){
                   <Field label={`Handling (${cur}/u)`} hint="Port charges, demurrage, terminal fees, intermodal handling. Sea: higher. Road: minimal."><NumInput step="0.1" value={b.transHandlingPerUnit||0} onChange={v=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{transHandlingPerUnit:v}})}/></Field>
                   <Field label="Weight (kg/u)" hint="Per-unit weight — used by transport solver for air freight chargeable-weight and fuel cost. Sea uses volumetric."><NumInput step="0.01" value={b.weightKg||1} onChange={v=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{weightKg:v}})}/></Field>
                   <Field label="Volume (cbm/u)" hint="Per-unit volumetric. Sea LCL priced per cbm. Air uses dimensional weight factor 1:6000cm³=1kg."><NumInput step="0.001" value={b.volumeCbm||0.005} onChange={v=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{volumeCbm:v}})}/></Field>
+                  <Field label="Density (kg/L)" hint="Round 8 — Bucket 2: per-unit density for liquid parts. Used by per-node multi-UoM capacity check (Locations Master → expand row → 'Liquid (L)' cap). Water = 1.0; light oil ≈ 0.85; concentrated chemical ≈ 1.4. Leave 0 if part isn't liquid — m³ → L conversion (×1000) is used instead."><NumInput step="0.01" value={b.densityKgPerL||0} onChange={v=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{densityKgPerL:v}})}/></Field>
                   <Field label="Origin" hint="Origin city/port. Used by transport solver to look up real Indian/international transit times."><input placeholder={b.supplierType==='import'?'e.g. Shanghai':'e.g. Pune'} value={b.originCity||''} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{originCity:e.target.value}})}/></Field>
                   <Field label="Destination" hint={`Defaults to your factory city (${state.config.city||'—'}). Override only if this part ships to a different plant / DC first.`}><input placeholder={state.config.city||'factory'} value={b.destCity||''} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{destCity:e.target.value}})}/></Field>
+                  {/* Round 8 — Bucket 2 B4: FTL/LTL auto-pick + air fallback. */}
+                  <Field label="Default mode" hint="Round 8 — preferred transport mode for this part. FTL/LTL auto-upgrade kicks in based on truck-fill ratio (≥60% → FTL).">
+                    <select value={b.defaultTransModeCode||'LTL'} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{defaultTransModeCode:e.target.value}})} style={{fontSize:10}}>
+                      {(state.transportModes||[]).filter(m=>m.applicability?.bom!==false).map(m=><option key={m.id} value={m.code}>{m.code}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Fallback mode" hint="Round 8 — disruption fallback. When the default mode is blocked by an active disruption (state.disruptions[]), shipment routes through fallback (typically Air, with a known cost premium).">
+                    <select value={b.fallbackTransModeCode||'Air'} onChange={e=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{fallbackTransModeCode:e.target.value}})} style={{fontSize:10}}>
+                      {(state.transportModes||[]).filter(m=>m.applicability?.bom!==false).map(m=><option key={m.id} value={m.code}>{m.code}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Air rate min (₹/kg)" hint="Round 8 — known band for air-fallback rate. Min/max captures negotiation range; solver uses midpoint when fallback triggers."><NumInput step="1" value={b.airRateBandMin||0} onChange={v=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{airRateBandMin:v}})}/></Field>
+                  <Field label="Air rate max (₹/kg)" hint="Round 8 — upper bound for air-fallback rate."><NumInput step="1" value={b.airRateBandMax||0} onChange={v=>dispatch({type:'UPDATE_BOM_ITEM',productId:activeId,bomId:b.id,payload:{airRateBandMax:v}})}/></Field>
                 </div>
+                {/* Round 8 — Bucket 2 B4: auto-pick preview at the part's MOQ. Shows what mode the dispatcher would actually choose. */}
+                {(()=>{
+                  const modes=state.transportModes||[];
+                  const disruptions=state.disruptions||[];
+                  const previewQty=+b.moq||10;
+                  const pick=pickTransportMode({qty:previewQty,b,modes,defaultModeCode:b.defaultTransModeCode||'LTL',fallbackModeCode:b.fallbackTransModeCode||'Air',disruptions,fillThreshold:0.6});
+                  const fillKgPct=pick.capacityKg>0?(pick.fillKg/pick.capacityKg*100).toFixed(0):'∞';
+                  const fillM3Pct=pick.capacityM3>0?(pick.fillM3/pick.capacityM3*100).toFixed(0):'∞';
+                  const reasonColor=pick.reason==='disruption-fallback'?'var(--dg)':pick.reason==='auto-upgrade-ftl'?'var(--a3)':pick.reason==='truck-overflow'?'var(--a4)':'var(--tx3)';
+                  return <div style={{marginTop:4,fontSize:9,color:'var(--tx2)',fontFamily:'JetBrains Mono',padding:'4px 6px',background:'var(--bg3)',borderRadius:3,borderLeft:`2px solid ${reasonColor}`}}>
+                    🚚 Auto-pick @ MOQ {previewQty}: <strong style={{color:'var(--ac)'}}>{pick.mode?.code||'?'}</strong>
+                    {pick.capacityKg>0&&<> · fill {fillKgPct}% kg / {fillM3Pct}% m³</>}
+                    {pick.tripsNeeded>1&&<> · <strong style={{color:'var(--a4)'}}>{pick.tripsNeeded} trips</strong></>}
+                    <span style={{color:reasonColor,marginLeft:6}}>[{pick.reason}]</span>
+                  </div>;
+                })()}
                 <div style={{marginTop:6,fontSize:10,color:'var(--tx2)',fontFamily:'JetBrains Mono'}}>
                   {(()=>{
                     const frt=(+b.transFreight||+b.transRate||0.5)*(1+(+b.transFuelPct||0)/100);
@@ -4769,7 +5113,8 @@ function ProductsTab({state,dispatch}){
           const mode=prod.milkRunMode||'off';
           const cost=+prod.milkRunCost||0;
           const freq=+prod.milkRunFreq||1;
-          const supCount=new Set((prod.bom||[]).map(b=>b.supplierName||b.supplier||b.vendor).filter(Boolean)).size||(prod.bom||[]).length;
+          const namedCount=new Set((prod.bom||[]).map(b=>b.supplierName||b.supplier||b.vendor).filter(Boolean)).size;
+          const supCount=namedCount>0?namedCount:((prod.bom||[]).length>0?1:0);
           const periodsPerYear=({daily:260,weekly:52,monthly:12})[state.planning?.timeGrain||'weekly']||52;
           const annual=mode==='perTrip'?cost*freq*periodsPerYear:mode==='perPeriod'?cost*periodsPerYear:mode==='perSupplier'?cost*supCount*freq*periodsPerYear:0;
           return <div style={{marginTop:6,padding:'6px 8px',background:'var(--bg3)',borderRadius:4,borderLeft:'3px solid var(--a3)'}}>
@@ -9390,9 +9735,259 @@ function MTODeliveryScheduleCard({state,dispatch}){
   </div>;
 }
 
+// ────────────────────────────────────────────────────────────
+// Round 7 — Investment Decision tab. Composes period-by-period
+// cash flows from primitives (rev / opex / capex / ΔWC / depr / terminal)
+// and surfaces NPV at TWO discount rates: project WACC and the equity
+// holder's *opportunity cost* derived from where the equity came from
+// (Fisher real-return across tagged tranches). Forces the user to confront
+// the "I could have just kept the land at 12%" question explicitly.
+// ────────────────────────────────────────────────────────────
+
+// Computes net cash flows per period from cfBuilder rows.
+// CF_t = (Rev_t − OpEx_t)·(1−tax) + Dep_t·tax − CapEx_t − ΔWC_t + Terminal_t
+function cfBuilderFlows(cfb,taxPct){
+  const rows=(cfb&&cfb.rows)||[];const t=(+taxPct||0)/100;
+  const sorted=[...rows].sort((a,b)=>(+a.period||0)-(+b.period||0));
+  return sorted.map(r=>{
+    const rev=+r.revenue||0,op=+r.opex||0,cx=+r.capex||0,dw=+r.dWC||0,dp=+r.depreciation||0,tv=+r.terminal||0;
+    const ebt=rev-op-dp;
+    const tax=ebt>0?ebt*t:0;
+    return Math.round(rev-op-tax-cx-dw+tv);
+  });
+}
+
+// Weighted real opportunity cost across equity tranches (Fisher).
+function realRet(altPct,inflPct){const a=(+altPct||0)/100,i=(+inflPct||0)/100;return ((1+a)/(1+i))-1;}
+function weightedOppCost(tranches){
+  const list=Array.isArray(tranches)?tranches:[];
+  const total=list.reduce((s,e)=>s+Math.max(0,+e.amount||0),0);
+  if(total<=0)return 0;
+  const wsum=list.reduce((s,e)=>{
+    const w=Math.max(0,+e.amount||0)/total;
+    return s+w*realRet(+e.altReturnPct,+e.inflationPct);
+  },0);
+  return wsum*100; // return as percent
+}
+
+function InvestmentDecisionTab({state,dispatch}){
+  const cur=state.config.currency;
+  const tax=+state.config.taxRate||25;
+  const wacc=+state.config.wacc||10;
+  const fin=state.finance||{};
+  const cfb=fin.cfBuilder||{grain:'yearly',horizon:5,rows:[]};
+  const tranches=fin.equitySources||[];
+  const setCFB=(p)=>dispatch({type:'SET_CFB',payload:p});
+  const updateRow=(id,p)=>dispatch({type:'CFB_UPDATE_ROW',id,payload:p});
+  const flows=cfBuilderFlows(cfb,tax);
+  const oppCost=weightedOppCost(tranches);
+  const nWacc=npvLocal(flows,wacc,1);
+  const nOpp=npvLocal(flows,oppCost,1);
+  const ppy=(+cfb.grain==='monthly')?12:(cfb.grain==='quarterly'?4:1);
+  // Discounted payback for both rates
+  const dPay=(rate)=>{const r=(rate/100)/ppy;let cum=0;for(let i=0;i<flows.length;i++){cum+=flows[i]/Math.pow(1+r,i);if(cum>=0)return i;}return null;};
+  const payWacc=dPay(wacc),payOpp=dPay(oppCost);
+  // Profitability index = (NPV + |CF0|) / |CF0| when CF0<0
+  const cf0=flows[0]||0;
+  const piWacc=cf0<0?((nWacc.npv+Math.abs(cf0))/Math.abs(cf0)).toFixed(2):'—';
+  const piOpp=cf0<0?((nOpp.npv+Math.abs(cf0))/Math.abs(cf0)).toFixed(2):'—';
+  // Verdict matrix
+  let verdict='—',vColor='var(--tx3)',vSub='Add cash flow rows to see a verdict.';
+  if(flows.length>=2){
+    const okW=nWacc.npv>0,okO=nOpp.npv>0;
+    if(okW&&okO){verdict='INVEST';vColor='var(--gn)';vSub='Both NPV @ WACC and NPV @ opportunity cost are positive. Project beats both the firm hurdle AND the alternative-asset return.';}
+    else if(okW&&!okO){verdict='MARGINAL';vColor='var(--a4)';vSub='NPV @ WACC is positive, but NPV @ opportunity cost is negative — the equity tranches you tagged would earn more if left in place.';}
+    else if(!okW&&okO){verdict='REVIEW';vColor='var(--a4)';vSub='Unusual: project clears equity opportunity cost but fails the firm WACC hurdle. Recheck debt/equity mix.';}
+    else{verdict='REJECT';vColor='var(--dg)';vSub='Both NPVs negative — project destroys value at every relevant discount rate.';}
+  }
+  // Worst-performing tranche callout
+  const worstTranche=tranches.length?tranches.reduce((w,e)=>{
+    const r=realRet(+e.altReturnPct,+e.inflationPct)*100;
+    return (!w||r>w.r)?{name:e.name,sourceType:e.sourceType,amount:+e.amount||0,r}:w;
+  },null):null;
+
+  return <div className="tab-section">
+    <div className="card">
+      <div className="card-title">💎 Investment Decision <span className="badge" style={{background:'rgba(0,212,170,.1)',color:'var(--ac)'}}>Round 7 · Cash Flow Builder · Two-Rate NPV</span></div>
+      <div style={{fontSize:11,color:'var(--tx2)',padding:8,background:'var(--bg2)',border:'1px dashed var(--br2)',marginBottom:8,lineHeight:1.5}}>
+        <strong>Why two NPVs?</strong> The standard NPV @ WACC tells you whether the project beats the firm's blended cost of capital. But if your equity came from liquidating a piece of land that was growing at 12%/yr, your <em>real</em> hurdle is whichever is higher: the firm WACC or the <strong>real after-inflation return</strong> on what you gave up. Tag each equity tranche below; the right column shows NPV at the <strong>weighted opportunity cost</strong> across tranches. If that's negative, the project destroys equity-holder value even when it looks fine at WACC.
+      </div>
+    </div>
+
+    {/* ─── Cash Flow Builder ─── */}
+    <div className="card">
+      <div className="card-title">📊 Cash Flow Builder <span className="badge" style={{background:'rgba(56,189,248,.1)',color:'var(--a2)'}}>Composes net cash flows from primitives</span></div>
+      <div className="grid4" style={{marginBottom:8}}>
+        <Field label="Period grain" hint="Affects how the discount rate is divided. Monthly = WACC/12 per period.">
+          <select value={cfb.grain||'yearly'} onChange={e=>setCFB({grain:e.target.value})}>
+            <option value="yearly">Yearly</option>
+            <option value="quarterly">Quarterly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </Field>
+        <Field label="Horizon length" hint="Number of forward periods (after the period-0 investment row).">
+          <NumInput value={cfb.horizon||5} onChange={v=>setCFB({horizon:Math.max(1,+v||1)})}/>
+        </Field>
+        <Field label={`Tax rate % (registry)`} hint="Pulled from Tab 1 company config — edit there to change.">
+          <input value={tax} readOnly style={{opacity:0.75,cursor:'not-allowed',background:'var(--bg3)'}}/>
+        </Field>
+        <Field label="WACC % (registry)" hint="Pulled from Tab 1 → Master Budget. Edit there to change.">
+          <input value={wacc} readOnly style={{opacity:0.75,cursor:'not-allowed',background:'var(--bg3)'}}/>
+        </Field>
+      </div>
+      <div style={{display:'flex',gap:6,marginBottom:6,flexWrap:'wrap'}}>
+        <button className="btn btn-secondary btn-sm" onClick={()=>{
+          const period=(cfb.rows||[]).length;
+          dispatch({type:'CFB_ADD_ROW',payload:{period}});
+        }}>+ Add Period Row</button>
+        <button className="btn btn-secondary btn-sm" onClick={()=>{
+          // Seed: 5-year project, ₹50L CapEx Y0, ₹15L revenue/yr, ₹5L opex/yr, ₹4L depr (10yr SLM)
+          (cfb.rows||[]).slice().forEach(r=>dispatch({type:'CFB_DELETE_ROW',id:r.id}));
+          const seed=[
+            {period:0,revenue:0,opex:0,capex:5000000,dWC:500000,depreciation:0,terminal:0},
+            {period:1,revenue:1500000,opex:500000,capex:0,dWC:0,depreciation:400000,terminal:0},
+            {period:2,revenue:1700000,opex:520000,capex:0,dWC:0,depreciation:400000,terminal:0},
+            {period:3,revenue:1900000,opex:540000,capex:0,dWC:0,depreciation:400000,terminal:0},
+            {period:4,revenue:2100000,opex:560000,capex:0,dWC:0,depreciation:400000,terminal:0},
+            {period:5,revenue:2300000,opex:580000,capex:0,dWC:-500000,depreciation:400000,terminal:1500000},
+          ];
+          seed.forEach(r=>dispatch({type:'CFB_ADD_ROW',payload:r}));
+        }}>⚡ Seed example (5-yr project)</button>
+        <button className="btn btn-danger btn-sm" disabled={!(cfb.rows||[]).length} onClick={()=>{
+          if(confirm('Clear all cash flow rows?'))(cfb.rows||[]).slice().forEach(r=>dispatch({type:'CFB_DELETE_ROW',id:r.id}));
+        }}>Clear all</button>
+      </div>
+      {(cfb.rows||[]).length===0?<div style={{padding:12,background:'var(--bg2)',border:'1px dashed var(--br2)',textAlign:'center',color:'var(--tx3)',fontSize:11}}>
+        No cash flow rows yet. Click <strong>Seed example</strong> for a starter dataset, or <strong>Add Period Row</strong> to build manually.
+      </div>:<div style={{overflowX:'auto'}}>
+        <table className="data-table" style={{fontSize:10}}>
+          <thead><tr><th>t</th><th>Revenue</th><th>OpEx</th><th>CapEx</th><th>ΔWC</th><th>Depr</th><th>Terminal</th><th>Tax ({tax}%)</th><th>Net CF</th><th></th></tr></thead>
+          <tbody>{[...(cfb.rows||[])].sort((a,b)=>(+a.period||0)-(+b.period||0)).map(r=>{
+            const rev=+r.revenue||0,op=+r.opex||0,dp=+r.depreciation||0;
+            const ebt=rev-op-dp;const taxAmt=ebt>0?Math.round(ebt*tax/100):0;
+            const cf=Math.round(rev-op-taxAmt-(+r.capex||0)-(+r.dWC||0)+(+r.terminal||0));
+            return <tr key={r.id}>
+              <td><NumInput value={r.period} onChange={v=>updateRow(r.id,{period:+v||0})}/></td>
+              <td><NumInput value={r.revenue} onChange={v=>updateRow(r.id,{revenue:+v||0})}/></td>
+              <td><NumInput value={r.opex} onChange={v=>updateRow(r.id,{opex:+v||0})}/></td>
+              <td><NumInput value={r.capex} onChange={v=>updateRow(r.id,{capex:+v||0})}/></td>
+              <td><NumInput value={r.dWC} onChange={v=>updateRow(r.id,{dWC:+v||0})}/></td>
+              <td><NumInput value={r.depreciation} onChange={v=>updateRow(r.id,{depreciation:+v||0})}/></td>
+              <td><NumInput value={r.terminal} onChange={v=>updateRow(r.id,{terminal:+v||0})}/></td>
+              <td className="num" style={{color:'var(--a4)'}}>{cur}{taxAmt.toLocaleString()}</td>
+              <td className="num" style={{color:cf>=0?'var(--gn)':'var(--dg)',fontWeight:700}}>{cur}{cf.toLocaleString()}</td>
+              <td><button className="btn btn-danger btn-sm" onClick={()=>dispatch({type:'CFB_DELETE_ROW',id:r.id})}>×</button></td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>}
+      <div style={{fontSize:10,color:'var(--tx3)',marginTop:6,padding:6,background:'var(--bg)',border:'1px dashed var(--br)',lineHeight:1.5}}>
+        <strong>Formula per period:</strong> <code style={{color:'var(--a2)'}}>NetCF = (Revenue − OpEx)·(1−tax) + Depreciation·tax − CapEx − ΔWC + Terminal</code>.
+        Depreciation is non-cash but creates a <strong>tax shield</strong> (Dep × tax rate). Terminal value goes in the final period only.
+      </div>
+    </div>
+
+    {/* ─── Equity Sources & Opportunity Cost ─── */}
+    <div className="card">
+      <div className="card-title">🏦 Equity Sources &amp; Opportunity Cost <span className="badge" style={{background:'rgba(167,139,250,.1)',color:'var(--a3)'}}>Fisher real-return weighted across tranches</span></div>
+      <div style={{display:'flex',gap:6,marginBottom:6,flexWrap:'wrap'}}>
+        <button className="btn btn-secondary btn-sm" onClick={()=>dispatch({type:'ADD_EQUITY_SOURCE'})}>+ Add Equity Tranche</button>
+        <button className="btn btn-secondary btn-sm" onClick={()=>{
+          (tranches||[]).slice().forEach(t=>dispatch({type:'DELETE_EQUITY_SOURCE',id:t.id}));
+          [
+            {name:'Liquidated Land (Coimbatore)',amount:4000000,sourceType:'liquidated_land',altReturnPct:12,inflationPct:6,notes:'40 lakh plot · 12% YoY apprec'},
+            {name:'Own Savings',amount:1000000,sourceType:'own_savings',altReturnPct:7.5,inflationPct:6,notes:'Bank FD'},
+          ].forEach(t=>dispatch({type:'ADD_EQUITY_SOURCE',payload:t}));
+        }}>⚡ Seed example (Land 12% + FD 7.5%)</button>
+      </div>
+      {tranches.length===0?<div style={{padding:12,background:'var(--bg2)',border:'1px dashed var(--br2)',textAlign:'center',color:'var(--tx3)',fontSize:11}}>
+        No equity tranches tagged. With nothing here, opportunity cost defaults to 0% — NPV at opp cost will equal undiscounted total. Add tranches to make the comparison meaningful.
+      </div>:<div style={{overflowX:'auto'}}>
+        <table className="data-table" style={{fontSize:10}}>
+          <thead><tr><th>Name</th><th>Amount ({cur})</th><th>Source</th><th>Alt Return %</th><th>Inflation %</th><th>Real Return %</th><th>Notes</th><th></th></tr></thead>
+          <tbody>{tranches.map(e=>{
+            const r=realRet(+e.altReturnPct,+e.inflationPct)*100;
+            return <tr key={e.id}>
+              <td><input value={e.name||''} onChange={ev=>dispatch({type:'UPDATE_EQUITY_SOURCE',id:e.id,payload:{name:ev.target.value}})}/></td>
+              <td><NumInput value={e.amount||0} onChange={v=>dispatch({type:'UPDATE_EQUITY_SOURCE',id:e.id,payload:{amount:+v||0}})}/></td>
+              <td><select value={e.sourceType||'own_savings'} onChange={ev=>dispatch({type:'UPDATE_EQUITY_SOURCE',id:e.id,payload:{sourceType:ev.target.value}})}>
+                <option value="own_savings">Own Savings (FD/MF)</option>
+                <option value="liquidated_land">Liquidated Land/Property</option>
+                <option value="liquidated_business">Liquidated Other Business</option>
+                <option value="retained_earnings">Retained Earnings</option>
+                <option value="family_loan">Family Loan</option>
+                <option value="vc_pe">VC / PE</option>
+              </select></td>
+              <td><NumInput step="0.1" value={e.altReturnPct||0} onChange={v=>dispatch({type:'UPDATE_EQUITY_SOURCE',id:e.id,payload:{altReturnPct:+v||0}})}/></td>
+              <td><NumInput step="0.1" value={e.inflationPct||0} onChange={v=>dispatch({type:'UPDATE_EQUITY_SOURCE',id:e.id,payload:{inflationPct:+v||0}})}/></td>
+              <td className="num" style={{color:r>wacc?'var(--dg)':'var(--gn)',fontWeight:700}}>{r.toFixed(2)}%</td>
+              <td><input value={e.notes||''} onChange={ev=>dispatch({type:'UPDATE_EQUITY_SOURCE',id:e.id,payload:{notes:ev.target.value}})}/></td>
+              <td><button className="btn btn-danger btn-sm" onClick={()=>dispatch({type:'DELETE_EQUITY_SOURCE',id:e.id})}>×</button></td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>}
+      {tranches.length>0&&<div style={{marginTop:8,padding:8,background:'rgba(167,139,250,.05)',border:'2px solid var(--a3)'}}>
+        <div style={{fontSize:10,color:'var(--tx3)',fontWeight:700,letterSpacing:.4,marginBottom:4}}>WEIGHTED REAL OPPORTUNITY COST</div>
+        <div style={{fontSize:24,fontWeight:800,color:'var(--a3)',fontFamily:'JetBrains Mono'}}>{oppCost.toFixed(2)}%</div>
+        <div style={{fontSize:10,color:'var(--tx2)',marginTop:4}}>
+          Σ(weight<sub>i</sub> × ((1+alt<sub>i</sub>)/(1+infl<sub>i</sub>) − 1)) across {tranches.length} tranche(s) totaling {cur}{tranches.reduce((s,e)=>s+(+e.amount||0),0).toLocaleString()}.
+          {oppCost>wacc?<span style={{marginLeft:6,color:'var(--dg)',fontWeight:700}}>⚠ Higher than firm WACC ({wacc}%) — project must clear this hurdle to create equity-holder value.</span>:<span style={{marginLeft:6,color:'var(--gn)',fontWeight:700}}>✓ Below firm WACC ({wacc}%) — WACC is the binding constraint.</span>}
+        </div>
+      </div>}
+    </div>
+
+    {/* ─── Two-Rate NPV + Verdict ─── */}
+    <div className="card">
+      <div className="card-title">⚖️ Investment Verdict <span className="badge" style={{background:'rgba(0,212,170,.1)',color:'var(--ac)'}}>NPV @ WACC vs NPV @ Opportunity Cost</span></div>
+      {flows.length<2?<div style={{padding:12,background:'var(--bg2)',border:'1px dashed var(--br2)',textAlign:'center',color:'var(--tx3)',fontSize:11}}>
+        Need at least 2 cash flow rows (period 0 + at least one return period) to compute NPV.
+      </div>:<>
+        <div className="grid2" style={{gap:8}}>
+          <div style={{padding:10,background:'rgba(56,189,248,.05)',border:`2px solid ${nWacc.npv>=0?'var(--a2)':'var(--dg)'}`}}>
+            <div style={{fontSize:10,color:'var(--tx3)',fontWeight:700,letterSpacing:.4,marginBottom:4}}>NPV @ WACC ({wacc}%)</div>
+            <div style={{fontSize:22,fontWeight:800,color:nWacc.npv>=0?'var(--gn)':'var(--dg)',fontFamily:'JetBrains Mono'}}>{cur}{Math.round(nWacc.npv).toLocaleString()}</div>
+            <div style={{fontSize:10,color:'var(--tx2)',marginTop:4}}>
+              IRR: <strong>{nWacc.irrDiverged?'diverged':(nWacc.irr!=null?nWacc.irr.toFixed(2)+'%':'N/A')}</strong> ·
+              Discounted payback: <strong>{payWacc!=null?payWacc+' periods':'never'}</strong> ·
+              PI: <strong>{piWacc}</strong>
+            </div>
+          </div>
+          <div style={{padding:10,background:'rgba(167,139,250,.05)',border:`2px solid ${nOpp.npv>=0?'var(--a3)':'var(--dg)'}`}}>
+            <div style={{fontSize:10,color:'var(--tx3)',fontWeight:700,letterSpacing:.4,marginBottom:4}}>NPV @ Opportunity Cost ({oppCost.toFixed(2)}%)</div>
+            <div style={{fontSize:22,fontWeight:800,color:nOpp.npv>=0?'var(--gn)':'var(--dg)',fontFamily:'JetBrains Mono'}}>{cur}{Math.round(nOpp.npv).toLocaleString()}</div>
+            <div style={{fontSize:10,color:'var(--tx2)',marginTop:4}}>
+              Discounted payback: <strong>{payOpp!=null?payOpp+' periods':'never'}</strong> ·
+              PI: <strong>{piOpp}</strong>
+            </div>
+          </div>
+        </div>
+        <div style={{marginTop:10,padding:12,background:vColor==='var(--gn)'?'rgba(63,185,80,.08)':vColor==='var(--dg)'?'rgba(248,81,73,.08)':'rgba(248,191,45,.08)',border:`2px solid ${vColor}`,display:'flex',alignItems:'center',gap:12}}>
+          <div style={{fontSize:32,fontWeight:900,color:vColor,fontFamily:'JetBrains Mono'}}>{verdict}</div>
+          <div style={{flex:1,fontSize:11,color:'var(--tx2)',lineHeight:1.5}}>{vSub}</div>
+        </div>
+        {verdict==='MARGINAL'&&worstTranche&&<div style={{marginTop:8,padding:8,background:'rgba(248,81,73,.05)',border:'1px dashed var(--dg)',fontSize:11,color:'var(--tx2)',lineHeight:1.5}}>
+          <strong style={{color:'var(--dg)'}}>Worst-performing tranche:</strong> {worstTranche.name} ({cur}{worstTranche.amount.toLocaleString()}) earning <strong>{worstTranche.r.toFixed(2)}%</strong> real. Keeping that capital where it is would beat this project on a per-rupee basis.
+        </div>}
+      </>}
+    </div>
+  </div>;
+}
+
 // ─── TAB 4: FINANCE & COSTS ───
 function FinanceTab({state,dispatch}){
   const cur=state.config.currency;
+  // Round 7 — sub-tab navigator. Tab 7 was a 30+ section dump; this groups by audience.
+  const [activeSub,setActiveSub]=useState('cashflow');
+  const SUBS=[
+    ['cashflow','💸 Cash Flow & P&L'],
+    ['npv','💎 NPV / IRR'],
+    ['assets','🏭 Asset Register & Depreciation'],
+    ['capital','🏦 Capital Structure & Debt'],
+    ['bvl','🔄 Buy vs Lease'],
+    ['cac','🎯 CAC / Marketing'],
+    ['fx','🛡️ FX & Hedging'],
+  ];
   const [deprForm,setDeprForm]=useState({purchase_price:8000000,residual_value:400000,useful_life:10,method:'SLM',wdv_rate:20,total_units:80000,annual_units:'3000,5200,4800,3500,1200'});
   const [deprResult,setDeprResult]=useState(null);
   // Pillar 11 — NPV/IRR/Depreciation: client-side primary compute, backend audit secondary. Horizon selector: monthly/quarterly/yearly.
@@ -9426,7 +10021,7 @@ function FinanceTab({state,dispatch}){
     let cum=0,payback=null;const r=(npvForm.wacc/100)/Math.max(npvForm.periodsPerYear,1);
     for(let t=0;t<flows.length;t++){cum+=flows[t]/Math.pow(1+r,t);if(cum>=0&&payback===null&&t>0){payback=t/(npvForm.periodsPerYear||1);break;}}
     const signChanges=irrSignChanges(flows);
-    setNpvResult({npv:Math.round(local.npv*100)/100,irr:Math.round(local.irr*100)/100,irrMultipleRoots:signChanges>1,irrSignChanges:signChanges,payback_discounted:payback!=null?Math.round(payback*10)/10:null,decision:local.npv>0?'INVEST':'REJECT'});
+    setNpvResult({npv:Math.round(local.npv*100)/100,irr:local.irr==null?null:Math.round(local.irr*100)/100,irrDiverged:!!local.irrDiverged,irrMultipleRoots:signChanges>1,irrSignChanges:signChanges,payback_discounted:payback!=null?Math.round(payback*10)/10:null,decision:local.npv>0?'INVEST':'REJECT'});
     try{const r=await fetch('/api/calc/npv',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cash_flows:flows,wacc:npvForm.wacc/100})});if(r.ok){setNpvAudit(await r.json());}else{setNpvAudit(null);}}catch(e){setNpvAudit(null);}
   };
   const calcWACC=async()=>{
@@ -9451,11 +10046,22 @@ function FinanceTab({state,dispatch}){
   const dio=state.products.length>0?Math.round((+state.products[0].shelfLife||0)/2):15;
 
   return <div className="animate-in">
+    {/* Round 7 — sub-tab navigator for Tab 7 */}
+    <div className="card" style={{padding:6,marginBottom:8,position:'sticky',top:0,zIndex:5,background:'var(--bg)'}}>
+      <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+        {SUBS.map(([k,lbl])=><button key={k} className={`btn btn-${activeSub===k?'primary':'secondary'} btn-sm`} onClick={()=>setActiveSub(k)} style={{fontSize:10,fontWeight:activeSub===k?700:500}}>{lbl}</button>)}
+        <span style={{flex:1}}/>
+        <button className="btn btn-secondary btn-sm" onClick={()=>{window.dispatchEvent(new CustomEvent('esim:setActiveTab',{detail:'invest'}));}} style={{fontSize:10,color:'var(--ac)'}} title="Open the Investment Decision tab (cash flow builder + opportunity-cost NPV)">→ Investment Decision</button>
+      </div>
+    </div>
+    {activeSub==='cashflow'&&<>
     {/* T7-01/T7-02 — P&L (accrual) and Cash Flow (cash) shown side-by-side. P&L now includes Interest before tax. */}
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
       <PnLWaterfallPanel state={state}/>
       <CashflowWaterfallPanel state={state}/>
     </div>
+    </>}
+    {activeSub==='capital'&&<>
     {/* T7-03/T7-04 — WACC explainer + MSME WACC bands */}
     {(()=>{
       const fin=state.finance||{};
@@ -9499,39 +10105,60 @@ function FinanceTab({state,dispatch}){
         </div>
       </div>;
     })()}
+    </>}
+    {activeSub==='cac'&&<>
     {/* Pillar 10 — Customer Acquisition Economics. CAC / LTV / payback-months. Writes into budget.marketingDetail. */}
     {(()=>{
-      const md=state.budget.marketingDetail||{cac:0,lifetimeMonths:12,monthlyMarginPerCustomer:0,promoSpend:0,channelSplit:{}};
+      const md=state.budget.marketingDetail||{cac:0,lifetimeMonths:12,monthlyMarginPerCustomer:0,promoSpend:0,channelSplit:{},inflationPct:6};
       const cac=+md.cac||0,lt=+md.lifetimeMonths||1,mpc=+md.monthlyMarginPerCustomer||0;
       const ltv=lt*mpc;
       const paybackMo=mpc>0?cac/mpc:0;
       const ratio=cac>0?ltv/cac:0;
       const upMD=(k,v)=>dispatch({type:'SET_BUDGET',payload:{marketingDetail:{...md,[k]:v,monthlyPayback:paybackMo}}});
       const applyToMarketing=()=>{const targetAcq=100;const rec=Math.round(cac*targetAcq*4*1.1);dispatch({type:'SET_BUDGET',payload:{marketing:rec}});};
+      // Round 7 — inflation-adjusted payback + NPV-anchored LTV.
+      // Real monthly margin shrinks by inflation; nominal payback understates the true wait.
+      const inflPct=+md.inflationPct||0;
+      const monthlyInfl=Math.pow(1+inflPct/100,1/12)-1;
+      const realMpc=mpc/(1+monthlyInfl); // first-month real margin (deflated)
+      const realPayback=realMpc>0?cac/realMpc:0;
+      // NPV-anchored LTV: discount each month's margin at WACC; geometric series.
+      const r=(+state.config.wacc||0)/100/12;
+      const npvLtv=mpc>0?(r===0?ltv:Math.round(mpc*(1-Math.pow(1+r,-lt))/r)):0;
+      const npvRatio=cac>0?npvLtv/cac:0;
       return <div className="card">
-        <div className="card-title">🎯 Customer Acquisition Economics <span className="badge" style={{background:'rgba(240,180,41,.1)',color:'var(--a4)'}}>Pillar 10 · CAC/LTV/Payback</span></div>
-        <div style={{fontSize:10,color:'var(--tx3)',marginBottom:8}}>CAC = cost to acquire a customer; LTV = lifetime gross margin; payback = CAC / monthly margin. Healthy B2B: <strong>LTV/CAC ≥ 3×</strong>, payback ≤ 12 months.</div>
+        <div className="card-title">🎯 Customer Acquisition Economics <span className="badge" style={{background:'rgba(240,180,41,.1)',color:'var(--a4)'}}>Pillar 10 · CAC/LTV/Payback · Round 7 inflation+NPV</span></div>
+        <div style={{fontSize:10,color:'var(--tx3)',marginBottom:8}}>CAC = cost to acquire a customer; LTV = lifetime gross margin; payback = CAC / monthly margin. Healthy B2B: <strong>LTV/CAC ≥ 3×</strong>, payback ≤ 12 months. <strong>Real payback</strong> deflates the margin stream by inflation; <strong>NPV-LTV</strong> discounts at WACC.</div>
         <div className="grid4">
           <Field label={`CAC (${cur})`} hint="Cost to acquire one customer (demand-gen + sales + onboarding, fully loaded). Includes digital spend, sales team allocated, collateral."><NumInput value={cac} onChange={v=>upMD('cac',v)}/></Field>
-          <Field label={`Monthly Margin / Customer (${cur})`} hint="Average monthly gross margin per customer post-acquisition."><NumInput value={mpc} onChange={v=>upMD('monthlyMarginPerCustomer',v)}/></Field>
+          <Field label={`Monthly Margin / Customer (${cur})`} hint="Average monthly gross margin per customer post-acquisition (nominal)."><NumInput value={mpc} onChange={v=>upMD('monthlyMarginPerCustomer',v)}/></Field>
           <Field label="Lifetime (months)" hint="Expected customer retention period. SaaS 24-60mo; industrial 60-120mo; FMCG 6-18mo."><NumInput value={lt} onChange={v=>upMD('lifetimeMonths',v)}/></Field>
+          <Field label="Inflation %/yr" hint="Annual inflation deflator applied to the monthly-margin stream. Indian CPI ~5-7%; use a higher figure if your category prices lag inflation."><NumInput step="0.1" value={inflPct} onChange={v=>upMD('inflationPct',+v||0)}/></Field>
+        </div>
+        <div className="grid4" style={{marginTop:6}}>
           <Field label={`Promo Spend (${cur})`} hint="Channel-agnostic promotional spend (trade discounts, demos, sponsorships). Separate from CAC for finance reporting."><NumInput value={+md.promoSpend||0} onChange={v=>upMD('promoSpend',v)}/></Field>
+          <div></div><div></div><div></div>
         </div>
         <div className="kpi-row" style={{marginTop:8}}>
-          <KPI label="Payback Period" value={`${paybackMo.toFixed(1)} mo`} sub={paybackMo<=12?'Healthy <12mo':paybackMo<=24?'OK 12-24mo':'Long — rethink'} color={paybackMo<=12?'var(--gn)':paybackMo<=24?'var(--a4)':'var(--dg)'}/>
-          <KPI label="LTV" value={`${cur}${ltv.toLocaleString()}`} sub={`${lt}mo × ${cur}${mpc}/mo`}/>
+          <KPI label="Payback (nominal)" value={`${paybackMo.toFixed(1)} mo`} sub={paybackMo<=12?'Healthy <12mo':paybackMo<=24?'OK 12-24mo':'Long — rethink'} color={paybackMo<=12?'var(--gn)':paybackMo<=24?'var(--a4)':'var(--dg)'}/>
+          <KPI label={`Payback (real, ${inflPct}% infl)`} value={`${realPayback.toFixed(1)} mo`} sub={realPayback>paybackMo?`+${(realPayback-paybackMo).toFixed(1)}mo vs nominal`:'~no inflation drag'} color={realPayback<=12?'var(--gn)':realPayback<=24?'var(--a4)':'var(--dg)'}/>
+          <KPI label="LTV (undiscounted)" value={`${cur}${ltv.toLocaleString()}`} sub={`${lt}mo × ${cur}${mpc}/mo`}/>
+          <KPI label={`NPV-LTV @ ${(+state.config.wacc||0)}% WACC`} value={`${cur}${npvLtv.toLocaleString()}`} sub={npvLtv<ltv?`-${(((ltv-npvLtv)/Math.max(ltv,1))*100).toFixed(0)}% time-value`:'no discount drag'} color="var(--a3)"/>
           <KPI label="LTV / CAC" value={`${ratio.toFixed(2)}×`} sub={ratio>=3?'Healthy (≥3×)':ratio>=1?'Marginal':'Burning cash'} color={ratio>=3?'var(--gn)':ratio>=1?'var(--a4)':'var(--dg)'}/>
+          <KPI label="NPV-LTV / CAC" value={`${npvRatio.toFixed(2)}×`} sub={npvRatio>=3?'Healthy on NPV basis':npvRatio>=1?'Marginal on NPV basis':'NPV says burn'} color={npvRatio>=3?'var(--gn)':npvRatio>=1?'var(--a4)':'var(--dg)'}/>
         </div>
         <div style={{marginTop:8,padding:8,background:'var(--bg3)',borderRadius:4,fontSize:10,fontFamily:'JetBrains Mono',color:'var(--tx2)',lineHeight:1.6}}>
-          <strong style={{color:'var(--ac)'}}>Formula:</strong> payback = CAC / monthly_margin = {cur}{cac} / {cur}{mpc} = <strong>{paybackMo.toFixed(2)} months</strong><br/>
-          LTV = lifetime × monthly_margin = {lt} × {cur}{mpc} = <strong>{cur}{ltv.toLocaleString()}</strong><br/>
-          Ratio LTV/CAC = <strong>{ratio.toFixed(2)}×</strong> — benchmark ≥3× signals CAC efficiency.
+          <strong style={{color:'var(--ac)'}}>Formulas:</strong> nominal payback = CAC / mpc = {paybackMo.toFixed(2)}mo · real payback = CAC / (mpc / (1+infl_m)) = {realPayback.toFixed(2)}mo<br/>
+          LTV (undiscounted) = lifetime × mpc = {cur}{ltv.toLocaleString()} · NPV-LTV = mpc × (1−(1+r)<sup>−lt</sup>)/r = <strong>{cur}{npvLtv.toLocaleString()}</strong> @ r = WACC/12<br/>
+          When inflation &gt; 0 OR WACC &gt; 0, the <strong>real / NPV ratios</strong> are the binding signals — nominal payback understates the true wait.
         </div>
         <div style={{marginTop:8}}>
           <button className="btn btn-secondary btn-sm" onClick={applyToMarketing}>Suggest Marketing Budget from CAC (CAC × 100 customers/qtr × 1.1)</button>
         </div>
       </div>;
     })()}
+    </>}
+    {activeSub==='cashflow'&&<>
     {/* Cost Structure */}
     <div className="card">
       <div className="card-title">📊 Cost Structure per SKU</div>
@@ -9573,7 +10200,8 @@ function FinanceTab({state,dispatch}){
 
     {/* P6 — Procurement Risk + FX Exposure */}
     <ProcurementRiskCard state={state} dispatch={dispatch}/>
-
+    </>}
+    {activeSub==='assets'&&<>
     {/* Asset Register */}
     <div className="card">
       <div className="card-title">🏭 Asset Register <span className="badge" style={{background:'rgba(56,189,248,.1)',color:'var(--a2)'}}>{state.assets.length} assets</span></div>
@@ -9590,7 +10218,20 @@ function FinanceTab({state,dispatch}){
       {state.assets.map(a=>{
         const nm=(a.name||'').toLowerCase();
         const kind=nm.includes('cnc')||nm.includes('lathe')||nm.includes('mill')?'cnc':nm.includes('press')||nm.includes('mould')||nm.includes('mold')?'molding':nm.includes('fork')||nm.includes('lift')||nm.includes('truck')?'forklift':nm.includes('line')||nm.includes('conveyor')||nm.includes('assemb')?'line':nm.includes('warehouse')||nm.includes('rack')||nm.includes('store')?'warehouse':'factory';
-        const annDep=Math.round(a.method==='SLM'?(a.purchasePrice-a.residualValue)/a.usefulLife:a.method==='WDV'?a.purchasePrice*(a.wdvRate||20)/100:0);
+        // Round 7 — depreciation respects components if present (IAS 16 / Schedule II per-component rule).
+        // Falls back to the flat asset-level method when components[] is empty/absent.
+        const comps=Array.isArray(a.components)?a.components:[];
+        const compSum=comps.reduce((s,c)=>s+Math.max(0,+c.allocationPct||0),0);
+        const flatDep=Math.round(a.method==='SLM'?(a.purchasePrice-a.residualValue)/a.usefulLife:a.method==='WDV'?a.purchasePrice*(a.wdvRate||20)/100:0);
+        const compDep=comps.length>0?Math.round(comps.reduce((s,c)=>{
+          const alloc=(+a.purchasePrice||0)*Math.max(0,+c.allocationPct||0)/100;
+          const life=Math.max(1,+c.usefulLife||1);
+          if(c.method==='WDV')return s+alloc*(+c.wdvRate||20)/100;
+          // SLM (and UoP fallback) — component residual not modeled separately; use 5% of allocation
+          const res=alloc*0.05;
+          return s+(alloc-res)/life;
+        },0)):0;
+        const annDep=comps.length>0?compDep:flatDep;
         const maint=+a.maintPerYr||0,energy=+a.energyPerYr||0,cons=+a.consumablesPerYr||0,op=+a.operatorPerYr||0,uptime=+a.uptimePct||95;
         const downtimeCostPerYr=Math.round((+a.purchasePrice||0)*0.02*(100-uptime)/5);
         const opexPerYr=maint+energy+cons+op+downtimeCostPerYr;
@@ -9608,8 +10249,60 @@ function FinanceTab({state,dispatch}){
             <Field label="💰 TCO/yr" hint={`Total Cost of Ownership per year = depreciation (${cur}${annDep.toLocaleString()}) + maintenance (${cur}${maint.toLocaleString()}) + energy (${cur}${energy.toLocaleString()}) + consumables (${cur}${cons.toLocaleString()}) + operator (${cur}${op.toLocaleString()}) + downtime cost (${cur}${downtimeCostPerYr.toLocaleString()}).\nLife-cycle TCO over ${a.usefulLife}yr: ${cur}${tcoLife.toLocaleString()}.\nClick to expand the cost breakdown.`}>
               <button className="btn btn-secondary btn-sm" style={{padding:'2px 5px',fontSize:10,width:90,textAlign:'left',fontWeight:700,color:'var(--dg)'}} onClick={()=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{_showTCO:!a._showTCO}})}>{cur}{tcoPerYr.toLocaleString()} {a._showTCO?'▲':'▼'}</button>
             </Field>
+            <Field label="🧩 Components" hint="IAS 16 / Schedule II — split a single asset into components (e.g., a crane = jib + hoist + electricals + foundation), each with its own life and depreciation method. When components are defined, asset-level Annual Depr = Σ(component depr).">
+              <button className="btn btn-secondary btn-sm" style={{padding:'2px 5px',fontSize:10,width:90,textAlign:'left',color:comps.length>0?'var(--ac)':'var(--tx3)',fontWeight:comps.length>0?700:500}} onClick={()=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{_showComp:!a._showComp}})}>{comps.length>0?`${comps.length} comps`:'+ Componentise'} {a._showComp?'▲':'▼'}</button>
+            </Field>
             <button className="btn btn-danger btn-sm" onClick={()=>dispatch({type:'DELETE_ASSET',id:a.id})}>×</button>
           </div>
+          {a._showComp&&<div style={{marginTop:6,padding:8,background:'rgba(56,189,248,.05)',border:'1px dashed var(--a2)'}}>
+            <div style={{fontSize:9,color:'var(--tx3)',fontWeight:700,letterSpacing:.4,marginBottom:4,display:'flex',alignItems:'center',gap:6}}>
+              <span>COMPONENT BREAKDOWN — IAS 16 / Schedule II</span>
+              <span style={{flex:1}}/>
+              <span style={{color:Math.abs(compSum-100)<0.5?'var(--gn)':'var(--a4)',fontFamily:'JetBrains Mono'}}>Σ allocation = {compSum.toFixed(1)}%</span>
+            </div>
+            {comps.length===0?<div style={{padding:8,fontSize:10,color:'var(--tx3)',textAlign:'center',background:'var(--bg)',border:'1px dashed var(--br2)'}}>
+              No components yet. A crane has jib (15yr SLM), hoist (12yr WDV 25%), electricals (8yr WDV 25%), foundation (30yr SLM). Click <strong>+ Add Component</strong> to start.
+            </div>:<table className="data-table" style={{fontSize:10}}>
+              <thead><tr><th>Name</th><th>Allocation %</th><th>Allocated ({cur})</th><th>Life (yr)</th><th>Method</th><th>WDV %</th><th>Annual Depr</th><th></th></tr></thead>
+              <tbody>{comps.map(c=>{
+                const alloc=(+a.purchasePrice||0)*Math.max(0,+c.allocationPct||0)/100;
+                const life=Math.max(1,+c.usefulLife||1);
+                const cDep=c.method==='WDV'?Math.round(alloc*(+c.wdvRate||20)/100):Math.round((alloc*0.95)/life);
+                return <tr key={c.id}>
+                  <td><input value={c.name||''} onChange={e=>dispatch({type:'UPDATE_ASSET_COMPONENT',id:a.id,cmpId:c.id,payload:{name:e.target.value}})}/></td>
+                  <td><NumInput step="0.1" value={c.allocationPct||0} onChange={v=>dispatch({type:'UPDATE_ASSET_COMPONENT',id:a.id,cmpId:c.id,payload:{allocationPct:+v||0}})}/></td>
+                  <td className="num">{cur}{Math.round(alloc).toLocaleString()}</td>
+                  <td><NumInput value={c.usefulLife||10} onChange={v=>dispatch({type:'UPDATE_ASSET_COMPONENT',id:a.id,cmpId:c.id,payload:{usefulLife:+v||1}})}/></td>
+                  <td><select value={c.method||'SLM'} onChange={e=>dispatch({type:'UPDATE_ASSET_COMPONENT',id:a.id,cmpId:c.id,payload:{method:e.target.value}})}><option value="SLM">SLM</option><option value="WDV">WDV</option></select></td>
+                  <td>{c.method==='WDV'?<NumInput step="0.5" value={c.wdvRate||20} onChange={v=>dispatch({type:'UPDATE_ASSET_COMPONENT',id:a.id,cmpId:c.id,payload:{wdvRate:+v||0}})}/>:<span style={{color:'var(--tx3)',fontStyle:'italic'}}>—</span>}</td>
+                  <td className="num" style={{color:'var(--a4)',fontWeight:700}}>{cur}{cDep.toLocaleString()}</td>
+                  <td><button className="btn btn-danger btn-sm" onClick={()=>dispatch({type:'DELETE_ASSET_COMPONENT',id:a.id,cmpId:c.id})}>×</button></td>
+                </tr>;
+              })}</tbody>
+            </table>}
+            <div style={{display:'flex',gap:6,marginTop:6,flexWrap:'wrap'}}>
+              <button className="btn btn-secondary btn-sm" style={{fontSize:10}} onClick={()=>dispatch({type:'ADD_ASSET_COMPONENT',id:a.id,payload:{name:'New Component',allocationPct:Math.max(0,100-compSum),usefulLife:10,method:'SLM'}})}>+ Add Component</button>
+              {kind==='cnc'&&comps.length===0&&<button className="btn btn-secondary btn-sm" style={{fontSize:10}} onClick={()=>{
+                [{name:'Spindle & Drives',allocationPct:35,usefulLife:8,method:'WDV',wdvRate:20},
+                 {name:'Tool Changer',allocationPct:15,usefulLife:6,method:'WDV',wdvRate:25},
+                 {name:'Frame & Bed',allocationPct:30,usefulLife:15,method:'SLM'},
+                 {name:'CNC Controller',allocationPct:15,usefulLife:7,method:'WDV',wdvRate:20},
+                 {name:'Coolant & Aux',allocationPct:5,usefulLife:5,method:'SLM'}].forEach(c=>dispatch({type:'ADD_ASSET_COMPONENT',id:a.id,payload:c}));
+              }}>⚡ Seed CNC components</button>}
+              {(kind==='molding'||nm.includes('crane'))&&comps.length===0&&<button className="btn btn-secondary btn-sm" style={{fontSize:10}} onClick={()=>{
+                [{name:'Hydraulic / Hoist',allocationPct:30,usefulLife:8,method:'WDV',wdvRate:25},
+                 {name:'Mould / Jib',allocationPct:25,usefulLife:12,method:'SLM'},
+                 {name:'Electricals',allocationPct:20,usefulLife:8,method:'WDV',wdvRate:25},
+                 {name:'Foundation / Frame',allocationPct:25,usefulLife:25,method:'SLM'}].forEach(c=>dispatch({type:'ADD_ASSET_COMPONENT',id:a.id,payload:c}));
+              }}>⚡ Seed Press / Crane components</button>}
+            </div>
+            {Math.abs(compSum-100)>0.5&&compSum>0&&<div style={{fontSize:10,color:'var(--a4)',marginTop:4,padding:4,background:'rgba(240,180,41,.05)',border:'1px dashed var(--a4)'}}>
+              ⚠ Component allocation sums to {compSum.toFixed(1)}%, not 100%. Depreciation will be under/over-allocated against asset purchase price.
+            </div>}
+            {comps.length>0&&<div style={{fontSize:10,color:'var(--tx2)',marginTop:6,padding:4,background:'var(--bg)',border:'1px dashed var(--br)'}}>
+              <strong>Component-driven Annual Depr:</strong> <span style={{color:'var(--a4)',fontWeight:700,fontFamily:'JetBrains Mono'}}>{cur}{compDep.toLocaleString()}</span> (overrides flat-method {cur}{flatDep.toLocaleString()}). Tax shield @ {state.config.taxRate}%: <span style={{color:'var(--gn)',fontWeight:700}}>{cur}{Math.round(compDep*state.config.taxRate/100).toLocaleString()}/yr</span>.
+            </div>}
+          </div>}
           {a._showTCO&&<div style={{marginTop:6,padding:8,background:'var(--bg2)',border:'1px dashed var(--br2)'}}>
             <div style={{fontSize:9,color:'var(--tx3)',fontWeight:700,letterSpacing:.4,marginBottom:4}}>TCO BREAKDOWN — OPEX COMPONENTS</div>
             <div className="bom-row" style={{alignItems:'center',gap:6}}>
@@ -9639,7 +10332,18 @@ function FinanceTab({state,dispatch}){
         <button className="btn btn-secondary btn-sm" style={{fontSize:10}} onClick={()=>{const samples=[{name:'CNC Machining Center',purchasePrice:8500000,residualValue:500000,usefulLife:10,method:'SLM',maintPerYr:425000,energyPerYr:240000,consumablesPerYr:180000,operatorPerYr:720000,uptimePct:92},{name:'Injection Moulding Press',purchasePrice:12000000,residualValue:800000,usefulLife:12,method:'WDV',wdvRate:15,maintPerYr:720000,energyPerYr:480000,consumablesPerYr:120000,operatorPerYr:480000,uptimePct:94},{name:'Electric Forklift',purchasePrice:1800000,residualValue:150000,usefulLife:7,method:'SLM',maintPerYr:90000,energyPerYr:36000,consumablesPerYr:24000,operatorPerYr:540000,uptimePct:97},{name:'Packing Line',purchasePrice:4200000,residualValue:200000,usefulLife:8,method:'SLM',maintPerYr:210000,energyPerYr:126000,consumablesPerYr:80000,operatorPerYr:960000,uptimePct:93},{name:'Warehouse Racking',purchasePrice:2500000,residualValue:50000,usefulLife:15,method:'SLM',maintPerYr:25000,energyPerYr:0,consumablesPerYr:0,operatorPerYr:0,uptimePct:99}];samples.forEach(s=>dispatch({type:'ADD_ASSET',payload:s}));}}>Load example assets</button>
       </div>
       {state.assets.length>0&&(()=>{
-        const totDep=state.assets.reduce((s,a)=>s+Math.round(a.method==='SLM'?(a.purchasePrice-a.residualValue)/a.usefulLife:a.purchasePrice*(a.wdvRate||20)/100),0);
+        // Round 7 — total depreciation respects componentisation when present.
+        const totDep=state.assets.reduce((s,a)=>{
+          const comps=Array.isArray(a.components)?a.components:[];
+          if(comps.length>0){
+            return s+Math.round(comps.reduce((cs,c)=>{
+              const alloc=(+a.purchasePrice||0)*Math.max(0,+c.allocationPct||0)/100;
+              if(c.method==='WDV')return cs+alloc*(+c.wdvRate||20)/100;
+              return cs+(alloc*0.95)/Math.max(1,+c.usefulLife||1);
+            },0));
+          }
+          return s+Math.round(a.method==='SLM'?(a.purchasePrice-a.residualValue)/a.usefulLife:a.purchasePrice*(a.wdvRate||20)/100);
+        },0);
         const totCapex=state.assets.reduce((s,a)=>s+(+a.purchasePrice||0),0);
         const shield=Math.round(totDep*state.config.taxRate/100);
         const totOpex=state.assets.reduce((s,a)=>{
@@ -9663,7 +10367,8 @@ function FinanceTab({state,dispatch}){
         </div>;
       })()}
     </div>
-
+    </>}
+    {activeSub==='bvl'&&<>
     {/* Buy vs Lease Comparison */}
     {(()=>{
       const annDepr=(bvl.assetCost-bvl.residual)/bvl.life;
@@ -9697,10 +10402,10 @@ function FinanceTab({state,dispatch}){
               </div>
             </div>
             <div className="grid2" style={{gap:4}}>
-              <Field label="Purchase Price"><NumInput value={bvl.assetCost} onChange={v=>setBvl(v=>({...v,assetCost:v}))}/></Field>
-              <Field label="Residual Value"><NumInput value={bvl.residual} onChange={v=>setBvl(v=>({...v,residual:v}))}/></Field>
-              <Field label="Useful Life (yr)"><NumInput value={bvl.life} onChange={v=>setBvl(v=>({...v,life:v}))}/></Field>
-              <Field label="Annual Maintenance"><NumInput value={bvl.maintBuy} onChange={v=>setBvl(v=>({...v,maintBuy:v}))}/></Field>
+              <Field label="Purchase Price"><NumInput value={bvl.assetCost} onChange={nv=>setBvl(prev=>({...prev,assetCost:nv}))}/></Field>
+              <Field label="Residual Value"><NumInput value={bvl.residual} onChange={nv=>setBvl(prev=>({...prev,residual:nv}))}/></Field>
+              <Field label="Useful Life (yr)"><NumInput value={bvl.life} onChange={nv=>setBvl(prev=>({...prev,life:nv}))}/></Field>
+              <Field label="Annual Maintenance"><NumInput value={bvl.maintBuy} onChange={nv=>setBvl(prev=>({...prev,maintBuy:nv}))}/></Field>
             </div>
             <div style={{fontSize:10,color:'var(--tx2)',marginTop:6,padding:4,background:'var(--bg)',border:'1px dashed var(--br)'}}>
               Annual depr: <strong style={{color:'var(--a4)'}}>{cur}{Math.round(annDepr).toLocaleString()}</strong> · Tax shield: <strong style={{color:'var(--gn)'}}>{cur}{Math.round(taxShield).toLocaleString()}/yr</strong>
@@ -9719,9 +10424,9 @@ function FinanceTab({state,dispatch}){
               </div>
             </div>
             <div className="grid2" style={{gap:4}}>
-              <Field label="Monthly Lease"><NumInput value={bvl.leaseCost} onChange={v=>setBvl(v=>({...v,leaseCost:v}))}/></Field>
-              <Field label="Lease Term (yr)"><NumInput value={bvl.leaseYears} onChange={v=>setBvl(v=>({...v,leaseYears:v}))}/></Field>
-              <Field label="Annual Maintenance"><NumInput value={bvl.maintLease} onChange={v=>setBvl(v=>({...v,maintLease:v}))}/></Field>
+              <Field label="Monthly Lease"><NumInput value={bvl.leaseCost} onChange={nv=>setBvl(prev=>({...prev,leaseCost:nv}))}/></Field>
+              <Field label="Lease Term (yr)"><NumInput value={bvl.leaseYears} onChange={nv=>setBvl(prev=>({...prev,leaseYears:nv}))}/></Field>
+              <Field label="Annual Maintenance"><NumInput value={bvl.maintLease} onChange={nv=>setBvl(prev=>({...prev,maintLease:nv}))}/></Field>
               <Field label="WACC % (registry)" hint="Read-only — edit on Tab 1 WACC Calculator. Changes here would bypass the single-source-of-truth (Pillar 14)."><input value={bvlWacc} readOnly style={{opacity:0.75,cursor:'not-allowed',background:'var(--bg3)'}}/></Field>
             </div>
             <div style={{fontSize:10,color:'var(--tx2)',marginTop:6,padding:4,background:'var(--bg)',border:'1px dashed var(--br)'}}>
@@ -9742,7 +10447,8 @@ function FinanceTab({state,dispatch}){
         </div>
       </div>
     })()}
-
+    </>}
+    {activeSub==='cashflow'&&<>
     {/* Cash Flow Timeline */}
     <div className="card">
       <div className="card-title">💸 Projected Cash Flow Timeline</div>
@@ -9772,7 +10478,8 @@ function FinanceTab({state,dispatch}){
         </div>
       })()}
     </div>
-
+    </>}
+    {activeSub==='fx'&&<>
     {/* Currency Hedging */}
     <div className="card">
       <div className="card-title">🛡️ Currency Hedging <span className="badge" style={{background:'rgba(240,180,41,.1)',color:'var(--a4)'}}>{state.hedges.length} hedges</span></div>
@@ -9792,7 +10499,8 @@ function FinanceTab({state,dispatch}){
         Unhedged: <strong style={{color:'var(--dg)'}}>{cur}{state.hedges.reduce((s,h)=>s+Math.round(h.notional*h.forwardRate*(100-h.hedgePct)/100),0).toLocaleString()}</strong>
       </div>}
     </div>
-
+    </>}
+    {activeSub==='capital'&&<>
     {/* Master Budget & Capital Structure */}
     {(()=>{
       const fin=state.finance||{equity:0,debt:0,costOfEquity:13,costOfDebt:8,interestRate:9,reserve:0};
@@ -9874,6 +10582,95 @@ function FinanceTab({state,dispatch}){
             <code style={{fontSize:9,color:'var(--gn)'}}>Ke (CAPM) = Rf + β × (Rm − Rf)</code> · <code style={{fontSize:9,color:'var(--gn)'}}>D/E = Debt / Equity</code>
           </div>
         </div>
+        {/* Round 7 — Debt Schedule with DSCR/DSRA/CADS modeling */}
+        {(()=>{
+          const tranches=fin.debtSchedule||[];
+          const cfFlows=cfBuilderFlows(state.finance?.cfBuilder||{rows:[]},state.config.taxRate);
+          // CADS proxy from cash flow builder (CF after CapEx and ΔWC ≈ EBITDA − Tax − ΔWC − Maint CapEx).
+          // If no builder rows, fall back to 0 (lender forces user to model cash flow first).
+          const cadsByYear=cfFlows.slice(1); // skip period 0 (initial investment)
+          // Annuity formula for EMI: PMT = P × r × (1+r)^n / ((1+r)^n − 1)
+          const emi=(p,r,n)=>r===0?p/n:p*r*Math.pow(1+r,n)/(Math.pow(1+r,n)-1);
+          // Build per-tranche schedule and merge across tranches by year for DSCR
+          const horizon=Math.max(1,...tranches.map(t=>(+t.tenureYears||0)+(+t.drawdownYear||1)-1),1);
+          const yearTotals=Array.from({length:horizon},()=>({interest:0,principal:0,ds:0,dsra:0}));
+          tranches.forEach(t=>{
+            const P=+t.amount||0,r=(+t.couponPct||0)/100,n=Math.max(1,+t.tenureYears||1),draw=Math.max(1,+t.drawdownYear||1);
+            const dsra=P*r*(+t.dsraMonths||0)/12; // DSRA = N months of interest+principal placeholder; using interest as proxy
+            let outstanding=P;
+            for(let y=draw;y<draw+n&&y<=horizon;y++){
+              let interest=outstanding*r;
+              let principal=0;
+              if(t.repaymentType==='bullet'){principal=(y===draw+n-1)?outstanding:0;}
+              else if(t.repaymentType==='emi'){const pmt=emi(P,r,n);principal=Math.max(0,pmt-interest);}
+              else if(t.repaymentType==='balloon'){principal=(y===draw+n-1)?outstanding*0.6:outstanding*0.4/(n-1);}
+              else if(t.repaymentType==='step_up'){principal=(P/n)*(0.5+(y-draw+1)/(n+1));}
+              else{principal=P/n;}
+              outstanding=Math.max(0,outstanding-principal);
+              const idx=y-1;
+              if(yearTotals[idx]){
+                yearTotals[idx].interest+=Math.round(interest);
+                yearTotals[idx].principal+=Math.round(principal);
+                yearTotals[idx].ds+=Math.round(interest+principal);
+                if(y===draw)yearTotals[idx].dsra+=Math.round(dsra);
+              }
+            }
+          });
+          return <div style={{padding:8,background:'rgba(248,191,45,.04)',border:'2px solid var(--a4)',marginTop:8}}>
+            <div style={{fontSize:10,color:'var(--a4)',fontWeight:700,letterSpacing:.4,marginBottom:6,display:'flex',alignItems:'center',gap:6}}>
+              <span>📅 DEBT SCHEDULE — DSCR · DSRA · CADS</span>
+              <span style={{flex:1}}/>
+              <button className="btn btn-secondary btn-sm" style={{fontSize:10}} onClick={()=>dispatch({type:'ADD_DEBT_TRANCHE'})}>+ Add Tranche</button>
+            </div>
+            <div style={{fontSize:10,color:'var(--tx2)',padding:6,background:'var(--bg2)',border:'1px dashed var(--br2)',lineHeight:1.5,marginBottom:6}}>
+              <strong>Tenure</strong> = years debt is outstanding · <strong>DSRA</strong> (Debt Service Reserve) = N months of debt service parked as restricted cash · <strong>CADS</strong> (Cash Available for Debt Service) = EBITDA − Tax − ΔWC − Maint CapEx (sourced from Cash Flow Builder on Investment Decision tab) · <strong>DSCR</strong> = CADS / Total DS. Lenders want ≥ 1.3-1.5×.
+            </div>
+            {tranches.length===0?<div style={{padding:8,fontSize:10,color:'var(--tx3)',textAlign:'center',background:'var(--bg)',border:'1px dashed var(--br2)'}}>
+              No debt tranches modeled. Click <strong>+ Add Tranche</strong> to start.
+            </div>:<div style={{overflowX:'auto'}}>
+              <table className="data-table" style={{fontSize:10,marginBottom:8}}>
+                <thead><tr><th>Name</th><th>Amount ({cur})</th><th>Tenure (yr)</th><th>Type</th><th>Coupon %</th><th>DSRA (mo)</th><th>Drawdown Yr</th><th></th></tr></thead>
+                <tbody>{tranches.map(t=><tr key={t.id}>
+                  <td><input value={t.name||''} onChange={e=>dispatch({type:'UPDATE_DEBT_TRANCHE',id:t.id,payload:{name:e.target.value}})}/></td>
+                  <td><NumInput value={t.amount||0} onChange={v=>dispatch({type:'UPDATE_DEBT_TRANCHE',id:t.id,payload:{amount:+v||0}})}/></td>
+                  <td><NumInput value={t.tenureYears||5} onChange={v=>dispatch({type:'UPDATE_DEBT_TRANCHE',id:t.id,payload:{tenureYears:+v||1}})}/></td>
+                  <td><select value={t.repaymentType||'emi'} onChange={e=>dispatch({type:'UPDATE_DEBT_TRANCHE',id:t.id,payload:{repaymentType:e.target.value}})}>
+                    <option value="emi">EMI (annuity)</option>
+                    <option value="bullet">Bullet (P at end)</option>
+                    <option value="balloon">Balloon (60% end)</option>
+                    <option value="step_up">Step-up</option>
+                    <option value="straight">Straight-line P</option>
+                  </select></td>
+                  <td><NumInput step="0.1" value={t.couponPct||9} onChange={v=>dispatch({type:'UPDATE_DEBT_TRANCHE',id:t.id,payload:{couponPct:+v||0}})}/></td>
+                  <td><NumInput value={t.dsraMonths||6} onChange={v=>dispatch({type:'UPDATE_DEBT_TRANCHE',id:t.id,payload:{dsraMonths:+v||0}})}/></td>
+                  <td><NumInput value={t.drawdownYear||1} onChange={v=>dispatch({type:'UPDATE_DEBT_TRANCHE',id:t.id,payload:{drawdownYear:+v||1}})}/></td>
+                  <td><button className="btn btn-danger btn-sm" onClick={()=>dispatch({type:'DELETE_DEBT_TRANCHE',id:t.id})}>×</button></td>
+                </tr>)}</tbody>
+              </table>
+              <div style={{fontSize:9,color:'var(--tx3)',fontWeight:700,letterSpacing:.4,marginBottom:4}}>YEARLY DEBT SERVICE &amp; DSCR (combined across tranches)</div>
+              <table className="data-table" style={{fontSize:10}}>
+                <thead><tr><th>Year</th><th>Interest</th><th>Principal</th><th>Total DS</th><th>DSRA</th><th>CADS (from CF Builder)</th><th>DSCR</th></tr></thead>
+                <tbody>{yearTotals.map((y,i)=>{
+                  const cads=cadsByYear[i]||0;
+                  const dscr=y.ds>0?cads/y.ds:null;
+                  const dscrColor=dscr==null?'var(--tx3)':dscr<1?'var(--dg)':dscr<1.3?'var(--a4)':'var(--gn)';
+                  return <tr key={i}>
+                    <td>Y{i+1}</td>
+                    <td className="num">{cur}{y.interest.toLocaleString()}</td>
+                    <td className="num">{cur}{y.principal.toLocaleString()}</td>
+                    <td className="num" style={{fontWeight:700}}>{cur}{y.ds.toLocaleString()}</td>
+                    <td className="num">{cur}{y.dsra.toLocaleString()}</td>
+                    <td className="num" style={{color:cads>=0?'var(--gn)':'var(--dg)'}}>{cur}{Math.round(cads).toLocaleString()}</td>
+                    <td className="num" style={{color:dscrColor,fontWeight:700,fontFamily:'JetBrains Mono'}}>{dscr==null?'—':dscr.toFixed(2)+'×'}</td>
+                  </tr>;
+                })}</tbody>
+              </table>
+              {cadsByYear.length===0&&<div style={{fontSize:10,color:'var(--a4)',marginTop:6,padding:6,background:'rgba(240,180,41,.05)',border:'1px dashed var(--a4)'}}>
+                ⚠ Build a Cash Flow on the <strong>Investment Decision</strong> tab to see real DSCR. Without it, CADS = 0 and DSCR cannot be evaluated.
+              </div>}
+            </div>}
+          </div>;
+        })()}
       </div>;
     })()}
 
@@ -9893,6 +10690,8 @@ function FinanceTab({state,dispatch}){
       </div>}
     </div>
 
+    </>}
+    {activeSub==='npv'&&<>
     {/* NPV Calculator — Pillar 11 */}
     <div className="card">
       <div className="card-title">💎 NPV / IRR Calculator <span className="badge" style={{background:'rgba(63,185,80,.1)',color:'var(--gn)'}}>Pillar 11 · Client-side · Monthly/Quarterly/Yearly</span></div>
@@ -9915,7 +10714,7 @@ function FinanceTab({state,dispatch}){
       {npvResult&&!npvResult.error&&<div style={{marginTop:8}}>
         <div className="kpi-row">
           <KPI label="NPV" value={`${cur}${npvResult.npv?.toLocaleString()}`} sub={npvResult.npv>0?'Value creating':'Value destroying'} color={npvResult.npv>0?'var(--gn)':'var(--dg)'}/>
-          <KPI label="IRR" value={npvResult.irr!==null?`${npvResult.irr}%`:'N/A'} sub={npvResult.irr>npvForm.wacc?`>${npvForm.wacc}% hurdle ✓`:`<${npvForm.wacc}% hurdle ✗`} color={npvResult.irr>npvForm.wacc?'var(--gn)':'var(--dg)'}/>
+          <KPI label="IRR" value={npvResult.irrDiverged?'diverged':(npvResult.irr!==null?`${npvResult.irr}%`:'N/A')} sub={npvResult.irrDiverged?'Newton-Raphson did not converge — check sign changes':(npvResult.irr>npvForm.wacc?`>${npvForm.wacc}% hurdle ✓`:`<${npvForm.wacc}% hurdle ✗`)} color={npvResult.irrDiverged?'var(--a4)':(npvResult.irr>npvForm.wacc?'var(--gn)':'var(--dg)')}/>
           <KPI label="Payback" value={npvResult.payback_discounted!==null?`${npvResult.payback_discounted} yrs`:'Never'} sub="discounted" color="var(--a2)"/>
           <KPI label="Decision" value={npvResult.decision} color={npvResult.decision==='INVEST'?'var(--gn)':'var(--dg)'}/>
         </div>
@@ -9935,6 +10734,8 @@ function FinanceTab({state,dispatch}){
       </div>}
     </div>
 
+    </>}
+    {activeSub==='assets'&&<>
     {/* Depreciation Calculator — Pillar 11 */}
     <div className="card">
       <div className="card-title">📉 Asset Depreciation Calculator <span className="badge" style={{background:'rgba(56,189,248,.1)',color:'var(--a2)'}}>IAS 16 · Pillar 11 · client-side</span></div>
@@ -9987,6 +10788,8 @@ function FinanceTab({state,dispatch}){
       </div>}
     </div>
 
+    </>}
+    {activeSub==='npv'&&<>
     {/* Pillar 11 Advanced — Plan NPV from MPS × demand × price − procurement − capex */}
     {(()=>{
       const w=+state.config.wacc||0;
@@ -10061,6 +10864,7 @@ function FinanceTab({state,dispatch}){
         </div>
       </div>;
     })()}
+    </>}
   </div>
 }
 
@@ -10576,21 +11380,41 @@ function AnalysisTab({state,dispatch}){
     {/* S&OP Gap Analysis */}
     <div className="card">
       <div className="card-title">📋 S&OP Gap Analysis</div>
-      <table className="data-table">
-        <thead><tr><th>Month</th><th>Demand Plan</th><th>Supply Capacity</th><th>Gap</th><th>Action</th></tr></thead>
-        <tbody>{MONTHS.map((m,i)=>{
-          const demand=state.products.reduce((s,p)=>s+(p.history[i]||0),0);
-          const supply=state.production.lines.reduce((s,l)=>s+l.capacity*4,0);
-          const gap=supply-demand;
-          return <tr key={m}>
-            <td>{m}</td>
-            <td className="num">{demand}</td>
-            <td className="num">{supply}</td>
-            <td className="num" style={{color:gap>=0?'var(--gn)':'var(--dg)',fontWeight:600}}>{gap>=0?'+':''}{gap}</td>
-            <td style={{fontSize:10,color:'var(--tx2)'}}>{gap>=0?(gap>supply*0.3?'Build inventory / reduce shifts':'Balanced'):(Math.abs(gap)<supply*0.1?'Slight shortage — overtime':'Add shift / subcontract '+Math.abs(gap)+'u')}</td>
-          </tr>
-        })}</tbody>
-      </table>
+      {(()=>{
+        // Capacity = per-line capacity (units / weekly period) × weeks-per-month (4.33).
+        // Only lines flagged eligible for at least one configured product are counted; orphan
+        // lines that can't run any current SKU don't contribute to the supply ceiling.
+        const lines=state.production.lines||[];
+        const productIds=new Set(state.products.map(p=>p.id));
+        const eligibleLines=lines.filter(l=>{
+          const elig=l.eligibleProducts;
+          if(!elig||!elig.length)return true; // empty = runs everything
+          return elig.some(pid=>productIds.has(pid));
+        });
+        const orphanLines=lines.length-eligibleLines.length;
+        const WEEKS_PER_MONTH=4.33;
+        const supply=Math.round(eligibleLines.reduce((s,l)=>s+(+l.capacity||0)*WEEKS_PER_MONTH,0));
+        return <>
+          <table className="data-table">
+            <thead><tr><th>Month</th><th>Demand Plan</th><th>Supply Capacity</th><th>Gap</th><th>Action</th></tr></thead>
+            <tbody>{MONTHS.map((m,i)=>{
+              const demand=state.products.reduce((s,p)=>s+(p.history[i]||0),0);
+              const gap=supply-demand;
+              return <tr key={m}>
+                <td>{m}</td>
+                <td className="num">{demand}</td>
+                <td className="num">{supply}</td>
+                <td className="num" style={{color:gap>=0?'var(--gn)':'var(--dg)',fontWeight:600}}>{gap>=0?'+':''}{gap}</td>
+                <td style={{fontSize:10,color:'var(--tx2)'}}>{gap>=0?(gap>supply*0.3?'Build inventory / reduce shifts':'Balanced'):(Math.abs(gap)<supply*0.1?'Slight shortage — overtime':'Add shift / subcontract '+Math.abs(gap)+'u')}</td>
+              </tr>
+            })}</tbody>
+          </table>
+          <div style={{fontSize:9,color:'var(--tx3)',marginTop:4}}>
+            Supply = Σ(line capacity × {WEEKS_PER_MONTH} wk/mo) over {eligibleLines.length} eligible line{eligibleLines.length===1?'':'s'}{orphanLines?` · ${orphanLines} orphan line${orphanLines===1?'':'s'} excluded (no SKU eligibility)`:''}.
+            Aggregate view — assumes shared throughput across SKUs. For per-line / per-SKU bottleneck detection use Tab 4 RCCP.
+          </div>
+        </>;
+      })()}
     </div>
 
     {/* Network Visualization removed in v3.3.3 — replaced by real Physical Network (Tab 3 → Lanes) with actual lat/lon, distance, cost per tonne-km, mode, and lead time. Duplicate simple graph deleted. */}
@@ -11641,11 +12465,8 @@ function InventoryProjectionCard({state}){
   const solverMPS=solverMPSByProd&&solverMPSByProd.some(x=>Array.isArray(x))?solverMPSByProd:null;
   // Per-product safety stock + projection that builds up to SS
   const skuSS=products.map(p=>{
-    const h=p.history||[];
-    const mu=h.reduce((a,b)=>a+b,0)/Math.max(h.length,1);
-    const sigma=Math.sqrt(h.reduce((s,v)=>s+Math.pow(v-mu,2),0)/Math.max(h.length,1));
     const maxLTwk=Math.max(...(p.bom||[{leadTime:1}]).map(b=>+(b.leadTime)||1));
-    return Math.max(Math.round(z*sigma*Math.sqrt(maxLTwk/4.33)),1); // monthly SS units
+    return Math.max(safetyStockUnits(p,maxLTwk,z),1); // monthly SS units (canonical helper)
   });
   const capacityWarnings=[];
   const projs=products.map((p,pi)=>{
@@ -12160,8 +12981,8 @@ function MultiSKU15({state}){
       ['Avg Monthly',p=>Math.round(ad(p)/12)],
       ['Std Dev σ',p=>Math.round(sd(p))],
       ['LT (1st part)',p=>(p.bom||[])[0]?.leadTime+'wk'||'N/A'],
-      ['Safety Stock',p=>{const lt=(p.bom||[])[0]?.leadTime||2;return Math.round(z*sd(p)*Math.sqrt(lt));}],
-      ['Reorder Point',p=>{const lt=(p.bom||[])[0]?.leadTime||2;const ss=Math.round(z*sd(p)*Math.sqrt(lt));return Math.round(ad(p)/12/4*lt+ss);}],
+      ['Safety Stock',p=>{const lt=(p.bom||[])[0]?.leadTime||2;return safetyStockUnits(p,lt,z);}],
+      ['Reorder Point',p=>{const lt=(p.bom||[])[0]?.leadTime||2;const ss=safetyStockUnits(p,lt,z);return Math.round(ad(p)/12*(lt/4.33)+ss);}],
       ['EOQ',p=>{const D=ad(p);const S=(p.bom||[])[0]?.orderingCost||75;const mc2=(p.bom||[])[0]?.cost||10;const H=mc2*((p.bom||[])[0]?.holdPct||24)/100;return D>0&&H>0?Math.round(Math.sqrt(2*D*S/H)):'N/A';}],
     ]}/></Sec>
     <Sec id="s8" title="8. Outbound Logistics"><T rows={[
@@ -12414,8 +13235,8 @@ function CommandCenterTab({state,dispatch}){
             </div>
             <div style={{marginTop:6}}><strong style={{color:'var(--a4)'}}>SAFETY STOCK</strong>:</div>
             <div style={{paddingLeft:12}}>
-              SS = z × σ × √LT = {z.toFixed(3)} × {sigma.toFixed(1)} × √{maxLT} = <strong style={{color:'var(--ac)'}}>{Math.round(z*sigma*Math.sqrt(maxLT))} units</strong><br/>
-              <span style={{color:'var(--tx3)'}}>z={z.toFixed(3)} for {(state.config.serviceLevel*100).toFixed(0)}% service level | σ={sigma.toFixed(1)} from {h.length} months history | LT={maxLT}wk (longest subpart)</span>
+              {(()=>{const ltMonths=(maxLT/4.33);return <>SS = z × σ_monthly × √LT_months = {z.toFixed(3)} × {sigma.toFixed(1)} × √{ltMonths.toFixed(2)} = <strong style={{color:'var(--ac)'}}>{safetyStockUnits(p,maxLT,z)} units</strong></>})()}<br/>
+              <span style={{color:'var(--tx3)'}}>z={z.toFixed(3)} for {(state.config.serviceLevel*100).toFixed(0)}% service level | σ={sigma.toFixed(1)} from {h.length} months history | LT={maxLT}wk = {(maxLT/4.33).toFixed(2)} mo (longest subpart). LT converted to months because σ is monthly; mixing units would silently inflate SS by √4.33≈2.08×.</span>
             </div>
             <div style={{marginTop:6}}><strong style={{color:'var(--a4)'}}>EOQ</strong> (per first subpart):</div>
             <div style={{paddingLeft:12}}>
@@ -12542,8 +13363,10 @@ function CascadeTracker({state}){
     const sigma=Math.sqrt(h.reduce((s,v)=>s+Math.pow(v-avg,2),0)/Math.max(n,1));
     const maxLT=Math.max(...(p.bom||[]).map(b=>+b.leadTime||1),1);
     const mape=+p.mape||15;
-    const ss=z*(mape/100)*avg*Math.sqrt(maxLT);
-    const rop=avg/4*maxLT+ss;
+    // Canonical SS — same formula as InventoryProjectionCard / Sec s7
+    const ss=safetyStockUnits(p,maxLT,z);
+    // ROP: monthly demand × LT(in months) + SS. avg is monthly; maxLT is weeks → /4.33.
+    const rop=avg*(maxLT/4.33)+ss;
     const mc=(p.bom||[]).reduce((s,b)=>s+(+b.cost||0)*effQtyPer(b),0);
     const unitCost=mc+(+p.variableCost||0)+(+p.laborPerUnit||5);
     const margin=(+p.sellPrice||0)-unitCost;
@@ -12582,7 +13405,7 @@ function CascadeTracker({state}){
     {id:'d_margin',label:'Margin/u',value:`avg ${cur}${agg.avgMargin}`,from:['d_unitCost','i_sell'],to:['c_pmix','c_kpi']},
     {id:'d_holdCost',label:'Hold Cost/yr',value:`derived`,from:['d_mc','i_carry'],to:['c_proc','c_kpi']},
     {id:'d_effCap',label:'Effective Capacity',value:`derived`,from:['i_cap'],to:['c_proc','c_rccp']},
-    {id:'d_T',label:'Periods T',value:`${(state.planning?.horizonLength||52)*((state.planning?.timeGrain==='daily')?7:(state.planning?.timeGrain==='monthly')?(1/4.33):1)|0}`,from:['i_horizon'],to:['c_proc','c_pmix','c_mps']},
+    {id:'d_T',label:'Periods T',value:`${periodCount(state.planning||{})}`,from:['i_horizon'],to:['c_proc','c_pmix','c_mps']},
   ];
   const consumers=[
     {id:'c_proc',label:'Procurement MILP',accent:'var(--ac)'},
@@ -12988,6 +13811,7 @@ const TABS=[
   {id:'supply',   num:'05',label:'Suppliers & Procurement',short:'SUPPLY',   desc:'Vendors · OTIF',     icon:'🌐'},
   {id:'logistics',num:'06',label:'Logistics & Network',short:'LOGISTICS',desc:'Lanes · 3PL · CoG',   icon:'🚚'},
   {id:'finance',  num:'07',label:'Finance & Costs',    short:'FINANCE',  desc:'Cost · Cashflow',     icon:'💰'},
+  {id:'invest',   num:'7B',label:'Investment Decision',short:'INVEST',   desc:'NPV · Opp Cost · DSCR',icon:'💎'},
   {id:'optimize', num:'08',label:'Optimize & Solve',   short:'OPTIMIZE', desc:'MILP · Solve',        icon:'⚡'},
   {id:'analysis', num:'09',label:'Risk & Scenarios',   short:'ANALYSIS', desc:'Risk · Reports',      icon:'📊'},
   {id:'command',  num:'10',label:'Command Center',     short:'COMMAND',  desc:'Ops Center',          icon:'🎯'},
@@ -14199,11 +15023,21 @@ function App(){
   const [persistStatus,setPersistStatus]=useState('ok'); // 'ok' | 'quota' | 'off'
 
   // Cross-component tab navigation: any child can fire window.dispatchEvent(new CustomEvent('esim:setActiveTab',{detail:'demand'}))
+  // Round 7 — when navigation lands on a tab hidden by the current view mode,
+  // auto-switch the mode so the tab is reachable.
   useEffect(()=>{
-    const h=(e)=>{if(e.detail&&typeof e.detail==='string')setActiveTab(e.detail);};
+    const h=(e)=>{
+      if(e.detail&&typeof e.detail==='string'){
+        setActiveTab(e.detail);
+        const financeTabs=['setup','finance','invest','command','learn'];
+        const isFinanceTab=financeTabs.includes(e.detail);
+        const mode=state.config?.viewMode||'operational';
+        if(mode==='finance'&&!isFinanceTab)dispatch({type:'SET_VIEW_MODE',mode:'operational'});
+      }
+    };
     window.addEventListener('esim:setActiveTab',h);
     return()=>window.removeEventListener('esim:setActiveTab',h);
-  },[]);
+  },[state.config?.viewMode]);
 
   // Pillar 8 — debounced auto-save. Every state change schedules a localStorage write 500ms later.
   useEffect(()=>{
@@ -14249,6 +15083,7 @@ function App(){
       case 'supply':return <SupplyTab state={state} dispatch={dispatch}/>;
       case 'logistics':return <LogisticsTab state={state} dispatch={dispatch}/>;
       case 'finance':return <FinanceTab state={state} dispatch={dispatch}/>;
+      case 'invest':return <InvestmentDecisionTab state={state} dispatch={dispatch}/>;
       case 'optimize':return <OptimizeTab state={state} dispatch={dispatch}/>;
       case 'analysis':return <AnalysisTab state={state} dispatch={dispatch}/>;
       case 'command':return <CommandCenterTab state={state} dispatch={dispatch}/>;
@@ -14266,6 +15101,17 @@ function App(){
   const hzUnit=(planning.horizonUnit||'weeks').slice(0,1).toUpperCase();
   const grain=(planning.timeGrain||'weekly');
   const skuCount=(state.products||[]).length;
+  // Round 7 — view-mode-driven tab strip filter. Operational sees the full SCM strip
+  // (sap excluded by default — keep current behavior). Finance mode focuses on the
+  // financial-decision audience: setup (read-only), finance, invest, command, learn.
+  const viewMode=state.config?.viewMode||'operational';
+  const FINANCE_TAB_IDS=['setup','finance','invest','command','learn'];
+  const visibleTabs=viewMode==='finance'?TABS.filter(t=>FINANCE_TAB_IDS.includes(t.id)):TABS;
+  const switchMode=(m)=>{
+    dispatch({type:'SET_VIEW_MODE',mode:m});
+    const allowed=m==='finance'?FINANCE_TAB_IDS:TABS.map(t=>t.id);
+    if(!allowed.includes(activeTab))setActiveTab(m==='finance'?'finance':'setup');
+  };
 
   return <div className="app-shell shell-fluid" data-skin={skin}>
     <div className="mast">
@@ -14278,6 +15124,11 @@ function App(){
       </div>
       <LiveCascadeIndicator state={state}/>
       <div className="mast-right">
+        {/* Round 7 — App-level view-mode toggle. Finance mode hides operational tabs and lands on Tab 7. */}
+        <div className="skin-pill" title="Switch audience: Operational planners vs. Project/Finance decision-makers" style={{borderColor:viewMode==='finance'?'var(--ac)':'var(--br2)'}}>
+          <button className={viewMode==='operational'?'on':''} onClick={()=>switchMode('operational')}>🏭 Operational</button>
+          <button className={viewMode==='finance'?'on':''} onClick={()=>switchMode('finance')}>💎 Project / Finance</button>
+        </div>
         <div className="skin-pill" title="Switch visual theme">
           <button className={skin==='v1'?'on':''}  onClick={()=>setSkin('v1')}>V1 Mono</button>
           <button className={skin==='v3'?'on':''}  onClick={()=>setSkin('v3')}>V3 Riso</button>
@@ -14293,7 +15144,7 @@ function App(){
       </div>
     </div>
     <div className="tstrip">
-      {TABS.map(t=><button key={t.id} className={`tchip${activeTab===t.id?' on':''}`} onClick={()=>setActiveTab(t.id)}>
+      {visibleTabs.map(t=><button key={t.id} className={`tchip${activeTab===t.id?' on':''}`} onClick={()=>setActiveTab(t.id)}>
         <span className="tnum">{t.num}</span>
         <span className="tname">{t.short}</span>
         <span className="tdesc">{t.desc}</span>
