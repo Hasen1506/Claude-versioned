@@ -2219,7 +2219,9 @@ const defaultState={
     // work-center such as a single powder-coat booth feeding multiple lines). When sharedStageId is set, capacity
     // for that stage comes from the shared pool, not the line-local stage record (prevents double counting).
     topology:{
-      lines:[{id:'L1',name:'Main Line',stages:[
+      // R13 / Phase 1a · A2 — id+name aligned with `lines[]` registry above. The two arrays
+      // are kept in lockstep by the App mount-time sweep + the `renameLine` helper.
+      lines:[{id:'line1',name:'Line 1',stages:[
         {id:'S1',name:'Cutting',     machines:2,workers:2,cycleMin:6, oeePct:78,canOutsource:false,outsourceCostPerUnit:0,outsourceLeadDays:0,sharedStageId:null},
         {id:'S2',name:'Welding',     machines:3,workers:3,cycleMin:8, oeePct:72,canOutsource:false,outsourceCostPerUnit:0,outsourceLeadDays:0,sharedStageId:null},
         {id:'S3',name:'Powder Coat', machines:1,workers:1,cycleMin:4, oeePct:68,canOutsource:true, outsourceCostPerUnit:18,outsourceLeadDays:3,sharedStageId:'SH-PC'},
@@ -7824,6 +7826,15 @@ function ProductionArchitectureTab({state,dispatch}){
   const upLine=(lineId,patch)=>setTopo({...topo,lines:topo.lines.map(L=>L.id!==lineId?{...L}:{...L,...patch})});
   // T4-09 — solver-line patch helper (separate from topology line)
   const upSolverLine=(lineId,patch)=>setLines(lines.map(L=>L.id===lineId?{...L,...patch}:L));
+  // R13 / Phase 1a · A2 — Rename a line in BOTH the registry and the topology atomically.
+  // Registry is the source of truth for identity; topology mirrors. Either UI input
+  // (registry table or topology header) calls this so the two never drift.
+  const renameLine=(lineId,newName)=>{
+    dispatch({type:'SET_PRODUCTION',payload:{
+      lines:lines.map(L=>L.id===lineId?{...L,name:newName}:L),
+      topology:{...topo,lines:topo.lines.map(L=>L.id===lineId?{...L,name:newName}:L)},
+    }});
+  };
   const upMap=(skuId,patch)=>{
     const cur=skuMap.find(m=>m.skuId===skuId);
     if(cur)setMap(skuMap.map(m=>m.skuId===skuId?{...m,...patch}:m));
@@ -7890,9 +7901,10 @@ function ProductionArchitectureTab({state,dispatch}){
           </thead>
           <tbody>{lines.map(L=>{
             const oee=lineOEE(L,topo);
-            const netHrs=lineNetHrsPerWorkDay(L)*wd;
+            const netHrsDay=lineNetHrsPerWorkDay(L);
+            const netHrs=netHrsDay*wd;
             return <tr key={L.id}>
-              <td style={{fontWeight:700,color:'var(--ac)'}}><input value={L.name||''} onChange={e=>upSolverLine(L.id,{name:e.target.value})} style={{width:90,fontSize:10,fontWeight:700}}/></td>
+              <td style={{fontWeight:700,color:'var(--ac)'}}><input value={L.name||''} onChange={e=>renameLine(L.id,e.target.value)} style={{width:90,fontSize:10,fontWeight:700}} title="Renaming here also updates the topology card below."/></td>
               <td><NumInput min={1} max={3} value={L.shiftsPerDay||1} onChange={v=>upSolverLine(L.id,{shiftsPerDay:v})} style={{width:40,fontSize:10}}/></td>
               <td><NumInput value={L.hoursPerShift||8} onChange={v=>upSolverLine(L.id,{hoursPerShift:v})} style={{width:40,fontSize:10}}/></td>
               <td><NumInput value={L.breakMins||30} onChange={v=>upSolverLine(L.id,{breakMins:v})} style={{width:42,fontSize:10}}/></td>
@@ -7905,7 +7917,7 @@ function ProductionArchitectureTab({state,dispatch}){
               <td><NumInput value={L.oeePerformance??92} onChange={v=>upSolverLine(L.id,{oeePerformance:v})} style={{width:42,fontSize:10}}/></td>
               <td><NumInput value={L.oeeQuality??98} onChange={v=>upSolverLine(L.id,{oeeQuality:v})} style={{width:42,fontSize:10}}/></td>
               <td className="num" style={{color:oee>=0.75?'var(--gn)':oee>=0.6?'var(--a4)':'var(--dg)',fontWeight:700}}>{(oee*100).toFixed(1)}%</td>
-              <td className="num" style={{color:'var(--a2)',fontWeight:600}}>{netHrs.toFixed(1)}h</td>
+              <td className="num" style={{color:'var(--a2)',fontWeight:600}}>{netHrs.toFixed(1)}h<SectionInfo title="Net hrs/wk derivation"><strong>Net hrs/day</strong> = (shifts × hrs/shift) − (breakMins × shifts / 60)<br/>= ({(+L.shiftsPerDay||1)} × {(+L.hoursPerShift||8)}) − ({(+L.breakMins||30)} × {(+L.shiftsPerDay||1)} / 60)<br/>= <strong>{netHrsDay.toFixed(2)} hrs/day</strong><br/><br/><strong>Net hrs/wk</strong> = net hrs/day × workDays/wk<br/>= {netHrsDay.toFixed(2)} × {wd}<br/>= <strong style={{color:'var(--ac)'}}>{netHrs.toFixed(2)} hrs/week</strong><br/><br/><span style={{fontSize:10,color:'var(--tx2)'}}>Workdays/wk is set in <em>Tab 1 → Planning Calendar</em>. Breaks are deducted once per shift.</span></SectionInfo></td>
               <td>{lines.length>1&&<button className="btn btn-danger btn-sm" onClick={()=>delLine(L.id)}>×</button>}</td>
             </tr>;
           })}</tbody>
@@ -7926,7 +7938,7 @@ function ProductionArchitectureTab({state,dispatch}){
         const solverLine=lines.find(x=>x.id===L.id)||lines[Li];
         return <div key={L.id} style={{marginBottom:10,padding:8,background:'var(--bg2)',borderRadius:6,border:'1px solid var(--br)'}}>
         <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:6,flexWrap:'wrap'}}>
-          <input value={L.name} onChange={e=>upLine(L.id,{name:e.target.value})} style={{fontWeight:700,color:'var(--ac)',fontSize:13,maxWidth:220}}/>
+          <input value={L.name} onChange={e=>renameLine(L.id,e.target.value)} style={{fontWeight:700,color:'var(--ac)',fontSize:13,maxWidth:220}} title="Renaming here also updates the Line Registry above."/>
           <span style={{fontSize:10,color:'var(--tx3)'}}>· bottleneck: <strong>{bottleneckStage(L)?.name||'—'}</strong> @ {Math.round(stageThroughputPerHr(bottleneckStage(L)||{}))} u/hr ⇒ line throughput <strong style={{color:'var(--gn)'}}>{lineCapPerPeriod(L,solverLine)} u/{grainLabel(state.planning).slice(0,-1)}</strong></span>
           <span style={{flex:1}}/>
           <button onClick={()=>addStage(L.id)} style={{fontSize:10,padding:'3px 8px',background:'var(--ac)',color:'#000',border:'none',borderRadius:3,cursor:'pointer',fontWeight:700}}>⊕ Stage</button>
@@ -7976,6 +7988,38 @@ function ProductionArchitectureTab({state,dispatch}){
     {/* T4-09 — SKU → Line mapping. Always reads from current topo.lines (no stale references). */}
     <CollapsibleCard title="⑤ Map SKUs to Lines" defaultOpen={true} accent="var(--a2)" badge={`${state.products.length} SKUs · ${skuMap.length} explicit mapping${skuMap.length===1?'':'s'}`}
       info={<><strong>T4-09:</strong> The Line dropdown lists every line currently in the topology — newly added lines appear here immediately. Stage sequence defaults to all line stages in order; uncheck stages this SKU skips (e.g. powder coat for a non-painted part).</>}>
+      {/* R13 / Phase 1a · A3 — Help text + bidirectional summary strips before the editor.
+          Lets the user audit "what runs where" without reading every row of the table below. */}
+      <div style={{fontSize:10,color:'var(--tx2)',marginBottom:8,padding:'6px 8px',background:'rgba(56,189,248,.04)',borderRadius:4,border:'1px solid var(--br)'}}>
+        Each SKU is currently <strong>assigned to one line</strong> in the editor below — that's the line the solver schedules it on by default. The two summaries are derived views: the first shows which SKUs each line carries, the second shows which line each SKU runs on. Multi-line concurrency for a single SKU is a Phase 2 feature (workforce/asset wiring) — not yet supported by the schema.
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:6,marginBottom:8}}>
+        {topo.lines.map(L=>{
+          const skusOnLine=state.products.filter(p=>{const m=skuMap.find(x=>x.skuId===p.id);return m&&m.lineId===L.id;});
+          return <div key={L.id} style={{padding:'5px 8px',background:'var(--bg2)',borderRadius:4,border:'1px solid var(--br)'}}>
+            <div style={{fontSize:10,fontWeight:700,color:'var(--ac)',marginBottom:3}}>🏭 {L.name}</div>
+            <div style={{display:'flex',gap:3,flexWrap:'wrap'}}>
+              {skusOnLine.length===0
+                ?<span style={{fontSize:9,color:'var(--tx3)',fontStyle:'italic'}}>(no SKUs mapped — defaults route here if first line)</span>
+                :skusOnLine.map(p=><span key={p.id} className="badge" style={{fontSize:9,background:'rgba(56,189,248,.10)',color:'var(--ac)'}}>{p.name}</span>)}
+            </div>
+          </div>;
+        })}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:6,marginBottom:10}}>
+        {state.products.map(p=>{
+          const m=skuMap.find(x=>x.skuId===p.id);
+          const mappedLine=m?topo.lines.find(L=>L.id===m.lineId):null;
+          return <div key={p.id} style={{padding:'5px 8px',background:'var(--bg3)',borderRadius:4,border:'1px solid var(--br)'}}>
+            <div style={{fontSize:10,fontWeight:700,color:'var(--a2)',marginBottom:3}}>📦 {p.name}</div>
+            <div style={{display:'flex',gap:3,flexWrap:'wrap'}}>
+              {mappedLine
+                ?<span className="badge" style={{fontSize:9,background:'rgba(63,185,80,.10)',color:'var(--gn)'}}>{mappedLine.name}</span>
+                :<span style={{fontSize:9,color:'var(--tx3)',fontStyle:'italic'}}>(unmapped — falls back to {topo.lines[0]?.name||'first line'})</span>}
+            </div>
+          </div>;
+        })}
+      </div>
       <table className="data-table">
         <thead><tr><th>SKU</th><th>Line</th><th>Stage sequence</th></tr></thead>
         <tbody>{state.products.map(p=>{
@@ -15516,6 +15560,32 @@ function App(){
     const skin=state.config.skin||'v1';
     document.documentElement.setAttribute('data-skin',skin);
   },[state.config.skin]);
+
+  // R13 / Phase 1a · A2 — On mount, reconcile registry↔topology id drift. Older seed had
+  // mismatched ids ('line1' in the registry vs 'L1' in the topology). For users whose
+  // localStorage still holds that older shape, this sweep re-keys the orphaned topology
+  // lines to match registry ids by index — preserving any stages they've already defined.
+  useEffect(()=>{
+    const lines=state.production?.lines||[];
+    const topo=state.production?.topology;
+    if(!topo||!topo.lines||!lines.length) return;
+    const regIds=new Set(lines.map(L=>L.id));
+    const topoIds=new Set(topo.lines.map(L=>L.id));
+    const orphanReg=lines.filter(L=>!topoIds.has(L.id));
+    if(orphanReg.length===0) return;
+    let next=[...topo.lines];
+    let changed=false;
+    orphanReg.forEach(regL=>{
+      const otIdx=next.findIndex(tL=>!regIds.has(tL.id));
+      if(otIdx>=0){
+        next=next.map((tL,idx)=>idx===otIdx?{...tL,id:regL.id,name:regL.name}:tL);
+        regIds.add(regL.id);
+        changed=true;
+      }
+    });
+    if(changed) dispatch({type:'SET_PRODUCTION',payload:{topology:{...topo,lines:next}}});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
 
   const renderTab=()=>{
     switch(activeTab){

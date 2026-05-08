@@ -17,6 +17,145 @@
 
 ---
 
+## A-5. What shipped in Round 13 (Tab 4 Phase 1a — UI coherence)
+
+**Working file sizes after R13:** `index.html` script block 1,278,520 bytes
+(R12 baseline: 1,272,848; net +5.6KB). `procurement.py` unchanged at 1,639 lines.
+No backend changes this round.
+
+### A-5.1 — Why R13 was scoped narrow
+The user dropped a ~19-concern brain-dump on Tab 4 (Production) covering UI
+inconsistencies, missing workforce/asset/solver semantics, and a request for a
+Cartesian-style live MILP playground. Doing all of it in one round would have
+been ~5× a normal round. The user confirmed full scope (A+B+C+D + live
+playground), but Phase-1 exploration showed every later phase reads from the
+line registry → topology drift would propagate downstream. **R13 = Phase 1a
+only**: pure UI coherence, no schema migrations, no solver changes. The
+remaining phases are tracked in section A-5.5 below.
+
+### A-5.2 — R13.A1 · Net hrs/week info icon (`index.html:7910`)
+Added a `SectionInfo` popover next to the Net hrs/wk cell in the Line Registry
+table. Shows the live formula:
+
+```
+Net hrs/day = (shifts × hrs/shift) − (breakMins × shifts / 60)
+            = (1 × 8) − (30 × 1 / 60) = 7.5 hrs/day
+Net hrs/wk  = net hrs/day × workDays = 7.5 × 6 = 45 hrs/week
+```
+
+Numbers are computed per-line from `state.production.lines[*].{shiftsPerDay,
+hoursPerShift, breakMins}` and `state.planning.workDays`. Reuses existing
+`SectionInfo` component at `index.html:2982`.
+
+### A-5.3 — R13.A2 · Registry ↔ Topology auto-sync
+Three coordinated changes fixed the "Main Line vs Line 1" / "Line 2 doesn't
+appear in topology" complaints:
+
+1. **Seed alignment** at `index.html:2222` — topology line is now
+   `{id:'line1', name:'Line 1'}` matching the registry seed at `index.html:2211`.
+   Old seed had `{id:'L1', name:'Main Line'}` which never matched.
+
+2. **App mount sweep** in `App` component at `index.html:15564` — for users
+   whose persisted localStorage state still has the older mismatched ids,
+   re-keys orphaned topology lines to match registry ids by index, preserving
+   any stages they've defined. Idempotent, runs once per mount.
+
+3. **`renameLine` helper** at `index.html:7829` — single function that updates
+   the line name in BOTH `state.production.lines[]` (registry) AND
+   `state.production.topology.lines[]` (topology) atomically via a single
+   `SET_PRODUCTION` dispatch. Both UI inputs (registry table at `index.html:7895`
+   and topology header at `index.html:7929`) call this helper, so renames can
+   never drift again.
+
+R12-and-earlier behavior of `addLine` / `delLine` already mirrored both arrays
+(verified at `index.html:7810–7823`), so no changes needed there — only the
+seed and rename paths were broken.
+
+### A-5.4 — R13.A3 · SKU↔Line bidirectional summary (`index.html:7991+`)
+Added two derived read-only summary strips above the existing "Map SKUs to
+Lines" editor table:
+
+- **Per line** (cyan badge): which SKUs are mapped to this line via `skuMap`.
+- **Per SKU** (green badge): which line this SKU runs on (or `(unmapped —
+  falls back to first line)` if no mapping exists).
+
+Both strips re-derive on every render from `skuMap` + `topo.lines` — no new
+state. A help-text banner above the strips clarifies that current schema
+allows ONE line per SKU; multi-line concurrency is a Phase-2 deferral.
+
+### A-5.5 — R13 verification matrix
+
+| # | Change | Path | Verification | Result |
+|---|---|---|---|---|
+| 1 | Seed alignment | `index.html:2222` | grep shows `{id:'line1',name:'Line 1'` | ✓ |
+| 2 | Mount-time sweep | `index.html:15564` | useEffect with `[]` deps; re-keys orphan topology lines | ✓ |
+| 3 | renameLine helper | `index.html:7829` | grep shows single `SET_PRODUCTION` w/ both keys | ✓ |
+| 4 | Registry rename input | `index.html:7895` | onChange calls `renameLine` | ✓ |
+| 5 | Topology rename input | `index.html:7929` | onChange calls `renameLine` | ✓ |
+| 6 | Net-hrs info icon | `index.html:7910` | SectionInfo with live numbers | ✓ |
+| 7 | A3 bidirectional strips | `index.html:7991+` | Help banner + 2 grids | ✓ |
+| 8 | Babel parse | full script block | 1,278,520 chars parsed cleanly | ✓ |
+
+No backend changes; profitmix/procurement/production solvers unchanged.
+
+### A-5.6 — Deferred (Phases 1b → 4 still open)
+
+**Phase 1b — Cycle-time + OEE provenance**
+- A4: `resolveCycleTime(productId, lineId, state) → {value, source}` resolver;
+  merge ④+⑥+⑦ cards into one Throughput Matrix with provenance badges.
+- A5: `resolveLineOEE(lineId, state) = Π(stage.oeePct/100)`. Mark line-level
+  availability/performance/quality fields as derived; banner on line registry.
+- A7: Shared-stage changeover — when `stage.sharedStageId` set, changeover
+  attaches to the shared work-center, not the per-line matrix.
+- A6: Decide on `op.parallelism` — expose as "concurrent lines" multiplier
+  on skuMap rows OR remove orphaned solver hookup at `index.html:6166`.
+
+**Phase 2 — Workforce + Asset → Line wiring**
+- B1–B5: New `state.production.workforce` branch (`salariedHeadcount`,
+  `salariedMonthlyCost`, `hourlyHeadcountCap`, `otCapHrs`, `idleSalariedFlag`).
+  New `state.config.laborCostMode: 'per_unit'|'hourly'|'salaried_idle'`.
+  Per-stage `laborMode: 'machine'|'labor'|'mixed'`. Defaults preserve current
+  behavior. Conflict banner when Tab 2 `laborPerUnit > 0` and mode is `'hourly'`.
+- C1–C4: Optional `lineId`, `stageId` on assets at `index.html:10504`.
+  Per-line depreciation roll-up echoed in line registry. "Componentise" prompt
+  to create asset for stage's machines. Investment Decision tab consumes
+  "expand line X" CapEx proposals.
+
+**Phase 3 — Production solver semantics**
+- D1: Write `/workspaces/Claude-versioned/PRODUCTION_MILP_SPEC.md` —
+  per-solver verbal model: objective, decision vars, constraints, assumptions,
+  explicit "does NOT model" list.
+- D2: Demand-ceiling / MTO-floor toggle in Tab 3 + echo in Tab 4 ⑧.
+- D3: Low-util shutdown recommendation — post-solve heuristic in
+  `production.py` returning `{period, type:'shutdown', savings, rehire_cost}`.
+- D4: CapEx expansion suggester — extends sensitivity card at
+  `index.html:8171` with delta-margin + payback per scenario.
+  New `/api/solve/production-sensitivity` endpoint.
+- D5: Objective mode toggle — `profitmix.py` param
+  `objective: 'profit'|'throughput'|'margin_per_hour'`.
+- D6: Per-stage worker-vs-machine cost integration via Phase-2 `laborMode`.
+- D7: Explicit MPS output card at top of Tab 4 (or promote to Tab 5).
+
+**Phase 4 — Live MILP playground (Cartesian-style)**
+- New tab id `'milplab'`. Three-pane: read-only Monaco showing current
+  `.py` source / live JSON input panel / live result + shadow prices +
+  binding constraints + LP gap + runtime + status.
+- **Hard "no" on editable code → backend execution** — arbitrary Python
+  upload to a Flask server running PuLP is RCE. Engineering cost of
+  sandboxing dwarfs user value.
+- Curated knobs only: M-big, time limit, gap tolerance, objective weights as
+  form fields with hyperlinks into highlighted source spans.
+- Backend: after `prob.solve()`, iterate `prob.constraints.items()` →
+  emit `{name, slack, pi}`. New `/api/source/<solver>` and
+  `/api/solve/<solver>?live=1` routes.
+- Monaco loaded via CDN, not bundled.
+
+**Phase 5 (optional) — Cartesian-specific lifts**
+Deferred until the user can paste screenshots. Claude has no web access in
+this session and cannot browse https://cartesian.app/.
+
+---
+
 ## A-4. What shipped in Round 12 (Honest Bucket 4 cleanup + R11 backend deferrals)
 
 **Working file sizes after R12:** `procurement.py` 1639 lines (R11 baseline: 1539);
