@@ -17,6 +17,118 @@
 
 ---
 
+## A-8. What shipped in Round 14 (Tab 4 Phase 2 — Workforce model + Asset → Line wiring)
+
+**Working file size after R14:** `index.html` script block ≈ 1,306,937 bytes
+(R13.6: 1,291,407; net +15.5 KB — one new card, three new helpers, two new state
+branches, six new Field components, one conflict banner, one componentise
+affordance, one expansion badge, one new line-registry column). No backend
+changes — Phase 2 is UI/state only; Phase 3 (D5/D6) wires the labor cost mode
+and per-stage `laborMode` into the solvers.
+
+### A-8.1 — Why R14 was needed
+
+Phase 1 (R13/R13.5/R13.6) closed the cycle-time + OEE provenance loop. The next
+two structural gaps surfaced in the original brain-dump were:
+
+- **Labor cost double-charge risk.** Tab 02 had per-SKU `laborPerUnit` (charged
+  inside profitmix margin); Tab 04 line registry had `hourlyRate` (charged via
+  OT cost in production.py). The two are independent — both could be non-zero,
+  both would charge, no flag warned the user. There was no concept of an
+  org-wide labor envelope at all.
+- **Assets ↔ lines not wired.** The asset registry (Tab 05) was a flat list with
+  no notion of "which line does this CNC belong to." Per-line CapEx was therefore
+  invisible from the line registry; "expand line X" investment proposals had no
+  schema to live in.
+
+R14 establishes the schema + UI for both, with defaults that preserve current
+behavior. Solver-side enforcement is deferred to Phase 3.
+
+### A-8.2 — What changed (B · Workforce)
+
+- **B1 — State branches.** Two new defaults:
+  - `state.config.laborCostMode: 'per_unit'` (default; matches R13.6 behavior).
+    Other modes: `'hourly'`, `'salaried_idle'`. Phase 3 wires the solver.
+  - `state.production.workforce: { salariedHeadcount, salariedMonthlyCost, hourlyHeadcountCap, otCapHrs, idleSalariedFlag }`.
+    Org-wide envelope; per-line `workersPerShift` continues to live in `lines[]`.
+- **B2 — Per-stage `laborMode`.** New field on each topology stage:
+  `'machine' | 'labor' | 'mixed'` (default `'mixed'`). Seeded into the four
+  default stages (Cutting/Welding/Powder Coat/Assembly) with realistic values.
+  Rendered as a `<select>` column in Lines × Stages. `addStage` and `addLine`
+  helpers seed `'mixed'` on new stages.
+- **B3 — Workforce & Labor Cost Mode card.** New collapsible card on Tab 04
+  between ② Line Registry and ③ Lines × Stages. Contains: mode dropdown,
+  five workforce numeric/boolean fields, status echo in the badge, and a
+  "How modes interact" footnote that calls out the Phase 2 vs Phase 3 split.
+- **B4 — Conflict banner.** Two surfaces:
+  1. Inside the Workforce card itself: lists every product whose
+     `laborPerUnit > 0` when mode is `'hourly'`.
+  2. On Tab 02 § Fixed & Setup Costs (per-SKU): warns the user editing this
+     SKU that the value will be double-charged in `'hourly'` mode.
+
+### A-8.3 — What changed (C · Asset → Line wiring)
+
+- **C1 — Asset shape extension.** `lineId: ''` and `stageId: ''` added to
+  `ADD_ASSET` reducer default. Two new dropdowns on each asset row in Tab 05:
+  🏭 Line (any line in `state.production.lines`) and ⚙ Stage (auto-filtered
+  to stages on the selected line; disabled until a line is picked). Selecting
+  a different line clears `stageId` to prevent stage→line drift.
+- **C2 — Per-line depreciation roll-up.** Two new helpers:
+  - `assetAnnualDepr(asset)` mirrors the inline calc in the asset footer.
+    Respects componentisation (Σ component depr overrides flat method).
+  - `lineAnnualDepreciation(lineId, assets)` filters assets by `lineId` and
+    sums. Site-wide assets (lineId === '') do not contribute to any line.
+
+  New `Depr/yr` column in the Line Registry table (after Net hrs/wk, before
+  the action column). Empty-line rendering is em-dash with grey colour;
+  populated rows highlight in `var(--a4)` with the asset count in the tooltip.
+- **C3 — Componentise affordance.** On stage rows in Lines × Stages where
+  `machines > 0` and the stage is not shared, surface a `+ Asset` button that
+  dispatches `ADD_ASSET` with name=`<line> · <stage>`, lineId, stageId, and
+  reasonable price/life defaults. Once an asset is tagged to (lineId,stageId),
+  the button is replaced with a chip showing `🧩 N · ₹X/yr` linking the count
+  + total annual depreciation. Click-tooltip lists asset names.
+- **C4 — Expansion badge.** Asset rows with `lineId` set render a thin chip
+  below the main row reading "🏭 Expansion of <line>" (and "· stage <name>"
+  if `stageId` is set too). Investment Decision tab integration ("expand line
+  X" CapEx proposals consumed by the solver) stays Phase 3 — the badge surfaces
+  the wiring without claiming any solver behavior yet.
+
+### A-8.4 — Verification (R14)
+
+- Babel parse OK on the post-edit script block (1,306,937 bytes).
+- `assetAnnualDepr` smoke test reproduces the inline footer math for SLM/WDV,
+  including the componentised CNC seed (Spindle/Tool Changer/Frame/Controller/Aux).
+- `lineAnnualDepreciation` correctly excludes site-wide assets (lineId='')
+  from per-line totals while preserving them in the global asset footer.
+- Default state: `state.config.laborCostMode === 'per_unit'`, all
+  `state.production.workforce.*` fields zero, all stage `laborMode` defaults
+  preserve `'mixed'` for any pre-R14 saved state. **No behavior change for
+  anyone who hasn't opted in.**
+- Conflict banner only fires when both halves of the conflict are present
+  (`laborCostMode === 'hourly'` AND any product `laborPerUnit > 0`).
+- Defensive falls-through: dropping a stage doesn't break the asset row
+  (the expansion badge gracefully shows "(missing line <id>)" if a line is
+  later deleted while assets still reference it — a deferred cleanup hook
+  for Phase 3).
+
+### A-8.5 — Carried forward to Phase 3
+
+- D5/D6 — Solver wiring for `laborCostMode` and per-stage `laborMode`. Profitmix
+  must skip per-unit labor when mode is `'hourly'` and add a labor-hours capacity
+  constraint instead. Production.py must respect `laborMode === 'machine'` (no
+  worker-count cap on throughput), `'labor'` (cycle scales inverse with workers),
+  `'mixed'` (current behavior).
+- Investment Decision tab consumption — surface "expand line X" CapEx proposals
+  pulled from `assets.filter(a=>a.lineId)`. Drives delta-throughput and payback.
+- Asset deletion when line is deleted — currently `delLine` does NOT cascade.
+  Decide: orphan (current), warn-and-keep, or auto-detach lineId.
+- Tab 4 § ② Line Registry could echo `Σ asset.uptimePct × machines` as a
+  cross-check against `lineOEE` — a possible Phase 3 "asset health vs OEE"
+  diagnostic.
+
+---
+
 ## A-7. What shipped in Round 13.6 (Tab 4 Phase 1a/1b — Backend wiring)
 
 **Working file sizes after R13.6:** `index.html` script block ≈ 1,291,407 bytes

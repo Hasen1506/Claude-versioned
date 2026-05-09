@@ -2178,6 +2178,15 @@ const defaultState={
     // a focused subset (setup read-only, finance, invest, command, learn) for the
     // Project/Finance audience. Persisted via the same localStorage path as the rest of config.
     viewMode:'operational',
+    // R14 / Phase 2 · B1 — Labor cost mode. Default 'per_unit' preserves R13.6 behavior
+    // (profitmix subtracts product.laborPerUnit from per-unit margin; production.py charges
+    // OT cost via line.hourlyRate). Other modes introduce alternative wage models — Phase 3
+    // wires the solver-side change.  Conflict banner fires when this is 'hourly' AND any
+    // product still has laborPerUnit > 0 to flag double-charge risk.
+    //   'per_unit'        : product.laborPerUnit (R13.6 default)
+    //   'hourly'          : workforce.hourlyHeadcountCap × hours @ hourlyRate (Phase 3 wires)
+    //   'salaried_idle'   : workforce.salariedHeadcount @ salariedMonthlyCost (idle-paid; Phase 3)
+    laborCostMode:'per_unit',
   },
   audit:[],
   rbac:{role:'planner',user:'demo@enterprise.sim'},
@@ -2225,11 +2234,14 @@ const defaultState={
     topology:{
       // R13 / Phase 1a · A2 — id+name aligned with `lines[]` registry above. The two arrays
       // are kept in lockstep by the App mount-time sweep + the `renameLine` helper.
+      // R14 / Phase 2 · B2 — `laborMode` per stage: 'machine' (machine-paced; labor incidental),
+      // 'labor' (labor-paced; cycle scales with workers), 'mixed' (current behavior, default).
+      // Phase 3 wires this into the solver — Phase 2 only establishes the field + UI.
       lines:[{id:'line1',name:'Line 1',stages:[
-        {id:'S1',name:'Cutting',     machines:2,workers:2,cycleMin:6, oeePct:78,canOutsource:false,outsourceCostPerUnit:0,outsourceLeadDays:0,sharedStageId:null},
-        {id:'S2',name:'Welding',     machines:3,workers:3,cycleMin:8, oeePct:72,canOutsource:false,outsourceCostPerUnit:0,outsourceLeadDays:0,sharedStageId:null},
-        {id:'S3',name:'Powder Coat', machines:1,workers:1,cycleMin:4, oeePct:68,canOutsource:true, outsourceCostPerUnit:18,outsourceLeadDays:3,sharedStageId:'SH-PC'},
-        {id:'S4',name:'Assembly',    machines:2,workers:4,cycleMin:5, oeePct:80,canOutsource:false,outsourceCostPerUnit:0,outsourceLeadDays:0,sharedStageId:null},
+        {id:'S1',name:'Cutting',     machines:2,workers:2,cycleMin:6, oeePct:78,laborMode:'mixed',canOutsource:false,outsourceCostPerUnit:0,outsourceLeadDays:0,sharedStageId:null},
+        {id:'S2',name:'Welding',     machines:3,workers:3,cycleMin:8, oeePct:72,laborMode:'labor',canOutsource:false,outsourceCostPerUnit:0,outsourceLeadDays:0,sharedStageId:null},
+        {id:'S3',name:'Powder Coat', machines:1,workers:1,cycleMin:4, oeePct:68,laborMode:'machine',canOutsource:true, outsourceCostPerUnit:18,outsourceLeadDays:3,sharedStageId:'SH-PC'},
+        {id:'S4',name:'Assembly',    machines:2,workers:4,cycleMin:5, oeePct:80,laborMode:'labor',canOutsource:false,outsourceCostPerUnit:0,outsourceLeadDays:0,sharedStageId:null},
       ]}],
       // T4-05 — pooled work centers (shared across lines). capacityPerHr is total throughput;
       // it is divided by the number of lines that consume from this shared resource.
@@ -2241,6 +2253,15 @@ const defaultState={
     capacityMode:'derived', // 'derived' | 'manual'
     // Sensitivity scenario (last computed)
     sensitivity:null,
+    // R14 / Phase 2 · B1 — Org-wide workforce envelope (separate from per-line workersPerShift).
+    // Defaults are zeros so existing behavior is preserved (Phase 3 wires the solver to enforce
+    // these caps when laborCostMode is 'hourly' or 'salaried_idle').
+    //   salariedHeadcount  : permanent headcount paid regardless of utilization
+    //   salariedMonthlyCost: total wage envelope per month for salariedHeadcount (currency-native)
+    //   hourlyHeadcountCap : ceiling on flex hourly hires the solver may use
+    //   otCapHrs           : org-wide weekly OT cap (line-level cap still applies — solver takes min)
+    //   idleSalariedFlag   : true → salaried wages charged even when no production scheduled
+    workforce:{salariedHeadcount:0,salariedMonthlyCost:0,hourlyHeadcountCap:0,otCapHrs:0,idleSalariedFlag:false},
   },
   // v3.5 — distribution network extended. Keep existing nodes[]/lanes[] (used by Physical Network card)
   // and add zones[] for demand aggregation + per-SKU allocation.
@@ -2656,7 +2677,10 @@ function reducer(state,action){
       break;
     }
     // Assets
-    case 'ADD_ASSET':s.assets=[...s.assets,{id:Date.now().toString(36),name:'New Asset',purchasePrice:100000,residualValue:10000,usefulLife:10,method:'SLM',wdvRate:20,purchaseDate:'2026-01',maintPerYr:5000,energyPerYr:3000,consumablesPerYr:1500,operatorPerYr:0,uptimePct:95,...(action.payload||{})}];break;
+    // R14 / Phase 2 · C1 — Optional lineId / stageId on assets (empty by default).
+    // Drives per-line depreciation roll-up echoed in the line registry, and the
+    // "expansion of <line>" badge on this asset row.
+    case 'ADD_ASSET':s.assets=[...s.assets,{id:Date.now().toString(36),name:'New Asset',purchasePrice:100000,residualValue:10000,usefulLife:10,method:'SLM',wdvRate:20,purchaseDate:'2026-01',maintPerYr:5000,energyPerYr:3000,consumablesPerYr:1500,operatorPerYr:0,uptimePct:95,lineId:'',stageId:'',...(action.payload||{})}];break;
     case 'UPDATE_ASSET':{const ai=s.assets.findIndex(a=>a.id===action.id);if(ai>=0){s.assets=[...s.assets];s.assets[ai]={...s.assets[ai],...action.payload}}break;}
     case 'DELETE_ASSET':s.assets=s.assets.filter(a=>a.id!==action.id);break;
     // Hedges
@@ -5217,6 +5241,11 @@ function ProductsTab({state,dispatch}){
             <strong style={{color:'var(--a4)'}}>• Fixed Factory</strong> = calendar-driven (rent, salaries, overhead). Accrues daily regardless of production. Annualized via workDays × 52.<br/>
             <strong style={{color:'var(--a4)'}}>• Labor/unit</strong> = direct labor (distinct from Variable Cost's labor component if you use overhead-style labor).
           </div>
+          {/* R14 / Phase 2 · B4 — double-charge banner. Visible only when this SKU has laborPerUnit>0
+              AND the org is in 'hourly' labor cost mode (which charges hours × wage on the line). */}
+          {(state.config.laborCostMode||'per_unit')==='hourly'&&laborU>0&&<div style={{padding:'7px 10px',background:'rgba(255,90,90,.08)',border:'1px solid var(--dg)',borderRadius:4,marginBottom:8,fontSize:11,color:'var(--dg)'}}>
+            ⚠ <strong>Double-charge risk.</strong> Org-wide labor cost mode is <code>hourly</code> (Tab 04 → ② · Workforce). The hourly wage on the line will charge for the labor hour, and this SKU's <code>Labor (₹/u) = {laborU}</code> will charge again for the same hour. Set this field to <strong>0</strong>, or switch labor cost mode back to <code>per_unit</code>.
+          </div>}
           <div className="grid4">
             <Field label={`Setup Cost (${cur}/batch)`} hint="Fires once each changeover to this SKU. Driver of lot-sizing: larger lots → fewer setups → less cost, but more inventory.">
               <NumInput value={setupC} onChange={v=>upProd({setupCost:v})} style={{color:'var(--a4)',fontWeight:600}}/>
@@ -7727,6 +7756,27 @@ function sharedStageIdsOnLine(line, topo){
   if(!lineTopo) return [];
   return Array.from(new Set((lineTopo.stages||[]).map(s=>s.sharedStageId).filter(x=>x)));
 }
+// R14 / Phase 2 · C2 — Annual depreciation for a single asset, respecting componentisation.
+// Mirrors the inline computation already used in the asset registry footer (line ~10783) so
+// the line-registry roll-up matches what the asset card itself shows.
+function assetAnnualDepr(a){
+  const comps=Array.isArray(a?.components)?a.components:[];
+  if(comps.length>0){
+    return Math.round(comps.reduce((cs,c)=>{
+      const alloc=(+a.purchasePrice||0)*Math.max(0,+c.allocationPct||0)/100;
+      if(c.method==='WDV') return cs+alloc*(+c.wdvRate||20)/100;
+      return cs+(alloc*0.95)/Math.max(1,+c.usefulLife||1);
+    },0));
+  }
+  if(a?.method==='SLM') return Math.round(((+a.purchasePrice||0)-(+a.residualValue||0))/Math.max(1,+a.usefulLife||1));
+  return Math.round((+a.purchasePrice||0)*(+a.wdvRate||20)/100);
+}
+// R14 / Phase 2 · C2 — Σ(annual depreciation) across assets tagged to this line.
+// Used by the "Depr/yr" column on Line Registry (Tab 04 § ②). Site-wide assets
+// (lineId='') do not contribute; they appear only in the global asset footer.
+function lineAnnualDepreciation(lineId, assets){
+  return (assets||[]).filter(a=>a&&a.lineId===lineId).reduce((s,a)=>s+assetAnnualDepr(a),0);
+}
 
 // T4-08 — Planned maintenance hours lost on a given line for a given period.
 function maintHoursLost(line, periodIdx, planning){
@@ -7864,14 +7914,15 @@ function ProductionArchitectureTab({state,dispatch}){
   };
   const addStage=(lineId)=>{
     const id='S'+Math.random().toString(36).slice(2,6);
-    const next={...topo,lines:topo.lines.map(L=>L.id!==lineId?L:{...L,stages:[...L.stages,{id,name:`Stage ${L.stages.length+1}`,machines:1,workers:1,cycleMin:5,oeePct:75,canOutsource:false,outsourceCostPerUnit:0,outsourceLeadDays:0,sharedStageId:null}]})};
+    // R14 / Phase 2 · B2 — new stages default to 'mixed' so behavior matches pre-Phase-2.
+    const next={...topo,lines:topo.lines.map(L=>L.id!==lineId?L:{...L,stages:[...L.stages,{id,name:`Stage ${L.stages.length+1}`,machines:1,workers:1,cycleMin:5,oeePct:75,laborMode:'mixed',canOutsource:false,outsourceCostPerUnit:0,outsourceLeadDays:0,sharedStageId:null}]})};
     setTopo(next);
   };
   const delStage=(lineId,stageId)=>setTopo({...topo,lines:topo.lines.map(L=>L.id!==lineId?L:{...L,stages:L.stages.filter(s=>s.id!==stageId)})});
   const addLine=()=>{
     const id='L'+Math.random().toString(36).slice(2,6);
     // T4-09 — also seed a matching solver-line entry so SKU↔Line mapping doesn't go stale.
-    setTopo({...topo,lines:[...topo.lines,{id,name:`Line ${topo.lines.length+1}`,stages:[{id:'S'+Math.random().toString(36).slice(2,6),name:'Stage 1',machines:1,workers:1,cycleMin:5,oeePct:75,canOutsource:false,outsourceCostPerUnit:0,outsourceLeadDays:0,sharedStageId:null}]}]});
+    setTopo({...topo,lines:[...topo.lines,{id,name:`Line ${topo.lines.length+1}`,stages:[{id:'S'+Math.random().toString(36).slice(2,6),name:'Stage 1',machines:1,workers:1,cycleMin:5,oeePct:75,laborMode:'mixed',canOutsource:false,outsourceCostPerUnit:0,outsourceLeadDays:0,sharedStageId:null}]}]});
     // R13 Phase 1b · A5 — new lines start in `oeeMode:'manual'` so the initial Composite reflects A·P·Q (76.6%).
     // Once the user adds stages in card ③, they can flip Auto to derive Composite = Π(stage.oeePct/100).
     setLines([...lines,{id,name:`Line ${lines.length+1}`,type:'shared',capacity:50,shiftsPerDay:1,hoursPerShift:8,breakMins:30,
@@ -7941,7 +7992,7 @@ function ProductionArchitectureTab({state,dispatch}){
     <CollapsibleCard title="② Line Registry — Labor, Shifts, OT & OEE" defaultOpen={true} accent="var(--a4)" badge={`${lines.length} line${lines.length===1?'':'s'} · workers + OT + line-OEE`}
       info={<><strong>T4-02/03/04/07:</strong> Workers per shift, hourly wage, and OT params per line drive the solver's labor-cost objective. <strong>OT cost</strong> = workers × OT_hrs × hourlyRate × OT_mult. <strong>Max OT/worker/wk</strong> caps the legal limit (Indian Factories Act ≈ 12 hrs/wk). <strong>OT threshold %</strong> = utilization above which OT becomes admissible — solver hint, prefers regular hrs below it. <strong>Line-level OEE</strong> = Availability × Performance × Quality. Per-product OEE on Tab 02 is a fallback only when this is missing.</>}>
       <div style={{overflowX:'auto'}}>
-        <table className="data-table" style={{fontSize:10,minWidth:980}}>
+        <table className="data-table" style={{fontSize:10,minWidth:1060}}>
           <thead>
             <tr>
               <th rowSpan={2}>Line</th>
@@ -7949,6 +8000,7 @@ function ProductionArchitectureTab({state,dispatch}){
               <th colSpan={4} style={{background:'rgba(240,180,41,.06)',textAlign:'center'}}>Labor & OT (T4-02/03/04)</th>
               <th colSpan={4} style={{background:'rgba(63,185,80,.06)',textAlign:'center'}}>Line OEE % (T4-07)</th>
               <th rowSpan={2}>Net hrs/wk</th>
+              <th rowSpan={2} title="R14 · Phase 2 · C2 — Σ annual depreciation across assets tagged to this line (Tab 05 → Asset Registry, set 🏭 Line on each asset).">Depr/yr</th>
               <th rowSpan={2}></th>
             </tr>
             <tr>
@@ -7991,6 +8043,10 @@ function ProductionArchitectureTab({state,dispatch}){
                 </div>
               </td>
               <td className="num" style={{color:'var(--a2)',fontWeight:600}}>{netHrs.toFixed(1)}h<SectionInfo title="Net hrs/wk derivation"><strong>Net hrs/day</strong> = (shifts × hrs/shift) − (breakMins × shifts / 60)<br/>= ({(+L.shiftsPerDay||1)} × {(+L.hoursPerShift||8)}) − ({(+L.breakMins||30)} × {(+L.shiftsPerDay||1)} / 60)<br/>= <strong>{netHrsDay.toFixed(2)} hrs/day</strong><br/><br/><strong>Net hrs/wk</strong> = net hrs/day × workDays/wk<br/>= {netHrsDay.toFixed(2)} × {wd}<br/>= <strong style={{color:'var(--ac)'}}>{netHrs.toFixed(2)} hrs/week</strong><br/><br/><span style={{fontSize:10,color:'var(--tx2)'}}>Workdays/wk is set in <em>Tab 1 → Planning Calendar</em>. Breaks are deducted once per shift.</span></SectionInfo></td>
+              {/* R14 / Phase 2 · C2 — per-line depreciation roll-up. Em-dash when no asset
+                  is tagged to this line. Click-through to the asset card is implicit
+                  (assets live on Tab 05). */}
+              {(()=>{const dep=lineAnnualDepreciation(L.id, state.assets||[]);const cnt=(state.assets||[]).filter(a=>a&&a.lineId===L.id).length;return <td className="num" style={{color:dep>0?'var(--a4)':'var(--tx3)',fontWeight:dep>0?700:400}} title={dep>0?`${cnt} asset${cnt===1?'':'s'} tagged to this line`:'No assets tagged to this line. Set 🏭 Line on an asset row in Tab 05.'}>{dep>0?`${cur}${dep.toLocaleString()}`:'—'}</td>;})()}
               <td>{lines.length>1&&<button className="btn btn-danger btn-sm" onClick={()=>delLine(L.id)}>×</button>}</td>
             </tr>;
           })}</tbody>
@@ -8003,6 +8059,59 @@ function ProductionArchitectureTab({state,dispatch}){
         <strong>OEE composite (R13 · A5):</strong> when the line has stages defined in card ③, Composite = Π(stage.oeePct/100) — serial composition across the topology. The A/P/Q columns become advisory (dimmed) and the badge under Composite shows <span style={{padding:'1px 4px',background:'rgba(56,189,248,.12)',color:'var(--ac)',borderRadius:2,fontWeight:600}}>Π N stages</span>. Click <em>Auto</em>/<em>Man</em> to toggle: Manual mode uses A·P·Q from this row instead. Industry world-class composite ≥ 85%.
       </div>
     </CollapsibleCard>
+
+    {/* R14 / Phase 2 · B3 — Workforce & Labor Cost Mode card. Sits between Line Registry (per-line
+        workersPerShift / hourlyRate) and Lines × Stages (per-stage laborMode). Captures the
+        org-wide envelope: salaried headcount, hourly cap, OT cap, and the labor cost MODE that
+        the solver will honor in Phase 3. Defaults preserve current 'per_unit' behavior. */}
+    {(()=>{
+      const wf=state.production.workforce||{salariedHeadcount:0,salariedMonthlyCost:0,hourlyHeadcountCap:0,otCapHrs:0,idleSalariedFlag:false};
+      const mode=state.config.laborCostMode||'per_unit';
+      const upWF=patch=>dispatch({type:'SET_PRODUCTION',payload:{workforce:{...wf,...patch}}});
+      const upMode=v=>dispatch({type:'SET_CONFIG',payload:{laborCostMode:v}});
+      // R14 / Phase 2 · B4 — conflict surface: 'hourly' mode + any product with laborPerUnit>0
+      // means the same labor hour gets charged twice. Banner echoed here AND on Tab 2.
+      const productsWithLPU=(state.products||[]).filter(p=>(+p.laborPerUnit||0)>0);
+      const conflict=mode==='hourly'&&productsWithLPU.length>0;
+      return <CollapsibleCard title="② · Workforce & Labor Cost Mode" defaultOpen={false} accent="var(--a4)"
+        badge={`mode: ${mode} · salaried ${wf.salariedHeadcount||0} · hourly cap ${wf.hourlyHeadcountCap||0}`}
+        info={<><strong>R14 · Phase 2 — workforce envelope.</strong> Per-line workers/wage are above; this card captures the <em>org-wide</em> shape. The <strong>labor cost mode</strong> drives how the solver charges direct labor: <code>per_unit</code> uses each SKU's <em>laborPerUnit</em> (Tab 02), <code>hourly</code> uses headcount × hours × wage from the line registry, <code>salaried_idle</code> charges the salaried envelope flat regardless of utilization. Defaults preserve R13.6 behavior — Phase 3 wires the solver-side change.</>}>
+        {conflict&&<div style={{padding:'7px 10px',background:'rgba(255,90,90,.08)',border:'1px solid var(--dg)',borderRadius:4,marginBottom:8,fontSize:11,color:'var(--dg)'}}>
+          ⚠ <strong>Double-charge risk.</strong> Labor mode is <code>hourly</code>, but {productsWithLPU.length} product{productsWithLPU.length===1?'':'s'} still {productsWithLPU.length===1?'has':'have'} <code>laborPerUnit &gt; 0</code> on Tab 02 ({productsWithLPU.map(p=>p.name).join(', ')}). The solver will charge the hourly wage on the line AND the per-unit labor cost — same labor hour, charged twice. Either zero out <em>laborPerUnit</em> on those SKUs, or switch this mode back to <code>per_unit</code>.
+        </div>}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:8,marginBottom:8}}>
+          <Field label="Labor cost mode" hint="per_unit (R13.6 default) | hourly (line-registry wage × hours) | salaried_idle (salaried pool, paid even when idle).">
+            <select value={mode} onChange={e=>upMode(e.target.value)} style={{fontWeight:600,color:mode==='per_unit'?'var(--gn)':mode==='hourly'?'var(--ac)':'var(--a4)'}}>
+              <option value="per_unit">per_unit (current)</option>
+              <option value="hourly">hourly</option>
+              <option value="salaried_idle">salaried_idle</option>
+            </select>
+          </Field>
+          <Field label="Salaried headcount" hint="Permanent staff paid regardless of utilization. Solver charges salariedMonthlyCost flat under salaried_idle mode.">
+            <NumInput value={wf.salariedHeadcount||0} onChange={v=>upWF({salariedHeadcount:+v||0})}/>
+          </Field>
+          <Field label={`Salaried monthly cost (${cur})`} hint="Total monthly wage envelope for salaried headcount. Charged flat under salaried_idle mode; otherwise advisory.">
+            <NumInput value={wf.salariedMonthlyCost||0} onChange={v=>upWF({salariedMonthlyCost:+v||0})}/>
+          </Field>
+          <Field label="Hourly headcount cap" hint="Ceiling on flex/contract hourly hires across all lines. Phase 3 will bind Σ(workersPerShift) ≤ this cap when mode is 'hourly'.">
+            <NumInput value={wf.hourlyHeadcountCap||0} onChange={v=>upWF({hourlyHeadcountCap:+v||0})}/>
+          </Field>
+          <Field label="Org OT cap (hrs/wk)" hint="Org-wide weekly OT ceiling. Solver takes min(this, line.maxOtHrsPerWorkerPerWeek × line workers). 0 = no org cap (line-level still applies).">
+            <NumInput value={wf.otCapHrs||0} onChange={v=>upWF({otCapHrs:+v||0})}/>
+          </Field>
+          <Field label="Idle-pay salaried" hint="When ON: salaried wages charged even in periods with zero production. When OFF: only when at least one line runs.">
+            <select value={wf.idleSalariedFlag?'1':'0'} onChange={e=>upWF({idleSalariedFlag:e.target.value==='1'})}>
+              <option value="0">No (only when running)</option>
+              <option value="1">Yes (always charged)</option>
+            </select>
+          </Field>
+        </div>
+        <div style={{fontSize:9,color:'var(--tx3)',padding:'5px 8px',background:'var(--bg3)',borderRadius:3,lineHeight:1.5}}>
+          <strong>How modes interact:</strong> in <code>per_unit</code> mode, Tab 02's <em>laborPerUnit</em> is the only labor charge — the line registry wage drives <em>only</em> OT cost (existing R13.6 behavior). In <code>hourly</code> mode, regular hours × wage become a charge too — set <em>laborPerUnit</em> to 0 to avoid double-counting. In <code>salaried_idle</code>, the salaried envelope is fixed and per-unit/hourly become zero.&nbsp;
+          <strong>Phase 2 status:</strong> UI + state only. The solvers do not yet read <code>laborCostMode</code> — Phase 3 (D5/D6) wires it.
+        </div>
+      </CollapsibleCard>;
+    })()}
 
     {/* Step 2b — Lines & Stages (topology). Stages now reference shared-stage registry when pooled. */}
     <CollapsibleCard title="③ Lines × Stages (operations)" defaultOpen={true} accent="var(--ac)" badge={`${topo.lines.length} line${topo.lines.length===1?'':'s'} · ${topo.lines.reduce((a,L)=>a+L.stages.length,0)} stages`}
@@ -8017,7 +8126,7 @@ function ProductionArchitectureTab({state,dispatch}){
           <button onClick={()=>addStage(L.id)} style={{fontSize:10,padding:'3px 8px',background:'var(--ac)',color:'#000',border:'none',borderRadius:3,cursor:'pointer',fontWeight:700}}>⊕ Stage</button>
         </div>
         <table className="data-table">
-          <thead><tr><th>Stage</th><th>Shared?</th><th>Machines</th><th>Workers</th><th>Cycle (min/u)</th><th>OEE %</th><th>Throughput (u/hr)</th><th>Bottleneck?</th><th></th></tr></thead>
+          <thead><tr><th>Stage</th><th>Shared?</th><th>Machines</th><th>Workers</th><th>Cycle (min/u)</th><th>OEE %</th><th title="R14 · Phase 2 · B2 — Labor mode per stage. 'machine' = machine-paced; 'labor' = labor-paced; 'mixed' = both (current default). Phase 3 wires this into the solver.">Labor mode</th><th>Throughput (u/hr)</th><th>Bottleneck?</th><th></th></tr></thead>
           <tbody>{L.stages.map(s=>{const tput=stageThroughputPerHr(s);const isBN=bottleneckStage(L)?.id===s.id;const isShared=!!s.sharedStageId;return<tr key={s.id} style={isBN?{background:'rgba(255,90,90,0.06)'}:null}>
             <td><input value={s.name} onChange={e=>upStage(L.id,s.id,{name:e.target.value})} style={{maxWidth:120}}/></td>
             <td><select value={s.sharedStageId||''} onChange={e=>upStage(L.id,s.id,{sharedStageId:e.target.value||null})} style={{fontSize:9,maxWidth:120}} title="Tag this stage as a member of a pooled work-center to share capacity with other lines.">
@@ -8028,9 +8137,28 @@ function ProductionArchitectureTab({state,dispatch}){
             <td><NumInput value={s.workers||1} disabled={isShared} style={{width:50,opacity:isShared?0.4:1}} onChange={v=>upStage(L.id,s.id,{workers:v})}/></td>
             <td><NumInput value={s.cycleMin||5} disabled={isShared} style={{width:55,opacity:isShared?0.4:1}} step="0.5" onChange={v=>upStage(L.id,s.id,{cycleMin:v})}/></td>
             <td><NumInput value={s.oeePct||75} disabled={isShared} style={{width:50,opacity:isShared?0.4:1}} onChange={v=>upStage(L.id,s.id,{oeePct:v})}/></td>
+            <td><select value={s.laborMode||'mixed'} onChange={e=>upStage(L.id,s.id,{laborMode:e.target.value})} disabled={isShared} style={{fontSize:9,maxWidth:90,opacity:isShared?0.4:1}} title="machine = throughput gated by machine cycle; labor = workers gate (more workers → faster); mixed = current behavior. Phase 3 wires this into the labor-cost objective.">
+              <option value="machine">machine</option>
+              <option value="labor">labor</option>
+              <option value="mixed">mixed</option>
+            </select></td>
             <td className="num" style={{color:isBN?'var(--dg)':'var(--gn)',fontWeight:600}}>{tput.toFixed(1)}{isShared?<span style={{fontSize:8,color:'var(--a3)'}}> ↪</span>:null}</td>
             <td>{isBN?<span style={{color:'var(--dg)',fontWeight:700}}>⛔ BOTTLENECK</span>:<span style={{color:'var(--tx3)'}}>—</span>}</td>
-            <td>{L.stages.length>1&&<button onClick={()=>delStage(L.id,s.id)} style={{fontSize:10,padding:'2px 6px',background:'transparent',color:'var(--tx3)',border:'1px solid var(--br)',borderRadius:3,cursor:'pointer'}}>×</button>}</td>
+            {/* R14 / Phase 2 · C3 — Componentise affordance. When this stage has machines but
+                no asset tagged to (this line, this stage), surface "+ Asset" so the user can
+                seed one with line/stage/name prefilled. Once an asset exists, show a chip
+                pointing to the asset (count + total annual depr) instead. */}
+            <td>{L.stages.length>1&&<button onClick={()=>delStage(L.id,s.id)} style={{fontSize:10,padding:'2px 6px',background:'transparent',color:'var(--tx3)',border:'1px solid var(--br)',borderRadius:3,cursor:'pointer'}}>×</button>}
+              {(()=>{
+                if(isShared||(+s.machines||0)<=0) return null;
+                const tagged=(state.assets||[]).filter(a=>a&&a.lineId===L.id&&a.stageId===s.id);
+                if(tagged.length===0){
+                  return <button onClick={()=>dispatch({type:'ADD_ASSET',payload:{name:`${L.name} · ${s.name}`,lineId:L.id,stageId:s.id,purchasePrice:500000,residualValue:25000,usefulLife:10,method:'SLM'}})} title={`Create an asset on Tab 05 prefilled with line=${L.name}, stage=${s.name}, machines=${s.machines}. Tracks per-stage CapEx in the line-registry depreciation roll-up.`} style={{fontSize:9,padding:'1px 5px',marginLeft:4,background:'transparent',color:'var(--ac)',border:'1px dashed var(--a2)',borderRadius:2,cursor:'pointer'}}>+ Asset</button>;
+                }
+                const sumDep=tagged.reduce((a,x)=>a+assetAnnualDepr(x),0);
+                return <span title={tagged.map(x=>x.name).join('\n')} style={{fontSize:9,padding:'1px 5px',marginLeft:4,background:'rgba(56,189,248,.10)',color:'var(--ac)',borderRadius:2,fontWeight:600}}>🧩 {tagged.length} · {cur}{sumDep.toLocaleString()}/yr</span>;
+              })()}
+            </td>
           </tr>})}</tbody>
         </table>
       </div>;
@@ -10691,6 +10819,19 @@ function FinanceTab({state,dispatch}){
             <Field label={`Purchase Price (${cur})`}><NumInput value={a.purchasePrice} onChange={v=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{purchasePrice:v}})}/></Field>
             <Field label="Residual Value"><NumInput value={a.residualValue} onChange={v=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{residualValue:v}})}/></Field>
             <Field label="Useful Life (yr)"><NumInput value={a.usefulLife} onChange={v=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{usefulLife:v}})}/></Field>
+            {/* R14 / Phase 2 · C1 — optional line/stage assignment for per-line depreciation roll-up. */}
+            <Field label="🏭 Line (opt)" hint="If this asset belongs to a specific production line, select it. Drives the per-line Depreciation column on Tab 04 § ② Line Registry. Leave blank for shared/site-wide assets (e.g., warehouse racking).">
+              <select value={a.lineId||''} onChange={e=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{lineId:e.target.value,stageId:''}})}>
+                <option value="">(unassigned)</option>
+                {(state.production.lines||[]).map(L=><option key={L.id} value={L.id}>{L.name}</option>)}
+              </select>
+            </Field>
+            <Field label="⚙ Stage (opt)" hint="If this asset belongs to a specific stage on the selected line (e.g., a CNC at Cutting), pick it. Optional — line-only assignment is fine.">
+              <select value={a.stageId||''} onChange={e=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{stageId:e.target.value}})} disabled={!a.lineId} style={{opacity:a.lineId?1:0.4}}>
+                <option value="">(line-only)</option>
+                {(()=>{const lineTopo=(state.production.topology?.lines||[]).find(L=>L.id===a.lineId);return (lineTopo?.stages||[]).map(s=><option key={s.id} value={s.id}>{s.name}</option>);})()}
+              </select>
+            </Field>
             <Field label="Method"><select value={a.method} onChange={e=>dispatch({type:'UPDATE_ASSET',id:a.id,payload:{method:e.target.value}})}><option value="SLM">SLM</option><option value="WDV">WDV</option><option value="UoP">UoP</option></select></Field>
             <Field label="Annual Depr"><input value={`${cur}${annDep.toLocaleString()}`} readOnly style={{color:'var(--a4)',fontWeight:600}}/></Field>
             <Field label="💰 TCO/yr" hint={`Total Cost of Ownership per year = depreciation (${cur}${annDep.toLocaleString()}) + maintenance (${cur}${maint.toLocaleString()}) + energy (${cur}${energy.toLocaleString()}) + consumables (${cur}${cons.toLocaleString()}) + operator (${cur}${op.toLocaleString()}) + downtime cost (${cur}${downtimeCostPerYr.toLocaleString()}).\nLife-cycle TCO over ${a.usefulLife}yr: ${cur}${tcoLife.toLocaleString()}.\nClick to expand the cost breakdown.`}>
@@ -10701,6 +10842,19 @@ function FinanceTab({state,dispatch}){
             </Field>
             <button className="btn btn-danger btn-sm" onClick={()=>dispatch({type:'DELETE_ASSET',id:a.id})}>×</button>
           </div>
+          {/* R14 / Phase 2 · C4 — Expansion badge. Surfaces line assignment so the asset
+              reads as a "claim against line X capacity" — ties into the per-line depreciation
+              roll-up on Tab 04. Investment Decision integration ("expand line X" CapEx
+              proposals) is deferred to Phase 3. */}
+          {a.lineId&&(()=>{
+            const L=(state.production.lines||[]).find(x=>x.id===a.lineId);
+            const st=(state.production.topology?.lines||[]).find(x=>x.id===a.lineId)?.stages?.find(s=>s.id===a.stageId);
+            return <div style={{marginTop:4,padding:'3px 8px',fontSize:9,background:'rgba(56,189,248,.06)',border:'1px solid var(--a2)',borderRadius:3,color:'var(--ac)'}}>
+              🏭 <strong>Expansion of {L?L.name:`(missing line ${a.lineId})`}</strong>
+              {st?<span style={{color:'var(--tx2)'}}> · stage <strong>{st.name}</strong></span>:null}
+              <span style={{marginLeft:8,fontSize:8,color:'var(--tx3)'}}>· depreciation rolls up to ② Line Registry</span>
+            </div>;
+          })()}
           {a._showComp&&<div style={{marginTop:6,padding:8,background:'rgba(56,189,248,.05)',border:'1px dashed var(--a2)'}}>
             <div style={{fontSize:9,color:'var(--tx3)',fontWeight:700,letterSpacing:.4,marginBottom:4,display:'flex',alignItems:'center',gap:6}}>
               <span>COMPONENT BREAKDOWN — IAS 16 / Schedule II</span>
