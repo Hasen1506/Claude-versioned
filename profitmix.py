@@ -38,6 +38,18 @@ def solve_profitmix(data):
     # If the caller forgot, we fall back to len(forecast) which is self-consistent.
     planning_horizon_months = int(data.get('planning_horizon_months', 0) or 0)
 
+    # R14.1 / Phase 3 · D5 — labor cost mode + org workforce envelope.
+    #   'per_unit'      (default, R13.6): margin includes product.labor_per_unit; no labor-hours cap.
+    #   'hourly'        : margin SKIPS labor_per_unit (avoids double-charge with the line wage);
+    #                     objective adds Σ_l line.hourly_rate × cycle_hrs × x[(k,l)]; if
+    #                     workforce.hourly_headcount_cap > 0, bind total labor hours.
+    #   'salaried_idle' : margin SKIPS labor_per_unit; subtract a flat fixed cost
+    #                     workforce.salaried_monthly_cost × horizon_months from total profit.
+    labor_cost_mode = data.get('labor_cost_mode', 'per_unit')
+    workforce = data.get('workforce', {}) or {}
+    wf_salaried_monthly_cost = float(workforce.get('salaried_monthly_cost', 0) or 0)
+    wf_hourly_headcount_cap = float(workforce.get('hourly_headcount_cap', 0) or 0)
+
     n = len(products)
     if not n:
         return {'error': 'No products'}
@@ -183,11 +195,16 @@ def solve_profitmix(data):
             (part.get('landed_cost') if part.get('landed_cost') is not None else part.get('cost', 0)) * part.get('qty_per', 1)
             for part in p.get('parts', [])
         )
-        labor_pu = p.get('labor_per_unit', 0) or 0
+        labor_pu_raw = p.get('labor_per_unit', 0) or 0
+        # R14.1 / Phase 3 · D5 — under 'hourly' or 'salaried_idle' modes, the per-unit labor cost
+        # is moved out of the margin (charged via line.hourly_rate × hours, or via the salaried
+        # envelope). Keeping it in here would double-charge the same labor hour.
+        labor_pu = labor_pu_raw if labor_cost_mode == 'per_unit' else 0
         margin = sell - var_cost - mat_cost - labor_pu
         products[k]['_margin'] = margin
         products[k]['_mat_cost'] = mat_cost
         products[k]['_labor_per_unit'] = labor_pu
+        products[k]['_labor_per_unit_raw'] = labor_pu_raw
 
         # Revenue from units actually sold (up to demand ceiling)
         obj.append(margin * q[k])
@@ -215,7 +232,42 @@ def solve_profitmix(data):
         horizon_days = 30 * planning_horizon_months
     fixed_total = sum((p.get('fixed_daily_cost', 0) or 0) * horizon_days for p in products)
 
-    prob += pulp.lpSum(obj) - fixed_total, "Total_Profit"
+    # R14.1 / Phase 3 · D5 — pulled forward from the constraints section so the labor-cost
+    # objective additions below (and the OrgLaborHrsCap constraint later) can reference them.
+    # Identical body to the prior in-constraints definition (R13 Phase 1b A4/A5).
+    cycle_times = [p.get('cycle_time', 1) for p in products]
+    def _cycle_hrs_for_line(k, line):
+        by_sku = line.get('cycle_time_by_sku_min', {}) or {}
+        if not by_sku:
+            return cycle_times[k]
+        v = by_sku.get(k)
+        if v is None:
+            v = by_sku.get(str(k))
+        if v is None or float(v) <= 0:
+            return cycle_times[k]
+        return float(v) / 60.0
+
+    # R14.1 / Phase 3 · D5 — labor cost objective additions.
+    #   'hourly' (line pool only): subtract Σ_l line.hourly_rate × Σ_k cycle_hrs × x[(k,l)] from profit.
+    #                              Without a line pool, fall back to skipping (no per-line wage to apply).
+    #   'salaried_idle': subtract a flat salaried envelope from profit (constant — affects total only).
+    hourly_labor_cost_terms = []
+    if labor_cost_mode == 'hourly' and has_line_pool:
+        for li, line in enumerate(lines_pool):
+            rate = float(line.get('hourly_rate', 0) or 0)
+            if rate <= 0:
+                continue
+            for k in range(n):
+                if (k, li) in x:
+                    ch = _cycle_hrs_for_line(k, line)
+                    hourly_labor_cost_terms.append(rate * ch * x[(k, li)])
+
+    salaried_fixed_cost = 0.0
+    if labor_cost_mode == 'salaried_idle':
+        months = planning_horizon_months if planning_horizon_months > 0 else 1
+        salaried_fixed_cost = wf_salaried_monthly_cost * months
+
+    prob += pulp.lpSum(obj) - pulp.lpSum(hourly_labor_cost_terms) - fixed_total - salaried_fixed_cost, "Total_Profit"
 
     # ── Constraints ──
     constraint_names = {}
@@ -245,25 +297,13 @@ def solve_profitmix(data):
         # Linearized: excess >= q - absorbable
         prob += excess[k] >= q[k] - di['absorbable'], f"Excess_{k}"
 
-    # Shared capacity (machine-hours)
-    cycle_times = [p.get('cycle_time', 1) for p in products]
-
+    # Shared capacity (machine-hours) — `cycle_times` and `_cycle_hrs_for_line` are defined earlier
+    # (R14.1 D5 pulled them forward); see comment block above the labor-cost objective additions.
     # R13 Phase 1b backend wiring · A4/A5 — per-(SKU, line) cycle time + per-line OEE.
     # Frontend resolves cycle time using override → Σ stage cycleMin → product fallback, and OEE
     # using stage product or A/P/Q. When `cycle_time_by_sku_min[k]` is present, prefer it (in minutes,
     # converted to hours here). When `oee` is present, derate available hours by it. Both fields are
     # OPTIONAL — payloads from older builds without these fields fall back to the previous behavior.
-    def _cycle_hrs_for_line(k, line):
-        by_sku = line.get('cycle_time_by_sku_min', {}) or {}
-        if not by_sku:
-            return cycle_times[k]
-        # JSON keys may be int or stringified int.
-        v = by_sku.get(k)
-        if v is None:
-            v = by_sku.get(str(k))
-        if v is None or float(v) <= 0:
-            return cycle_times[k]
-        return float(v) / 60.0
 
     if has_line_pool:
         # v3.4 — per-line hours budget. Σ_k cycle[k,l] * x[k,l] ≤ avail_hrs[l] × oee[l]
@@ -324,6 +364,20 @@ def solve_profitmix(data):
     if wh_max > 0:
         prob += pulp.lpSum(q[k] for k in range(n)) <= wh_max, "Warehouse"
         constraint_names['Warehouse'] = "Warehouse"
+
+    # R14.1 / Phase 3 · D5 — Org-wide labor-hours cap when 'hourly' mode is active and a cap is set.
+    # Total labor hours used = Σ_l Σ_k cycle_hrs(k,l) × x[(k,l)]. Cap = headcount_cap × 40 hrs/wk × weeks.
+    # Note: 40 hrs/wk is the assumed regular-hours baseline per worker; OT is a separate per-period
+    # ceiling enforced in production.py (this LP is strategic, not period-resolved). Skipped without
+    # a line pool (no per-line cycle_hrs data on the aggregate path).
+    if labor_cost_mode == 'hourly' and has_line_pool and wf_hourly_headcount_cap > 0:
+        weeks = max(1, round((30 * planning_horizon_months / 7) if planning_horizon_months > 0 else 4.33))
+        org_labor_hrs_cap = wf_hourly_headcount_cap * 40 * weeks
+        prob += pulp.lpSum(
+            _cycle_hrs_for_line(k, line) * x[(k, li)]
+            for k in range(n) for li, line in enumerate(lines_pool) if (k, li) in x
+        ) <= org_labor_hrs_cap, "OrgLaborHrsCap"
+        constraint_names['Org Labor Hours Cap (hourly)'] = "OrgLaborHrsCap"
 
     # ── Solve ──
     solver = pulp.PULP_CBC_CMD(msg=0, timeLimit=30)
@@ -494,12 +548,30 @@ def solve_profitmix(data):
                 'util_pct': round(line_hrs_used / max(line_cap_hrs, 0.01) * 100, 1),
             })
 
+    # R14.1 / Phase 3 · D5 — post-solve extraction of the new labor-cost components so the UI can
+    # show how much of total_cost came from hourly wages vs fixed salaried envelope.
+    hourly_labor_cost_total = 0.0
+    if labor_cost_mode == 'hourly' and has_line_pool:
+        for li, line in enumerate(lines_pool):
+            rate = float(line.get('hourly_rate', 0) or 0)
+            if rate <= 0:
+                continue
+            for k in range(n):
+                if (k, li) in x:
+                    ch = _cycle_hrs_for_line(k, line)
+                    qty = pulp.value(x[(k, li)]) or 0
+                    hourly_labor_cost_total += rate * ch * qty
+
     return {
         'status': 'Optimal',
         'total_profit': round(total_profit, 2),
         'total_revenue': round(total_revenue, 2),
-        'total_cost': round(total_cost + fixed_total, 2),
+        'total_cost': round(total_cost + fixed_total + hourly_labor_cost_total + salaried_fixed_cost, 2),
         'fixed_cost': round(fixed_total, 2),
+        # R14.1 / Phase 3 · D5 — labor cost transparency.
+        'labor_cost_mode_active': labor_cost_mode,
+        'hourly_labor_cost': round(hourly_labor_cost_total, 2),
+        'salaried_fixed_cost': round(salaried_fixed_cost, 2),
         'horizon_days': horizon_days,
         'contribution_margin': round(total_profit + fixed_total, 2),
         'margin_pct': round(total_profit / max(total_revenue, 1) * 100, 1),

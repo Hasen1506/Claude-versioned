@@ -25,6 +25,20 @@ def solve_production(data):
     hrs_per_shift = params.get('hours_per_shift', 8)
     makespan_weight = params.get('makespan_weight', 0.1)
 
+    # R14.1 / Phase 3 · D6 — labor cost mode + org workforce envelope.
+    #   'per_unit'     (R13.6): no extra cost; per-line OT cost objective unchanged.
+    #   'hourly'       : if workforce.hourly_headcount_cap > 0, add a per-period org-wide labor-hours
+    #                    cap (cap × 40 hrs/wk regular). OT vars remain capped per-line by the existing
+    #                    line.max_ot_hrs_per_worker_per_week × workers × shifts logic.
+    #   'salaried_idle': add a flat salaried envelope to the objective
+    #                    (salaried_monthly_cost × T_in_months). Constant — affects total cost only.
+    # Per-stage laborMode cycle adjustment is NOT done here — it is applied frontend-side in
+    # resolveCycleTime so cycle_time_by_sku_min reaches this solver already adjusted.
+    labor_cost_mode = data.get('labor_cost_mode', 'per_unit')
+    workforce = data.get('workforce', {}) or {}
+    wf_salaried_monthly_cost = float(workforce.get('salaried_monthly_cost', 0) or 0)
+    wf_hourly_headcount_cap = float(workforce.get('hourly_headcount_cap', 0) or 0)
+
     n_prod = len(products)
     n_lines = len(lines) if lines else 1
 
@@ -229,6 +243,13 @@ def solve_production(data):
     for k in range(n_prod):
         obj.append(makespan_weight * completion[k])
 
+    # R14.1 / Phase 3 · D6 — salaried-idle envelope as a flat fixed cost (added regardless of
+    # utilization). Periods are weekly; convert to months at 4.33 weeks/month.
+    salaried_fixed_cost = 0.0
+    if labor_cost_mode == 'salaried_idle':
+        salaried_fixed_cost = wf_salaried_monthly_cost * (T / 4.33)
+        obj.append(salaried_fixed_cost)
+
     prob += pulp.lpSum(obj)
 
     # Constraints
@@ -299,6 +320,22 @@ def solve_production(data):
             for k in range(n_prod):
                 # If product k was NOT on line l at t-1 but IS at t → switch
                 prob += switch[l, t] >= y[k, l, t] - y[k, l, t - 1], f"SwDet_{k}_{l}_{t}"
+
+    # R14.1 / Phase 3 · D6 — per-period org-wide labor-hours cap when 'hourly' mode is active and
+    # workforce.hourly_headcount_cap > 0. Bounds Σ_l Σ_k cycle_hrs(k,l) × x[k,l,t] for each period t.
+    # 40 hrs/wk regular per worker is the assumed baseline; OT vars (capped per-line) ride on top.
+    if labor_cost_mode == 'hourly' and wf_hourly_headcount_cap > 0:
+        org_reg_hrs_per_period = wf_hourly_headcount_cap * 40.0
+        for t in range(T):
+            terms = []
+            for k in range(n_prod):
+                for l in range(n_lines):
+                    cm = _cycle_min_by_sku(l, k)
+                    if cm is None or cm <= 0:
+                        continue
+                    terms.append((cm / 60.0) * x[k, l, t])
+            if terms:
+                prob += pulp.lpSum(terms) <= org_reg_hrs_per_period, f"OrgLaborHrs_{t}"
 
     # Solve
     solver = pulp.PULP_CBC_CMD(msg=0, timeLimit=60, gapRel=0.05)
@@ -377,6 +414,9 @@ def solve_production(data):
     return {
         'status': 'Optimal',
         'total_cost': round(total_cost, 2),
+        # R14.1 / Phase 3 · D6 — labor cost transparency.
+        'labor_cost_mode_active': labor_cost_mode,
+        'salaried_fixed_cost': round(salaried_fixed_cost, 2),
         'solve_time': round(solve_time, 2),
         'products': product_results,
         'lines': line_results,

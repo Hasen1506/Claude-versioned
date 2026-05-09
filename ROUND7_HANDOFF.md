@@ -17,6 +17,125 @@
 
 ---
 
+## A-9. What shipped in Round 14.1 (Tab 4 Phase 3 D5/D6 — Backend wiring for laborCostMode + per-stage laborMode)
+
+**Working file sizes after R14.1:** `index.html` script block ≈ 1,310,077 bytes
+(R14: 1,306,937; net +3 KB). `profitmix.py` ≈ 26 KB (R14: 24.7 KB).
+`production.py` ≈ 18.5 KB (R14: 17 KB).
+
+R14 established the schema + UI for the workforce envelope, per-stage labor
+mode, and asset↔line wiring; it explicitly deferred solver consumption to
+"Phase 3 D5/D6". R14.1 closes that deferral.
+
+### A-9.1 — What changed (frontend wiring)
+
+- **`resolveCycleTime`** ([index.html:7690](index.html#L7690)) now applies a
+  per-stage labor factor when summing stage cycles for a SKU's stage sequence:
+  - `stage.laborMode === 'labor'` → `cycleEff = cycleMin / max(workers, 1)` —
+    strict inverse with workers (baseline = 1 worker), modeling labor-paced
+    parallelism.
+  - `'machine' | 'mixed'` → factor 1, cycle unchanged.
+  - The result `source` field flips to `'stageSum-laborAdj'` when at least one
+    stage on the sequence is labor-paced, so card ⑥ provenance badges can show
+    the user that the cycle has been adjusted.
+  - **Default-state behavior change.** The R14 seed tagged Welding (workers=3)
+    and Assembly (workers=4) as `laborMode='labor'`. Their effective cycles
+    drop from 8→2.67 min and 5→1.25 min respectively, increasing line
+    throughput by ~40% versus R13.6. This is intended — the field's purpose
+    is exactly this scaling. Users who don't want it can switch those stages
+    back to `'mixed'` in card ③.
+
+- **/api/solve/production payload** ([index.html:6245](index.html#L6245)) now
+  includes top-level `labor_cost_mode` and `workforce` (snake-case keys for the
+  Python solvers). Per-stage `laborMode` reaches the solver implicitly via
+  `cycle_time_by_sku_min` (frontend baked it in) — no per-stage data is sent.
+
+- **/api/solve/profitmix payload** ([index.html:6290](index.html#L6290)) gets
+  the same `labor_cost_mode` + `workforce` + new per-line `hourly_rate` and
+  `workers_per_shift` (the latter pair previously only reached production.py;
+  profitmix needs them for the 'hourly' cost objective term).
+
+### A-9.2 — What changed (profitmix.py · D5)
+
+- New params at top of `solve_profitmix`:
+  ```python
+  labor_cost_mode = data.get('labor_cost_mode', 'per_unit')
+  workforce       = data.get('workforce', {}) or {}
+  ```
+- **Margin loop:** `labor_pu` is zeroed in the per-unit margin when mode is
+  `'hourly'` or `'salaried_idle'` (prevents double-charge with the hourly wage
+  on the line / the salaried envelope). The raw value is stashed on the
+  product as `_labor_per_unit_raw` for transparency.
+- **Objective additions:**
+  - `'hourly'` mode (line pool only): adds `Σ_l line.hourly_rate × cycle_hrs(k,l) × x[(k,l)]` as a cost (subtracted from profit).
+  - `'salaried_idle'` mode: subtracts a flat `salaried_monthly_cost × planning_horizon_months` from profit.
+- **New constraint:** `OrgLaborHrsCap` when mode is `'hourly'` AND
+  `workforce.hourly_headcount_cap > 0`:
+  `Σ_l Σ_k cycle_hrs(k,l) × x[(k,l)] ≤ headcount_cap × 40 hrs/wk × weeks`.
+  The 40-hrs/wk regular-hours baseline is documented as an assumption in code
+  comments; OT is line-level and lives in production.py, not here (profitmix
+  is strategic, not period-resolved).
+- `cycle_times` and `_cycle_hrs_for_line` were pulled forward from the
+  constraints section to before the objective build so the objective additions
+  can reference them. Bodies unchanged.
+- **Result echo:** `labor_cost_mode_active`, `hourly_labor_cost`,
+  `salaried_fixed_cost`. `total_cost` now includes both new components.
+
+### A-9.3 — What changed (production.py · D6)
+
+- New params at top of `solve_production`:
+  ```python
+  labor_cost_mode = data.get('labor_cost_mode', 'per_unit')
+  workforce       = data.get('workforce', {}) or {}
+  ```
+- **New constraint:** `OrgLaborHrs_{t}` per period when mode is `'hourly'`
+  AND `workforce.hourly_headcount_cap > 0`:
+  `Σ_l Σ_k cycle_hrs(k,l) × x[k,l,t] ≤ headcount_cap × 40 hrs/wk` per period.
+  Stays in addition to the existing per-line OT cap (workers × shifts ×
+  max_ot_hrs_per_worker_per_week).
+- **Objective addition:** salaried-idle envelope as a flat fixed cost,
+  `salaried_monthly_cost × T / 4.33` (assumes weekly periods, 4.33 weeks/month).
+  Added to `obj` before `prob += pulp.lpSum(obj)`, so it's transparent in
+  the minimization total.
+- **Per-stage `laborMode` is NOT re-applied here.** The frontend
+  `resolveCycleTime` already adjusted the cycle when assembling
+  `cycle_time_by_sku_min` — so production.py's existing throughput math
+  inherits the labor-paced scaling. Documented as a code comment at the top
+  of `solve_production`.
+- **Result echo:** `labor_cost_mode_active`, `salaried_fixed_cost`.
+
+### A-9.4 — Verification (R14.1)
+
+- Babel parse OK on the post-edit script block (1,310,077 bytes).
+- `python3 -c "import ast; ast.parse(...)"` clean on both `production.py` and
+  `profitmix.py`.
+- Smoke test (PuLP CBC, minimal payload):
+  - `profitmix per_unit`: profit 21,450; hourly_lc 0; salaried_fc 0 (R13.6 baseline preserved).
+  - `profitmix hourly`: profit 6,600; hourly_lc 16,500; salaried_fc 0 (labor charged via hours).
+  - `profitmix salaried_idle`: profit −126,900; salaried_fc 150,000 (= 50,000 × 3 months).
+  - `production hourly`: Optimal; mode echoed; salaried_fc 0.
+  - `production salaried_idle`: Optimal; salaried_fc 46,189 (= 50,000 × 4 / 4.33).
+
+### A-9.5 — Carried forward to Phase 3 (still open)
+
+- **D7** — Investment Decision tab consumption of `assets.filter(a => a.lineId)`
+  for "expand line X" CapEx proposals. R14 surfaced the wiring (the
+  "🏭 Expansion of <line>" badge); D7 is the solver consumption.
+- **D-cleanup** — Asset deletion when its line is deleted. `delLine` does NOT
+  cascade. Decide: orphan (current), warn-and-keep, or auto-detach lineId.
+- **D-asset-health** — `Σ asset.uptimePct × machines` echoed in line registry
+  as a cross-check vs `lineOEE` (asset health vs OEE diagnostic).
+- **D-throughput-cap-vs-cost** — Currently 'hourly' mode adds both a cost AND
+  (optionally) a hours cap. If users set headcount_cap > 0 the cap binds; if 0
+  it's purely a cost lever. This is intentional but worth surfacing in the UI
+  card (Workforce & Labor Cost Mode) as a hint.
+- **D-OT-envelope** — `workforce.ot_cap_hrs` is sent in the payload but the
+  solvers don't yet bind on it (only line-level `max_ot_hrs_per_worker_per_week`
+  applies). Org-wide OT envelope is straightforward to add as
+  `Σ_l ot[l,t] ≤ ot_cap_hrs` per period in production.py — deferred.
+
+---
+
 ## A-8. What shipped in Round 14 (Tab 4 Phase 2 — Workforce model + Asset → Line wiring)
 
 **Working file size after R14:** `index.html` script block ≈ 1,306,937 bytes

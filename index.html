@@ -6243,6 +6243,18 @@ function OptimizeTab({state,dispatch}){
             };
           }),
           params:{periods:periodCount(state.planning),changeover_cost:100,overtime_cost_per_hr:50,work_days:state.planning.workDays||6,hrs_per_period:((state.production.lines[0]?.hoursPerShift||8)*(state.production.lines[0]?.shiftsPerDay||1))*(state.planning.workDays||6),horizon_start_date:state.planning.horizonStartDate||null,time_grain:state.planning.timeGrain||'weekly',holidays:(state.planning.holidays||[]).map(h=>h.date)},
+          // R14.1 / Phase 3 · D5/D6 — labor cost mode + org workforce envelope. Production.py reads
+          // labor_cost_mode and workforce.* to add an hourly-headcount labor-hours cap and/or a
+          // salaried-idle fixed cost; per-stage laborMode is already baked into cycle_time_by_sku_min
+          // by resolveCycleTime, so production.py does not need stages.
+          labor_cost_mode:state.config.laborCostMode||'per_unit',
+          workforce:{
+            salaried_headcount:+(state.production.workforce?.salariedHeadcount||0),
+            salaried_monthly_cost:+(state.production.workforce?.salariedMonthlyCost||0),
+            hourly_headcount_cap:+(state.production.workforce?.hourlyHeadcountCap||0),
+            ot_cap_hrs:+(state.production.workforce?.otCapHrs||0),
+            idle_salaried_flag:!!(state.production.workforce?.idleSalariedFlag),
+          },
         };
       }else if(solverMode==='profitmix'){
         endpoint='/api/solve/profitmix';
@@ -6263,6 +6275,10 @@ function OptimizeTab({state,dispatch}){
             cycle_time_by_sku_min:ctByIdx,
             oee:resolveLineOEE(l,_topo).value,
             shared_stage_ids:sharedStageIdsOnLine(l,_topo),
+            // R14.1 / Phase 3 · D5 — hourly_rate + workers_per_shift reach profitmix.py for the
+            // 'hourly' labor cost objective term and (for completeness) the per-line hours envelope.
+            hourly_rate:+l.hourlyRate||0,
+            workers_per_shift:+l.workersPerShift||1,
             dedicated:!!l.dedicated,changeover_mins:+l.changeoverMins||30};
         });
         payload={
@@ -6288,6 +6304,20 @@ function OptimizeTab({state,dispatch}){
               weight_kg:+b.weightKg||1,volume_cbm:+b.volumeCbm||0.005,origin_city:b.originCity||'',dest_city:b.destCity||state.config.city||''}))})),
           lines:linesPayload,
           constraints:{shared_capacity:state.production.lines.reduce((a,l)=>a+l.capacity*periodCount(state.planning),0),budget:constraints.budget.on?constraints.budget.val:0,warehouse:constraints.warehouse.on?constraints.warehouse.val:0,replan_from_period:state.planning.replanFromPeriod??null},
+          // R14.1 / Phase 3 · D5 — labor cost mode + org workforce envelope. Profitmix.py reads
+          // labor_cost_mode to (a) skip per-unit labor in 'hourly'/'salaried_idle' modes (avoids
+          // double-charge with the hourly wage on the line), (b) add a labor-hours capacity
+          // constraint when 'hourly' AND hourly_headcount_cap>0, (c) charge a flat salaried envelope
+          // when 'salaried_idle'. Per-line hourly_rate moves with each line in linesPayload below;
+          // here we add the org-wide envelope and the mode flag.
+          labor_cost_mode:state.config.laborCostMode||'per_unit',
+          workforce:{
+            salaried_headcount:+(state.production.workforce?.salariedHeadcount||0),
+            salaried_monthly_cost:+(state.production.workforce?.salariedMonthlyCost||0),
+            hourly_headcount_cap:+(state.production.workforce?.hourlyHeadcountCap||0),
+            ot_cap_hrs:+(state.production.workforce?.otCapHrs||0),
+            idle_salaried_flag:!!(state.production.workforce?.idleSalariedFlag),
+          },
         };
       }else if(solverMode==='transport'){
         endpoint='/api/solve/transport';
@@ -7697,8 +7727,20 @@ function resolveCycleTime(prod, line, topo, skuMap){
     const seqIds = map.stageSeq||[];
     const stagesOnSeq = (lineTopo.stages||[]).filter(s=>seqIds.includes(s.id));
     if(stagesOnSeq.length){
-      const total = stagesOnSeq.reduce((a,s)=>a + (+s.cycleMin||0), 0);
-      if(total>0) return {value: total, source:'stageSum', stageCount: stagesOnSeq.length};
+      // R14.1 / Phase 3 · D6 — per-stage laborMode factor when summing stage cycles.
+      // 'labor' (workers gate throughput): cycle scales 1/max(workers,1) — strict inverse, baseline = 1 worker.
+      // 'machine' / 'mixed' (current default): factor = 1 (workers don't shorten cycle).
+      // Result: a labor-paced stage with workers=2 halves its cycle (each worker runs a parallel unit).
+      // This propagates straight to /api/solve/production + /api/solve/profitmix via cycle_time_by_sku_min,
+      // so production.py / profitmix.py do NOT re-apply the factor — single source of truth, frontend-side.
+      const stageCycleAdjusted = (s) => {
+        const cm = +s.cycleMin || 0;
+        if (s.laborMode === 'labor') return cm / Math.max(1, +s.workers||1);
+        return cm;
+      };
+      const total = stagesOnSeq.reduce((a,s)=>a + stageCycleAdjusted(s), 0);
+      const anyLabor = stagesOnSeq.some(s=>s.laborMode==='labor');
+      if(total>0) return {value: total, source: anyLabor?'stageSum-laborAdj':'stageSum', stageCount: stagesOnSeq.length};
     }
   }
   return {value: prod.cycleTime || 19, source:'productFallback', stageCount:0};
