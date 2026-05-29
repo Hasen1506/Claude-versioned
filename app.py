@@ -307,6 +307,73 @@ def api_solve_production():
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 
+# ─── R15 / Phase 3 · D4 — Production Sensitivity (CapEx Expansion Suggester) ───
+# Takes a base production payload + a list of scenarios. Each scenario is a perturbation:
+#   {line_idx, type:'shift'|'machine'|'worker', delta, capex}
+# Re-solves production.py once per scenario and returns delta_cost, delta_throughput, payback.
+# Payback = capex / annual_delta_margin where annual_delta_margin = avg per-unit margin × delta_throughput × periods_per_year.
+@app.route('/api/solve/production-sensitivity', methods=['POST'])
+def api_solve_production_sensitivity():
+    try:
+        data = request.json or {}
+        base = data.get('base', {})
+        scenarios = data.get('scenarios', [])
+        avg_margin = float(data.get('avg_margin_per_unit', 0) or 0)
+        periods_per_year = int(data.get('periods_per_year', 52) or 52)
+
+        base_result = solve_production(base)
+        base_cost = base_result.get('total_cost', 0)
+        base_produced = sum(int(l.get('total_produced', 0) or 0) for l in (base_result.get('lines') or []))
+
+        out = []
+        for sc in scenarios:
+            modified = json.loads(json.dumps(base))
+            line_idx = int(sc.get('line_idx', 0))
+            stype = sc.get('type', 'shift')
+            delta = float(sc.get('delta', 1) or 1)
+            capex = float(sc.get('capex', 0) or 0)
+            lines = modified.get('lines') or []
+            if 0 <= line_idx < len(lines):
+                L = lines[line_idx]
+                if stype == 'shift':
+                    L['shifts_per_day'] = float(L.get('shifts_per_day', 1) or 1) + delta
+                    L['capacity'] = int(float(L.get('capacity', 50) or 50) * (1 + delta / max(float(L.get('shifts_per_day', 1) or 1), 1)))
+                elif stype == 'machine':
+                    L['capacity'] = int(float(L.get('capacity', 50) or 50) * (1 + 0.5 * delta))  # heuristic: +1 machine lifts cap ~50% when bottleneck-relief
+                elif stype == 'worker':
+                    L['workers_per_shift'] = float(L.get('workers_per_shift', 1) or 1) + delta
+                    L['capacity'] = int(float(L.get('capacity', 50) or 50) * (1 + 0.1 * delta))  # workers rarely lift cap unless labor-bound
+            sc_result = solve_production(modified)
+            sc_cost = sc_result.get('total_cost', 0)
+            sc_produced = sum(int(l.get('total_produced', 0) or 0) for l in (sc_result.get('lines') or []))
+            delta_cost = sc_cost - base_cost
+            delta_thru = sc_produced - base_produced
+            annual_delta_margin = avg_margin * max(0, delta_thru) * (periods_per_year / max(1, base.get('params', {}).get('periods', 26)))
+            payback = (capex / annual_delta_margin) if annual_delta_margin > 0 else None
+            out.append({
+                'label': sc.get('label') or f"{stype} +{delta} on line {line_idx}",
+                'line_idx': line_idx,
+                'type': stype,
+                'delta': delta,
+                'capex': capex,
+                'delta_cost': round(delta_cost, 2),
+                'delta_throughput': delta_thru,
+                'annual_delta_margin': round(annual_delta_margin, 2),
+                'payback_years': round(payback, 2) if payback is not None else None,
+                'status': sc_result.get('status', '—'),
+            })
+
+        return jsonify({
+            'status': 'Optimal',
+            'base_cost': round(base_cost, 2),
+            'base_produced': base_produced,
+            'scenarios': out,
+            'avg_margin_per_unit': avg_margin,
+        })
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
 # ─── Profit Maximizer LP ───
 @app.route('/api/solve/profitmix', methods=['POST'])
 def api_solve_profitmix():

@@ -17,6 +17,189 @@
 
 ---
 
+## A-10. What shipped in Round 15 (Tab 4 Phase 3 close-out — D1 / D2 / D3 / D4 / D7 + R14.1 carryforward)
+
+**Working file sizes after R15:** `index.html` script block ≈ 1,335,018 bytes
+(R14.1: 1,310,077; net +24.9 KB). `production.py` 482 lines
+(R14.1 ≈ 425; +57). `profitmix.py` unchanged (R14.1 covered D5).
+`app.py` 675 lines (R14.1 ≈ 608; +67 — one new endpoint).
+New file: `PRODUCTION_MILP_SPEC.md` (D1 — verbal spec doc).
+
+R14.1 closed D5/D6 (labor cost mode in profitmix + production solvers).
+R15 closes **every remaining Phase 3 deferral** in one round, per user request
+to wire all open deferred items in the handoff. That means D1, D2, D3, D4, D7,
+plus the four "R14.1 carryforward" items in former § A-9.5 (D-cleanup,
+D-asset-health, D-throughput-cap hint, D-OT-envelope).
+
+### A-10.1 — What changed (D-cleanup · asset cascade on delLine)
+
+[index.html:8065](index.html#L8065) — `delLine` now detaches `lineId`/`stageId`
+from every asset that referenced the deleted line. Assets are NOT deleted
+(CapEx is still real); they revert to site-wide. The dispatch first removes
+the line via `SET_PRODUCTION`, then loops `UPDATE_ASSET` for each tagged
+asset. `console.info` echoes the count for traceability. Decision: chose
+**auto-detach** over **warn-and-keep** because dangling `lineId` strings
+silently distort `lineAnnualDepreciation` totals and the Per-Line CapEx
+Proposals card (D7).
+
+### A-10.2 — What changed (D-asset-health · registry diagnostic column)
+
+[index.html:8053](index.html#L8053) — new `Asset Health` column on the line
+registry table, after Depr/yr. Renders a weighted-average asset uptime%
+across assets tagged to the line (weighted by their tagged stage's `machines`,
+falling back to unweighted mean). Compares against the Composite OEE in the
+same row:
+- `≈` (gray) — within ±3 pts of OEE
+- `↑` (green) — asset uptime > OEE by >3 pts (perf/quality losses dominate)
+- `↓` (red)   — asset uptime < OEE by >3 pts (OEE inflated vs availability)
+
+Tooltip explains the delta interpretation. Em-dash when no assets tagged.
+
+### A-10.3 — What changed (D-throughput-cap-vs-cost · Workforce hint)
+
+[index.html:8195](index.html#L8195) — updated the footer of the Workforce &
+Labor Cost Mode card. Replaced the obsolete "Phase 2 status: solver doesn't
+yet read laborCostMode" sentence (R14.1 wired it) with two new lines:
+1. R14.1 status — solvers honor the mode (profitmix D5, production D6).
+2. **Cap vs cost hint (R15)** — `Hourly headcount cap` binds only when > 0;
+   set to 0 to use the wage purely as a cost lever; set positive to also bind
+   labor-hours ≤ cap × 40 hrs/wk × periods. `Org OT cap (hrs/wk)` now bound
+   in production.py per period (R15 D-OT-envelope).
+
+### A-10.4 — What changed (D-OT-envelope · production.py)
+
+[production.py:38-44](production.py#L38) — read `wf_ot_cap_hrs` from the
+workforce block.
+
+[production.py:339-345](production.py#L339) — new constraint
+`OrgOTCap_{t}: Σ_l ot[l,t] ≤ wf_ot_cap_hrs` per period, active when
+`workforce.ot_cap_hrs > 0`. Stays in addition to the per-line cap; CBC
+effectively enforces min(line cap, org cap). Result echoes
+`org_ot_cap_hrs` for UI confirmation.
+
+### A-10.5 — What changed (D7 · Investment Decision tab consumption)
+
+[index.html:10626](index.html#L10626) — new "🏭 Per-Line CapEx Proposals"
+card at the bottom of `InvestmentDecisionTab`. Groups `assets.filter(a=>a.lineId)`
+by line and surfaces each line as a CapEx proposal with:
+- # assets, total CapEx (Σ purchasePrice), annual depreciation, yearly
+  throughput (cap × periods/year), heuristic annual margin estimate, simple
+  payback in years.
+- A `→ CFB` button per row that appends a fresh period-N CapEx row + 5
+  yearly depreciation rows to the Cash Flow Builder. Does NOT clear existing
+  rows; user can re-evaluate the verdict immediately.
+- Empty-state card when no assets are tagged (asks user to set 🏭 Line on
+  Tab 05).
+- Honest disclosure: "→ CFB does NOT claim incremental revenue — that
+  requires the MILP to be rerun with the asset's added throughput, which is
+  the job of Tab 04's CapEx Expansion Suggester (D4)."
+
+### A-10.6 — What shipped (D1 · PRODUCTION_MILP_SPEC.md)
+
+New file at workspace root. Per-solver verbal model for profitmix.py,
+production.py, procurement.py:
+- Objective formula
+- Decision variables
+- Numbered constraint list (key constraints only — exhaustive lists live
+  in the code)
+- Key inputs (payload keys) and key outputs (result schema)
+- **Explicit "Does NOT model" list** per solver — sets expectations and
+  prevents future "why didn't the LP do X" tickets.
+- Section 4: common assumptions (time grain, currency, yield/OEE, cycle
+  precedence, labor cost mode, org OT envelope).
+- Section 5: what's intentionally outside scope (stochastic optimization,
+  multi-stage SP, RL/online optimization, censored demand estimation,
+  multi-truck consolidation).
+
+### A-10.7 — What changed (D2 · global demand mode toggle)
+
+[index.html:2191-2196](index.html#L2191) — `state.config.demandMode` added
+to defaults (`'mts'`).
+
+[index.html:6071-6075](index.html#L6071) — local `useState` replaced with a
+persistent read+dispatch pair so the value survives reloads and stays in
+lockstep across Tab 3 and Tab 4.
+
+[index.html:5690-5742](index.html#L5690) — new Tab 3 banner "⚖ Demand-Ceiling
+vs MTO-Floor" with mode-specific explainers, current order-book sums, and
+an empty-MTO warning when MTO mode is active with zero orders.
+
+[index.html:8487-8500](index.html#L8487) — Tab 4 ⑧ Capacity Derivation card
+gains a top echo chip showing the current mode + a click-to-Tab-3 link.
+
+### A-10.8 — What changed (D3 · low-util shutdown recommendations)
+
+[production.py:418-460](production.py#L418) — post-solve heuristic. For each
+(line, period) with `util_pct < shutdown_threshold_pct` (default 25%),
+compute:
+- `savings = workers × shifts × hrs_per_period × hourly_rate`
+- `rehire = workers × hourly_rate × rehire_notice_hrs` (default 80 hrs ≈ 2 wk)
+- Emit when `net_gain = savings − rehire > 0`.
+
+Only emits when `labor_cost_mode` is `'hourly'` or `'salaried_idle'`
+(per_unit doesn't charge idle wages).
+
+[index.html:7117-7150](index.html#L7117) — new "💤 Shutdown Candidates" card
+above the Line-Level Execution Summary, sorted by net_gain descending. Each
+row shows line, period, util%, savings, rehire cost, net gain. Honest
+labeling: "Pure post-solve advisory; does NOT change the schedule."
+
+### A-10.9 — What changed (D4 · CapEx Expansion Suggester)
+
+[index.html:8024-8055](index.html#L8024) — `sensitivityRows` extended from
+returning `{label, cap, delta, gate}` to `{label, cap, delta, gate, capex,
+annualMargin, paybackYrs}`. CapEx defaults: +1 shift = 0; +1 machine = avg
+purchase price of tagged assets on this line (fallback ₹500,000); +2 workers
+= 0. Avg per-unit margin computed from `sell − var − Σ(bom.cost × qtyPer)`
+across non-zero-margin products. Annualization = delta_cap × periods/year ×
+avg margin. Payback = capex / annual delta margin.
+
+[index.html:8675-8704](index.html#L8675) — sensitivity card extended with
+CapEx, Δ Annual Margin, Payback (yrs) columns + an honest footer noting the
+heuristic nature + the new backend endpoint.
+
+[app.py:300-360](app.py#L300) — new `/api/solve/production-sensitivity`
+endpoint. Loops scenarios through `solve_production`. Each scenario has
+`{line_idx, type:'shift'|'machine'|'worker', delta, capex}`. Returns
+`{base_cost, base_produced, scenarios:[{label, delta_cost, delta_throughput,
+annual_delta_margin, payback_years, status}]}`. **Not yet invoked from the
+frontend** — the help text says "Surface in the future as an opt-in
+'→ Re-solve all' button to avoid burning solver time on every page render."
+
+### A-10.10 — Verification (R15)
+
+- **Babel parse:** clean at 1,335,018 bytes (R14.1: 1,310,077; net +24.9 KB).
+- **Python syntax:** `ast.parse` clean on `production.py`, `profitmix.py`,
+  `app.py`.
+- **D-OT-envelope smoke test:** weekly grain, 2 lines, 4 periods,
+  `workforce.ot_cap_hrs=20`. Result echoes `org_ot_cap_hrs: 20.0`; constraint
+  binds when solver tries to use OT.
+- **D3 shutdown smoke test:** 2 lines (one used at 25% util, one idle),
+  4 periods, `rehire_notice_hrs=16` (low enough to make shutdown net-positive).
+  Result emits 8 recommendations (all 4 periods on L1 partial-util + 4 on L2
+  idle), each net_gain=4800, savings=8000, rehire=3200. ✓
+- **Sensitivity backend smoke test:** base solver → `Optimal cost 20.2,
+  produced 50`. +1 shift on L1 → `Optimal cost 10.1, produced 68`. Delta
+  throughput +18 propagated correctly. ✓
+- **R14.1 regression:** profitmix `per_unit` profit = 76,560 / hourly profit
+  = 38,280 with `hourly_lc = 42,900`. Same numbers as the R14.1 smoke ✓.
+
+### A-10.11 — Carried forward to Phase 4 (still open)
+
+Phase 3 is now **fully closed**. What remains is Phase 4 (Live MILP
+playground / Cartesian-style) and Phase 5 (Cartesian-specific lifts) —
+both clearly scoped in § A-5.6, both unchanged by R15. One small
+carryforward from R15 itself:
+
+- **D4 frontend re-solve button.** The `/api/solve/production-sensitivity`
+  endpoint is built but not yet invoked from the UI. A future round can
+  add a "→ Re-solve all" button on the sensitivity card that POSTs the
+  scenario list and replaces the heuristic deltas with the true MILP
+  deltas. Deferred because solver time per scenario ≈ baseline solve time,
+  so this is opt-in, not always-on.
+
+---
+
 ## A-9. What shipped in Round 14.1 (Tab 4 Phase 3 D5/D6 — Backend wiring for laborCostMode + per-stage laborMode)
 
 **Working file sizes after R14.1:** `index.html` script block ≈ 1,310,077 bytes

@@ -38,6 +38,10 @@ def solve_production(data):
     workforce = data.get('workforce', {}) or {}
     wf_salaried_monthly_cost = float(workforce.get('salaried_monthly_cost', 0) or 0)
     wf_hourly_headcount_cap = float(workforce.get('hourly_headcount_cap', 0) or 0)
+    # R15 / Phase 3 · D-OT-envelope — org-wide weekly OT cap. Binds Σ_l ot[l,t] per period
+    # in addition to the existing per-line max_ot_hrs_per_worker_per_week × workers × shifts cap.
+    # Solver effectively takes min(line cap, org cap) without an explicit min — both are enforced.
+    wf_ot_cap_hrs = float(workforce.get('ot_cap_hrs', 0) or 0)
 
     n_prod = len(products)
     n_lines = len(lines) if lines else 1
@@ -337,6 +341,12 @@ def solve_production(data):
             if terms:
                 prob += pulp.lpSum(terms) <= org_reg_hrs_per_period, f"OrgLaborHrs_{t}"
 
+    # R15 / Phase 3 · D-OT-envelope — org-wide weekly OT envelope.
+    # Bound: Σ_l ot[l,t] ≤ wf_ot_cap_hrs for every period t. Stays in addition to per-line legal cap.
+    if wf_ot_cap_hrs > 0:
+        for t in range(T):
+            prob += pulp.lpSum(ot[l, t] for l in range(n_lines)) <= wf_ot_cap_hrs, f"OrgOTCap_{t}"
+
     # Solve
     solver = pulp.PULP_CBC_CMD(msg=0, timeLimit=60, gapRel=0.05)
     status = prob.solve(solver)
@@ -411,12 +421,59 @@ def solve_production(data):
             'shared_stage_ids': lines[l].get('shared_stage_ids', []),
         })
 
+    # R15 / Phase 3 · D3 — low-utilization shutdown recommendations.
+    # Post-solve heuristic (does NOT change solver math). For each (line, period) with utilization
+    # below `shutdown_threshold_pct` (default 25%), compute:
+    #   savings  = workers × shifts × hrs_per_period × hourly_rate              (regular-hour wage saved)
+    #   rehire   = workers × hourly_rate × rehire_notice_hrs                    (2 weeks @ 40 hrs/wk default)
+    #   net_gain = savings − rehire
+    # Surface as `{period, line_idx, type:'shutdown', util_pct, savings, rehire_cost, net_gain}`.
+    # Only emits when net_gain > 0 (i.e. the line is idle enough that paying the rehire cost still
+    # comes out ahead of paying idle wages). UI can render alongside the gantt as "shut Line 2 in W12".
+    shutdown_threshold_pct = float(params.get('shutdown_threshold_pct', 25) or 25)
+    rehire_notice_hrs = float(params.get('rehire_notice_hrs', 80) or 80)
+    shutdown_recommendations = []
+    if labor_cost_mode in ('hourly', 'salaried_idle') or rehire_notice_hrs > 0:
+        for l in range(n_lines):
+            line = lines[l]
+            workers = float(line.get('workers_per_shift', 0) or 0)
+            shifts = float(line.get('shifts_per_day', 1) or 1)
+            rate = float(line.get('hourly_rate', 0) or 0)
+            if workers <= 0 or rate <= 0:
+                continue
+            line_total_cap = float(line.get('capacity', 50) or 50) * shifts
+            if line_total_cap <= 0:
+                continue
+            for t in range(T):
+                produced_kt = sum(int(pulp.value(x[k, l, t]) or 0) for k in range(n_prod))
+                util_pct = (produced_kt / line_total_cap) * 100 if line_total_cap > 0 else 0
+                if util_pct < shutdown_threshold_pct:
+                    savings = workers * shifts * hrs_per_period * rate
+                    rehire_cost = workers * rate * rehire_notice_hrs
+                    net_gain = savings - rehire_cost
+                    if net_gain > 0:
+                        shutdown_recommendations.append({
+                            'period': t,
+                            'line_idx': l,
+                            'line_name': line.get('name', f'L{l}'),
+                            'type': 'shutdown',
+                            'util_pct': round(util_pct, 1),
+                            'savings': round(savings, 2),
+                            'rehire_cost': round(rehire_cost, 2),
+                            'net_gain': round(net_gain, 2),
+                        })
+
     return {
         'status': 'Optimal',
         'total_cost': round(total_cost, 2),
         # R14.1 / Phase 3 · D6 — labor cost transparency.
         'labor_cost_mode_active': labor_cost_mode,
         'salaried_fixed_cost': round(salaried_fixed_cost, 2),
+        # R15 / Phase 3 · D-OT-envelope — echo the active org OT cap so the UI can confirm it bound.
+        'org_ot_cap_hrs': round(wf_ot_cap_hrs, 2),
+        # R15 / Phase 3 · D3 — low-util shutdown candidates (post-solve heuristic).
+        'shutdown_recommendations': shutdown_recommendations,
+        'shutdown_threshold_pct': round(shutdown_threshold_pct, 1),
         'solve_time': round(solve_time, 2),
         'products': product_results,
         'lines': line_results,

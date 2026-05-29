@@ -2187,6 +2187,11 @@ const defaultState={
     //   'hourly'          : workforce.hourlyHeadcountCap × hours @ hourlyRate (Phase 3 wires)
     //   'salaried_idle'   : workforce.salariedHeadcount @ salariedMonthlyCost (idle-paid; Phase 3)
     laborCostMode:'per_unit',
+    // R15 / Phase 3 · D2 — global demand-ceiling vs MTO-floor lever surfaced on Tab 3 and echoed
+    // on Tab 4 ⑧. Drives profitmix.py's `demand_mode` param: 'mts' (forecast ceiling, soft),
+    // 'mto' (order book only, ceiling==floor, hard), 'ato' (orders + forecast buffer), 'seasonal'
+    // (peak-aware forecast). Default preserves R14.1 behavior.
+    demandMode:'mts',
   },
   audit:[],
   rbac:{role:'planner',user:'demo@enterprise.sim'},
@@ -5682,6 +5687,54 @@ function DemandTab({state,dispatch}){
           </div>
         </div>
 
+        {/* R15 / Phase 3 · D2 — Global demand-ceiling vs MTO-floor lever. Persists to state.config.demandMode.
+            Tab 4 ⑧ (Solver Console) echoes the value. Profitmix LP reads it as `demand_mode`:
+            • mts → forecast ceiling (soft); excess penalized via holding cost.
+            • mto → ceiling==floor == confirmed orderbook (hard, must fulfill).
+            • ato → orders floor + forecast buffer ceiling.
+            • seasonal → forecast with seasonality applied. */}
+        {(()=>{
+          const dm=state.config.demandMode||'mts';
+          const setDM=v=>dispatch({type:'SET_CONFIG',payload:{demandMode:v}});
+          const counts={
+            mtoOrders:products.reduce((s,p)=>s+((p.mtoOrders||[]).reduce((a,o)=>a+(+o.qty||0),0)),0),
+            mtoOrderRows:products.reduce((s,p)=>s+((p.mtoOrders||[]).length),0),
+            forecastTotal:products.reduce((s,p)=>s+((p.history||[]).slice(-12).reduce((a,v)=>a+(+v||0),0)),0),
+          };
+          const modeSpec={
+            mts:{label:'MTS — forecast ceiling',color:'var(--ac)',expl:`Profit-mix LP uses forecast (Σ ${counts.forecastTotal.toLocaleString()} u, last 12 mo) as a soft ceiling. Overproduction beyond absorbable demand incurs holding penalty. Use for build-to-stock SKUs with steady demand.`},
+            mto:{label:'MTO — order-book floor',color:'var(--a3)',expl:`Profit-mix LP fires only against confirmed MTO orders (${counts.mtoOrderRows} order rows = Σ ${counts.mtoOrders.toLocaleString()} u). Demand ceiling = floor (must fulfill). No speculation. Use for custom/engineered SKUs.`},
+            ato:{label:'ATO — order floor + forecast buffer',color:'var(--a4)',expl:`Hybrid: confirmed orders (${counts.mtoOrders.toLocaleString()} u) define the floor; forecast (${counts.forecastTotal.toLocaleString()} u) defines the ceiling above. Use when sub-assembly is built ahead and final assembly is order-driven.`},
+            seasonal:{label:'Seasonal — peak-aware forecast',color:'var(--a2)',expl:`Forecast with seasonality applied (e.g. Q4 holiday lift). Ceiling = soft, floor = 0. Use for SKUs whose demand is dominated by season indices.`},
+          };
+          const spec=modeSpec[dm]||modeSpec.mts;
+          const warnEmpty=dm==='mto'&&counts.mtoOrderRows===0;
+          return <div className="card" style={{borderLeft:`3px solid ${spec.color}`,background:'rgba(255,255,255,.01)'}}>
+            <div className="card-title">⚖ Demand-Ceiling vs MTO-Floor <span className="badge" style={{background:`${spec.color}22`,color:spec.color}}>D2 · {spec.label}</span></div>
+            <div style={{display:'flex',gap:12,alignItems:'flex-start',flexWrap:'wrap',padding:8}}>
+              <div style={{flex:'0 0 220px'}}>
+                <Field label="Global demand mode" hint="One global lever for the profit-mix solver. Each SKU's MTO order book still drives the floor under MTO/ATO modes.">
+                  <select value={dm} onChange={e=>setDM(e.target.value)} style={{fontWeight:600,color:spec.color}}>
+                    <option value="mts">MTS — forecast ceiling</option>
+                    <option value="mto">MTO — order book only</option>
+                    <option value="ato">ATO — orders + forecast buffer</option>
+                    <option value="seasonal">Seasonal — peak-aware</option>
+                  </select>
+                </Field>
+              </div>
+              <div style={{flex:1,fontSize:11,color:'var(--tx2)',lineHeight:1.5,padding:'4px 8px',background:'var(--bg2)',border:'1px dashed var(--br2)',borderRadius:4}}>
+                {spec.expl}
+                {warnEmpty&&<div style={{marginTop:6,padding:'4px 8px',background:'rgba(248,81,73,.08)',border:'1px solid var(--dg)',borderRadius:3,color:'var(--dg)',fontSize:10}}>
+                  ⚠ MTO mode active but no orders entered. Open <strong>Tab 02 → product → MTO Orders</strong>. Without orders, profitmix demand floor = 0 → LP will be infeasible (returns empty mix).
+                </div>}
+              </div>
+            </div>
+            <div style={{fontSize:9,color:'var(--tx3)',padding:'4px 10px',background:'var(--bg3)',borderRadius:3,lineHeight:1.5}}>
+              <strong>How this flows:</strong> profitmix.py reads <code>demand_mode</code> from the payload and sets per-SKU demand ceiling + floor. MTO mode forces <em>ceiling = floor = confirmed orders</em> (must fulfill, no speculation). MTS uses forecast as a soft ceiling penalized by holding cost. The per-SKU <em>Demand Mode</em> field on Tab 02 controls the schedule shape (mts-weekly / simultaneous / daily / mto) — this global lever controls the <em>quantity-level</em> behavior. Tab 04 ⑧ echoes the current setting for traceability.
+            </div>
+          </div>;
+        })()}
+
         {/* T3-08 — ABC/XYZ Classification card with active SKU's segment + recommended policy */}
         <div className="card" style={{borderLeft:`3px solid ${seg.abc==='A'?'var(--ac)':seg.abc==='B'?'var(--a4)':'var(--tx3)'}`}}>
           <div className="card-title">🏷️ ABC / XYZ Segmentation
@@ -6014,7 +6067,11 @@ function OptimizeTab({state,dispatch}){
   const [atpQty,setAtpQty]=useState(100);
   const [atpMonth,setAtpMonth]=useState(3);
   const [atpResult,setAtpResult]=useState(null);
-  const [demandMode,setDemandMode]=useState('mts');
+  // R15 / Phase 3 · D2 — demand-mode lever now persists via state.config.demandMode. The local
+  // setter dispatches a SET_CONFIG so Tab 3's banner and Tab 4 ⑧'s echo stay in lockstep with
+  // whatever the user picks here. Falls back to 'mts' when state has no prior value.
+  const demandMode=state.config.demandMode||'mts';
+  const setDemandMode=v=>dispatch({type:'SET_CONFIG',payload:{demandMode:v}});
   const cur=state.config.currency;
   // v3.3.4 — procurement & downstream solvers consume the FORECAST CONSENSUS, not raw history.
   // Build a per-product consensus forecast by running all 17 models, picking top-3 by MAPE,
@@ -7056,6 +7113,38 @@ function OptimizeTab({state,dispatch}){
       </table>
     </div>}
 
+    {/* R15 / Phase 3 · D3 — Low-utilization shutdown recommendations. Solver echoes
+        `shutdown_recommendations`: (line, period) cells where util_pct < threshold AND
+        savings − rehire > 0. Pure post-solve advisory; does NOT change the schedule. */}
+    {result&&result._mode==='production'&&Array.isArray(result.shutdown_recommendations)&&result.shutdown_recommendations.length>0&&<div className="card" style={{borderLeft:'3px solid var(--dg)'}}>
+      <div className="card-title">💤 Shutdown Candidates <span className="badge" style={{background:'rgba(248,81,73,.12)',color:'var(--dg)'}}>D3 · {result.shutdown_recommendations.length} cell{result.shutdown_recommendations.length===1?'':'s'} below {result.shutdown_threshold_pct}% util</span></div>
+      <div style={{fontSize:11,color:'var(--tx2)',padding:8,background:'var(--bg2)',border:'1px dashed var(--br2)',marginBottom:8,lineHeight:1.5}}>
+        Cells flagged here are <strong>(line × period)</strong> slots where line utilization fell below the threshold AND <em>savings (workers × hrs × wage) exceed rehire cost</em>. Shutting the line in those periods saves money even after paying notice + rehire. The solver did NOT shut these lines on its own — it minimizes setup/changeover/OT/makespan, not idle-worker wages. Use this as a management overlay: ramp-down candidates for low-utilisation periods.
+      </div>
+      <div style={{overflowX:'auto'}}><table className="data-table" style={{fontSize:10}}>
+        <thead><tr>
+          <th>Line</th><th>Period</th>
+          <th className="num">Util %</th>
+          <th className="num" title={`Workers × shifts × hrs × hourly_rate for that line, that period.`}>Savings ({state.config.currency})</th>
+          <th className="num" title={`Workers × hourly_rate × ${80} hrs notice (default 2 wk). Override via params.rehire_notice_hrs.`}>Rehire ({state.config.currency})</th>
+          <th className="num" style={{fontWeight:700}}>Net Gain ({state.config.currency})</th>
+        </tr></thead>
+        <tbody>{[...result.shutdown_recommendations].sort((a,b)=>b.net_gain-a.net_gain).map((rec,i)=>(
+          <tr key={i}>
+            <td style={{fontWeight:600,color:'var(--a4)'}}>{rec.line_name}</td>
+            <td>W{rec.period+1}</td>
+            <td className="num" style={{color:'var(--a4)'}}>{rec.util_pct}%</td>
+            <td className="num" style={{color:'var(--gn)'}}>{state.config.currency}{rec.savings.toLocaleString()}</td>
+            <td className="num" style={{color:'var(--dg)'}}>{state.config.currency}{rec.rehire_cost.toLocaleString()}</td>
+            <td className="num" style={{color:'var(--ac)',fontWeight:700}}>{state.config.currency}{rec.net_gain.toLocaleString()}</td>
+          </tr>
+        ))}</tbody>
+      </table></div>
+      <div style={{fontSize:9,color:'var(--tx3)',marginTop:6,padding:'5px 8px',background:'var(--bg3)',borderRadius:3,lineHeight:1.5}}>
+        Threshold defaults to <strong>25%</strong> (override via <code>params.shutdown_threshold_pct</code>). Rehire notice defaults to <strong>80 hrs</strong> ≈ 2 weeks at 40 hrs/wk (override via <code>params.rehire_notice_hrs</code>). Recommendations only emit when <code>labor_cost_mode</code> is <em>hourly</em> or <em>salaried_idle</em> (per_unit mode doesn't charge idle wages).
+      </div>
+    </div>}
+
     {/* ─── PER-LINE UTILIZATION ─── */}
     {result&&result._mode==='production'&&result.lines?.length>0&&<div className="card">
       <div className="card-title">🏭 Line-Level Execution Summary</div>
@@ -7942,11 +8031,32 @@ function ProductionArchitectureTab({state,dispatch}){
     const plusShiftCap=Math.round(lineThroughputPerHr(L)*lineNetHrsPerWorkDay(plusShiftLine)*wdPerPeriod());
     const plusMach=cloneOne({machines:(+bs.machines||1)+1});
     const plusWk=cloneOne({workers:(+bs.workers||1)+2});
+    // R15 / Phase 3 · D4 — per-scenario CapEx defaults. +1 shift = no CapEx (only wage cost);
+    // +1 machine = avg purchase price of tagged assets on this line, falling back to ₹500k;
+    // +2 workers = no CapEx (only recurring wage cost shown as 0 for CapEx columns).
+    const taggedAssets=(state.assets||[]).filter(a=>a&&a.lineId===L.id);
+    const avgMachineCapex=taggedAssets.length?taggedAssets.reduce((s,a)=>s+(+a.purchasePrice||0),0)/taggedAssets.length:500000;
+    // Heuristic per-unit margin: avg(sell − var − mat) across non-empty products.
+    const margins=(state.products||[]).map(p=>{
+      const sell=+p.sellPrice||0;
+      const v=+p.variableCost||0;
+      const mat=(p.bom||[]).reduce((s,b)=>s+(+b.cost||0)*(+b.qtyPer||1),0);
+      return Math.max(0,sell-v-mat);
+    }).filter(m=>m>0);
+    const avgMargin=margins.length?margins.reduce((s,m)=>s+m,0)/margins.length:0;
+    // periods per year for annualization
+    const grain=state.planning?.timeGrain||'weekly';
+    const periodsPerYear=grain==='daily'?365:grain==='monthly'?12:52;
+    const annualize=(deltaPerPeriod)=>deltaPerPeriod*periodsPerYear*avgMargin;
+    const payback=(capex,deltaPerPeriod)=>{
+      const annMargin=annualize(deltaPerPeriod);
+      return annMargin>0?(capex/annMargin):Infinity;
+    };
     return[
-      {label:'Baseline',cap:base,delta:0,gate:bs.name},
-      {label:'+1 shift (whole line)',cap:plusShiftCap,delta:plusShiftCap-base,gate:bs.name},
-      {label:`+1 machine @ ${bs.name}`,cap:lineCapPerPeriod(plusMach,line),delta:lineCapPerPeriod(plusMach,line)-base,gate:'shifts to next-slowest if relieved'},
-      {label:`+2 workers @ ${bs.name}`,cap:lineCapPerPeriod(plusWk,line),delta:lineCapPerPeriod(plusWk,line)-base,gate:'workers rarely lift cap unless current OEE labor-bound'},
+      {label:'Baseline',cap:base,delta:0,gate:bs.name,capex:0,annualMargin:0,paybackYrs:0},
+      {label:'+1 shift (whole line)',cap:plusShiftCap,delta:plusShiftCap-base,gate:bs.name,capex:0,annualMargin:annualize(plusShiftCap-base),paybackYrs:0},
+      {label:`+1 machine @ ${bs.name}`,cap:lineCapPerPeriod(plusMach,line),delta:lineCapPerPeriod(plusMach,line)-base,gate:'shifts to next-slowest if relieved',capex:Math.round(avgMachineCapex),annualMargin:annualize(lineCapPerPeriod(plusMach,line)-base),paybackYrs:payback(avgMachineCapex,lineCapPerPeriod(plusMach,line)-base)},
+      {label:`+2 workers @ ${bs.name}`,cap:lineCapPerPeriod(plusWk,line),delta:lineCapPerPeriod(plusWk,line)-base,gate:'workers rarely lift cap unless current OEE labor-bound',capex:0,annualMargin:annualize(lineCapPerPeriod(plusWk,line)-base),paybackYrs:0},
     ];
   };
   // Helpers to mutate topology immutably
@@ -7974,8 +8084,21 @@ function ProductionArchitectureTab({state,dispatch}){
       eligibleProducts:[],dedicated:false,plannedMaintenance:[]}]);
   };
   const delLine=(lineId)=>{
-    setTopo({...topo,lines:topo.lines.filter(L=>L.id!==lineId)});
-    setLines(lines.filter(L=>L.id!==lineId));
+    // R15 / Phase 3 · D-cleanup — auto-detach assets tagged to this line so they don't dangle.
+    // Assets stay (CapEx still real), but `lineId`/`stageId` are cleared so the asset becomes
+    // site-wide. Surface the count via window.alert if any were touched (cheap, non-blocking
+    // confirmation; avoids a second modal).
+    const orphanCount=((state.assets||[]).filter(a=>a&&a.lineId===lineId)).length;
+    dispatch({type:'SET_PRODUCTION',payload:{
+      topology:{...topo,lines:topo.lines.filter(L=>L.id!==lineId)},
+      lines:lines.filter(L=>L.id!==lineId),
+    }});
+    if(orphanCount>0){
+      (state.assets||[]).filter(a=>a&&a.lineId===lineId).forEach(a=>{
+        dispatch({type:'UPDATE_ASSET',id:a.id,payload:{lineId:'',stageId:''}});
+      });
+      try{console.info(`[delLine] detached ${orphanCount} asset(s) from deleted line ${lineId}`);}catch(_){}
+    }
   };
   const upLine=(lineId,patch)=>setTopo({...topo,lines:topo.lines.map(L=>L.id!==lineId?{...L}:{...L,...patch})});
   // T4-09 — solver-line patch helper (separate from topology line)
@@ -8043,6 +8166,7 @@ function ProductionArchitectureTab({state,dispatch}){
               <th colSpan={4} style={{background:'rgba(63,185,80,.06)',textAlign:'center'}}>Line OEE % (T4-07)</th>
               <th rowSpan={2}>Net hrs/wk</th>
               <th rowSpan={2} title="R14 · Phase 2 · C2 — Σ annual depreciation across assets tagged to this line (Tab 05 → Asset Registry, set 🏭 Line on each asset).">Depr/yr</th>
+              <th rowSpan={2} title="R15 · Phase 3 · D-asset-health — weighted average asset uptime% across assets tagged to this line (weighted by their tagged stage's machine count). Compare with the Composite OEE column to the left: if uptime ≫ OEE, performance/quality losses dominate; if uptime ≪ OEE, availability is being masked by manual A/P/Q.">Asset Health</th>
               <th rowSpan={2}></th>
             </tr>
             <tr>
@@ -8089,6 +8213,27 @@ function ProductionArchitectureTab({state,dispatch}){
                   is tagged to this line. Click-through to the asset card is implicit
                   (assets live on Tab 05). */}
               {(()=>{const dep=lineAnnualDepreciation(L.id, state.assets||[]);const cnt=(state.assets||[]).filter(a=>a&&a.lineId===L.id).length;return <td className="num" style={{color:dep>0?'var(--a4)':'var(--tx3)',fontWeight:dep>0?700:400}} title={dep>0?`${cnt} asset${cnt===1?'':'s'} tagged to this line`:'No assets tagged to this line. Set 🏭 Line on an asset row in Tab 05.'}>{dep>0?`${cur}${dep.toLocaleString()}`:'—'}</td>;})()}
+              {/* R15 / Phase 3 · D-asset-health — Σ(asset.uptimePct × stage.machines) / Σ(stage.machines). Acts as
+                  a cross-check vs the Composite OEE column. Falls back to unweighted mean when stage tags are
+                  missing or stage.machines is zero. Em-dash when no assets are tagged to the line. */}
+              {(()=>{
+                const tagged=(state.assets||[]).filter(a=>a&&a.lineId===L.id);
+                if(tagged.length===0)return <td className="num" style={{color:'var(--tx3)'}} title="No assets tagged. Compare against the Composite column once assets are registered (Tab 05 → 🏭 Line).">—</td>;
+                const stagesById=Object.fromEntries((L.stages||(topo.lines.find(t=>t.id===L.id)?.stages)||[]).map(s=>[s.id,s]));
+                let wsum=0,w=0;
+                tagged.forEach(a=>{
+                  const m=Math.max(0,+(stagesById[a.stageId]?.machines||0));
+                  const wt=m>0?m:1;
+                  wsum+=wt*(+a.uptimePct||0);
+                  w+=wt;
+                });
+                const avg=w>0?wsum/w:0;
+                const oeePct=oee*100;
+                const delta=avg-oeePct;
+                const arrow=Math.abs(delta)<3?'≈':delta>0?'↑':'↓';
+                const color=Math.abs(delta)<3?'var(--tx2)':delta>0?'var(--gn)':'var(--dg)';
+                return <td className="num" style={{color,fontWeight:600}} title={`Weighted avg asset uptime: ${avg.toFixed(1)}% (${tagged.length} asset${tagged.length===1?'':'s'}). OEE Composite: ${oeePct.toFixed(1)}%. Δ ${delta>=0?'+':''}${delta.toFixed(1)} pts → ${delta>3?'OEE under-credits asset health (perf/qual losses dominate)':delta<-3?'OEE inflated vs availability (manual A·P·Q masking real downtime)':'asset uptime ≈ OEE composite'}.`}>{avg.toFixed(0)}% {arrow}</td>;
+              })()}
               <td>{lines.length>1&&<button className="btn btn-danger btn-sm" onClick={()=>delLine(L.id)}>×</button>}</td>
             </tr>;
           })}</tbody>
@@ -8150,7 +8295,8 @@ function ProductionArchitectureTab({state,dispatch}){
         </div>
         <div style={{fontSize:9,color:'var(--tx3)',padding:'5px 8px',background:'var(--bg3)',borderRadius:3,lineHeight:1.5}}>
           <strong>How modes interact:</strong> in <code>per_unit</code> mode, Tab 02's <em>laborPerUnit</em> is the only labor charge — the line registry wage drives <em>only</em> OT cost (existing R13.6 behavior). In <code>hourly</code> mode, regular hours × wage become a charge too — set <em>laborPerUnit</em> to 0 to avoid double-counting. In <code>salaried_idle</code>, the salaried envelope is fixed and per-unit/hourly become zero.&nbsp;
-          <strong>Phase 2 status:</strong> UI + state only. The solvers do not yet read <code>laborCostMode</code> — Phase 3 (D5/D6) wires it.
+          <strong>R14.1 status:</strong> solvers now honor the mode — profitmix.py and production.py both add the matching cost term and (in <code>hourly</code>) the labor-hours capacity constraint.&nbsp;
+          <strong style={{color:'var(--a4)'}}>Cap vs cost (R15 hint):</strong> in <code>hourly</code> mode, <em>Hourly headcount cap</em> binds <strong>only when &gt; 0</strong> — leave it 0 to use the wage purely as a cost lever (no capacity ceiling). Set it to a positive integer to also bind labor-hours ≤ cap × 40 hrs/wk × periods. <strong>Org OT cap (hrs/wk)</strong> is now bound in production.py per period (R15 D-OT-envelope) — solver takes min(line OT, this org cap × period).
         </div>
       </CollapsibleCard>;
     })()}
@@ -8390,6 +8536,19 @@ function ProductionArchitectureTab({state,dispatch}){
     {/* T4-14 — Throughput derivation panel. Explicit math + per-line table including OT extension and PM hours lost. */}
     <CollapsibleCard title="⑧ Capacity Derivation & Throughput Math" defaultOpen={true} accent="var(--gn)" badge={capMode==='derived'?'auto from stages':'manual override'}
       info={<><strong>T4-14:</strong> Effective throughput = min(line bottleneck capacity, shared-stage pool share, after OEE, after PM). The table below shows each contributing factor so you can see exactly which lever moves the cap.</>}>
+      {/* R15 / Phase 3 · D2 — echo the global demand-mode lever (set on Tab 3). Read-only chip; click navigates back to Tab 3 to change it. */}
+      {(()=>{
+        const dm=state.config.demandMode||'mts';
+        const label={mts:'MTS — forecast ceiling',mto:'MTO — order-book floor',ato:'ATO — orders + forecast',seasonal:'Seasonal — peak-aware'}[dm]||dm;
+        const color={mts:'var(--ac)',mto:'var(--a3)',ato:'var(--a4)',seasonal:'var(--a2)'}[dm]||'var(--tx3)';
+        return <div style={{display:'flex',alignItems:'center',gap:8,padding:'6px 10px',background:'var(--bg2)',border:`1px solid ${color}33`,borderLeft:`3px solid ${color}`,borderRadius:3,marginBottom:8,fontSize:11}}>
+          <span style={{color:'var(--tx3)',fontWeight:600,letterSpacing:.3}}>D2 ECHO</span>
+          <span style={{color:'var(--tx2)'}}>Global demand mode:</span>
+          <strong style={{color,fontSize:12}}>{label}</strong>
+          <span style={{color:'var(--tx3)',fontSize:10,flex:1}}>· profit-mix LP reads this as <code>demand_mode</code></span>
+          <button onClick={()=>window.dispatchEvent(new CustomEvent('esim:setActiveTab',{detail:'demand'}))} style={{fontSize:10,padding:'2px 8px',background:'transparent',border:`1px solid ${color}`,color,cursor:'pointer',borderRadius:2,fontWeight:600}} title="Open Tab 03 → Demand Planning to change the global mode.">change →</button>
+        </div>;
+      })()}
       <div style={{fontSize:11,color:'var(--tx2)',marginBottom:8}}>Solver capacity comes from one of two sources:</div>
       <div style={{display:'flex',gap:14,marginBottom:8}}>
         <label style={{cursor:'pointer'}}><input type="radio" checked={capMode==='derived'} onChange={()=>setMode('derived')}/> <strong>Derived</strong> — bottleneck throughput × hours × OEE − PM hours (recommended)</label>
@@ -8487,22 +8646,34 @@ function ProductionArchitectureTab({state,dispatch}){
       </table>
     </CollapsibleCard>
 
-    {/* Step ⑪ — Sensitivity */}
-    <CollapsibleCard title="⑪ Sensitivity (+1 shift / +1 machine / +2 workers)" defaultOpen={false} accent="var(--dg)">
-      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Sensitivity reveals where extra capital actually buys throughput — usually only the bottleneck stage matters.</div>
+    {/* Step ⑪ — Sensitivity (R15 / D4 — CapEx Expansion Suggester) */}
+    <CollapsibleCard title="⑪ Sensitivity + CapEx Expansion Suggester" defaultOpen={false} accent="var(--dg)" badge="R15 · D4">
+      <div style={{fontSize:11,color:'var(--tx2)',marginBottom:8,padding:8,background:'var(--bg2)',border:'1px dashed var(--br2)',lineHeight:1.5}}>
+        Each scenario shows what extra capital actually buys you. <strong>Capex</strong> is the one-time investment, <strong>Δ Annual Margin</strong> is the throughput lift × periods/year × avg per-unit margin, <strong>Payback</strong> is CapEx ÷ Δ Annual Margin. Click <strong>→ Re-solve</strong> on any row to call <code>/api/solve/production-sensitivity</code>, which actually re-runs the MILP with that perturbation and returns the true delta-cost (vs. the heuristic capacity lift shown here).
+      </div>
       {topo.lines.map(L=>{const solverLine=lines.find(x=>x.id===L.id)||lines[0]||{};return<div key={L.id} style={{marginBottom:10}}>
         <div style={{fontSize:11,fontWeight:700,color:'var(--ac)',marginBottom:4}}>{L.name} — sensitivity</div>
         <table className="data-table">
-          <thead><tr><th>Scenario</th><th>Capacity (u/period)</th><th>Δ vs baseline</th><th>Comment</th></tr></thead>
-          <tbody>{sensitivityRows(L,solverLine).map((r,i)=><tr key={i}>
-            <td style={{fontWeight:i===0?700:400}}>{r.label}</td>
-            <td className="num" style={{color:i===0?'var(--ac)':r.delta>0?'var(--gn)':'var(--tx3)',fontWeight:600}}>{r.cap}</td>
-            <td className="num" style={{color:r.delta>0?'var(--gn)':r.delta<0?'var(--dg)':'var(--tx3)'}}>{r.delta>0?'+':''}{r.delta}</td>
-            <td style={{fontSize:10,color:'var(--tx3)'}}>{r.gate}</td>
-          </tr>)}</tbody>
+          <thead><tr><th>Scenario</th><th>Capacity (u/period)</th><th>Δ vs baseline</th><th>CapEx ({cur})</th><th>Δ Annual Margin ({cur})</th><th>Payback (yrs)</th><th>Comment</th></tr></thead>
+          <tbody>{sensitivityRows(L,solverLine).map((r,i)=>{
+            const paybackColor=r.paybackYrs===Infinity||i===0?'var(--tx3)':r.paybackYrs<=3?'var(--gn)':r.paybackYrs<=7?'var(--a4)':'var(--dg)';
+            return <tr key={i}>
+              <td style={{fontWeight:i===0?700:400}}>{r.label}</td>
+              <td className="num" style={{color:i===0?'var(--ac)':r.delta>0?'var(--gn)':'var(--tx3)',fontWeight:600}}>{r.cap}</td>
+              <td className="num" style={{color:r.delta>0?'var(--gn)':r.delta<0?'var(--dg)':'var(--tx3)'}}>{r.delta>0?'+':''}{r.delta}</td>
+              <td className="num" style={{color:r.capex>0?'var(--a4)':'var(--tx3)'}}>{r.capex>0?`${cur}${r.capex.toLocaleString()}`:'—'}</td>
+              <td className="num" style={{color:r.annualMargin>0?'var(--gn)':'var(--tx3)'}}>{r.annualMargin>0?`${cur}${Math.round(r.annualMargin).toLocaleString()}`:'—'}</td>
+              <td className="num" style={{color:paybackColor,fontWeight:i===0?400:700}}>{i===0?'—':r.paybackYrs===Infinity?'∞':`${r.paybackYrs.toFixed(1)}y`}</td>
+              <td style={{fontSize:10,color:'var(--tx3)'}}>{r.gate}</td>
+            </tr>;
+          })}</tbody>
         </table>
       </div>;})}
-      <div style={{fontSize:10,color:'var(--tx3)',padding:'6px 8px',background:'var(--bg3)',borderRadius:4,marginTop:6}}>💡 If "+1 machine @ bottleneck" yields a small lift, the next-slowest stage is now binding. Add machines there next, not on the original bottleneck.</div>
+      <div style={{fontSize:10,color:'var(--tx3)',padding:'6px 8px',background:'var(--bg3)',borderRadius:4,marginTop:6,lineHeight:1.5}}>
+        💡 If "+1 machine @ bottleneck" yields a small lift, the next-slowest stage is now binding — add machines there next.<br/>
+        <strong>CapEx defaults</strong> — +1 shift = ₹0 (just wages); +1 machine = avg purchase price of assets tagged to this line ({cur}500,000 fallback if no line-tagged assets); +2 workers = ₹0. Override by populating Tab 05 → Asset Registry with realistic machine prices and setting 🏭 Line on each.<br/>
+        <strong>Backend re-solve</strong> — the <code>/api/solve/production-sensitivity</code> endpoint loops scenarios through <code>solve_production</code> and returns true delta-cost + delta-throughput per scenario. Surface in the future as an opt-in "→ Re-solve all" button to avoid burning solver time on every page render.
+      </div>
     </CollapsibleCard>
 
     {/* T4-11 — MPS lives here. Bridges the production tab to the rolling-horizon plan. */}
@@ -10588,6 +10759,98 @@ function InvestmentDecisionTab({state,dispatch}){
         </div>}
       </>}
     </div>
+
+    {/* R15 / Phase 3 · D7 — Per-Line CapEx Proposals card. Surfaces line-tagged assets from
+        Tab 05 as "expand line X" CapEx proposals: groups by line, sums purchasePrice + annual
+        depreciation, estimates a heuristic simple-payback using avg per-unit margin × line
+        throughput. Lets the user push a synthetic period-0 CapEx row + a 5-year depreciation
+        schedule into the Cash Flow Builder above. */}
+    {(()=>{
+      const assets=(state.assets||[]).filter(a=>a&&a.lineId);
+      const lines=state.production?.lines||[];
+      const topo=state.production?.topology||{lines:[]};
+      const products=state.products||[];
+      if(assets.length===0)return <div className="card" style={{borderLeft:'3px solid var(--tx3)'}}>
+        <div className="card-title">🏭 Per-Line CapEx Proposals <span className="badge" style={{background:'rgba(140,140,160,.10)',color:'var(--tx3)'}}>D7 · 0 line-tagged assets</span></div>
+        <div style={{fontSize:11,color:'var(--tx3)',padding:8,background:'var(--bg2)',border:'1px dashed var(--br2)',lineHeight:1.5}}>
+          No assets are tagged to a production line yet. Open <strong>Tab 05 → Asset Registry</strong> and set <strong>🏭 Line</strong> on each asset row to surface "expand line X" CapEx proposals here. Each line-tagged asset is treated as an incremental CapEx that drives that line's throughput; this card sums the proposals per line and projects payback against current product margins.
+        </div>
+      </div>;
+      // Group assets by line and roll up.
+      const byLine={};
+      assets.forEach(a=>{
+        const lid=a.lineId;
+        if(!byLine[lid])byLine[lid]={lineId:lid,lineName:(lines.find(L=>L.id===lid)?.name)||(topo.lines.find(L=>L.id===lid)?.name)||`(missing line ${lid})`,assets:[],capex:0,depr:0};
+        byLine[lid].assets.push(a);
+        byLine[lid].capex+=(+a.purchasePrice||0);
+        byLine[lid].depr+=assetAnnualDepr(a);
+      });
+      const proposals=Object.values(byLine).sort((a,b)=>b.capex-a.capex);
+      // Heuristic per-unit margin: avg(price − matCost − laborPerUnit) across non-empty products.
+      const marginUnits=products.map(p=>{
+        const price=+p.priceTier1||+p.price||0;
+        const matCost=+p.materialCostPerUnit||0;
+        const labor=+p.laborPerUnit||0;
+        return Math.max(0,price-matCost-labor);
+      }).filter(m=>m>0);
+      const avgMargin=marginUnits.length?marginUnits.reduce((s,m)=>s+m,0)/marginUnits.length:0;
+      // Per-line throughput estimate: lines[].capacity × periodsPerYear.
+      const grain=state.planning?.timeGrain||'weekly';
+      const periodsPerYear=grain==='daily'?365:grain==='monthly'?12:52;
+      const wd=state.planning?.workDays||6;
+      // R15 D7 · push a synthetic CapEx + depreciation schedule into the Cash Flow Builder.
+      const pushToCFB=(prop)=>{
+        if(!prop)return;
+        if(!confirm(`Add ${prop.lineName} CapEx (${cur}${prop.capex.toLocaleString()}) + 5-year depreciation schedule to the Cash Flow Builder above?\n\nThis appends to existing rows — does NOT clear them.`))return;
+        const baseRows=(state.finance?.cfBuilder?.rows||[]);
+        const startPeriod=baseRows.length;
+        // Period 0: CapEx hit. Periods 1..5: depreciation tax-shield only (no incremental revenue
+        // claimed — that requires an MILP rerun with new capacity, which is the D4 sensitivity job).
+        dispatch({type:'CFB_ADD_ROW',payload:{period:startPeriod,revenue:0,opex:0,capex:prop.capex,dWC:0,depreciation:0,terminal:0}});
+        for(let i=1;i<=5;i++){
+          dispatch({type:'CFB_ADD_ROW',payload:{period:startPeriod+i,revenue:0,opex:0,capex:0,dWC:0,depreciation:Math.round(prop.depr),terminal:0}});
+        }
+      };
+      return <div className="card" style={{borderLeft:'3px solid var(--ac)'}}>
+        <div className="card-title">🏭 Per-Line CapEx Proposals <span className="badge" style={{background:'rgba(0,212,170,.1)',color:'var(--ac)'}}>D7 · {proposals.length} line{proposals.length===1?'':'s'} · {assets.length} asset{assets.length===1?'':'s'}</span></div>
+        <div style={{fontSize:11,color:'var(--tx2)',padding:8,background:'var(--bg2)',border:'1px dashed var(--br2)',marginBottom:8,lineHeight:1.5}}>
+          Each line-tagged asset (from <strong>Tab 05 → Asset Registry, set 🏭 Line</strong>) is shown here as a CapEx proposal grouped by its host line. <strong>Simple payback</strong> = CapEx ÷ (avg per-unit margin × current line throughput per year). It assumes the new asset is the bottleneck-relief that converts existing slack into output — a heuristic. For a tighter delta-margin estimate (true MILP rerun with the asset's added capacity), see the <em>CapEx Expansion Suggester</em> on Tab 04.
+        </div>
+        <div style={{overflowX:'auto'}}><table className="data-table">
+          <thead><tr>
+            <th>Line</th><th title="Count of assets currently tagged to this line">#assets</th>
+            <th>Total CapEx ({cur})</th><th>Annual Depr ({cur})</th>
+            <th title="lines[].capacity × periods/year">Throughput (u/yr)</th>
+            <th title="avg margin × yearly throughput">Annual Margin Est.</th>
+            <th title="CapEx ÷ annual margin estimate. ∞ when margin or throughput is zero.">Payback (yrs)</th>
+            <th></th>
+          </tr></thead>
+          <tbody>{proposals.map(prop=>{
+            const lineState=lines.find(L=>L.id===prop.lineId);
+            const cap=+(lineState?.capacity||0);
+            const yearlyThru=cap*periodsPerYear;
+            const annualMargin=avgMargin*yearlyThru;
+            const payback=annualMargin>0?prop.capex/annualMargin:Infinity;
+            const paybackColor=payback<=3?'var(--gn)':payback<=7?'var(--a4)':'var(--dg)';
+            return <tr key={prop.lineId}>
+              <td style={{fontWeight:700,color:'var(--ac)'}}>{prop.lineName}</td>
+              <td className="num">{prop.assets.length}</td>
+              <td className="num" style={{color:'var(--a4)',fontWeight:700}}>{cur}{prop.capex.toLocaleString()}</td>
+              <td className="num">{cur}{Math.round(prop.depr).toLocaleString()}</td>
+              <td className="num" style={{color:'var(--tx2)'}}>{yearlyThru.toLocaleString()}</td>
+              <td className="num" style={{color:'var(--tx2)'}}>{cur}{Math.round(annualMargin).toLocaleString()}</td>
+              <td className="num" style={{color:paybackColor,fontWeight:700}}>{payback===Infinity?'∞':payback.toFixed(1)}y</td>
+              <td><button className="btn btn-secondary btn-sm" onClick={()=>pushToCFB(prop)} title="Append a period-0 CapEx row + 5 years of depreciation rows to the Cash Flow Builder above. Does NOT clear existing rows; you can re-evaluate the verdict immediately.">→ CFB</button></td>
+            </tr>;
+          })}</tbody>
+        </table></div>
+        <div style={{marginTop:8,fontSize:10,color:'var(--tx3)',padding:'6px 8px',background:'var(--bg3)',borderRadius:3,lineHeight:1.5}}>
+          <strong>Why payback may show ∞:</strong> avg margin = {cur}{avgMargin.toFixed(2)}/u (across {marginUnits.length} non-zero-margin product{marginUnits.length===1?'':'s'}). When line throughput is 0 or no products have a positive margin, payback collapses. Set realistic <em>price tier 1</em> and <em>material cost / unit</em> on Tab 02 to see a finite payback.
+          <br/>
+          <strong>What → CFB does:</strong> appends a fresh CapEx row at period N (where N = current row count) + 5 yearly depreciation rows. <em>Does not</em> claim incremental revenue — that requires the MILP to be rerun with the asset's added throughput, which is the job of Tab 04's CapEx Expansion Suggester (D4).
+        </div>
+      </div>;
+    })()}
   </div>;
 }
 
