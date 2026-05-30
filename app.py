@@ -36,6 +36,7 @@ from solvers.cvar import solve_cvar
 from solvers.reconcile import run_sop_pipeline
 from solvers.policy import derive_policies
 from solvers.capital_capacity import solve_capital_capacity
+from solvers.sequencing import evaluate_line as sequence_evaluate_line
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
@@ -547,6 +548,17 @@ def api_solve_pipeline():
 
         results['pipeline_status'] = 'complete'
         return jsonify(results)
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+# ─── Sequence-dependent changeover (GAP-8) ───
+@app.route('/api/solve/sequence', methods=['POST'])
+def api_solve_sequence():
+    """Cheapest run order over the asymmetric changeover matrix for a set of SKUs
+    (shortest Hamiltonian path), plus the saving vs the averaged approximation."""
+    try:
+        return jsonify(sequence_evaluate_line(request.json or {}))
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 

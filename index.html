@@ -7427,6 +7427,22 @@ function OptimizeTab({state,dispatch}){
       </div>
     </div>}
 
+    {/* ─── GAP-8 · SEQUENCE-DEPENDENT CHANGEOVER ─── */}
+    {result&&result._mode==='production'&&result.sequence_plans?.length>0&&<div className="card" style={{borderLeft:'3px solid var(--a3)'}}>
+      <div className="card-title">🔀 Sequence-Dependent Changeover <span className="badge" style={{background:'rgba(167,139,250,.12)',color:'var(--a3)',marginLeft:6}}>GAP-8 · true run order</span></div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>The MILP charges changeover as a switch count × the <em>averaged</em> matrix (kept linear). Here is the cheapest run order over the real <strong>asymmetric</strong> matrix (A→B ≠ B→A) for the SKUs actually scheduled — and the time it saves vs that average.</div>
+      {result.sequence_plans.map((s,i)=><div key={i} style={{marginBottom:8,padding:8,background:'var(--bg3)',borderRadius:4}}>
+        <div style={{display:'flex',justifyContent:'space-between',flexWrap:'wrap',gap:8,fontSize:11}}>
+          <div><strong style={{color:'var(--ac)'}}>{s.line}</strong> <span style={{color:'var(--tx3)'}}>({s.basis})</span> — run order: {s.sequence.map((sk,j)=><span key={j}>{j>0&&<span style={{color:'var(--tx3)'}}> → </span>}<span style={{fontWeight:600}}>{sk}</span></span>)}</div>
+          <div style={{display:'flex',gap:14}}>
+            <span><span style={{color:'var(--tx3)'}}>seq cost </span><strong>{s.total_changeover_min}min</strong></span>
+            <span><span style={{color:'var(--tx3)'}}>averaged </span><strong style={{color:'var(--tx2)'}}>{s.averaged_approx_min}min</strong></span>
+            <span><span style={{color:'var(--tx3)'}}>saving </span><strong style={{color:s.sequence_saving_min>0?'var(--gn)':'var(--tx2)'}}>{s.sequence_saving_min}min</strong></span>
+          </div>
+        </div>
+      </div>)}
+    </div>}
+
     {/* ─── PRODUCTION ORDERS REGISTER ─── */}
     {result&&result._mode==='production'&&result.gantt?.length>0&&<div className="card">
       <div className="card-title">📋 Production Order Register

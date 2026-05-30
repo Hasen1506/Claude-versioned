@@ -509,9 +509,41 @@ def solve_production(data):
                         'net_gain': round(net_gain, 2),
                     })
 
+    # GAP-8 (move a) — sequence-dependent changeover. Post-solve, for each line compute the
+    # cheapest run order over the asymmetric changeover matrix for the SKUs actually scheduled,
+    # and report the true cost vs the MILP's averaged approximation. No MILP change.
+    sequence_plans = []
+    try:
+        from .sequencing import optimal_sequence, _matrix_lookup
+    except ImportError:
+        try:
+            from sequencing import optimal_sequence, _matrix_lookup
+        except ImportError:
+            optimal_sequence = None
+    if optimal_sequence is not None:
+        for l in range(n_lines):
+            co_matrix = lines[l].get('changeover_matrix', {}) or {}
+            sched_ks = [k for k in range(n_prod)
+                        if any((pulp.value(x[k, l, t]) or 0) > 0 for t in range(T))]
+            if len(sched_ks) < 2:
+                continue
+            names = [products[k].get('name', f'P{k}') for k in sched_ks]
+            default_min = float(lines[l].get('changeover_mins', 30) or 30)
+            seq = optimal_sequence(names, co_matrix, default_min)
+            # averaged approximation for contrast (matches the MILP's mean-matrix basis)
+            vals = [_matrix_lookup(co_matrix, a, b) for a in names for b in names if a != b]
+            vals = [v for v in vals if v is not None]
+            mean_min = (sum(vals) / len(vals)) if vals else default_min
+            seq['line'] = lines[l].get('name', f'L{l}')
+            seq['averaged_approx_min'] = round(mean_min * (len(names) - 1), 2)
+            seq['sequence_saving_min'] = round(seq['averaged_approx_min'] - seq['total_changeover_min'], 2)
+            sequence_plans.append(seq)
+
     return {
         'status': 'Optimal',
         'total_cost': round(total_cost, 2),
+        # GAP-8 — true sequence-dependent changeover run order per line (vs averaged MILP cost).
+        'sequence_plans': sequence_plans,
         # R14.1 / Phase 3 · D6 — labor cost transparency.
         'labor_cost_mode_active': labor_cost_mode,
         'salaried_fixed_cost': round(salaried_fixed_cost, 2),

@@ -216,7 +216,19 @@ Legend: 🟩 verified premise · ⚖️ design judgment · ⭐ highest leverage
 
 ---
 
-## GAP-8 · Production scheduling: averaged changeover, no WIP, CBC engine
+## GAP-8 · Production scheduling: averaged changeover, no WIP, CBC engine — ✅ MOVE (a) IMPLEMENTED (R27)
+- ✅ **Built (R27):** new [sequencing.py](sequencing.py) `optimal_sequence` — the true
+  sequence-dependent changeover the MILP averages away. It solves the shortest Hamiltonian PATH over
+  the asymmetric changeover matrix (A→B ≠ B→A) for the SKUs scheduled on a line: exact (permutation)
+  for ≤8 SKUs, nearest-neighbour + node-reinsertion above. production.py now emits `sequence_plans`
+  per line (run order + true changeover min + saving vs the averaged approximation) post-solve, no MILP
+  change; endpoint `/api/solve/sequence`; a **Sequence-Dependent Changeover** card shows the run order +
+  saving. Verified: 6 tests in [tests/test_gap8_sequence.py](tests/test_gap8_sequence.py) — cheapest
+  path, asymmetry respected, saving vs average, single-SKU zero, heuristic for >8, production emits plans.
+- ⏸️ **Moves (b) CP-SAT and (c) WIP / lot-streaming — deferred.** OR-Tools is not installed in this
+  environment (CP-SAT unavailable), and inter-stage WIP/transfer-batch modelling is a large MILP
+  reformulation (`_route_cap` collapses routing to bottleneck throughput today). Move (a) delivers the
+  highest-fidelity win — real asymmetric setup cost + the optimal run order — without those dependencies.
 - 🟩 **Premise (verified):** changeover is a switch *count* with the matrix averaged to stay
   linear (last session's note, [production.py:221-238](production.py#L221)); multi-stage
   routing collapses to bottleneck throughput (`_route_cap`), so no WIP / lot-streaming.
