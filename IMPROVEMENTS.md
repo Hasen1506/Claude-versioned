@@ -136,7 +136,21 @@ Legend: 🟩 verified premise · ⚖️ design judgment · ⭐ highest leverage
 
 ---
 
-## GAP-5 · Capital budgeting is single-period and decoupled from capacity
+## GAP-5 · Capital budgeting is single-period and decoupled from capacity — ✅ IMPLEMENTED (R24)
+- ✅ **Built (R24):** new [capital_capacity.py](capital_capacity.py) `solve_capital_capacity` — all
+  three moves: (a) multi-period `invest[i,t]` timing within each option's [earliest,latest] window
+  under a per-period budget whose unspent balance rolls forward; (b) ENDOGENOUS capacity — a
+  'capacity' option's annual cash flow is derived from throughput (capacity_hours · margin_per_hour ·
+  utilization − opex), with margin_per_hour defaulting to the binding capacity shadow price the
+  Aggregate Plan (GAP-0) emits, directly coupling capital to the bottleneck's value; (c) a Monte Carlo
+  pass perturbs the cash-flow drivers (±CV) and reports the NPV band + P(NPV<0). Endpoint
+  `/api/solve/capital-capacity`; **"Endogenous-Capacity Capital Plan"** card in the Investment tab
+  (pulls the live shadow price from `state.aggregatePlan`). Verified: 7 tests in
+  [tests/test_gap5_capital.py](tests/test_gap5_capital.py) — throughput-derived CF, margin override,
+  positive-NPV capacity selected, tight no-rollover drops the big line, rollover is a relaxation
+  (NPV can't worsen) and funds the line by mid-horizon, risk band ordered with bounded P(NPV<0).
+- **Note:** capital.py (legacy single-period knapsack) is retained; this is the additive multi-period
+  successor, not a rewrite.
 - 🟩 **Premise (verified):** capital.py is a single-period binary knapsack on NPV at one
   WACC; no multi-year budget, no capacity coupling. The production-sensitivity bridge that
   would value added capacity is broken under the machine-hours model (MUST_FIX MF-3).

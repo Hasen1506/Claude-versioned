@@ -35,6 +35,7 @@ from solvers.aggregate import solve_aggregate
 from solvers.cvar import solve_cvar
 from solvers.reconcile import run_sop_pipeline
 from solvers.policy import derive_policies
+from solvers.capital_capacity import solve_capital_capacity
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
@@ -546,6 +547,19 @@ def api_solve_pipeline():
 
         results['pipeline_status'] = 'complete'
         return jsonify(results)
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+# ─── Multi-period capital plan w/ endogenous capacity (GAP-5) ───
+@app.route('/api/solve/capital-capacity', methods=['POST'])
+def api_solve_capital_capacity():
+    """Multi-period capital plan: invest[i,t] timing under a rollover budget, where a
+    'capacity' option's NPV is DERIVED from the throughput it unlocks (capacity_hours ×
+    margin_per_hour × utilization − opex, margin defaulting to the capacity shadow price),
+    then risk-adjusted by a Monte Carlo pass on the cash-flow drivers."""
+    try:
+        return jsonify(solve_capital_capacity(request.json or {}))
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 

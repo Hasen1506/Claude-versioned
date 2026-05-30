@@ -10961,12 +10961,97 @@ function InvestmentDecisionTab({state,dispatch}){
     return (!w||r>w.r)?{name:e.name,sourceType:e.sourceType,amount:+e.amount||0,r}:w;
   },null):null;
 
+  // ── GAP-5 · Endogenous-capacity capital plan ──
+  // The binding capacity shadow price from the latest Aggregate Plan (Tab 3B) is the
+  // marginal value of one machine-hour — exactly what a new line/shift earns per hour.
+  const capShadow=React.useMemo(()=>{
+    const sp=(state.aggregatePlan?.shadow_prices)||[];
+    const binding=sp.filter(s=>s.binding).map(s=>Math.abs(+s.shadow_price||0));
+    return binding.length?Math.round(Math.max(...binding)*100)/100:0;
+  },[state.aggregatePlan]);
+  const [capOpts,setCapOpts]=useState([
+    {name:'New Line',type:'capacity',capex:200000,capacity_hours_per_period:2000,utilization:0.85,opex_per_period:10000,useful_life:5,residual_value:30000,earliest_period:0,latest_period:3,margin_per_hour:''},
+    {name:'Extra Shift',type:'capacity',capex:50000,capacity_hours_per_period:800,utilization:0.9,opex_per_period:20000,useful_life:5,residual_value:0,earliest_period:0,latest_period:4,margin_per_hour:''},
+  ]);
+  const [capBudget,setCapBudget]=useState(150000);
+  const [capRollover,setCapRollover]=useState(true);
+  const [capResult,setCapResult]=useState(null);
+  const [capSolving,setCapSolving]=useState(false);
+  const setCapOpt=(i,p)=>setCapOpts(o=>o.map((x,j)=>j===i?{...x,...p}:x));
+  const solveCap=async()=>{
+    setCapSolving(true);setCapResult(null);
+    try{
+      const r=await fetch('/api/solve/capital-capacity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        investments:capOpts.map(o=>({...o,margin_per_hour:o.margin_per_hour===''?null:+o.margin_per_hour})),
+        params:{horizon_periods:6,wacc:wacc/100,capacity_shadow_price:capShadow,budget_per_period:+capBudget,budget_rollover:capRollover,driver_cv:0.2},
+      })});
+      const d=await r.json();setCapResult(d.error?{error:d.error}:d);
+    }catch(e){setCapResult({error:e.message});}
+    setCapSolving(false);
+  };
+
   return <div className="tab-section">
     <div className="card">
       <div className="card-title">💎 Investment Decision <span className="badge" style={{background:'rgba(0,212,170,.1)',color:'var(--ac)'}}>Round 7 · Cash Flow Builder · Two-Rate NPV</span></div>
       <div style={{fontSize:11,color:'var(--tx2)',padding:8,background:'var(--bg2)',border:'1px dashed var(--br2)',marginBottom:8,lineHeight:1.5}}>
         <strong>Why two NPVs?</strong> The standard NPV @ WACC tells you whether the project beats the firm's blended cost of capital. But if your equity came from liquidating a piece of land that was growing at 12%/yr, your <em>real</em> hurdle is whichever is higher: the firm WACC or the <strong>real after-inflation return</strong> on what you gave up. Tag each equity tranche below; the right column shows NPV at the <strong>weighted opportunity cost</strong> across tranches. If that's negative, the project destroys equity-holder value even when it looks fine at WACC.
       </div>
+    </div>
+
+    {/* ─── GAP-5 · Endogenous-Capacity Capital Plan ─── */}
+    <div className="card" style={{borderColor:'var(--ac)'}}>
+      <div className="card-title">🏗️ Endogenous-Capacity Capital Plan <span className="badge" style={{background:'rgba(0,212,170,.1)',color:'var(--ac)'}}>GAP-5 · multi-period · throughput-justified</span></div>
+      <div style={{fontSize:11,color:'var(--tx2)',padding:8,background:'var(--bg2)',border:'1px dashed var(--br2)',marginBottom:8,lineHeight:1.5}}>
+        A capacity option (new line / extra shift) is valued by the <strong>throughput it unlocks</strong>:
+        annual cash flow = capacity-hours × <strong>margin/hour</strong> × utilization − opex. Margin/hour defaults to the
+        binding <strong>capacity shadow price</strong> from the Aggregate Plan (Tab 3B) — {capShadow>0?<span style={{color:'var(--gn)'}}>{cur}{capShadow}/hr (live)</span>:<span style={{color:'var(--a4)'}}>run Tab 3B for a live value; using per-option overrides / 0 until then</span>}.
+        The plan chooses WHICH options and WHEN, under a per-period budget{capRollover?' (unspent balance rolls forward)':''}, then Monte-Carlo stress-tests the chosen NPV.
+      </div>
+      <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap',marginBottom:8,fontSize:11}}>
+        <label style={{display:'flex',alignItems:'center',gap:4}}>Budget/period ({cur}): <NumInput value={capBudget} onChange={setCapBudget} min={0} style={{width:100}}/></label>
+        <label style={{display:'flex',alignItems:'center',gap:4,cursor:'pointer'}}><input type="checkbox" checked={capRollover} onChange={e=>setCapRollover(e.target.checked)}/> budget rollover</label>
+        <button className="btn btn-primary" onClick={solveCap} disabled={capSolving}>{capSolving?'⏳ Solving…':'▶ Solve Capital Plan'}</button>
+      </div>
+      <div style={{overflowX:'auto'}}>
+        <table className="data-table" style={{fontSize:10,width:'100%'}}>
+          <thead><tr><th style={{textAlign:'left'}}>Option</th><th>Type</th><th>CapEx</th><th>Hrs/period</th><th>Util</th><th>Opex/period</th><th>Margin/hr (blank=shadow)</th><th>Life</th><th>Window</th></tr></thead>
+          <tbody>{capOpts.map((o,i)=><tr key={i}>
+            <td><input value={o.name} onChange={e=>setCapOpt(i,{name:e.target.value})} style={{width:90,background:'var(--bg3)',border:'1px solid var(--br2)',color:'var(--tx)',fontSize:10,padding:'2px 4px'}}/></td>
+            <td><select value={o.type} onChange={e=>setCapOpt(i,{type:e.target.value})} style={{background:'var(--bg3)',border:'1px solid var(--br2)',color:'var(--tx)',fontSize:10}}><option value="capacity">capacity</option><option value="cashflow">cashflow</option></select></td>
+            <td><NumInput value={o.capex} onChange={v=>setCapOpt(i,{capex:v})} style={{width:75}}/></td>
+            <td>{o.type==='capacity'?<NumInput value={o.capacity_hours_per_period} onChange={v=>setCapOpt(i,{capacity_hours_per_period:v})} style={{width:60}}/>:<span style={{color:'var(--tx3)'}}>—</span>}</td>
+            <td>{o.type==='capacity'?<NumInput value={o.utilization} onChange={v=>setCapOpt(i,{utilization:v})} step={0.05} min={0} max={1} style={{width:48}}/>:'—'}</td>
+            <td>{o.type==='capacity'?<NumInput value={o.opex_per_period} onChange={v=>setCapOpt(i,{opex_per_period:v})} style={{width:65}}/>:<NumInput value={o.annual_cash_flow||0} onChange={v=>setCapOpt(i,{annual_cash_flow:v})} style={{width:65}} title="annual cash flow"/>}</td>
+            <td>{o.type==='capacity'?<NumInput value={o.margin_per_hour} onChange={v=>setCapOpt(i,{margin_per_hour:v})} placeholder="shadow" style={{width:60}}/>:'—'}</td>
+            <td><NumInput value={o.useful_life} onChange={v=>setCapOpt(i,{useful_life:v})} style={{width:40}}/></td>
+            <td style={{whiteSpace:'nowrap'}}><NumInput value={o.earliest_period} onChange={v=>setCapOpt(i,{earliest_period:v})} style={{width:32}}/>–<NumInput value={o.latest_period} onChange={v=>setCapOpt(i,{latest_period:v})} style={{width:32}}/></td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+      <button onClick={()=>setCapOpts(o=>[...o,{name:`Option ${o.length+1}`,type:'capacity',capex:100000,capacity_hours_per_period:1000,utilization:0.85,opex_per_period:10000,useful_life:5,residual_value:0,earliest_period:0,latest_period:5,margin_per_hour:''}])} style={{marginTop:6,fontSize:10,background:'var(--bg3)',border:'1px solid var(--br2)',color:'var(--tx2)',padding:'3px 8px',borderRadius:3,cursor:'pointer'}}>+ Add option</button>
+      {capResult&&capResult.error&&<div style={{color:'var(--dg)',fontSize:11,marginTop:8}}>⚠ {capResult.error}</div>}
+      {capResult&&capResult.status==='Optimal'&&<div style={{marginTop:10}}>
+        <div style={{display:'flex',gap:18,flexWrap:'wrap',fontSize:12,marginBottom:8}}>
+          <div><span style={{color:'var(--tx3)'}}>Total NPV </span><strong style={{color:'var(--gn)'}}>{cur}{capResult.total_npv.toLocaleString()}</strong></div>
+          <div><span style={{color:'var(--tx3)'}}>CapEx </span><strong>{cur}{capResult.total_capex.toLocaleString()}</strong></div>
+          {capResult.risk_adjusted_npv&&<>
+            <div><span style={{color:'var(--tx3)'}}>Risk-adj. mean </span><strong>{cur}{capResult.risk_adjusted_npv.mean.toLocaleString()}</strong></div>
+            <div><span style={{color:'var(--tx3)'}}>P10…P90 </span><strong>{cur}{capResult.risk_adjusted_npv.p10.toLocaleString()} … {cur}{capResult.risk_adjusted_npv.p90.toLocaleString()}</strong></div>
+            <div><span style={{color:'var(--tx3)'}}>P(NPV&lt;0) </span><strong style={{color:capResult.risk_adjusted_npv.prob_negative>20?'var(--dg)':capResult.risk_adjusted_npv.prob_negative>5?'var(--a4)':'var(--gn)'}}>{capResult.risk_adjusted_npv.prob_negative}%</strong></div>
+          </>}
+        </div>
+        <table className="data-table" style={{fontSize:10,width:'100%'}}>
+          <thead><tr style={{textAlign:'right'}}><th style={{textAlign:'left'}}>Invest period</th><th style={{textAlign:'left'}}>Option</th><th>CapEx</th><th>Annual CF</th><th>NPV</th><th>IRR</th><th>Hrs/period</th></tr></thead>
+          <tbody>{capResult.schedule.map((s,i)=><tr key={i} style={{textAlign:'right'}}>
+            <td style={{textAlign:'left'}}>Y{s.invest_period}</td>
+            <td style={{textAlign:'left',fontWeight:600,color:'var(--ac)'}}>{s.name}</td>
+            <td>{cur}{s.capex.toLocaleString()}</td><td>{cur}{s.annual_cash_flow.toLocaleString()}</td>
+            <td style={{color:s.npv>0?'var(--gn)':'var(--dg)'}}>{cur}{s.npv.toLocaleString()}</td>
+            <td>{s.irr!=null?s.irr+'%':'—'}</td><td>{s.capacity_hours_per_period||'—'}</td>
+          </tr>)}</tbody>
+        </table>
+        <div style={{fontSize:9,color:'var(--tx3)',marginTop:4}}>Capacity added by period (machine-hrs): [{capResult.capacity_added_by_period.join(', ')}]. The deterministic NPV is the point estimate; the risk-adjusted band perturbs margin/hour & utilization ±20% to expose downside.</div>
+      </div>}
     </div>
 
     {/* ─── Cash Flow Builder ─── */}
