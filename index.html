@@ -7605,6 +7605,13 @@ function OptimizeTab({state,dispatch}){
         <KPI label="Total Cost" value={`${cur}${result.total_cost?.toLocaleString()}`} color="var(--dg)"/>
         <KPI label="Margin" value={`${result.margin_pct}%`} color={result.margin_pct>20?'var(--gn)':'var(--a4)'}/>
       </div>
+      {/* GAP-6 — MAPE robustness band + fixed-charge line-opening decisions */}
+      {(result.robustness||result.opened_lines?.length>0)&&<div style={{display:'flex',gap:14,flexWrap:'wrap',fontSize:11,marginBottom:8,padding:'6px 10px',background:'var(--bg3)',borderRadius:4}}>
+        {result.robustness&&<span title="The chosen mix re-evaluated if demand lands at ±MAPE (poor-man's recourse). Shows downside exposure of a deterministic plan.">
+          📉 Robustness band: <strong style={{color:'var(--dg)'}}>{cur}{result.robustness.pessimistic_profit?.toLocaleString()}</strong> <span style={{color:'var(--tx3)'}}>(−MAPE)</span> … <strong>{cur}{result.robustness.expected_profit?.toLocaleString()}</strong> <span style={{color:'var(--tx3)'}}>(exp)</span> … <strong style={{color:'var(--gn)'}}>{cur}{result.robustness.optimistic_profit?.toLocaleString()}</strong> <span style={{color:'var(--tx3)'}}>(+MAPE)</span>
+        </span>}
+        {result.opened_lines?.length>0&&<span title="Fixed-charge MILP: a line's fixed open cost is paid only if it's opened.">🏭 Lines opened: <strong>{result.opened_lines.map(l=>l.line).join(', ')}</strong> <span style={{color:'var(--tx3)'}}>({cur}{result.fixed_open_cost_total?.toLocaleString()} fixed)</span></span>}
+      </div>}
       <table className="data-table">
         <thead><tr><th>Product</th><th>Margin/u</th><th>Margin/hr</th><th>Ceiling</th><th>Produce</th><th>Fill%</th><th>Hours</th><th>Profit</th><th>Demand Source</th></tr></thead>
         <tbody>{result.products?.map((p,i)=><tr key={i}>

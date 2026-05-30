@@ -10,7 +10,14 @@ start→end chain. Each item separates the **factual premise** (verified against
 code, file:line) from the **design judgment** (my recommendation, which is
 debatable). Effort/leverage is my estimate.
 
-Legend: 🟩 verified premise · ⚖️ design judgment · ⭐ highest leverage
+Legend: 🟩 verified premise · ⚖️ design judgment · ⭐ highest leverage · ✅ IMPLEMENTED
+
+> **STATUS (2026-05-30):** All ten gaps implemented across Rounds 20–29 (GAP-0 R20, GAP-1 R21,
+> GAP-2 R22, GAP-3 R23, GAP-5 R24, GAP-4 R25, GAP-7 R26, GAP-8 R27, GAP-9 R28, GAP-6 R29). Each
+> shipped as a verified commit (Python AST + full Babel JSX parse + pytest). The suite grew from 17 to
+> 73 tests. Three gaps were delivered in their highest-leverage scope with the larger rewrite explicitly
+> deferred and reasoned (GAP-8 CP-SAT/WIP, GAP-9 unified MILP, GAP-6 full two-stage stochastic) — see
+> each section's scope note.
 
 ---
 
@@ -176,7 +183,21 @@ Legend: 🟩 verified premise · ⚖️ design judgment · ⭐ highest leverage
 
 ---
 
-## GAP-6 · Profit mix: deterministic, single-period, independent demand
+## GAP-6 · Profit mix: deterministic, single-period, independent demand — ✅ IMPLEMENTED (R29)
+- ✅ **Built (R29):** in [profitmix.py](profitmix.py). (c) **Fixed-charge line opening** — a line's
+  one-time open cost is now a BINARY decision: `open[l] ∈ {0,1}`, capacity gated on it (x ≤ cap·open),
+  the fixed charge paid once per opened line (was a linear per-SKU `fixed_daily_cost`). (b)
+  **Cross-elasticity / cannibalization** — a SKU's substitutes eat its ceiling: q[k] + Σ rate·q[j] ≤
+  ceiling_k, so SKUs are no longer independent. (a) **MAPE robustness band** — the chosen mix is
+  re-evaluated at ±MAPE demand (poor-man's recourse) → pessimistic/expected/optimistic profit, exposing
+  a deterministic plan's downside. Result carries `opened_lines`, `fixed_open_cost_total`, `robustness`;
+  surfaced in the profit-mix result. Verified: 5 tests in
+  [tests/test_gap6_profitmix.py](tests/test_gap6_profitmix.py) — cannibalization lowers the substitute's
+  output (constraint binds), no-substitutes unchanged, fixed charge opens the cheap line / declines the
+  ₹500k one, robustness band ordered.
+- **Scope note:** the full two-stage stochastic program is, as this gap originally noted, largely
+  subsumed by the multi-period GAP-0 tier + the GAP-1 Monte Carlo on the committed plan; the ±MAPE band
+  here is the lightweight in-solver robustness readout.
 - 🟩 **Premise (verified):** LP with deterministic margins; MAPE used only as a static
   ceiling buffer ([profitmix.py:91](profitmix.py#L91)); SKUs have independent demand;
   `fixed_daily_cost` is linear ([profitmix.py:233](profitmix.py#L233)).

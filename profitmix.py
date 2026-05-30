@@ -275,6 +275,9 @@ def solve_profitmix(data):
         months = planning_horizon_months if planning_horizon_months > 0 else 1
         salaried_fixed_cost = wf_salaried_monthly_cost * months
 
+    # GAP-6 (c) — fixed_open_terms is defined in the capacity section below; reference a holder here
+    # and add it after that section so the binary open-cost lands in the objective. We fold it via a
+    # post-construction objective update to keep the single prob.objective assignment readable.
     prob += pulp.lpSum(obj) - pulp.lpSum(hourly_labor_cost_terms) - fixed_total - salaried_fixed_cost, "Total_Profit"
 
     # ── Constraints ──
@@ -289,7 +292,20 @@ def solve_profitmix(data):
         effective_ceiling = di['ceiling']
         if user_max > 0:
             effective_ceiling = min(effective_ceiling, user_max)
-        prob += q[k] <= effective_ceiling, f"DemandCeiling_{k}"
+        # GAP-6 (b) — cross-elasticity / cannibalization. SKUs are no longer independent: when
+        # product k declares substitutes, each unit of a substitute j sold eats `rate` units of
+        # k's own demand ceiling. Linear: q[k] + Σ_j rate_kj·q[j] ≤ ceiling_k. Absent → unchanged.
+        subs = products[k].get('substitutes') or products[k].get('cannibalization') or []
+        cannib_terms = []
+        for sub in subs:
+            j = sub.get('index')
+            rate = float(sub.get('rate', 0) or 0)
+            if j is not None and 0 <= int(j) < n and int(j) != k and rate > 0:
+                cannib_terms.append(rate * q[int(j)])
+        if cannib_terms:
+            prob += q[k] + pulp.lpSum(cannib_terms) <= effective_ceiling, f"DemandCeiling_{k}"
+        else:
+            prob += q[k] <= effective_ceiling, f"DemandCeiling_{k}"
         if user_max > 0:
             constraint_names[f"Max prod: {products[k].get('name', f'P{k}')}"] = f"DemandCeiling_{k}"
 
@@ -313,6 +329,20 @@ def solve_profitmix(data):
     # converted to hours here). When `oee` is present, derate available hours by it. Both fields are
     # OPTIONAL — payloads from older builds without these fields fall back to the previous behavior.
 
+    # GAP-6 (c) — fixed-charge line opening. A line that incurs a one-time fixed cost to open
+    # (setup/lease/min staffing) is a BINARY decision, not the linear per-SKU fixed_daily_cost.
+    # When any line carries fixed_open_cost > 0 we add open[l] ∈ {0,1}; production on a line is
+    # gated by open[l] (x ≤ cap·open) and the objective pays the fixed charge once per opened line.
+    open_line = {}
+    fixed_open_terms = []
+    has_fixed_open = has_line_pool and any(float(l.get('fixed_open_cost', 0) or 0) > 0 for l in lines_pool)
+    if has_fixed_open:
+        for li, line in enumerate(lines_pool):
+            open_line[li] = pulp.LpVariable(f'open_{li}', cat='Binary')
+            fc = float(line.get('fixed_open_cost', 0) or 0)
+            if fc > 0:
+                fixed_open_terms.append(fc * open_line[li])
+
     if has_line_pool:
         # v3.4 — per-line hours budget. Σ_k cycle[k,l] * x[k,l] ≤ avail_hrs[l] × oee[l]
         for li, line in enumerate(lines_pool):
@@ -321,10 +351,12 @@ def solve_profitmix(data):
             # weekly → scale by planning horizon weeks (infer from horizon_days/7)
             weeks = max(1, round((30 * planning_horizon_months / 7) if planning_horizon_months > 0 else 4.33))
             line_cap_hrs = avail * weeks * oee
+            # GAP-6 (c) — gate available capacity on the open decision when a fixed open cost exists.
+            cap_rhs = (line_cap_hrs * open_line[li]) if (has_fixed_open and li in open_line) else line_cap_hrs
             c_name = f"LineHrs_{li}"
             prob += pulp.lpSum(
                 _cycle_hrs_for_line(k, line) * x[(k, li)] for k in range(n) if (k, li) in x
-            ) <= line_cap_hrs, c_name
+            ) <= cap_rhs, c_name
             constraint_names[f"Line hrs: {line.get('name', f'L{li}')}"] = c_name
     else:
         shared_cap = constraints.get('shared_capacity', 0)
@@ -333,6 +365,11 @@ def solve_profitmix(data):
                 cycle_times[k] * q[k] for k in range(n)
             ) <= shared_cap, "Shared_Capacity"
             constraint_names['Shared Capacity (machine-hrs)'] = "Shared_Capacity"
+
+    # GAP-6 (c) — fold the binary line-opening fixed charges into the objective (built above in the
+    # capacity section, after the initial objective assignment).
+    if fixed_open_terms:
+        prob.objective = prob.objective - pulp.lpSum(fixed_open_terms)
 
     # Per-line capacity
     for li, line in enumerate(constraints.get('lines', [])):
@@ -581,12 +618,51 @@ def solve_profitmix(data):
                     qty = pulp.value(x[(k, li)]) or 0
                     hourly_labor_cost_total += rate * ch * qty
 
+    # GAP-6 (c) — which lines the fixed-charge MILP chose to open + the fixed cost paid.
+    opened_lines = []
+    fixed_open_cost_total = 0.0
+    if has_fixed_open:
+        for li, line in enumerate(lines_pool):
+            if li in open_line and (pulp.value(open_line[li]) or 0) > 0.5:
+                fc = float(line.get('fixed_open_cost', 0) or 0)
+                fixed_open_cost_total += fc
+                opened_lines.append({'line': line.get('name', f'L{li}'), 'fixed_open_cost': round(fc, 2)})
+
+    # GAP-6 (a) — robustness readout (poor-man's recourse): re-evaluate the CHOSEN mix's realizable
+    # revenue if demand lands at ±MAPE, capping sales at the scenario ceiling. Shows how the fixed
+    # plan holds up across the MAPE band without a full two-stage stochastic program (the multi-period
+    # stochastic tier proper is GAP-0 + the GAP-1 MC on the committed plan).
+    def _scenario_profit(mult):
+        prof = 0.0
+        for k in range(n):
+            p = products[k]
+            qty = pulp.value(q[k]) or 0
+            mape = p.get('mape_pct', 15) / 100.0
+            base = demand_info[k]['absorbable'] or demand_info[k]['ceiling']
+            scen_ceiling = base * (1 + mult * mape)
+            sold = min(qty, max(0.0, scen_ceiling))
+            margin = p.get('_margin', 0)
+            unit_cost = p.get('variable_cost', 0) + p.get('_mat_cost', 0)
+            # unsold units still cost to make (sunk) — approximate with make-cost on the overhang.
+            prof += margin * sold - unit_cost * max(0.0, qty - sold)
+        return round(prof - fixed_total - hourly_labor_cost_total - salaried_fixed_cost - fixed_open_cost_total, 2)
+
+    robustness = {
+        'expected_profit': round(total_profit, 2),
+        'pessimistic_profit': _scenario_profit(-1.0),   # demand at −MAPE
+        'optimistic_profit': _scenario_profit(+1.0),     # demand at +MAPE
+    }
+
     return {
         'status': 'Optimal',
         'total_profit': round(total_profit, 2),
         'total_revenue': round(total_revenue, 2),
-        'total_cost': round(total_cost + fixed_total + hourly_labor_cost_total + salaried_fixed_cost, 2),
+        'total_cost': round(total_cost + fixed_total + hourly_labor_cost_total + salaried_fixed_cost + fixed_open_cost_total, 2),
         'fixed_cost': round(fixed_total, 2),
+        # GAP-6 — fixed-charge line opening + cannibalization-aware ceilings + MAPE robustness band.
+        'opened_lines': opened_lines,
+        'fixed_open_cost_total': round(fixed_open_cost_total, 2),
+        'robustness': robustness,
         # R14.1 / Phase 3 · D5 — labor cost transparency.
         'labor_cost_mode_active': labor_cost_mode,
         'hourly_labor_cost': round(hourly_labor_cost_total, 2),
