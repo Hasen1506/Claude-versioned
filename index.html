@@ -7117,23 +7117,25 @@ function OptimizeTab({state,dispatch}){
         `shutdown_recommendations`: (line, period) cells where util_pct < threshold AND
         savings − rehire > 0. Pure post-solve advisory; does NOT change the schedule. */}
     {result&&result._mode==='production'&&Array.isArray(result.shutdown_recommendations)&&result.shutdown_recommendations.length>0&&<div className="card" style={{borderLeft:'3px solid var(--dg)'}}>
-      <div className="card-title">💤 Shutdown Candidates <span className="badge" style={{background:'rgba(248,81,73,.12)',color:'var(--dg)'}}>D3 · {result.shutdown_recommendations.length} cell{result.shutdown_recommendations.length===1?'':'s'} below {result.shutdown_threshold_pct}% util</span></div>
+      <div className="card-title">💤 Shutdown Candidates <span className="badge" style={{background:'rgba(248,81,73,.12)',color:'var(--dg)'}}>D3 · {result.shutdown_recommendations.length} run{result.shutdown_recommendations.length===1?'':'s'} below {result.shutdown_threshold_pct}% util</span></div>
       <div style={{fontSize:11,color:'var(--tx2)',padding:8,background:'var(--bg2)',border:'1px dashed var(--br2)',marginBottom:8,lineHeight:1.5}}>
-        Cells flagged here are <strong>(line × period)</strong> slots where line utilization fell below the threshold AND <em>savings (workers × hrs × wage) exceed rehire cost</em>. Shutting the line in those periods saves money even after paying notice + rehire. The solver did NOT shut these lines on its own — it minimizes setup/changeover/OT/makespan, not idle-worker wages. Use this as a management overlay: ramp-down candidates for low-utilisation periods.
+        Each row is a <strong>consecutive idle run</strong> on a line where utilization stayed below the threshold AND <em>cumulative wage savings exceed the one-off rehire cost</em>. Rehire/notice is charged <strong>once per run</strong> (not per period), so Net Gain is the true benefit of shutting the line for the whole window. The solver did NOT shut these lines on its own — it minimizes setup/changeover/OT/makespan, not idle-worker wages. Use this as a management overlay.
       </div>
       <div style={{overflowX:'auto'}}><table className="data-table" style={{fontSize:10}}>
         <thead><tr>
-          <th>Line</th><th>Period</th>
-          <th className="num">Util %</th>
-          <th className="num" title={`Workers × shifts × hrs × hourly_rate for that line, that period.`}>Savings ({state.config.currency})</th>
-          <th className="num" title={`Workers × hourly_rate × ${80} hrs notice (default 2 wk). Override via params.rehire_notice_hrs.`}>Rehire ({state.config.currency})</th>
+          <th>Line</th><th>Idle window</th>
+          <th className="num">Periods</th>
+          <th className="num">Avg util %</th>
+          <th className="num" title={`Σ over the run of (workers × shifts × hrs × hourly_rate). Wage saved across all idle periods.`}>Savings ({state.config.currency})</th>
+          <th className="num" title={`Workers × hourly_rate × ${80} hrs notice (default 2 wk), charged once per run. Override via params.rehire_notice_hrs.`}>Rehire ({state.config.currency})</th>
           <th className="num" style={{fontWeight:700}}>Net Gain ({state.config.currency})</th>
         </tr></thead>
         <tbody>{[...result.shutdown_recommendations].sort((a,b)=>b.net_gain-a.net_gain).map((rec,i)=>(
           <tr key={i}>
             <td style={{fontWeight:600,color:'var(--a4)'}}>{rec.line_name}</td>
-            <td>W{rec.period+1}</td>
-            <td className="num" style={{color:'var(--a4)'}}>{rec.util_pct}%</td>
+            <td>{rec.from_period===rec.to_period?`W${rec.from_period+1}`:`W${rec.from_period+1}–W${rec.to_period+1}`}</td>
+            <td className="num">{rec.idle_periods}</td>
+            <td className="num" style={{color:'var(--a4)'}}>{rec.avg_util_pct}%</td>
             <td className="num" style={{color:'var(--gn)'}}>{state.config.currency}{rec.savings.toLocaleString()}</td>
             <td className="num" style={{color:'var(--dg)'}}>{state.config.currency}{rec.rehire_cost.toLocaleString()}</td>
             <td className="num" style={{color:'var(--ac)',fontWeight:700}}>{state.config.currency}{rec.net_gain.toLocaleString()}</td>

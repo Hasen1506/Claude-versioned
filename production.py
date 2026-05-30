@@ -298,17 +298,35 @@ def solve_production(data):
             for t in range(T):
                 prob += completion[k] >= (t + 1) * y[k, l, t], f"Comp_{k}_{l}_{t}"
 
-    # C5: Line capacity per period (sum across products)
+    # C5: Line capacity per period.
+    # (Audit #11) When per-(SKU,line) cycle times are present, bind MACHINE-HOURS:
+    #     Σ_k cycle_hrs(k,l)·x[k,l,t] ≤ avail_hrs·OEE + ot[l,t]
+    # The old model summed heterogeneous-cycle SKUs by a single flat unit count
+    # (capacity×shifts), which is dimensionally invalid for a shared line and contradicted
+    # the per-variable route cap on x. The hours basis here matches `_route_cap` exactly
+    # (hrs_per_period·60·OEE / cycle_min), so the aggregate and per-product ceilings agree.
+    # OT now adds genuine hours instead of a 0.5·cap/hrs_per_shift unit fudge.
+    # NOTE: shift count is assumed folded into hrs_per_period (same convention as _route_cap,
+    # which does not separately multiply by shifts); the no-cycle-data branch keeps the legacy
+    # capacity×shifts unit fallback so older payloads are unchanged.
     for l in range(n_lines):
         cap = lines[l].get('capacity', 50)
         shifts = lines[l].get('shifts_per_day', 1)
         total_cap = cap * shifts
+        line_oee = _line_oee(l, products[0]) if n_prod else 1.0
+        avail_hrs = hrs_per_period * line_oee
+        has_cycle = any(_cycle_min_by_sku(l, k) for k in range(n_prod))
         for t in range(T):
-            # Regular capacity + overtime extension
-            ot_cap_extra = cap * 0.5  # OT can add 50% more
-            prob += pulp.lpSum(
-                x[k, l, t] for k in range(n_prod)
-            ) <= total_cap + (ot_cap_extra / max(hrs_per_shift, 1)) * ot[l, t], f"LineCap_{l}_{t}"
+            if has_cycle:
+                prob += pulp.lpSum(
+                    ((_cycle_min_by_sku(l, k) or 0) / 60.0) * x[k, l, t] for k in range(n_prod)
+                ) <= avail_hrs + ot[l, t], f"LineCapHrs_{l}_{t}"
+            else:
+                # Legacy flat-unit fallback (no cycle data): OT extends in units via shift conversion.
+                ot_cap_extra = cap * 0.5  # OT can add 50% more
+                prob += pulp.lpSum(
+                    x[k, l, t] for k in range(n_prod)
+                ) <= total_cap + (ot_cap_extra / max(hrs_per_shift, 1)) * ot[l, t], f"LineCap_{l}_{t}"
 
     # C6: Shared lines — max 1 active product per period (optional for sequential mode)
     for l in range(n_lines):
@@ -444,24 +462,45 @@ def solve_production(data):
             line_total_cap = float(line.get('capacity', 50) or 50) * shifts
             if line_total_cap <= 0:
                 continue
+            # (Audit #13) Group CONSECUTIVE sub-threshold periods into one shutdown "run".
+            # A shutdown pays the rehire/notice cost ONCE per run, not once per idle period.
+            # The old per-period emission charged rehire on every idle week, so summing net_gain
+            # across rows overstated the benefit by ~run_length×.
+            per_period_savings = workers * shifts * hrs_per_period * rate  # regular wage saved / idle period
+            rehire_cost = workers * rate * rehire_notice_hrs               # one-off notice/rehire per run
+            runs = []  # list of (start, end_exclusive, avg_util_pct)
+            cur_start = None
+            util_acc = 0.0
             for t in range(T):
                 produced_kt = sum(int(pulp.value(x[k, l, t]) or 0) for k in range(n_prod))
                 util_pct = (produced_kt / line_total_cap) * 100 if line_total_cap > 0 else 0
                 if util_pct < shutdown_threshold_pct:
-                    savings = workers * shifts * hrs_per_period * rate
-                    rehire_cost = workers * rate * rehire_notice_hrs
-                    net_gain = savings - rehire_cost
-                    if net_gain > 0:
-                        shutdown_recommendations.append({
-                            'period': t,
-                            'line_idx': l,
-                            'line_name': line.get('name', f'L{l}'),
-                            'type': 'shutdown',
-                            'util_pct': round(util_pct, 1),
-                            'savings': round(savings, 2),
-                            'rehire_cost': round(rehire_cost, 2),
-                            'net_gain': round(net_gain, 2),
-                        })
+                    if cur_start is None:
+                        cur_start = t
+                        util_acc = 0.0
+                    util_acc += util_pct
+                elif cur_start is not None:
+                    runs.append((cur_start, t, util_acc / max(t - cur_start, 1)))
+                    cur_start = None
+            if cur_start is not None:
+                runs.append((cur_start, T, util_acc / max(T - cur_start, 1)))
+            for (start, end, avg_util) in runs:
+                n_idle = end - start
+                run_savings = per_period_savings * n_idle
+                net_gain = run_savings - rehire_cost
+                if net_gain > 0:
+                    shutdown_recommendations.append({
+                        'line_idx': l,
+                        'line_name': line.get('name', f'L{l}'),
+                        'type': 'shutdown',
+                        'from_period': start,
+                        'to_period': end - 1,
+                        'idle_periods': n_idle,
+                        'avg_util_pct': round(avg_util, 1),
+                        'savings': round(run_savings, 2),
+                        'rehire_cost': round(rehire_cost, 2),
+                        'net_gain': round(net_gain, 2),
+                    })
 
     return {
         'status': 'Optimal',

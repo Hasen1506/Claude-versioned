@@ -17,6 +17,12 @@ import pulp
 import time
 import math
 
+# (Audit dedup) IRR lives in finance.py — import it rather than maintaining a copy.
+try:
+    from .finance import _calc_irr
+except ImportError:
+    from finance import _calc_irr
+
 
 def solve_capital_budget(data):
     t0 = time.time()
@@ -58,37 +64,35 @@ def solve_capital_budget(data):
                 inv['_payback'] = t
                 break
 
-    prob = pulp.LpProblem("Capital_Budget", pulp.LpMaximize)
-
-    # Binary: select investment or not
-    x = {i: pulp.LpVariable(f'x_{i}', cat='Binary') for i in range(n)}
-
-    # Objective: maximize total NPV
-    prob += pulp.lpSum(investments[i]['_npv'] * x[i] for i in range(n))
-
-    # Budget constraint
-    prob += pulp.lpSum(
-        investments[i].get('capex', abs(investments[i]['cash_flows'][0])) * x[i]
-        for i in range(n)
-    ) <= budget, "Budget"
-
-    # Max number of investments
-    prob += pulp.lpSum(x[i] for i in range(n)) <= max_investments, "MaxCount"
-
-    # Mutual exclusivity groups (e.g., buy Machine A OR lease Machine A, not both)
+    # (Audit #15) Build the model via a factory so we can solve it twice:
+    #   - as a 0/1 IP (the actual select/reject decision), and
+    #   - as its LP relaxation (continuous x ∈ [0,1]) to read a *valid* budget dual.
+    # CBC's `.pi` on the integer program is NOT a valid sensitivity (it reflects the
+    # final-node relaxation), so the budget shadow price is taken from the relaxation
+    # and labelled as such.
     exclusivity = data.get('exclusivity_groups', [])
-    for gi, group in enumerate(exclusivity):
-        indices = group.get('indices', [])
-        prob += pulp.lpSum(x[i] for i in indices if i < n) <= 1, f"Excl_{gi}"
-
-    # Dependencies (e.g., investment B requires investment A)
     dependencies = data.get('dependencies', [])
-    for di, dep in enumerate(dependencies):
-        requires = dep.get('requires', 0)
-        dependent = dep.get('dependent', 0)
-        if requires < n and dependent < n:
-            prob += x[dependent] <= x[requires], f"Dep_{di}"
 
+    def _build_model(var_cat):
+        m = pulp.LpProblem("Capital_Budget", pulp.LpMaximize)
+        xv = {i: pulp.LpVariable(f'x_{i}', lowBound=0, upBound=1, cat=var_cat) for i in range(n)}
+        m += pulp.lpSum(investments[i]['_npv'] * xv[i] for i in range(n))
+        m += pulp.lpSum(
+            investments[i].get('capex', abs(investments[i]['cash_flows'][0])) * xv[i]
+            for i in range(n)
+        ) <= budget, "Budget"
+        m += pulp.lpSum(xv[i] for i in range(n)) <= max_investments, "MaxCount"
+        for gi, group in enumerate(exclusivity):
+            indices = group.get('indices', [])
+            m += pulp.lpSum(xv[i] for i in indices if i < n) <= 1, f"Excl_{gi}"
+        for di, dep in enumerate(dependencies):
+            requires = dep.get('requires', 0)
+            dependent = dep.get('dependent', 0)
+            if requires < n and dependent < n:
+                m += xv[dependent] <= xv[requires], f"Dep_{di}"
+        return m, xv
+
+    prob, x = _build_model('Binary')
     solver = pulp.PULP_CBC_CMD(msg=0, timeLimit=15)
     status = prob.solve(solver)
     solve_time = time.time() - t0
@@ -121,10 +125,20 @@ def solve_capital_budget(data):
         else:
             rejected.append(entry)
 
-    # Budget shadow price
-    budget_constraint = prob.constraints.get("Budget")
-    budget_shadow = round(budget_constraint.pi, 4) if budget_constraint and hasattr(budget_constraint, 'pi') and budget_constraint.pi else 0
-    budget_slack = round(budget_constraint.slack, 2) if budget_constraint and hasattr(budget_constraint, 'slack') else None
+    # (Audit #15) Budget shadow price from the LP RELAXATION, not the IP.
+    # Re-solve with continuous x to obtain a meaningful dual (marginal NPV per extra ₹
+    # of budget). Slack is reported from the actual integer solution (the real spend gap).
+    budget_constraint_ip = prob.constraints.get("Budget")
+    budget_slack = round(budget_constraint_ip.slack, 2) if budget_constraint_ip and hasattr(budget_constraint_ip, 'slack') else None
+    budget_shadow = 0
+    try:
+        prob_lp, _ = _build_model('Continuous')
+        prob_lp.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=15))
+        bc_lp = prob_lp.constraints.get("Budget")
+        if bc_lp is not None and getattr(bc_lp, 'pi', None) is not None:
+            budget_shadow = round(bc_lp.pi, 4)
+    except Exception:
+        budget_shadow = 0
 
     return {
         'status': 'Optimal',
@@ -133,26 +147,9 @@ def solve_capital_budget(data):
         'budget': budget,
         'budget_utilization': round(total_capex / max(budget, 1) * 100, 1),
         'budget_shadow_price': budget_shadow,
+        'budget_shadow_price_basis': 'lp_relaxation',  # (Audit #15) IP duals are invalid; this is the relaxation dual
         'budget_slack': budget_slack,
         'selected': selected,
         'rejected': rejected,
         'solve_time': round(solve_time, 2),
     }
-
-
-def _calc_irr(cash_flows, tol=1e-6, max_iter=200):
-    if not cash_flows or len(cash_flows) < 2:
-        return None
-    r = 0.1
-    for _ in range(max_iter):
-        npv = sum(cf / (1 + r) ** t for t, cf in enumerate(cash_flows))
-        dnpv = sum(-t * cf / (1 + r) ** (t + 1) for t, cf in enumerate(cash_flows))
-        if abs(dnpv) < 1e-12:
-            break
-        r_new = r - npv / dnpv
-        if abs(r_new - r) < tol:
-            return r_new
-        r = r_new
-        if abs(r) > 10:
-            return None
-    return r

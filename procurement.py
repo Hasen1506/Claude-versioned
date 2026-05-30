@@ -42,7 +42,11 @@ def solve_procurement(data):
     periods_per_year = {'daily': 365, 'weekly': 52, 'monthly': 12}.get(time_grain, 52)
     carry_rate_annual = params.get('carry_rate', 0.24)
     # The solver accumulates holding cost once per period, so per-period rate = annual / periods-per-year.
-    carry_rate = carry_rate_annual / periods_per_year * 52  # keep legacy "per-week equivalent" when weekly grain
+    # (Audit #1) Grain-correct: every holding-cost site divides the ANNUAL rate by periods_per_year.
+    # The old `annual/ppy*52 … then /52` hybrid silently mis-scaled a user-set part.hold_pct on
+    # non-weekly grains (RM undercharged ~4.3× on monthly). Removing the coupling fixes that; on
+    # weekly grain (ppy=52) every number is unchanged.
+    carry_rate_per_period = carry_rate_annual / periods_per_year
     # Holiday list (ISO dates) — periods that overlap with a holiday are excluded from capacity & shift production.
     holidays = params.get('holidays', []) or []
     horizon_start_date = params.get('horizon_start_date', None)
@@ -356,27 +360,9 @@ def solve_procurement(data):
         fy = prod.get('yield_pct', 0.95)
         short_penalty = sell_price * 1.5  # lost margin + goodwill
 
-        # Safety stock — T3-08 honors per-product ABC/XYZ class when supplied.
-        # T8-05 — Heizer formula honors BOTH demand variance AND lead-time variance:
-        #   SS = Z × √(LT × σ²_d + d̄² × σ²_LT)
-        # where σ_LT = LT × lt_cv (using max LT-CV across BOM parts for this product, since
-        # SS protects against the slowest replenishment path). Falls back to demand-only
-        # when no parts/lt_cv information is available.
-        demand_arr = np.array(demand, dtype=float)
-        avg_d = max(demand_arr.mean(), 0.1)
-        std_d = max(demand_arr.std(), 0.1)
-        z_eff = per_product_z(prod)
-        # Find the bottleneck part: max(LT × (1 + lt_cv)) — the path that drives SS sizing.
-        _parts_for_ss = prod.get('parts', []) or []
-        if _parts_for_ss:
-            lt_for_ss = max(float(pt.get('lead_time', 1) or 1) for pt in _parts_for_ss)
-            lt_cv_for_ss = max(float(pt.get('lt_cv', 0) or 0) for pt in _parts_for_ss)
-        else:
-            lt_for_ss = 1.0
-            lt_cv_for_ss = 0.0
-        sigma_lt = lt_for_ss * lt_cv_for_ss
-        sigma_ltd = math.sqrt(max(lt_for_ss, 1.0) * std_d ** 2 + (avg_d ** 2) * (sigma_lt ** 2))
-        ss = max(1, round(z_eff * sigma_ltd))
+        # (Audit dead-code) The Heizer SS computation that lived here was never used in this
+        # variable-declaration loop — SS is (re)computed and consumed in the constraint loop
+        # below (search "Audit #0"). Removed the duplicate to avoid drift between the two copies.
 
         for t in range(T):
             p[k, t] = pulp.LpVariable(f'p_{k}_{t}', 0, cap, cat='Integer')
@@ -432,7 +418,7 @@ def solve_procurement(data):
                 'lt': part.get('lead_time', 1),
                 'moq': 0 if is_vmi else part.get('moq', 1),
                 'max_order': 999999 if is_vmi else part.get('max_order', 9999),
-                'hold_pct': part.get('hold_pct', carry_rate * 100),
+                'hold_pct': part.get('hold_pct', carry_rate_annual * 100),  # ANNUAL %, divided by ppy at use
                 'rm_cap': 999999 if is_vmi else part.get('rm_capacity', 9999),
                 'ord_cost': 0 if is_vmi else part.get('ordering_cost', 50),
                 'rm_shelf': part.get('rm_shelf', T),
@@ -505,6 +491,7 @@ def solve_procurement(data):
     # downstream code that reads inv[k,t] continues to work.
     inv_node = {}
     transfer = {}
+    short_node = {}  # (Audit #2) per-DC shortage so node demand-satisfaction can't contradict single pool
     plant_node_ids = []
     dc_node_ids = []
     storage_node_ids = []
@@ -544,6 +531,16 @@ def solve_procurement(data):
                 for k in range(n_products):
                     for t in range(T):
                         transfer[(k, lid, t)] = pulp.LpVariable(f'tr_{k}_{lid}_{t}', 0)
+            # (Audit #2) Per-DC shortage var. Without it the node balance below (inv_node ≥ 0 with
+            # demand subtracted and no shortage term) FORCED every DC to fully satisfy its demand,
+            # which (a) silently contradicted the single pool that allows short[k,t], and (b) could
+            # render the network infeasible when lane lead times can't deliver in time. The aggregate
+            # short[k,t] is tied to Σ_n short_node below, so the reported fill-rate is the physically
+            # achievable one and the shortage is penalized exactly once.
+            for k in range(n_products):
+                for n in dc_node_ids:
+                    for t in range(T):
+                        short_node[(k, n, t)] = pulp.LpVariable(f'shn_{k}_{n}_{t}', 0)
 
     # ── Objective function ──
     obj = []
@@ -587,7 +584,7 @@ def solve_procurement(data):
             pt.get('cost', 1) * pt.get('qty_per', 1)
             for pt in prod.get('parts', [])
         )
-        fg_hold = unit_cost * carry_rate / 52  # weekly holding cost per unit (legacy single-pool)
+        fg_hold = unit_cost * carry_rate_per_period  # per-period holding cost per unit (single-pool)
         # Round 5 / MEIO — per-node holding rate map. When meio_enabled, the FG holding term
         # in the objective is replaced by Σ_n (unit_cost × carry_rate_n × inv_node[k,n,t] / 52)
         # using each node's own carryingRatePct. Single-pool fg_hold remains the fallback.
@@ -604,7 +601,7 @@ def solve_procurement(data):
             # FG holding: per-node when MEIO enabled, single-pool otherwise.
             if meio_enabled and inv_node:
                 for n_id in storage_node_ids:
-                    rate_n = (node_carry_pct_by_id.get(n_id, 24) / 100.0) / 52
+                    rate_n = (node_carry_pct_by_id.get(n_id, 24) / 100.0) / periods_per_year
                     obj.append(unit_cost * rate_n * inv_node[(k, n_id, t)])
             else:
                 obj.append(fg_hold * inv[k, t])
@@ -695,7 +692,7 @@ def solve_procurement(data):
             # Ordering admin cost
             obj.append(part['ord_cost'] * o[gidx, t])
             # RM holding (use base cost as proxy for holding valuation)
-            rm_hold = base_cost * (part['hold_pct'] / 100) / 52
+            rm_hold = base_cost * (part['hold_pct'] / 100) / periods_per_year
             obj.append(rm_hold * rm_inv[gidx, t])
 
             # ─── R10 + R11 / Bucket 2 (B3/B4/B5) — mode-aware transport cost ───
@@ -785,6 +782,16 @@ def solve_procurement(data):
 
     # ── Constraints ──
 
+    # (Audit #0) Make-to-stock safety-stock FLOOR controls.
+    #   'soft' (default): inv[k,t] + ss_gap >= ss, ss_gap penalized → buffer held whenever
+    #                     physically possible, diagnosable gap when capacity can't.
+    #   'hard'          : inv[k,t] >= ss (can go infeasible under NoBO + tight capacity).
+    #   'off'           : legacy behavior (no floor).
+    ss_floor_mode = (params.get('ss_floor_mode') or 'soft').lower()
+    ss_floor_penalty_mult = float(params.get('ss_floor_penalty_mult', 3) or 3)
+    ss_floor_terms = []
+    ss_by_k = {}  # (Audit #0) realized SS per product, surfaced in output for transparency
+
     for k, prod in enumerate(products):
         demand = prod.get('demand', [0] * T)[:T]
         cap = prod.get('capacity', 50)
@@ -809,6 +816,12 @@ def solve_procurement(data):
             lt_c, ltcv_c = 1.0, 0.0
         sigma_ltd_c = math.sqrt(max(lt_c, 1.0) * std_d_c ** 2 + (avg_d_c ** 2) * ((lt_c * ltcv_c) ** 2))
         ss = max(1, round(z * sigma_ltd_c))
+        # (Audit #0) Per-unit penalty for dipping below SS: holding-rate × value × multiplier.
+        # Cheaper than a true stockout (sell_price×1.5) but expensive enough to hold SS unless
+        # capacity genuinely can't — so it doesn't override a real infeasibility.
+        uc_ss = sum(pt.get('cost', 1) * pt.get('qty_per', 1) for pt in prod.get('parts', []))
+        ss_pen_k = max(uc_ss, 1.0) * carry_rate_per_period * ss_floor_penalty_mult
+        ss_by_k[k] = ss
 
         for t in range(T):
             d = demand[t] if t < len(demand) else demand[-1]
@@ -849,11 +862,24 @@ def solve_procurement(data):
             if demand_mode == 'mto':
                 prob += inv[k, t] <= ss, f"MTO_NoBuild_{k}_{t}"
                 prob += p[k, t] <= d + ss, f"MTO_TrackDemand_{k}_{t}"
+            # (Audit #0) MTS / ATO / seasonal / simultaneous: enforce SS as a FLOOR over the
+            # committed window. MTO is excluded (it has the inv<=ss ceiling above).
+            elif ss_floor_mode != 'off' and t < min(T_committed, T):
+                if ss_floor_mode == 'hard':
+                    prob += inv[k, t] >= ss, f"SSFloor_{k}_{t}"
+                else:
+                    ss_gap = pulp.LpVariable(f'ssgap_{k}_{t}', 0)
+                    prob += inv[k, t] + ss_gap >= ss, f"SSFloor_{k}_{t}"
+                    ss_floor_terms.append(ss_pen_k * ss_gap)
 
         # Simultaneous: total horizon demand must be met by total horizon production + init_inv
         if demand_mode == 'simultaneous':
             total_d = sum(demand)
             prob += pulp.lpSum(p[k, tt] for tt in range(T)) + init_inv >= total_d, f"Simul_HorizonMeet_{k}"
+
+    # (Audit #0) Fold the soft SS-floor penalties into the objective once (avoids O(N²) rebuilds).
+    if ss_floor_terms:
+        prob.objective = prob.objective + pulp.lpSum(ss_floor_terms)
 
     # Aggregate warehouse constraint
     for t in range(T):
@@ -890,17 +916,14 @@ def solve_procurement(data):
             # Demand per period (used to allocate fulfillment to DCs).
             demand_k = (products[k].get('demand', [0] * T) or [0] * T)[:T]
             for t in range(T):
-                # MEIO v2 — NO aggregation constraint between inv[k,t] (legacy single-pool) and
-                # Σ_n inv_node[k,n,t]. They reflect different abstractions:
-                #   - inv[k,t] follows the legacy MTS-balance (production, demand, short, single pool)
-                #   - inv_node[k,n,t] follows per-node flows with lane lead times
-                #   - in-transit on lanes is modelled separately (Round 6 block below) — units in
-                #     motion carry holding cost on the shipper's balance sheet but don't sit at any node
-                # Forcing equality across all t would require including in-transit in inv[k,t], which
-                # we don't do because legacy WC/WH/SS constraints aren't designed to handle in-motion
-                # stock. For v2 they remain parallel views: legacy WH/WC/SS use inv[k,t]; MEIO holding
-                # cost + per-node capacity use inv_node; in-transit cost uses the transfer expression.
-                # Per-node balance:
+                # (Audit #2) RECONCILED view. inv[k,t] (single pool) still drives WC/WH/SS and
+                # carries no in-transit, so it is NOT tied to Σ_n inv_node (that would conflict with
+                # in-motion stock). What IS reconciled is the SHORTAGE: the node network used to
+                # FORCE full demand satisfaction (no shortage term), contradicting the single pool
+                # which allows short[k,t]. We add a per-DC short_node and tie short[k,t] = Σ_n
+                # short_node[k,n,t] below, so both views agree on unmet demand and the network can
+                # report (and be charged for) shortfalls instead of going infeasible.
+                # Per-node balance (DC nodes gain the shortage term):
                 for n_id in storage_node_ids:
                     prev = inv_node[(k, n_id, t - 1)] if t > 0 else node_init(prod_name, n_id)
                     inflow = 0
@@ -918,9 +941,17 @@ def solve_procurement(data):
                     prod_in = p[k, t] if n_id == primary_plant else 0
                     # Demand fulfilled from DC nodes proportional to demand_share.
                     demand_at_node = (demand_k[t] if n_id in dc_node_ids else 0) * demand_share_by_dc.get(n_id, 0)
-                    # Shortage handled at aggregate level (short[k,t]) — DC-level shortage not modelled in v1.
-                    prob += inv_node[(k, n_id, t)] == prev + prod_in + inflow - outflow - demand_at_node, \
+                    # (Audit #2) Unmet demand at this DC is absorbed by short_node (else the node
+                    # would be forced to deliver demand it physically can't given lane lead times).
+                    short_at_node = short_node[(k, n_id, t)] if n_id in dc_node_ids else 0
+                    prob += inv_node[(k, n_id, t)] == prev + prod_in + inflow - outflow - demand_at_node + short_at_node, \
                         f"MEIO_Bal_{k}_{n_id}_{t}"
+                # (Audit #2) Tie aggregate shortage to the network's per-DC shortage so the single
+                # pool and the node network can never disagree on unmet demand. With backorders off,
+                # NoBO forces short[k,t]=0 → Σ short_node=0 → the network must fully deliver (or be
+                # infeasible, correctly surfacing an over-constrained network).
+                prob += short[k, t] == pulp.lpSum(short_node[(k, n_id, t)] for n_id in dc_node_ids), \
+                    f"MEIO_ShortTie_{k}_{t}"
                 # Per-node capacity (units cap; aggregate across products at the node).
             # Note: aggregate-across-products node capacity added below as a per-period constraint.
         # ─── R11.A — Per-node UoM-aware FG storage caps. ───
@@ -985,7 +1016,7 @@ def solve_procurement(data):
                 # Default to origin node's carry rate (shipper-owned WC)
                 src_id = ln.get('from')
                 transit_pct = node_carry_pct_by_id.get(src_id, 24)
-            transit_rate = (transit_pct / 100.0) / 52  # weekly rate
+            transit_rate = (transit_pct / 100.0) / periods_per_year  # per-period rate
             for k in range(n_products):
                 uc = unit_cost_by_k.get(k, 0)
                 if uc <= 0:
@@ -1418,9 +1449,12 @@ def solve_procurement(data):
         # Round 5 / MEIO — per-node inventory + per-lane transfer flows when enabled.
         # Returned as nested dicts for the UI to render the per-node breakdown.
         node_inventory = {}
+        node_shortages = {}  # (Audit #2) per-DC unmet demand per period
         if meio_enabled and inv_node:
             for n_id in storage_node_ids:
                 node_inventory[n_id] = [round(pulp.value(inv_node[(k, n_id, t)]) or 0, 1) for t in range(T_out)]
+            for n_id in dc_node_ids:
+                node_shortages[n_id] = [round(pulp.value(short_node[(k, n_id, t)]) or 0, 1) for t in range(T_out)]
         lane_flows = {}
         lane_in_transit = {}
         if meio_enabled and transfer:
@@ -1454,8 +1488,12 @@ def solve_procurement(data):
             'total_shortage': round(total_short),
             'fill_rate': fill_rate,
             'num_batches': sum(setups),
+            # (Audit #0) Safety stock + how many committed periods ended below it (soft-floor slack).
+            'safety_stock': ss_by_k.get(k, 0),
+            'ss_below_periods': sum(1 for lvl in inv_levels if lvl + 0.5 < ss_by_k.get(k, 0)),
             # MEIO per-node breakdown (only populated when meio_enabled was True).
             'node_inventory': node_inventory,
+            'node_shortages': node_shortages,  # (Audit #2) per-DC unmet demand
             'lane_flows': lane_flows,
             # Round 6 — per-lane in-transit inventory per period (units in motion).
             'lane_in_transit': lane_in_transit,
@@ -1491,7 +1529,7 @@ def solve_procurement(data):
         milp_cost = round(
             sum(orders) * part['cost']
             + sum(order_flags) * part['ord_cost']
-            + sum(rm_levels) * part['cost'] * (part['hold_pct'] / 100) / 52,
+            + sum(rm_levels) * part['cost'] * (part['hold_pct'] / 100) / periods_per_year,
             2,
         )
 
@@ -1510,7 +1548,8 @@ def solve_procurement(data):
             'unit_cost': part['cost'],
             'ord_cost': part['ord_cost'],
             'hold_rate_annual': part['hold_pct'] / 100,
-            'hold_rate_weekly': (part['hold_pct'] / 100) / 52,
+            'periods_per_year': periods_per_year,
+            'hold_rate_per_period': (part['hold_pct'] / 100) / periods_per_year,
             'lead_time': part['lt'],
             'z': z,
             'init_inv': 0,
@@ -1525,7 +1564,7 @@ def solve_procurement(data):
             'total_cost': milp_cost,
             'order_cost': round(sum(order_flags) * part['ord_cost'], 2),
             'hold_cost': round(
-                sum(rm_levels) * part['cost'] * (part['hold_pct'] / 100) / 52,
+                sum(rm_levels) * part['cost'] * (part['hold_pct'] / 100) / periods_per_year,
                 2,
             ),
             'num_orders': sum(order_flags),
@@ -1705,7 +1744,7 @@ def solve_procurement(data):
             # R12 — per-node, per-UoM realised utilisation + peak %. Closes the R11 deferral
             # ("solver applies caps but doesn't emit a per-node weight/volume utilisation table").
             'node_uom_utilisation': node_uom_utilisation,
-            'note': 'v3: per-node inv_node[k,n,t] + per-lane in-transit + R12 per-UoM utilisation. Legacy single-pool inv[k,t] kept for WC/WH/SS constraints.',
+            'note': 'v4 (Audit #2): per-node inv_node[k,n,t] + per-lane in-transit + R12 per-UoM utilisation. Single-pool inv[k,t] still drives WC/WH/SS (no in-transit). Shortage RECONCILED: per-DC short_node tied to aggregate short[k,t], so the node network and single pool agree on unmet demand and the network reports shortfalls instead of going infeasible.',
         }
 
     return {
@@ -1722,6 +1761,7 @@ def solve_procurement(data):
         'horizon_buffer': max(0, T - T_committed), # R10 / C1.a — buffer-only periods clipped
         'r10_terminal_anchor': bool(enable_terminal_anchor),
         'r10_min_coverage': bool(enable_min_coverage),
+        'ss_floor_mode': ss_floor_mode,  # (Audit #0) 'soft' | 'hard' | 'off'
         'solver': 'CBC',
         # P4 — echo replan context so UI knows the solver honoured the lock.
         'replan_from_period': replan_from_period,

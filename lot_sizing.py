@@ -24,7 +24,26 @@ auto_select_policy(demand, params) runs them all, returns the cheapest.
 import math
 
 
-def _simulate(orders, demand, unit_cost, ord_cost, hold_rate_weekly, init_inv=0):
+def _ppy(params):
+    """Periods per year for the active grain (52 weekly / 12 monthly / 365 daily).
+    (Audit #3) Replaces the hardcoded ×52 annualization so EOQ/POQ/EPQ/Min-Max are
+    correct on non-weekly grains."""
+    return params.get('periods_per_year', 52)
+
+
+def _per_period_hold_rate(params):
+    """Per-period holding rate (fraction of unit cost held one period).
+    Prefers an explicit per-period rate; falls back to the legacy weekly key, then
+    derives from the annual rate / periods_per_year."""
+    hpp = params.get('hold_rate_per_period')
+    if hpp is None:
+        hpp = params.get('hold_rate_weekly')  # legacy key (weekly grain only)
+    if hpp is None:
+        hpp = params.get('hold_rate_annual', 0.24) / max(_ppy(params), 1)
+    return hpp
+
+
+def _simulate(orders, demand, unit_cost, ord_cost, hold_rate_per_period, init_inv=0):
     """Given an order schedule, simulate inventory and compute total cost.
     Returns dict: {total_cost, order_cost, hold_cost, prod_cost, inventory[], shortage[]}
     """
@@ -49,7 +68,7 @@ def _simulate(orders, demand, unit_cost, ord_cost, hold_rate_weekly, init_inv=0)
             short_series.append(d - inv)
             shortage += d - inv
             inv = 0
-        hold_cost += inv * unit_cost * hold_rate_weekly
+        hold_cost += inv * unit_cost * hold_rate_per_period
         inv_series.append(inv)
     return {
         'total_cost': round(order_cost + hold_cost + prod_cost, 2),
@@ -77,7 +96,7 @@ def eoq(demand, params):
     S = params.get('ord_cost', 50)
     c = params.get('unit_cost', 1)
     i_annual = params.get('hold_rate_annual', 0.24)
-    annual_d = avg_d * 52
+    annual_d = avg_d * _ppy(params)
     if annual_d <= 0 or c <= 0 or i_annual <= 0:
         return lfl(demand, params)
     q_star = math.sqrt(2 * annual_d * S / (i_annual * c))
@@ -115,7 +134,7 @@ def poq(demand, params):
     S = params.get('ord_cost', 50)
     c = params.get('unit_cost', 1)
     i_annual = params.get('hold_rate_annual', 0.24)
-    annual_d = avg_d * 52
+    annual_d = avg_d * _ppy(params)
     if annual_d > 0 and c > 0 and i_annual > 0:
         eoq_q = math.sqrt(2 * annual_d * S / (i_annual * c))
         N = max(1, round(eoq_q / avg_d))
@@ -143,7 +162,7 @@ def min_max(demand, params):
     S = params.get('ord_cost', 50)
     c = params.get('unit_cost', 1)
     i_annual = params.get('hold_rate_annual', 0.24)
-    eoq_q = math.sqrt(max(2 * mu * 52 * S / max(i_annual * c, 0.01), 1))
+    eoq_q = math.sqrt(max(2 * mu * _ppy(params) * S / max(i_annual * c, 0.01), 1))
     S_target = s + eoq_q
     orders = [0] * T
     # Start with init_inv from params (default 0); first tick will trigger order up to S
@@ -168,7 +187,7 @@ def epq(demand, params):
     S = params.get('ord_cost', 50)
     c = params.get('unit_cost', 1)
     i_annual = params.get('hold_rate_annual', 0.24)
-    D_ann = avg_d * 52
+    D_ann = avg_d * _ppy(params)
     if D_ann <= 0 or c <= 0 or i_annual <= 0:
         return lfl(demand, params)
     q_star = math.sqrt(2 * D_ann * S / (i_annual * c) * p_rate / (p_rate - avg_d))
@@ -184,8 +203,7 @@ def wagner_whitin(demand, params):
     T = len(demand)
     S = params.get('ord_cost', 50)
     c = params.get('unit_cost', 1)
-    i_w = params.get('hold_rate_weekly', 0.24 / 52)
-    h = c * i_w
+    h = c * _per_period_hold_rate(params)
     INF = float('inf')
     F = [0.0] * (T + 1)          # F[T] = 0 (no cost after horizon)
     next_order = [T] * T
@@ -217,7 +235,7 @@ def silver_meal(demand, params):
     T = len(demand)
     S = params.get('ord_cost', 50)
     c = params.get('unit_cost', 1)
-    h = c * params.get('hold_rate_weekly', 0.24 / 52)
+    h = c * _per_period_hold_rate(params)
     orders = [0] * T
     t = 0
     while t < T:
@@ -245,7 +263,7 @@ def ppb(demand, params):
     T = len(demand)
     S = params.get('ord_cost', 50)
     c = params.get('unit_cost', 1)
-    h = c * params.get('hold_rate_weekly', 0.24 / 52)
+    h = c * _per_period_hold_rate(params)
     epp = S / max(h, 1e-9)  # economic part-periods
     orders = [0] * T
     t = 0
@@ -269,7 +287,7 @@ def luc(demand, params):
     T = len(demand)
     S = params.get('ord_cost', 50)
     c = params.get('unit_cost', 1)
-    h = c * params.get('hold_rate_weekly', 0.24 / 52)
+    h = c * _per_period_hold_rate(params)
     orders = [0] * T
     t = 0
     while t < T:
@@ -299,7 +317,7 @@ def ltc(demand, params):
     T = len(demand)
     S = params.get('ord_cost', 50)
     c = params.get('unit_cost', 1)
-    h = c * params.get('hold_rate_weekly', 0.24 / 52)
+    h = c * _per_period_hold_rate(params)
     orders = [0] * T
     t = 0
     while t < T:
@@ -363,7 +381,7 @@ def run_policy(policy_key, demand, params):
         demand,
         unit_cost=params.get('unit_cost', 1),
         ord_cost=params.get('ord_cost', 50),
-        hold_rate_weekly=params.get('hold_rate_weekly', 0.24 / 52),
+        hold_rate_per_period=_per_period_hold_rate(params),
         init_inv=params.get('init_inv', 0),
     )
     return {
@@ -421,7 +439,8 @@ def solve_lot_sizing(data):
         'unit_cost': data.get('unit_cost', 1),
         'ord_cost': data.get('ord_cost', 50),
         'hold_rate_annual': data.get('hold_rate_annual', 0.24),
-        'hold_rate_weekly': data.get('hold_rate_annual', 0.24) / 52,
+        'periods_per_year': data.get('periods_per_year', 52),
+        'hold_rate_per_period': data.get('hold_rate_annual', 0.24) / max(data.get('periods_per_year', 52), 1),
         'lead_time': data.get('lead_time', 1),
         'z': data.get('z', 1.645),
         'foq_qty': data.get('foq_qty', 0),
