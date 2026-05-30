@@ -42,6 +42,20 @@ def run_montecarlo(data, n_runs=500):
     chol_a = rho
     chol_b = math.sqrt(max(0.0, 1.0 - rho * rho))
 
+    # GAP-1 (move 1) — simulate the ACTUAL plan, not a re-derived policy.
+    # Historically the inner loop recomputed a base-stock target every period
+    # (`target = d + ss − on_hand`), so the risk numbers described a base-stock
+    # policy the procurement/production MILP never chose — optimize plan A, report
+    # the risk of policy B. When the caller passes each product's committed
+    # production schedule (`plan` / `production_plan`, per-period units from the
+    # MILP), we now FIX production to that schedule so the distribution describes
+    # the plan that will actually execute. Auto-detected; falls back to the
+    # base-stock heuristic when no plan is supplied (legacy behavior preserved).
+    policy = params.get('policy', 'auto')
+    any_plan = any((p.get('plan') or p.get('production_plan')) for p in products)
+    if policy == 'auto':
+        policy = 'plan' if any_plan else 'base_stock'
+
     rng = np.random.default_rng(42)
     run_costs = []
     run_fills = []
@@ -100,8 +114,16 @@ def run_montecarlo(data, n_runs=500):
             writeoff_per_unit = unit_made_cost * max(0.0, 1.0 - salvage)
             shelf_eff = shelf if (shelf and shelf < T) else None  # None → no expiry within horizon
 
-            # Safety stock
+            # Safety stock (base-stock policy only)
             ss = max(1, round(z * max(np.std(base_demand), 0.1)))
+
+            # GAP-1 — the committed production schedule for this product, if supplied.
+            # In 'plan' mode the simulator REPLAYS this fixed schedule against the
+            # stochastic demand draws instead of reacting period-by-period, so a plan
+            # that under- or over-builds for a shock is penalized exactly as it would be
+            # in execution.
+            plan_arr = prod.get('plan') or prod.get('production_plan') or []
+            use_plan = (policy == 'plan') and len(plan_arr) > 0
 
             # Simulation: replenish up to demand + SS, age cohorts, expire past shelf life.
             lots = []  # list of [qty, age_in_periods], oldest first
@@ -114,9 +136,13 @@ def run_montecarlo(data, n_runs=500):
             for t in range(T):
                 d = demand[t]
                 on_hand = sum(l[0] for l in lots)
-                # Decide production (target up to demand + SS, net of what's on hand)
-                target = d + ss - on_hand
-                prod_qty = max(0, min(target, cap))
+                if use_plan:
+                    # Fixed committed schedule — the plan cannot react to the demand draw.
+                    prod_qty = max(0, round(plan_arr[t] if t < len(plan_arr) else 0))
+                else:
+                    # Base-stock policy: replenish up to demand + SS, net of on-hand.
+                    target = d + ss - on_hand
+                    prod_qty = max(0, min(target, cap))
                 good_qty = round(prod_qty * fy)
 
                 # Costs
@@ -180,6 +206,7 @@ def run_montecarlo(data, n_runs=500):
 
     return {
         'n_runs': n_runs,
+        'policy_simulated': policy,  # GAP-1 — 'plan' = the committed MILP schedule; 'base_stock' = re-derived policy
         'avg_cost': round(avg_cost, 2),
         'median_cost': round(float(np.median(costs)), 2),
         'std_cost': round(float(np.std(costs)), 2),

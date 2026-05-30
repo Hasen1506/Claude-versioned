@@ -42,7 +42,20 @@ Legend: 🟩 verified premise · ⚖️ design judgment · ⭐ highest leverage
 
 ---
 
-## GAP-1 · Risk is descriptive, not prescriptive — and grades the wrong policy
+## GAP-1 · Risk is descriptive, not prescriptive — and grades the wrong policy — ✅ IMPLEMENTED (R21)
+- ✅ **Move 1 (R21):** [montecarlo.py](montecarlo.py) now simulates the COMMITTED plan when each
+  product carries a `plan`/`production_plan` schedule — the inner loop replays that fixed schedule
+  against the stochastic demand draws instead of re-deriving a base-stock target. Auto-detected
+  (`params.policy='auto'`), legacy base-stock preserved when no plan is supplied. Result carries
+  `policy_simulated`; the MC card badges "committed plan" vs "base-stock policy".
+- ✅ **Move 2 (R21):** new [cvar.py](cvar.py) — the Rockafellar–Uryasev linear CVaR program
+  (newsvendor order-up-to; `max()` linearized via overage/underage vars). Endpoint
+  `/api/solve/cvar`. Procurement consumes it as a safety-stock floor via `params.ss_source='cvar'`
+  (+ `cvar_beta`), surfaced by the **"CVaR-robust SS (β%)"** toggle in Optimize → constraints, so the
+  PO plan is robust to the β-tail of lead-time demand by construction. Verified: 8 tests in
+  [tests/test_gap1_risk.py](tests/test_gap1_risk.py) — committed under-build plan costs more / fills
+  less than base-stock; CVaR order-up-to monotone in β and in shortage cost; procurement reports
+  `ss_source='cvar'` with per-product levels.
 - 🟩 **Premise (verified):** Monte Carlo simulates a base-stock heuristic
   `target = d + ss - inv; prod_qty = max(0, min(target, cap))`
   ([montecarlo.py:98-99](montecarlo.py#L98)) — i.e. it evaluates a base-stock policy,

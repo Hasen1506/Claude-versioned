@@ -6445,6 +6445,10 @@ function OptimizeTab({state,dispatch}){
           abc_service_a_min_pct:constraints.abcServiceA.on?+constraints.abcServiceA.val:0,
           budget_deflate:constraints.budgetDeflate.on,
           inflation_pct_annual:(state.config&&state.config.finance&&state.config.finance.inflationAdjust)?(+state.config.finance.inflationPct||0):0,
+          // GAP-1 — CVaR-robust safety stock source. When the toggle is on, procurement derives
+          // the per-product SS floor from the R–U CVaR-optimal order-up-to level at confidence β.
+          ss_source:constraints.cvarRobust.on?'cvar':'heizer',
+          cvar_beta:Math.min(0.999,Math.max(0.5,(+constraints.cvarRobust.val||95)/100)),
           // Round 5 / MEIO — per-node FG inventory variables. Auto-enables when at least one
           // DC + one plant exist in the network. When disabled, solver runs the legacy single-pool path.
           // Each node carries: id, type, capacity (units), carryingRatePct (0-100). Lanes carry source+dest+lt+ratePerUnit.
@@ -6798,6 +6802,7 @@ function OptimizeTab({state,dispatch}){
     supplierConcMax:{on:false,val:40},
     fxExposure:{on:false,val:30},
     abcServiceA:{on:false,val:99},
+    cvarRobust:{on:false,val:95},
     budgetDeflate:{on:false,val:0}
   });
   const toggleC=(k)=>setConstraints(c=>({...c,[k]:{...c[k],on:!c[k].on}}));
@@ -7090,6 +7095,7 @@ function OptimizeTab({state,dispatch}){
             {k:'supplierConcMax',lbl:'Single-supplier max %',solver:'hard',hint:'No single supplier may exceed this share of total spend across the horizon. Anti-concentration risk control.'},
             {k:'fxExposure',lbl:'FX spend max %',solver:'hard',hint:'Max % of horizon spend in non-home currency. Constraint: Σ foreign-spend ≤ cap × Σ total-spend. is_foreign_currency derived from supplierProfiles[name].currency vs config.currency.'},
             {k:'abcServiceA',lbl:'A-class SL min %',solver:'hard',hint:'Minimum fill-rate for A-class SKUs (tighter than default service_level). Σ A-class shortage ≤ (1−target) × Σ A-class demand. Requires backorders enabled.'},
+            {k:'cvarRobust',lbl:'CVaR-robust SS (β%)',solver:'hard',hint:'GAP-1 — when ON, per-product safety stock is the Rockafellar–Uryasev CVaR-β-optimal order-up-to level (cvar.py) instead of the Heizer z·σ_LTD formula, so the held floor protects the β-tail of lead-time demand. β = the % here (e.g. 95 = average over the worst 5% of demand outcomes).'},
             {k:'budgetDeflate',lbl:'Inflation-deflate budget',solver:'hard',hint:'When ON, the per-period budget cap is divided by (1+infl)^t to reflect real purchasing power. Uses WACC card inflation rate.',noVal:true}
           ].map(({k,lbl,solver,hint,noVal})=>
             <label key={k} title={hint||''} style={{display:'flex',alignItems:'center',gap:4,cursor:'pointer',opacity:constraints[k].on?1:0.5,padding:'2px 4px',borderLeft:solver==='pending'?'2px solid var(--a4)':'none'}}>
@@ -7667,7 +7673,10 @@ function OptimizeTab({state,dispatch}){
 
     {/* ─── MONTE CARLO RESULTS ─── */}
     {result&&result._mode==='montecarlo'&&<div className="card">
-      <div className="card-title">🎲 Monte Carlo Results <span className="badge" style={{background:'rgba(248,81,73,.1)',color:'var(--dg)'}}>{result.n_runs} runs · {result.solve_time}s</span></div>
+      <div className="card-title">🎲 Monte Carlo Results <span className="badge" style={{background:'rgba(248,81,73,.1)',color:'var(--dg)'}}>{result.n_runs} runs · {result.solve_time}s</span>
+        {/* GAP-1 — label which policy the distribution describes. */}
+        <span className="badge" title={result.policy_simulated==='plan'?'Risk of the COMMITTED plan — the simulator replays the MILP production schedule against stochastic demand.':'Risk of a base-stock policy re-derived in the simulator (no committed plan supplied).'} style={{marginLeft:6,background:result.policy_simulated==='plan'?'rgba(63,185,80,.12)':'rgba(248,191,45,.12)',color:result.policy_simulated==='plan'?'var(--gn)':'var(--a4)'}}>{result.policy_simulated==='plan'?'committed plan':'base-stock policy'}</span>
+      </div>
       <div className="kpi-row">
         <KPI label="Avg Cost" value={`${cur}${result.avg_cost?.toLocaleString()}`}/>
         <KPI label="VaR₉₅" value={`${cur}${result.var95?.toLocaleString()}`} sub="95th pct worst" color="var(--dg)"/>

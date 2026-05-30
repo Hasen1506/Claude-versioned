@@ -32,6 +32,7 @@ from solvers.pattern_sensing import sense as demand_sense, list_patterns
 from solvers.forecast import run_forecast
 from solvers.risk import detect_regimes, detect_many
 from solvers.aggregate import solve_aggregate
+from solvers.cvar import solve_cvar
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
@@ -462,6 +463,19 @@ def api_solve_aggregate():
     can actually be planned, and the coherent quantity source for downstream solvers."""
     try:
         return jsonify(solve_aggregate(request.json or {}))
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+# ─── CVaR optimization (Rockafellar–Uryasev) — GAP-1 ───
+@app.route('/api/solve/cvar', methods=['POST'])
+def api_solve_cvar():
+    """CVaR-β-optimal newsvendor order-up-to level via the R–U linear program.
+    Returns the robust stocking level, its CVaR/VaR, and the robustness premium
+    over the expected-value (critical-ratio) plan. Procurement consumes the same
+    formulation as a safety-stock floor when params.ss_source='cvar'."""
+    try:
+        return jsonify(solve_cvar(request.json or {}))
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 

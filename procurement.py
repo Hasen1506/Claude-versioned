@@ -20,6 +20,11 @@ try:
 except ImportError:
     from lot_sizing import run_policy, auto_select_policy
 
+try:
+    from .cvar import cvar_safety_stock
+except ImportError:
+    from cvar import cvar_safety_stock
+
 
 def solve_procurement(data):
     """Main entry point. data = dict from API request."""
@@ -792,7 +797,14 @@ def solve_procurement(data):
     #   'off'           : legacy behavior (no floor).
     ss_floor_mode = (params.get('ss_floor_mode') or 'soft').lower()
     ss_floor_penalty_mult = float(params.get('ss_floor_penalty_mult', 3) or 3)
+    # GAP-1 (move 2) — CVaR-robust safety stock. When ss_source='cvar', the per-product
+    # safety stock is the level implied by a Rockafellar–Uryasev CVaR-optimal order-up-to
+    # decision (cvar.py) rather than the Heizer z·σ_LTD formula, so the held floor protects
+    # the β-tail of lead-time demand. The MILP then plans against this robust floor.
+    ss_source = (params.get('ss_source') or 'heizer').lower()
+    cvar_beta = float(params.get('cvar_beta', 0.95) or 0.95)
     ss_floor_terms = []
+    cvar_ss_by_k = {}  # realized CVaR safety stock per product (transparency / UI)
     expire_writeoff_terms = []  # (Systemic) salvage-adjusted spoilage cost, folded into objective below
     expiry_by_k = {}  # realized spoilage units per product, surfaced in output for transparency
     ss_by_k = {}  # (Audit #0) realized SS per product, surfaced in output for transparency
@@ -821,6 +833,20 @@ def solve_procurement(data):
             lt_c, ltcv_c = 1.0, 0.0
         sigma_ltd_c = math.sqrt(max(lt_c, 1.0) * std_d_c ** 2 + (avg_d_c ** 2) * ((lt_c * ltcv_c) ** 2))
         ss = max(1, round(z * sigma_ltd_c))
+        # GAP-1 — CVaR-robust override. Mean/σ are over lead-time demand; overage cost is the
+        # per-period holding on a leftover unit, underage cost a stockout (sell-style penalty).
+        if ss_source == 'cvar':
+            mean_ltd_c = avg_d_c * max(lt_c, 1.0)
+            uc_unit = sum(pt.get('cost', 1) * pt.get('qty_per', 1) for pt in _parts_c) or 1.0
+            h_over = max(uc_unit * carry_rate_per_period, 0.01)
+            p_under = max(uc_unit * 1.5, h_over * 5)
+            try:
+                cv_res = cvar_safety_stock(mean_ltd_c, sigma_ltd_c, h_over, p_under,
+                                           beta=cvar_beta, n_scenarios=150)
+                cvar_ss_by_k[k] = round(cv_res.get('safety_stock', 0), 1)
+                ss = max(1, round(cv_res.get('safety_stock', ss)))
+            except Exception:
+                cvar_ss_by_k[k] = ss  # fall back to Heizer ss on any solver hiccup
         # (Audit #0) Per-unit penalty for dipping below SS: holding-rate × value × multiplier.
         # Cheaper than a true stockout (sell_price×1.5) but expensive enough to hold SS unless
         # capacity genuinely can't — so it doesn't override a real infeasibility.
@@ -1818,6 +1844,11 @@ def solve_procurement(data):
         'r10_terminal_anchor': bool(enable_terminal_anchor),
         'r10_min_coverage': bool(enable_min_coverage),
         'ss_floor_mode': ss_floor_mode,  # (Audit #0) 'soft' | 'hard' | 'off'
+        # GAP-1 — CVaR-robust SS provenance. 'heizer' = z·σ_LTD; 'cvar' = Rockafellar–Uryasev tail-robust.
+        'ss_source': ss_source,
+        'cvar_beta': cvar_beta if ss_source == 'cvar' else None,
+        'cvar_safety_stock_by_product': ({products[k].get('name', f'P{k}'): cvar_ss_by_k.get(k, 0)
+                                          for k in range(n_products)} if ss_source == 'cvar' else {}),
         'solver': 'CBC',
         # P4 — echo replan context so UI knows the solver honoured the lock.
         'replan_from_period': replan_from_period,
