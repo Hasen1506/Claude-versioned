@@ -333,6 +333,7 @@ def solve_procurement(data):
     p = {}   # production
     inv = {}  # FG inventory
     short = {}  # shortages
+    expire = {}  # (Systemic) FG units spoiled past shelf_life, per (k,t) — only for perishable products
     y = {}   # production binary
     r = {}   # RM orders
     o = {}   # RM order binary
@@ -792,6 +793,8 @@ def solve_procurement(data):
     ss_floor_mode = (params.get('ss_floor_mode') or 'soft').lower()
     ss_floor_penalty_mult = float(params.get('ss_floor_penalty_mult', 3) or 3)
     ss_floor_terms = []
+    expire_writeoff_terms = []  # (Systemic) salvage-adjusted spoilage cost, folded into objective below
+    expiry_by_k = {}  # realized spoilage units per product, surfaced in output for transparency
     ss_by_k = {}  # (Audit #0) realized SS per product, surfaced in output for transparency
 
     for k, prod in enumerate(products):
@@ -825,14 +828,45 @@ def solve_procurement(data):
         ss_pen_k = max(uc_ss, 1.0) * carry_rate_per_period * ss_floor_penalty_mult
         ss_by_k[k] = ss
 
+        # ── Perishability (Systemic / MF-26) — FIFO cohort expiry + salvage-adjusted write-off ──
+        # When shelf_life is finite (< horizon), FG that ages past `shelf` periods spoils. We model
+        # this WITHOUT age-indexed variables via the classic FIFO perishable-inventory constraint
+        # (Nahmias): cumulative write-off through period t ≥ (cumulative arrivals that have aged out
+        # by t) − (cumulative served demand through t). Under oldest-first issuing, anything that
+        # entered on or before period t−shelf and was not consumed by demand through t must have
+        # spoiled. init_inventory is treated as fresh (age 0) arriving at period 0. Each spoiled unit
+        # is charged unit_cost·(1−salvage): sunk material cost net of salvage recovery (salvage=1 → no
+        # loss, salvage=0 → full loss). This makes shelf_life + salvage genuine levers (both were dead
+        # inputs — see MUST_FIX Systemic): a short shelf or low salvage now penalizes over-building.
+        try:
+            shelf_i = int(shelf)
+        except (TypeError, ValueError):
+            shelf_i = T
+        is_perishable = shelf_i < T
+        writeoff_per_unit = unit_cost_by_k.get(k, 0) * max(0.0, 1.0 - min(max(float(salvage), 0.0), 1.0))
+        if is_perishable:
+            for t in range(T):
+                expire[k, t] = pulp.LpVariable(f'expire_{k}_{t}', 0)
+                expire_writeoff_terms.append(writeoff_per_unit * expire[k, t])
+
         for t in range(T):
             d = demand[t] if t < len(demand) else demand[-1]
 
-            # C1: Inventory balance
+            # C1: Inventory balance (perishable products also lose spoiled units this period)
             prev_inv = inv[k, t - 1] if t > 0 else init_inv
             good_prod = p[k, t]  # simplified: yield applied at BOM consumption
-            prob += inv[k, t] == prev_inv + good_prod - d + short[k, t], \
+            exp_t = expire[k, t] if (k, t) in expire else 0
+            prob += inv[k, t] == prev_inv + good_prod - d + short[k, t] - exp_t, \
                 f"InvBal_{k}_{t}"
+
+            # C1b: FIFO spoilage forcing — units aged past shelf_i and not yet consumed must expire.
+            if is_perishable and t - shelf_i >= 0:
+                aged_arrivals = init_inv + pulp.lpSum(p[k, s] for s in range(0, t - shelf_i + 1))
+                served_cum = pulp.lpSum(
+                    (demand[s] if s < len(demand) else demand[-1]) - short[k, s]
+                    for s in range(0, t + 1))
+                cum_expire = pulp.lpSum(expire[k, s] for s in range(0, t + 1))
+                prob += cum_expire >= aged_arrivals - served_cum, f"FIFOExpire_{k}_{t}"
 
             # C2: Capacity (scaled by per-period working-day factor — Pillar 6 holiday exclusion)
             # T8-03 — also scaled by line-maintenance factor (1.0 = no derate, 0.0 = all eligible lines down).
@@ -882,6 +916,10 @@ def solve_procurement(data):
     # (Audit #0) Fold the soft SS-floor penalties into the objective once (avoids O(N²) rebuilds).
     if ss_floor_terms:
         prob.objective = prob.objective + pulp.lpSum(ss_floor_terms)
+
+    # (Systemic) Fold salvage-adjusted spoilage write-off into the objective.
+    if expire_writeoff_terms:
+        prob.objective = prob.objective + pulp.lpSum(expire_writeoff_terms)
 
     # Aggregate warehouse constraint
     for t in range(T):
@@ -1643,7 +1681,20 @@ def solve_procurement(data):
             float(products[k].get('milk_run_per_period', 0) or 0) * T
             for k in range(n_products)
         ), 2),
+        # (Systemic) Salvage-adjusted spoilage: FG aged past shelf_life written off at
+        # unit_cost·(1−salvage). 0 when no product is perishable (shelf ≥ horizon) — the
+        # docstring's long-advertised "expiry" cost component now actually exists.
+        'expiry_writeoff': round(sum(
+            (pulp.value(expire[k, t]) or 0)
+            * unit_cost_by_k.get(k, 0) * max(0.0, 1.0 - min(max(float(salvage), 0.0), 1.0))
+            for (k, t) in expire
+        ), 2),
     }
+
+    # (Systemic) Realized spoilage units per product, for UI transparency / KPIs.
+    for k in range(n_products):
+        expiry_by_k[k] = round(sum((pulp.value(expire[k, t]) or 0) for t in range(T) if (k, t) in expire), 1)
+    total_expiry_units = round(sum(expiry_by_k.values()), 1)
 
     # Round 5 / MEIO — surface a top-level summary block so the UI can render banners + tables
     # without spelunking products[].node_inventory. Only populated when meio_enabled.
@@ -1756,6 +1807,9 @@ def solve_procurement(data):
         'products': product_results,
         'materials': material_results,
         'meio': meio_summary,
+        # (Systemic) Spoilage transparency: total + per-product units written off past shelf_life.
+        'expiry_units_total': total_expiry_units,
+        'expiry_units_by_product': {products[k].get('name', f'P{k}'): expiry_by_k.get(k, 0) for k in range(n_products)},
         'solve_time': round(solve_time, 2),
         'periods': T_out,                # R10 / C1.a — committed window for display
         'effective_periods': T,          # R10 / C1.a — actual MILP horizon (T_user + buffer)

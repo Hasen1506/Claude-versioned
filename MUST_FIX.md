@@ -11,15 +11,16 @@ relisted here — they are committed.
 
 ---
 
-## ⭐ SYSTEMIC — Perishability & salvage (R17: now modeled in MC + profitmix; procurement pending)
+## ⭐ SYSTEMIC — Perishability & salvage (R17 + R19: now modeled in ALL THREE solvers + researcher)
 This is the headline finding and it spans three solvers + the researcher. **Decision (2026-05-30):
 model it for real.** Batch 1 (R17) made shelf_life + salvage genuine levers in Monte Carlo and
-profitmix; procurement's cohort model is still pending (next batch).
+profitmix; **Batch 3 (R19) closed procurement** with a FIFO cohort spoilage + salvage write-off. The
+systemic finding is fully resolved.
 
 | Solver | `shelf_life` | `salvage_rate` | Status |
 |---|---|---|---|
 | profitmix.py | ✅ horizon-scaled holding + shelf<horizon spoilage gate (MF-5) | ✅ write-off `unit_cost·(1−salvage)` on excess now in objective (MF-2) | **FIXED R17** |
-| procurement.py | **dead** — read L358/581/798, never in any constraint/cost | **dead** — read L58, never used | pending |
+| procurement.py | ✅ FIFO cumulative-expiry constraint (Nahmias); spoiled units leave inventory | ✅ `unit_cost·(1−salvage)` write-off in objective + `cost_breakdown.expiry_writeoff` | **FIXED R19** |
 | montecarlo.py | ✅ FIFO/FEFO cohort aging, expire past shelf (MF-1) | ✅ salvage-adjusted write-off on expired lots | **FIXED R17** |
 
 procurement's docstring (L5) even advertises "**+ expiry**" as a cost component
@@ -102,6 +103,56 @@ index.html script block (1.34 MB, JSX valid)**, and functional tests where logic
 - **MF-24** ✅ index.html — removed the discarded `/api/calc/wacc` round-trip in the finance
   scratchpad (client-side authoritative; response was logged-into-a-comment waste). Tab-1 WACC
   Calculator keeps its real server-vs-client audit fetch.
+
+---
+
+## ✅ Batch 3 — RESOLVED (R19, 2026-05-30) · MF-25 … MF-34 + Systemic procurement perishability
+
+Conceptual-input, output-fidelity, failure-mode, persistence, and test-coverage fixes — plus the
+final piece of the Systemic perishability decision (procurement). Verified by Python AST parse,
+**Babel parse of the full index.html script block (1.35 MB, JSX valid)**, and a new **pytest suite
+(17 tests, all green)** that pins the perishability levers, the key contracts, the grain scaling, and
+the failure modes against regression.
+
+- **⭐ Systemic (procurement)** ✅ procurement.py — FIFO cohort spoilage + salvage write-off now
+  modeled (Nahmias cumulative-expiry constraint, no age indices): `Σ expire ≥ Σ aged-in arrivals −
+  Σ served demand`; each spoiled unit charged `unit_cost·(1−salvage)`; folded into the objective;
+  `cost_breakdown.expiry_writeoff` + `expiry_units_total`/`_by_product` emitted. The docstring's
+  long-advertised "expiry" cost component finally exists. **All three solvers + researcher now model
+  perishability for real.** Verified: shelf=2/init=120/demand=20 → 60 units spoil; salvage 0→0.8 cuts
+  write-off 120→24; non-perishable (shelf≥horizon) → 0.
+- **MF-25** ✅ index.html — MAPE is now a read-only echo (the Round-4 auto-write-back already syncs it
+  from the winning forecast model). Hand-typing a tighter SS is no longer possible; matches the WACC
+  single-source pattern. (The audit's "never written back" was stale — the write-back exists since R4;
+  the residual harm was free-editability, now removed.)
+- **MF-26** ✅ index.html — salvage hint corrected: it now states salvage drives the real
+  `unit_cost·(1−salvage)` write-off in profit-mix/procurement/MC (true after this batch), and that the
+  Newsvendor card is a learning aid, not a decision solver. The Newsvendor card now reads the real
+  `salvageRate` (was hardcoded 0.2 + yieldPct) and a latent `||` operator-precedence bug is fixed.
+- **MF-27** ✅ index.html — the two colliding "Demand Mode" labels are disambiguated: per-SKU →
+  **"Schedule Shape"**, global → **"Demand Policy"**. Explanatory paragraph + Tab-4 echo updated.
+- **MF-28** ✅ index.html — Effective Tax Rate (finance tab) and Shelf Life (Product Parameters card)
+  are now read-only echoes pointing to their single source (Company Profile / Product Header), matching
+  the WACC read-only pattern; the duplicate writers are removed.
+- **MF-29** ✅ index.html — dashboard now reads `var95`/`cvar95` (was `var_95`, never emitted → always
+  $0); CVaR₉₅ also surfaced. Pinned by `test_montecarlo_emits_var95_not_var_95`.
+- **MF-30** ✅ STALE — procurement has emitted `meio.avg_in_transit_value` since Round 6 (procurement.py
+  L1745) and the UI reads it (index.html L6907); the audit cited L1742 and missed L1745. Verified by
+  trace + `test_procurement_meio_emits_in_transit_value`. No code change.
+- **MF-31** ✅ transport.py — the outer return no longer hardcodes `'status':'Optimal'`; when the
+  allocation LP comes back infeasible/unbounded the top-level status degrades to the real status and
+  surfaces the error (MF-9 fixed the inner alloc guard; this closes the outer claim). Verified:
+  supply 5 < demand 100 → outer status `Infeasible`.
+- **MF-32** ✅ index.html — Monte Carlo / sensitivity / researcher handlers now check `r.ok`, tolerate a
+  non-JSON body, store `{error}`, and render a visible error banner (were empty `catch{}`).
+- **MF-33** ✅ index.html — "Load State (JSON)" now rehydrates the FULL state via a new `LOAD_STATE`
+  reducer (deep-merge mirroring `loadPersistedState`); was config + capped-products only, silently
+  dropping planning/budget/production/network/scenarios. Export already writes the whole `state`, so the
+  round-trip is now symmetric.
+- **MF-34** ✅ tests/ — pytest suite added (was zero tests): `test_solver_contract` (UI-read key
+  contracts, incl. MF-29/30), `test_perishability` (shelf+salvage levers move in MC/profitmix/
+  procurement), `test_grain_scaling` (MF-4/14 grain conversions), `test_failure_modes` (MF-31). 17
+  tests, all passing. Run: `python -m pytest tests/ -q`.
 
 ---
 

@@ -2698,6 +2698,20 @@ function reducer(state,action){
       // T8-08 — Clear stale solver results on scenario load so cards don't show numbers
       // computed against the OLD config/products. User must re-solve to populate.
       s.solverResults={};s.lockedPOs=[];}break;}
+    case 'LOAD_STATE':{
+      // MF-33 — full-state rehydration for "Load State (JSON)". The old import only re-applied
+      // config + products (capped at the current product count), silently dropping planning,
+      // budget, production, network, scenarios and any extra products — a save→load round-trip lost
+      // most of the model while claiming success. Mirror loadPersistedState's deep-merge so the
+      // entire model is reconstructed; clear stale solver output so loaded numbers can't masquerade.
+      const d=action.payload||{};
+      const merged={...defaultState,...d,
+        config:{...defaultState.config,...(d.config||{})},
+        planning:{...defaultState.planning,...(d.planning||{})},
+        plant:{...(defaultState.plant||{}),...(d.plant||{})}};
+      merged.solverResults={};merged.lockedPOs=[];
+      return merged;
+    }
     case 'DELETE_SCENARIO':s.scenarios=s.scenarios.filter(x=>x.id!==action.id);if(s.activeScenarioId===action.id)s.activeScenarioId=null;break;
     // Round 4 — scenario disruption editing
     case 'ADD_SCENARIO_DISR':{
@@ -3849,7 +3863,9 @@ function WACCCard({state,dispatch}){
         <Field label="Cost of Equity %" hint="Opportunity cost — the return equity holders could earn on an equivalent-risk alternative. CAPM: Ke = Rf + β·(Rm−Rf). For Indian mid-cap mfg: Rf(10yr G-Sec)≈7% + β(1.0-1.3)·ERP(5-7%) ≈ 12-16%."><NumInput step="0.1" value={fin.costOfEquity||0} onChange={v=>setFin('costOfEquity',v)}/></Field>
         {mode==='simple'&&<Field label="Cost of Debt % (pre-tax)" hint="Pre-tax interest rate. After-tax is Kd·(1−t) since interest is tax-deductible. For Indian AA/A corporate: 8-11%."><NumInput step="0.1" value={fin.costOfDebt||0} onChange={v=>setFin('costOfDebt',v)}/></Field>}
         {mode==='complex'&&<Field label={`Weighted Avg Kd (auto)`} hint="Computed as Σ(principal_i × rate_i) / Σ(principal_i) over all debt instruments below."><NumInput step="0.01" value={Math.round(res.kdWeighted*100)/100} onChange={()=>{}} disabled/></Field>}
-        <Field label="Effective Tax Rate %" hint="Tax shield on debt. Indian corporate FY25 = 25%. Set in Company Profile."><NumInput step="0.1" value={state.config.taxRate||0} onChange={v=>dispatch({type:'SET_CONFIG',payload:{taxRate:v}})}/></Field>
+        {/* MF-28 — read-only echo. Effective Tax Rate's single source of truth is the Company
+            Profile (Tab 01); editing here would bypass it. Matches the WACC read-only pattern. */}
+        <Field label="Effective Tax Rate % (from Company Profile)" hint="Read-only echo — single source of truth is Company Profile (Tab 01); editing here would bypass it (same pattern as the WACC field). Tax shield on debt; Indian corporate FY25 = 25%."><NumInput step="0.1" value={state.config.taxRate||0} onChange={()=>{}} disabled/></Field>
       </div>
 
       {mode==='complex'&&<div style={{marginTop:8}}>
@@ -5328,10 +5344,22 @@ function ProductsTab({state,dispatch}){
         <div className="card-title">⚙️ Product Parameters <span className="badge" style={{background:'rgba(167,139,250,.1)',color:'var(--a3)'}}>Each feeds a calculation</span><SectionInfo><strong>What it does:</strong> Per-SKU operational parameters: capacity (units/period), MAPE (forecast error), yield %, OEE, sell price, shelf life, init inventory, demand mode, etc.<br/><strong>Each field flows to a specific solver constraint</strong> — see the per-field ⓘ tooltips for the exact MILP variable/constraint each one drives.</SectionInfo></div>
         <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>MAPE auto-fills from winning forecast model. All parameters cascade into safety stock, MPS, MILP, and Monte Carlo.</div>
         <div className="grid4">
-          <Field label="MAPE %" hint="Auto from winner → SS → ROP → MC noise"><NumInput value={prod.mape||15} onChange={v=>upProd({mape:v})} min={0} max={100} style={{color:'var(--a4)',fontWeight:600}}/></Field>
+          {/* MF-25 — MAPE is a MEASURED output (holdout backtest), not a free input. It already
+              auto-syncs from the winning forecast model (the write-back useEffect on the Demand
+              Planning tab), so this is a read-only echo matching the WACC single-source pattern:
+              hand-typing a tighter MAPE would silently fabricate a smaller safety stock (z·σ_LTD)
+              than the data supports. To change it, improve the forecast/history on Tab 03. */}
+          <Field label="MAPE %" hint="Read-only — measured holdout error from the winning forecast model (auto-synced from the Tab 03 leaderboard). Drives SS → ROP → MC noise. Hand-typing a tighter error fabricates a safety stock your data doesn't support; improve the forecast/history instead."><div style={{padding:'5px 7px',background:'var(--bg3)',border:'1px solid var(--bd)',borderRadius:3,color:'var(--a4)',fontWeight:600}}>{prod.mape||15}% <span style={{fontSize:8,color:'var(--tx3)',fontWeight:400,letterSpacing:.3}}>MEASURED</span></div></Field>
           <Field label="Demand Ceiling" hint="strict = cap at forecast (no MAPE buffer); soft = forecast × (1+MAPE) (deterministic robust-optimization, Bertsimas-Sim style); off = solver free (use maxProd only)"><select value={prod.demandCeilingMode||'soft'} onChange={e=>upProd({demandCeilingMode:e.target.value})} style={{color:prod.demandCeilingMode==='strict'?'var(--dg)':prod.demandCeilingMode==='off'?'var(--a3)':'var(--ac)',fontWeight:600}}><option value="soft">soft (±MAPE robust)</option><option value="strict">strict (cap at forecast)</option><option value="off">off (free)</option></select></Field>
-          <Field label="Demand Mode" hint="MTS-weekly (default): build-to-stock; demand[t] is the period total; solver may pre-build inventory. Simultaneous: total demand fires at once across horizon. Daily: demand spread evenly across workdays in the period. MTO: make-to-order; no inventory build-ahead — production must match demand each period (FG inv ≤ safety stock only)."><select value={prod.demandMode||'mts-weekly'} onChange={e=>upProd({demandMode:e.target.value})} style={{color:'var(--a3)',fontWeight:600}}><option value="mts-weekly">MTS (build to stock)</option><option value="simultaneous">Simultaneous</option><option value="daily">Daily-spread</option><option value="mto">MTO (make to order)</option></select></Field>
-          <Field label="Shelf Life (days)" hint={`FG expiry in DAYS. At grain "${state.planning?.timeGrain||'weekly'}" solver enforces ${effectiveShelfDays(prod.shelfLife||52,state.planning)} days.\n\nT2-12 POLICY: solver will NOT plan production beyond (demand_date − shelf_life). Sporadic / weekend demand caps batch sizes accordingly. Switch grain to daily for 100% exact.`}><NumInput value={prod.shelfLife||52} onChange={v=>upProd({shelfLife:v})}/></Field>
+          {/* MF-27 — renamed "Demand Mode" → "Schedule Shape". This per-SKU field controls the
+              SCHEDULE SHAPE (how demand is spread/built across periods); the GLOBAL config.demandMode
+              on Tab 03 (now "Demand Policy") controls quantity-level ceiling/floor behavior. They had
+              the same label and overlapping mts/mto values — the collision is removed. */}
+          <Field label="Schedule Shape" hint="Per-SKU SCHEDULE SHAPE (distinct from the global 'Demand Policy' on Tab 03). MTS-weekly (default): build-to-stock; demand[t] is the period total; solver may pre-build inventory. Simultaneous: total demand fires at once across horizon. Daily: demand spread evenly across workdays in the period. MTO: make-to-order; no inventory build-ahead — production must match demand each period (FG inv ≤ safety stock only)."><select value={prod.demandMode||'mts-weekly'} onChange={e=>upProd({demandMode:e.target.value})} style={{color:'var(--a3)',fontWeight:600}}><option value="mts-weekly">MTS (build to stock)</option><option value="simultaneous">Simultaneous</option><option value="daily">Daily-spread</option><option value="mto">MTO (make to order)</option></select></Field>
+          {/* MF-28 — read-only echo. Shelf Life's single source of truth is the Product Header
+              (top of Tab 02); editing it in two places writing the same prod.shelfLife key is the
+              defect. Matches the WACC read-only pattern. */}
+          <Field label="Shelf Life (days) — set in Product Header" hint={`Read-only echo — edit on the Product Header (top of Tab 02); this surface would otherwise be a second writer of the same prod.shelfLife. At grain "${state.planning?.timeGrain||'weekly'}" the solver enforces ${effectiveShelfDays(prod.shelfLife||52,state.planning)} days. T2-12 POLICY: solver will NOT plan production beyond (demand_date − shelf_life).`}><NumInput value={prod.shelfLife||52} onChange={()=>{}} disabled/></Field>
           <Field label="Yield Predicted %" hint="Production yield used by the planner → scrap factor. Predicted = what the design says you should achieve."><NumInput value={Math.round((prod.yieldPct||0.95)*100)} onChange={v=>upProd({yieldPct:v/100})} min={50} max={100} style={{color:'var(--ac)',fontWeight:600}}/></Field>
           {/* P7 — yieldActual side-by-side variance vs predicted */}
           <Field label="Yield Actual %" hint="Yield observed in production this horizon. If left blank or 0, the planner assumes predicted = actual. Variance = (actual − predicted) drives the Cost Waterfall Quality Loss bar and the P5 alert if Δ > 5 pp."><NumInput value={prod.yieldActual!=null?Math.round((prod.yieldActual||0)*100):''} placeholder="—" onChange={v=>upProd({yieldActual:v===''||v==null?null:(+v||0)/100})} min={0} max={100} style={{color:'var(--a4)'}}/></Field>
@@ -5352,7 +5380,11 @@ function ProductsTab({state,dispatch}){
               Production Mode is now picked in the regime header at the top of CatalogTab. */}
           <Field label="Setup Penalty" hint="1.0=none, 1.25=seasonal"><NumInput step="0.05" value={prod.setupPen||1} onChange={v=>upProd({setupPen:v})}/></Field>
           {/* Setup Cost + Fixed Factory + Labor moved to the dedicated "Fixed & Setup Costs" card above — single source of truth */}
-          <Field label="Salvage %" hint="Recovery rate on expired/obsolete inventory. Used in Newsvendor critical ratio and write-off cost."><NumInput value={Math.round((prod.salvageRate||0.8)*100)} onChange={v=>upProd({salvageRate:v/100})} min={0} max={100}/></Field>
+          {/* MF-26 — hint corrected: salvage now drives a REAL salvage-adjusted write-off
+              (unit_cost×(1−salvage)) on spoiled/excess stock in profit-mix, procurement (FIFO
+              spoilage), and Monte-Carlo. The Newsvendor card is an illustrative learning aid, not a
+              decision solver — the hint no longer implies a critical-ratio model drives ordering. */}
+          <Field label="Salvage %" hint="Recovery rate on expired/obsolete inventory. Drives the salvage-adjusted write-off cost — unit_cost×(1−salvage) — on spoiled/excess stock in the profit-mix, procurement (FIFO spoilage), and Monte-Carlo optimizers. Also illustrated in the Newsvendor learning card (not a decision solver)."><NumInput value={Math.round((prod.salvageRate||0.8)*100)} onChange={v=>upProd({salvageRate:v/100})} min={0} max={100}/></Field>
           <Field label="FG Warehouse Max" hint="Per-product storage cap. Solver enforces as hard constraint. 0 = unlimited."><NumInput value={prod.whMaxUnits||500} onChange={v=>upProd({whMaxUnits:v})}/></Field>
           {/* P7 — per-product footprint for area/volume warehouse modes */}
           <Field label="Footprint (m²/u)" hint="Floor area per unit. Used when Setup → Budget warehouse mode = 'area'; effective wh_max = area_limit / weighted-avg footprint."><NumInput step="0.01" value={prod.footprintArea||0.05} onChange={v=>upProd({footprintArea:v})}/></Field>
@@ -5730,7 +5762,7 @@ function DemandTab({state,dispatch}){
               </div>
             </div>
             <div style={{fontSize:9,color:'var(--tx3)',padding:'4px 10px',background:'var(--bg3)',borderRadius:3,lineHeight:1.5}}>
-              <strong>How this flows:</strong> profitmix.py reads <code>demand_mode</code> from the payload and sets per-SKU demand ceiling + floor. MTO mode forces <em>ceiling = floor = confirmed orders</em> (must fulfill, no speculation). MTS uses forecast as a soft ceiling penalized by holding cost. The per-SKU <em>Demand Mode</em> field on Tab 02 controls the schedule shape (mts-weekly / simultaneous / daily / mto) — this global lever controls the <em>quantity-level</em> behavior. Tab 04 ⑧ echoes the current setting for traceability.
+              <strong>How this flows:</strong> profitmix.py reads <code>demand_mode</code> from the payload and sets per-SKU demand ceiling + floor. MTO mode forces <em>ceiling = floor = confirmed orders</em> (must fulfill, no speculation). MTS uses forecast as a soft ceiling penalized by holding cost. The per-SKU <em>Schedule Shape</em> field on Tab 02 controls the schedule shape (mts-weekly / simultaneous / daily / mto) — this global <em>Demand Policy</em> lever controls the <em>quantity-level</em> behavior. Tab 04 ⑧ echoes the current setting for traceability.
             </div>
           </div>;
         })()}
@@ -6809,7 +6841,9 @@ function OptimizeTab({state,dispatch}){
         <div style={{display:'flex',gap:16,alignItems:'center',marginBottom:6}}>
           <div style={{fontSize:10,fontWeight:600,color:'var(--a3)'}}>⚙ Constraints</div>
           {solverMode==='profitmix'&&<div style={{display:'flex',alignItems:'center',gap:4,fontSize:10}}>
-            <span style={{color:'var(--a4)',fontWeight:600}}>Demand Mode:</span>
+            {/* MF-27 — global lever relabeled "Demand Policy" (quantity ceiling/floor), distinct from
+                the per-SKU "Schedule Shape" on Tab 02. */}
+            <span style={{color:'var(--a4)',fontWeight:600}}>Demand Policy:</span>
             <select value={demandMode} onChange={e=>setDemandMode(e.target.value)} style={{fontSize:10,padding:'2px 6px'}}>
               <option value="mts">MTS — Forecast ceiling</option>
               <option value="mto">MTO — Order book only</option>
@@ -7794,7 +7828,7 @@ for k, prod in enumerate(products):
           const data=JSON.stringify(state,null,2);const blob=new Blob([data],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='simulator_state.json';a.click();
         }}>💾 Save State (JSON)</button>
         <label className="btn btn-secondary btn-sm" style={{cursor:'pointer'}}>📂 Load State<input type="file" accept=".json" style={{display:'none'}} onChange={e=>{
-          const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);Object.keys(d).forEach(k=>{if(k==='config')dispatch({type:'SET_CONFIG',payload:d[k]});else if(k==='products'){d[k].forEach((p,i)=>{if(i<state.products.length)dispatch({type:'UPDATE_PRODUCT',id:state.products[i].id,payload:p})})}});alert('State loaded')}catch(ex){alert('Invalid file')}};r.readAsText(f);
+          const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);/* MF-33 — full rehydration via LOAD_STATE (was: config + capped products only). */dispatch({type:'LOAD_STATE',payload:d});alert('State loaded')}catch(ex){alert('Invalid file')}};r.readAsText(f);
         }}/></label>
       </div>
     </div>
@@ -11839,9 +11873,14 @@ function AnalysisTab({state,dispatch}){
     params:{periods:periodCount(state.planning),time_grain:state.planning.timeGrain||"weekly",horizon_start_date:state.planning.horizonStartDate||null,holidays:(state.planning.holidays||[]).map(h=>h.date),working_capital:+(state.budget&&state.budget.workingCapital)||0,carry_rate:effectiveCarryRate(state),service_level:state.config.serviceLevel},
   });
 
+  // MF-32 — these three handlers previously had no r.ok check and an EMPTY catch, so a 500 /
+  // network drop / non-JSON body left the panel blank or stale with no signal. Now each checks
+  // r.ok, tolerates a non-JSON body, and stores {error} (surfaced in the banner below) — matching
+  // the core solver console's `if(data.error){setError(...)}` contract.
+  const _safeJson=async(r)=>{try{return await r.json();}catch{return null;}};
   const runMC=async()=>{
     setLoading('mc');
-    try{const r=await fetch('/api/solve/montecarlo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...buildPayload(),n_runs:mcRuns})});setMcResult(await r.json())}catch(e){}
+    try{const r=await fetch('/api/solve/montecarlo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...buildPayload(),n_runs:mcRuns})});const data=await _safeJson(r);if(!r.ok||!data||data.error){setMcResult({error:(data&&data.error)||`Monte Carlo failed (HTTP ${r.status})`});}else setMcResult(data);}catch(e){setMcResult({error:e.message});}
     setLoading('');
   };
 
@@ -11853,13 +11892,13 @@ function AnalysisTab({state,dispatch}){
         'service_level':[0.85,0.90,0.95,0.99],
         'carry_rate':[0.15,0.20,0.24,0.30,0.40],
       },
-    })});setSensResult(await r.json())}catch(e){}
+    })});const data=await _safeJson(r);if(!r.ok||!data||data.error){setSensResult({error:(data&&data.error)||`Sensitivity failed (HTTP ${r.status})`});}else setSensResult(data);}catch(e){setSensResult({error:e.message});}
     setLoading('');
   };
 
   const runResearch=async(mode)=>{
     setLoading('research');
-    try{const r=await fetch('/api/solve/researcher',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({base_data:buildPayload(),mode:mode||'fixed',n_experiments:researchN})});setResearchResult(await r.json())}catch(e){}
+    try{const r=await fetch('/api/solve/researcher',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({base_data:buildPayload(),mode:mode||'fixed',n_experiments:researchN})});const data=await _safeJson(r);if(!r.ok||!data||data.error){setResearchResult({error:(data&&data.error)||`Researcher failed (HTTP ${r.status})`});}else setResearchResult(data);}catch(e){setResearchResult({error:e.message});}
     setLoading('');
   };
 
@@ -12019,6 +12058,14 @@ function AnalysisTab({state,dispatch}){
         <span style={{fontSize:10,color:'var(--tx3)'}}>N:</span><NumInput value={researchN} onChange={v=>setResearchN(v)} style={{width:60,padding:'4px 6px',fontSize:10}} min={20} max={500} step={10}/>
       </div>
     </div>
+
+    {/* MF-32 — surface solver failures that used to vanish into empty catches. */}
+    {(mcResult?.error||sensResult?.error||researchResult?.error)&&<div className="card" style={{border:'1px solid var(--dg)',background:'rgba(248,81,73,.08)'}}>
+      <div style={{fontSize:11,color:'var(--dg)',fontWeight:600}}>⚠ Solver error</div>
+      {mcResult?.error&&<div style={{fontSize:10,color:'var(--tx2)',marginTop:2}}>Monte Carlo: {mcResult.error}</div>}
+      {sensResult?.error&&<div style={{fontSize:10,color:'var(--tx2)',marginTop:2}}>Sensitivity: {sensResult.error}</div>}
+      {researchResult?.error&&<div style={{fontSize:10,color:'var(--tx2)',marginTop:2}}>Researcher: {researchResult.error}</div>}
+    </div>}
 
     {/* MC Results */}
     {mcResult&&!mcResult.error&&<div className="card">
@@ -12755,7 +12802,10 @@ function LearningLab({state}){
     <S id="newsvendor" title="📰 Newsvendor Problem" color="var(--a2)">
       <p>Classic: how many newspapers to stock when demand is uncertain? Order too many → waste (overage cost). Order too few → lost sales (underage cost).</p>
       <p><F f="Q* = F⁻¹(Cu / (Cu + Co))"/> where Cu = underage cost (selling price - cost), Co = overage cost (cost - salvage).</p>
-      <p style={{marginTop:6}}>For your product: Cu = {cur}{(prod?.sellPrice||100) - matCost} (lost margin), Co = {cur}{(matCost * (1 - (prod?.yieldPct||0.8))).toFixed(1)} (waste after salvage). Critical ratio = {((prod?.sellPrice||100 - matCost) / ((prod?.sellPrice||100 - matCost) + matCost * 0.2)).toFixed(3)}</p>
+      {/* MF-26 — overage cost now uses the real salvage rate: Co = cost × (1 − salvage), the same
+          unit_cost×(1−salvage) write-off the optimizers charge. Also fixes a latent operator-precedence
+          bug (sellPrice||100 - matCost parsed as sellPrice || (100-matCost)). */}
+      <p style={{marginTop:6}}>For your product (salvage {Math.round((prod?.salvageRate??0.8)*100)}%): Cu = {cur}{((prod?.sellPrice||100) - matCost).toFixed(1)} (lost margin), Co = {cur}{(matCost * (1 - (prod?.salvageRate??0.8))).toFixed(1)} (cost − salvage recovery). Critical ratio = {(() => {const Cu=(prod?.sellPrice||100)-matCost; const Co=matCost*(1-(prod?.salvageRate??0.8)); return (Cu/((Cu+Co)||1)).toFixed(3);})()}</p>
     </S>
 
     <S id="clt" title="📐 Central Limit Theorem" color="var(--a3)">
@@ -14307,7 +14357,7 @@ function CommandCenterTab({state,dispatch}){
       {Object.keys(results).length>0&&<div style={{marginTop:8,padding:8,background:'var(--bg3)',borderRadius:4}}>
         <div style={{fontSize:10,fontWeight:700,color:'var(--ac)',marginBottom:4}}>Results Summary</div>
         {Object.entries(results).map(([k,v])=><div key={k} style={{fontSize:10,color:v.error?'var(--dg)':'var(--tx2)',marginBottom:2}}>
-          <strong>{k}:</strong> {v.error||`${v.status||'OK'} — ${v.total_cost?`${cur}${Math.round(v.total_cost).toLocaleString()} total cost`:''}${v.total_profit?`${cur}${Math.round(v.total_profit).toLocaleString()} profit`:''}${v.avg_cost?`${cur}${Math.round(v.avg_cost).toLocaleString()} avg cost, VaR₉₅: ${cur}${Math.round(v.var_95||0).toLocaleString()}`:''} (${v.solve_time||'?'}s)`}
+          <strong>{k}:</strong> {v.error||`${v.status||'OK'} — ${v.total_cost?`${cur}${Math.round(v.total_cost).toLocaleString()} total cost`:''}${v.total_profit?`${cur}${Math.round(v.total_profit).toLocaleString()} profit`:''}${v.avg_cost?`${cur}${Math.round(v.avg_cost).toLocaleString()} avg cost, VaR₉₅: ${cur}${Math.round(v.var95||0).toLocaleString()}, CVaR₉₅: ${cur}${Math.round(v.cvar95||0).toLocaleString()}`:''} (${v.solve_time||'?'}s)`}{/* MF-29 — Monte Carlo emits var95/cvar95 (no underscore); the dashboard read v.var_95 (never emitted) → always 0. */}
         </div>)}
       </div>}
       {/* R9 / C8 — Solver result transparency: shows what was sent + which guards fired. */}

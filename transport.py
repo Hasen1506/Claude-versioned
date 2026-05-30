@@ -173,6 +173,17 @@ def solve_transport(data):
                 {'from':origs[i].get('name',''),'to':dests[j].get('name',''),'quantity':round(pulp.value(x[i,j]),1),'total_cost':round(pulp.value(x[i,j])*cmat[i][j],2)}
                 for i in range(len(origs)) for j in range(len(dests)) if (pulp.value(x[i,j]) or 0) > 0.5]}
 
-    return {'status':'Optimal','total_cost':round(total_cost,2),'total_weight':round(total_weight,1),
+    # (MF-31) The mode-choice heuristic above always produces a result, but the allocation LP is the
+    # only real optimization here — and it can come back infeasible/unbounded. Previously the outer
+    # return hardcoded 'Optimal' regardless, so an over-constrained allocation was reported as a clean
+    # solve. Degrade the top-level status to the allocation's real status (and surface its error) when
+    # an allocation was attempted and did not solve, mirroring the other four solvers' contract.
+    out_status = 'Optimal'
+    out = {'total_cost':round(total_cost,2),'total_weight':round(total_weight,1),
         'n_shipments':len(results),'shipments':results,'mode_summary':mode_summary,'spike_alerts':spike_alerts,
         'allocation':alloc,'tracking_portals':TRACKING,'solve_time':round(time.time()-t0,2)}
+    if alloc and alloc.get('status') and alloc['status'] != 'Optimal':
+        out_status = alloc['status']
+        out['error'] = alloc.get('error', f"Allocation {alloc['status']}.")
+    out['status'] = out_status
+    return out
