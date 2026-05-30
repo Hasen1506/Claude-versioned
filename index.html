@@ -4545,14 +4545,30 @@ function ServerForecastCard({state,dispatch,prod,activeId}){
         <strong>Solver env:</strong> sklearn {env.sklearn?'✓':'✗'} · statsmodels {env.statsmodels?'✓':'✗'} · xgboost {env.xgboost?'✓':'✗'} | solve_time {result.solve_time}s | data bucket: <strong>{result.products?.[0]?.data_size_bucket}</strong> | recommended for this size: <strong style={{color:'var(--ac)'}}>{recommended}</strong>
         {warning&&<><br/>⚠ {warning}</>}
       </div>
+      {/* GAP-7 — intermittence classification + reconciliation strip */}
+      {(()=>{
+        const im=result.products?.[0]?.intermittence;const rec=result.reconciliation;
+        if(!im&&!rec)return null;
+        return <div style={{display:'flex',gap:10,flexWrap:'wrap',fontSize:10,marginBottom:6}}>
+          {im&&<span style={{padding:'3px 8px',borderRadius:3,background:im.is_intermittent?'rgba(248,191,45,.1)':'var(--bg3)',color:im.is_intermittent?'var(--a4)':'var(--tx2)'}}>
+            Demand pattern: <strong>{im.label}</strong> (ADI {im.adi}, CV² {im.cv2}) · ranked by <strong>{im.ranked_by.toUpperCase()}</strong>{im.is_intermittent&&' — Croston/SBA/TSB apply'}
+          </span>}
+          {rec&&<span style={{padding:'3px 8px',borderRadius:3,background:'rgba(0,212,170,.08)',color:'var(--ac)'}} title={rec.note}>
+            🔗 Bottom-up reconciled total: <strong>{rec.total_horizon?.toLocaleString()}</strong> over {rec.n_series} series
+          </span>}
+        </div>;
+      })()}
       <table className="data-table" style={{fontSize:10}}>
-        <thead><tr><th>Rank</th><th>Model</th><th>Holdout MAPE %</th><th>RMSE</th><th>MAE</th><th>Status</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Rank</th><th>Model</th><th>MAPE %</th><th>MASE</th><th>RMSE</th><th>MAE</th><th>Bias</th><th>Track sig</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody>{lb.map((row,i)=><tr key={row.model} style={{background:row.model===winner?'rgba(0,212,170,.06)':'transparent'}}>
           <td style={{fontWeight:700,color:i===0&&row.status==='ok'?'var(--ac)':'var(--tx)'}}>{i+1}{row.model===winner&&' 👑'}</td>
           <td style={{fontWeight:600}}>{row.model}{row.model===recommended&&<span style={{fontSize:8,marginLeft:4,color:'var(--a3)'}}>★ recommended</span>}</td>
-          <td className="num" style={{color:row.status==='ok'?(row.mape<10?'var(--gn)':row.mape<20?'var(--a4)':'var(--dg)'):'var(--tx3)'}}>{row.status==='ok'?row.mape:'—'}</td>
+          <td className="num" style={{color:row.status==='ok'?(row.mape<10?'var(--gn)':row.mape<20?'var(--a4)':'var(--dg)'):'var(--tx3)'}}>{row.status==='ok'&&isFinite(row.mape)?row.mape:'—'}</td>
+          <td className="num" style={{color:row.mase!=null?(row.mase<1?'var(--gn)':'var(--a4)'):'var(--tx3)'}} title="Mean Absolute Scaled Error — <1 beats naive; defined on zero-heavy series">{row.mase!=null?row.mase:'—'}</td>
           <td className="num">{row.status==='ok'?row.rmse:'—'}</td>
           <td className="num">{row.status==='ok'?row.mae:'—'}</td>
+          <td className="num" style={{color:Math.abs(row.bias||0)>0.01?'var(--a4)':'var(--tx3)'}} title="Signed mean error (pred−actual). ≠0 ⇒ systematic over/under-forecast.">{row.status==='ok'?row.bias:'—'}</td>
+          <td className="num" style={{color:row.out_of_control?'var(--dg)':'var(--tx3)',fontWeight:row.out_of_control?700:400}} title="RSFE/MAD — |TS|>4 means out of statistical control (persistent bias)">{row.status==='ok'?row.tracking_signal:'—'}{row.out_of_control&&' ⚠'}</td>
           <td style={{fontSize:9,color:row.status==='ok'?'var(--gn)':'var(--dg)'}}>{row.status}</td>
           <td>{row.status==='ok'&&<button className="btn btn-secondary btn-sm" style={{fontSize:9,padding:'2px 6px'}} onClick={()=>applyWinner(row.model)} title="Write this model's forecast into the product's demand plan overrides">📥 Apply</button>}</td>
         </tr>)}</tbody>

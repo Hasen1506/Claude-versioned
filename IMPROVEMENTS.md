@@ -189,7 +189,21 @@ Legend: 🟩 verified premise · ⚖️ design judgment · ⭐ highest leverage
 
 ---
 
-## GAP-7 · Forecasting: no reconciliation, no intermittent methods, MAPE-only
+## GAP-7 · Forecasting: no reconciliation, no intermittent methods, MAPE-only — ✅ IMPLEMENTED (R26)
+- ✅ **Built (R26):** all three moves in [forecast.py](forecast.py). (a) **Intermittent models** —
+  Croston, SBA (bias-corrected), TSB (probability-based, obsolescence-aware), pure-numpy so always
+  available; a Syntetos–Boylan classifier (ADI/CV²) labels each series smooth/intermittent/erratic/lumpy
+  and, when intermittent, ranks the leaderboard by **MASE** (finite on zeros, where MAPE breaks) and
+  steers the recommendation to TSB/SBA/Croston. (b) **Bias / tracking-signal** — every leaderboard row
+  now carries MASE, signed `bias`, and `tracking_signal` (RSFE/MAD) with an `out_of_control` flag (|TS|>4)
+  — the biased-but-accurate forecast is now surfaced. (c) **Hierarchical reconciliation** — a bottom-up
+  pass sums each SKU's winning forecast into a coherent family total (`reconciliation`). UI: the
+  server-side forecast card gains MASE/Bias/Track-sig columns + an intermittence/reconciliation strip.
+  Verified: 8 tests in [tests/test_gap7_forecast.py](tests/test_gap7_forecast.py) — classification,
+  Croston/SBA/TSB shape, SBA<Croston, MASE finite on zeros, bias/TS detect over-forecast, intermittent
+  series won by an intermittent model ranked on MASE, bottom-up total = Σ winners.
+- **Scope note:** MinT reconciliation needs a residual covariance estimate not carried here; bottom-up
+  is the unbiased, dependency-free choice and is what the disaggregation/aggregate tiers consume.
 - 🟩 **Premise (verified):** per-SKU independent models; MAPE masks zeros
   `mask = actual != 0` ([forecast.py:68](forecast.py#L68)); no Croston/SBA/TSB; SKU
   forecasts and the annual-mix disaggregation are never reconciled.

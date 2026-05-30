@@ -81,6 +81,119 @@ def _mae(actual, pred):
     return float(np.mean(np.abs(np.asarray(actual) - np.asarray(pred))))
 
 
+# ─── GAP-7 · accuracy metrics that work where MAPE breaks ───
+def _mase(actual, pred, train, season=1):
+    """Mean Absolute Scaled Error. Scales MAE by the in-sample one-step (seasonal) naive MAE,
+    so it's defined even when actuals are zero — the regime where MAPE is meaningless. <1 beats naive."""
+    actual = np.asarray(actual, dtype=float)
+    pred = np.asarray(pred, dtype=float)
+    tr = np.asarray(train, dtype=float)
+    m = season if (season and len(tr) > season) else 1
+    denom = np.mean(np.abs(tr[m:] - tr[:-m])) if len(tr) > m else 0.0
+    if denom <= 1e-9 or len(actual) == 0:
+        return float('inf')
+    return float(np.mean(np.abs(actual - pred)) / denom)
+
+
+def _bias(actual, pred):
+    """Signed mean error (pred − actual). Positive ⇒ systematic over-forecast. A biased-but-accurate
+    forecast is the dangerous case MAPE/RMSE hide."""
+    if len(actual) == 0:
+        return 0.0
+    return float(np.mean(np.asarray(pred, dtype=float) - np.asarray(actual, dtype=float)))
+
+
+def _tracking_signal(actual, pred):
+    """RSFE / MAD — running sum of forecast errors over mean absolute deviation. |TS| > 4 ⇒ the
+    forecast is out of statistical control (persistent bias), independent of headline MAPE."""
+    actual = np.asarray(actual, dtype=float)
+    pred = np.asarray(pred, dtype=float)
+    if len(actual) == 0:
+        return 0.0
+    err = pred - actual
+    mad = np.mean(np.abs(err))
+    if mad <= 1e-9:
+        return 0.0
+    return float(np.sum(err) / mad)
+
+
+# ─── GAP-7 · intermittent-demand models (pure numpy, always available) ───
+def _intermittence(series):
+    """Syntetos–Boylan demand classification. Returns (ADI, CV2, label).
+    ADI = avg inter-demand interval; CV2 = squared CV of non-zero sizes."""
+    s = np.asarray(series, dtype=float)
+    nz = s[s > 0]
+    n_nz = len(nz)
+    if n_nz == 0:
+        return float('inf'), 0.0, 'no-demand'
+    adi = len(s) / n_nz
+    cv2 = (np.std(nz) / np.mean(nz)) ** 2 if np.mean(nz) > 0 else 0.0
+    if adi < 1.32 and cv2 < 0.49:
+        label = 'smooth'
+    elif adi >= 1.32 and cv2 < 0.49:
+        label = 'intermittent'
+    elif adi < 1.32 and cv2 >= 0.49:
+        label = 'erratic'
+    else:
+        label = 'lumpy'
+    return float(adi), float(cv2), label
+
+
+def _croston_core(series, h, alpha=0.1, variant='croston'):
+    """Croston / SBA / TSB one-rate forecast. Returns (forecast[h], fitted[len(series)]).
+    croston: rate = z/p; sba: (1−α/2)·z/p; tsb: prob·z (probability-based, handles obsolescence)."""
+    s = np.asarray(series, dtype=float)
+    n = len(s)
+    fitted = np.zeros(n)
+    if n == 0 or np.all(s <= 0):
+        return [0.0] * h, list(fitted)
+
+    if variant == 'tsb':
+        beta = 0.1
+        nz = s[s > 0]
+        z = float(nz[0]) if len(nz) else 0.0
+        prob = float(np.mean(s > 0))
+        for t in range(n):
+            fitted[t] = prob * z
+            if s[t] > 0:
+                z = z + alpha * (s[t] - z)
+                prob = prob + beta * (1.0 - prob)
+            else:
+                prob = prob + beta * (0.0 - prob)
+        rate = prob * z
+    else:
+        # Croston / SBA — update demand size z and interval p at each non-zero point.
+        first = next((i for i, v in enumerate(s) if v > 0), 0)
+        z = float(s[first]) if s[first] > 0 else float(np.mean(s[s > 0]))
+        p = 1.0
+        q = 1  # periods since last non-zero
+        for t in range(n):
+            if s[t] > 0:
+                z = z + alpha * (s[t] - z)
+                p = p + alpha * (q - p)
+                q = 1
+            else:
+                q += 1
+            fitted[t] = z / p if p > 0 else 0.0
+        rate = z / p if p > 0 else 0.0
+        if variant == 'sba':
+            rate *= (1.0 - alpha / 2.0)
+            fitted *= (1.0 - alpha / 2.0)
+    return [float(rate)] * h, list(fitted)
+
+
+def _croston(series, h, alpha=0.1):
+    return _croston_core(series, h, alpha, 'croston')
+
+
+def _sba(series, h, alpha=0.1):
+    return _croston_core(series, h, alpha, 'sba')
+
+
+def _tsb(series, h, alpha=0.1):
+    return _croston_core(series, h, alpha, 'tsb')
+
+
 def _safe_period_grain(grain):
     return {'daily': 1, 'weekly': 7, 'monthly': 30}.get(grain, 7)
 
@@ -340,6 +453,10 @@ def run_forecast(payload):
         'xgboost': HAS_XGBOOST,
         'mlp': HAS_SKLEARN,
         'hybrid': HAS_STATSMODELS and HAS_SKLEARN,
+        # GAP-7 — intermittent-demand models (pure numpy, always available).
+        'croston': True,
+        'sba': True,
+        'tsb': True,
     }
     if requested:
         run_models = [m for m in requested if available_models.get(m, False)]
@@ -407,18 +524,35 @@ def run_forecast(payload):
                 elif model_name == 'hybrid':
                     test_pred, train_fit = _hybrid(train, len(test), season, train_dates, test_dates, promo_periods, holidays_set, lags=lags)
                     full_fcst, full_fit = _hybrid(history, h, season, hist_dates, future_dates, promo_periods, holidays_set, lags=lags)
+                elif model_name == 'croston':
+                    test_pred, train_fit = _croston(train, len(test))
+                    full_fcst, full_fit = _croston(history, h)
+                elif model_name == 'sba':
+                    test_pred, train_fit = _sba(train, len(test))
+                    full_fcst, full_fit = _sba(history, h)
+                elif model_name == 'tsb':
+                    test_pred, train_fit = _tsb(train, len(test))
+                    full_fcst, full_fit = _tsb(history, h)
                 else:
                     continue
 
                 mape = _mape(test, test_pred) if test else float('inf')
                 rmse_v = _rmse(test, test_pred) if test else 0.0
                 mae_v = _mae(test, test_pred) if test else 0.0
+                # GAP-7 — MASE (defined on zero-heavy series), signed bias, and tracking signal.
+                mase_v = _mase(test, test_pred, train, season) if test else float('inf')
+                bias_v = _bias(test, test_pred) if test else 0.0
+                ts_v = _tracking_signal(test, test_pred) if test else 0.0
 
                 leaderboard.append({
                     'model': model_name,
                     'mape': round(mape, 2),
                     'rmse': round(rmse_v, 2),
                     'mae': round(mae_v, 2),
+                    'mase': round(mase_v, 3) if math.isfinite(mase_v) else None,
+                    'bias': round(bias_v, 2),
+                    'tracking_signal': round(ts_v, 2),
+                    'out_of_control': bool(abs(ts_v) > 4),
                     'forecast': [round(float(v), 2) for v in full_fcst],
                     'fitted': [round(float(v), 2) for v in full_fit[:n_hist]],
                     'status': 'ok',
@@ -434,8 +568,17 @@ def run_forecast(payload):
                     'status': f'failed: {str(e)[:80]}',
                 })
 
-        # Sort by MAPE ascending (best first), but valid models above failed
-        leaderboard.sort(key=lambda r: (r['status'] != 'ok', r['mape']))
+        # GAP-7 — intermittence classification. For lumpy/intermittent series MAPE is meaningless
+        # (zeros), so rank by MASE and steer the recommendation to Croston/SBA/TSB.
+        adi, cv2, intermit_label = _intermittence(history)
+        is_intermittent = intermit_label in ('intermittent', 'lumpy')
+        if is_intermittent:
+            # rank by MASE (finite on zeros); push the intermittent methods up
+            leaderboard.sort(key=lambda r: (r['status'] != 'ok',
+                                            r['mase'] if (r.get('mase') is not None) else float('inf')))
+            recommended = next((m for m in ('tsb', 'sba', 'croston') if m in run_models), recommended)
+        else:
+            leaderboard.sort(key=lambda r: (r['status'] != 'ok', r['mape']))
         winner = leaderboard[0]['model'] if leaderboard and leaderboard[0]['status'] == 'ok' else None
 
         out_products.append({
@@ -446,12 +589,44 @@ def run_forecast(payload):
             'winner': winner,
             'horizon_periods': h,
             'leaderboard': leaderboard,
+            # GAP-7 — demand-pattern classification (Syntetos–Boylan).
+            'intermittence': {'adi': round(adi, 2) if math.isfinite(adi) else None,
+                              'cv2': round(cv2, 3), 'label': intermit_label,
+                              'is_intermittent': is_intermittent,
+                              'ranked_by': 'mase' if is_intermittent else 'mape'},
             'warning': 'Insufficient history for seasonality assessment — classical methods recommended.' if n_hist < 12 else None,
         })
+
+    # ── GAP-7 · hierarchical reconciliation (bottom-up) ──
+    # Sum each SKU's winning forecast into a coherent family/total forecast, so the SKU level and
+    # the aggregate agree by construction (the input disaggregation/aggregate tiers consume this).
+    # Bottom-up is the unbiased, dependency-free reconciliation; MinT would need a residual
+    # covariance estimate we don't carry here.
+    reconciliation = None
+    winners = []
+    for op in out_products:
+        lb = op.get('leaderboard') or []
+        win = next((r for r in lb if r.get('status') == 'ok' and r.get('forecast')), None)
+        if win:
+            winners.append(win['forecast'])
+    if winners:
+        L = max(len(w) for w in winners)
+        total = [0.0] * L
+        for w in winners:
+            for t in range(len(w)):
+                total[t] += w[t]
+        reconciliation = {
+            'method': 'bottom_up',
+            'total_forecast': [round(v, 2) for v in total],
+            'total_horizon': round(sum(total), 1),
+            'n_series': len(winners),
+            'note': 'SKU winners summed to a coherent total — SKU and aggregate levels now agree.',
+        }
 
     return {
         'status': 'ok',
         'products': out_products,
+        'reconciliation': reconciliation,
         'env': {
             'sklearn': HAS_SKLEARN,
             'statsmodels': HAS_STATSMODELS,
