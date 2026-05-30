@@ -120,7 +120,20 @@ Legend: 🟩 verified premise · ⚖️ design judgment · ⭐ highest leverage
 
 ---
 
-## GAP-4 · Risk model (HMM regimes) is computed and thrown away
+## GAP-4 · Risk model (HMM regimes) is computed and thrown away — ✅ IMPLEMENTED (R25)
+- ✅ **Built (R25):** the HMM regime signal now changes a sourcing decision. Parts carry
+  `regime_high_vol` / `regime_persistence` (from risk.py); procurement (`regime_aware_sourcing`)
+  computes a regime-TIGHTENED effective concentration cap per supplier — base × (1 −
+  tightening·severity), severity = max regime persistence among the supplier's high-vol parts — and
+  adds a SOFT penalty on spend concentrated with a high-vol supplier beyond that cap, widening
+  dual-sourcing toward stabler alternatives. Soft (not a hard tighten) so a structurally single-sourced
+  part can never be made infeasible. Surfaced by the **"Regime-aware sourcing (tighten%)"** toggle +
+  a result card. Verified: 4 tests in [tests/test_gap4_regime.py](tests/test_gap4_regime.py) — off ⇒
+  no adjustment, high-vol cap tightened (50→23%), only high-vol suppliers listed, stickier regime
+  tightens more.
+- **Scope note:** full dual-sourcing of ONE part across multiple suppliers is a deeper model change
+  (parts are bound per product/BOM line today); this wires the trigger into the existing
+  concentration-control channel, as the gap describes.
 - 🟩 **Premise (verified):** `detect_regimes` is imported only by its own endpoint
   ([app.py:33,414](app.py#L33)); **no solver** consumes regime output. Procurement *does*
   have static risk controls — `supplier_concentration_max_pct`

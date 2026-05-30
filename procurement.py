@@ -76,6 +76,12 @@ def solve_procurement(data):
     abc_service_a_min_pct = float(params.get('abc_service_a_min_pct', 0) or 0)
     budget_deflate = bool(params.get('budget_deflate', False))
     inflation_pct_annual = float(params.get('inflation_pct_annual', 0) or 0)
+    # GAP-4 — regime-aware sourcing levers. When on, a high-vol-regime supplier's effective
+    # concentration cap tightens and a soft penalty pushes spend toward alternatives.
+    regime_aware_sourcing = bool(params.get('regime_aware_sourcing', False))
+    regime_concentration_tightening = float(params.get('regime_concentration_tightening', 0.5) or 0.5)
+    regime_default_cap_pct = float(params.get('regime_default_cap_pct', 50) or 50)
+    regime_penalty_mult = float(params.get('regime_penalty_mult', 0.25) or 0.25)
     # Round 5 / MEIO — per-node FG inventory. When meio_enabled=True and the network has both
     # plant + DC nodes, the solver replaces the single-pool fg_levels[t] with per-node inv_node[k,n,t]
     # variables and adds inter-node transfer flows along lanes. When False (default), legacy single-
@@ -460,6 +466,9 @@ def solve_procurement(data):
                 'supplier_name': part.get('supplier_name', '') or '',
                 'supplier_state': part.get('supplier_state', '') or '',
                 'supplier_country': part.get('supplier_country', 'IN') or 'IN',
+                # GAP-4 — HMM regime signal threaded through for regime-aware sourcing.
+                'regime_high_vol': bool(part.get('regime_high_vol', False)),
+                'regime_persistence': float(part.get('regime_persistence', 0) or 0),
                 'vmi': is_vmi,
                 'vmi_target_stock_days': float(part.get('vmi_target_stock_days', 14) or 14),
                 'vmi_review_freq_days': float(part.get('vmi_review_freq_days', 7) or 7),
@@ -1389,6 +1398,48 @@ def solve_procurement(data):
                 # sup_spend ≤ cap_frac × total_spend  ⇒  sup_spend - cap_frac*total_spend ≤ 0
                 prob += sup_spend - cap_frac * total_spend <= 0, f"SupConc_{sup[:20]}"
 
+    # GAP-4 — Regime-aware sourcing. The HMM (risk.py) detects whether a part's price/supply
+    # series is in a high-volatility / disruption regime; that signal previously changed no
+    # sourcing decision. When `regime_aware_sourcing` is on and parts carry regime fields
+    # (regime_high_vol, regime_persistence ∈ [0,1]), we (a) compute a regime-TIGHTENED effective
+    # concentration cap per supplier (the base cap shrinks with regime severity) for transparency,
+    # and (b) add a SOFT penalty on spend concentrated with a high-vol supplier beyond that
+    # effective cap — so the optimizer widens dual-sourcing splits away from volatile suppliers.
+    # Soft (not a hard tighten) so a structurally single-sourced part can never be made infeasible.
+    regime_sourcing_summary = []
+    regime_penalty_terms = []
+    if regime_aware_sourcing:
+        sup_parts = {}
+        for gidx, part in enumerate(all_parts):
+            sup_parts.setdefault(part.get('supplier_name') or 'unknown', []).append(gidx)
+        base_cap_frac = (supplier_concentration_max_pct / 100.0) if (0 < supplier_concentration_max_pct < 100) \
+            else (regime_default_cap_pct / 100.0)
+        total_spend_rg = pulp.lpSum(part['cost'] * r[gidx, t]
+                                    for gidx, part in enumerate(all_parts) for t in range(T))
+        for sup, gidxs in sup_parts.items():
+            # Severity = max regime persistence among this supplier's high-vol parts (0 if none).
+            sev = 0.0
+            for gidx in gidxs:
+                pt = all_parts[gidx]
+                if pt.get('regime_high_vol'):
+                    sev = max(sev, float(pt.get('regime_persistence', 0.8) or 0.8))
+            if sev <= 0:
+                continue
+            eff_cap = max(0.05, base_cap_frac * (1.0 - regime_concentration_tightening * sev))
+            sup_spend_rg = pulp.lpSum(all_parts[gidx]['cost'] * r[gidx, t] for gidx in gidxs for t in range(T))
+            # excess concentration beyond the regime-tightened cap (soft).
+            exc = pulp.LpVariable(f'rgexc_{sup[:14]}', lowBound=0)
+            prob += exc >= sup_spend_rg - eff_cap * total_spend_rg, f'RegimeConc_{sup[:14]}'
+            regime_penalty_terms.append(regime_penalty_mult * sev * exc)
+            regime_sourcing_summary.append({
+                'supplier': sup, 'severity': round(sev, 3),
+                'base_cap_pct': round(base_cap_frac * 100, 1),
+                'effective_cap_pct': round(eff_cap * 100, 1),
+            })
+        # Fold the regime soft-penalty into the objective (added here, after the early ss_floor fold).
+        if regime_penalty_terms:
+            prob.objective = prob.objective + pulp.lpSum(regime_penalty_terms)
+
     # #7 — FX exposure cap. Σ_foreign-spend ≤ cap × Σ_total-spend across the horizon.
     # is_foreign_currency is derived JS-side from supplierProfiles[name].currency vs config.currency.
     if fx_exposure_max_pct > 0 and fx_exposure_max_pct < 100:
@@ -1851,6 +1902,9 @@ def solve_procurement(data):
         'ss_floor_mode': ss_floor_mode,  # (Audit #0) 'soft' | 'hard' | 'off'
         # GAP-3 — emit a reorder POLICY ((s,S) + (R,Q) per part), not just the fixed PO schedule.
         'inventory_policies': derive_policies(data).get('policies', []),
+        # GAP-4 — regime-aware sourcing: per-supplier regime severity + tightened concentration cap.
+        'regime_sourcing': regime_sourcing_summary,
+        'regime_aware_sourcing': regime_aware_sourcing,
         # GAP-1 — CVaR-robust SS provenance. 'heizer' = z·σ_LTD; 'cvar' = Rockafellar–Uryasev tail-robust.
         'ss_source': ss_source,
         'cvar_beta': cvar_beta if ss_source == 'cvar' else None,

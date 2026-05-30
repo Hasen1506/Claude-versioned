@@ -6419,6 +6419,9 @@ function OptimizeTab({state,dispatch}){
               // T8-07 — is_import drives the fx-shock disruption scope (only imports take the FX hit).
               is_import:(b.supplierType==='import')||(b.country&&b.country!=='IN'),
               hedge_ratio:Math.max(0,Math.min(1,(+sprof.hedgeRatio||0)/100)),
+              // GAP-4 — per-part HMM regime signal (flag on the BOM item or supplier profile).
+              regime_high_vol:!!(b.regimeHighVol||sprof.regimeHighVol),
+              regime_persistence:+(b.regimePersistence||sprof.regimePersistence||0),
               vmi:vmi,vmi_target_stock_days:+(sprof.vmiTargetStockDays||14),vmi_review_freq_days:+(sprof.vmiReviewFreq||7)};
             }),
           })),
@@ -6449,6 +6452,9 @@ function OptimizeTab({state,dispatch}){
           // the per-product SS floor from the R–U CVaR-optimal order-up-to level at confidence β.
           ss_source:constraints.cvarRobust.on?'cvar':'heizer',
           cvar_beta:Math.min(0.999,Math.max(0.5,(+constraints.cvarRobust.val||95)/100)),
+          // GAP-4 — regime-aware sourcing trigger. Tightening = the toggle's % at full severity.
+          regime_aware_sourcing:constraints.regimeAware.on,
+          regime_concentration_tightening:Math.min(0.95,Math.max(0,(+constraints.regimeAware.val||60)/100)),
           // Round 5 / MEIO — per-node FG inventory variables. Auto-enables when at least one
           // DC + one plant exist in the network. When disabled, solver runs the legacy single-pool path.
           // Each node carries: id, type, capacity (units), carryingRatePct (0-100). Lanes carry source+dest+lt+ratePerUnit.
@@ -6808,6 +6814,7 @@ function OptimizeTab({state,dispatch}){
     fxExposure:{on:false,val:30},
     abcServiceA:{on:false,val:99},
     cvarRobust:{on:false,val:95},
+    regimeAware:{on:false,val:60},
     budgetDeflate:{on:false,val:0}
   });
   const toggleC=(k)=>setConstraints(c=>({...c,[k]:{...c[k],on:!c[k].on}}));
@@ -7101,6 +7108,7 @@ function OptimizeTab({state,dispatch}){
             {k:'fxExposure',lbl:'FX spend max %',solver:'hard',hint:'Max % of horizon spend in non-home currency. Constraint: Σ foreign-spend ≤ cap × Σ total-spend. is_foreign_currency derived from supplierProfiles[name].currency vs config.currency.'},
             {k:'abcServiceA',lbl:'A-class SL min %',solver:'hard',hint:'Minimum fill-rate for A-class SKUs (tighter than default service_level). Σ A-class shortage ≤ (1−target) × Σ A-class demand. Requires backorders enabled.'},
             {k:'cvarRobust',lbl:'CVaR-robust SS (β%)',solver:'hard',hint:'GAP-1 — when ON, per-product safety stock is the Rockafellar–Uryasev CVaR-β-optimal order-up-to level (cvar.py) instead of the Heizer z·σ_LTD formula, so the held floor protects the β-tail of lead-time demand. β = the % here (e.g. 95 = average over the worst 5% of demand outcomes).'},
+            {k:'regimeAware',lbl:'Regime-aware sourcing (tighten%)',solver:'hard',hint:'GAP-4 — feeds the HMM volatility regime (Tab 9 risk) into sourcing: a supplier whose part is in a high-vol regime gets a TIGHTER effective concentration cap and a soft penalty that pushes spend toward stabler alternatives (widening dual-sourcing). Value = max tightening % at full regime severity. Set per-BOM-item regimeHighVol / regimePersistence to flag a part.'},
             {k:'budgetDeflate',lbl:'Inflation-deflate budget',solver:'hard',hint:'When ON, the per-period budget cap is divided by (1+infl)^t to reflect real purchasing power. Uses WACC card inflation rate.',noVal:true}
           ].map(({k,lbl,solver,hint,noVal})=>
             <label key={k} title={hint||''} style={{display:'flex',alignItems:'center',gap:4,cursor:'pointer',opacity:constraints[k].on?1:0.5,padding:'2px 4px',borderLeft:solver==='pending'?'2px solid var(--a4)':'none'}}>
@@ -7338,6 +7346,21 @@ function OptimizeTab({state,dispatch}){
           </tr>)}</tbody>
         </table>
       </div>
+    </div>}
+
+    {/* ─── GAP-4 · REGIME-AWARE SOURCING ─── */}
+    {result&&result._mode==='procurement'&&result.regime_aware_sourcing&&result.regime_sourcing?.length>0&&<div className="card" style={{borderColor:'var(--a4)'}}>
+      <div className="card-title">🌪️ Regime-Aware Sourcing <span className="badge" style={{background:'rgba(248,191,45,.12)',color:'var(--a4)',marginLeft:6}}>HMM → concentration cap</span></div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Suppliers with a part in a high-volatility regime have their effective concentration cap tightened (and over-concentration softly penalized), pushing spend toward stabler alternatives. Effective cap = base × (1 − tightening × severity).</div>
+      <table className="data-table" style={{fontSize:10,width:'100%'}}>
+        <thead><tr style={{textAlign:'right'}}><th style={{textAlign:'left'}}>Supplier</th><th>Regime severity</th><th>Base cap</th><th>Effective cap</th></tr></thead>
+        <tbody>{result.regime_sourcing.map((s,i)=><tr key={i} style={{textAlign:'right'}}>
+          <td style={{textAlign:'left',fontWeight:600,color:'var(--ac)'}}>{s.supplier}</td>
+          <td style={{color:'var(--a4)'}}>{(s.severity*100).toFixed(0)}%</td>
+          <td>{s.base_cap_pct}%</td>
+          <td style={{fontWeight:600,color:'var(--dg)'}}>{s.effective_cap_pct}%</td>
+        </tr>)}</tbody>
+      </table>
     </div>}
 
     {/* ─── MRP EXPLOSION ─── */}
