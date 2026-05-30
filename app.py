@@ -37,6 +37,7 @@ from solvers.reconcile import run_sop_pipeline
 from solvers.policy import derive_policies
 from solvers.capital_capacity import solve_capital_capacity
 from solvers.sequencing import evaluate_line as sequence_evaluate_line
+from solvers.transport import consolidate_shipments, MODE_SPECS as TRANSPORT_MODE_SPECS
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
@@ -548,6 +549,22 @@ def api_solve_pipeline():
 
         results['pipeline_status'] = 'complete'
         return jsonify(results)
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+# ─── Transport consolidation (GAP-9) ───
+@app.route('/api/solve/consolidate', methods=['POST'])
+def api_solve_consolidate():
+    """LTL→FTL / LCL→FCL consolidation across shipments sharing a lane: bin-pack the
+    combined weight into full loads and report the saving vs shipping each individually."""
+    try:
+        data = request.json or {}
+        modes = {k: {**v} for k, v in TRANSPORT_MODE_SPECS.items()}
+        for mn, ov in (data.get('params', {}).get('mode_overrides', {}) or {}).items():
+            if mn in modes:
+                modes[mn].update(ov)
+        return jsonify({'consolidation': consolidate_shipments(data.get('shipments', []), modes, data.get('params', {}))})
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 

@@ -47,6 +47,72 @@ def _lookup_transit(origin, dest, mode_type):
     if 'rail' in mode_type: return 5
     return 3
 
+def consolidate_shipments(shipments, modes, params=None):
+    """GAP-9 — consolidation across shipments sharing a lane.
+
+    The per-shipment mode choice is greedy: each shipment independently picks its
+    cheapest mode, so many small LTL/LCL parcels on the SAME origin→dest lane never
+    combine into a full truck/container even when that is far cheaper. This pass groups
+    shipments by lane, bin-packs the combined weight into full loads, and compares the
+    all-individual cost against the consolidated cost, recommending the cheaper.
+
+    Returns a list of per-lane consolidation analyses (only lanes with ≥2 shipments).
+    """
+    params = params or {}
+    # Pick the LTL (small-parcel) and FTL (full-load) rate pair by lane type.
+    road_ltl = modes.get('road_ltl', MODE_SPECS['road_ltl'])
+    road_ftl = modes.get('road_ftl', MODE_SPECS['road_ftl'])
+    sea_lcl = modes.get('sea_lcl', MODE_SPECS['sea_lcl'])
+    sea_fcl = modes.get('sea_fcl_40', MODE_SPECS['sea_fcl_40'])
+
+    lanes = {}
+    for s in shipments:
+        orig = s.get('origin', 'Domestic')
+        dest = s.get('destination', 'Factory')
+        is_imp = s.get('is_import', orig not in ['Domestic', 'Factory', 'Warehouse'])
+        lanes.setdefault((orig, dest, is_imp), []).append(s)
+
+    out = []
+    for (orig, dest, is_imp), ships in lanes.items():
+        if len(ships) < 2:
+            continue
+        W = sum(s.get('weight_kg', 0) for s in ships)
+        if is_imp:
+            ltl, ftl, full_label, part_label = sea_lcl, sea_fcl, 'FCL 40ft', 'LCL'
+        else:
+            ltl, ftl, full_label, part_label = road_ltl, road_ftl, 'FTL', 'LTL'
+        cap = ftl['max_kg']
+        truck_cost = cap * ftl['cost_per_kg']        # a booked full load is priced at its capacity
+        ltl_rate = ltl['cost_per_kg']
+
+        # Option A — everything as individual small loads.
+        cost_individual = W * ltl_rate
+        # Option B — bin-pack into full loads; the remainder takes whichever is cheaper.
+        n_full = int(W // cap)
+        rem = W - n_full * cap
+        rem_cost = min(rem * ltl_rate, truck_cost) if rem > 0 else 0.0
+        cost_consolidated = n_full * truck_cost + rem_cost
+        saving = cost_individual - cost_consolidated
+
+        out.append({
+            'lane': f'{orig} → {dest}',
+            'is_import': is_imp,
+            'n_shipments': len(ships),
+            'combined_weight_kg': round(W, 1),
+            'individual_mode': part_label,
+            'consolidated_mode': full_label,
+            'full_loads': n_full,
+            'remainder_kg': round(rem, 1),
+            'cost_individual': round(cost_individual, 2),
+            'cost_consolidated': round(cost_consolidated, 2),
+            'saving': round(saving, 2),
+            'recommend_consolidate': bool(saving > 0),
+            'utilization_pct': round((W / (cap * max(n_full + (1 if rem > 0 else 0), 1))) * 100, 1),
+        })
+    out.sort(key=lambda r: r['saving'], reverse=True)
+    return out
+
+
 def solve_transport(data):
     t0 = time.time()
     shipments = data.get('shipments', [])
@@ -178,10 +244,15 @@ def solve_transport(data):
     # return hardcoded 'Optimal' regardless, so an over-constrained allocation was reported as a clean
     # solve. Degrade the top-level status to the allocation's real status (and surface its error) when
     # an allocation was attempted and did not solve, mirroring the other four solvers' contract.
+    # GAP-9 — consolidation pass across shipments sharing a lane (LTL→FTL / LCL→FCL bin-packing).
+    consolidation = consolidate_shipments(shipments, modes, params)
+    consolidation_saving = round(sum(c['saving'] for c in consolidation if c['recommend_consolidate']), 2)
+
     out_status = 'Optimal'
     out = {'total_cost':round(total_cost,2),'total_weight':round(total_weight,1),
         'n_shipments':len(results),'shipments':results,'mode_summary':mode_summary,'spike_alerts':spike_alerts,
-        'allocation':alloc,'tracking_portals':TRACKING,'solve_time':round(time.time()-t0,2)}
+        'allocation':alloc,'consolidation':consolidation,'consolidation_saving':consolidation_saving,
+        'tracking_portals':TRACKING,'solve_time':round(time.time()-t0,2)}
     if alloc and alloc.get('status') and alloc['status'] != 'Optimal':
         out_status = alloc['status']
         out['error'] = alloc.get('error', f"Allocation {alloc['status']}.")

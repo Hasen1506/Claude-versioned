@@ -240,7 +240,19 @@ Legend: 🟩 verified premise · ⚖️ design judgment · ⭐ highest leverage
 
 ---
 
-## GAP-9 · Transport: greedy mode-choice + disconnected allocation LP
+## GAP-9 · Transport: greedy mode-choice + disconnected allocation LP — ✅ CONSOLIDATION IMPLEMENTED (R28)
+- ✅ **Built (R28):** `consolidate_shipments` in [transport.py](transport.py) — the consolidation the
+  greedy per-shipment mode choice misses. It groups shipments by origin→dest lane, bin-packs the
+  combined weight into full loads, and compares all-individual (LTL/LCL) cost against the consolidated
+  (FTL/FCL) cost with the remainder taking whichever is cheaper, recommending consolidation only when it
+  saves. solve_transport returns `consolidation` + `consolidation_saving`; endpoint
+  `/api/solve/consolidate`; a **Consolidation opportunities** panel in the transport result. Verified: 6
+  tests in [tests/test_gap9_consolidation.py](tests/test_gap9_consolidation.py) — LTL→FTL saves, tiny
+  parcels not consolidated, bin-packs into multiple full loads, single-shipment lane skipped, separate
+  lanes not merged, solve_transport surfaces it.
+- **Scope note:** a single unified mode-choice + consolidation + multi-stop MILP (fully replacing the
+  sort-beside-an-LP) is the larger rewrite the gap's ideal describes; this delivers the consolidation/
+  bin-packing decision — the highest-value missing piece — alongside the existing mode heuristic.
 - 🟩 **Premise (verified):** per-shipment "cheapest feasible mode" is a sort
   ([transport.py:98-99](transport.py#L98)); the allocation LP uses separate
   origins/destinations/cost_matrix ([transport.py:145-155](transport.py#L145)) and is not

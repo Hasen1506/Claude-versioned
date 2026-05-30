@@ -7741,6 +7741,23 @@ function OptimizeTab({state,dispatch}){
         <KPI label="Shipments" value={result.shipments?.length||0} color="var(--a3)"/>
       </div>
       {Object.entries(result.mode_summary||{}).length>0&&<div className="kpi-row">{Object.entries(result.mode_summary).map(([mode,s])=><KPI key={mode} label={mode.toUpperCase()} value={`${s.count} shipments`} sub={`${cur}${Math.round(s.cost).toLocaleString()} · ${Math.round(s.weight)}kg`}/>)}</div>}
+      {/* GAP-9 — consolidation across shipments sharing a lane (LTL→FTL / LCL→FCL) */}
+      {result.consolidation?.some(c=>c.recommend_consolidate)&&<div style={{marginTop:8,padding:8,background:'rgba(0,212,170,.05)',border:'1px solid var(--ac)',borderRadius:4}}>
+        <div style={{fontSize:11,fontWeight:700,color:'var(--ac)',marginBottom:4}}>🔗 Consolidation opportunities — total saving {cur}{result.consolidation_saving?.toLocaleString()}</div>
+        <div style={{fontSize:9,color:'var(--tx3)',marginBottom:6}}>The per-shipment mode choice is greedy — small parcels on the same lane never combine. Bundling them into full trucks/containers is cheaper:</div>
+        <table className="data-table" style={{fontSize:10,width:'100%'}}>
+          <thead><tr style={{textAlign:'right'}}><th style={{textAlign:'left'}}>Lane</th><th>Shipments</th><th>Weight</th><th>Individual ({/*mode*/}LTL/LCL)</th><th>Consolidated</th><th>Full loads</th><th>Util</th><th>Saving</th></tr></thead>
+          <tbody>{result.consolidation.filter(c=>c.recommend_consolidate).map((c,i)=><tr key={i} style={{textAlign:'right'}}>
+            <td style={{textAlign:'left',fontWeight:600}}>{c.lane}</td>
+            <td>{c.n_shipments}</td><td>{c.combined_weight_kg.toLocaleString()}kg</td>
+            <td>{cur}{c.cost_individual.toLocaleString()} <span style={{color:'var(--tx3)'}}>{c.individual_mode}</span></td>
+            <td>{cur}{c.cost_consolidated.toLocaleString()} <span style={{color:'var(--tx3)'}}>{c.consolidated_mode}</span></td>
+            <td>{c.full_loads}{c.remainder_kg>0?`+${c.remainder_kg}kg`:''}</td>
+            <td>{c.utilization_pct}%</td>
+            <td style={{fontWeight:700,color:'var(--gn)'}}>{cur}{c.saving.toLocaleString()}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>}
       <table className="data-table">
         <thead><tr><th>Shipment</th><th>Route</th><th>Weight</th><th>Deadline</th><th>Recommended</th><th>Transit</th><th>Cost</th><th>Alert</th></tr></thead>
         <tbody>{result.shipments?.map((s,i)=><tr key={i}>
