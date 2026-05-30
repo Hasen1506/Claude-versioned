@@ -33,6 +33,7 @@ from solvers.forecast import run_forecast
 from solvers.risk import detect_regimes, detect_many
 from solvers.aggregate import solve_aggregate
 from solvers.cvar import solve_cvar
+from solvers.reconcile import run_sop_pipeline
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
@@ -544,6 +545,24 @@ def api_solve_pipeline():
 
         results['pipeline_status'] = 'complete'
         return jsonify(results)
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+# ─── Closed-loop S&OP pipeline (GAP-2) ───
+@app.route('/api/solve/sop', methods=['POST'])
+def api_solve_sop():
+    """One demand truth + capacity feedback. Stamps a single consensus demand vector
+    onto every solver, runs profit → produce, and re-solves the mix with a tightened
+    ceiling wherever production is capacity-bound below the requested quantity — then
+    procures on the reconciled plan. Turns the forward report pipeline into S&OP."""
+    try:
+        data = request.json or {}
+        return jsonify(run_sop_pipeline(
+            data,
+            max_iters=int(data.get('max_iters', 3)),
+            tol=float(data.get('tol', 0.02)),
+        ))
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 

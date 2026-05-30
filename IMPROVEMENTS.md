@@ -73,7 +73,18 @@ Legend: 🟩 verified premise · ⚖️ design judgment · ⭐ highest leverage
 
 ---
 
-## GAP-2 · One-way waterfall, no feedback; no single demand truth
+## GAP-2 · One-way waterfall, no feedback; no single demand truth — ✅ IMPLEMENTED (R22)
+- ✅ **Built (R22):** new [reconcile.py](reconcile.py) — `consensus_demand` resolves ONE per-SKU
+  demand vector (priority: the GAP-0 aggregate plan → caller consensus → forecast) and stamps it onto
+  every solver payload, so profit-mix / procurement / production stop disagreeing. `run_sop_pipeline`
+  runs the forward chain then closes the loop: where production is capacity-bound (its demand floor C1
+  is hard, so a shortfall surfaces as infeasibility), it rations the mix ceiling to the achievable
+  output and re-solves, iterating until self-consistent, then procures on the reconciled quantities.
+  Endpoint `/api/solve/sop`; **"🔁 Closed-loop S&OP"** mode in Optimize stamps `state.aggregatePlan`
+  as the truth and renders the per-iteration reconciliation table. Verified: 5 tests in
+  [tests/test_gap2_sop.py](tests/test_gap2_sop.py) — aggregate-plan demand truth + forecast fallback,
+  tight line reconciles (infeasible→rationed→Optimal, procures on reconciled plan), ample capacity
+  converges first iteration.
 - 🟩 **Premise (verified):** `/api/solve/pipeline` runs profit→disaggregate→procure→produce
   strictly forward ([app.py:432-496](app.py#L432)); production results never revise the mix.
 - 🟩 **Premise (verified):** demand enters four solvers independently —

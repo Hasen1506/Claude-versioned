@@ -6713,9 +6713,13 @@ function OptimizeTab({state,dispatch}){
           params:{budget:constraints.budget.on?constraints.budget.val:state.budget.capex||1000000,wacc:state.config.wacc/100,
             ...(cap.maxInvestments?{max_investments:+cap.maxInvestments}:{})},
         };
-      }else if(solverMode==='pipeline'){
-        endpoint='/api/solve/pipeline';
+      }else if(solverMode==='pipeline'||solverMode==='sop'){
+        // GAP-2 — 'sop' reuses the identical sub-payloads but hits the closed-loop endpoint,
+        // stamping the stored aggregate (S&OP) plan as the single demand truth and re-solving
+        // the mix wherever production is capacity-bound.
+        endpoint=solverMode==='sop'?'/api/solve/sop':'/api/solve/pipeline';
         payload={
+          ...(solverMode==='sop'?{aggregate_plan:state.aggregatePlan||null,max_iters:3}:{}),
           profit_data:{
             products:state.products.map(p=>({name:p.name,sell_price:p.sellPrice,variable_cost:p.variableCost,max_demand:annDemand(p),cycle_time:1,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:effQtyPer(b)}))})),
             constraints:{shared_capacity:state.production.lines.reduce((a,l)=>a+l.capacity*periodCount(state.planning),0),budget:constraints.budget.on?constraints.budget.val:0,warehouse:constraints.warehouse.on?constraints.warehouse.val:5000},
@@ -6782,6 +6786,7 @@ function OptimizeTab({state,dispatch}){
     {id:'procurement',label:'② Procurement',icon:'📦',desc:'STEP 2 — Takes Profit Mix quantities, explodes BOM, finds optimal PO schedule minimizing total procurement + holding + ordering cost (MILP/CBC).',obj:'Min Cost'},
     {id:'production',label:'③ Production',icon:'🏭',desc:'STEP 3 — Takes required quantities from Profit Mix, schedules across production lines minimizing makespan + setup + overtime (MILP/CBC).',obj:'Min Makespan'},
     {id:'pipeline',label:'🔗 Full Pipeline',icon:'🔗',desc:'Chains all 3 steps in order: Profit Mix → Disaggregation (seasonal) → Procurement → Production. Each step output feeds the next.',obj:'End-to-End'},
+    {id:'sop',label:'🔁 Closed-loop S&OP',icon:'🔁',desc:'GAP-2 — stamps the Aggregate Plan (Tab 3B) as the single demand truth across every solver, then runs Profit Mix → Production and RE-SOLVES the mix wherever production is capacity-bound, iterating until the plan is self-consistent. Procures on the reconciled quantities. Run the Aggregate Plan first to supply the demand truth.',obj:'Reconciled Plan'},
     {id:'transport',label:'Transport',icon:'🚛',desc:'Mode selection with demand sensing + allocation (LP). Evaluates road/rail/sea/air/multimodal across 25 Indian routes.',obj:'Min Logistics'},
     {id:'capital',label:'Capital Budget',icon:'🏗️',desc:'Maximize portfolio NPV subject to CAPEX budget (LP). Computes IRR, payback, profitability index per investment.',obj:'Max NPV'},
     {id:'montecarlo',label:'Monte Carlo',icon:'🎲',desc:'1000 stochastic runs with randomized demand (±MAPE%), lead times (±LT_CV%), material prices (±cost_CV%). Outputs VaR/CVaR/fragility.',obj:'Risk Analysis'},
@@ -7719,6 +7724,34 @@ function OptimizeTab({state,dispatch}){
     </div>}
 
     {/* ─── PIPELINE RESULTS ─── */}
+    {/* GAP-2 — closed-loop S&OP reconciliation summary */}
+    {result&&result._mode==='sop'&&<div>
+      <div className="card" style={{borderColor:result.reconciled?'var(--gn)':'var(--a4)'}}>
+        <div className="card-title">🔁 Closed-loop S&OP {result.reconciled?<span className="badge" style={{background:'rgba(63,185,80,.12)',color:'var(--gn)'}}>RECONCILED</span>:<span className="badge" style={{background:'rgba(248,191,45,.12)',color:'var(--a4)'}}>NOT CONVERGED · {result.iterations_run} iters</span>}</div>
+        <div style={{fontSize:11,color:'var(--tx2)',marginBottom:8}}>
+          Demand truth: <strong>{result.demand_source}</strong>{result.demand_source==='aggregate'?' (Aggregate Plan, Tab 3B)':result.demand_source==='forecast'?' — no aggregate plan stored; run Tab 3B first for a true S&OP loop':''}.
+          The mix was re-solved {result.iterations_run>1?`${result.iterations_run-1} time(s)`:'no times'} against capacity feedback.
+        </div>
+        <table className="data-table" style={{fontSize:11,width:'100%'}}>
+          <thead><tr><th style={{textAlign:'left'}}>Iter</th><th style={{textAlign:'left'}}>Production</th><th style={{textAlign:'right'}}>Profit</th><th style={{textAlign:'left'}}>Capacity gaps</th></tr></thead>
+          <tbody>{(result.iterations||[]).map(it=><tr key={it.iter}>
+            <td style={{textAlign:'left'}}>{it.iter}</td>
+            <td style={{textAlign:'left',color:it.production_status==='Optimal'?'var(--gn)':'var(--dg)'}}>{it.production_status}</td>
+            <td style={{textAlign:'right'}}>{cur}{(it.profit||0).toLocaleString()}</td>
+            <td style={{textAlign:'left',fontSize:10,color:'var(--tx2)'}}>{it.gaps&&it.gaps.length?it.gaps.map(g=>`${g.product}: ${g.required}→${g.produced} (−${g.shortfall})`).join('; '):'— none —'}</td>
+          </tr>)}</tbody>
+        </table>
+        <div style={{fontSize:9,color:'var(--tx3)',marginTop:6}}>Each capacity-bound iteration rations the mix ceiling to the achievable output and re-solves, so the final plan is one production can actually make.</div>
+      </div>
+      {result.profit_mix&&<div className="card">
+        <div className="card-title">Reconciled Mix → {cur}{result.profit_mix.total_profit?.toLocaleString()} profit</div>
+        <div className="kpi-row">
+          <KPI label="Profit" value={`${cur}${result.profit_mix.total_profit?.toLocaleString()}`} color="var(--gn)"/>
+          <KPI label="Revenue" value={`${cur}${result.profit_mix.total_revenue?.toLocaleString()}`} color="var(--a2)"/>
+          <KPI label="Procurement" value={result.procurement?`${cur}${result.procurement.total_cost?.toLocaleString()}`:'—'} sub={result.procurement?.status||'—'}/>
+        </div>
+      </div>}
+    </div>}
     {result&&result._mode==='pipeline'&&<div>
       <div className="card" style={{borderColor:'var(--a3)'}}>
         <div className="card-title">🔗 Pipeline: Profit → Procurement → Production</div>
