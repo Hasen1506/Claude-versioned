@@ -31,6 +31,7 @@ from solvers.lot_sizing import solve_lot_sizing
 from solvers.pattern_sensing import sense as demand_sense, list_patterns
 from solvers.forecast import run_forecast
 from solvers.risk import detect_regimes, detect_many
+from solvers.aggregate import solve_aggregate
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
@@ -448,6 +449,19 @@ def api_risk_regimes():
         if 'rows' in data:
             return jsonify(detect_many(data))
         return jsonify(detect_regimes(data.get('series', []), n_iter=int(data.get('n_iter', 30))))
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+# ─── Aggregate Production Planning / S&OP (GAP-0) ───
+@app.route('/api/solve/aggregate', methods=['POST'])
+def api_solve_aggregate():
+    """Multi-period Hax–Meal aggregate plan: level-vs-chase over monthly buckets
+    with regular/overtime production, hire/fire, inventory carry, and backorder.
+    This is the missing middle tier (GAP-0) — the only place seasonal build-ahead
+    can actually be planned, and the coherent quantity source for downstream solvers."""
+    try:
+        return jsonify(solve_aggregate(request.json or {}))
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 

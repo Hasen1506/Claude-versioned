@@ -2825,6 +2825,9 @@ function reducer(state,action){
     // Round 5 — solver lifecycle hooks. Stamp lastSolveAt so STALE detection has a baseline.
     case 'SOLVE_STARTED':s.planning={...s.planning,_solveInProgressAt:new Date().toISOString()};break;
     case 'SOLVE_FINISHED':s.planning={...s.planning,lastSolveAt:new Date().toISOString(),_solveInProgressAt:null};break;
+    // GAP-0 — persist the latest aggregate (S&OP) plan so it can act as the consensus
+    // quantity source for the downstream pipeline (GAP-2 reads s.aggregatePlan.sku_plans).
+    case 'SET_AGGREGATE_PLAN':s.aggregatePlan={...action.payload,_at:new Date().toISOString()};break;
     // v3.6 — supplier profile registry. Keyed by supplier name (matches BOM.supplierName). Holds scorecard dimensions + contract terms.
     case 'SET_SUPPLIER_PROFILE':{
       const name=action.name;if(!name)break;
@@ -6084,6 +6087,230 @@ function DemandTab({state,dispatch}){
         </div>
       </div>
     </div>
+  </div>;
+}
+
+// ─── TAB 3B: AGGREGATE PLAN / S&OP (GAP-0) ───
+// The missing middle tier between the single-period profit-mix LP and weekly scheduling.
+// profitmix's q[k] has NO time index, so demand_mode='seasonal' cannot pre-build. This tab
+// drives the multi-period Hax–Meal aggregate LP (monthly buckets × {regular, overtime,
+// hire/fire, inventory carry, backorder}) where level-vs-chase strategy actually lives.
+function AggregateTab({state,dispatch}){
+  const [solving,setSolving]=useState(false);
+  const [result,setResult]=useState(null);
+  const [error,setError]=useState(null);
+  const cur=state.config.currency||'₹';
+  const prods=useMemo(()=>state.products||[],[state.products]);
+
+  // Convert each product's planning-grain history into a forward 12-month demand profile
+  // (naive seasonal = repeat the last observed year). Forecast sophistication is GAP-7's job;
+  // the aggregate tier's question is level-vs-chase, not which forecaster wins.
+  const monthly12=React.useCallback((p)=>{
+    const hist=(p.history||[]).map(v=>+v||0);
+    const grain=(state.planning&&state.planning.timeGrain)||'weekly';
+    let mh=[];
+    if(grain==='monthly')mh=hist.slice();
+    else if(grain==='daily'){for(let i=0;i<hist.length;i+=30)mh.push(hist.slice(i,i+30).reduce((a,b)=>a+b,0));}
+    else{for(let i=0;i<hist.length;i+=4)mh.push(hist.slice(i,i+4).reduce((a,b)=>a+b,0));}
+    if(!mh.length)return Array(12).fill(0);
+    const last12=mh.slice(-12);
+    while(last12.length<12)last12.unshift(last12[0]||0);
+    return last12.map(v=>Math.max(0,Math.round(v)));
+  },[state.planning]);
+
+  const demandMatrix=useMemo(()=>prods.map(monthly12),[prods,monthly12]);
+  const aggMonthly=useMemo(()=>{
+    const out=Array(12).fill(0);
+    demandMatrix.forEach(row=>row.forEach((v,t)=>{out[t]+=v;}));
+    return out;
+  },[demandMatrix]);
+
+  // Sensible cost/capacity defaults derived from existing state — all editable below.
+  const derived=useMemo(()=>{
+    const avgVar=prods.length?prods.reduce((a,p)=>a+(+p.variableCost||0),0)/prods.length:10;
+    const reg=Math.max(1,Math.round(avgVar||10));
+    const carry=effectiveCarryRate(state)||0.24;
+    const initWf=Math.max(1,Math.round((state.production?.lines||[]).reduce((a,l)=>a+(l.stages||[]).reduce((s,g)=>s+(+g.workers||0),0),0))||20);
+    const initInv=Math.round(prods.reduce((a,p)=>a+(+effectiveInitInventory(p,state)||0),0));
+    const peak=Math.max(1,...aggMonthly);
+    return {reg,carry,initWf,initInv,rate:Math.max(1,Math.round(peak/initWf))};
+  },[prods,state,aggMonthly]);
+
+  const [params,setParams]=useState(null);
+  // Initialise the lever form once defaults are known (and never clobber user edits afterward).
+  React.useEffect(()=>{
+    setParams(prev=>prev?prev:{
+      init_workforce:derived.initWf,init_inventory:derived.initInv,rate_per_worker:derived.rate,
+      reg_cost_per_unit:derived.reg,ot_cost_per_unit:Math.round(derived.reg*1.5),
+      holding_cost_per_unit:+(derived.reg*derived.carry/12).toFixed(2),
+      backorder_cost_per_unit:Math.round(derived.reg*2),allow_backorder:true,
+      hire_cost:1500,fire_cost:2500,wage_per_worker:2000,
+      max_ot_pct:25,min_workforce:0,max_workforce:0,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[derived.initWf,derived.initInv,derived.rate,derived.reg]);
+
+  const setP=(k,v)=>setParams(p=>({...p,[k]:v}));
+
+  const handleSolve=async()=>{
+    if(!params)return;
+    setSolving(true);setError(null);setResult(null);
+    try{
+      const payload={
+        products:prods.map((p,k)=>({name:p.name,forecast:demandMatrix[k],labor_hours_per_unit:+p.cycleTime||1})),
+        params:{
+          periods:12,
+          init_workforce:+params.init_workforce||0,init_inventory:+params.init_inventory||0,
+          rate_per_worker:+params.rate_per_worker||0,
+          reg_cost_per_unit:+params.reg_cost_per_unit||0,ot_cost_per_unit:+params.ot_cost_per_unit||0,
+          holding_cost_per_unit:+params.holding_cost_per_unit||0,
+          backorder_cost_per_unit:+params.backorder_cost_per_unit||0,allow_backorder:!!params.allow_backorder,
+          hire_cost:+params.hire_cost||0,fire_cost:+params.fire_cost||0,wage_per_worker:+params.wage_per_worker||0,
+          max_ot_pct:(+params.max_ot_pct||0)/100,
+          min_workforce:+params.min_workforce||0,
+          max_workforce:+params.max_workforce>0?+params.max_workforce:'',
+        },
+      };
+      const res=await fetch('/api/solve/aggregate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const data=await res.json();
+      if(!res.ok||data.error){setError((data&&data.error)||`Aggregate plan failed (HTTP ${res.status})`);}
+      else{setResult(data);dispatch({type:'SET_AGGREGATE_PLAN',payload:data});}
+    }catch(e){setError(e.message);}
+    setSolving(false);
+  };
+
+  if(!params)return <div className="animate-in"><div className="card">Initialising…</div></div>;
+  const cv=v=>`${cur}${(+v||0).toLocaleString(undefined,{maximumFractionDigits:0})}`;
+  const stratColor=result?(result.strategy==='level'?'var(--gn)':result.strategy==='chase'?'var(--a4)':'var(--ac)'):'var(--tx2)';
+
+  return <div className="animate-in">
+    <div className="card" style={{marginBottom:14}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:10}}>
+        <div style={{flex:1,minWidth:280}}>
+          <h3 style={{margin:'0 0 4px'}}>📐 Aggregate Plan / S&OP <span style={{fontSize:10,color:'var(--tx3)',fontWeight:400}}>— the missing middle tier (GAP-0)</span></h3>
+          <div style={{fontSize:11,color:'var(--tx2)',lineHeight:1.5}}>
+            Multi-period <strong>Hax–Meal LP</strong> over 12 monthly buckets. Unlike the single-period
+            Profit-Mix LP — whose <code>q[k]</code> has no time index and so <em>cannot</em> build ahead —
+            this tier carries inventory across months, so it can <strong>pre-build in a low season to
+            cover a high-season peak</strong>. It solves the <strong>level-vs-chase</strong> tradeoff:
+            flex the workforce (hire/fire) or absorb swings with inventory. Its plan is the coherent
+            quantity source that feeds disaggregation → procurement → production.
+          </div>
+        </div>
+        <button className="btn-primary" onClick={handleSolve} disabled={solving||!prods.length} style={{minWidth:150}}>
+          {solving?'Solving…':'▶ Solve Aggregate Plan'}
+        </button>
+      </div>
+      {!prods.length&&<div style={{marginTop:8,fontSize:11,color:'var(--dg)'}}>Add products (Tab 2) with demand history first.</div>}
+    </div>
+
+    {/* Lever form */}
+    <div className="card" style={{marginBottom:14}}>
+      <div style={{fontSize:11,fontWeight:700,color:'var(--tx2)',marginBottom:8,textTransform:'uppercase',letterSpacing:.5}}>Cost & Capacity Levers <span style={{fontWeight:400,textTransform:'none',color:'var(--tx3)'}}>· defaults derived from your data — tune to see strategy flip</span></div>
+      <div className="vgrid vgrid-4">
+        <Field label="Init workforce (workers)"><NumInput value={params.init_workforce} onChange={v=>setP('init_workforce',v)} min={0}/></Field>
+        <Field label="Init inventory (units)"><NumInput value={params.init_inventory} onChange={v=>setP('init_inventory',v)} min={0}/></Field>
+        <Field label="Rate / worker / month (units)" hint="0 = auto from peak demand"><NumInput value={params.rate_per_worker} onChange={v=>setP('rate_per_worker',v)} min={0}/></Field>
+        <Field label="Max overtime (% of reg cap)"><NumInput value={params.max_ot_pct} onChange={v=>setP('max_ot_pct',v)} min={0} max={100}/></Field>
+        <Field label={`Regular cost / unit (${cur})`}><NumInput value={params.reg_cost_per_unit} onChange={v=>setP('reg_cost_per_unit',v)} min={0}/></Field>
+        <Field label={`Overtime cost / unit (${cur})`}><NumInput value={params.ot_cost_per_unit} onChange={v=>setP('ot_cost_per_unit',v)} min={0}/></Field>
+        <Field label={`Holding / unit / month (${cur})`}><NumInput value={params.holding_cost_per_unit} onChange={v=>setP('holding_cost_per_unit',v)} min={0} step={0.1}/></Field>
+        <Field label={`Backorder / unit / month (${cur})`}><NumInput value={params.backorder_cost_per_unit} onChange={v=>setP('backorder_cost_per_unit',v)} min={0}/></Field>
+        <Field label={`Hire cost / worker (${cur})`}><NumInput value={params.hire_cost} onChange={v=>setP('hire_cost',v)} min={0}/></Field>
+        <Field label={`Fire cost / worker (${cur})`}><NumInput value={params.fire_cost} onChange={v=>setP('fire_cost',v)} min={0}/></Field>
+        <Field label={`Wage / worker / month (${cur})`}><NumInput value={params.wage_per_worker} onChange={v=>setP('wage_per_worker',v)} min={0}/></Field>
+        <Field label="Max workforce (0 = none)"><NumInput value={params.max_workforce} onChange={v=>setP('max_workforce',v)} min={0}/></Field>
+      </div>
+      <label style={{display:'inline-flex',alignItems:'center',gap:6,fontSize:11,color:'var(--tx2)',marginTop:8,cursor:'pointer'}}>
+        <input type="checkbox" checked={params.allow_backorder} onChange={e=>setP('allow_backorder',e.target.checked)}/>
+        Allow backorders (uncheck to forbid stockouts — forces enough capacity/inventory every month)
+      </label>
+    </div>
+
+    {error&&<div className="card" style={{borderColor:'var(--dg)',background:'rgba(220,53,69,.06)',marginBottom:14}}><div style={{color:'var(--dg)',fontSize:12,fontWeight:700}}>⚠ {error}</div></div>}
+
+    {result&&result.status==='Optimal'&&<>
+      {/* Strategy banner */}
+      <div className="card" style={{marginBottom:14,borderColor:stratColor,background:'rgba(0,212,170,.04)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+          <div style={{fontSize:13,fontWeight:800,color:stratColor,textTransform:'uppercase',letterSpacing:1}}>{result.strategy} strategy</div>
+          {result.seasonal_prebuild&&<span style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:10,background:'rgba(0,212,170,.15)',color:'var(--gn)'}}>📦 SEASONAL PRE-BUILD DETECTED</span>}
+          <div style={{flex:1,minWidth:200,fontSize:11,color:'var(--tx2)'}}>{result.strategy_note}</div>
+        </div>
+        <div style={{display:'flex',gap:18,marginTop:10,flexWrap:'wrap',fontSize:11}}>
+          <div><span style={{color:'var(--tx3)'}}>Workforce CoV </span><strong>{(result.workforce_cv*100).toFixed(1)}%</strong></div>
+          <div><span style={{color:'var(--tx3)'}}>Inventory CoV </span><strong>{(result.inventory_cv*100).toFixed(1)}%</strong></div>
+          <div><span style={{color:'var(--tx3)'}}>Final workforce </span><strong>{result.final_workforce}</strong></div>
+          <div><span style={{color:'var(--tx3)'}}>Peak inventory </span><strong>{result.peak_inventory.toLocaleString()}</strong></div>
+          <div><span style={{color:'var(--tx3)'}}>Total backorder </span><strong style={{color:result.total_backorder>0?'var(--a4)':'var(--tx)'}}>{result.total_backorder.toLocaleString()}</strong></div>
+          <div><span style={{color:'var(--tx3)'}}>Total cost </span><strong style={{color:'var(--ac)'}}>{cv(result.total_cost)}</strong></div>
+        </div>
+      </div>
+
+      {/* Per-period plan */}
+      <div className="card" style={{marginBottom:14,overflowX:'auto'}}>
+        <div style={{fontSize:11,fontWeight:700,color:'var(--tx2)',marginBottom:8,textTransform:'uppercase',letterSpacing:.5}}>Monthly Plan</div>
+        <table className="data-table" style={{fontSize:11,width:'100%'}}>
+          <thead><tr style={{textAlign:'right'}}>
+            <th style={{textAlign:'left'}}>Month</th><th>Demand</th><th>Regular</th><th>Overtime</th><th>Inventory</th><th>Backorder</th><th>Workforce</th><th>Hire</th><th>Fire</th><th>Cost</th>
+          </tr></thead>
+          <tbody>
+            {result.periods.map(r=><tr key={r.period} style={{textAlign:'right'}}>
+              <td style={{textAlign:'left',fontWeight:600}}>M{r.period}</td>
+              <td>{r.demand.toLocaleString()}</td>
+              <td>{r.regular_production.toLocaleString()}</td>
+              <td style={{color:r.overtime_production>0?'var(--a4)':'var(--tx3)'}}>{r.overtime_production.toLocaleString()}</td>
+              <td style={{color:r.inventory>0?'var(--gn)':'var(--tx3)'}}>{r.inventory.toLocaleString()}</td>
+              <td style={{color:r.backorder>0?'var(--dg)':'var(--tx3)'}}>{r.backorder.toLocaleString()}</td>
+              <td>{r.workforce}</td>
+              <td style={{color:r.hires>0?'var(--gn)':'var(--tx3)'}}>{r.hires>0?'+'+r.hires:'—'}</td>
+              <td style={{color:r.fires>0?'var(--dg)':'var(--tx3)'}}>{r.fires>0?'-'+r.fires:'—'}</td>
+              <td>{cv(r.period_cost)}</td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="vgrid vgrid-2" style={{marginBottom:14}}>
+        {/* Cost breakdown */}
+        <div className="card">
+          <div style={{fontSize:11,fontWeight:700,color:'var(--tx2)',marginBottom:8,textTransform:'uppercase',letterSpacing:.5}}>Cost Breakdown</div>
+          {Object.entries({Regular:'regular_production',Overtime:'overtime_production',Holding:'holding',Backorder:'backorder',Hiring:'hiring',Firing:'firing',Wages:'wages'}).map(([lab,key])=>{
+            const v=result.cost_breakdown[key]||0;const pct=result.total_cost>0?v/result.total_cost*100:0;
+            return <div key={key} style={{marginBottom:6}}>
+              <div style={{display:'flex',justifyContent:'space-between',fontSize:11}}><span style={{color:'var(--tx2)'}}>{lab}</span><span><strong>{cv(v)}</strong> <span style={{color:'var(--tx3)'}}>{pct.toFixed(0)}%</span></span></div>
+              <div style={{height:5,background:'var(--bg3)',borderRadius:3,marginTop:2}}><div style={{width:`${pct}%`,height:'100%',background:'var(--ac)',borderRadius:3}}/></div>
+            </div>;
+          })}
+        </div>
+        {/* Shadow prices — value of one more worker-period (GAP-5 hook) */}
+        <div className="card">
+          <div style={{fontSize:11,fontWeight:700,color:'var(--tx2)',marginBottom:4,textTransform:'uppercase',letterSpacing:.5}}>Capacity Shadow Prices</div>
+          <div style={{fontSize:10,color:'var(--tx3)',marginBottom:8}}>A binding regular-capacity dual = the marginal value of one more worker-period. Where this is large, added capacity (a new shift/line) pays back — the hook the Investment tab uses (GAP-5).</div>
+          {(result.shadow_prices||[]).filter(s=>s.binding).length===0
+            ? <div style={{fontSize:11,color:'var(--tx3)'}}>No binding capacity constraints — workforce has slack every month.</div>
+            : <table className="data-table" style={{fontSize:11,width:'100%'}}>
+                <thead><tr><th style={{textAlign:'left'}}>Constraint</th><th style={{textAlign:'right'}}>Dual ({cur}/unit-cap)</th></tr></thead>
+                <tbody>{(result.shadow_prices||[]).filter(s=>s.binding).map((s,i)=><tr key={i}><td style={{textAlign:'left'}}>{s.constraint}</td><td style={{textAlign:'right',fontWeight:600,color:'var(--ac)'}}>{s.shadow_price}</td></tr>)}</tbody>
+              </table>}
+        </div>
+      </div>
+
+      {/* Per-SKU disaggregation */}
+      <div className="card" style={{overflowX:'auto'}}>
+        <div style={{fontSize:11,fontWeight:700,color:'var(--tx2)',marginBottom:4,textTransform:'uppercase',letterSpacing:.5}}>Per-SKU Disaggregation</div>
+        <div style={{fontSize:10,color:'var(--tx3)',marginBottom:8}}>The aggregate plan split back to SKUs by each month's demand share. This is the consensus quantity vector that flows downstream (GAP-2 wires it into the pipeline).</div>
+        <table className="data-table" style={{fontSize:11,width:'100%'}}>
+          <thead><tr style={{textAlign:'right'}}><th style={{textAlign:'left'}}>SKU</th>{Array.from({length:12},(_,i)=><th key={i}>M{i+1}</th>)}<th>Σ Plan</th><th>Σ Demand</th></tr></thead>
+          <tbody>{(result.sku_plans||[]).map((s,i)=><tr key={i} style={{textAlign:'right'}}>
+            <td style={{textAlign:'left',fontWeight:600}}>{s.name}</td>
+            {s.monthly_plan.map((v,j)=><td key={j}>{v.toLocaleString()}</td>)}
+            <td style={{fontWeight:600}}>{s.total_planned.toLocaleString()}</td>
+            <td style={{color:'var(--tx3)'}}>{s.total_demand.toLocaleString()}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+    </>}
   </div>;
 }
 
@@ -15002,6 +15229,7 @@ const TABS=[
   {id:'setup',    num:'01',label:'Company & Calendar', short:'SETUP',    desc:'Company · Calendar',  icon:'⚙️'},
   {id:'products', num:'02',label:'Products & BOM',     short:'PRODUCTS', desc:'Master Data · BOM',   icon:'📦'},
   {id:'demand',   num:'03',label:'Demand Planning',    short:'DEMAND',   desc:'History · Forecast',  icon:'📈'},
+  {id:'aggregate',num:'3B',label:'Aggregate Plan / S&OP',short:'S&OP',  desc:'Level vs Chase',      icon:'📐'},
   {id:'production',num:'04',label:'Production Architecture',short:'PRODUCTION',desc:'Lines · Stages · OEE',icon:'🏭'},
   {id:'supply',   num:'05',label:'Suppliers & Procurement',short:'SUPPLY',   desc:'Vendors · OTIF',     icon:'🌐'},
   {id:'logistics',num:'06',label:'Logistics & Network',short:'LOGISTICS',desc:'Lanes · 3PL · CoG',   icon:'🚚'},
@@ -16314,6 +16542,7 @@ function App(){
       case 'setup':return <SetupTab state={state} dispatch={dispatch}/>;
       case 'products':return <ProductsTab state={state} dispatch={dispatch}/>;
       case 'demand':return <DemandTab state={state} dispatch={dispatch}/>;
+      case 'aggregate':return <AggregateTab state={state} dispatch={dispatch}/>;
       case 'production':return <ProductionArchitectureTab state={state} dispatch={dispatch}/>;
       case 'supply':return <SupplyTab state={state} dispatch={dispatch}/>;
       case 'logistics':return <LogisticsTab state={state} dispatch={dispatch}/>;

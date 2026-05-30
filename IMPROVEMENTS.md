@@ -14,7 +14,17 @@ Legend: 🟩 verified premise · ⚖️ design judgment · ⭐ highest leverage
 
 ---
 
-## ⭐ GAP-0 · The missing middle tier: Aggregate Planning / S&OP
+## ⭐ GAP-0 · The missing middle tier: Aggregate Planning / S&OP — ✅ IMPLEMENTED (R20)
+- ✅ **Built (R20):** new [aggregate.py](aggregate.py) — Hax–Meal multi-period LP over 12 monthly
+  buckets × {regular, overtime, hire/fire, inventory carry, backorder}. Endpoint
+  `/api/solve/aggregate` ([app.py](app.py)); new **Aggregate Plan / S&OP** tab (`3B`) in index.html
+  driving level-vs-chase with a derived-default lever form. Emits per-period plan, cost breakdown,
+  a strategy classification (level / chase / hybrid via workforce-vs-inventory CoV), a
+  seasonal-pre-build detector, capacity shadow prices (the GAP-5 hook), and a proportional per-SKU
+  disaggregation stored in `state.aggregatePlan` for GAP-2 to forward. Verified: 5 tests in
+  [tests/test_aggregate.py](tests/test_aggregate.py) — expensive labor ⇒ level+prebuild, cheap labor
+  ⇒ chase, quantity-conserving disaggregation, no-backorder feasibility, binding-capacity duals.
+  **Still open downstream:** GAP-2 must wire this plan in as the single demand truth (next).
 - 🟩 **Premise (verified):** profitmix decision var is a single scalar per SKU —
   `q[k] = pulp.LpVariable(f'q_{k}', 0, ...)` with **no time index**
   ([profitmix.py:172](profitmix.py#L172)). Production is weekly scheduling. Nothing
