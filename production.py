@@ -328,13 +328,20 @@ def solve_production(data):
                     x[k, l, t] for k in range(n_prod)
                 ) <= total_cap + (ot_cap_extra / max(hrs_per_shift, 1)) * ot[l, t], f"LineCap_{l}_{t}"
 
-    # C6: Shared lines — max 1 active product per period (optional for sequential mode)
+    # C6: Shared lines — at most ONE active product per period, with a 2nd allowed ONLY during a
+    # genuine changeover period.
+    # (MF-12) The old `≤ 2` permitted two products EVERY period, so the "sequential" semantics in
+    # the comment were never enforced. Tie the relaxation to the changeover indicator: switch[l,t]=1
+    # (which SwDet forces whenever a new product appears) lets the bound rise to 2 for the transition
+    # period only; switch carries a changeover cost in the objective, so it won't be set frivolously.
+    # switch is defined for t≥1, so t=0 is hard-capped at 1 (no prior product to change over from).
     for l in range(n_lines):
         if lines[l].get('type') == 'shared':
             for t in range(T):
+                rhs = 1 + (switch[l, t] if (l, t) in switch else 0)
                 prob += pulp.lpSum(
                     y[k, l, t] for k in range(n_prod)
-                ) <= 2, f"Shared_{l}_{t}"  # allow 2 for changeover periods
+                ) <= rhs, f"Shared_{l}_{t}"
 
     # C7: Changeover detection
     for l in range(n_lines):

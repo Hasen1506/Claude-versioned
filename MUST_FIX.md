@@ -11,14 +11,16 @@ relisted here — they are committed.
 
 ---
 
-## ⭐ SYSTEMIC — Perishability & salvage are inert across the entire core
-This is the headline finding and it spans three solvers + the researcher:
+## ⭐ SYSTEMIC — Perishability & salvage (R17: now modeled in MC + profitmix; procurement pending)
+This is the headline finding and it spans three solvers + the researcher. **Decision (2026-05-30):
+model it for real.** Batch 1 (R17) made shelf_life + salvage genuine levers in Monte Carlo and
+profitmix; procurement's cohort model is still pending (next batch).
 
-| Solver | `shelf_life` | `salvage_rate` | Evidence |
+| Solver | `shelf_life` | `salvage_rate` | Status |
 |---|---|---|---|
-| profitmix.py | used only in a `/12`-grain spoilage *factor* (MF-5) | **dead** — `expiry_penalty` computed, never added (MF-2) | L213-224 |
-| procurement.py | **dead** — read L358/581/798, never in any constraint/cost | **dead** — read L58, never used | grep: 3 bare reads |
-| montecarlo.py | **dead** — `if shelf<T: pass` (MF-1) | **dead** | L56/L110-112 |
+| profitmix.py | ✅ horizon-scaled holding + shelf<horizon spoilage gate (MF-5) | ✅ write-off `unit_cost·(1−salvage)` on excess now in objective (MF-2) | **FIXED R17** |
+| procurement.py | **dead** — read L358/581/798, never in any constraint/cost | **dead** — read L58, never used | pending |
+| montecarlo.py | ✅ FIFO/FEFO cohort aging, expire past shelf (MF-1) | ✅ salvage-adjusted write-off on expired lots | **FIXED R17** |
 
 procurement's docstring (L5) even advertises "**+ expiry**" as a cost component
 that **does not exist** in the objective (L596-612: setup + FG holding + variable
@@ -28,6 +30,38 @@ described in docstrings — but **change no result anywhere.** This should be th
 first decision: either model expiry/salvage for real (cohort aging + write-off at
 `unit_cost·(1-salvage)`, plus a `inv ≤ Σ demand over next shelf periods` cap), or
 strip the inputs and the claims. MF-1/MF-2/MF-5 are the per-site instances.
+
+---
+
+## ✅ Batch 1 — RESOLVED (R17, 2026-05-30) · MF-1 … MF-12
+
+Fixed in this pass (verified by AST parse + functional smoke-tests that each lever now *moves*):
+
+- **MF-1** ✅ montecarlo.py — FIFO/FEFO cohort aging; lots past `shelf_life` written off at
+  `(var+mat)·(1−salvage)`. Verified: short shelf +940 cost vs long; zero-salvage +241 more.
+- **MF-2** ✅ profitmix.py — expiry write-off now added to the objective on `excess[k]`. Verified:
+  low salvage lowers total_profit vs high salvage.
+- **MF-3** ✅ app.py production-sensitivity — scenarios now scale the target line's
+  `cycle_time_by_sku_min` (1/cap_factor), the basis `LineCapHrs`/`_route_cap` actually read.
+  Verified: Δthroughput=60 where the old flat-capacity perturbation gave 0.
+- **MF-4** ✅ montecarlo.py — holding divides by `periods_per_year` (was hardcoded /52).
+- **MF-5** ✅ profitmix.py — excess holding scaled by `horizon_months`; shelf unified to months;
+  `planning_mode` demoted to documented fallback behind `planning_horizon_months`.
+- **MF-6** ✅ app.py `/api/solve/rolling` — slides the horizon forward + pads with a trailing-mean
+  naive forecast instead of cyclically wrapping the tail to the front.
+- **MF-7** ✅ montecarlo.py — `NormalDist().inv_cdf` for exact z at any service level (was 4-bucket).
+- **MF-8** ✅ profitmix.py — `margin_per_hour`/`capacity_hours_used`/crossover use realized per-line
+  cycle hours (`_cycle_hrs_for_line`), not the scalar `cycle_time` the LP ignores.
+- **MF-9** ✅ transport.py — allocation LP checks `LpStatus` before reading values; infeasible
+  (Σsupply<Σdemand) returns a real status+error instead of a `round(None)` 500. Verified.
+- **MF-10** ✅ transport.py — one reconciled stockout price: both the mode-ranking penalty and the
+  air-vs-sea decision risk-adjust the same gross lost-revenue by `stockout_risk_factor` (param, def 0.3).
+- **MF-11** ✅ app.py `/api/whatif` — labelled advisory-only (`advisory_only/applied:false/parsed`);
+  it parses intent, does not apply or re-solve.
+- **MF-12** ✅ production.py — shared line capped at 1 product/period, a 2nd allowed only when
+  `switch[l,t]=1` (a real changeover). Verified shared-line solve stays Optimal.
+
+Detailed original write-ups for each retained below for provenance.
 
 ---
 

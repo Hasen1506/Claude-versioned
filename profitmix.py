@@ -209,21 +209,29 @@ def solve_profitmix(data):
         # Revenue from units actually sold (up to demand ceiling)
         obj.append(margin * q[k])
 
-        # Penalty for overproduction: holding cost + expiry risk
-        shelf = p.get('shelf_life_periods') or p.get('shelf_life', 52)
+        # Penalty for overproduction: holding cost over the horizon + expiry write-off.
+        # (MF-5) shelf life is stored in WEEKS (default 52); convert to months so it can be
+        # compared against the month-based horizon. The old `shelf < 12` compared weeks
+        # against months (mixed units) and the holding charge was a single fixed month
+        # regardless of planning_horizon_months.
+        shelf_weeks = p.get('shelf_life_periods') or p.get('shelf_life', 52)
+        shelf_months = shelf_weeks / (52.0 / 12.0)  # ≈ /4.333
         carry_rate = p.get('carry_rate', 0.24)
         unit_cost = var_cost + mat_cost
-        # Holding cost on excess inventory (per unit per period)
-        holding_penalty = unit_cost * carry_rate / 12  # monthly
-        # If short shelf life, excess is even more costly (spoilage)
-        if shelf < 12:
-            spoilage_factor = 1 + (12 - shelf) / 12  # up to 2× for very short shelf
-            holding_penalty *= spoilage_factor
-        # Salvage recovery reduces the penalty
+        # planning_horizon_months (when the UI sends it) is authoritative; planning_mode is only
+        # a fallback for legacy payloads that omit it.
+        horizon_months = planning_horizon_months if planning_horizon_months > 0 else \
+            {'monthly': 1, 'quarterly': 3, 'annual': 12}.get(planning_mode, 1)
+        # Holding cost on excess across the WHOLE horizon (annual carry_rate → /12 per month).
+        holding_penalty = unit_cost * (carry_rate / 12.0) * horizon_months
+        # (MF-2) Expiry write-off — now actually applied. Excess is production beyond absorbable
+        # demand, so it can't be sold this horizon; if its shelf life is shorter than the horizon
+        # it WILL spoil → charge the sunk make-cost net of salvage recovery, unit_cost·(1−salvage).
+        # Higher salvage lowers the penalty (optimizer tolerates more buffer); lower salvage raises it.
         salvage = p.get('salvage_rate', 0.8)
-        expiry_penalty = unit_cost * (1 - salvage)
+        expiry_penalty = unit_cost * max(0.0, 1.0 - salvage) if shelf_months < horizon_months else 0.0
 
-        obj.append(-holding_penalty * excess[k])  # penalize overproduction
+        obj.append(-(holding_penalty + expiry_penalty) * excess[k])  # penalize overproduction
 
     # Fixed daily cost per SKU — allocated across the planning horizon.
     # planning_mode 'monthly' ≈ 30 days per period; 'quarterly' ≈ 90; 'annual' ≈ 365.
@@ -399,7 +407,18 @@ def solve_profitmix(data):
         exc = pulp.value(excess[k]) or 0
         p = products[k]
         margin = p.get('_margin', 0)
-        cycle = p.get('cycle_time', 1)
+        # (MF-8) Effective cycle hours = realized machine-hours / qty, using the SAME per-line
+        # cycle basis the LP optimized on (_cycle_hrs_for_line). The scalar product cycle_time is
+        # ignored by the LP whenever a line carries cycle_time_by_sku_min, so the headline
+        # margin/hr must not be computed from it. Falls back to the scalar with no line pool.
+        if has_line_pool and qty > 0.01:
+            realized_hrs = sum(
+                (pulp.value(x[(k, li)]) or 0) * _cycle_hrs_for_line(k, lines_pool[li])
+                for li in range(len(lines_pool)) if (k, li) in x
+            )
+            cycle = realized_hrs / qty if qty > 0.01 else cycle_times[k]
+        else:
+            cycle = cycle_times[k]
         revenue = qty * p.get('sell_price', 0)
         cost = qty * (p.get('variable_cost', 0) + p.get('_mat_cost', 0))
         profit = qty * margin

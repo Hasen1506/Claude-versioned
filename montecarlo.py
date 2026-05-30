@@ -11,6 +11,7 @@ Returns: cost distribution, VaR95, CVaR95, fill rate distribution
 import numpy as np
 import time
 import math
+from statistics import NormalDist
 
 
 def run_montecarlo(data, n_runs=500):
@@ -20,9 +21,13 @@ def run_montecarlo(data, n_runs=500):
 
     T = params.get('periods', 52)
     carry_rate = params.get('carry_rate', 0.24)
+    # (MF-4) Per-period holding grain: divide the ANNUAL carry rate by periods_per_year
+    # (52 weekly / 12 monthly / 365 daily) instead of a hardcoded /52.
+    periods_per_year = params.get('periods_per_year', 52)
     service_level = params.get('service_level', 0.95)
-    z_map = {0.85: 1.036, 0.90: 1.282, 0.95: 1.645, 0.99: 2.326}
-    z = z_map.get(service_level, 1.645)
+    # (MF-7) Exact inverse-normal z for ANY service level — was a 4-bucket lookup that
+    # snapped every off-grid level to z=1.645 (procurement already uses inv_cdf).
+    z = NormalDist().inv_cdf(min(max(float(service_level), 0.5), 0.9999))
 
     # T8-10 — Bivariate-correlated demand & cost shocks.
     # Real-world: commodity-price spikes often co-occur with demand surges (expansion-phase
@@ -81,21 +86,36 @@ def run_montecarlo(data, n_runs=500):
             # Period-mean material cost — simulation loop below uses scalar per-period.
             unit_mat_cost = float(np.mean(unit_mat_cost_pp))
 
-            fg_hold_per = unit_mat_cost * carry_rate / 52
+            fg_hold_per = unit_mat_cost * carry_rate / max(periods_per_year, 1)
             short_penalty = sell_price * 1.5
+
+            # (MF-1) Perishability is now REAL, not a `pass`. Inventory is tracked as FIFO/FEFO
+            # cohorts [qty, age]; demand consumes oldest stock first; a lot that ages past
+            # shelf_life is written off at its sunk make-cost net of salvage recovery:
+            #     write-off/unit = (var_cost + material_cost) · (1 − salvage_rate)
+            # so a shorter shelf life or a lower salvage value both raise simulated cost — both
+            # are genuine levers now (the researcher's shelf-life sweep is no longer fabricated).
+            salvage = float(prod.get('salvage_rate', 0.8) or 0.0)
+            unit_made_cost = var_cost + unit_mat_cost
+            writeoff_per_unit = unit_made_cost * max(0.0, 1.0 - salvage)
+            shelf_eff = shelf if (shelf and shelf < T) else None  # None → no expiry within horizon
 
             # Safety stock
             ss = max(1, round(z * max(np.std(base_demand), 0.1)))
 
-            # Simple simulation: produce to replenish up to demand + SS
-            inv = prod.get('init_inventory', 0)
+            # Simulation: replenish up to demand + SS, age cohorts, expire past shelf life.
+            lots = []  # list of [qty, age_in_periods], oldest first
+            init_inv = prod.get('init_inventory', 0)
+            if init_inv > 0:
+                lots.append([init_inv, 0])
             cost_k = 0
             served_k = 0
 
             for t in range(T):
                 d = demand[t]
-                # Decide production
-                target = d + ss - inv
+                on_hand = sum(l[0] for l in lots)
+                # Decide production (target up to demand + SS, net of what's on hand)
+                target = d + ss - on_hand
                 prod_qty = max(0, min(target, cap))
                 good_qty = round(prod_qty * fy)
 
@@ -105,20 +125,42 @@ def run_montecarlo(data, n_runs=500):
                     cost_k += var_cost * prod_qty
                     cost_k += unit_mat_cost * prod_qty
 
-                inv += good_qty
+                if good_qty > 0:
+                    lots.append([good_qty, 0])
 
-                # Expiry
-                if shelf < T and t >= shelf:
-                    pass  # simplified: tracked by cohort in full version
-
-                # Serve demand
-                served = min(inv, d)
+                # Serve demand FEFO (oldest cohort first — uses near-expiry stock before it spoils)
+                remaining = d
+                for lot in lots:
+                    if remaining <= 0:
+                        break
+                    take = min(lot[0], remaining)
+                    lot[0] -= take
+                    remaining -= take
+                served = d - remaining
                 served_k += served
-                shortage = d - served
-                inv -= served
+                shortage = remaining
 
-                cost_k += fg_hold_per * inv
+                # Age cohorts; expire anything that has now lived ≥ shelf_eff periods.
+                expired_units = 0
+                for lot in lots:
+                    lot[1] += 1
+                if shelf_eff is not None:
+                    kept = []
+                    for lot in lots:
+                        if lot[0] <= 0:
+                            continue
+                        if lot[1] >= shelf_eff:
+                            expired_units += lot[0]
+                        else:
+                            kept.append(lot)
+                    lots = kept
+                else:
+                    lots = [l for l in lots if l[0] > 0]
+
+                on_hand_end = sum(l[0] for l in lots)
+                cost_k += fg_hold_per * on_hand_end
                 cost_k += short_penalty * shortage
+                cost_k += writeoff_per_unit * expired_units
                 total_demand += d
 
             total_served += served_k

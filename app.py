@@ -99,11 +99,21 @@ def api_solve_rolling():
         for w in range(waves):
             # Slice demand forward by shift*w weeks — simulate time passing
             sliced = dict(base)
+            # (MF-6) Slide the horizon FORWARD over the known demand series and pad newly-revealed
+            # tail periods with a naive forecast (trailing mean) — NOT a cyclic wrap. The old
+            # `demand[w*shift:] + demand[:w*shift]` rotated the tail to the front, injecting phantom
+            # demand spikes and making "nervousness" a permutation artifact rather than a measure of
+            # re-planning churn. Sliding forward + fresh-forecast tail is a genuine rolling re-plan.
             products = []
             for p in base.get('products', []):
                 demand = list(p.get('demand', []))
-                d_shifted = demand[w * shift:] + demand[:w * shift]
-                products.append({**p, 'demand': d_shifted})
+                n_d = len(demand)
+                start = min(w * shift, n_d)
+                window = demand[start:]
+                if len(window) < n_d:
+                    fresh = round(sum(demand) / n_d) if n_d else 0  # trailing-mean naive forecast
+                    window = window + [fresh] * (n_d - len(window))
+                products.append({**p, 'demand': window})
             sliced['products'] = products
             # Add frozen constraint marker
             params = dict(base.get('params', {}))
@@ -335,14 +345,28 @@ def api_solve_production_sensitivity():
             lines = modified.get('lines') or []
             if 0 <= line_idx < len(lines):
                 L = lines[line_idx]
+                orig_shifts = max(float(L.get('shifts_per_day', 1) or 1), 1)
+                cap_factor = 1.0
                 if stype == 'shift':
-                    L['shifts_per_day'] = float(L.get('shifts_per_day', 1) or 1) + delta
-                    L['capacity'] = int(float(L.get('capacity', 50) or 50) * (1 + delta / max(float(L.get('shifts_per_day', 1) or 1), 1)))
+                    cap_factor = 1 + delta / orig_shifts
+                    L['shifts_per_day'] = orig_shifts + delta
+                    L['capacity'] = int(float(L.get('capacity', 50) or 50) * cap_factor)
                 elif stype == 'machine':
-                    L['capacity'] = int(float(L.get('capacity', 50) or 50) * (1 + 0.5 * delta))  # heuristic: +1 machine lifts cap ~50% when bottleneck-relief
+                    cap_factor = 1 + 0.5 * delta  # heuristic: +1 machine lifts cap ~50% when bottleneck-relief
+                    L['capacity'] = int(float(L.get('capacity', 50) or 50) * cap_factor)
                 elif stype == 'worker':
+                    cap_factor = 1 + 0.1 * delta  # workers rarely lift cap unless labor-bound
                     L['workers_per_shift'] = float(L.get('workers_per_shift', 1) or 1) + delta
-                    L['capacity'] = int(float(L.get('capacity', 50) or 50) * (1 + 0.1 * delta))  # workers rarely lift cap unless labor-bound
+                    L['capacity'] = int(float(L.get('capacity', 50) or 50) * cap_factor)
+                # (MF-3) The machine-hours model (production.py LineCapHrs / _route_cap) derives
+                # capacity from per-line cycle_time_by_sku_min + hrs_per_period and IGNORES the flat
+                # capacity/shifts_per_day fields above once cycle data is present — so the old
+                # perturbation no-op'd (delta_throughput=0, payback None) on any modern payload. Also
+                # scale this line's cycle minutes by 1/cap_factor: a faster effective cycle == the
+                # throughput the added shift/machine/worker buys, in the basis the solver actually reads.
+                by_sku = L.get('cycle_time_by_sku_min')
+                if isinstance(by_sku, dict) and by_sku and cap_factor > 0:
+                    L['cycle_time_by_sku_min'] = {kk: (float(vv) / cap_factor) for kk, vv in by_sku.items()}
             sc_result = solve_production(modified)
             sc_cost = sc_result.get('total_cost', 0)
             sc_produced = sum(int(l.get('total_produced', 0) or 0) for l in (sc_result.get('lines') or []))
@@ -615,10 +639,22 @@ def api_whatif():
         if not changes:
             changes.append({'param': 'unknown', 'change': '?', 'reason': 'Could not parse scenario. Try: "material cost up 20%", "demand doubles in Dec", "new supplier with LT=2w"'})
 
-        interpretation = f"Scenario: \"{query}\". Identified {len(changes)} parameter change(s)."
-        impact = "Re-run the MILP solver with modified parameters to see exact cost impact."
+        # (MF-11) This endpoint is an intent PARSER, not a solver. It maps natural-language
+        # scenarios to the parameter knobs they *would* touch; it does NOT apply them or re-solve.
+        # Label that explicitly so the UI can't present advisory prose as a computed result.
+        parsed_ok = not (len(changes) == 1 and changes[0].get('param') == 'unknown')
+        interpretation = (
+            f"Scenario: \"{query}\". Parsed {len(changes)} parameter change(s) — advisory only."
+            if parsed_ok else
+            f"Scenario: \"{query}\". Could not map to known parameters."
+        )
+        impact = ("Advisory only — no parameters were changed and no solve was run. "
+                  "Apply these changes in the relevant tab and re-run the solver to see exact cost impact.")
 
         return jsonify({
+            'advisory_only': True,
+            'applied': False,
+            'parsed': parsed_ok,
             'interpretation': interpretation,
             'changes': changes,
             'impact': impact,

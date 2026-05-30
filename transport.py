@@ -53,6 +53,11 @@ def solve_transport(data):
     params = data.get('params', {})
     customs_speed = params.get('customs_clearance', 'normal')
     cust_d = CUSTOMS_DAYS.get(customs_speed, 4)
+    # (MF-10) ONE price for a stockout event. Both the mode-ranking penalty and the air-vs-sea
+    # spike decision now risk-adjust the same gross lost-revenue figure by this factor (≈ P(stockout)),
+    # instead of the old split where ranking used a 0.3 haircut and the decision used full lost
+    # revenue — the same event priced two ways. Tunable via params.stockout_risk_factor.
+    stockout_risk_factor = float(params.get('stockout_risk_factor', 0.3) or 0.3)
     modes = {k:{**v} for k,v in MODE_SPECS.items()}
     for mn, ov in params.get('mode_overrides', {}).items():
         if mn in modes: modes[mn].update(ov)
@@ -88,7 +93,7 @@ def solve_transport(data):
             so_cost = 0
             if daily_use > 0 and spike:
                 gap = max(0, total_t - dos)
-                so_cost = gap * daily_use * (val / max(wt, 1)) * 0.3
+                so_cost = gap * daily_use * (val / max(wt, 1)) * stockout_risk_factor
             rel_cost = (1 - mode['reliability']) * val * 0.01
             total_c = base + so_cost + rel_cost
             opts.append({'mode':mn,'label':mode['label'],'base_cost':round(base,2),'stockout_cost':round(so_cost,2),
@@ -111,7 +116,10 @@ def solve_transport(data):
                 sea_opt = next((m for m in opts if 'sea' in m['mode']), None)
                 if air_opt:
                     gap_days = sea_t - dos
-                    lost_rev = gap_days * daily_use * (val / max(wt, 1))
+                    # (MF-10) Risk-adjusted expected stockout cost — same basis & factor as the
+                    # mode-ranking penalty above, so one event has one price for both the ranking
+                    # and the go/no-go. Compare the CERTAIN air premium against the EXPECTED loss.
+                    lost_rev = gap_days * daily_use * (val / max(wt, 1)) * stockout_risk_factor
                     premium = air_opt['base_cost'] - (sea_opt['base_cost'] if sea_opt else 0)
                     justified = premium < lost_rev
                     spike_alert = {
@@ -119,6 +127,7 @@ def solve_transport(data):
                         'message':f"Stock lasts {dos:.0f}d but sea takes {sea_t}d. Stockout in {max(0,dos):.0f}d. Air delivers in {air_t}d.",
                         'air_cost':air_opt['base_cost'],'sea_cost':sea_opt['base_cost'] if sea_opt else 0,
                         'premium':round(premium,2),'stockout_cost_if_sea':round(lost_rev,2),
+                        'risk_factor':stockout_risk_factor,
                         'justified':justified,'decision':'USE AIR' if justified else 'ACCEPT RISK',
                         'time_saved_days':sea_t-air_t,'stock_days':round(dos,1),'sea_days':sea_t,'air_days':air_t,
                     }
@@ -149,10 +158,20 @@ def solve_transport(data):
         prob += pulp.lpSum(cmat[i][j]*x[i,j] for i in range(len(origs)) for j in range(len(dests)))
         for i in range(len(origs)): prob += pulp.lpSum(x[i,j] for j in range(len(dests))) <= origs[i].get('supply',0)
         for j in range(len(dests)): prob += pulp.lpSum(x[i,j] for i in range(len(origs))) >= dests[j].get('demand',0)
-        prob.solve(pulp.PULP_CBC_CMD(msg=0,timeLimit=10))
-        alloc = {'total_cost':round(pulp.value(prob.objective),2),'allocation':[
-            {'from':origs[i].get('name',''),'to':dests[j].get('name',''),'quantity':round(pulp.value(x[i,j]),1),'total_cost':round(pulp.value(x[i,j])*cmat[i][j],2)}
-            for i in range(len(origs)) for j in range(len(dests)) if (pulp.value(x[i,j]) or 0) > 0.5]}
+        status = prob.solve(pulp.PULP_CBC_CMD(msg=0,timeLimit=10))
+        # (MF-9) Guard the status before reading values. With demand >= and supply <=, if
+        # Σsupply < Σdemand the LP is INFEASIBLE and pulp.value() returns None → round(None) threw a
+        # bare 500. Report the real status (like the other solvers) instead of crashing.
+        if pulp.LpStatus[status] != 'Optimal':
+            total_supply = sum(o.get('supply', 0) for o in origs)
+            total_demand_alloc = sum(d.get('demand', 0) for d in dests)
+            alloc = {'status': pulp.LpStatus[status], 'allocation': [],
+                     'error': f"Allocation {pulp.LpStatus[status]} — supply {total_supply} vs demand {total_demand_alloc}"
+                              f"{' (supply < demand)' if total_supply < total_demand_alloc else ''}."}
+        else:
+            alloc = {'status':'Optimal','total_cost':round(pulp.value(prob.objective),2),'allocation':[
+                {'from':origs[i].get('name',''),'to':dests[j].get('name',''),'quantity':round(pulp.value(x[i,j]),1),'total_cost':round(pulp.value(x[i,j])*cmat[i][j],2)}
+                for i in range(len(origs)) for j in range(len(dests)) if (pulp.value(x[i,j]) or 0) > 0.5]}
 
     return {'status':'Optimal','total_cost':round(total_cost,2),'total_weight':round(total_weight,1),
         'n_shipments':len(results),'shipments':results,'mode_summary':mode_summary,'spike_alerts':spike_alerts,
