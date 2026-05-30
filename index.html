@@ -7315,6 +7315,31 @@ function OptimizeTab({state,dispatch}){
       </div>)}
     </div>}
 
+    {/* ─── GAP-3 · INVENTORY POLICY ─── */}
+    {result&&result._mode==='procurement'&&result.inventory_policies?.length>0&&<div className="card">
+      <div className="card-title">📋 Reorder Policy — (s,S) &amp; (R,Q) per Part <span className="badge" style={{background:'rgba(0,212,170,.12)',color:'var(--ac)',marginLeft:6}}>operational output</span></div>
+      <div style={{fontSize:10,color:'var(--tx3)',marginBottom:6}}>Planners run a policy, not a frozen PO schedule. EOQ Q*=√(2DK/h); reorder point s=μ<sub>L</sub>+z·σ<sub>LTD</sub>; order-up-to S=s+Q*. Continuous review (s,S) is recommended for lumpy parts (CV&gt;0.5), periodic (R,Q) for steady movers. Validate by rolling-horizon re-solve (🔄 Rolling MPS).</div>
+      <div style={{overflowX:'auto'}}>
+        <table className="data-table" style={{fontSize:10,width:'100%'}}>
+          <thead><tr style={{textAlign:'right'}}>
+            <th style={{textAlign:'left'}}>Part</th><th>Ann. demand</th><th>CV</th><th>LT</th><th>EOQ (Q*)</th><th>Safety stock</th><th>Reorder s</th><th>Order-up-to S</th><th>Orders/yr</th><th style={{textAlign:'left'}}>Recommended</th>
+          </tr></thead>
+          <tbody>{result.inventory_policies.map((p,i)=><tr key={i} style={{textAlign:'right'}}>
+            <td style={{textAlign:'left',fontWeight:600,color:'var(--ac)'}}>{p.part}</td>
+            <td>{p.annual_demand.toLocaleString()}</td>
+            <td style={{color:p.demand_cv>0.5?'var(--a4)':'var(--tx2)'}}>{p.demand_cv}</td>
+            <td>{p.lead_time_periods}</td>
+            <td>{p.eoq.toLocaleString()}</td>
+            <td>{p.safety_stock.toLocaleString()}</td>
+            <td>{p.reorder_point_s.toLocaleString()}</td>
+            <td>{p.order_up_to_S.toLocaleString()}</td>
+            <td>{p.orders_per_year}</td>
+            <td style={{textAlign:'left',fontWeight:600,color:p.recommended_policy.includes('s,S')?'var(--a4)':'var(--gn)'}}>{p.recommended_policy}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+    </div>}
+
     {/* ─── MRP EXPLOSION ─── */}
     {result&&result._mode==='procurement'&&result.products&&<div className="card">
       <div className="card-title">🔄 MRP Explosion — Forecast → Gross Req → Net Req → PO</div>

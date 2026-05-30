@@ -25,6 +25,11 @@ try:
 except ImportError:
     from cvar import cvar_safety_stock
 
+try:
+    from .policy import derive_policies
+except ImportError:
+    from policy import derive_policies
+
 
 def solve_procurement(data):
     """Main entry point. data = dict from API request."""
@@ -1844,6 +1849,8 @@ def solve_procurement(data):
         'r10_terminal_anchor': bool(enable_terminal_anchor),
         'r10_min_coverage': bool(enable_min_coverage),
         'ss_floor_mode': ss_floor_mode,  # (Audit #0) 'soft' | 'hard' | 'off'
+        # GAP-3 — emit a reorder POLICY ((s,S) + (R,Q) per part), not just the fixed PO schedule.
+        'inventory_policies': derive_policies(data).get('policies', []),
         # GAP-1 — CVaR-robust SS provenance. 'heizer' = z·σ_LTD; 'cvar' = Rockafellar–Uryasev tail-robust.
         'ss_source': ss_source,
         'cvar_beta': cvar_beta if ss_source == 'cvar' else None,

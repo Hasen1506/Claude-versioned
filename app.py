@@ -34,6 +34,7 @@ from solvers.risk import detect_regimes, detect_many
 from solvers.aggregate import solve_aggregate
 from solvers.cvar import solve_cvar
 from solvers.reconcile import run_sop_pipeline
+from solvers.policy import derive_policies
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
@@ -545,6 +546,18 @@ def api_solve_pipeline():
 
         results['pipeline_status'] = 'complete'
         return jsonify(results)
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+# ─── Inventory policy derivation (GAP-3) ───
+@app.route('/api/solve/policy', methods=['POST'])
+def api_solve_policy():
+    """Derive per-part (s,S) continuous-review and (R,Q) periodic-review reorder
+    policies (EOQ + safety stock from LT/demand variability) from a procurement-shaped
+    payload. The operational output planners actually run, vs. a frozen PO schedule."""
+    try:
+        return jsonify(derive_policies(request.json or {}))
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 

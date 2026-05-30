@@ -98,7 +98,15 @@ Legend: 🟩 verified premise · ⚖️ design judgment · ⭐ highest leverage
 
 ---
 
-## GAP-3 · Procurement emits a plan, not an inventory *policy*
+## GAP-3 · Procurement emits a plan, not an inventory *policy* — ✅ IMPLEMENTED (R23)
+- ✅ **Built (R23):** new [policy.py](policy.py) `derive_policies` — per-part (s,S) continuous-review
+  and (R,Q) periodic-review reorder policies from the cost structure + LT/demand variability:
+  EOQ Q*=√(2DK/h), ss=z·σ_LTD, reorder s=μ_L+ss, order-up-to S=s+Q*, review period, orders/yr, and a
+  continuous-vs-periodic recommendation by demand CV. Procurement now returns `inventory_policies`;
+  endpoint `/api/solve/policy`; a **Reorder Policy** card renders the (s,S)/(R,Q) table in Optimize.
+  The existing rolling-horizon endpoint (now MF-6-correct) is the named validator. Verified: 6 tests in
+  [tests/test_gap3_policy.py](tests/test_gap3_policy.py) — EOQ closed-form, S=s+Q*, s≥μ_L+ss, service
+  level ↑ ⇒ ss ↑, lumpy series ⇒ (s,S) recommended, procurement surfaces the policy.
 - 🟩 **Premise (verified):** procurement returns a fixed-horizon PO schedule; the
   rolling-horizon endpoint that would make it a re-planning policy is the broken cyclic
   rotation (see MUST_FIX MF-6, [app.py:105](app.py#L105)). Safety stock is computed
