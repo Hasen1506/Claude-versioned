@@ -698,12 +698,16 @@ from solvers.calendar import build_calendar
 def api_calendar():
     try:
         data = request.json or {}
+        # (MF-16) Pass through custom_holidays + year so the function's custom-holiday support and
+        # non-2026 calendars are actually reachable from the API (both were previously dead).
         result = build_calendar(
             work_days_per_week=data.get('work_days_per_week', 6),
             use_indian_holidays=data.get('indian_holidays', True),
+            custom_holidays=data.get('custom_holidays'),
             start_month=data.get('start_month', 0),
+            year=int(data.get('year', 2026) or 2026),
         )
-        # Don't send 365 daily entries by default (too large)
+        # Don't send the full daily array by default (too large)
         if not data.get('include_daily', False):
             result.pop('daily', None)
         return jsonify(result)

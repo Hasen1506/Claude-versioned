@@ -5912,8 +5912,10 @@ function DemandTab({state,dispatch}){
             const dr=detectDriftLight(prod,planning);
             const cad=prod.retrainCadence||'monthly';
             const last=prod.lastRetrained;
-            const retrainNow=async()=>{
-              try{await fetch('/api/forecast/retrain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sku_id:prod.id,cadence:cad})});}catch(e){}
+            const retrainNow=()=>{
+              // (MF-23) The POST /api/forecast/retrain route does not exist (404, silently swallowed).
+              // Forecasts are (re)fit on demand via /api/forecast, so "Retrain Now" only needs to bump
+              // the local lastRetrained marker — the dead fetch is removed rather than left to 404.
               upProd({lastRetrained:new Date().toISOString().slice(0,10)});
             };
             return <div style={{padding:'6px 8px',background:dr.drifted?'rgba(220,53,69,.08)':'var(--bg3)',border:`1px solid ${dr.drifted?'var(--dg)':'var(--br2)'}`,borderRadius:4,marginTop:6,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
@@ -5924,7 +5926,7 @@ function DemandTab({state,dispatch}){
                   <option value="daily">daily</option><option value="weekly">weekly</option><option value="monthly">monthly</option>
                 </select>
                 <span>{last?`last: ${last}`:'never trained'}</span>
-                <button onClick={retrainNow} className="btn btn-secondary btn-sm" style={{fontSize:9,padding:'2px 8px'}} title="POST /api/forecast/retrain — bumps lastRetrained timestamp.">↻ Retrain Now</button>
+                <button onClick={retrainNow} className="btn btn-secondary btn-sm" style={{fontSize:9,padding:'2px 8px'}} title="Bumps the lastRetrained marker. Forecasts refit on demand via /api/forecast (Run Forecast).">↻ Retrain Now</button>
               </span>
             </div>;
           })()}
@@ -6299,7 +6301,12 @@ function OptimizeTab({state,dispatch}){
               products:eligibleIdx,dedicated:!!l.dedicated
             };
           }),
-          params:{periods:periodCount(state.planning),changeover_cost:100,overtime_cost_per_hr:50,work_days:state.planning.workDays||6,hrs_per_period:((state.production.lines[0]?.hoursPerShift||8)*(state.production.lines[0]?.shiftsPerDay||1))*(state.planning.workDays||6),horizon_start_date:state.planning.horizonStartDate||null,time_grain:state.planning.timeGrain||'weekly',holidays:(state.planning.holidays||[]).map(h=>h.date)},
+          params:{periods:periodCount(state.planning),changeover_cost:100,overtime_cost_per_hr:50,work_days:state.planning.workDays||6,hrs_per_period:((state.production.lines[0]?.hoursPerShift||8)*(state.production.lines[0]?.shiftsPerDay||1))*(state.planning.workDays||6),horizon_start_date:state.planning.horizonStartDate||null,time_grain:state.planning.timeGrain||'weekly',holidays:(state.planning.holidays||[]).map(h=>h.date),
+          // (MF-20) These three were documented as tunable in the result tooltips but never sent,
+          // so production.py always used its hardcoded defaults. Now wired (settable via state.production.*).
+          makespan_weight:state.production.makespanWeight!=null?+state.production.makespanWeight:0.1,
+          shutdown_threshold_pct:+state.production.shutdownThresholdPct||25,
+          rehire_notice_hrs:state.production.rehireNoticeHrs!=null?+state.production.rehireNoticeHrs:80},
           // R14.1 / Phase 3 · D5/D6 — labor cost mode + org workforce envelope. Production.py reads
           // labor_cost_mode and workforce.* to add an hourly-headcount labor-hours cap and/or a
           // salaried-idle fixed cost; per-stage laborMode is already baked into cycle_time_by_sku_min
@@ -6378,9 +6385,20 @@ function OptimizeTab({state,dispatch}){
         };
       }else if(solverMode==='transport'){
         endpoint='/api/solve/transport';
+        // (MF-21) Wire the demand-sensing inputs so transport.py's headline air-vs-sea stockout path
+        // can actually fire. It is gated on `spike && daily_use>0`, but daily_consumption/current_stock
+        // were never sent and demand_spike was hardcoded false — so the module always returned the
+        // "cheapest feasible mode" and never flagged a stockout. demand_spike now reflects an active
+        // demand-type disruption; daily_consumption + current_stock come from real demand + RM on-hand.
+        // NOTE: the transportation ALLOCATION LP (origins/destinations/cost_matrix) stays unsent — it
+        // needs a transport-network UI that doesn't exist yet; it remains an optional, gated surface.
+        const _demandSpike=(state.disruptions||[]).some(d=>d.active&&((d.type||d.kind||'')+'').toLowerCase().includes('demand'));
         payload={
           shipments:state.products.flatMap(p=>p.bom.filter(b=>b.supplierType==='import'||b.leadTime>2).map(b=>{
             const monthlyUnits=effQtyPer(b)*(p.history||[]).reduce((a,v)=>a+(+v||0),0)/12;
+            const dailyUse=monthlyUnits/30;
+            // RM stock on hand if tracked; else assume rmCoverMonths (default 1 mo) of coverage.
+            const curStock=(b.rmOnHand!=null?+b.rmOnHand:(b.initRmInventory!=null?+b.initRmInventory:monthlyUnits*(+b.rmCoverMonths||1)));
             // v3.5 — use actual per-unit weight/volume + per-line origin so mode selection is real
             return {
               name:`${b.name} for ${p.name}`,
@@ -6390,7 +6408,11 @@ function OptimizeTab({state,dispatch}){
               deadline_days:b.leadTime*7,urgency:b.leadTime<=1?'critical':b.leadTime<=3?'high':'normal',
               origin:b.originCity||(b.supplierType==='import'?'International':'Domestic'),
               destination:b.destCity||state.config.city||'Factory',
-              current_mode:b.transMode||'road',demand_spike:false,
+              current_mode:b.transMode||'road',
+              daily_consumption:dailyUse,
+              current_stock:curStock,
+              demand_spike:_demandSpike,
+              spike_qty:_demandSpike?monthlyUnits*0.5:0,
             };
           })),
           params:{},
@@ -6404,14 +6426,29 @@ function OptimizeTab({state,dispatch}){
         };
       }else if(solverMode==='capital'){
         endpoint='/api/solve/capital';
-        // Build investment list from product lines and assets
-        payload={
-          investments:state.production.lines.map((l,i)=>({
+        // (MF-22) Prefer a REAL user-entered investment list; only fall back to auto-generated
+        // per-line "capacity upgrade" candidates when none exists — and tag those synthetic so
+        // results don't masquerade as vetted CapEx options. exclusivity_groups / dependencies /
+        // max_investments were previously NEVER sent, so capital.py's mutual-exclusivity, dependency,
+        // and max-count constraints (and the buy-vs-lease framing) were inert; now passed through.
+        const cap=state.capital||{};
+        const userInvest=Array.isArray(cap.investments)?cap.investments:[];
+        const investments=userInvest.length?userInvest.map(iv=>({
+            name:iv.name,capex:+iv.capex||0,annual_cash_flow:+iv.annualCashFlow||0,
+            useful_life:+iv.usefulLife||10,residual_value:+iv.residualValue||0,
+            cash_flows:Array.isArray(iv.cashFlows)?iv.cashFlows.map(v=>+v||0):undefined,
+          })):state.production.lines.map((l,i)=>({
             name:`${l.name} (capacity upgrade)`,capex:l.capacity*10000,
-            annual_cash_flow:l.capacity*state.products.reduce((a,p)=>a+p.sellPrice-p.variableCost-p.bom.reduce((s,b)=>s+b.cost*effQtyPer(b),0),0)/state.production.lines.length*0.3,
-            useful_life:10,residual_value:l.capacity*2000,
-          })),
-          params:{budget:constraints.budget.on?constraints.budget.val:state.budget.capex||1000000,wacc:state.config.wacc/100},
+            annual_cash_flow:l.capacity*state.products.reduce((a,p)=>a+p.sellPrice-p.variableCost-p.bom.reduce((s,b)=>s+b.cost*effQtyPer(b),0),0)/Math.max(state.production.lines.length,1)*0.3,
+            useful_life:10,residual_value:l.capacity*2000,synthetic:true,
+          }));
+        payload={
+          investments,
+          exclusivity_groups:Array.isArray(cap.exclusivityGroups)?cap.exclusivityGroups:[],
+          dependencies:Array.isArray(cap.dependencies)?cap.dependencies:[],
+          investments_synthetic:!userInvest.length,
+          params:{budget:constraints.budget.on?constraints.budget.val:state.budget.capex||1000000,wacc:state.config.wacc/100,
+            ...(cap.maxInvestments?{max_investments:+cap.maxInvestments}:{})},
         };
       }else if(solverMode==='pipeline'){
         endpoint='/api/solve/pipeline';
@@ -10911,7 +10948,9 @@ function FinanceTab({state,dispatch}){
     const wE=(+waccForm.equity_pct||0)/100,wD=(+waccForm.debt_pct||0)/100,ke=(+waccForm.cost_equity||0)/100,kd=(+waccForm.cost_debt||0)/100,t=(+waccForm.tax_rate||0)/100;
     const wacc=Math.round((wE*ke+wD*kd*(1-t))*10000)/100;
     setWaccResult({wacc,breakdown:{equity_term:Math.round(wE*ke*10000)/100,debt_term:Math.round(wD*kd*(1-t)*10000)/100}});
-    try{const r=await fetch('/api/calc/wacc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(waccForm)});if(r.ok){const j=await r.json();if(j&&j.wacc!=null){/* keep client-side result authoritative, just log */}}}catch(e){}
+    // (MF-24) Removed the /api/calc/wacc round-trip: this scratchpad is client-side authoritative and
+    // the server response was fetched then thrown away (logged into a comment) — pure waste. The Tab-1
+    // WACC Calculator keeps its own server-vs-client audit fetch (which DOES render via setServerWACC).
   };
   const depreciationResidualSuggest=()=>{
     const P=+deprForm.purchase_price||0;
@@ -14194,11 +14233,64 @@ function CommandCenterTab({state,dispatch}){
             {name:'Production (Min Makespan)',inputs:'Products, Lines',
               check:()=>P.length>0&&state.production.lines.length>0,
               data:()=>`${state.production.lines.length} lines, ${P.length} products`,
-              run:()=>runSolver('production','/api/solve/production',{products:P.map(p=>({name:p.name,required_qty:annDem(p),setup_cost:p.setupCost,yield_pct:p.yieldPct,cycle_time:p.cycleTime||19})),lines:state.production.lines.map(l=>({id:l.id,name:l.name,capacity:l.capacity,type:l.type,shifts_per_day:l.shiftsPerDay,products:P.map((_,k)=>k)})),params:{periods:periodCount(state.planning),changeover_cost:100}})},
+              /* (MF-19) Dashboard payload now matches the primary dispatcher's contract — was a
+                 degraded flat-capacity payload that dropped cycle_time_by_sku_min/oee/workforce/OT,
+                 so this Run silently fell back to the legacy model with no labor/machine-hours. */
+              run:()=>runSolver('production','/api/solve/production',(()=>{
+                const _topo=state.production.topology||{lines:[]};
+                const _skuMap=state.production.skuMap||[];
+                return {
+                  products:P.map(p=>({name:p.name,required_qty:annDem(p),setup_cost:p.setupCost,yield_pct:p.yieldPct,cycle_time:(p.cycleTime||19)/60,
+                    oee:((p.oeeAvailability||85)*(p.oeePerformance||92)*(p.oeeQuality||98))/1000000})),
+                  lines:state.production.lines.map(l=>{
+                    const eligibleIdx=eligibleSkuIdxForLine(l,state.products,_skuMap);
+                    const ctByIdx=cycleMinByIdxForLine(l,state.products,_topo,_skuMap);
+                    return{id:l.id,name:l.name,capacity:l.capacity,type:l.type,shifts_per_day:l.shiftsPerDay,hours_per_shift:l.hoursPerShift||8,break_mins:l.breakMins||30,
+                      workers_per_shift:+l.workersPerShift||1,hourly_rate:+l.hourlyRate||0,ot_mult:+l.otMult||1.5,ot_threshold_pct:+l.otThresholdPct||80,max_ot_hrs_per_worker_per_week:+l.maxOtHrsPerWorkerPerWeek||12,
+                      oee:resolveLineOEE(l,_topo).value,cycle_time_by_sku_min:ctByIdx,shared_stage_ids:sharedStageIdsOnLine(l,_topo),changeover_mins:l.changeoverMins||30,
+                      products:eligibleIdx,dedicated:!!l.dedicated};
+                  }),
+                  params:{periods:periodCount(state.planning),changeover_cost:100,overtime_cost_per_hr:50,work_days:state.planning.workDays||6,hrs_per_period:((state.production.lines[0]?.hoursPerShift||8)*(state.production.lines[0]?.shiftsPerDay||1))*(state.planning.workDays||6),time_grain:state.planning.timeGrain||'weekly',
+                    makespan_weight:state.production.makespanWeight!=null?+state.production.makespanWeight:0.1,shutdown_threshold_pct:+state.production.shutdownThresholdPct||25,rehire_notice_hrs:state.production.rehireNoticeHrs!=null?+state.production.rehireNoticeHrs:80},
+                  labor_cost_mode:state.config.laborCostMode||'per_unit',
+                  workforce:{salaried_headcount:+(state.production.workforce?.salariedHeadcount||0),salaried_monthly_cost:+(state.production.workforce?.salariedMonthlyCost||0),hourly_headcount_cap:+(state.production.workforce?.hourlyHeadcountCap||0),ot_cap_hrs:+(state.production.workforce?.otCapHrs||0),idle_salaried_flag:!!(state.production.workforce?.idleSalariedFlag)},
+                };
+              })())},
             {name:'Profit Max (Max Margin)',inputs:'Products, BOM, Capacity',
               check:()=>P.length>0&&P.every(p=>p.sellPrice>0),
               data:()=>`${P.map(p=>`${p.name}:${cur}${(p.sellPrice-p.variableCost-p.bom.reduce((s,b)=>s+b.cost*effQtyPer(b),0)).toFixed(0)}/u`).join(', ')}`,
-              run:()=>runSolver('profitmix','/api/solve/profitmix',{demand_mode:P[0]?.prodMode||'mts',products:P.map(p=>({name:p.name,sell_price:p.sellPrice,variable_cost:p.variableCost,cycle_time:p.cycleTime||19,forecast:(p.history||[]).slice(-12).map(v=>+v||0),mape_pct:p.mape||15,parts:p.bom.map(b=>({name:b.name,cost:b.cost,qty_per:effQtyPer(b)}))})),constraints:{shared_capacity:state.production.lines.reduce((a,l)=>a+l.capacity*periodCount(state.planning),0)}})},
+              /* (MF-19) Was dimensionally broken: cycle_time:p.cycleTime||19 sent raw MINUTES while
+                 constraints.shared_capacity is built in UNITS (~60× unit-incoherent), and it omitted
+                 the line pool / planning_horizon_months / time_grain / salvage. Now matches the primary
+                 contract: cycle_time in hours, a real line pool (per-line cycle basis), and horizon. */
+              run:()=>runSolver('profitmix','/api/solve/profitmix',(()=>{
+                const _topo=state.production.topology||{lines:[]};
+                const _skuMap=state.production.skuMap||[];
+                const unit=state.planning.planningUnit||'weekly';
+                const horizonMonths=Math.max(1,Math.min(24,Math.ceil(periodCount(state.planning)*(unit==='weekly'?7:unit==='daily'?1:30)/30.5)));
+                const linesPayload=(state.production.lines||[]).map(l=>{
+                  const eligibleIdx=eligibleSkuIdxForLine(l,state.products,_skuMap);
+                  const ctByIdx=cycleMinByIdxForLine(l,state.products,_topo,_skuMap);
+                  const wkHrs=((+l.shiftsPerDay||2)*(+l.hoursPerShift||8)-(+l.breakMins||30)*(+l.shiftsPerDay||2)/60)*(state.planning.workDays||6);
+                  return{id:l.id,name:l.name,avail_hrs_per_week:wkHrs,eligible_skus:eligibleIdx,cycle_time_by_sku_min:ctByIdx,oee:resolveLineOEE(l,_topo).value,shared_stage_ids:sharedStageIdsOnLine(l,_topo),hourly_rate:+l.hourlyRate||0,workers_per_shift:+l.workersPerShift||1,dedicated:!!l.dedicated,changeover_mins:+l.changeoverMins||30};
+                });
+                return {
+                  demand_mode:state.config.demandMode||'mts',
+                  planning_horizon_months:horizonMonths,
+                  time_grain:state.planning.timeGrain||'weekly',
+                  products:P.map(p=>({name:p.name,sell_price:p.sellPrice,variable_cost:p.variableCost,
+                    cycle_time:Math.max(0.1,168/(p.capacity||50)),
+                    forecast:(p.history||[]).slice(-horizonMonths).map(v=>+v||0),mape_pct:p.mape||15,
+                    shelf_life_periods:shelfLifeToPeriods(p.shelfLife,state.planning),shelf_life:shelfLifeToPeriods(p.shelfLife,state.planning),
+                    carry_rate:0.24,salvage_rate:p.salvageRate||0.8,
+                    min_quantity:+p.minProd||0,max_quantity:+p.maxProd||0,setup_cost:+p.setupCost||50,
+                    demand_ceiling_mode:p.demandCeilingMode||'soft',init_inventory:+p.initInventory||0,
+                    parts:p.bom.map(b=>({name:b.name,cost:b.cost,landed_cost:landedCost(b,state.config,state.plant,state.supplierProfiles),qty_per:effQtyPer(b)}))})),
+                  lines:linesPayload,
+                  constraints:{shared_capacity:state.production.lines.reduce((a,l)=>a+l.capacity*periodCount(state.planning),0),budget:0,warehouse:0},
+                  labor_cost_mode:state.config.laborCostMode||'per_unit',
+                };
+              })())},
             {name:'Monte Carlo (Risk)',inputs:'All product + BOM data',
               check:()=>P.length>0,
               data:()=>`1000 runs, ${P.length} SKUs`,

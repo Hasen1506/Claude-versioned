@@ -65,6 +65,46 @@ Detailed original write-ups for each retained below for provenance.
 
 ---
 
+## ✅ Batch 2 — RESOLVED (R18, 2026-05-30) · MF-13 … MF-24
+
+Backend + frontend coherence fixes. Verified by Python AST parse, **Babel parse of the full
+index.html script block (1.34 MB, JSX valid)**, and functional tests where logic changed.
+
+- **MF-13** ✅ pattern_sensing.py — `match_patterns` now uses the recent OVERLAPPING window
+  (`actuals[-n:]` ↔ `baseline[hi-n:hi]`), consistent with `posterior_variance`'s index alignment.
+  Was latest-actuals vs earliest-forecast (temporal mismatch).
+- **MF-14** ✅ forecast.py — grain-aware lag offsets via `_lag_offsets` (monthly→(1,3,12),
+  weekly→(1,4,season), daily→(1,7,30)). Threaded through `_build_features`/`_future_features`/
+  `_ml_regressor`/`_xgboost`/`_hybrid`. Verified lags + a monthly RF/naive run.
+- **MF-15** ✅ report.py — demand basis prefers a forward `forecast`; else relabels summed history
+  as "N recorded periods" instead of "annual demand"/"projected revenue". Verified PDF bytes.
+- **MF-16** ✅ calendar.py + app.py — `build_calendar(year=…)` parameterized; route passes
+  `custom_holidays` + `year`. Verified 2027 calendar (296 working days) + a custom holiday landing.
+- **MF-17** ✅ procurement.py — stale `/52` MEIO comment corrected to `/periods_per_year`.
+- **MF-18** ✅ report.py — bilingual `_g(obj,'camelCase','snake_case')` getter so a contract drift
+  can't silently read a default. Verified both casings render. (Structural fix = MF-19 + MF-34.)
+- **MF-19** ✅ index.html — dashboard payloads now match the primary contract: profitmix's ~60×
+  dimensional bug fixed (cycle_time in hours + real line pool + horizon), production's dropped
+  machine-hours/labor/OEE wiring restored, via the top-level line/OEE helpers. (Procurement's two
+  surfaces remain complementary — full single-builder extraction tracked; the WRONG-number harms
+  are resolved.)
+- **MF-20** ✅ index.html + production.py — `makespan_weight`/`shutdown_threshold_pct`/
+  `rehire_notice_hrs` now SENT in the production payload (settable via state.production.*), so the
+  result tooltips that advertised `params.*` overrides are truthful. (planning_mode handled in MF-5.)
+- **MF-21** ✅ index.html — transport demand-sensing wired: `daily_consumption`+`current_stock` from
+  real demand/RM-on-hand, `demand_spike` from active demand-type disruptions. The air-vs-sea stockout
+  path can now fire (was hardcoded off). Allocation LP stays gated (needs a transport-network UI).
+- **MF-22** ✅ index.html — capital prefers a real `state.capital.investments` list; synthetic
+  per-line candidates tagged `synthetic:true`; `exclusivity_groups`/`dependencies`/`max_investments`
+  now passed through (were never sent → those constraints were inert).
+- **MF-23** ✅ index.html — removed the dead `POST /api/forecast/retrain` (404); "Retrain Now" keeps
+  the client-side lastRetrained bump; tooltip corrected.
+- **MF-24** ✅ index.html — removed the discarded `/api/calc/wacc` round-trip in the finance
+  scratchpad (client-side authoritative; response was logged-into-a-comment waste). Tab-1 WACC
+  Calculator keeps its real server-vs-client audit fetch.
+
+---
+
 ## Severity 🔴 — actively misleading (presents inert/stale results as real)
 
 ### MF-1 · Monte Carlo `shelf_life` is inert, and the auto-researcher sells it as a lever

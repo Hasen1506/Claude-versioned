@@ -44,16 +44,20 @@ NATIONAL_HOLIDAYS_2026 = [
 ]
 
 
-def build_calendar(work_days_per_week=6, use_indian_holidays=True, custom_holidays=None, start_month=0):
+def build_calendar(work_days_per_week=6, use_indian_holidays=True, custom_holidays=None, start_month=0, year=2026):
     """
-    Build day-by-day 2026 working calendar.
-    
+    Build a day-by-day working calendar for `year`.
+
     Args:
         work_days_per_week: 5 (Mon-Fri), 6 (Mon-Sat), 7 (all days)
         use_indian_holidays: exclude TN gazetted holidays
         custom_holidays: additional [(month, day, name)] to exclude
         start_month: 0=Jan, 3=Apr (fiscal year), etc.
-    
+        year: (MF-16) calendar year — was hardcoded 2026. Weekday/leap-year math now follows
+              `year`. NOTE: the TN_HOLIDAYS_2026 dates are (month, day) pairs and apply to any
+              year as-is; the lunar-calendar holidays (Ramzan, Bakrid, Muharram, Milad) are only
+              exact for 2026 and approximate for other years.
+
     Returns:
         dict with monthly working days, total, holiday list, and day-by-day array
     """
@@ -77,8 +81,8 @@ def build_calendar(work_days_per_week=6, use_indian_holidays=True, custom_holida
     monthly_holidays = [0] * 12
     daily_calendar = []  # [{date, month, weekday, is_working, holiday_name}]
     
-    d = date(2026, 1, 1)
-    end = date(2026, 12, 31)
+    d = date(year, 1, 1)
+    end = date(year, 12, 31)
     
     while d <= end:
         m = d.month - 1  # 0-indexed
@@ -139,7 +143,7 @@ def build_calendar(work_days_per_week=6, use_indian_holidays=True, custom_holida
         })
     
     return {
-        'year': 2026,
+        'year': year,
         'work_days_per_week': work_days_per_week,
         'indian_holidays': use_indian_holidays,
         'total_working_days': total_working,

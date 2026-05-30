@@ -15,6 +15,19 @@ import io
 import time
 
 
+def _g(obj, *keys, default=None):
+    """(MF-18) Bilingual field getter — tolerate either camelCase (raw frontend state, the report's
+    actual contract) or snake_case (the solver contract). The report reads RAW state while every
+    solver reads transformed snake_case; with no shared schema, a key the report spells one way and
+    the data carries the other silently becomes a default (0/0.95/52), printing a wrong number with
+    no error. Accepting both spellings removes that silent-default trap. The structural fix is the
+    canonical payload builder (MF-19) + a contract test (MF-34) that pins every field to its key."""
+    for k in keys:
+        if isinstance(obj, dict) and obj.get(k) is not None:
+            return obj[k]
+    return default
+
+
 def generate_report(data):
     """Generate PDF report from app state. Returns bytes."""
     buf = io.BytesIO()
@@ -43,14 +56,35 @@ def generate_report(data):
 
     # Executive Summary
     story.append(Paragraph("Executive Summary", styles['H1']))
-    total_demand = sum(sum(p.get('history', [])) for p in products)
-    total_mat = sum(sum(b.get('cost', 0) * b.get('qtyPer', 1) for b in p.get('bom', []))
-                    * sum(p.get('history', [])) for p in products)
-    total_revenue = sum(p.get('sellPrice', 0) * sum(p.get('history', [])) for p in products)
+
+    # (MF-15) Demand basis: prefer a forward-looking forecast when present; otherwise fall back to
+    # recorded history. The old code summed ALL history (any number of past periods) and labelled it
+    # "total annual demand" / "projected revenue" — that double-counts multi-year history and calls
+    # past actuals a projection. Now the basis is explicit and the label matches what was summed.
+    def _demand_basis(p):
+        fc = p.get('forecast') or []
+        if fc and any(float(x or 0) for x in fc):
+            return float(sum(fc)), 'forecast', len(fc)
+        hist = p.get('history', []) or []
+        return float(sum(hist)), 'history', len(hist)
+
+    bases = [_demand_basis(p) for p in products]
+    total_demand = sum(d for d, _, _ in bases)
+    total_mat = sum(sum(_g(b, 'cost', default=0) * _g(b, 'qtyPer', 'qty_per', default=1) for b in p.get('bom', [])) * d
+                    for p, (d, _, _) in zip(products, bases))
+    total_revenue = sum(_g(p, 'sellPrice', 'sell_price', default=0) * d for p, (d, _, _) in zip(products, bases))
+    src_set = {s for _, s, _ in bases}
+    if src_set == {'forecast'}:
+        basis_label, rev_word = 'forecast horizon', 'Forecast revenue'
+    elif src_set == {'history'}:
+        max_n = max((n for _, _, n in bases), default=0)
+        basis_label, rev_word = f'{max_n} recorded period(s), historical', 'Revenue at current price (historical basis)'
+    else:
+        basis_label, rev_word = 'mixed forecast/historical', 'Revenue (mixed basis)'
     story.append(Paragraph(
-        f"This report covers {len(products)} product(s) with total annual demand of "
-        f"{total_demand:,} units. Projected revenue: {cur}{total_revenue:,.0f}. "
-        f"Projected material cost: {cur}{total_mat:,.0f}. "
+        f"This report covers {len(products)} product(s) with total demand of "
+        f"{total_demand:,.0f} units ({basis_label}). {rev_word}: {cur}{total_revenue:,.0f}. "
+        f"Material cost (same basis): {cur}{total_mat:,.0f}. "
         f"Gross margin: {(total_revenue - total_mat) / max(total_revenue, 1) * 100:.1f}%.",
         styles['Body']))
 
@@ -58,18 +92,19 @@ def generate_report(data):
     story.append(Paragraph("Product Details", styles['H1']))
     for p in products:
         story.append(Paragraph(p.get('name', 'Product'), styles['H2']))
-        ann = sum(p.get('history', []))
-        mat = sum(b.get('cost', 0) * b.get('qtyPer', 1) for b in p.get('bom', []))
+        dem, dem_src, dem_n = _demand_basis(p)
+        mat = sum(_g(b, 'cost', default=0) * _g(b, 'qtyPer', 'qty_per', default=1) for b in p.get('bom', []))
+        dem_label = 'Demand (forecast horizon)' if dem_src == 'forecast' else f'Demand ({dem_n} recorded periods)'
         tbl_data = [
             ['Parameter', 'Value'],
-            ['Annual Demand', f"{ann:,} units"],
-            ['Selling Price', f"{cur}{p.get('sellPrice', 0)}"],
+            [dem_label, f"{dem:,.0f} units"],
+            ['Selling Price', f"{cur}{_g(p, 'sellPrice', 'sell_price', default=0)}"],
             ['Unit Material Cost', f"{cur}{mat:.2f}"],
-            ['Variable Cost', f"{cur}{p.get('variableCost', 0)}"],
-            ['Setup Cost/Batch', f"{cur}{p.get('setupCost', 0)}"],
-            ['Capacity', f"{p.get('capacity', 0)} units/week"],
-            ['Shelf Life', f"{p.get('shelfLife', 52)} weeks"],
-            ['Yield', f"{p.get('yieldPct', 0.95)*100:.0f}%"],
+            ['Variable Cost', f"{cur}{_g(p, 'variableCost', 'variable_cost', default=0)}"],
+            ['Setup Cost/Batch', f"{cur}{_g(p, 'setupCost', 'setup_cost', default=0)}"],
+            ['Capacity', f"{_g(p, 'capacity', default=0)} units/week"],
+            ['Shelf Life', f"{_g(p, 'shelfLife', 'shelf_life', default=52)} weeks"],
+            ['Yield', f"{_g(p, 'yieldPct', 'yield_pct', default=0.95)*100:.0f}%"],
             ['BOM Parts', f"{len(p.get('bom', []))}"],
         ]
         t = Table(tbl_data, colWidths=[doc.width * 0.4, doc.width * 0.6])
@@ -91,11 +126,11 @@ def generate_report(data):
             for b in p['bom']:
                 bom_data.append([
                     b.get('name', ''),
-                    str(b.get('qtyPer', 1)),
-                    f"{cur}{b.get('cost', 0)}",
-                    str(b.get('leadTime', 1)),
-                    str(b.get('moq', 10)),
-                    b.get('supplierType', 'domestic'),
+                    str(_g(b, 'qtyPer', 'qty_per', default=1)),
+                    f"{cur}{_g(b, 'cost', default=0)}",
+                    str(_g(b, 'leadTime', 'lead_time', default=1)),
+                    str(_g(b, 'moq', default=10)),
+                    _g(b, 'supplierType', 'supplier_type', default='domestic'),
                 ])
             bt = Table(bom_data, colWidths=[doc.width*0.25, doc.width*0.12, doc.width*0.12,
                                             doc.width*0.12, doc.width*0.12, doc.width*0.15])

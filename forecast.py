@@ -98,24 +98,42 @@ def _date_axis(start_iso, n_periods, grain):
     return [start + timedelta(days=i * days) for i in range(n_periods)]
 
 
-def _build_features(history, dates, promo_periods, holidays_set):
+def _lag_offsets(grain, season=None):
+    """(MF-14) Grain-aware lag offsets so the three lag features mean the same thing
+    regardless of time grain. The old hardcoded (1, 7, 30) read as day/week/month — but on
+    the DEFAULT monthly grain `lag-30` meant "30 months ago", needing 2.5 years of history
+    before the feature was ever real. Now:
+        daily   → (1, 7, 30)      # yesterday / last week / last month
+        weekly  → (1, 4, season)  # last week / ~last month / last season (13 or 52)
+        monthly → (1, 3, season)  # last month / last quarter / last year (12)
+    """
+    grain = (grain or 'monthly').lower()
+    if grain == 'daily':
+        return (1, 7, 30)
+    if grain == 'weekly':
+        return (1, 4, season if season and season > 4 else 13)
+    return (1, 3, season if season and season > 3 else 12)  # monthly default
+
+
+def _build_features(history, dates, promo_periods, holidays_set, lags=(1, 7, 30)):
     """Build a DataFrame-like 2D feature matrix for ML/DL models.
 
     Returns (X, y, feature_names). X[i] corresponds to forecasting y[i] using
-    only information available before period i.
+    only information available before period i. `lags` are grain-aware (see _lag_offsets).
     """
     n = len(history)
     promo_periods = promo_periods or []
     holidays_set = holidays_set or set()
     promo_set = set(promo_periods)  # period indices that are promo
+    l0, l1, l2 = lags
 
     feats = []
     for t in range(n):
         row = []
         # Lag features — guard against insufficient history.
-        row.append(history[t - 1] if t >= 1 else 0)
-        row.append(history[t - 7] if t >= 7 else (history[max(t - 1, 0)] if t > 0 else 0))
-        row.append(history[t - 30] if t >= 30 else (history[max(t - 1, 0)] if t > 0 else 0))
+        row.append(history[t - l0] if t >= l0 else 0)
+        row.append(history[t - l1] if t >= l1 else (history[max(t - 1, 0)] if t > 0 else 0))
+        row.append(history[t - l2] if t >= l2 else (history[max(t - 1, 0)] if t > 0 else 0))
         # Rolling means
         row.append(np.mean(history[max(0, t - 3):t]) if t >= 1 else 0)
         row.append(np.mean(history[max(0, t - 7):t]) if t >= 1 else 0)
@@ -134,24 +152,27 @@ def _build_features(history, dates, promo_periods, holidays_set):
 
     X = np.asarray(feats, dtype=float)
     y = np.asarray(history, dtype=float)
-    names = ['lag1', 'lag7', 'lag30', 'roll3', 'roll7', 'dow', 'month', 'quarter', 'holiday', 'promo']
+    l0, l1, l2 = lags
+    names = [f'lag{l0}', f'lag{l1}', f'lag{l2}', 'roll3', 'roll7', 'dow', 'month', 'quarter', 'holiday', 'promo']
     return X, y, names
 
 
-def _future_features(history, future_dates, promo_periods, holidays_set, h_periods):
+def _future_features(history, future_dates, promo_periods, holidays_set, h_periods, lags=(1, 7, 30)):
     """Build feature matrix for h future periods. Uses last-known history values
-    as lags for the first horizon step and propagates predictions forward."""
+    as lags for the first horizon step and propagates predictions forward.
+    `lags` must match the ones _build_features used for training (grain-aware)."""
     promo_set = set(promo_periods or [])
     holidays_set = holidays_set or set()
     n = len(history)
+    l0, l1, l2 = lags
     rows = []
     extended = list(history)
     for h in range(h_periods):
         t = n + h
         row = []
-        row.append(extended[t - 1])
-        row.append(extended[t - 7] if t >= 7 else extended[-1])
-        row.append(extended[t - 30] if t >= 30 else extended[-1])
+        row.append(extended[t - l0] if t >= l0 else extended[-1])
+        row.append(extended[t - l1] if t >= l1 else extended[-1])
+        row.append(extended[t - l2] if t >= l2 else extended[-1])
         row.append(np.mean(extended[max(0, t - 3):t]))
         row.append(np.mean(extended[max(0, t - 7):t]))
         if h < len(future_dates):
@@ -223,10 +244,10 @@ def _arima(history, h_periods):
     return forecast, fitted
 
 
-def _ml_regressor(model_cls, history, h_periods, dates, future_dates, promo, holidays_set, **kwargs):
+def _ml_regressor(model_cls, history, h_periods, dates, future_dates, promo, holidays_set, lags=(1, 7, 30), **kwargs):
     if not HAS_SKLEARN:
         raise ImportError('scikit-learn not available')
-    X, y, _ = _build_features(history, dates, promo, holidays_set)
+    X, y, _ = _build_features(history, dates, promo, holidays_set, lags=lags)
     if len(history) < 10:
         raise ValueError('ML needs ≥10 observations')
     # Skip first row (lag-1 has no predecessor)
@@ -238,29 +259,29 @@ def _ml_regressor(model_cls, history, h_periods, dates, future_dates, promo, hol
     extended = list(history)
     forecast = []
     for h in range(h_periods):
-        Xf, _ = _future_features(extended, future_dates[h:h + 1], promo, holidays_set, 1)
+        Xf, _ = _future_features(extended, future_dates[h:h + 1], promo, holidays_set, 1, lags=lags)
         yhat = float(model.predict(Xf)[0])
         forecast.append(yhat)
         extended.append(yhat)
     return forecast, fitted
 
 
-def _xgboost(history, h_periods, dates, future_dates, promo, holidays_set):
+def _xgboost(history, h_periods, dates, future_dates, promo, holidays_set, lags=(1, 7, 30)):
     if not HAS_XGBOOST:
         raise ImportError('xgboost not available')
     return _ml_regressor(
-        XGBRegressor, history, h_periods, dates, future_dates, promo, holidays_set,
+        XGBRegressor, history, h_periods, dates, future_dates, promo, holidays_set, lags=lags,
         n_estimators=120, max_depth=4, learning_rate=0.1, verbosity=0
     )
 
 
-def _hybrid(history, h_periods, season, dates, future_dates, promo, holidays_set):
+def _hybrid(history, h_periods, season, dates, future_dates, promo, holidays_set, lags=(1, 7, 30)):
     """Holt-Winters baseline + RandomForest residual correction."""
     if not (HAS_STATSMODELS and HAS_SKLEARN):
         raise ImportError('hybrid needs both statsmodels and sklearn')
     hw_forecast, hw_fit = _holt_winters(history, h_periods, season)
     residuals = np.asarray(history, dtype=float) - np.asarray(hw_fit[:len(history)])
-    X, _, _ = _build_features(history, dates, promo, holidays_set)
+    X, _, _ = _build_features(history, dates, promo, holidays_set, lags=lags)
     if len(history) < 10:
         raise ValueError('Hybrid needs ≥10 observations')
     rf = RandomForestRegressor(n_estimators=80, max_depth=5, random_state=0)
@@ -269,7 +290,7 @@ def _hybrid(history, h_periods, season, dates, future_dates, promo, holidays_set
     extended = list(history)
     forecast = []
     for h in range(h_periods):
-        Xf, _ = _future_features(extended, future_dates[h:h + 1], promo, holidays_set, 1)
+        Xf, _ = _future_features(extended, future_dates[h:h + 1], promo, holidays_set, 1, lags=lags)
         residual_pred = float(rf.predict(Xf)[0])
         yhat = hw_forecast[h] + residual_pred
         forecast.append(yhat)
@@ -305,6 +326,7 @@ def run_forecast(payload):
     h = int(params.get('h_periods') or params.get('periods') or 12)
     grain = params.get('time_grain', 'monthly')
     season = int(params.get('season_length') or {'daily': 7, 'weekly': 13, 'monthly': 12}.get(grain, 12))
+    lags = _lag_offsets(grain, season)  # (MF-14) grain-aware lag offsets for ML feature builders
     holidays_set = set(params.get('holidays') or [])
     horizon_start = params.get('horizon_start_date')
     requested = params.get('models')
@@ -371,20 +393,20 @@ def run_forecast(payload):
                     test_pred, train_fit = _arima(train, len(test))
                     full_fcst, full_fit = _arima(history, h)
                 elif model_name == 'random_forest':
-                    test_pred, train_fit = _ml_regressor(RandomForestRegressor, train, len(test), train_dates, test_dates, promo_periods, holidays_set, n_estimators=100, max_depth=6, random_state=0)
-                    full_fcst, full_fit = _ml_regressor(RandomForestRegressor, history, h, hist_dates, future_dates, promo_periods, holidays_set, n_estimators=100, max_depth=6, random_state=0)
+                    test_pred, train_fit = _ml_regressor(RandomForestRegressor, train, len(test), train_dates, test_dates, promo_periods, holidays_set, lags=lags, n_estimators=100, max_depth=6, random_state=0)
+                    full_fcst, full_fit = _ml_regressor(RandomForestRegressor, history, h, hist_dates, future_dates, promo_periods, holidays_set, lags=lags, n_estimators=100, max_depth=6, random_state=0)
                 elif model_name == 'gradient_boost':
-                    test_pred, train_fit = _ml_regressor(GradientBoostingRegressor, train, len(test), train_dates, test_dates, promo_periods, holidays_set, n_estimators=100, max_depth=3, learning_rate=0.1, random_state=0)
-                    full_fcst, full_fit = _ml_regressor(GradientBoostingRegressor, history, h, hist_dates, future_dates, promo_periods, holidays_set, n_estimators=100, max_depth=3, learning_rate=0.1, random_state=0)
+                    test_pred, train_fit = _ml_regressor(GradientBoostingRegressor, train, len(test), train_dates, test_dates, promo_periods, holidays_set, lags=lags, n_estimators=100, max_depth=3, learning_rate=0.1, random_state=0)
+                    full_fcst, full_fit = _ml_regressor(GradientBoostingRegressor, history, h, hist_dates, future_dates, promo_periods, holidays_set, lags=lags, n_estimators=100, max_depth=3, learning_rate=0.1, random_state=0)
                 elif model_name == 'xgboost':
-                    test_pred, train_fit = _xgboost(train, len(test), train_dates, test_dates, promo_periods, holidays_set)
-                    full_fcst, full_fit = _xgboost(history, h, hist_dates, future_dates, promo_periods, holidays_set)
+                    test_pred, train_fit = _xgboost(train, len(test), train_dates, test_dates, promo_periods, holidays_set, lags=lags)
+                    full_fcst, full_fit = _xgboost(history, h, hist_dates, future_dates, promo_periods, holidays_set, lags=lags)
                 elif model_name == 'mlp':
-                    test_pred, train_fit = _ml_regressor(MLPRegressor, train, len(test), train_dates, test_dates, promo_periods, holidays_set, hidden_layer_sizes=(32, 16), max_iter=500, random_state=0)
-                    full_fcst, full_fit = _ml_regressor(MLPRegressor, history, h, hist_dates, future_dates, promo_periods, holidays_set, hidden_layer_sizes=(32, 16), max_iter=500, random_state=0)
+                    test_pred, train_fit = _ml_regressor(MLPRegressor, train, len(test), train_dates, test_dates, promo_periods, holidays_set, lags=lags, hidden_layer_sizes=(32, 16), max_iter=500, random_state=0)
+                    full_fcst, full_fit = _ml_regressor(MLPRegressor, history, h, hist_dates, future_dates, promo_periods, holidays_set, lags=lags, hidden_layer_sizes=(32, 16), max_iter=500, random_state=0)
                 elif model_name == 'hybrid':
-                    test_pred, train_fit = _hybrid(train, len(test), season, train_dates, test_dates, promo_periods, holidays_set)
-                    full_fcst, full_fit = _hybrid(history, h, season, hist_dates, future_dates, promo_periods, holidays_set)
+                    test_pred, train_fit = _hybrid(train, len(test), season, train_dates, test_dates, promo_periods, holidays_set, lags=lags)
+                    full_fcst, full_fit = _hybrid(history, h, season, hist_dates, future_dates, promo_periods, holidays_set, lags=lags)
                 else:
                     continue
 

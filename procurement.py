@@ -586,8 +586,10 @@ def solve_procurement(data):
         )
         fg_hold = unit_cost * carry_rate_per_period  # per-period holding cost per unit (single-pool)
         # Round 5 / MEIO — per-node holding rate map. When meio_enabled, the FG holding term
-        # in the objective is replaced by Σ_n (unit_cost × carry_rate_n × inv_node[k,n,t] / 52)
+        # in the objective is replaced by Σ_n (unit_cost × carry_rate_n × inv_node[k,n,t] / periods_per_year)
         # using each node's own carryingRatePct. Single-pool fg_hold remains the fallback.
+        # (MF-17) Comment corrected: the live use-site divides by periods_per_year (grain-correct
+        # since the Audit #1 fix), not the old hardcoded /52 this comment used to show.
         node_carry_pct_by_id = {n['id']: float(n.get('carry_rate_pct', 24) or 24) for n in network_nodes} if meio_enabled else {}
         # v3.6 — Milk-run inbound consolidation cost (fixed per period when active).
         # Wired from JS payload milk_run_per_period (computed via milkRunPerPeriod in index.html).

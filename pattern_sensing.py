@@ -115,9 +115,15 @@ def match_patterns(actuals, baseline_forecast, min_history=4):
     Returns ranked list of {pattern, similarity, shape}."""
     if len(actuals) < min_history or len(baseline_forecast) < min_history:
         return []
-    n = min(len(actuals), len(baseline_forecast), 8)
-    recent_a = actuals[-n:]
-    recent_b = baseline_forecast[:n]
+    # (MF-13) baseline_forecast is index-aligned to actuals (baseline[i] is the forecast for
+    # actuals[i]; it covers the same span + the future). So the recent window must be taken from the
+    # SAME indices in both — actuals[-n:] paired with baseline[hi-n:hi], NOT baseline[:n] (the
+    # earliest forecasts). The old mismatch compared the latest actuals against the oldest forecasts
+    # whenever len(actuals) > n, and disagreed with posterior_variance's index-0 alignment.
+    hi = min(len(actuals), len(baseline_forecast))
+    n = min(hi, 8)
+    recent_a = actuals[hi - n:hi]
+    recent_b = baseline_forecast[hi - n:hi]
     residual = _residual_ratio(recent_a, recent_b)
     # Normalize residual to mean=1 for shape-only comparison
     mu = sum(residual) / max(len(residual), 1)
