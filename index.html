@@ -3052,15 +3052,6 @@ function AssetIcon({kind='cnc',size=48,color='var(--ac)',bg='transparent'}){
 }
 
 // Inline horizontal bars — compact comparison
-function MiniBars({data,max,color='var(--ac)',h=6,fmt=v=>v.toLocaleString()}){
-  const m=max||Math.max(...data.map(d=>Math.abs(d.value||0)))||1;
-  return <div style={{display:'flex',flexDirection:'column',gap:3,fontSize:9}}>{data.map((d,i)=><div key={i} style={{display:'grid',gridTemplateColumns:'70px 1fr 80px',gap:4,alignItems:'center'}}>
-    <span style={{color:'var(--tx2)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.label}</span>
-    <div style={{height:h,background:'var(--bg3)',position:'relative',borderRadius:1}}><div style={{position:'absolute',left:0,top:0,bottom:0,width:`${Math.abs(d.value||0)/m*100}%`,background:d.color||color}}/></div>
-    <span className="num" style={{color:d.color||color,fontWeight:600,textAlign:'right'}}>{fmt(d.value||0)}</span>
-  </div>)}</div>;
-}
-
 // Inline vertical bar chart — for yearly cash flows
 function YearBars({data,color='var(--a2)',negColor='var(--dg)',h=70,fmt=v=>Math.round(v/1000)+'k'}){
   const max=Math.max(...data.map(d=>Math.abs(d.value||0)))||1;
@@ -3976,185 +3967,8 @@ function WACCCard({state,dispatch}){
 
 // v3.5 — Distribution Network & Customer Zones. Defines DC nodes + customer zones, plus per-SKU allocation.
 // Reads from state.network.nodes (shared with the richer Physical Network editor in Tab 3) and state.network.zones.
-function DistributionNetworkPanel({state,dispatch}){
-  const net=state.network||{nodes:[],lanes:[],zones:[]};
-  const zones=net.zones||[];
-  const dcs=(net.nodes||[]).filter(n=>n.type==='dc');
-  const cur=state.config.currency;
-  const activeId=state.activeProductId;
-  const prod=(state.products||[]).find(p=>p.id===activeId)||(state.products||[])[0];
-  const upZones=(zs)=>dispatch({type:'SET_NETWORK',payload:{zones:zs}});
-  const upNodes=(nds)=>dispatch({type:'SET_NETWORK',payload:{nodes:nds}});
-  const upProd=(patch)=>{if(prod)dispatch({type:'UPDATE_PRODUCT',id:prod.id,payload:patch})};
-  const zoneSplit=prod?.zoneSplit||{};
-  const zSplitTotal=Object.values(zoneSplit).reduce((a,b)=>a+(+b||0),0);
-  return <CollapsibleCard title="Distribution Network & Customer Zones" icon="🚚" badge={`${dcs.length} DC${dcs.length===1?'':'s'} · ${zones.length} zone${zones.length===1?'':'s'}`} defaultOpen={false} accent="var(--a2)">
-    <div style={{fontSize:10,color:'var(--tx3)',marginBottom:8,padding:'6px 8px',background:'var(--bg3)',borderRadius:4,borderLeft:'2px solid var(--a2)'}}>
-      Define where finished goods ship (DCs), who consumes (customer zones), and the per-SKU demand split across zones. The transport solver honors <code>originCity → destCity</code> on BOM parts; for outbound (plant→DC→zone), use this panel. Service days per zone drive replenishment frequency in the MPS.
-    </div>
-    {/* DCs — quick add/edit; nodes with type='dc' are the source of truth */}
-    <div style={{marginBottom:10}}>
-      <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:6}}>
-        <strong style={{fontSize:11,color:'var(--tx2)'}}>Distribution Centers ({dcs.length})</strong>
-        <button className="btn btn-secondary btn-sm" onClick={()=>{
-          const id='dc'+Date.now().toString(36).slice(-5);
-          upNodes([...(net.nodes||[]),{id,type:'dc',name:`DC ${dcs.length+1}`,location:state.config.city||'',lat:0,lon:0,capacity:5000,costPerCbmDay:2.5}]);
-        }}>+ DC</button>
-        <span style={{fontSize:9,color:'var(--tx3)'}}>Richer lane config in Tab 3 → Physical Network</span>
-      </div>
-      {dcs.length>0&&<table className="data-table" style={{fontSize:10}}>
-        <thead><tr><th>Name</th><th>City</th><th>Capacity (cbm)</th><th>Holding ({cur}/cbm·day)</th><th></th></tr></thead>
-        <tbody>{dcs.map(dc=>{const idx=(net.nodes||[]).findIndex(n=>n.id===dc.id);const upDC=(patch)=>{const nds=[...(net.nodes||[])];nds[idx]={...nds[idx],...patch};upNodes(nds)};
-          return <tr key={dc.id}>
-            <td><input value={dc.name} onChange={e=>upDC({name:e.target.value})} style={{width:100}}/></td>
-            <td><input value={dc.location||''} onChange={e=>upDC({location:e.target.value})} style={{width:90}}/></td>
-            <td><NumInput value={dc.capacity||0} onChange={v=>upDC({capacity:v})} style={{width:70}}/></td>
-            <td><NumInput step="0.1" value={dc.costPerCbmDay||0} onChange={v=>upDC({costPerCbmDay:v})} style={{width:60}}/></td>
-            <td><button className="btn btn-danger btn-sm" onClick={()=>upNodes((net.nodes||[]).filter(n=>n.id!==dc.id))}>×</button></td>
-          </tr>
-        })}</tbody>
-      </table>}
-    </div>
-    {/* Zones */}
-    <div style={{marginBottom:10}}>
-      <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:6}}>
-        <strong style={{fontSize:11,color:'var(--tx2)'}}>Customer Zones ({zones.length})</strong>
-        <button className="btn btn-secondary btn-sm" onClick={()=>upZones([...zones,{id:'zone'+Date.now().toString(36).slice(-5),name:`Zone ${zones.length+1}`,cities:'',demandPct:0,serviceDaysTarget:3}])}>+ Zone</button>
-      </div>
-      {zones.length>0&&<table className="data-table" style={{fontSize:10}}>
-        <thead><tr><th>Zone</th><th>Cities (CSV)</th><th>Total Demand %</th><th>Service Days (target)</th><th></th></tr></thead>
-        <tbody>{zones.map((z,zi)=>{const upZ=(patch)=>{const zs=[...zones];zs[zi]={...zs[zi],...patch};upZones(zs)};
-          return <tr key={z.id}>
-            <td><input value={z.name} onChange={e=>upZ({name:e.target.value})} style={{width:100}}/></td>
-            <td><input value={z.cities||''} placeholder="Chennai, Bengaluru" onChange={e=>upZ({cities:e.target.value})} style={{width:180}}/></td>
-            <td><NumInput value={z.demandPct||0} onChange={v=>upZ({demandPct:v})} style={{width:55}}/></td>
-            <td><NumInput value={z.serviceDaysTarget||3} onChange={v=>upZ({serviceDaysTarget:v})} style={{width:55}}/></td>
-            <td><button className="btn btn-danger btn-sm" onClick={()=>upZones(zones.filter((_,j)=>j!==zi))}>×</button></td>
-          </tr>
-        })}</tbody>
-      </table>}
-    </div>
-    {/* Per-SKU allocation */}
-    {prod&&zones.length>0&&<div style={{padding:'8px 10px',background:'var(--bg3)',borderRadius:4}}>
-      <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:6}}>
-        <strong style={{fontSize:11,color:'var(--tx2)'}}>Zone Split for <span style={{color:'var(--ac)'}}>{prod.name}</span></strong>
-        <span style={{fontSize:9,color:zSplitTotal===100?'var(--gn)':zSplitTotal>0?'var(--a4)':'var(--tx3)'}}>total: {zSplitTotal}%</span>
-        {zSplitTotal!==100&&<button className="btn btn-secondary btn-sm" style={{fontSize:9,padding:'2px 6px'}} onClick={()=>{
-          // Equal-split across zones
-          const each=Math.round(100/zones.length);
-          const split={};zones.forEach((z,i)=>{split[z.id]=i===zones.length-1?(100-each*(zones.length-1)):each});
-          upProd({zoneSplit:split});
-        }}>Equal split</button>}
-      </div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:6}}>
-        {zones.map(z=><Field key={z.id} label={`${z.name} %`} hint={`Share of ${prod.name} demand served from this zone. Drives transport cost allocation and per-zone service-level tracking. Uniform split if left empty.`}>
-          <NumInput min={0} max={100} placeholder="0" value={zoneSplit[z.id]??''} onChange={v=>upProd({zoneSplit:{...zoneSplit,[z.id]:e.target.value===''?0:v}})}/>
-        </Field>)}
-        <Field label="Served by DCs" hint="Check DCs that fulfill this SKU. Empty = all DCs can serve."><div style={{display:'flex',flexWrap:'wrap',gap:4}}>
-          {dcs.map(dc=><label key={dc.id} style={{fontSize:9,padding:'2px 4px',background:(prod.dcIds||[]).includes(dc.id)?'rgba(56,189,248,.15)':'var(--bg2)',border:'1px solid var(--br)',borderRadius:3,cursor:'pointer'}}>
-            <input type="checkbox" style={{width:10,height:10,marginRight:3}} checked={(prod.dcIds||[]).includes(dc.id)} onChange={e=>{
-              const cur=prod.dcIds||[];
-              const nxt=e.target.checked?[...cur,dc.id]:cur.filter(x=>x!==dc.id);
-              upProd({dcIds:nxt});
-            }}/>{dc.name}
-          </label>)}
-        </div></Field>
-      </div>
-    </div>}
-    {!zones.length&&<div style={{padding:'10px',textAlign:'center',fontSize:10,color:'var(--tx3)'}}>No zones defined. Click + Zone to begin — e.g. South India (Chennai, Bengaluru), North India, Export.</div>}
-  </CollapsibleCard>;
-}
-
 // v3.4 — Production Capacity & Compatibility. Shared line pool (identical hrs default)
 // + product×line compatibility matrix. Single source of truth = line.eligibleProducts[].
-function ProductionCapacityPanel({state,dispatch}){
-  const lines=state.production?.lines||[];
-  const products=state.products||[];
-  const cur=state.config.currency;
-  const wd=state.planning.workDays||6;
-  const updateLines=(nl)=>dispatch({type:'SET_PRODUCTION',payload:{lines:nl}});
-  const toggleCompat=(lineIdx,pid)=>{
-    const nl=lines.map((l,i)=>{
-      if(i!==lineIdx)return l;
-      const ep=l.eligibleProducts||[];
-      // universal (empty) → first toggle converts to explicit whitelist minus the clicked one
-      if(!ep.length){return{...l,eligibleProducts:products.filter(p=>p.id!==pid).map(p=>p.id)}}
-      return{...l,eligibleProducts:ep.includes(pid)?ep.filter(x=>x!==pid):[...ep,pid]};
-    });
-    updateLines(nl);
-  };
-  const setUniversal=(lineIdx)=>{const nl=lines.map((l,i)=>i===lineIdx?{...l,eligibleProducts:[],dedicated:false}:l);updateLines(nl);};
-  const addLine=()=>{
-    const id='line'+(lines.length+1)+'-'+Date.now().toString(36).slice(-4);
-    updateLines([...lines,{id,name:`Line ${lines.length+1}`,type:'shared',capacity:50,shiftsPerDay:2,hoursPerShift:8,breakMins:30,otMult:1.5,changeoverMins:30,eligibleProducts:[],dedicated:false,plannedMaintenance:[]}]);
-  };
-  const delLine=(i)=>{if(lines.length<=1)return;updateLines(lines.filter((_,j)=>j!==i));};
-  const lineIsEligible=(line,pid)=>!line.eligibleProducts?.length||line.eligibleProducts.includes(pid);
-  // Theoretical capacity u/wk based on common cycle time
-  const lineWeeklyHrs=(l)=>((+l.shiftsPerDay||2)*(+l.hoursPerShift||8)-((+l.breakMins||30)*(+l.shiftsPerDay||2)/60))*wd;
-  return <CollapsibleCard title="Production Capacity & Line Compatibility" icon="🏭" badge={`${lines.length} lines · ${products.length} SKUs`} defaultOpen={true} accent="var(--a2)"
-    right={<button className="btn btn-primary btn-sm" onClick={addLine}>+ Add Line</button>}>
-    <div style={{fontSize:10,color:'var(--tx3)',marginBottom:8,padding:'6px 8px',background:'var(--bg3)',borderRadius:4,borderLeft:'2px solid var(--a2)'}}>
-      <strong style={{color:'var(--a2)'}}>Shared pool model.</strong> All lines default to <em>identical</em> available hours (shifts × hrs × workDays). Cycle time is set per-product — the solver picks schedule: "Line L runs SKU k for duration d, then SKU k+1". Use the matrix below to declare which SKUs each line <em>can</em> produce. Universal = runs all; Dedicated = single SKU; Flexible = 2+ SKUs.
-    </div>
-    {/* LINE REGISTRY */}
-    <div style={{marginBottom:10,overflowX:'auto'}}>
-      <table className="data-table" style={{fontSize:10,minWidth:720}}>
-        <thead><tr><th>Line</th><th>Name</th><th>Shifts/d</th><th>Hrs/shift</th><th>Break min</th><th>Changeover min</th><th>OT ×</th><th>Avail hrs/wk</th><th>Compatibility</th><th></th></tr></thead>
-        <tbody>{lines.map((l,i)=>{
-          const upL=(patch)=>updateLines(lines.map((ll,j)=>j===i?{...ll,...patch}:ll));
-          const ep=l.eligibleProducts||[];
-          const isUniv=!ep.length;
-          const isDed=ep.length===1;
-          const kind=isUniv?'Universal':isDed?'Dedicated':'Flexible';
-          const kindCol=isUniv?'var(--gn)':isDed?'var(--a4)':'var(--a3)';
-          return <tr key={l.id}>
-            <td style={{fontWeight:700,color:'var(--ac)'}}>#{i+1}</td>
-            <td><input value={l.name} onChange={e=>upL({name:e.target.value})} style={{width:90,fontSize:10}}/></td>
-            <td><NumInput min={1} max={3} value={l.shiftsPerDay||2} onChange={v=>upL({shiftsPerDay:v})} style={{width:40,fontSize:10}}/></td>
-            <td><NumInput value={l.hoursPerShift||8} onChange={v=>upL({hoursPerShift:v})} style={{width:40,fontSize:10}}/></td>
-            <td><NumInput value={l.breakMins||30} onChange={v=>upL({breakMins:v})} style={{width:40,fontSize:10}}/></td>
-            <td><NumInput value={l.changeoverMins||30} onChange={v=>upL({changeoverMins:v})} style={{width:40,fontSize:10}}/></td>
-            <td><NumInput step="0.1" value={l.otMult||1.5} onChange={v=>upL({otMult:v})} style={{width:40,fontSize:10}}/></td>
-            <td className="num" style={{color:'var(--a2)',fontWeight:600}}>{lineWeeklyHrs(l).toFixed(1)}h</td>
-            <td><span style={{color:kindCol,fontWeight:600,fontSize:10}}>{kind}</span> <span style={{color:'var(--tx3)',fontSize:9}}>({isUniv?products.length:ep.length}/{products.length})</span>{!isUniv&&<button style={{marginLeft:4,fontSize:9,padding:'0 4px',background:'none',border:'1px solid var(--br2)',color:'var(--tx3)',borderRadius:2,cursor:'pointer'}} onClick={()=>setUniversal(i)} title="Reset to universal (runs all SKUs)">↺</button>}</td>
-            <td>{lines.length>1&&<button className="btn btn-danger btn-sm" onClick={()=>delLine(i)}>×</button>}</td>
-          </tr>;
-        })}</tbody>
-      </table>
-    </div>
-    {/* COMPATIBILITY MATRIX */}
-    {products.length>0&&<div>
-      <div style={{fontSize:10,color:'var(--tx2)',fontWeight:600,marginBottom:4}}>Product ↔ Line Compatibility Matrix <span style={{color:'var(--tx3)',fontWeight:400,fontSize:9,marginLeft:6}}>Click a cell to toggle. ✓ = line can run this SKU. Dashes on all cells of a column = universal line.</span></div>
-      <div style={{overflowX:'auto'}}>
-        <table className="data-table" style={{fontSize:10}}>
-          <thead><tr><th style={{minWidth:140,textAlign:'left'}}>SKU ↓ / Line →</th>{lines.map(l=><th key={l.id} style={{textAlign:'center',minWidth:50}}>{l.name}</th>)}<th style={{textAlign:'center',color:'var(--a3)'}}># lines</th></tr></thead>
-          <tbody>{products.map(p=>{
-            const nEligible=lines.filter(l=>lineIsEligible(l,p.id)).length;
-            const riskCol=nEligible===0?'var(--dg)':nEligible===1?'var(--a4)':'var(--gn)';
-            return <tr key={p.id}>
-              <td style={{textAlign:'left',fontWeight:600,color:p.id===state.activeProductId?'var(--ac)':'var(--tx)'}}>{p.name}</td>
-              {lines.map((l,li)=>{
-                const elig=lineIsEligible(l,p.id);
-                const isUniv=!(l.eligibleProducts||[]).length;
-                return <td key={l.id} style={{textAlign:'center',cursor:'pointer',padding:'4px',background:elig?(isUniv?'rgba(63,185,80,.08)':'rgba(0,212,170,.12)'):'rgba(248,81,73,.06)'}} onClick={()=>toggleCompat(li,p.id)} title={elig?(isUniv?'Universal (runs all) — click to convert to whitelist':'Eligible — click to remove'):'Not eligible — click to add'}>
-                  <span style={{color:elig?(isUniv?'var(--gn)':'var(--ac)'):'var(--dg)',fontWeight:700,fontSize:12}}>{elig?(isUniv?'—':'✓'):'·'}</span>
-                </td>;
-              })}
-              <td className="num" style={{color:riskCol,fontWeight:700}}>{nEligible}</td>
-            </tr>;
-          })}</tbody>
-        </table>
-      </div>
-      {(()=>{
-        const unreachable=products.filter(p=>!lines.some(l=>lineIsEligible(l,p.id)));
-        if(unreachable.length){return <div style={{marginTop:6,padding:'4px 8px',background:'rgba(248,81,73,.08)',border:'1px solid var(--dg)',borderRadius:4,fontSize:10,color:'var(--dg)',fontWeight:600}}>⚠ {unreachable.length} SKU(s) have no eligible line: {unreachable.map(p=>p.name).join(', ')}. Solver will mark these infeasible.</div>}
-        return null;
-      })()}
-    </div>}
-  </CollapsibleCard>;
-}
-
 // T7-11/12/13/14 — Working Capital Period View. Computes per-period AR / Inventory / AP / WC,
 // flags breach vs Tab 1 WC limit, surfaces fix-options. Aggregated at company level (T7-13)
 // with optional per-SKU drill-down. AR is model-estimated (T7-14) — the Payment Ledger card
@@ -15486,14 +15300,6 @@ function Panel({title,sub,right,children,className}){
       {right&&<div>{right}</div>}
     </div>
     {children}
-  </div>;
-}
-
-function Blk({label,value,sub,color}){
-  return <div className="blk">
-    <div className="blk-lbl">{label}</div>
-    <div className="blk-val" style={color?{color}:null}>{value}</div>
-    {sub&&<div className="blk-sub">{sub}</div>}
   </div>;
 }
 
