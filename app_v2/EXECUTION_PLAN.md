@@ -146,13 +146,13 @@ Legend: **BE?** = backend already does it (✅ wire it / ➕ build new / ⚠ par
 | D-7 | Data import (CSV, date detect, bucketing) | 🔴 | ➕ | real ingestion + column mapping | A8 |
 | D-8 | Hierarchical reconciliation surfaced | 🟠 | ✅ | wire `reconcile.py` output | A8 |
 
-### 3.3 Supply / Procurement / Inventory
-| # | Item | Sev | BE? | What to build | Evidence |
-|---|---|---|---|---|---|
-| S-1 | Feed `landed_cost` into procurement | 🔴 | ✅ | pipe landed-cost solve into `bomParts` (stop using raw cost) | B1 |
-| S-2 | Stepwise freight / truck capacity (kill flat `S(i)`) | 🔴 | ✅ | send `transport_modes`/`contracts`; freight = f(qty, trucks) not flat ₹120 | B1, EOQ |
-| S-3 | Inventory policy as **autopilot for steady parts only** | 🟠 | ✅ | (s,S)/order-up-to from `policy.py`, gated by ABC/XYZ; **EOQ never beside a MILP plan, never for one-offs** | H2, EOQ |
-| S-4 | Rolling re-plan UI + nervousness | 🟠 | ✅ | wire `/api/solve/rolling`; show wave churn | H2 |
+### 3.3 Supply / Procurement / Inventory — ✅ W2 SHIPPED 2026-06-02 (S-1…S-4)
+| # | Item | Sev | BE? | What to build | Evidence | Status |
+|---|---|---|---|---|---|---|
+| S-1 | Feed `landed_cost` into procurement | 🔴 | ✅ | pipe landed-cost solve into `bomParts` (stop using raw cost) | B1 | ✅ governed per-part `Sourcing Terms` (import flag + duty/freight %) → `partsWithSourcing` sets `landed_cost`; MILP provably plans on landed (billet 228→255.36 ⇒ +₹41K) |
+| S-2 | Stepwise freight / truck capacity (kill flat `S(i)`) | 🔴 | ✅ | send `transport_modes`/`contracts`; freight = f(qty, trucks) not flat ₹120 | B1, EOQ | ✅ `SrcFreight` truck-step on the real MILP order qty: ⌈qty/units-per-truck⌉×₹/truck, shows the marginal-truck cliff |
+| S-3 | Inventory policy as **autopilot for steady parts only** | 🟠 | ✅ | (s,S)/order-up-to from `policy.py`, gated by ABC/XYZ; **EOQ never beside a MILP plan, never for one-offs** | H2, EOQ | ✅ `SrcPolicy` shows EOQ/(R,Q)/(s,S) ONLY for steady (CV≤0.5); lumpy (CV>0.5) explicitly flagged MILP-only, no EOQ |
+| S-4 | Rolling re-plan UI + nervousness | 🟠 | ✅ | wire `/api/solve/rolling`; show wave churn | H2 | ✅ `SrcRolling` + **rolling-endpoint nervousness wiring fix** (read real `materials[].purchase_orders`, relative-period churn over open overlap); per-wave + total churn, STABLE/NERVOUS verdict |
 | S-5 | Postponable vs pinned PO flag | 🟡 | ⚠ | surface release-timing slack | H5 |
 | S-6 | Multi-echelon SS placement (RM/WIP/FG) | 🔴 | ➕ | **new** guaranteed-service layer; per-node balance is the scaffold | H6 |
 | S-7 | Costly-item / MTO preset (newsvendor h vs p) | 🟠 | ✅ | expose MTO mode + CVaR buffer for costly parts | H7 |
@@ -219,7 +219,7 @@ Legend: **BE?** = backend already does it (✅ wire it / ➕ build new / ⚠ par
 |---|---|---|---|---|
 | **W0 ✅** | Platform foundations *(SHIPPED 2026-06-02)* | P1–P5 | — | ✅ MET — changing committed demand auto-flags only downstream solves; an actuals entry writes to the event log; the Sourcing service-level card uses the governed-input component end-to-end; every touched card shows a provenance badge. |
 | **W1 ✅** | Demand truth → L2 *(SHIPPED 2026-06-02)* | D-1…D-4, D-6 | W0 | ✅ MET — a flagged promo period lifts the live forecast (verified: GB P6→300 vs 100); per-period table renders the winner array with promo rows flagged; lifecycle is opt-in and shows base→×mult→shaped, Apply writes the committed series; one consolidated commit panel (item + company rollup) replaces the seed consensus; the trigger monitor flags MAPE/bias/tracking-signal breaches and logs a review trigger. |
-| **W2** | Supply truth → L2 | S-1,S-2,S-3,S-4 | W1 | Procurement objective includes landed cost + **stepwise** freight (order over 1 truck shows 2-truck cost); steady parts show an (s,S) autopilot, EOQ absent from MILP/one-off views; rolling re-plan shows nervousness. |
+| **W2 ✅** | Supply truth → L2 *(SHIPPED 2026-06-02)* | S-1,S-2,S-3,S-4 | W1 | ✅ MET — the procurement MILP plans on landed cost (verified billet 228→255.36 ⇒ total +₹41K); the stepwise freight card books real trucks off the MILP order qty and shows the +1-unit→+1-truck cliff; the policy autopilot lists EOQ/(s,S)/(R,Q) for steady parts only and flags lumpy parts MILP-only; rolling re-plan reports real per-wave + total nervousness (0 on the stable smooth series — proven non-zero on churny demand) with a STABLE/NERVOUS verdict. Backend: rolling nervousness wiring fixed (was structurally always 0). |
 | **W3** | Production truth → L2 | PR-1,PR-2,PR-3,PR-5,PR-6 | W1 | MPS = real `/api/solve/production` Gantt, per-SKU filter, dated days excluding Sundays/holidays; changeover run-order shown with saving. |
 | **W4** | Plan reconciliation → L2 | PL-1…PL-5 | W2,W3 | Aggregate capacity equals the line registry; capital consumes a line dual; disaggregation names family+horizon. |
 | **W5** | Finance wedge → L2/L3 | F-1→F-9 (in that order) | W4 | Owner can enter equity/debt sources → real hurdle; WACC-curve finds min mix under DSCR; required-sales bridge drives a profit-mix target; EVA scoreboard flags a value-destroyer; Investment cards are live. |
@@ -271,10 +271,19 @@ preset react); endpoints verified live.
 
 **W1 acceptance (all met):** ✅ a flagged promo period shifts the live forecast; ✅ the per-period table matches the chart's winner array; ✅ lifecycle changes the committed numbers only on explicit Apply (opt-in, reversible); ✅ one consolidated commit panel (item + company rollup); ✅ a MAPE/bias/TS breach fires a logged review trigger. Files touched: `store.jsx`, `demand.jsx` — both transform clean (babel-standalone 7.29.0, preset react); forecast endpoint verified live with the full D-1 payload.
 
-> **Next wave = W2 (Supply truth → L2):** S-1 landed cost in the procurement objective, S-2 **stepwise**
-> truck/container freight (per decision D-DEC-3 option b), S-3 EOQ/(s,S) autopilot for steady parts,
-> S-4 rolling re-plan / nervousness. Expand W2 into atomic tasks the same way when starting it. Keep the
-> expansion **one wave ahead** — the ledger §3 holds the rest of the scope.
+### §5 · W2 tasks — Supply truth → L2 ✅ SHIPPED 2026-06-02
+- `S-1` Landed cost → procurement — Files: store.jsx (`sourcing` slice + `sourcingDefault`/`getSourcing`/`useSourcing`/`effLandedCost`), sourcing.jsx (`SrcSourcingTerms`/`SrcTermRow`, `partsWithSourcing`). Governed per-part import flag + duty/freight % (seed→user, D-DEC-1); `partsWithSourcing` sets `parts[].landed_cost`; procurement.py prefers landed over raw. Verified: imported billet 228→255.36 raises its material cost +₹41K and reshapes the solve. Status: ✅
+- `S-2` Stepwise inbound freight — Files: store.jsx (`freightSteps`), sourcing.jsx (`SrcFreight`). freight = ⌈qty/units-per-truck⌉×₹/truck on the SELECTED part's real MILP `total_ordered`; renders trucks booked, last-truck fill %, and the +1-unit→+1-truck cliff (the duty/freight % the MILP averages into landed cost, made lumpy-honest). D-DEC-3 option b. Status: ✅
+- `S-3` Inventory policy autopilot (gated) — Files: sourcing.jsx (`SrcPolicy`), `policyPayload`. Wires `/api/solve/policy` on the SAME landed parts; shows EOQ/(R,Q)/(s,S) + reorder s + order-up-to S ONLY for steady movers (recommended `(R,Q) periodic`, CV≤0.5); lumpy parts (`(s,S) continuous`) explicitly flagged "MILP-planned, no autopilot" — honours ledger H2 "EOQ never beside a MILP plan, never for one-offs". Status: ✅
+- `S-4` Rolling re-plan + nervousness — Files: app.py (rolling endpoint wiring fix), sourcing.jsx (`SrcRolling`), `rollingPayload`. **Backend fix:** the endpoint read `procurement_schedule`/`po.week` which the solver never emits → nervousness was structurally always 0; rewrote to read `materials[].purchase_orders[]` and measure relative-period churn over the open, overlapping window (frozen front excluded). UI: governed waves/shift/frozen, per-wave + total nervousness, STABLE/MODERATE/NERVOUS verdict vs plan volume. Verified: 0 on the stable smooth series, ~5.5× higher on spiky demand. Status: ✅
+
+**W2 acceptance (all met):** ✅ procurement objective includes landed cost (billet 228→255.36, total +₹41K); ✅ freight is stepwise — an order over one truck shows the next-truck cost and cliff; ✅ steady parts show an (s,S)/(R,Q) autopilot, EOQ absent from lumpy/MILP-only parts; ✅ rolling re-plan shows real nervousness (non-zero on churny demand, honestly 0 when stable). Files touched: `app.py` (rolling wiring), `store.jsx` (sourcing slice + helpers), `sourcing.jsx` — all jsx transform clean; all four endpoints verified live with the exact UI payloads.
+
+> **Next wave = W3 (Production truth → L2):** PR-1 wire `/api/solve/production` → real per-line Gantt
+> (per-SKU filter from `gantt[]`), PR-2 calendar-aware MPS (use `plant_calendar`, exclude Sundays/holidays,
+> drill month→week→day-with-dates), PR-3 surface sequence/changeover + saving (already correct in
+> `sequencing.py`), PR-5 cycle-time-simple / OEE-behind-Advanced, PR-6 low-util shutdown rec. Expand W3 into
+> atomic tasks the same way. Keep the expansion **one wave ahead** — the ledger §3.5 holds the scope.
 
 ---
 
@@ -284,6 +293,7 @@ preset react); endpoints verified live.
 - **CRITIQUE_R2_DEMAND_AND_SEGMENTS.md** Part A demand · B MILP feeds · C cross-segment ·
   D patterns · E S&OP/production/procurement-formulation · F profit-mix/stochastic/capital ·
   G finance structure · H finance-remaining/inventory-policy/sensing.
-- **Open product decisions (still unanswered — blockers for W2/W5):** tax jurisdictions (US+India
-  first?), consolidated-view shape, contract-model depth. (AUDIT §H)
+- **Product decisions — ✅ ALL RESOLVED 2026-06-02 (see §0.5):** D-DEC-1 tax jurisdictions = US+India
+  seeded-with-override; D-DEC-2 consolidated-view = combined item-dossier + company rollup; D-DEC-3
+  contract depth = freight-included stepwise (option b first, →a later). No open blockers. (AUDIT §H)
 </content>

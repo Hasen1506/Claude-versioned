@@ -115,6 +115,14 @@ const _STATE_SEED = {
   // holidays: global ISO date list fed to the forecast calendar features so the
   // engine can down/up-weight known non-working / surge days.
   holidays: [],
+  // ── Sourcing inputs (W2 · S-1/S-2) ───────────────────────────────────────
+  // Governed, per-PART procurement inputs keyed by part code. Empty until edited;
+  // reads fall back to sourcingDefault(bomRow) (honest seed provenance, overridable
+  // — D-DEC-1 seeded-with-override). sourcing[part] = { imported, dutyFreightPct,
+  // unitsPerTruck, costPerTruck }. dutyFreightPct lifts the part's raw cost into a
+  // LANDED cost the procurement/policy MILP plans against (S-1); the truck fields
+  // drive the stepwise inbound-freight curve (S-2, D-DEC-3 option b).
+  sourcing: {},
 };
 
 const appStore = {
@@ -229,6 +237,65 @@ function useHolidays(){
   const { state, patch } = useStore(s=>s.holidays||[]);
   return { holidays: state || [], setHolidays:(arr)=>patch({ holidays: Array.isArray(arr)?arr:[] }) };
 }
+
+// ── Sourcing inputs (W2 · S-1 landed cost, S-2 stepwise freight) ───────────
+// sourcingDefault(bomRow): the SEED sourcing terms for a part (provenance=seed
+// until the user overrides any field). Honest, documented assumptions — not
+// fabricated solver output:
+//   · imported  — only the POSCO bearing-alloy billet (RM-BRG18) is imported in
+//     the seed dataset (matches the landed-cost worked example); the rest are
+//     domestic. The user flips this per part.
+//   · dutyFreightPct — a seed estimate of the duty + inbound-freight uplift that
+//     turns a part's quoted cost into its LANDED cost (0 for domestic). The real
+//     per-import build-up lives in the Landed Cost card; this is the planning knob.
+//   · unitsPerTruck / costPerTruck — the stepwise inbound-freight lot: a truck
+//     holds `unitsPerTruck` and costs `costPerTruck` whether full or not, so
+//     freight = ⌈qty / unitsPerTruck⌉ × costPerTruck (a real step function).
+function sourcingDefault(bomRow){
+  const b = bomRow || {};
+  const imported = b.part === 'RM-BRG18';     // POSCO import (seed assumption)
+  const moq = Number(b.moq) || 1000;
+  return {
+    imported,
+    dutyFreightPct: imported ? 12 : 0,        // seed: duty+freight uplift to landed
+    unitsPerTruck: Math.max(1000, moq * 4),   // seed: a truckload ≈ 4 MOQ lots
+    costPerTruck: imported ? 55000 : 16000,   // seed: container vs domestic haul (₹)
+  };
+}
+// getSourcing(part, bomRow): non-reactive read (seed merged under stored override)
+// for payload builders. provenance: 'user' if any field was overridden, else 'seed'.
+function getSourcing(part, bomRow){
+  const stored = (appStore.get().sourcing || {})[part] || {};
+  const seed = sourcingDefault(bomRow);
+  return { ...seed, ...stored, _prov: Object.keys(stored).length ? 'user' : 'seed' };
+}
+// useSourcing(part, bomRow): reactive editor binding. Editing re-flags the supply
+// solves (procurement/policy/rolling) stale via the 'sourcing' source.
+function useSourcing(part, bomRow){
+  const { state, patch } = useStore(s=>s.sourcing||{});
+  const stored = state[part] || {};
+  const seed = sourcingDefault(bomRow);
+  const src = { ...seed, ...stored, _prov: Object.keys(stored).length ? 'user' : 'seed' };
+  return { src, setSrc:(p)=>{ patch({ sourcing:{ [part]:{ ...stored, ...p } } }); markStale('sourcing'); } };
+}
+// effLandedCost(rawCost, src): quoted cost → landed cost the MILP plans against.
+function effLandedCost(rawCost, src){
+  const pct = Number(src && src.dutyFreightPct) || 0;
+  return Math.round(Number(rawCost||0) * (1 + pct/100) * 100) / 100;
+}
+// freightSteps(qty, src): the stepwise inbound-freight lot. Returns the truck count,
+// total freight, amortised per-unit freight, and where the NEXT truck tips in — so
+// the UI can show "one more unit ⇒ a whole extra truck" honestly.
+function freightSteps(qty, src){
+  const cap = Math.max(1, Number(src && src.unitsPerTruck) || 1);
+  const per = Number(src && src.costPerTruck) || 0;
+  const q = Math.max(0, Number(qty) || 0);
+  const trucks = q > 0 ? Math.ceil(q / cap) : 0;
+  const cost = trucks * per;
+  return { trucks, cost, perUnit: q > 0 ? cost / q : 0,
+    cap, costPerTruck: per, fillPct: trucks > 0 ? (q / (trucks * cap)) * 100 : 0,
+    nextStepAt: trucks * cap + 1, marginalTruck: per };
+}
 // bomParts(periodDays): map mock `M.bom` rows → the procurement solver's part
 // schema (one shared illustrative BOM — documented limitation). Reused by Sourcing
 // + Console. Lead time on `M.bom` is in DAYS; the solver counts in PERIODS, so we
@@ -300,7 +367,9 @@ function msmeTier(investmentCr, annualTurnoverCr){
 // bom (shared parts). A solveKey may also depend on ANOTHER solve (montecarlo
 // chains off the committed procurement plan) — staleness then cascades.
 const SOLVE_DEPS = {
-  procurement: ['demand','network','productCosts','planning','bom','config'],
+  procurement: ['demand','network','productCosts','planning','bom','config','sourcing'],
+  policy:      ['demand','network','productCosts','planning','bom','config','sourcing'],  // (s,S)/(R,Q) autopilot
+  rolling:     ['demand','network','productCosts','planning','bom','config','sourcing'],  // rolling re-plan / nervousness
   production:  ['demand','planning','productCosts'],
   aggregate:   ['demand','planning','productCosts'],   // S&OP
   profitmix:   ['demand','productCosts','config'],
@@ -374,5 +443,6 @@ Object.assign(window, {
   getNetwork, useNetwork, msmeTier,
   getItemDemand, setItemDemand, getFinishedDemand, bomParts, transportPayload,
   getDemandInputs, useDemandInputs, useHolidays,
+  sourcingDefault, getSourcing, useSourcing, effLandedCost, freightSteps,
   SOLVE_DEPS, markStale, markSolved, useStale, logEvent, getEvents, useEvents,
 });

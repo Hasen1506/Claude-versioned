@@ -103,6 +103,25 @@ def api_solve_rolling():
         results = []
         prev_plan = None
         nervousness = 0
+
+        T_base = max((len(p.get('demand', []) or []) for p in base.get('products', [])), default=0)
+
+        def _po_map(res):
+            """Flatten a procurement result to {(material, relative_period): qty}.
+            Nervousness compares each re-plan's decision for 'N periods from now'
+            against the previous re-plan's decision for the same relative horizon
+            offset — NOT absolute calendar slot. A stable rolling plan reorders at
+            the same relative offset each wave, so a same-qty order whose calendar
+            slot merely advanced with the clock reads as ZERO churn (correct), while
+            a genuine change of mind about the near-term order shows up."""
+            out = {}
+            for m in (res.get('materials') or []):
+                nm = m.get('name')
+                for po in (m.get('purchase_orders') or []):
+                    rp = int(po.get('period', 0))
+                    out[(nm, rp)] = out.get((nm, rp), 0) + float(po.get('quantity', 0) or 0)
+            return out
+
         for w in range(waves):
             # Slice demand forward by shift*w weeks — simulate time passing
             sliced = dict(base)
@@ -128,17 +147,28 @@ def api_solve_rolling():
             params['wave_index'] = w
             sliced['params'] = params
             res = solve_procurement(sliced)
-            # Measure nervousness — delta between this wave's wk-(frozen..shift) vs prev plan's
+            # Measure nervousness — re-planning churn over the STILL-OPEN, OVERLAPPING
+            # window. The frozen front [0, frozen) is committed, so changes there aren't
+            # churn. The overlap of two consecutive horizons (relative offset < T - shift)
+            # is the region both re-plans have an opinion about; beyond it the later wave
+            # is first-planning newly-revealed tail, not re-planning. Union the keys in
+            # that band (a PO that appears/disappears counts as churn against 0).
+            wave_offset = w * shift
+            wave_nervousness = 0
             if prev_plan and not res.get('error'):
-                prev_po = prev_plan.get('procurement_schedule', [])
-                curr_po = res.get('procurement_schedule', [])
-                prev_map = {(po.get('week'), po.get('part')): po.get('qty', 0) for po in prev_po}
-                for po in curr_po:
-                    key = (po.get('week'), po.get('part'))
-                    if key in prev_map:
-                        nervousness += abs(po.get('qty', 0) - prev_map[key])
-            results.append({'wave': w, 'shift_weeks': w * shift, 'total_cost': res.get('total_cost', 0),
-                            'solve_time': res.get('solve_time', 0), 'error': res.get('error')})
+                prev_map = _po_map(prev_plan)
+                curr_map = _po_map(res)
+                hi = max(T_base - shift, frozen)   # overlap upper bound on relative offset
+                keys = set(prev_map) | set(curr_map)
+                for key in keys:
+                    nm, rp = key
+                    if rp < frozen or rp >= hi:
+                        continue
+                    wave_nervousness += abs(curr_map.get(key, 0) - prev_map.get(key, 0))
+                nervousness += wave_nervousness
+            results.append({'wave': w, 'shift_weeks': wave_offset, 'total_cost': res.get('total_cost', 0),
+                            'solve_time': res.get('solve_time', 0), 'error': res.get('error'),
+                            'wave_nervousness': round(wave_nervousness, 1)})
             prev_plan = res
         return jsonify({'waves': results, 'nervousness': nervousness,
                         'final_plan': prev_plan, 'frozen_weeks': frozen, 'shift_weeks': shift})
