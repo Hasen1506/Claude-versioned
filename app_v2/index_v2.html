@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en" data-theme="mono">
+<head>
+<meta charset="utf-8"/>
+<title>Enterprise Simulator v2 — Supply-Chain OS</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ── THEME TOKENS (never hard-code hex, use the vars) ─────── */
+  :root{
+    --disp:'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    --body:'Inter', system-ui, sans-serif;
+    --mono:'JetBrains Mono', ui-monospace, monospace;
+    --r:0px; /* brutalist: no radius */
+  }
+  /* MONO — light brutalist (default) */
+  html[data-theme="mono"]{
+    --bg:#f0eee9; --bg2:#ffffff; --bg3:#f2f1ec; --bg4:#e7e5df;
+    --br:#0a0a0a; --br2:#d4d4d0;
+    --ink:#0a0a0a; --tx:#0a0a0a; --tx2:#3a3a3a; --tx3:#8a8a8a;
+    --paper:#ffffff; --card:#f2f1ec;
+    --ac:#ffd60a; --ac2:#f5c400;
+    --a2:#1a3a8a; --a3:#6b3fa0; --a4:#c77d12;
+    --gn:#1f7a3f; --dg:#d6392b; --hl:#ffd60a; --hl2:#1a3a8a;
+    --onAc:#0a0a0a;
+  }
+  /* NOIR — dark brutalist */
+  html[data-theme="noir"]{
+    --bg:#0b0b0c; --bg2:#161617; --bg3:#1e1e20; --bg4:#262629;
+    --br:#f2f2ec; --br2:#34343a;
+    --ink:#f2f2ec; --tx:#f2f2ec; --tx2:#bdbdb6; --tx3:#76766f;
+    --paper:#161617; --card:#1e1e20;
+    --ac:#ffd60a; --ac2:#e6c200;
+    --a2:#5a8af0; --a3:#a98bff; --a4:#e0a23c;
+    --gn:#45c46e; --dg:#ff5a47; --hl:#ffd60a; --hl2:#5a8af0;
+    --onAc:#0a0a0a;
+  }
+  /* SEPIA — warm paper print */
+  html[data-theme="sepia"]{
+    --bg:#e9dfca; --bg2:#f7f0e1; --bg3:#efe6d2; --bg4:#e3d8bf;
+    --br:#2a2118; --br2:#cbbb9c;
+    --ink:#2a2118; --tx:#2a2118; --tx2:#5a4d39; --tx3:#94856a;
+    --paper:#f7f0e1; --card:#efe6d2;
+    --ac:#e8a712; --ac2:#cf9410;
+    --a2:#3a5a8a; --a3:#7a4a8a; --a4:#b8732a;
+    --gn:#4a6b34; --dg:#b8412f; --hl:#e8a712; --hl2:#3a5a8a;
+    --onAc:#2a2118;
+  }
+
+  html,body{margin:0;padding:0;background:var(--bg);font-family:var(--body);color:var(--tx);}
+  *{box-sizing:border-box;}
+  #root{width:100vw;min-height:100vh;}
+  ::-webkit-scrollbar{width:10px;height:10px;}
+  ::-webkit-scrollbar-track{background:var(--bg3);}
+  ::-webkit-scrollbar-thumb{background:var(--tx3);border:2px solid var(--bg3);}
+  .num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum";}
+  @keyframes ein{from{transform:translateY(6px);}to{transform:none;}}
+  .animate-in{animation:ein .32s cubic-bezier(.2,.7,.2,1) both;}
+  button{font-family:inherit;}
+  input,select{font-family:inherit;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+
+<!-- foundation -->
+<script type="text/babel" data-presets="react" src="lib.jsx"></script>
+<script type="text/babel" data-presets="react" src="store.jsx"></script>
+<script type="text/babel" data-presets="react" src="data.jsx"></script>
+<!-- stages -->
+<script type="text/babel" data-presets="react" src="home.jsx"></script>
+<script type="text/babel" data-presets="react" src="setup.jsx"></script>
+<script type="text/babel" data-presets="react" src="products.jsx"></script>
+<script type="text/babel" data-presets="react" src="network.jsx"></script>
+<script type="text/babel" data-presets="react" src="demand.jsx"></script>
+<script type="text/babel" data-presets="react" src="plan.jsx"></script>
+<script type="text/babel" data-presets="react" src="production.jsx"></script>
+<script type="text/babel" data-presets="react" src="sourcing.jsx"></script>
+<script type="text/babel" data-presets="react" src="logistics.jsx"></script>
+<script type="text/babel" data-presets="react" src="finance.jsx"></script>
+<script type="text/babel" data-presets="react" src="console.jsx"></script>
+<script type="text/babel" data-presets="react" src="scenarios.jsx"></script>
+<script type="text/babel" data-presets="react" src="reference.jsx"></script>
+<!-- chrome + mount -->
+<script type="text/babel" data-presets="react" src="chrome.jsx"></script>
+<script type="text/babel" data-presets="react" src="main.jsx"></script>
+</body>
+</html>
