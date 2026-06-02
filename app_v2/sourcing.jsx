@@ -47,6 +47,39 @@ function rollingPayload(sku, planning, serviceLevel, rp){
   return { n_waves: rp.waves, shift_weeks: rp.shift, frozen_weeks: rp.frozen,
     base: procurementPayload(sku, planning, serviceLevel) };
 }
+// MEIO (multi-echelon SS placement) payload — builds the RM→WIP→FG assembly graph
+// the guaranteed-service model places buffers on (meio.py). All times in DAYS (the
+// native lead-time unit), so net-replenishment τ and √τ safety stock are coherent.
+//   • RM stages   : one per BOM part, T = supplier lead (days), value = LANDED cost
+//                   (S-1 — so an expensive import correctly resists being buffered),
+//                   demand μ/σ propagated up the BOM (μ_fg·qty/yield).
+//   • WIP stage   : the assembly, T = production cycle (days), value = rolled material.
+//   • FG stage    : the demand node, T = finishing, value = full product cost, with a
+//                   GOVERNED max committed service time — the knob that lets the model
+//                   choose make-to-order (no FG buffer) over a finished buffer.
+const MEIO_DPY = 300;   // working days/yr — converts annual demand to a daily rate
+function meioPayload(sku, serviceLevel, maxServiceDays){
+  const p = (M.products||[]).find(x=>x.sku===sku) || {};
+  const bom = M.bom || [];
+  const cv = Math.max(Number(p.mape)||1, 1) / 100;        // forecast error % as demand CV proxy
+  const muFg = (Number(p.demand)||0) / MEIO_DPY;          // FG units/day
+  const sigFg = cv * muFg;
+  const yld = Number(p.yield) || 0.97;
+  const rolled = bom.reduce((s,b)=> s + b.qty * effLandedCost(b.cost, getSourcing(b.part,b)), 0);
+  const stages = [];
+  bom.forEach(b=>{
+    const src = getSourcing(b.part, b);
+    const mu = muFg * b.qty / Math.max(yld, 1e-6);
+    stages.push({ id:b.part, name:b.name, kind:'RM', lead_time:b.lt,
+      unit_cost: effLandedCost(b.cost, src), hold_pct:b.hold, mu, sigma: cv*mu, suppliers:[] });
+  });
+  stages.push({ id:'WIP', name:'Assembly WIP', kind:'WIP', lead_time:Math.max(1, Math.round(Number(p.cycle)||3)),
+    unit_cost: Math.round(rolled*100)/100, hold_pct:24, mu:muFg, sigma:sigFg, suppliers: bom.map(b=>b.part) });
+  stages.push({ id:sku, name:(p.name||sku), kind:'FG', lead_time:1,
+    unit_cost: Number(p.cost)||0, hold_pct:24, mu:muFg, sigma:sigFg,
+    max_service: Math.max(0, Math.round(Number(maxServiceDays)||0)), suppliers:['WIP'] });
+  return { stages, params:{ service_level: serviceLevel, time_unit:'days' } };
+}
 // effective service level: the user's governed override, else the 0.95 default.
 function effServiceLevel(config){
   const o = config && config.serviceLevelOverride;
@@ -93,6 +126,7 @@ function StageSourcing({ onNav }) {
         <SrcFreight proc={proc}/>
         <SrcPolicy sku={sku} planning={planning} sl={sl}/>
         <SrcRolling sku={sku} planning={planning} sl={sl}/>
+        <SrcMEIO sku={sku} sl={sl}/>
         <SrcResults proc={proc}/>
       </div>
     </div>
@@ -432,7 +466,7 @@ function SrcResults({ proc }) {
     shortages = (fg.shortages||[]).map((q,t)=>({t,q})).filter(s=>s.q>0.5);
   }
   return (
-    <StageSection step="8" title="Release & Shortages" sub="time-phased PO releases and projected stockouts">
+    <StageSection step="9" title="Release & Shortages" sub="time-phased PO releases and projected stockouts">
       <Grid cols={2}>
         <Card icon="📦" title="PO Release Plan" badge={res?`${poRows.length} POs · solved`:'time-phased'} badgeTone={res?'g':undefined}
           right={res ? <Provenance kind="solved" asOf={proc.ranAt}/> : undefined}
@@ -611,6 +645,106 @@ function SrcRolling({ sku, planning, sl }){
             </div>
             <Reading formula="nervousness = Σ_waves Σ_part |qty_wave − qty_prev|  over the open, overlapping window (frozen front excluded)"
               soWhat={`At ${nervPct.toFixed(1)}% of planned volume the plan is ${verdict.toLowerCase()}. ${nervPct<5?'The near-term order barely moves as the horizon advances — the policy and lot sizes are robust to the revealed forecast.':'The near-term order shifts materially each re-plan — widen the frozen front or revisit lot sizing to dampen the churn.'}`}/>
+          </div>
+        )}
+      </Card>
+    </StageSection>
+  );
+}
+// ════════════════════════════════════════════════════════════════════════
+// MEIO · MULTI-ECHELON SAFETY-STOCK PLACEMENT (GAP-MEIO) — where in the RM→WIP→FG
+// chain to hold ONE buffer, vs policy.py's single-echelon z·σ on every node. The
+// guaranteed-service model (meio.py) minimises total holding cost over integer
+// service times; two answers fall out: (1) decoupling points = the stages that
+// actually hold safety stock; (2) an FG with net-replenishment 0 is MAKE-TO-ORDER
+// — no finished buffer, exactly the "expensive item we never stock" case. The
+// committed-service knob is the lever: a longer quote lets the FG go MTO and pushes
+// the buffer upstream to cheaper RM/WIP. No faking — if the FG is MTO we show the
+// honest "no FG buffer" state, not a fabricated finished safety stock.
+// ════════════════════════════════════════════════════════════════════════
+function SrcMEIO({ sku, sl }){
+  const [maxSvc, setMaxSvc] = useState(7);   // governed committed service time (days)
+  const meio = useSolve('/api/solve/meio', ()=>meioPayload(sku, sl, maxSvc));
+  const { stale } = useStale('meio');
+  const run = ()=> meio.run().then(d=>{ markSolved('meio'); return d; }).catch(()=>{});
+  const res = meio.result;
+  const stages = res ? (res.stages||[]) : [];
+  const fg = stages.find(s=>s.kind==='FG');
+  const mto = fg && fg.mode==='make-to-order';
+  const fmt = n=> Math.round(n).toLocaleString('en-IN');
+  const buffers = res ? (res.decoupling_points||[]) : [];
+  const roleTone = s=> s.is_decoupling_point ? (s.kind==='FG'?C.dg:C.ac) : C.tx3;
+  return (
+    <StageSection step="8" title="Multi-Echelon SS Placement (MEIO)" sub="across RM → WIP → FG: where to hold ONE buffer — and which finished goods are make-to-order (no FG stock at all)">
+      <Card icon="🎯" title="Decoupling-point placement" badge={res?(mto?'FG make-to-order':`${buffers.length} buffer node${buffers.length===1?'':'s'}`):'place the buffer'} badgeTone={res?(mto?'k':'g'):undefined}
+        right={res ? <Provenance kind="solved" asOf={meio.ranAt}/> : undefined}
+        info={{ what:'Guaranteed-service MEIO places safety stock at the cheapest decoupling point in the RM→WIP→FG chain, not z·σ at every node. A longer committed service time lets the FG go make-to-order (no finished buffer) and pushes the buffer upstream.', flows:'meio.py ← BOM echelon graph (landed RM cost, rolled WIP, full FG cost) × committed service.' }}
+        dev={{ comp:'SrcMEIO', props:'solve.meio.stages, decoupling_points', state:'maxSvc (committed service days)' }}>
+        <Grid cols={3}>
+          <Field label="Committed service (days)" hint="lead time you quote the customer — longer ⇒ FG can go make-to-order">
+            <input type="number" value={maxSvc} min={0} max={60} onChange={e=>setMaxSvc(Math.max(0, Math.min(60, Number(e.target.value)||0)))}
+              style={{ width:64, fontFamily:F.mono, fontSize:11, textAlign:'right', padding:'3px 5px', border:`1px solid ${C.line}`, background:C.paper, color:C.tx }}/>
+          </Field>
+          <Field label="Service level (α)" hint="from the solver-parameters card above"><div style={{fontFamily:F.mono, fontSize:13, fontWeight:700, paddingTop:3}}>{sl}</div></Field>
+          <Field label=" " hint=" "><Btn kind="accent" sm onClick={run}>{meio.solving?'⏳ Placing…':'🎯 Place buffers'}</Btn></Field>
+        </Grid>
+        {stale && res && <div style={{margin:'8px 0'}}><StaleMark since="(sourcing or demand changed)" onNav={run} go="re-place"/></div>}
+        {meio.error && <div style={{margin:'8px 0', padding:'7px 11px', border:`2px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>MEIO error: {meio.error}</div>}
+        {!res ? (
+          <div style={{marginTop:10, padding:'12px', border:`2px dashed ${C.line}`, fontFamily:F.mono, fontSize:11, color:C.tx3}}>
+            Place the buffer across the echelon. The model decides which stages hold safety stock (decoupling points) and whether this finished good is worth stocking or better made-to-order — single-echelon policy.py can't see this.
+          </div>
+        ) : (
+          <div style={{marginTop:12}}>
+            {/* FG verdict — the make-to-order vs make-to-stock answer the planner asked for */}
+            <div style={{border:`2px solid ${C.line}`, borderLeft:`5px solid ${mto?C.dg:C.gn}`, background:C.bg3, padding:'10px 12px', marginBottom:12}}>
+              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                <span style={{fontFamily:F.disp, fontWeight:800, fontSize:13}}>{fg ? fg.name : sku} → <span style={{color:mto?C.dg:C.gn}}>{mto?'MAKE-TO-ORDER':'MAKE-TO-STOCK'}</span></span>
+                <Tag c={mto?'r':'g'}>{mto?'no FG buffer':`FG buffer ${fmt(fg?fg.safety_stock:0)} u`}</Tag>
+              </div>
+              <div style={{fontFamily:F.mono, fontSize:10, color:C.tx3, marginTop:5, lineHeight:1.6}}>
+                {mto
+                  ? `Holding finished value (₹${fmt(fg?fg.unit_cost:0)}/u) is dearer than quoting your ${maxSvc}-day lead — the model holds NO finished safety stock and decouples upstream at ${buffers.join(', ')||'no node'}. Build on the order.`
+                  : `The ${maxSvc}-day quote is too tight to absorb upstream lead, so the FG must serve from a finished buffer of ${fmt(fg?fg.safety_stock:0)} u. Lengthen the committed service to push the buffer upstream and free the finished capital.`}
+              </div>
+            </div>
+            {/* per-stage echelon table, RM → WIP → FG */}
+            <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
+              <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10.5}}>
+                <thead><tr style={{background:C.ink}}>
+                  {['Stage','Ech','Lead d','In-svc','Out-svc','Net repl τ','Unit ₹','Safety','SS value ₹','Hold ₹/yr','Role'].map((h,i)=>(
+                    <th key={i} style={{color:C.paper, textAlign:i<2?'left':'right', padding:'6px 8px', fontSize:8.5, textTransform:'uppercase'}}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {stages.map((s,i)=>(
+                    <tr key={i} style={{borderTop:`1px solid ${C.line2}`, background: s.is_decoupling_point?C.bg3:C.paper}}>
+                      <td style={{padding:'5px 8px', fontWeight:700}}>{s.name}</td>
+                      <td style={{padding:'5px 8px'}}><Tag c={s.kind==='FG'?'a':s.kind==='WIP'?'b':'w'}>{s.kind}</Tag></td>
+                      <td style={{padding:'5px 8px', textAlign:'right', color:C.tx2}}>{s.processing_time}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right', color:C.tx3}}>{s.inbound_service}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right', color:C.tx3}}>{s.outbound_service}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right', fontWeight:700, color: s.net_replenishment>0?C.tx:C.tx3}}>{s.net_replenishment}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right', color:C.tx2}}>₹{fmt(s.unit_cost)}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right', fontWeight:700}}>{s.safety_stock>0?fmt(s.safety_stock):'·'}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right', color:C.tx2}}>{s.safety_stock_value>0?`₹${fmt(s.safety_stock_value)}`:'·'}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right', color:C.tx2}}>{s.annual_holding_cost>0?`₹${fmt(s.annual_holding_cost)}`:'·'}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right'}}><span style={{fontWeight:700, fontSize:9, color:roleTone(s)}}>{s.is_decoupling_point?'● BUFFER':'○ flow'}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{display:'flex', gap:8, marginTop:12}}>
+              <Blk label="Buffer nodes" value={`${buffers.length}`} sub={`of ${stages.length} stages`} tone="y"/>
+              <Blk label="Total SS holding" value={`₹${fmt(res.total_holding_cost)}`} sub="per year, all echelons" accent={C.dg}/>
+              <Blk label="SS capital" value={`₹${fmt(res.total_safety_stock_value)}`} sub="value tied in buffers" tone="k"/>
+              <Blk label="Service level" value={`${(res.service_level*100).toFixed(1)}%`} sub={`z = ${res.z}`} tone="c"/>
+            </div>
+            <Reading formula="τ_j = SI_j + T_j − S_j   ·   ss_j = z·σ_j·√τ_j   ·   min Σ_j h_j·ss_j   (h rises RM→WIP→FG, so the buffer seeks the cheapest node)"
+              soWhat={mto
+                ? `At a ${maxSvc}-day quote the model makes ${fg?fg.name:sku} to order — zero finished buffer — and holds only ₹${fmt(res.total_holding_cost)}/yr of cheap upstream stock at ${buffers.join(', ')||'no node'}. This is the multi-echelon answer single-echelon policy can't give: it would have prescribed a finished buffer you'd never want.`
+                : `The buffer sits at ${buffers.join(', ')||'no node'} for ₹${fmt(res.total_holding_cost)}/yr. Lengthen the committed service time to let the FG go make-to-order and shift capital to cheaper upstream inventory; shorten it to serve faster off a finished buffer.`}/>
           </div>
         )}
       </Card>

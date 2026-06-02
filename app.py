@@ -35,6 +35,7 @@ from solvers.aggregate import solve_aggregate
 from solvers.cvar import solve_cvar
 from solvers.reconcile import run_sop_pipeline
 from solvers.policy import derive_policies
+from solvers.meio import solve_meio
 from solvers.capital_capacity import solve_capital_capacity
 from solvers.sequencing import evaluate_line as sequence_evaluate_line
 from solvers.transport import consolidate_shipments, MODE_SPECS as TRANSPORT_MODE_SPECS
@@ -631,6 +632,19 @@ def api_solve_policy():
     payload. The operational output planners actually run, vs. a frozen PO schedule."""
     try:
         return jsonify(derive_policies(request.json or {}))
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+# ─── Multi-echelon safety-stock placement (GAP-MEIO) ───
+@app.route('/api/solve/meio', methods=['POST'])
+def api_solve_meio():
+    """Place ONE safety-stock buffer at the right node of the RM→WIP→FG chain
+    (Graves–Willems guaranteed-service MEIO). Decides decoupling points and surfaces
+    make-to-order finished goods (no FG buffer) — the multi-echelon answer that
+    single-echelon policy.py cannot give."""
+    try:
+        return jsonify(solve_meio(request.json or {}))
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 

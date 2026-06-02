@@ -47,7 +47,7 @@ executable, dependency-ordered, benchmark-anchored plan — so no topic is re-re
 |---|---|---|---|---|
 | Demand | **L1−** | **L4** | far | A1,A3,A5,A6,A8,H3 |
 | Supply/Procurement | **L1−** | **L4** | far | B1,F4,H2 |
-| Inventory | **L0–L1** | **L4** | very far (needs new MEIO module) | H5,H6,H7,EOQ |
+| Inventory | **L2** (was L0–L1) | **L4** | closing — S-3 policy autopilot + **GAP-MEIO module shipped** (RM→WIP→FG placement, MTO/MTS); remaining: pooling, multi-product shared-part network | H5,H6,H7,EOQ |
 | Plan/S&OP | **L1** | **L4** | medium | E1,E2,E3,E4 |
 | Production | **L0–L1** | **L4** | far | E5,E6,E7,C2 |
 | Logistics | **L1** | **L4** | medium | B2,C4 |
@@ -278,6 +278,13 @@ preset react); endpoints verified live.
 - `S-4` Rolling re-plan + nervousness — Files: app.py (rolling endpoint wiring fix), sourcing.jsx (`SrcRolling`), `rollingPayload`. **Backend fix:** the endpoint read `procurement_schedule`/`po.week` which the solver never emits → nervousness was structurally always 0; rewrote to read `materials[].purchase_orders[]` and measure relative-period churn over the open, overlapping window (frozen front excluded). UI: governed waves/shift/frozen, per-wave + total nervousness, STABLE/MODERATE/NERVOUS verdict vs plan volume. Verified: 0 on the stable smooth series, ~5.5× higher on spiky demand. Status: ✅
 
 **W2 acceptance (all met):** ✅ procurement objective includes landed cost (billet 228→255.36, total +₹41K); ✅ freight is stepwise — an order over one truck shows the next-truck cost and cliff; ✅ steady parts show an (s,S)/(R,Q) autopilot, EOQ absent from lumpy/MILP-only parts; ✅ rolling re-plan shows real nervousness (non-zero on churny demand, honestly 0 when stable). Files touched: `app.py` (rolling wiring), `store.jsx` (sourcing slice + helpers), `sourcing.jsx` — all jsx transform clean; all four endpoints verified live with the exact UI payloads.
+
+### §5 · GAP-MEIO — Multi-echelon SS placement (RM→WIP→FG) ✅ SHIPPED 2026-06-02
+**Trigger:** user flagged that policy.py is single-echelon — it prescribes a finished-goods buffer even for expensive items that should be **make-to-order** (a fabricated number ⇒ No-Faking violation). User chose the *full MEIO module* over a quick UI gate. New module (explicitly allowed by the constraint; existing solver logic untouched).
+- **Solver** `meio.py` — Graves–Willems **guaranteed-service model** over an assembly tree, as an **exact MILP** (PuLP/CBC, house style). Net-replenishment τ_j = SI_j + T_j − S_j; ss_j = z·σ_j·√τ_j; min Σ h_j·ss_j over integer service times. √τ linearised exactly via one-hot τ selectors (τ integer by construction — no approximation). Holding cost h_j uses **cumulative** unit value (RM landed < WIP rolled < FG full), so the buffer seeks the cheapest node. Outputs per-stage role (BUFFER vs flow), decoupling points, and `make_to_order_fg`.
+- **Endpoint** `/api/solve/meio` (app.py, thin glue) + `solvers.meio` import.
+- **UI** `SrcMEIO` (sourcing.jsx step 8) + `meioPayload` (RM stages w/ landed cost & BOM-propagated μ/σ → WIP → FG w/ governed committed-service knob); store.jsx `SOLVE_DEPS.meio`. Shows the MTO/MTS verdict, the per-echelon placement table, total holding + SS capital; **honest "no FG buffer" state** when MTO (never a fabricated finished safety stock).
+- **Verified live (exact UI payload):** behaviour emerges from the optimisation, not a rule — at a 0-day quote the FG is forced make-to-stock (holds a finished buffer); lengthen the committed service and the FG flips to **make-to-order** and the buffer is pushed **upstream to cheap RM**; the expensive TPA-7722 (₹2050) decouples *further upstream* and ties up *less* finished capital (₹603) than the cheaper bearing (₹1139) at the same service. All jsx transform clean; meio.py/app.py parse clean. Status: ✅
 
 > **Next wave = W3 (Production truth → L2):** PR-1 wire `/api/solve/production` → real per-line Gantt
 > (per-SKU filter from `gantt[]`), PR-2 calendar-aware MPS (use `plant_calendar`, exclude Sundays/holidays,

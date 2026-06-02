@@ -370,6 +370,7 @@ const SOLVE_DEPS = {
   procurement: ['demand','network','productCosts','planning','bom','config','sourcing'],
   policy:      ['demand','network','productCosts','planning','bom','config','sourcing'],  // (s,S)/(R,Q) autopilot
   rolling:     ['demand','network','productCosts','planning','bom','config','sourcing'],  // rolling re-plan / nervousness
+  meio:        ['demand','productCosts','planning','bom','config','sourcing'],            // multi-echelon SS placement (RM→WIP→FG)
   production:  ['demand','planning','productCosts'],
   aggregate:   ['demand','planning','productCosts'],   // S&OP
   profitmix:   ['demand','productCosts','config'],
