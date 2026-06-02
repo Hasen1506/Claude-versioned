@@ -790,12 +790,8 @@ def api_ai_insights():
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
-
 # ─── Working Calendar ───
-from solvers.calendar import build_calendar
+from solvers.plant_calendar import build_calendar
 
 @app.route('/api/calc/calendar', methods=['POST'])
 def api_calendar():
@@ -816,3 +812,11 @@ def api_calendar():
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# Must stay LAST: app.run() blocks, so any @app.route defined below it never
+# registers when launched via `python app.py`. (Was previously below this guard,
+# which silently disabled /api/calc/calendar.)
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
