@@ -4,11 +4,25 @@
 // day inside the frozen fence). ATP/CTP & changeover interpreted inline.
 // Now OWNS Cycle Time & Line Assignment (moved out of Products).
 // ════════════════════════════════════════════════════════════════════════
+// W3 — effective governed value: the user's override, else the seed (matches the
+// service-level pattern — a seed is always the effective default until overridden).
+const _eff = (v, seed)=> (v!=null && v!=='') ? Number(v) : seed;
+
 function StageProduction({ onNav }) {
   const { item } = useActiveItem();
+  const { planning } = usePlanning();
+  const { config, setConfig } = useConfig();
   const p = M.products.find(x=>x.sku===(item&&item.id)) || M.products[0];
   // sub-tabbed to tame density — this was the busiest single-scroll stage
   const [sub, setSub] = useState('arch');
+  // W3 · PR-1 — the schedule subtab now runs the REAL production MILP (was a
+  // hand-synthesised grid). The labor rate + shutdown threshold are governed
+  // seeds (SolverInput) that price overtime and the idle-week shutdown heuristic.
+  const laborRate  = _eff(config.prodLaborRate, 120);
+  const shutdownPct = _eff(config.prodShutdownPct, 25);
+  const prod = useSolve('/api/solve/production', ()=>productionPayload(planning, { laborRate, shutdownPct }));
+  const { stale, ranAt } = useStale('production');
+  const runProd = ()=> prod.run().then(d=>{ markSolved('production'); return d; }).catch(()=>{});
   const tabs = [
     { id:'arch',   label:'Architecture' },
     { id:'cycle',  label:'Cycle & Line' },
@@ -18,19 +32,48 @@ function StageProduction({ onNav }) {
   return (
     <div>
       <StageHeader n="06" title="Production Architecture" kicker="Lines → stages → machines · OEE · bottleneck = min(stage) · cycle/line · MPS(day) · order promising"
-        right={<Btn kind="secondary">+ Add line</Btn>}/>
+        right={<Btn kind="accent" onClick={runProd}>{prod.solving?'⏳ Scheduling…':'⚡ Run schedule'}</Btn>}/>
       <ItemSelector/>
       <SubTabNav tabs={tabs} active={sub} onChange={setSub}/>
       <div style={{padding:18}}>
+        {prod.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Production MILP: {prod.error}</div>}
         {sub==='arch'   && <StageSection step="1" title="Architecture" sub="line → stage → machine tree · the slowest stage caps the line"><ProdArch/></StageSection>}
-        {sub==='cycle'  && <StageSection step="2" title={`Cycle & Line · ${p.name}`} sub="cycle time and line assignment are line properties (moved here from Products)"><ProdCycle p={p} onNav={onNav}/></StageSection>}
+        {sub==='cycle'  && <StageSection step="2" title={`Cycle & Line · ${p.name}`} sub="cycle time and line assignment are line properties (moved here from Products)"><ProdCycle p={p} prod={prod} onNav={onNav}/></StageSection>}
         {sub==='sched'  && <>
-          <StageSection step="3" title="Master Production Schedule" sub="day-level inside the frozen fence, week beyond — a planner reads this by day"><ProdMPS/></StageSection>
-          <StageSection step="4" title="Order Promising · ATP / CTP" sub="what you can still promise, read inline"><ProdATP/></StageSection>
+          <StageSection step="0" title="Solver Parameters" sub="governed inputs — seed defaults you may override; the rate prices overtime and shutdown savings">
+            <ProdParams config={config} setConfig={setConfig} prod={prod} ranAt={ranAt}/>
+          </StageSection>
+          {stale && <StaleMark since="(demand or cost inputs changed)" onNav={()=>runProd()} go="rerun"/>}
+          <StageSection step="3" title="Master Production Schedule" sub="time-phased quantities from the production MILP — weekly, with a calendar-aware day drill inside the frozen fence"><ProdMPS prod={prod} planning={planning} item={item} runProd={runProd}/></StageSection>
+          <StageSection step="4" title="Order Promising · ATP / CTP" sub="uncommitted supply = solved production − committed demand, carried period to period"><ProdATP prod={prod} planning={planning}/></StageSection>
+          <StageSection step="5" title="Capacity Loading & Shutdown" sub="per-line utilization, overtime and idle-week shutdown candidates from the solve"><ProdCapacity prod={prod} rateIsSeed={config.prodLaborRate==null||config.prodLaborRate===''} laborRate={laborRate}/></StageSection>
         </>}
-        {sub==='change' && <StageSection step="5" title="Sequence-Dependent Changeover" sub="the matrix, plus the solver's chosen run order and the minutes it saves"><ProdChange/></StageSection>}
+        {sub==='change' && <StageSection step="6" title="Sequence-Dependent Changeover" sub="the matrix, plus the solver's chosen run order and the minutes it saves"><ProdChange/></StageSection>}
       </div>
     </div>
+  );
+}
+
+// W3 · PR-1/PR-6 — governed production-MILP inputs. The labor rate is a SEED
+// (EXTERNAL·seed badge until overridden, D-DEC-1) that prices OT + shutdown
+// savings; the shutdown threshold sets the utilization floor for a candidate.
+function ProdParams({ config, setConfig, prod, ranAt }){
+  return (
+    <Card icon="🎛️" title="Production MILP inputs" badge="governed" badgeTone="y"
+      right={prod && prod.result ? <Provenance kind="solved" asOf={ranAt?ranAt.toLocaleTimeString():undefined}/> : null}
+      info={{ what:'Line labor rate prices overtime and idle-week shutdown savings; the threshold sets the utilization below which an idle run is a shutdown candidate. Both are seeds you may override.', flows:'→ production MILP labor_cost_mode + shutdown heuristic.' }}
+      dev={{ comp:'SolverInput', props:'config.prodLaborRate, config.prodShutdownPct', state:'config.{prodLaborRate,prodShutdownPct}' }}>
+      <Grid cols={3}>
+        <SolverInput label="Line labor rate" seed={120} value={config.prodLaborRate}
+          onChange={v=>setConfig({ prodLaborRate:v })} min={0} suffix="₹/hr"
+          hint="prices OT + shutdown savings"/>
+        <SolverInput label="Shutdown threshold" seed={25} value={config.prodShutdownPct}
+          onChange={v=>setConfig({ prodShutdownPct:v })} min={0} max={100} suffix="% util"
+          hint="idle runs below this are candidates"/>
+      </Grid>
+      <Reading formula="OT cost = workers × hrs × rate × 1.5   ·   shutdown net = wage saved over an idle run − one-off rehire"
+        soWhat="The rate is seeded — enter your real ₹/hr and re-run; the overtime bill and shutdown savings below move with it. Workers/line come from the bottleneck stage's machine count."/>
+    </Card>
   );
 }
 
@@ -98,17 +141,31 @@ function ProdArch() {
   );
 }
 
-function ProdCycle({ p, onNav }) {
-  const [capMode, setCapMode] = useState('oee');
+function ProdCycle({ p, prod, onNav }) {
+  // PR-5 — flat rate (rate x run-hours) is the SIMPLE default; the OEE
+  // decomposition is opt-in behind "Advanced" for shops that measure the losses.
+  const [advanced, setAdvanced] = useState(false);
+  const capMode = advanced ? 'oee' : 'flat';
   const flatRate = (60/p.cycle).toFixed(1);
   const effRate = (60/p.cycle*p.oee).toFixed(1);
+  // Line-load preview reads the REAL solve: this SKU's assigned line, util/week
+  // = sum(scheduled units on the line) / weekly capacity (cap / 4.33).
+  const line = M.lines.find(l=>l.id===p.line);
+  const wkCap = line ? line.cap/4.33 : 0;
+  const res = prod && prod.result;
+  let load = null;
+  if(res && res.gantt && line){
+    const T = res.periods||0; const per = Array(T).fill(0);
+    res.gantt.filter(g=>g.line===line.name).forEach(g=>{ per[g.period]+=g.quantity; });
+    load = per.map(q=> wkCap ? Math.round(q/wkCap*100) : 0);
+  }
   return (
     <Grid cols={2}>
       <Card icon="🏭" title="Cycle Time & Line Assignment" badge={p.line} info={{ what:'Per-SKU cycle time + line assignment (a line property, owned here).', flows:'Cycle/line → production MILP & MPS.' }}
         dev={{ comp:'CycleEditor', props:'prod.cycle, prod.line, capMode', state:'products[id].{cycle,line,capMode}', note:'OEE is OPTIONAL — flat rate (rate×hours) is allowed for shops that don\u2019t track OEE.' }}
-        right={<div style={{display:'flex', border:`2px solid ${C.line}`, marginRight:8}}>
-          {[['oee','OEE'],['flat','FLAT']].map(([v,l],i)=><button key={v} onClick={()=>setCapMode(v)} style={{fontFamily:F.mono, fontSize:9, fontWeight:700, padding:'3px 9px', border:'none', borderRight:i===0?`2px solid ${C.line}`:'none', cursor:'pointer', background:capMode===v?C.ac:C.paper, color:capMode===v?C.onAc:C.tx}}>{l}</button>)}
-        </div>}>
+        right={<label style={{display:'flex', alignItems:'center', gap:5, marginRight:8, fontFamily:F.mono, fontSize:9, fontWeight:700, color:C.tx2, cursor:'pointer'}}>
+          <input type="checkbox" checked={advanced} onChange={e=>setAdvanced(e.target.checked)}/>ADVANCED · OEE
+        </label>}>
         <Grid cols={2} gap={8}>
           <Field label="Cycle Time"><NumInput value={p.cycle} suffix="min/u"/></Field>
           <Field label="Assigned Line"><Select value={p.line} options={['LINE-01','LINE-02','LINE-03']}/></Field>
@@ -124,92 +181,213 @@ function ProdCycle({ p, onNav }) {
           : <Reading formula={`flat capacity = ${flatRate} u/hr × run hours (no OEE decomposition)`}
               soWhat="If you don\u2019t track OEE, a flat rate × hours is a valid capacity input — the MILP doesn\u2019t require the decomposition."/>}
       </Card>
-      <Card icon="📅" title="Line Load Preview" badge="this SKU" info={{ what:'Where this SKU sits on its assigned line.', flows:'Shared with the schedule.' }}
-        dev={{ comp:'LineLoadMini', props:'prod.line' }}>
-        <div style={{display:'flex', flexDirection:'column', gap:6}}>
-          {M.periods.slice(0,6).map((wk,i)=>(
-            <div key={i} style={{display:'flex', alignItems:'center', gap:8}}>
-              <span style={{fontFamily:F.mono, fontSize:10, width:42, color:C.tx2}}>{wk.label}</span>
-              <MiniBar v={[60,72,68,80,55,64][i]} max={100} color={C.ink} h={12}/>
-              <span className="num" style={{fontFamily:F.mono, fontSize:10, width:36, textAlign:'right'}}>{[60,72,68,80,55,64][i]}%</span>
-            </div>
-          ))}
-        </div>
+      <Card icon="📅" title="Line Load Preview" badge={line?line.name:'—'} info={{ what:'Where this SKU’s line sits on the solved schedule — weekly utilization from the MILP.', flows:'Shared with the schedule + capacity panel.' }}
+        right={res ? <Provenance kind="solved"/> : null}
+        dev={{ comp:'LineLoadMini', props:'prod.result.gantt, line.cap' }}>
+        {load ? (
+          <div style={{display:'flex', flexDirection:'column', gap:6}}>
+            {M.periods.slice(0,8).map((wk,i)=> i<load.length ? (
+              <div key={i} style={{display:'flex', alignItems:'center', gap:8}}>
+                <span style={{fontFamily:F.mono, fontSize:10, width:42, color:C.tx2}}>{wk.label}</span>
+                <MiniBar v={load[i]} max={100} color={load[i]>95?C.dg:C.ink} h={12}/>
+                <span className="num" style={{fontFamily:F.mono, fontSize:10, width:36, textAlign:'right', color:load[i]>95?C.dg:C.tx}}>{load[i]}%</span>
+              </div>
+            ) : null)}
+            <div style={{marginTop:4, fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>util = sum(units on {line&&line.name}) / {Math.round(wkCap).toLocaleString('en-IN')} u/wk</div>
+          </div>
+        ) : (
+          <div style={{padding:'18px 12px', textAlign:'center', fontFamily:F.mono, fontSize:10, color:C.tx3, border:`2px dashed ${C.line2}`}}>Run the schedule (⚡ above) to see this line’s solved weekly load.</div>
+        )}
       </Card>
     </Grid>
   );
 }
 
-function ProdMPS() {
-  const [grain, setGrain] = useState('day');
-  const wks = M.periods.slice(0,8);
-  // synthesize a daily view of the first 2 weeks (frozen fence) — 10 working days
-  const days = Array.from({length:10},(_,i)=>({ d:i, label:'D'+(i+1), wk:Math.floor(i/5) }));
+function ProdMPS({ prod, planning, item }){
+  const [grain, setGrain] = useState('week');
+  const [scope, setScope] = useState('all');
+  const res = prod && prod.result;
+  if(!res || !res.gantt){
+    return (
+      <Card icon="📅" title="Master Production Schedule (MPS)" badge="not solved"
+        info={{ what:'Time-phased production quantities per SKU, straight from the production MILP.', flows:'MPS → MRP explosion & order promising.' }}>
+        <div style={{padding:'22px 12px', textAlign:'center', fontFamily:F.mono, fontSize:11, color:C.tx3, border:`2px dashed ${C.line2}`}}>
+          No schedule yet — press <b style={{color:C.tx}}>⚡ Run schedule</b> (top right) to solve the production MILP.<br/>The MPS, day drill, ATP and capacity panels all read its output.
+        </div>
+      </Card>
+    );
+  }
+  const T = res.periods || 0;
+  const periods = (M.periods || []).slice(0, T);
+  // per-SKU weekly quantities from the solved gantt (g.product = the SKU code we passed).
+  const bySku = {};
+  res.gantt.forEach(g=>{ (bySku[g.product] = bySku[g.product] || Array(T).fill(0))[g.period] += g.quantity; });
+  const skus = Object.keys(bySku);
+  const selSku = item && item.id;
+  const shown = (scope==='selected' && selSku && bySku[selSku]) ? [selSku] : skus;
+  // calendar-aware day drill across the frozen fence (Sundays + Indian holidays excluded).
+  const frozen = Math.max(1, Math.min(Number(planning.frozenWeeks) || 2, T));
+  const dayCols = [];   // [{wk, iso, label, dow}]
+  periods.slice(0, frozen).forEach((wk, wi)=>{
+    (window.productionWorkDays(wk.iso, planning.workDaysPerWeek) || []).forEach(d=>dayCols.push({ ...d, wk:wi }));
+  });
+  // spread a week's solved qty across its working days (even split, remainder front-loaded).
+  const spread = (total, nDays)=>{
+    if(nDays<=0) return [];
+    const base = Math.floor(total/nDays); let rem = total - base*nDays;
+    return Array.from({ length:nDays }, ()=>{ const e = rem>0?1:0; if(rem>0) rem--; return base+e; });
+  };
+  const dayQ = {};
+  shown.forEach(sku=>{
+    const arr = [];
+    for(let wi=0; wi<frozen; wi++){
+      const nd = dayCols.filter(d=>d.wk===wi).length;
+      spread(bySku[sku][wi] || 0, nd).forEach(v=>arr.push(v));
+    }
+    dayQ[sku] = arr;
+  });
+  const maxWk = Math.max(1, ...shown.flatMap(s=>bySku[s]));
   return (
-    <Card icon="📅" title="Master Production Schedule (MPS)" badge={grain==='day'?'frozen · daily':'weekly'} info={{ what:'Time-phased production quantities per SKU.', flows:'MPS → MRP explosion & order promising.' }}
-      dev={{ comp:'MPSVizCard', props:'state.production.mps, grain', state:'production.mps[sku][period]' }}
-      right={<div style={{display:'flex', border:`2px solid ${C.line}`, marginRight:8}}>
-        {['day','week'].map((g,i)=><button key={g} onClick={()=>setGrain(g)} style={{fontFamily:F.mono, fontSize:9, fontWeight:700, padding:'3px 9px', border:'none', borderRight:i===0?`2px solid ${C.line}`:'none', cursor:'pointer', background:grain===g?C.ac:C.paper, color:grain===g?C.onAc:C.tx, textTransform:'uppercase'}}>{g}</button>)}
+    <Card icon="📅" title="Master Production Schedule (MPS)" badge={grain==='day'?`frozen ${frozen}w · daily`:'weekly'}
+      info={{ what:'Time-phased production quantities per SKU, straight from the production MILP gantt.', flows:'MPS → MRP explosion & order promising.' }}
+      dev={{ comp:'MPSVizCard', props:'prod.result.gantt, grain, scope' }}
+      right={<div style={{display:'flex', gap:8, marginRight:8, alignItems:'center'}}>
+        {selSku && bySku[selSku] && <div style={{display:'flex', border:`2px solid ${C.line}`}}>
+          {[['all','ALL'],['selected',selSku.slice(4)]].map(([v,l],i)=><button key={v} onClick={()=>setScope(v)} style={{fontFamily:F.mono, fontSize:9, fontWeight:700, padding:'3px 9px', border:'none', borderRight:i===0?`2px solid ${C.line}`:'none', cursor:'pointer', background:scope===v?C.ink:C.paper, color:scope===v?C.paper:C.tx}}>{l}</button>)}
+        </div>}
+        <div style={{display:'flex', border:`2px solid ${C.line}`}}>
+          {['day','week'].map((g,i)=><button key={g} onClick={()=>setGrain(g)} style={{fontFamily:F.mono, fontSize:9, fontWeight:700, padding:'3px 9px', border:'none', borderRight:i===0?`2px solid ${C.line}`:'none', cursor:'pointer', background:grain===g?C.ac:C.paper, color:grain===g?C.onAc:C.tx, textTransform:'uppercase'}}>{g}</button>)}
+        </div>
+        <Provenance kind="solved" asOf={prod.ranAt?prod.ranAt.toLocaleTimeString():undefined}/>
       </div>}>
       <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
         <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10.5}}>
           <thead><tr style={{background:C.ink}}>
             <th style={{color:C.paper, textAlign:'left', padding:'6px 9px', fontSize:9, textTransform:'uppercase'}}>SKU</th>
             {grain==='week'
-              ? wks.map(w=><th key={w.id} style={{color:C.paper, textAlign:'right', padding:'6px 9px', fontSize:9}}>{w.label}</th>)
-              : days.map(d=><th key={d.d} style={{color:C.paper, textAlign:'right', padding:'6px 7px', fontSize:9, background:d.wk===0?'#000':C.ink}}>{d.label}</th>)}
+              ? periods.map(w=><th key={w.id} style={{color:C.paper, textAlign:'right', padding:'6px 9px', fontSize:9}}>{w.label}</th>)
+              : dayCols.map((d,i)=><th key={i} title={d.iso} style={{color:C.paper, textAlign:'right', padding:'6px 7px', fontSize:8.5, background:d.wk%2?C.ink:'#000'}}>{d.dow} {d.label.slice(0,2)}</th>)}
           </tr></thead>
           <tbody>
-            {M.mps.map((row,ri)=>(
-              <tr key={ri} style={{borderTop:`1px solid ${C.line2}`, background: ri%2?C.bg3:C.paper}}>
-                <td style={{padding:'5px 9px', fontWeight:700}}>{row.sku}</td>
+            {shown.map((sku,ri)=>(
+              <tr key={sku} style={{borderTop:`1px solid ${C.line2}`, background: ri%2?C.bg3:C.paper}}>
+                <td style={{padding:'5px 9px', fontWeight:700}}>{sku}</td>
                 {grain==='week'
-                  ? row.wk.map((q,i)=>(
-                      <td key={i} className="num" style={{textAlign:'right', padding:'5px 9px', position:'relative'}}>
-                        <span style={{position:'relative', zIndex:1}}>{q}</span>
-                        <span style={{position:'absolute', right:4, bottom:3, height:3, width:`${q/110*40}px`, background:C.ac}}/>
+                  ? bySku[sku].map((q,i)=>(
+                      <td key={i} className="num" style={{textAlign:'right', padding:'5px 9px', position:'relative', color:q?C.tx:C.tx3}}>
+                        <span style={{position:'relative', zIndex:1}}>{q||'·'}</span>
+                        {q>0 && <span style={{position:'absolute', right:4, bottom:3, height:3, width:`${q/maxWk*40}px`, background:C.ac}}/>}
                       </td>
                     ))
-                  : days.map((d,i)=>{ const wq=row.wk[d.wk]; const dq=Math.round(wq/5 + ((i%3)-1)*2);
-                      return <td key={i} className="num" style={{textAlign:'right', padding:'5px 7px', color: d.wk===0?C.tx:C.tx2}}>{dq}</td>;
-                    })}
+                  : (dayQ[sku]||[]).map((q,i)=>(
+                      <td key={i} className="num" style={{textAlign:'right', padding:'5px 7px', color: q?C.tx:C.tx3, background: dayCols[i] && dayCols[i].wk%2?'transparent':C.bg4}}>{q||'·'}</td>
+                    ))}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <Reading formula={grain==='day'?'daily qty = weekly MPS ÷ workdays (frozen fence = days)':'weekly MPS = Σ daily within bucket'}
-        soWhat={grain==='day'?'Inside the 2-week frozen fence the schedule is executable by day; beyond it, switch to weekly.':'Weekly view is for the slushy/free horizon; switch to day to release work.'}/>
+      <Reading formula={grain==='day'?"daily qty = solved weekly MPS spread across that week's working days (Sundays + Indian holidays excluded)":'weekly MPS = production MILP gantt, summed per SKU per week'}
+        soWhat={grain==='day'?`Inside the ${frozen}-week frozen fence the schedule is executable by dated working day — ${dayCols.length} real working days, holidays already removed.`:'Each cell is solved output, not a target — switch to day to release dated work inside the fence.'}/>
     </Card>
   );
 }
 
-function ProdATP() {
-  const wk=M.periods.slice(0,8);
+function ProdATP({ prod, planning }){
+  const res = prod && prod.result;
+  if(!res || !res.gantt){
+    return (
+      <Card icon="📦" title="Order Promising · ATP / CTP" badge="not solved"
+        info={{ what:'Uncommitted supply = solved production − committed demand.', flows:'ATP → quoting & MTO acceptance.' }}>
+        <div style={{padding:'18px 12px', textAlign:'center', fontFamily:F.mono, fontSize:10.5, color:C.tx3, border:`2px dashed ${C.line2}`}}>Run the schedule to derive available-to-promise from the solved MPS.</div>
+      </Card>
+    );
+  }
+  const T = res.periods || 0;
+  const periods = (M.periods || []).slice(0, T);
+  const bySku = {};
+  res.gantt.forEach(g=>{ (bySku[g.product] = bySku[g.product] || Array(T).fill(0))[g.period] += g.quantity; });
+  const skus = Object.keys(bySku);
+  // projected available balance = running cumulative(solved production − committed demand).
+  const atpRows = skus.map(sku=>{
+    const dem = finishedWeeklyDemand(sku, planning, T);
+    let bal = 0; const atp = bySku[sku].map((q,t)=>{ bal += q - (dem[t]||0); return Math.round(bal); });
+    return { sku, atp };
+  });
   return (
-    <Card icon="📦" title="Order Promising · ATP / CTP" badge="available-to-promise" info={{ what:'Uncommitted supply available to promise; CTP adds a capacity check.', flows:'ATP → quoting & MTO acceptance.' }}
-      dev={{ comp:'ATPCard', props:'state.production.mps, orders' }}>
+    <Card icon="📦" title="Order Promising · ATP / CTP" badge="available-to-promise"
+      right={<Provenance kind="derived"/>}
+      info={{ what:'Projected available balance = cumulative(solved production − committed demand). Negative ⇒ over-committed.', flows:'ATP → quoting & MTO acceptance.' }}
+      dev={{ comp:'ATPCard', props:'prod.result.gantt, finishedWeeklyDemand' }}>
       <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
         <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10.5}}>
           <thead><tr style={{background:C.ink}}>
             <th style={{color:C.paper, textAlign:'left', padding:'6px 9px', fontSize:9}}>SKU</th>
-            {wk.map(w=><th key={w.id} style={{color:C.paper, textAlign:'right', padding:'6px 9px', fontSize:9}}>{w.label}</th>)}
+            {periods.map(w=><th key={w.id} style={{color:C.paper, textAlign:'right', padding:'6px 9px', fontSize:9}}>{w.label}</th>)}
           </tr></thead>
           <tbody>
-            {M.mps.map((row,ri)=>(
-              <tr key={ri} style={{borderTop:`1px solid ${C.line2}`}}>
+            {atpRows.map((row)=>(
+              <tr key={row.sku} style={{borderTop:`1px solid ${C.line2}`}}>
                 <td style={{padding:'5px 9px', fontWeight:700}}>{row.sku}</td>
                 {row.atp.map((q,i)=>(
-                  <td key={i} className="num" style={{textAlign:'right', padding:'5px 9px', background: q===0?C.bg4: q<6?'color-mix(in srgb,var(--dg) 14%,transparent)':'color-mix(in srgb,var(--gn) 14%,transparent)', fontWeight:700, color: q===0?C.tx3:C.tx}}>{q}</td>
+                  <td key={i} className="num" style={{textAlign:'right', padding:'5px 9px', background: q<0?'color-mix(in srgb,var(--dg) 16%,transparent)': q<6?C.bg4:'color-mix(in srgb,var(--gn) 12%,transparent)', fontWeight:700, color: q<0?C.dg:C.tx}}>{q}</td>
                 ))}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <Reading formula="ATP = on-hand + scheduled receipts − committed   ·   CTP = ATP + what you could still produce in time"
-        soWhat={`Reading row TPA-4471: ${M.mps[0].atp.reduce((a,b)=>a+b,0)} units promisable across the fence; the W03 zero means fully committed — quote ${M.pLabel(4)} or later.`}/>
+      <Reading formula="ATP(t) = Σ≤t (solved production − committed demand)   ·   CTP = ATP + what the line could still produce in time"
+        soWhat={atpRows.length?`${atpRows[0].sku}: a negative cell means demand has outrun the schedule by that week — expedite, pull a later batch forward, or quote the next positive week.`:'Run the schedule to populate.'}/>
     </Card>
+  );
+}
+
+function ProdCapacity({ prod, rateIsSeed, laborRate }){
+  const res = prod && prod.result;
+  if(!res || !res.lines){
+    return (
+      <Card icon="⚙️" title="Capacity Loading & Shutdown" badge="not solved"
+        info={{ what:'Per-line utilization, overtime and idle-week shutdown candidates from the solve.', flows:'Shutdowns → workforce + capital plans.' }}>
+        <div style={{padding:'18px 12px', textAlign:'center', fontFamily:F.mono, fontSize:10.5, color:C.tx3, border:`2px dashed ${C.line2}`}}>Run the schedule to load the lines and evaluate idle-week shutdowns.</div>
+      </Card>
+    );
+  }
+  const recs = res.shutdown_recommendations || [];
+  const totGain = recs.reduce((s,r)=>s+(r.net_gain||0), 0);
+  return (
+    <div style={{display:'flex', flexDirection:'column', gap:12}}>
+      <Card icon="⚙️" title="Capacity Loading" badge={`${res.lines.length} lines`}
+        right={<Provenance kind="solved" asOf={prod.ranAt?prod.ranAt.toLocaleTimeString():undefined}/>}
+        info={{ what:'Per-line active periods, utilization, solver-chosen overtime and changeovers.', flows:'Loading → capacity duals on Plan.' }}
+        dev={{ comp:'DataTable', props:'prod.result.lines' }}>
+        <DataTable cols={['Line','Util','Active wks','Produced','OT hrs','OT cost','Changeovers']} align={['left','right','right','right','right','right','right']}
+          rows={res.lines.map(l=>({cells:[
+            l.name,
+            <span style={{fontWeight:700, color:l.utilization>95?C.dg:C.tx}}>{l.utilization}%</span>,
+            l.active_periods, (l.total_produced||0).toLocaleString('en-IN'),
+            l.overtime_hours, `₹${(l.overtime_cost||0).toLocaleString('en-IN')}`, l.changeovers]}))}/>
+        <Reading formula="util = active periods ÷ horizon   ·   OT cost = workers × hrs × rate × 1.5"
+          soWhat={`Overtime is priced at the governed labor rate (₹${laborRate}/hr${rateIsSeed?' · seed':''}); workers/line come from the bottleneck stage's machine count. A line under the shutdown threshold for a run of weeks becomes a candidate below.`}/>
+      </Card>
+      <Card icon="🛑" title="Idle-Week Shutdown Candidates" badge={recs.length?`${recs.length} · net ₹${Math.round(totGain).toLocaleString('en-IN')}`:'none'} badgeTone={recs.length?'y':undefined}
+        info={{ what:'Post-solve heuristic: consecutive sub-threshold weeks where wage saved over the run beats the one-off rehire cost.', flows:'Shutdowns → workforce + S&OP.' }}
+        dev={{ comp:'ShutdownTable', props:'prod.result.shutdown_recommendations' }}>
+        {recs.length ? (
+          <DataTable cols={['Line','Idle weeks','Avg util','Wage saved','Rehire cost','Net gain']} align={['left','left','right','right','right','right']}
+            rows={recs.map(r=>({cells:[
+              r.line_name, `W${r.from_period+1}–W${r.to_period+1} (${r.idle_periods})`,
+              `${r.avg_util_pct}%`, `₹${r.savings.toLocaleString('en-IN')}`, `₹${r.rehire_cost.toLocaleString('en-IN')}`,
+              <span style={{fontWeight:700, color:C.gn}}>₹{r.net_gain.toLocaleString('en-IN')}</span>]}))}/>
+        ) : (
+          <div style={{padding:'14px 12px', fontFamily:F.mono, fontSize:10, color:C.tx3, border:`2px dashed ${C.line2}`}}>
+            No shutdown beats its rehire cost at {res.shutdown_threshold_pct}% threshold and ₹{laborRate}/hr{rateIsSeed?' (seed)':''} — every line earns its idle wages back. Lower the threshold or enter your real rate to re-test.
+          </div>
+        )}
+        <Reading formula="net = (workers × shifts × hrs × rate) × idle weeks − (workers × rate × 80 hr notice)"
+          soWhat={recs.length?`Shutting the flagged runs nets ₹${Math.round(totGain).toLocaleString('en-IN')} over paying idle wages — rehire is charged once per run, not per week.`:'When a line sits idle long enough the wage saved outruns the one-off rehire cost; none cross that line here.'}/>
+      </Card>
+    </div>
   );
 }
 

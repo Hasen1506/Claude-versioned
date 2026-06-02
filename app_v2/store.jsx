@@ -336,6 +336,67 @@ function transportPayload(){
   return { shipments, params:{} };
 }
 
+// ── Production schedule (W3) — REAL /api/solve/production payload ───────────
+// finishedWeeklyDemand(sku,planning,T): the committed FORECAST series at the
+// planning weekly grain, sliced to the schedule horizon T. Pulling the full
+// horizon first (then slicing) keeps weekly demand at annual/52 — getItemDemand
+// alone would spread the whole year across just T periods and inflate it ~4×.
+function finishedWeeklyDemand(sku, planning, T){
+  const full = Math.max(T||1, Number(planning && planning.horizonLength) || 52);
+  return getItemDemand(sku, full).slice(0, T);
+}
+// productionScheduleHorizon: cap the MILP at ~13 weeks. A schedule is a fence
+// (frozen+slushy), not the full year, and 6 SKUs × 3 lines × 52 wk × binaries
+// is a needlessly large MIP. 13 covers the frozen+slushy view the MPS renders.
+function productionScheduleHorizon(planning){
+  return Math.max(4, Math.min(Number(planning && planning.horizonLength) || 13, 13));
+}
+// productionPayload(planning, opts) → the production MILP input. opts.laborRate
+// (₹/hr, governed seed→override) prices overtime + idle-week shutdowns;
+// opts.shutdownPct sets the utilization floor for a shutdown candidate.
+// Each FG is PINNED to its assigned line via a single routing op carrying its
+// real cycle time — so the solver schedules it where it actually runs, at the
+// SKU's own cycle×OEE×hours throughput (no fabricated per-line capacity).
+function productionPayload(planning, opts){
+  const M = window.M || {};
+  opts = opts || {};
+  const T = productionScheduleHorizon(planning);
+  const wdays = Math.max(1, Number(planning.workDaysPerWeek) || 6);
+  const hrsPerShift = 8;
+  const hrsPerPeriod = wdays * hrsPerShift;                 // weekly available hrs/line
+  const rate = Number(opts.laborRate) || 0;
+  const fin = (M.products || []).filter(p=>p.cat==='Finished');
+  const products = fin.map(p=>{
+    const dem = finishedWeeklyDemand(p.sku, planning, T);
+    return {
+      name: p.sku,
+      required_qty: dem.reduce((a,b)=>a+b, 0),
+      oee: p.oee, yield_pct: (p.yield || 0.95), setup_cost: 50,
+      routing: [{ line_id: p.line, cycleTimeMin: p.cycle, parallelism: 1,
+                  yieldPct: (p.yield || 0.95) * 100 }],
+    };
+  });
+  // sequence-dependent setup matrix (M.changeover is in HOURS → ×60 to minutes).
+  const coSkus = ['TPA-4471','TPA-3215','TPA-9904','TPA-2188'];
+  const coMatrix = {};
+  coSkus.forEach((a, ri)=>{ coMatrix[a] = {}; coSkus.forEach((b, ci)=>{
+    const v = (M.changeover[ri] || [])[ci]; if(typeof v === 'number') coMatrix[a][b] = v * 60; }); });
+  const lines = (M.lines || []).map(l=>{
+    const bn = (l.stages || []).find(s=>s.bottleneck) || (l.stages || [])[0] || {};
+    const ln = { id: l.id, name: l.name,
+      capacity: Math.round((l.cap || 0) / 4.33),             // u/mo → u/week
+      oee: l.oee, changeover_matrix: coMatrix, changeover_mins: 30,
+      workers_per_shift: bn.m || 1, shifts_per_day: 1 };
+    if(rate > 0) ln.hourly_rate = rate;                       // priced OT + shutdown
+    return ln;
+  });
+  return { products, lines,
+    labor_cost_mode: rate > 0 ? 'hourly' : 'per_unit',
+    params: { periods: T, hrs_per_period: hrsPerPeriod, hours_per_shift: hrsPerShift,
+      horizon_start_date: planning.startDate,
+      shutdown_threshold_pct: Number(opts.shutdownPct) || 25, rehire_notice_hrs: 80 } };
+}
+
 // ── MSME tier — single derived fact, reused by Setup + Sourcing + Finance ──
 // MSMED Act 2020 (₹Cr): Micro inv≤1 & TO≤5; Small ≤10 & ≤50; Medium ≤50 & ≤250; else not an MSME.
 function msmeTier(investmentCr, annualTurnoverCr){
@@ -378,7 +439,6 @@ const SOLVE_DEPS = {
   transport:   ['demand','network'],
   capital:     ['demand','productCosts','config'],
   montecarlo:  ['demand','procurement'],   // risk runs on the committed supply plan
-  cvar:        ['demand','procurement'],
 };
 
 // markStale(key): flag every solve that depends — directly or transitively — on
@@ -444,6 +504,7 @@ Object.assign(window, {
   appStore, useStore, useConfig, usePlanning, useCalendar, useProductCosts,
   getNetwork, useNetwork, msmeTier,
   getItemDemand, setItemDemand, getFinishedDemand, bomParts, transportPayload,
+  productionPayload, finishedWeeklyDemand,
   getDemandInputs, useDemandInputs, useHolidays,
   sourcingDefault, getSourcing, useSourcing, effLandedCost, freightSteps,
   SOLVE_DEPS, markStale, markSolved, useStale, logEvent, getEvents, useEvents,

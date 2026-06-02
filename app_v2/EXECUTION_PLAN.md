@@ -167,15 +167,21 @@ Legend: **BE?** = backend already does it (✅ wire it / ➕ build new / ⚠ par
 | PL-4 | Disaggregation clarity (which family/horizon, solved-vs-seed) | 🟡 | ⚠ | header + provenance | E4 |
 | PL-5 | Workforce plan tie-back (covers which gap) | 🟡 | ⚠ | link hire/OT to the capacity gap it fills | E3 |
 
-### 3.5 Production
-| # | Item | Sev | BE? | What to build | Evidence |
-|---|---|---|---|---|---|
-| PR-1 | Wire `/api/solve/production` → real Gantt | 🔴 | ✅ | per-line swimlanes, per-SKU filter from `gantt[]` | E5 |
-| PR-2 | Calendar-aware MPS (Sun/holiday exclusion, real dates) | 🔴 | ✅ | use `plant_calendar`; drill month→week→day-with-dates | E7,C2,D |
-| PR-3 | Surface sequence/changeover (asymmetric) + saving | 🟡 | ✅ | already correct (`sequencing.py`); just show it | H8,E6 |
-| PR-4 | Campaign run-length lever + explain setup-vs-holding | 🟠 | ⚠ | expose min-run; show why AAAA-then-BBBB | E6 |
-| PR-5 | Cycle-time simple default, OEE behind Advanced | 🟡 | ✅ | reorder UI; OEE optional (already supported) | F5 |
-| PR-6 | Low-util shutdown rec surfaced | 🟡 | ✅ | from `production.py` | E5 |
+### 3.5 Production — ✅ W3 COMPLETE 2026-06-02 (PR-1,2,3,5,6 shipped; PR-4 + new gaps carried)
+| # | Item | Sev | BE? | What to build | Evidence | Status |
+|---|---|---|---|---|---|---|
+| PR-1 | Wire `/api/solve/production` → real Gantt | 🔴 | ✅ | per-line swimlanes, per-SKU filter from `gantt[]` | E5 | ✅ `productionPayload` + `ProdMPS` (per-SKU scope toggle) |
+| PR-2 | Calendar-aware MPS (Sun/holiday exclusion, real dates) | 🔴 | ✅ | use `plant_calendar`; drill month→week→day-with-dates | E7,C2,D | ✅ `productionWorkDays` (Sun+holiday excl); day-drill spreads solved wk qty over dated working days |
+| PR-3 | Surface sequence/changeover (asymmetric) + saving | 🟡 | ✅ | already correct (`sequencing.py`); just show it | H8,E6 | ✅ `ProdChange` (pre-existing, retained) |
+| PR-4 | Campaign run-length lever + explain setup-vs-holding | 🟠 | ⚠ | expose min-run; show why AAAA-then-BBBB | E6 | ⏳ deferred — needs a min-run param in production.py (see W3 follow-ups) |
+| PR-5 | Cycle-time simple default, OEE behind Advanced | 🟡 | ✅ | reorder UI; OEE optional (already supported) | F5 | ✅ `ProdCycle` flat-default + Advanced·OEE checkbox |
+| PR-6 | Low-util shutdown rec surfaced | 🟡 | ✅ | from `production.py` | E5 | ✅ `ProdCapacity` — line util/OT/changeovers + 3 live shutdown recs (governed rate) |
+
+**W3 follow-ups discovered while building (carry into a later production L3 pass):**
+- **PR-A · time-phased MPS (L3).** `production.py` only meets *total* `required_qty`, not demand *per period* — with makespan+setup minimization the solve front-loads each SKU into 1–2 weeks, so the MPS is sparse and the shutdown heuristic fires on the resulting idle tail. A true level/time-phased MPS needs per-period demand constraints + an inventory-carry (holding) term so production tracks the demand curve. This is the next real production-truth gain; it is **backend** work (new constraint + var), so it waits for an L3 wave, not a UI tweak.
+- **PR-B · governed cycle/line edits.** `ProdCycle`'s Cycle-Time / Assigned-Line / Batch fields are still display-only `NumInput`s (mock `M`), not persisted governed inputs — so editing them does not flow into the payload. Promote to `SolverInput` writing `productCosts`/a `routing` slice when Production gains an editable line registry (overlaps W4 PL-1).
+- **PR-C · Architecture util from the solve.** `ProdArch`'s "Util @ plan" still derives from `M.demand/12 ÷ cap` (mock), while the Cycle tab's Line-Load now reads the solved gantt. Unify both on the solved line load once the solve is cached app-wide.
+- **PR-D · per-line changeover matrix.** `M.changeover` is one global 4×4; `production.py` averages it per line. Real plants have per-line matrices — wire when the changeover editor becomes per-line (overlaps PR-3/H8).
 
 ### 3.6 Logistics
 | # | Item | Sev | BE? | What to build | Evidence |
@@ -220,7 +226,7 @@ Legend: **BE?** = backend already does it (✅ wire it / ➕ build new / ⚠ par
 | **W0 ✅** | Platform foundations *(SHIPPED 2026-06-02)* | P1–P5 | — | ✅ MET — changing committed demand auto-flags only downstream solves; an actuals entry writes to the event log; the Sourcing service-level card uses the governed-input component end-to-end; every touched card shows a provenance badge. |
 | **W1 ✅** | Demand truth → L2 *(SHIPPED 2026-06-02)* | D-1…D-4, D-6 | W0 | ✅ MET — a flagged promo period lifts the live forecast (verified: GB P6→300 vs 100); per-period table renders the winner array with promo rows flagged; lifecycle is opt-in and shows base→×mult→shaped, Apply writes the committed series; one consolidated commit panel (item + company rollup) replaces the seed consensus; the trigger monitor flags MAPE/bias/tracking-signal breaches and logs a review trigger. |
 | **W2 ✅** | Supply truth → L2 *(COMPLETE 2026-06-02 — S-1…S-8)* | S-1…S-8 | W1 | ✅ MET — the procurement MILP plans on landed cost (verified billet 228→255.36 ⇒ total +₹41K); the stepwise freight card books real trucks off the MILP order qty and shows the +1-unit→+1-truck cliff; the policy autopilot lists EOQ/(s,S)/(R,Q) for steady parts only and flags lumpy parts MILP-only; rolling re-plan reports real per-wave + total nervousness (0 on the stable smooth series — proven non-zero on churny demand) with a STABLE/NERVOUS verdict. Backend: rolling nervousness wiring fixed (was structurally always 0). |
-| **W3** | Production truth → L2 | PR-1,PR-2,PR-3,PR-5,PR-6 | W1 | MPS = real `/api/solve/production` Gantt, per-SKU filter, dated days excluding Sundays/holidays; changeover run-order shown with saving. |
+| **W3 ✅** | Production truth → L2 *(COMPLETE 2026-06-02 — PR-1,2,3,5,6)* | PR-1,PR-2,PR-3,PR-5,PR-6 | W1 | ✅ MET — the Schedule subtab runs the real `/api/solve/production` MILP (verified Optimal, 13 wk, 0.52 s, 6 FG scheduled with **0 line-pin violations** — each SKU lands only on its assigned line via a routing op carrying its real cycle time); MPS reads the solved gantt with an ALL/per-SKU scope toggle; the day drill spreads each week's solved qty across **dated working days, Sundays + Indian holidays excluded** (`productionWorkDays`); ATP = cumulative(solved production − committed demand); the Capacity panel shows real per-line util/OT/changeovers and **3 live shutdown recommendations** off a governed labor rate (seed→override); cycle-time is flat-default with OEE behind Advanced. PR-4 + four discovered gaps (PR-A…PR-D) carried to a later production-L3 pass — see §3.5. |
 | **W4** | Plan reconciliation → L2 | PL-1…PL-5 | W2,W3 | Aggregate capacity equals the line registry; capital consumes a line dual; disaggregation names family+horizon. |
 | **W5** | Finance wedge → L2/L3 | F-1→F-9 (in that order) | W4 | Owner can enter equity/debt sources → real hurdle; WACC-curve finds min mix under DSCR; required-sales bridge drives a profit-mix target; EVA scoreboard flags a value-destroyer; Investment cards are live. |
 | **W6** | Risk → L1/L2 | R-1…R-4 | W2 | MC runs on the committed plan; CVaR returns a "hold N more" with net-cost delta; no mock risk card remains. |
@@ -290,11 +296,19 @@ preset react); endpoints verified live.
 - **UI** `SrcMEIO` (sourcing.jsx step 8) + `meioPayload` (RM stages w/ landed cost & BOM-propagated μ/σ → WIP → FG w/ governed committed-service knob); store.jsx `SOLVE_DEPS.meio`. Shows the MTO/MTS verdict, the per-echelon placement table, total holding + SS capital; **honest "no FG buffer" state** when MTO (never a fabricated finished safety stock).
 - **Verified live (exact UI payload):** behaviour emerges from the optimisation, not a rule — at a 0-day quote the FG is forced make-to-stock (holds a finished buffer); lengthen the committed service and the FG flips to **make-to-order** and the buffer is pushed **upstream to cheap RM**; the expensive TPA-7722 (₹2050) decouples *further upstream* and ties up *less* finished capital (₹603) than the cheaper bearing (₹1139) at the same service. All jsx transform clean; meio.py/app.py parse clean. Status: ✅
 
-> **Next wave = W3 (Production truth → L2):** PR-1 wire `/api/solve/production` → real per-line Gantt
-> (per-SKU filter from `gantt[]`), PR-2 calendar-aware MPS (use `plant_calendar`, exclude Sundays/holidays,
-> drill month→week→day-with-dates), PR-3 surface sequence/changeover + saving (already correct in
-> `sequencing.py`), PR-5 cycle-time-simple / OEE-behind-Advanced, PR-6 low-util shutdown rec. Expand W3 into
-> atomic tasks the same way. Keep the expansion **one wave ahead** — the ledger §3.5 holds the scope.
+### §5 · W3 tasks — Production truth → L2 ✅ SHIPPED 2026-06-02
+- **PR-1 wire production MILP** — `productionPayload(planning,{laborRate,shutdownPct})` (store.jsx): finished SKUs as products with `required_qty` = committed weekly demand summed over a 13-wk schedule horizon (`finishedWeeklyDemand` pulls the full-horizon series then slices, so weekly stays annual/52 — `getItemDemand` alone would inflate ~4×); each FG **pinned to its line** by a single routing op carrying its real cycle time (no fabricated per-line cap); lines = `M.lines` mapped (cap u/mo → u/wk ÷4.33, bottleneck machine count → workers/shift, global changeover matrix ×60 hrs→min). `StageProduction` owns `useSolve('/api/solve/production')` + a header Run button + `useStale('production')`/`markSolved`.
+- **PR-2 calendar-aware MPS** — `productionWorkDays(weekIso,n)` (data.jsx) returns dated working days excluding Sundays + `M.holidays`; `ProdMPS` renders the solved gantt weekly (real W-labels) with an ALL/selected-SKU scope toggle, and a day-drill that spreads each week's solved qty across exactly those working dates (even split, remainder front-loaded). Honest "not solved" empty state.
+- **PR-5 cycle simple/OEE-advanced** — `ProdCycle` defaults to flat rate × hours; OEE decomposition behind an "ADVANCED · OEE" checkbox. Line-Load preview now reads the solved gantt for the SKU's line (was hardcoded `[60,72,68,80,55,64]`).
+- **PR-6 shutdown + capacity** — `ProdCapacity` shows solved per-line util/OT-hrs/OT-cost/changeovers + the `shutdown_recommendations[]` (consecutive sub-threshold runs, rehire charged once/run). Driven by a **governed** labor rate + shutdown threshold (`ProdParams` SolverInputs, seed→override). ATP (`ProdATP`) = cumulative(solved production − committed demand); negative = over-committed.
+- **Verified live (exact UI payload):** `/api/solve/production` → status Optimal, 13 periods, 0.52 s; all 6 FG scheduled, **0 pin violations**; `labor_cost_mode_active=hourly`; util 38.5/23.1/15.4 %; **3 shutdown recs** with real net gains (₹84.5K/₹144K/₹53.8K) off the ₹120/hr seed; sequence_plans present (Precision Machining saves 3.0 min). All jsx parse clean. Status: ✅ (PR-4 + PR-A…PR-D carried — see §3.5.)
+
+> **Next wave = W4 (Plan reconciliation → L2):** PL-1 aggregate (S&OP) capacity must equal the line registry
+> (the same `M.lines` the production MILP uses, not an independent number), PL-2 level/chase plan from
+> `/api/solve/aggregate` with hire/fire + inventory carry, PL-3 capital decision consumes a **line capacity
+> dual** (the binding line's shadow price → where added capacity earns its return), PL-4/PL-5 disaggregation
+> names family + horizon (aggregate plan → MPS handoff). Expand W4 into atomic tasks the same way. Keep the
+> expansion **one wave ahead** — the ledger §3.4 (Plan) holds the scope.
 
 ---
 

@@ -496,6 +496,25 @@ function buildPeriods(cal){
 }
 M.calendar = { grain:'week', start:'2026-06-01', count:52 };
 M.periods  = buildPeriods(M.calendar);
+// productionWorkDays(weekIso, n) → up to n REAL working dates in the ISO week
+// starting weekIso, excluding Sundays and Indian holidays (M.holidays, 'MMM DD').
+// The MPS day-drill spreads each week's SOLVED quantity across exactly these
+// dates — never a synthetic per-day split. (W3 · PR-2 calendar-aware MPS.)
+function productionWorkDays(weekIso, n){
+  const start = new Date(weekIso + 'T00:00:00');
+  const hol = new Set((M.holidays || []).map(h=>h[0]));   // 'MMM DD'
+  const out = [];
+  for(let i=0; i<7 && out.length < (n || 6); i++){
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    if(d.getDay() === 0) continue;                          // Sunday off
+    const tag = _MONTHS[d.getMonth()] + ' ' + String(d.getDate()).padStart(2,'0');
+    if(hol.has(tag)) continue;                              // Indian holiday off
+    out.push({ iso:d.toISOString().slice(0,10),
+      label:String(d.getDate()).padStart(2,'0') + ' ' + _MONTHS[d.getMonth()],
+      dow:['Su','Mo','Tu','We','Th','Fr','Sa'][d.getDay()] });
+  }
+  return out;
+}
 M.pLabel   = (pid)=> (M.periods[pid] ? M.periods[pid].label : '—');
 M.pDate    = (pid)=> (M.periods[pid] ? M.periods[pid].date  : '—');
 
@@ -667,3 +686,4 @@ M.solvers.forEach(s=>{ s.status='idle'; s.obj='—'; });
 window.M = M;
 window.MOCK = M;
 window.buildPeriods = buildPeriods;
+window.productionWorkDays = productionWorkDays;
