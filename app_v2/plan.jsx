@@ -25,9 +25,27 @@ function aggMonths(res){
   }));
 }
 
+// W4 — effective governed plan-cost param: override (config.planParams) else seed.
+function planParam(config, k){
+  const v = (config.planParams || {})[k];
+  return (v!=null && v!=='') ? Number(v) : PLAN_PARAMS[k];
+}
+// W4 · PL-1 — the line registry total monthly capacity: the SAME M.lines the
+// production MILP respects. The aggregate plan must reconcile to THIS ceiling,
+// not to an arbitrary labor number (was the mock's single-line 1,240 u/mo).
+function lineRegistryCapacity(){
+  return (M.lines || []).reduce((s,l)=>s + (Number(l.cap)||0), 0);
+}
+
 function StagePlan({ onNav }) {
+  const { config, setConfig } = useConfig();
   // family monthly demand (mock 6-month profile) split per finished SKU by annual share,
   // so the solver can disaggregate it back — sku_plans feeds the Disaggregation card.
+  const rate = planParam(config, 'rate_per_worker') || 1;
+  const lineCap = lineRegistryCapacity();
+  // PL-1 — bound the workforce so regular capacity can never exceed the line
+  // registry ceiling: max regular units = rate · max_workforce ≤ Σ line cap.
+  const wfCeiling = Math.max(planParam(config,'min_workforce')+1, Math.round(lineCap / rate));
   const agg = useSolve('/api/solve/aggregate', ()=>{
     const fg = M.products.filter(p=>p.cat==='Finished');
     const months = M.aggregate.months;
@@ -38,22 +56,67 @@ function StagePlan({ onNav }) {
         forecast: months.map(mo=> Math.max(0, Math.round(mo.dem * (p.demand||0)/totAnnual))),
         labor_hours_per_unit: 1,
       })),
-      params: { periods: months.length, ...PLAN_PARAMS },
+      params: {
+        periods: months.length,
+        init_workforce: PLAN_PARAMS.init_workforce,
+        rate_per_worker: rate,
+        reg_cost_per_unit: planParam(config,'reg_cost_per_unit'),
+        ot_cost_per_unit: planParam(config,'ot_cost_per_unit'),
+        holding_cost_per_unit: planParam(config,'holding_cost_per_unit'),
+        backorder_cost_per_unit: PLAN_PARAMS.backorder_cost_per_unit,
+        hire_cost: planParam(config,'hire_cost'),
+        fire_cost: planParam(config,'fire_cost'),
+        wage_per_worker: planParam(config,'wage_per_worker'),
+        max_ot_pct: PLAN_PARAMS.max_ot_pct,
+        min_workforce: PLAN_PARAMS.min_workforce,
+        max_workforce: wfCeiling,                 // PL-1 — line-registry ceiling
+        allow_backorder: PLAN_PARAMS.allow_backorder,
+      },
     };
   });
+  const { stale, ranAt } = (typeof useStale==='function') ? useStale('aggregate') : { stale:false };
+  const runAgg = ()=> agg.run().then(d=>{ if(typeof markSolved==='function') markSolved('aggregate'); return d; }).catch(()=>{});
   return (
     <div>
       <StageHeader n="05" title="Plan · Sales & Operations" kicker="Level-vs-chase strategy · seasonal prebuild · workforce plan · capacity duals · SKU disaggregation"
-        right={<Btn kind="accent" onClick={()=>agg.run().catch(()=>{})}>{agg.solving?'⏳ Solving…':'⚡ Solve Aggregate'}</Btn>}/>
+        right={<Btn kind="accent" onClick={runAgg}>{agg.solving?'⏳ Solving…':'⚡ Solve Aggregate'}</Btn>}/>
       <div style={{padding:18}}>
         {agg.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Aggregate solver: {agg.error}</div>}
+        {stale && <StaleMark since="(demand or cost inputs changed)" onNav={runAgg} go="rerun"/>}
+        <StageSection step="0" title="Plan Cost Inputs" sub="governed — seed defaults you may override; the workforce is bounded so the plan can never exceed the line registry"><PlanParamsCard config={config} setConfig={setConfig} lineCap={lineCap} rate={rate} wfCeiling={wfCeiling} agg={agg} ranAt={ranAt}/></StageSection>
         <StageSection step="1" title="Strategy" sub="level vs chase, and the seasonal prebuild it implies"><PlanStrategy agg={agg}/></StageSection>
-        <StageSection step="2" title="Capacity & Duals" sub="demand vs capacity, and the shadow price of each binding resource"><PlanCapacity onNav={onNav} agg={agg}/></StageSection>
-        <StageSection step="3" title="Workforce" sub="hire / fire / overtime by period"><PlanWorkforce agg={agg}/></StageSection>
+        <StageSection step="2" title="Capacity & Duals" sub="demand vs the line-registry ceiling; the labor dual vs the binding line"><PlanCapacity onNav={onNav} agg={agg} lineCap={lineCap}/></StageSection>
+        <StageSection step="3" title="Workforce" sub="hire / fire / overtime by period — and the capacity gap each fills"><PlanWorkforce agg={agg} rate={rate}/></StageSection>
         <StageSection step="4" title="Disaggregation" sub="family plan split back to SKUs by mix"><PlanDisagg agg={agg}/></StageSection>
         <StageSection step="5" title="Gap to Target" sub="committed consensus plan vs business target — the S&OP outcome (moved here from Scenarios)"><PlanGap/></StageSection>
       </div>
     </div>
+  );
+}
+
+// W4 · PL-3 — governed plan cost inputs (replaces the PLAN_PARAMS hardcodes as
+// the EDITABLE surface; seeds still come from PLAN_PARAMS). Seed→override with
+// provenance, same pattern as the Production + Sourcing solver-parameter cards.
+function PlanParamsCard({ config, setConfig, lineCap, rate, wfCeiling, agg, ranAt }){
+  const set = (k,v)=> setConfig({ planParams: { ...(config.planParams||{}), [k]:v } });
+  const pp = config.planParams || {};
+  return (
+    <Card icon="🎛️" title="Aggregate-plan cost & capacity inputs" badge="governed" badgeTone="y"
+      right={agg && agg.result ? <Provenance kind="solved" asOf={ranAt?ranAt.toLocaleTimeString():undefined}/> : null}
+      info={{ what:'Per-unit production/holding costs and hire/fire/wage costs the Hax–Meal aggregate LP minimizes. Seeds you may override per run.', flows:'→ /api/solve/aggregate params.' }}
+      dev={{ comp:'SolverInput', props:'config.planParams', state:'config.planParams.{rate_per_worker,reg_cost_per_unit,…}' }}>
+      <Grid cols={4}>
+        <SolverInput label="Rate / worker" seed={PLAN_PARAMS.rate_per_worker} value={pp.rate_per_worker} onChange={v=>set('rate_per_worker',v)} min={1} suffix="u/mo"/>
+        <SolverInput label="Regular cost" seed={PLAN_PARAMS.reg_cost_per_unit} value={pp.reg_cost_per_unit} onChange={v=>set('reg_cost_per_unit',v)} min={0} prefix="₹"/>
+        <SolverInput label="Overtime cost" seed={PLAN_PARAMS.ot_cost_per_unit} value={pp.ot_cost_per_unit} onChange={v=>set('ot_cost_per_unit',v)} min={0} prefix="₹"/>
+        <SolverInput label="Holding cost" seed={PLAN_PARAMS.holding_cost_per_unit} value={pp.holding_cost_per_unit} onChange={v=>set('holding_cost_per_unit',v)} min={0} prefix="₹"/>
+        <SolverInput label="Hire cost" seed={PLAN_PARAMS.hire_cost} value={pp.hire_cost} onChange={v=>set('hire_cost',v)} min={0} prefix="₹"/>
+        <SolverInput label="Fire cost" seed={PLAN_PARAMS.fire_cost} value={pp.fire_cost} onChange={v=>set('fire_cost',v)} min={0} prefix="₹"/>
+        <SolverInput label="Wage / worker" seed={PLAN_PARAMS.wage_per_worker} value={pp.wage_per_worker} onChange={v=>set('wage_per_worker',v)} min={0} prefix="₹"/>
+      </Grid>
+      <Reading formula={`line-registry ceiling = Σ line cap = ${lineCap.toLocaleString('en-IN')} u/mo  ⇒  max workforce = ${lineCap.toLocaleString('en-IN')} ÷ ${rate} = ${wfCeiling} heads`}
+        soWhat={`The plan is bounded to the SAME ${(M.lines||[]).length}-line capacity the production schedule respects (${(M.lines||[]).map(l=>l.cap.toLocaleString('en-IN')).join(' + ')} u/mo) — it can never promise more than the floor can physically build. Override the rate to re-scale the ceiling.`}/>
+    </Card>
   );
 }
 
@@ -132,51 +195,101 @@ function PlanStrategy({ agg }) {
   );
 }
 
-function PlanCapacity({ onNav, agg }) {
+// W4 · PL-1/PL-2 — per-line load from the disaggregated SKU plan vs the line
+// REGISTRY capacity. This is the line/machine pressure signal Capital should
+// consume (NOT the labor dual) — the binding line is where machine CapEx pays
+// back. Honest: at low demand every line shows slack (no CapEx case).
+function linePressure(res){
+  if(!res || !res.sku_plans || !res.sku_plans.length) return null;
+  const T = (res.periods && res.periods.length) || 1;
+  const byLine = {};
+  res.sku_plans.forEach(sp=>{
+    const prod = M.products.find(p=>p.sku===sp.name);
+    const lid = (prod && prod.line) || '—';
+    byLine[lid] = (byLine[lid]||0) + (sp.total_planned||0);
+  });
+  return (M.lines||[]).map(l=>{
+    const load = byLine[l.id] || 0;             // units planned over the horizon
+    const cap  = (Number(l.cap)||0) * T;        // line capacity over the same horizon
+    const util = cap ? load/cap : 0;
+    return { line:l.name, id:l.id, loadPerMo:Math.round(load/T), cap:l.cap,
+             util, shortfall:Math.max(0, Math.round((load-cap)/T)), binding: util>=0.95 };
+  });
+}
+
+function PlanCapacity({ onNav, agg, lineCap }) {
   const res = agg && agg.result;
   const months = aggMonths(res);
   const shadow = res && res.shadow_prices;
+  const press = linePressure(res);
+  const bind = press && press.find(p=>p.binding);
   return (
     <Grid cols={2}>
-      <Card icon="📊" title="Capacity vs Demand" badge={`${(months||M.aggregate.months).length} periods`} info={{ what:'Monthly demand against available capacity and planned production.', flows:'Shortfalls → prebuild & overtime.' }} span={2}
+      <Card icon="📊" title="Capacity vs Demand" badge={`${(months||M.aggregate.months).length} periods · ceiling ${lineCap?lineCap.toLocaleString('en-IN'):'—'} u/mo`} info={{ what:'Monthly demand against the planned regular-labor capacity (rate × workforce), bounded by the line-registry ceiling.', flows:'Shortfalls → prebuild & overtime.' }} span={2}
         right={res ? <Provenance kind="solved" asOf={agg.ranAt?agg.ranAt.toLocaleTimeString():undefined}/> : undefined}
-        dev={{ comp:'CapacityPlanCard', props:'state.aggregatePlan.months' }}>
+        dev={{ comp:'CapacityPlanCard', props:'aggregate.periods, lineCap' }}>
         <CapacityChart data={months}/>
-        <DataTable dense cols={['Period','Demand','Capacity','Production','Net Inv']} align={['left','right','right','right','right']}
+        <DataTable dense cols={['Period','Demand','Labor cap','Production','Net Inv']} align={['left','right','right','right','right']}
           rows={(months||M.aggregate.months).map(m=>({cells:[m.m, m.dem, m.cap, m.prod, <span style={{color:m.inv<0?C.dg:C.tx, fontWeight:700}}>{m.inv>0?'+':''}{m.inv}</span>]}))}/>
+        <Reading formula={`line-registry ceiling = Σ line cap = ${lineCap?lineCap.toLocaleString('en-IN'):'—'} u/mo  ·  "Labor cap" column = rate × workforce that period`}
+          soWhat="The capacity the plan deploys each period is the LABOR capacity (rate × heads); it can rise only to the line-registry ceiling above. Demand under the ceiling means the lines are not the constraint — labor is."/>
       </Card>
-      <Card icon="🔑" title="Capacity Shadow Prices" badge={shadow?`${shadow.length} duals · live`:'duals'} badgeTone="y" info={{ what:'Marginal value of one more unit of each binding resource.', flows:'Duals → capital budget solver (where to invest).' }} span={2}
-        right={res ? <Provenance kind="solved" asOf={agg.ranAt?agg.ranAt.toLocaleTimeString():undefined}/> : <button onClick={()=>onNav&&onNav('finance')} style={{marginLeft:'auto', fontFamily:F.mono, fontSize:9.5, fontWeight:700, color:C.a2, background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline'}}>invest against this dual →</button>}
-        dev={{ comp:'ShadowPriceCard', props:'state.aggregatePlan.shadow', note:'Consumed by Capital solver.' }}>
+      <Card icon="🔑" title="Labor Capacity Shadow Prices" badge={shadow?`${shadow.length} duals · live`:'duals'} badgeTone="y" info={{ what:'Marginal value of one more WORKER-PERIOD of regular capacity (the aggregate LP dual). This is a labor dual — not a line/machine dual.', flows:'Labor duals → hire/OT decision, NOT line CapEx.' }} span={2}
+        right={res ? <Provenance kind="solved" asOf={agg.ranAt?agg.ranAt.toLocaleTimeString():undefined}/> : undefined}
+        dev={{ comp:'ShadowPriceCard', props:'aggregate.shadow_prices', note:'Worker-period duals (P_t ≤ rate·W_t).' }}>
         {shadow ? (
-          shadow.length ? <DataTable cols={['Constraint','Dual (₹/u)','Slack','Status']} align={['left','right','right','left']}
+          shadow.length ? <DataTable cols={['Constraint','Dual (₹/worker-unit)','Slack','Status']} align={['left','right','right','left']}
             rows={shadow.map(s=>({__hl:s.binding, cells:[s.constraint, s.shadow_price?`₹${Number(s.shadow_price).toFixed(2)}`:'—', s.slack==null?'—':s.slack, <Tag c={s.binding?'k':'w'}>{s.binding?'BINDING':'slack'}</Tag>]}))}/>
-          : <div style={{padding:'12px', fontFamily:F.mono, fontSize:10.5, color:C.tx3, border:`2px dashed ${C.line2}`}}>No binding capacity rows — the plan has slack everywhere (no resource is worth expanding at these costs).</div>
+          : <div style={{padding:'12px', fontFamily:F.mono, fontSize:10.5, color:C.tx3, border:`2px dashed ${C.line2}`}}>No binding labor-capacity rows — the plan has workforce slack everywhere (no resource is worth expanding at these costs).</div>
         ) : (
-          <DataTable cols={['Resource','Dual (₹/u)','Slack','Status']} align={['left','right','right','left']}
-            rows={M.shadow.map(s=>({__hl:s.binding, cells:[s.res, s.dual?`₹${s.dual.toFixed(2)}`:'—', s.slack, <Tag c={s.binding?'k':'w'}>{s.binding?'BINDING':'slack'}</Tag>]}))}/>
+          <div style={{padding:'12px', fontFamily:F.mono, fontSize:10.5, color:C.tx3, border:`2px dashed ${C.line2}`}}>Solve the aggregate plan to see the live labor duals.</div>
         )}
-        <Reading formula="dual λ = ∂(objective) / ∂(capacity)  — ₹ saved per extra unit"
-          soWhat={shadow?"Each binding regular-capacity period is worth its dual per extra worker-unit — the periods with the largest duals are the strongest case for a CapEx shift in Finance.":"Line-1 is worth ₹1,248/u and binding — that’s the strongest case for the Heat-Treat #2 CapEx in Finance."}/>
+        <Reading formula="labor dual λ = ∂(objective) / ∂(worker-period capacity)  — ₹ saved per extra worker-unit"
+          soWhat="A binding labor dual means the answer is hire/overtime, not machines. Line/machine CapEx is justified by the line-pressure table below — a different constraint."/>
+      </Card>
+      <Card icon="🏭" title="Line Capacity Pressure" badge={press?(bind?`${bind.line} binding`:'all slack'):'solve first'} badgeTone="k" span={2}
+        info={{ what:'The disaggregated SKU plan loaded onto each line vs its registry capacity. The binding line is where machine CapEx pays back — this is the line/machine signal Capital consumes (not the labor dual).', flows:'Binding line → Capital / Investment Decision.' }}
+        right={res && bind ? <button onClick={()=>onNav&&onNav('finance')} style={{marginLeft:'auto', fontFamily:F.mono, fontSize:9.5, fontWeight:700, color:C.a2, background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline'}}>invest in {bind.line} →</button> : undefined}
+        dev={{ comp:'LinePressureTable', props:'aggregate.sku_plans grouped by M.products.line vs M.lines.cap' }}>
+        {press ? (
+          <DataTable cols={['Line','Planned u/mo','Registry cap','Util','Shortfall u/mo','Status']} align={['left','right','right','right','right','left']}
+            rows={press.map(p=>({__hl:p.binding, cells:[p.line, p.loadPerMo.toLocaleString('en-IN'), p.cap.toLocaleString('en-IN'),
+              <span style={{fontWeight:700, color:p.util>0.95?C.dg:C.tx}}>{(p.util*100).toFixed(0)}%</span>,
+              p.shortfall?`+${p.shortfall.toLocaleString('en-IN')}`:'—', <Tag c={p.binding?'k':'w'}>{p.binding?'BINDING':'slack'}</Tag>]}))}/>
+        ) : (
+          <div style={{padding:'12px', fontFamily:F.mono, fontSize:10.5, color:C.tx3, border:`2px dashed ${C.line2}`}}>Solve the aggregate plan — the SKU disaggregation loads each line against its registry capacity here.</div>
+        )}
+        <Reading formula="line util = Σ(planned SKU qty on the line) ÷ (line registry cap × horizon)"
+          soWhat={press?(bind?`${bind.line} is at ${(bind.util*100).toFixed(0)}% — the binding line, short ${bind.shortfall} u/mo. THAT is the CapEx case to carry into Finance, valued by re-solving production with +1 shift.`:'Every line has slack at this demand — no machine CapEx is justified; the constraint is labor (see the labor duals above), not the lines.'):'—'}/>
       </Card>
     </Grid>
   );
 }
 
-function PlanWorkforce({ agg }) {
+function PlanWorkforce({ agg, rate }) {
   const res = agg && agg.result;
-  // real solver gives heads (workforce) + OT in production units; mock gives heads + OT hrs.
+  const r = Number(rate) || PLAN_PARAMS.rate_per_worker || 1;
+  // PL-5 — tie each period's hire/OT back to the capacity GAP it fills:
+  // gap = demand − regular capacity at the START-of-period headcount (rate × prior heads).
+  // A positive gap is exactly what the hire + overtime in that row exist to cover.
   const wf = res && res.periods
-    ? res.periods.map(p=>({ period:'P'+p.period, base:Math.round(p.workforce), hire:Math.round(p.hires), fire:Math.round(p.fires), ot:Math.round(p.overtime_production) }))
-    : M.aggregate.workforce;
+    ? res.periods.map((p,i,arr)=>{
+        const priorHeads = i===0 ? PLAN_PARAMS.init_workforce : Math.round(arr[i-1].workforce);
+        const gap = Math.max(0, Math.round((p.demand||0) - r*priorHeads));
+        return { period:'P'+p.period, base:Math.round(p.workforce), hire:Math.round(p.hires), fire:Math.round(p.fires),
+                 ot:Math.round(p.overtime_production), gap };
+      })
+    : M.aggregate.workforce.map(w=>({ ...w, gap:null }));
   const otLabel = res ? 'Overtime (u)' : 'Overtime (hrs)';
   const wfMax = Math.max(...wf.map(w=>w.base), 1);
   return (
-    <Card icon="👷" title="Workforce Plan · Hire / Fire / OT" badge={res?`${wf.length} periods · live`:'4 quarters'} info={{ what:'Period workforce decisions: base heads, hire, fire, overtime.', flows:'Labour capacity → production MILP.' }}
+    <Card icon="👷" title="Workforce Plan · Hire / Fire / OT" badge={res?`${wf.length} periods · live`:'4 quarters'} info={{ what:'Period workforce decisions: base heads, hire, fire, overtime — and the demand-vs-capacity gap each fills.', flows:'Labour capacity → production MILP.' }}
       right={res ? <Provenance kind="solved" asOf={agg.ranAt?agg.ranAt.toLocaleTimeString():undefined}/> : undefined}
-      dev={{ comp:'WorkforceCard', props:'state.aggregatePlan.workforce', state:'aggregatePlan.workforce[]' }}>
-      <DataTable cols={['Period','Base Heads','Hire','Fire',otLabel]} align={['left','right','right','right','right']}
-        rows={wf.map(w=>({cells:[w.period, w.base, <span style={{color:w.hire?C.gn:C.tx3, fontWeight:700}}>{w.hire?`+${w.hire}`:'—'}</span>, <span style={{color:w.fire?C.dg:C.tx3, fontWeight:700}}>{w.fire?`-${w.fire}`:'—'}</span>, w.ot]}))}/>
+      dev={{ comp:'WorkforceCard', props:'aggregate.periods (workforce, hires, fires, OT, demand)' }}>
+      <DataTable cols={['Period','Base Heads','Hire','Fire',otLabel,'Fills gap (u)']} align={['left','right','right','right','right','right']}
+        rows={wf.map(w=>({cells:[w.period, w.base, <span style={{color:w.hire?C.gn:C.tx3, fontWeight:700}}>{w.hire?`+${w.hire}`:'—'}</span>, <span style={{color:w.fire?C.dg:C.tx3, fontWeight:700}}>{w.fire?`-${w.fire}`:'—'}</span>, w.ot, w.gap==null?'—':<span style={{color:w.gap>0?C.dg:C.tx3, fontWeight:700}}>{w.gap>0?`+${w.gap}`:'0'}</span>]}))}/>
+      {res && <Reading formula="gap = demand − rate × (start-of-period heads)   ·   filled by hire + overtime that period"
+        soWhat="A positive gap is the capacity hole the period's hire + overtime exist to close — when the gap is 0 the base workforce already covers demand and any OT is buffering, not catching up."/>}
       <div style={{marginTop:12}}>
         <SubLabel>Headcount trajectory</SubLabel>
         <div style={{display:'flex', alignItems:'flex-end', gap:10, height:80}}>
@@ -205,10 +318,14 @@ function PlanDisagg({ agg }) {
     familyQty = 13400;
     split = [['TPA-4471',32],['TPA-3215',46],['TPA-9904',12],['TPA-2188',6],['TPA-5540',4]].map(([s,w])=>[s,w,Math.round(13400*w/100)]);
   }
+  // PL-4 — name the family + horizon explicitly so the split is not a mystery slice.
+  const nFG = M.products.filter(p=>p.cat==='Finished').length;
+  const horizon = (M.aggregate.months||[]).length;
   return (
-    <Card icon="🔀" title="SKU Disaggregation" badge={res?'aggregate → SKU · live':'aggregate → SKU'} info={{ what:'Splits the aggregate family plan back to individual SKUs by mix.', flows:'SKU-level plan → MPS & procurement.' }}
+    <Card icon="🔀" title="SKU Disaggregation" badge={res?'aggregate → SKU · solved':'aggregate → SKU · seed'} info={{ what:`Splits the solved aggregate family plan (${nFG} finished SKUs, ${horizon}-month horizon) back to individual SKUs by each SKU's planned share. Seed shares shown until solved.`, flows:'SKU-level plan → MPS & procurement.' }}
       right={res ? <Provenance kind="solved" asOf={agg.ranAt?agg.ranAt.toLocaleTimeString():undefined}/> : undefined}
-      dev={{ comp:'DisaggregateCard', props:'state.aggregatePlan, mix', note:'disaggregate.py backend.' }}>
+      dev={{ comp:'DisaggregateCard', props:'aggregate.sku_plans (total_planned share)', note:'derived from the solved aggregate plan; seed split until solved.' }}>
+      <div style={{marginBottom:10, fontFamily:F.mono, fontSize:9.5, color:C.tx3}}>FAMILY: all finished goods ({nFG} SKUs) · HORIZON: {horizon} months · BASIS: {res?'solved per-SKU planned quantity':'annual-demand seed share (not yet solved)'}</div>
       <div style={{display:'flex', height:30, border:`2px solid ${C.line}`, marginBottom:14}}>
         {split.map(([s,w],i)=>(
           <div key={i} style={{width:`${w}%`, background:palette[i%palette.length], color: i===1?C.onAc:'#fff', display:'grid', placeItems:'center', fontFamily:F.mono, fontSize:9, fontWeight:700, borderRight:i<split.length-1?`1px solid ${C.paper}`:'none'}}>{w}%</div>

@@ -158,14 +158,17 @@ Legend: **BE?** = backend already does it (✅ wire it / ➕ build new / ⚠ par
 | S-7 | Costly-item / MTO preset (newsvendor h vs p) | 🟠 | ✅ | expose MTO mode + CVaR buffer for costly parts | H7 | ✅ `SrcNewsvendor` wires `/api/solve/cvar` per costly part: critical ratio p/(p+h), EV vs CVaR-β order-up-to + robustness premium; low CR (holding dominates) ⇒ flagged make-to-order (verified h=300/p=40 ⇒ CR 12%, safety 0) |
 | S-8 | MRP-at-scale UX (10+ BOM) | 🟡 | — | exception-based roll-up/drill-down, not a giant grid | H (BOM scale) | ✅ `SrcExceptions` scores every part on the solve (zero-cover / capital-concentration / many-releases) + FG shortages; surfaces only flagged parts, rolls up the clear ones — the readable-at-scale pattern, not a part×period grid |
 
-### 3.4 Plan / S&OP
-| # | Item | Sev | BE? | What to build | Evidence |
-|---|---|---|---|---|---|
-| PL-1 | Tie aggregate capacity to the **real line registry** | 🔴 | ⚠ | stop showing labor capacity as the line capacity | E1,E2 |
-| PL-2 | Fix labor-dual → line-CapEx mis-wire | 🔴 | ⚠ | capital must consume a line/machine dual, not the labor dual | E2,F3 |
-| PL-3 | Real plan cost inputs (replace `PLAN_PARAMS` seeds) | 🟠 | ✅ | governed cost-input card | E1 |
-| PL-4 | Disaggregation clarity (which family/horizon, solved-vs-seed) | 🟡 | ⚠ | header + provenance | E4 |
-| PL-5 | Workforce plan tie-back (covers which gap) | 🟡 | ⚠ | link hire/OT to the capacity gap it fills | E3 |
+### 3.4 Plan / S&OP — ✅ W4 COMPLETE 2026-06-02 (PL-1…PL-5; PL-A line-dual LP carried)
+| # | Item | Sev | BE? | What to build | Evidence | Status |
+|---|---|---|---|---|---|---|
+| PL-1 | Tie aggregate capacity to the **real line registry** | 🔴 | ⚠ | stop showing labor capacity as the line capacity | E1,E2 | ✅ `lineRegistryCapacity()` = Σ `M.lines.cap`; payload `max_workforce = Σcap÷rate` ceiling; chart/table relabeled "labor cap" vs the registry ceiling |
+| PL-2 | Fix labor-dual → line-CapEx mis-wire | 🔴 | ⚠ | capital must consume a line/machine dual, not the labor dual | E2,F3 | ✅ aggregate duals relabeled **Labor (worker-period)**; new **Line Capacity Pressure** card (disaggregated load vs registry cap) is the line/machine CapEx signal; "invest in {line}→Finance" link gated on a line actually binding |
+| PL-3 | Real plan cost inputs (replace `PLAN_PARAMS` seeds) | 🟠 | ✅ | governed cost-input card | E1 | ✅ `PlanParamsCard` — 7 governed SolverInputs (rate/reg/OT/holding/hire/fire/wage), seed→override, writes `config.planParams` |
+| PL-4 | Disaggregation clarity (which family/horizon, solved-vs-seed) | 🟡 | ⚠ | header + provenance | E4 | ✅ header names family (all FG) + horizon (months) + BASIS (solved vs seed-share); badge + provenance flip |
+| PL-5 | Workforce plan tie-back (covers which gap) | 🟡 | ⚠ | link hire/OT to the capacity gap it fills | E3 | ✅ "Fills gap (u)" column = demand − rate×(start-of-period heads); Reading ties hire+OT to the hole they close |
+
+**W4 follow-up discovered while building (carry into a later plan-L3/L4 pass):**
+- **PL-A · true ₹ line shadow price (L3).** The Line Capacity Pressure card ranks lines by *utilization vs registry cap* (an honest pressure signal), not a ₹ dual. A real per-line marginal value wants either (a) a **new** `linecap.py` LP (assign family demand across lines at min cost s.t. line caps → emit each line's capacity `.pi`), or (b) wiring `/api/solve/production-sensitivity` — but that endpoint's +shift/+machine perturbation **no-ops on a routing-based payload** (the MF-3 note in app.py) and the lines run 15–44% slack, so it would return ~0 today. Both are deferred until demand actually pressures a line; at current TPAC volumes the honest answer is "lines have slack, expand labor not machines," which the pressure card already states.
 
 ### 3.5 Production — ✅ W3 COMPLETE 2026-06-02 (PR-1,2,3,5,6 shipped; PR-4 + new gaps carried)
 | # | Item | Sev | BE? | What to build | Evidence | Status |
@@ -227,7 +230,7 @@ Legend: **BE?** = backend already does it (✅ wire it / ➕ build new / ⚠ par
 | **W1 ✅** | Demand truth → L2 *(SHIPPED 2026-06-02)* | D-1…D-4, D-6 | W0 | ✅ MET — a flagged promo period lifts the live forecast (verified: GB P6→300 vs 100); per-period table renders the winner array with promo rows flagged; lifecycle is opt-in and shows base→×mult→shaped, Apply writes the committed series; one consolidated commit panel (item + company rollup) replaces the seed consensus; the trigger monitor flags MAPE/bias/tracking-signal breaches and logs a review trigger. |
 | **W2 ✅** | Supply truth → L2 *(COMPLETE 2026-06-02 — S-1…S-8)* | S-1…S-8 | W1 | ✅ MET — the procurement MILP plans on landed cost (verified billet 228→255.36 ⇒ total +₹41K); the stepwise freight card books real trucks off the MILP order qty and shows the +1-unit→+1-truck cliff; the policy autopilot lists EOQ/(s,S)/(R,Q) for steady parts only and flags lumpy parts MILP-only; rolling re-plan reports real per-wave + total nervousness (0 on the stable smooth series — proven non-zero on churny demand) with a STABLE/NERVOUS verdict. Backend: rolling nervousness wiring fixed (was structurally always 0). |
 | **W3 ✅** | Production truth → L2 *(COMPLETE 2026-06-02 — PR-1,2,3,5,6)* | PR-1,PR-2,PR-3,PR-5,PR-6 | W1 | ✅ MET — the Schedule subtab runs the real `/api/solve/production` MILP (verified Optimal, 13 wk, 0.52 s, 6 FG scheduled with **0 line-pin violations** — each SKU lands only on its assigned line via a routing op carrying its real cycle time); MPS reads the solved gantt with an ALL/per-SKU scope toggle; the day drill spreads each week's solved qty across **dated working days, Sundays + Indian holidays excluded** (`productionWorkDays`); ATP = cumulative(solved production − committed demand); the Capacity panel shows real per-line util/OT/changeovers and **3 live shutdown recommendations** off a governed labor rate (seed→override); cycle-time is flat-default with OEE behind Advanced. PR-4 + four discovered gaps (PR-A…PR-D) carried to a later production-L3 pass — see §3.5. |
-| **W4** | Plan reconciliation → L2 | PL-1…PL-5 | W2,W3 | Aggregate capacity equals the line registry; capital consumes a line dual; disaggregation names family+horizon. |
+| **W4 ✅** | Plan reconciliation → L2 *(COMPLETE 2026-06-02 — PL-1…PL-5)* | PL-1…PL-5 | W2,W3 | ✅ MET — the aggregate plan is bounded to the **line-registry ceiling** (Σ `M.lines.cap` = 4,100 u/mo, the same registry the production MILP respects; `max_workforce = ceiling÷rate`); the aggregate duals are relabeled **labor (worker-period)** duals and a separate **Line Capacity Pressure** card (disaggregated SKU load vs registry cap) is the line/machine CapEx signal — verified live the regular-capacity rows bind (labor dual −₹563.8/period) while all three lines sit 18–44% **slack**, so it correctly shows *no* machine-CapEx case (fixes the mock's overstated "Line-1 binding ₹1,248"); plan cost inputs are governed (`PlanParamsCard`, seed→override); disaggregation names family+horizon+solved-vs-seed; workforce rows carry a "Fills gap" tie-back. PL-A (true ₹ line shadow price) carried — see §3.4. |
 | **W5** | Finance wedge → L2/L3 | F-1→F-9 (in that order) | W4 | Owner can enter equity/debt sources → real hurdle; WACC-curve finds min mix under DSCR; required-sales bridge drives a profit-mix target; EVA scoreboard flags a value-destroyer; Investment cards are live. |
 | **W6** | Risk → L1/L2 | R-1…R-4 | W2 | MC runs on the committed plan; CVaR returns a "hold N more" with net-cost delta; no mock risk card remains. |
 | **W7** | Orchestration + the loop → L3/L4 | orchestration (mix→dual→capital→risk), S-5,S-8,LG | W5,W6 | One "run the whole loop" action chains forecast→supply→plan→capital→risk on one dataset. |
@@ -303,12 +306,19 @@ preset react); endpoints verified live.
 - **PR-6 shutdown + capacity** — `ProdCapacity` shows solved per-line util/OT-hrs/OT-cost/changeovers + the `shutdown_recommendations[]` (consecutive sub-threshold runs, rehire charged once/run). Driven by a **governed** labor rate + shutdown threshold (`ProdParams` SolverInputs, seed→override). ATP (`ProdATP`) = cumulative(solved production − committed demand); negative = over-committed.
 - **Verified live (exact UI payload):** `/api/solve/production` → status Optimal, 13 periods, 0.52 s; all 6 FG scheduled, **0 pin violations**; `labor_cost_mode_active=hourly`; util 38.5/23.1/15.4 %; **3 shutdown recs** with real net gains (₹84.5K/₹144K/₹53.8K) off the ₹120/hr seed; sequence_plans present (Precision Machining saves 3.0 min). All jsx parse clean. Status: ✅ (PR-4 + PR-A…PR-D carried — see §3.5.)
 
-> **Next wave = W4 (Plan reconciliation → L2):** PL-1 aggregate (S&OP) capacity must equal the line registry
-> (the same `M.lines` the production MILP uses, not an independent number), PL-2 level/chase plan from
-> `/api/solve/aggregate` with hire/fire + inventory carry, PL-3 capital decision consumes a **line capacity
-> dual** (the binding line's shadow price → where added capacity earns its return), PL-4/PL-5 disaggregation
-> names family + horizon (aggregate plan → MPS handoff). Expand W4 into atomic tasks the same way. Keep the
-> expansion **one wave ahead** — the ledger §3.4 (Plan) holds the scope.
+### §5 · W4 tasks — Plan reconciliation → L2 ✅ SHIPPED 2026-06-02
+- **PL-1 capacity = line registry** — `lineRegistryCapacity()` sums `M.lines.cap` (4,100 u/mo); `StagePlan` bounds the aggregate payload `max_workforce = Σcap ÷ rate` so the plan can never promise more than the floor builds. The Capacity card relabels the per-period number "labor cap" (rate × workforce) and shows the registry ceiling separately with its derivation.
+- **PL-2 line dual ≠ labor dual** — the aggregate `shadow_prices` are relabeled **Labor Capacity Shadow Prices (worker-period)**; a new **Line Capacity Pressure** card (`linePressure`) groups the disaggregated `sku_plans` by `M.products.line` and loads each line vs its registry cap → util/shortfall/binding. The "invest in {line} → Finance" link only appears when a line actually binds. Verified live: lines 18–44% slack ⇒ no CapEx case, labor binds instead (correct anti-fake outcome).
+- **PL-3 governed cost inputs** — `PlanParamsCard`: 7 SolverInputs (rate/reg/OT/holding/hire/fire/wage) writing `config.planParams`, seeds from `PLAN_PARAMS`, seed→override with provenance.
+- **PL-4 disaggregation clarity** — header names FAMILY (all FG) · HORIZON (months) · BASIS (solved per-SKU qty vs annual-demand seed share); badge + Provenance flip on solve.
+- **PL-5 workforce tie-back** — "Fills gap (u)" column = max(0, demand − rate × start-of-period heads); Reading ties each period's hire+OT to the capacity hole it closes.
+- **Verified live (exact UI payload):** `/api/solve/aggregate` → Optimal, strategy level, rate 30; regular-capacity rows **binding** (labor duals −₹563.8…−698.8/period, workforce held at 35 within the 137 ceiling); `sku_plans` returned for all 6 FG; derived line pressure LINE-01 44% / LINE-02 29% / LINE-03 18% — all slack. plan.jsx parses clean. Status: ✅ (PL-A true line shadow price carried — see §3.4.)
+
+> **Next wave = W5 (Finance wedge → L2/L3):** F-1 source-weighted hurdle (land/retained/promoter/PE; bank/family
+> → blended Ke/Kd → real hurdle, wire the inert Equity-Sources card), F-2 WACC-curve min-mix under DSCR, F-3
+> required-sales bridge → profit-mix target, F-4 EVA scoreboard flags a value-destroyer, F-5…F-9 the Investment
+> cards go live (and **consume the binding-line CapEx case from W4 PL-2** + the line shadow price once PL-A lands).
+> Build F-1→F-9 in that order — the ledger §3.7 (Finance) holds the scope. Keep the expansion one wave ahead.
 
 ---
 
