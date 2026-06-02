@@ -80,6 +80,26 @@ function meioPayload(sku, serviceLevel, maxServiceDays){
     max_service: Math.max(0, Math.round(Number(maxServiceDays)||0)), suppliers:['WIP'] });
   return { stages, params:{ service_level: serviceLevel, time_unit:'days' } };
 }
+// S-7 · COSTLY-ITEM NEWSVENDOR (h vs p) + CVaR payload — for ONE chosen part, the
+// single-period stocking economics: overage h (cost of a leftover unit) vs underage p
+// (cost of a stockout unit). The critical ratio p/(p+h) sets the expected-value order-up-to;
+// cvar.py also returns the CVaR-β-robust order-up-to (covers the demand tail, not just the
+// mean) and the robustness premium between them. A costly part where holding dominates
+// (low critical ratio) is the make-to-order regime. Lead-time demand μ/σ from the same
+// BOM explosion the MEIO/MILP use (μ_part = μ_fg·qty/yield, over the part's lead-time days).
+function cvarPayload(sku, partId, overage, underage, beta){
+  const p = (M.products||[]).find(x=>x.sku===sku) || {};
+  const bom = M.bom || [];
+  const b = bom.find(x=>x.part===partId) || bom[0] || {};
+  const cv = Math.max(Number(p.mape)||1, 1) / 100;
+  const yld = Number(p.yield) || 0.97;
+  const muDay = (Number(p.demand)||0) / MEIO_DPY * (Number(b.qty)||0) / Math.max(yld, 1e-6);
+  const lt = Math.max(1, Number(b.lt)||1);
+  const mean = muDay * lt;                         // lead-time demand (the newsvendor horizon)
+  const std = Math.max(cv * mean, 1e-6);
+  return { mean, std, holding_cost: Number(overage)||0, shortage_cost: Number(underage)||0,
+    beta: Number(beta)||0.95, n_scenarios:300 };
+}
 // effective service level: the user's governed override, else the 0.95 default.
 function effServiceLevel(config){
   const o = config && config.serviceLevelOverride;
@@ -127,7 +147,10 @@ function StageSourcing({ onNav }) {
         <SrcPolicy sku={sku} planning={planning} sl={sl}/>
         <SrcRolling sku={sku} planning={planning} sl={sl}/>
         <SrcMEIO sku={sku} sl={sl}/>
+        <SrcNewsvendor sku={sku}/>
+        <SrcPostpone proc={proc}/>
         <SrcResults proc={proc}/>
+        <SrcExceptions proc={proc}/>
       </div>
     </div>
   );
@@ -466,7 +489,7 @@ function SrcResults({ proc }) {
     shortages = (fg.shortages||[]).map((q,t)=>({t,q})).filter(s=>s.q>0.5);
   }
   return (
-    <StageSection step="9" title="Release & Shortages" sub="time-phased PO releases and projected stockouts">
+    <StageSection step="11" title="Release & Shortages" sub="time-phased PO releases and projected stockouts">
       <Grid cols={2}>
         <Card icon="📦" title="PO Release Plan" badge={res?`${poRows.length} POs · solved`:'time-phased'} badgeTone={res?'g':undefined}
           right={res ? <Provenance kind="solved" asOf={proc.ranAt}/> : undefined}
@@ -745,6 +768,249 @@ function SrcMEIO({ sku, sl }){
               soWhat={mto
                 ? `At a ${maxSvc}-day quote the model makes ${fg?fg.name:sku} to order — zero finished buffer — and holds only ₹${fmt(res.total_holding_cost)}/yr of cheap upstream stock at ${buffers.join(', ')||'no node'}. This is the multi-echelon answer single-echelon policy can't give: it would have prescribed a finished buffer you'd never want.`
                 : `The buffer sits at ${buffers.join(', ')||'no node'} for ₹${fmt(res.total_holding_cost)}/yr. Lengthen the committed service time to let the FG go make-to-order and shift capital to cheaper upstream inventory; shorten it to serve faster off a finished buffer.`}/>
+          </div>
+        )}
+      </Card>
+    </StageSection>
+  );
+}
+// ════════════════════════════════════════════════════════════════════════
+// S-7 · COSTLY-ITEM NEWSVENDOR (h vs p) + CVaR — for a chosen part, the single-period
+// stocking decision under its own overage/underage economics. cvar.py returns BOTH the
+// expected-value (critical-ratio) order-up-to AND the CVaR-β-robust one (Rockafellar–Uryasev),
+// so the planner sees the robustness premium — the extra units the tail-robust plan holds
+// over the mean-optimal plan. When holding dominates (low critical ratio) the order-up-to
+// collapses toward the mean: the costly-item make-to-order regime. h/p are GOVERNED inputs
+// seeded from the part's landed economics (seed→user), so no number is fabricated.
+// ════════════════════════════════════════════════════════════════════════
+function SrcNewsvendor({ sku }){
+  const bom = M.bom || [];
+  // default to the costliest part by landed cost — the one whose stocking economics matter most
+  const landedOf = b => effLandedCost(b.cost, getSourcing(b.part, b));
+  const costliest = bom.slice().sort((a,b)=>landedOf(b)-landedOf(a))[0] || {};
+  const seedOver = b => Math.round(landedOf(b) * (Number(b.hold)||20)/100 * 100)/100; // ₹/unit/yr holding ⇒ overage
+  const seedUnder = b => Math.round(landedOf(b) * 0.5);                                // stockout/expedite premium ≈ ½ part value
+  const [partId, setPartId] = useState(costliest.part || (bom[0]||{}).part);
+  const part = bom.find(b=>b.part===partId) || costliest;
+  const [ov, setOv] = useState(seedOver(costliest));
+  const [un, setUn] = useState(seedUnder(costliest));
+  const [beta, setBeta] = useState(0.95);
+  const onPart = id => { const b = bom.find(x=>x.part===id)||{}; setPartId(id); setOv(seedOver(b)); setUn(seedUnder(b)); };
+  const nv = useSolve('/api/solve/cvar', ()=>cvarPayload(sku, partId, ov, un, beta));
+  const run = ()=> nv.run().then(d=>{ markSolved('cvar'); return d; }).catch(()=>{});
+  const res = nv.result;
+  const fmt = n=> Math.round(n).toLocaleString('en-IN');
+  const cr = res ? res.critical_ratio : null;
+  // make-to-order regime: when the critical ratio is low the optimal stock barely exceeds the mean
+  const mto = res ? (res.safety_stock <= 0.5 || cr < 0.35) : false;
+  const num = (val,set,min,max,step)=>(
+    <input type="number" value={val} min={min} max={max} step={step||1} onChange={e=>set(Math.max(min, Math.min(max, Number(e.target.value)||0)))}
+      style={{ width:74, fontFamily:F.mono, fontSize:11, textAlign:'right', padding:'3px 5px', border:`1px solid ${C.line}`, background:C.paper, color:C.tx }}/>
+  );
+  return (
+    <StageSection step="9" title="Costly-Item Newsvendor (h vs p) + CVaR" sub="for an expensive part — the single-period stock that balances holding vs stockout, and how much MORE a tail-robust (CVaR) plan would hold">
+      <Card icon="⚖️" title="Newsvendor & CVaR-robust stocking" badge={res?(mto?'make-to-order regime':`CR ${(cr*100).toFixed(0)}%`):'balance h vs p'} badgeTone={res?(mto?'k':'g'):undefined}
+        right={res ? <Provenance kind="solved" asOf={nv.ranAt}/> : undefined}
+        info={{ what:'For the chosen part: the expected-value (critical-ratio) order-up-to AND the CVaR-β-robust one. The gap is the robustness premium — units held to cover the demand tail. Low critical ratio ⇒ holding dominates ⇒ make-to-order.', flows:'cvar.py (Rockafellar–Uryasev LP) ← part lead-time demand μ/σ × {overage h, underage p, β}.' }}
+        dev={{ comp:'SrcNewsvendor', props:'solve.cvar.{critical_ratio,order_up_to,expected_value_order_up_to,robustness_premium_units}', state:'partId, overage, underage, beta' }}>
+        <Grid cols={4}>
+          <Field label="Part" hint="seeded to the costliest landed part">
+            <select value={partId} onChange={e=>onPart(e.target.value)}
+              style={{ fontFamily:F.mono, fontSize:11, padding:'3px 5px', border:`1px solid ${C.line}`, background:C.paper, color:C.tx, maxWidth:150 }}>
+              {bom.map(b=><option key={b.part} value={b.part}>{b.name} · ₹{fmt(landedOf(b))}</option>)}
+            </select>
+          </Field>
+          <Field label="Overage h (₹/unit)" hint="cost of one leftover unit — holding/obsolescence">{num(ov,setOv,0,100000,1)}</Field>
+          <Field label="Underage p (₹/unit)" hint="cost of one stockout unit — lost margin / expedite">{num(un,setUn,0,1000000,1)}</Field>
+          <Field label="CVaR β (tail)" hint="0.95 ⇒ robust to worst 5% of demand">{num(beta,setBeta,0.5,0.999,0.01)}</Field>
+        </Grid>
+        <div style={{margin:'10px 0'}}><Btn kind="accent" sm onClick={run}>{nv.solving?'⏳ Solving…':'⚖️ Solve newsvendor + CVaR'}</Btn></div>
+        {nv.error && <div style={{margin:'8px 0', padding:'7px 11px', border:`2px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>CVaR error: {nv.error}</div>}
+        {!res ? (
+          <div style={{padding:'12px', border:`2px dashed ${C.line}`, fontFamily:F.mono, fontSize:11, color:C.tx3}}>
+            Pick a costly part and set its overage h (cost to hold a leftover) and underage p (cost of a stockout). The model returns the cost-balancing stock and the extra a tail-robust plan would carry — and flags the make-to-order regime when holding dominates.
+          </div>
+        ) : (
+          <div>
+            <div style={{border:`2px solid ${C.line}`, borderLeft:`5px solid ${mto?C.dg:C.gn}`, background:C.bg3, padding:'10px 12px', marginBottom:12}}>
+              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                <span style={{fontFamily:F.disp, fontWeight:800, fontSize:13}}>{part.name} → <span style={{color:mto?C.dg:C.gn}}>{mto?'MAKE-TO-ORDER':'STOCK TO ORDER-UP-TO'}</span></span>
+                <Tag c={mto?'r':'g'}>critical ratio {(cr*100).toFixed(0)}%</Tag>
+              </div>
+              <div style={{fontFamily:F.mono, fontSize:10, color:C.tx3, marginTop:5, lineHeight:1.6}}>
+                {mto
+                  ? `With overage ₹${fmt(ov)} dominating underage ₹${fmt(un)}, the critical ratio is only ${(cr*100).toFixed(0)}% — the optimal stock barely clears the mean (safety ${fmt(res.safety_stock)} u). Hold near-zero buffer and build this part to the order.`
+                  : `Underage ₹${fmt(un)} outweighs overage ₹${fmt(ov)} (critical ratio ${(cr*100).toFixed(0)}%), so it pays to pre-stock: the expected-value plan orders up to ${fmt(res.expected_value_order_up_to)} u; the CVaR-${(beta*100).toFixed(0)} plan holds ${res.robustness_premium_units>=0?'+':''}${fmt(res.robustness_premium_units)} more to cover the tail.`}
+              </div>
+            </div>
+            <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
+              <Blk label="Critical ratio" value={`${(cr*100).toFixed(0)}%`} sub="p / (p + h)" tone={mto?'k':'c'}/>
+              <Blk label="EV order-up-to" value={fmt(res.expected_value_order_up_to)} sub="mean-optimal (newsvendor)" tone="b"/>
+              <Blk label={`CVaR-${(beta*100).toFixed(0)} order-up-to`} value={fmt(res.order_up_to)} sub="tail-robust (R–U LP)" accent={C.ac}/>
+              <Blk label="Robustness premium" value={`${res.robustness_premium_units>=0?'+':''}${fmt(res.robustness_premium_units)} u`} sub="CVaR − EV stock" accent={res.robustness_premium_units>0?C.dg:C.tx3}/>
+              <Blk label="Implied safety" value={fmt(res.safety_stock)} sub={`over mean ${fmt(res.mean_demand)} u`} tone="y"/>
+            </div>
+            <Reading formula="critical ratio = p / (p + h)   ·   Q*_EV = μ + z(CR)·σ   ·   Q*_CVaR = argmin_Q [ α + 1/((1−β)S)·Σ(L_s−α)⁺ ]   (Rockafellar–Uryasev)"
+              soWhat={mto
+                ? `${part.name} sits in the make-to-order regime: holding a leftover (₹${fmt(ov)}) costs more than the stocking it buys back, so the optimizer refuses to pre-build. This is the costly-item case — pair it with the MEIO card to confirm the buffer belongs upstream, not on this node.`
+                : `It pays to stock ${part.name}. The CVaR-${(beta*100).toFixed(0)} plan carries ${res.robustness_premium_units>0?`${fmt(res.robustness_premium_units)} units more than`:'no more than'} the mean-optimal plan to protect the worst ${(100-beta*100).toFixed(0)}% of demand — that premium is the price of robustness you choose to pay or not.`}/>
+          </div>
+        )}
+      </Card>
+    </StageSection>
+  );
+}
+// ════════════════════════════════════════════════════════════════════════
+// S-5 · POSTPONABLE vs PINNED PO RELEASES — release-timing slack derived from the MILP's
+// OWN solved inventory trajectory (no extra solve, no faking). Per part, implied per-period
+// consumption = inv[t−1] + arrivals[t] − inv[t]; a PO landing at period a can slide later by
+// as many periods as the stock already on hand (inv[a−1]) covers the consumption that follows.
+// slack 0 ⇒ PINNED (just-in-time, fragile to any slip); slack ≥ 1 ⇒ POSTPONABLE (its capital
+// outlay can be deferred). Surfaces the working-capital and flexibility the flat release plan hides.
+// ════════════════════════════════════════════════════════════════════════
+function SrcPostpone({ proc }){
+  const res = proc && proc.result;
+  const fmt = n=> Math.round(n).toLocaleString('en-IN');
+  let rows=null, postponable=0, pinned=0, deferValue=0, slackUnits=0;
+  if(res){
+    rows=[];
+    (res.materials||[]).forEach((m,mi)=>{
+      const inv = m.inventory||[]; const T = inv.length;
+      const pos = m.purchase_orders||[];
+      if(!T || !pos.length) return;
+      // arrivals per period from the PO list (arrive_period carries release + lead time)
+      const arrivals = new Array(T).fill(0);
+      pos.forEach(po=>{ if(po.arrive_period<T) arrivals[po.arrive_period]+=po.quantity; });
+      // implied consumption from the solved balance (clamped ≥ 0 for display robustness)
+      const cons = new Array(T).fill(0);
+      for(let t=0;t<T;t++){ cons[t] = Math.max(0, (t>0?inv[t-1]:0) + arrivals[t] - inv[t]); }
+      pos.forEach((po,pi)=>{
+        const a = po.arrive_period;
+        let cover = a>0 ? inv[a-1] : 0;       // stock on hand the period BEFORE this PO lands
+        let need = 0, slack = 0;
+        for(let j=a;j<T;j++){ need += cons[j]; if(cover>=need) slack++; else break; }
+        const pin = slack<=0;
+        if(pin) pinned++; else { postponable++; deferValue += po.cost||0; slackUnits += slack; }
+        rows.push([`PO-${String(mi+1).padStart(2,'0')}${pi+1}`, m.name,
+          po.quantity.toLocaleString('en-IN'), `P${po.period}→${po.arrive_period}`,
+          pin?'pinned':`+${slack}p`, pin, `₹${((po.cost||0)/1000).toFixed(0)}K`]);
+      });
+    });
+    rows.sort((a,b)=> (a[5]===b[5]) ? 0 : (a[5]? -1 : 1)); // pinned first (the ones you must protect)
+  }
+  return (
+    <StageSection step="10" title="Postponable vs Pinned PO Releases" sub="which releases must land just-in-time (pinned) and which can slide later — the release-timing slack inside the committed plan">
+      <Card icon="⏳" title="Release-timing slack" badge={res?`${postponable} postponable · ${pinned} pinned`:'derive from plan'} badgeTone={res?'g':undefined}
+        right={res ? <Provenance kind="derived" asOf={proc.ranAt}/> : undefined}
+        info={{ what:'Per PO, how many periods its release could slide before the stock already on hand runs dry. 0 ⇒ pinned (JIT, protect it); ≥1 ⇒ postponable (defer the cash). Derived from the MILP’s own inventory trajectory — no extra solve.', flows:'← procurement materials[].{inventory, purchase_orders}.' }}
+        dev={{ comp:'SrcPostpone', props:'solve.procurement.materials[].inventory/purchase_orders (derived slack)' }}>
+        {!res ? (
+          <div style={{padding:'12px', border:`2px dashed ${C.line}`, fontFamily:F.mono, fontSize:11, color:C.tx3}}>
+            Run the procurement MILP above — this reads its solved inventory path and tells you, per PO, whether the release is pinned (must land just-in-time) or has slack you can postpone to defer working capital.
+          </div>
+        ) : !rows.length ? (
+          <div style={{padding:'10px 11px', border:`2px solid ${C.line}`, background:C.bg3, fontFamily:F.mono, fontSize:11, color:C.tx3}}>No POs in the horizon to classify.</div>
+        ) : (
+          <div>
+            <div style={{display:'flex', gap:8, marginBottom:12, flexWrap:'wrap'}}>
+              <Blk label="Postponable POs" value={`${postponable}`} sub={`of ${postponable+pinned} releases`} tone="c"/>
+              <Blk label="Pinned (JIT)" value={`${pinned}`} sub="must land on time" accent={C.dg}/>
+              <Blk label="Deferrable cash" value={`₹${fmt(deferValue/1000)}K`} sub="outlay you can slide later" tone="y"/>
+              <Blk label="Total slack" value={`${slackUnits} p`} sub="period-shifts available" tone="g"/>
+            </div>
+            <DataTable dense cols={['PO','Part','Qty','Release→Arrive','Slack','Value']} align={['left','left','right','left','right','right']}
+              rows={rows.map(r=>[r[0], r[1], r[2], r[3],
+                r[5] ? <Tag c="r">pinned</Tag> : <Tag c="g">{r[4]}</Tag>, r[6]])}/>
+            <Reading formula="slack(PO) = max k : inv[arrive−1] ≥ Σ consumption[arrive … arrive+k−1]   ·   slack 0 ⇒ pinned, ≥1 ⇒ postponable"
+              soWhat={`${postponable} of ${postponable+pinned} releases carry slack — ₹${fmt(deferValue/1000)}K of purchasing could slide later without breaching cover, freeing working capital. The ${pinned} pinned PO${pinned===1?'':'s'} are the just-in-time releases to protect first when a supplier slips.`}/>
+          </div>
+        )}
+      </Card>
+    </StageSection>
+  );
+}
+// ════════════════════════════════════════════════════════════════════════
+// S-8 · MRP-AT-SCALE EXCEPTION ROLL-UP — the answer to "what about 10+ parts?". Not a giant
+// per-part × per-period grid (unreadable at scale); instead an exception-first roll-up: every
+// part scored on real signals from the solve — zero-cover (JIT-fragile), capital concentration,
+// reorder frequency — with only the flagged parts surfaced for action and the rest rolled into
+// a one-line "clear" count. Plus the FG’s projected shortages as the top-level exception. The
+// pattern is what scales: a planner reads 3 exceptions, not a 200-cell matrix. All flags derived.
+// ════════════════════════════════════════════════════════════════════════
+function SrcExceptions({ proc }){
+  const res = proc && proc.result;
+  const fmt = n=> Math.round(n).toLocaleString('en-IN');
+  let parts=null, flagged=0, fgShort=null, fgName='';
+  if(res){
+    const mats = res.materials||[];
+    const caps = mats.map(m=>m.total_landed_cost||0).sort((a,b)=>b-a);
+    const capCut = caps.length ? caps[Math.max(0, Math.floor(caps.length/3)-1)] : Infinity; // top tercile by capital
+    parts = mats.map(m=>{
+      const inv = m.inventory||[];
+      const minCover = inv.length ? Math.min(...inv) : 0;
+      const reorders = m.num_orders||0;
+      const ex=[];
+      if(inv.length && minCover<=0) ex.push('zero-cover');                 // runs to JIT — fragile to any slip
+      if((m.total_landed_cost||0)>=capCut && caps.length>=3) ex.push('high-capital');
+      if(reorders>=4) ex.push('many-releases');                            // frequent reorders ⇒ ordering-cost / nervousness risk
+      return { name:m.name, minCover, reorders, capital:m.total_landed_cost||0, ordered:m.total_ordered||0, ex };
+    });
+    flagged = parts.filter(p=>p.ex.length).length;
+    parts.sort((a,b)=> b.ex.length-a.ex.length || b.capital-a.capital);
+    const fg = (res.products||[])[0] || {}; fgName = fg.name||'';
+    fgShort = (fg.shortages||[]).map((q,t)=>({t,q})).filter(s=>s.q>0.5);
+  }
+  const exLabel = { 'zero-cover':['r','zero-cover'], 'high-capital':['a','high-capital'], 'many-releases':['y','many-releases'] };
+  return (
+    <StageSection step="12" title="MRP Exception Roll-up (at scale)" sub="not a giant grid — every part scored on the solve, only the exceptions surfaced; the pattern that scales to a 10+ part BOM">
+      <Card icon="🚦" title="Exception-based MRP" badge={res?(flagged?`${flagged} need attention`:'all clear'):'roll up the plan'} badgeTone={res?(flagged?'k':'g'):undefined}
+        right={res ? <Provenance kind="derived" asOf={proc.ranAt}/> : undefined}
+        info={{ what:'Scores every part on zero-cover (JIT-fragile), capital concentration and reorder frequency, and surfaces only the flagged ones — the exception-first view that stays readable as the BOM grows. FG shortages shown as the top exception.', flows:'← procurement materials[] + products[0].shortages (derived flags).' }}
+        dev={{ comp:'SrcExceptions', props:'solve.procurement.materials[] (derived exception flags)' }}>
+        {!res ? (
+          <div style={{padding:'12px', border:`2px dashed ${C.line}`, fontFamily:F.mono, fontSize:11, color:C.tx3}}>
+            Run the procurement MILP — this rolls every part up into an exception list (zero-cover, capital-heavy, churny) so a planner reads the few parts that need action instead of a part × period matrix that doesn’t scale.
+          </div>
+        ) : (
+          <div>
+            {fgShort && fgShort.length>0 && (
+              <div style={{border:`2px solid ${C.line}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, padding:'9px 11px', marginBottom:12}}>
+                <div style={{fontFamily:F.disp, fontWeight:800, fontSize:12, color:C.dg, marginBottom:3}}>⚠ Top exception — {fgName} projects {fgShort.length} shortage period{fgShort.length===1?'':'s'}</div>
+                <div style={{fontFamily:F.mono, fontSize:9.5, color:C.tx3}}>{fgShort.map(s=>`P${s.t} (−${fmt(s.q)}u)`).join('  ·  ')}  — resolve before drilling part exceptions.</div>
+              </div>
+            )}
+            <div style={{display:'flex', gap:8, marginBottom:12, flexWrap:'wrap'}}>
+              <Blk label="Parts flagged" value={`${flagged}`} sub={`of ${parts.length} in BOM`} tone={flagged?'k':'c'}/>
+              <Blk label="Clear" value={`${parts.length-flagged}`} sub="no exception — rolled up" tone="g"/>
+              <Blk label="BOM capital" value={`₹${fmt(parts.reduce((s,p)=>s+p.capital,0)/1000)}K`} sub="total landed across parts" tone="y"/>
+            </div>
+            <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
+              <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10.5}}>
+                <thead><tr style={{background:C.ink}}>
+                  {['Part','Min cover','Reorders','Capital ₹','Status'].map((h,i)=>(
+                    <th key={i} style={{color:C.paper, textAlign:i?'right':'left', padding:'6px 9px', fontSize:9, textTransform:'uppercase'}}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {parts.map((p,i)=>(
+                    <tr key={i} style={{borderTop:`1px solid ${C.line2}`, background:p.ex.length?C.bg3:C.paper}}>
+                      <td style={{padding:'5px 9px', fontWeight:700}}>{p.name}</td>
+                      <td style={{padding:'5px 9px', textAlign:'right', color:p.minCover<=0?C.dg:C.tx2, fontWeight:p.minCover<=0?700:400}}>{fmt(p.minCover)}</td>
+                      <td style={{padding:'5px 9px', textAlign:'right', color:C.tx2}}>{p.reorders}</td>
+                      <td style={{padding:'5px 9px', textAlign:'right', color:C.tx2}}>₹{fmt(p.capital/1000)}K</td>
+                      <td style={{padding:'5px 9px', textAlign:'right'}}>
+                        {p.ex.length ? <span style={{display:'inline-flex', gap:4, flexWrap:'wrap', justifyContent:'flex-end'}}>{p.ex.map((e,j)=><Tag key={j} c={exLabel[e][0]}>{exLabel[e][1]}</Tag>)}</span>
+                                     : <Tag c="g">✓ clear</Tag>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Reading formula="exception = zero-cover (min inv ≤ 0) ∨ high-capital (top-tercile landed) ∨ many-releases (≥4 reorders)   ·   surface flagged, roll up the rest"
+              soWhat={flagged
+                ? `${flagged} of ${parts.length} parts need attention — a planner acts on these, not on a ${parts.length}×period grid. At a 10+ part BOM this is the difference between a readable worklist and an unscannable matrix; the ${parts.length-flagged} clear part${parts.length-flagged===1?'':'s'} stay rolled up.`
+                : `No part trips an exception — every part holds cover, no capital concentration or churn flag. At scale this empty state is the signal the plan is healthy without reading a single cell.`}/>
           </div>
         )}
       </Card>
