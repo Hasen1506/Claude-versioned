@@ -76,10 +76,26 @@ function IndiaMap({ marks, cog, flows }) {
 
 function LogAllocation({ tr }) {
   const r = tr && tr.result;
-  const lanes=['CHN→BLR','CHN→PUN','PUN→GGN','BLR→GGN'];
-  const modes=['FTL','LTL','Rail','Air'];
-  const alloc=[[100,0,0,0],[0,0,100,0],[0,60,0,40],[0,0,0,100]];
-  const flows=[{from:'WH-CHN',to:'DC-BLR',w:.8},{from:'WH-CHN',to:'DC-PUN',w:1},{from:'DC-PUN',to:'CUST-GGN',w:.6},{from:'DC-BLR',to:'CUST-GGN',w:.3}];
+  // LG-1 — allocation matrix BUILT FROM THE SOLVE: each solved shipment is a lane that
+  // picked ONE mode (the transport MILP's choice); the matrix is lane × chosen-mode with
+  // the cell = that lane's value share on its picked mode (100% — one mode per lane).
+  // Falls back to the illustrative literal only before the first solve.
+  const SEED_LANES=['CHN→BLR','CHN→PUN','PUN→GGN','BLR→GGN'];
+  const SEED_MODES=['FTL','LTL','Rail','Air'];
+  const SEED_ALLOC=[[100,0,0,0],[0,0,100,0],[0,60,0,40],[0,0,0,100]];
+  let lanes=SEED_LANES, modes=SEED_MODES, alloc=SEED_ALLOC;
+  if(r && (r.shipments||[]).length){
+    lanes = r.shipments.map(s=>s.name);
+    const modeOf = s=> (s.recommended && (s.recommended.label||s.recommended.mode)) || '—';
+    modes = Array.from(new Set(r.shipments.map(modeOf)));
+    alloc = r.shipments.map(s=> modes.map(m=> modeOf(s)===m ? 100 : 0));
+  }
+  // real flows from the solved shipments (line weight = value share)
+  let flows=[{from:'WH-CHN',to:'DC-BLR',w:.8},{from:'WH-CHN',to:'DC-PUN',w:1},{from:'DC-PUN',to:'CUST-GGN',w:.6},{from:'DC-BLR',to:'CUST-GGN',w:.3}];
+  if(r && (r.shipments||[]).length){
+    const mxv = Math.max(...r.shipments.map(s=>Number(s.value)||0), 1);
+    flows = r.shipments.map(s=>({ from:s.origin, to:s.destination, w: Math.max(.2, (Number(s.value)||0)/mxv) }));
+  }
   // real freight KPIs from the solve: total cost, weighted avg cost/shipment, SLA proxy
   const totFreight = r ? r.total_cost : null;
   const avgCost = r && r.shipments.length ? r.total_cost / r.shipments.length : null;
@@ -119,9 +135,44 @@ function LogAllocation({ tr }) {
           </KpiRow>
         </div>
         {r && <div style={{marginTop:8, fontFamily:F.mono, fontSize:10, color:C.tx2}}>Solver chose: {Object.entries(r.mode_summary).map(([m,v])=>`${v.count}× ${v.label}`).join(' · ')} over {r.n_shipments} outbound shipments.</div>}
+        <LogSkuFlows/>
         <Reading formula="min Σ (lane cost × volume)  s.t. demand met, capacity, SLA" soWhat={r?`Mode mix minimises freight at ₹${(totFreight/1e5).toFixed(2)}L for the outbound flow; weight tiers and deadlines drive each lane's pick.`:"Rail wins CHN→PUN on cost; Air only survives on BLR→GGN where the SLA forces speed."}/>
       </Card>
     </Grid>
+  );
+}
+
+// LG-2 — per-SKU outbound flow breakdown with REAL per-SKU shipping weights (kg/unit,
+// from store skuWeightKg), replacing the old flat 3 kg/unit even-split. Each finished
+// SKU's monthly flow (committed demand) × its own mass → mix-accurate tonnage, so the
+// lane weight the transport solver prices reflects the actual product mix.
+function LogSkuFlows(){
+  const fin = (M.products||[]).filter(p=>p.cat==='Finished');
+  const rows = fin.map(p=>{ const monthly = getItemDemand(p.sku,12).reduce((a,b)=>a+b,0)/12;
+    const w = (typeof skuWeightKg==='function') ? skuWeightKg(p.sku) : 3;
+    return { sku:p.sku, monthly, w, kg:monthly*w }; }).sort((a,b)=>b.kg-a.kg);
+  const totKg = rows.reduce((s,r)=>s+r.kg,0) || 1;
+  const fmt = n=>Math.round(n).toLocaleString('en-IN');
+  return (
+    <div style={{marginTop:10, border:`2px solid ${C.line}`}}>
+      <div style={{background:C.bg3, padding:'5px 9px', fontFamily:F.disp, fontWeight:800, fontSize:11}}>LG-2 · Per-SKU outbound flow <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3, fontWeight:400}}>real kg/unit · {fmt(totKg)} kg/mo total</span></div>
+      <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10}}>
+        <thead><tr style={{background:C.ink}}>
+          {['SKU','units/mo','kg/unit','kg/mo','mix %'].map((h,i)=><th key={i} style={{color:C.paper, textAlign:i?'right':'left', padding:'4px 9px', fontSize:8.5}}>{h}</th>)}
+        </tr></thead>
+        <tbody>
+          {rows.map((r,i)=>(
+            <tr key={i} style={{borderTop:`1px solid ${C.line2}`, background:i%2?C.bg3:C.paper}}>
+              <td style={{padding:'3px 9px', fontWeight:700}}>{r.sku}</td>
+              <td style={{padding:'3px 9px', textAlign:'right', color:C.tx2}}>{fmt(r.monthly)}</td>
+              <td style={{padding:'3px 9px', textAlign:'right', color:C.tx3}}>{r.w.toFixed(1)}</td>
+              <td style={{padding:'3px 9px', textAlign:'right', fontWeight:700}}>{fmt(r.kg)}</td>
+              <td style={{padding:'3px 9px', textAlign:'right', color: r.kg/totKg>0.25?C.gn:C.tx3}}>{((r.kg/totKg)*100).toFixed(0)}%</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

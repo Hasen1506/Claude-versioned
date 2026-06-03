@@ -20,7 +20,13 @@ function StageProduction({ onNav }) {
   // seeds (SolverInput) that price overtime and the idle-week shutdown heuristic.
   const laborRate  = _eff(config.prodLaborRate, 120);
   const shutdownPct = _eff(config.prodShutdownPct, 25);
-  const prod = useSolve('/api/solve/production', ()=>productionPayload(planning, { laborRate, shutdownPct }));
+  // PR-A — opt-in time-phased MPS (tracks the demand curve vs front-loading); the holding
+  // cost penalizes building early. PR-B — governed per-SKU cycle/line overrides flow in.
+  const timePhased = !!config.prodTimePhased;
+  const holdingCost = _eff(config.prodHoldingCost, 2);
+  const campaignMinRun = _eff(config.prodCampaignMinRun, 0);   // PR-4 — campaign min-run lever
+  const routing = config.prodRouting || {};
+  const prod = useSolve('/api/solve/production', ()=>productionPayload(planning, { laborRate, shutdownPct, timePhased, holdingCost, campaignMinRun, routing }), { solveKey:'production' });  // LP-C hydrate from loop cache
   const { stale, ranAt } = useStale('production');
   const runProd = ()=> prod.run().then(d=>{ markSolved('production'); return d; }).catch(()=>{});
   const tabs = [
@@ -37,8 +43,8 @@ function StageProduction({ onNav }) {
       <SubTabNav tabs={tabs} active={sub} onChange={setSub}/>
       <div style={{padding:18}}>
         {prod.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Production MILP: {prod.error}</div>}
-        {sub==='arch'   && <StageSection step="1" title="Architecture" sub="line → stage → machine tree · the slowest stage caps the line"><ProdArch/></StageSection>}
-        {sub==='cycle'  && <StageSection step="2" title={`Cycle & Line · ${p.name}`} sub="cycle time and line assignment are line properties (moved here from Products)"><ProdCycle p={p} prod={prod} onNav={onNav}/></StageSection>}
+        {sub==='arch'   && <StageSection step="1" title="Architecture" sub="line → stage → machine tree · the slowest stage caps the line"><ProdArch prod={prod}/></StageSection>}
+        {sub==='cycle'  && <StageSection step="2" title={`Cycle & Line · ${p.name}`} sub="cycle time and line assignment are line properties (moved here from Products)"><ProdCycle p={p} prod={prod} config={config} setConfig={setConfig} onNav={onNav}/></StageSection>}
         {sub==='sched'  && <>
           <StageSection step="0" title="Solver Parameters" sub="governed inputs — seed defaults you may override; the rate prices overtime and shutdown savings">
             <ProdParams config={config} setConfig={setConfig} prod={prod} ranAt={ranAt}/>
@@ -58,11 +64,15 @@ function StageProduction({ onNav }) {
 // (EXTERNAL·seed badge until overridden, D-DEC-1) that prices OT + shutdown
 // savings; the shutdown threshold sets the utilization floor for a candidate.
 function ProdParams({ config, setConfig, prod, ranAt }){
+  // PR-A — time-phased toggle. OFF (default) = minimize makespan+setup ⇒ each SKU front-loads
+  // into 1–2 weeks (the W3 behavior). ON = add a no-backorder inventory balance per period so
+  // production TRACKS the committed demand curve; the holding rate prices early build.
+  const timePhased = !!config.prodTimePhased;
   return (
     <Card icon="🎛️" title="Production MILP inputs" badge="governed" badgeTone="y"
       right={prod && prod.result ? <Provenance kind="solved" asOf={ranAt?ranAt.toLocaleTimeString():undefined}/> : null}
-      info={{ what:'Line labor rate prices overtime and idle-week shutdown savings; the threshold sets the utilization below which an idle run is a shutdown candidate. Both are seeds you may override.', flows:'→ production MILP labor_cost_mode + shutdown heuristic.' }}
-      dev={{ comp:'SolverInput', props:'config.prodLaborRate, config.prodShutdownPct', state:'config.{prodLaborRate,prodShutdownPct}' }}>
+      info={{ what:'Line labor rate prices overtime and idle-week shutdown savings; the threshold sets the utilization below which an idle run is a shutdown candidate. Time-phasing makes the schedule track the demand curve instead of front-loading. All seeds you may override.', flows:'→ production MILP labor_cost_mode + shutdown heuristic + inventory balance.' }}
+      dev={{ comp:'SolverInput', props:'config.{prodLaborRate,prodShutdownPct,prodTimePhased,prodHoldingCost}', state:'config.*' }}>
       <Grid cols={3}>
         <SolverInput label="Line labor rate" seed={120} value={config.prodLaborRate}
           onChange={v=>setConfig({ prodLaborRate:v })} min={0} suffix="₹/hr"
@@ -70,9 +80,31 @@ function ProdParams({ config, setConfig, prod, ranAt }){
         <SolverInput label="Shutdown threshold" seed={25} value={config.prodShutdownPct}
           onChange={v=>setConfig({ prodShutdownPct:v })} min={0} max={100} suffix="% util"
           hint="idle runs below this are candidates"/>
+        {timePhased && <SolverInput label="Holding cost" seed={2} value={config.prodHoldingCost}
+          onChange={v=>setConfig({ prodHoldingCost:v })} min={0} suffix="₹/u/wk"
+          hint="penalizes building ahead of demand"/>}
+        <SolverInput label="Campaign min-run" seed={0} value={config.prodCampaignMinRun}
+          onChange={v=>setConfig({ prodCampaignMinRun:v })} min={0} integer suffix="u/run"
+          hint="PR-4 — min units per setup (0 = off)"/>
       </Grid>
-      <Reading formula="OT cost = workers × hrs × rate × 1.5   ·   shutdown net = wage saved over an idle run − one-off rehire"
-        soWhat="The rate is seeded — enter your real ₹/hr and re-run; the overtime bill and shutdown savings below move with it. Workers/line come from the bottleneck stage's machine count."/>
+      {prod && prod.result && prod.result.campaign && (()=>{ const cm = prod.result.campaign;
+        return <div style={{marginTop:10, display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', fontFamily:F.mono, fontSize:10, color:C.tx2}}>
+          <span style={{fontWeight:700, color:C.tx3}}>CAMPAIGN:</span>
+          <span>{cm.runs} runs</span><span style={{color:C.line2}}>·</span>
+          <span>avg <b style={{color:C.tx}}>{cm.avg_run_units}</b> u/run</span><span style={{color:C.line2}}>·</span>
+          <span>min-run {cm.min_run>0?<b style={{color:C.ac}}>{cm.min_run}u</b>:'off'}</span>
+          <Tag c={cm.min_run>0?'b':'w'}>{cm.min_run>0?'campaigned':'free lots'}</Tag>
+        </div>;
+      })()}
+      <label style={{display:'flex', alignItems:'center', gap:7, marginTop:10, fontFamily:F.mono, fontSize:10, fontWeight:700, color:C.tx2, cursor:'pointer'}}>
+        <input type="checkbox" checked={timePhased} onChange={e=>setConfig({ prodTimePhased:e.target.checked })}/>
+        TIME-PHASED MPS · production tracks the weekly demand curve (no-backorder inventory balance)
+        <span style={{fontWeight:400, color:C.tx3}}>{timePhased?'— on: schedule follows demand':'— off: minimize makespan (SKUs front-load)'}</span>
+      </label>
+      <Reading formula="OT cost = workers × hrs × rate × 1.5   ·   shutdown net = wage saved over an idle run − one-off rehire   ·   time-phased: inv[t] = inv[t−1] + prod·yield − demand[t] ≥ 0   ·   campaign: x[k,l,t] ≥ min_run·y[k,l,t]"
+        soWhat={timePhased
+          ? "Time-phased ON: the MPS below tracks committed weekly demand and the on-hand cover row stays near zero — re-run to see it. Holding cost is what stops it building everything early."
+          : "The rate is seeded — enter your real ₹/hr and re-run; the overtime bill and shutdown savings move with it. Turn on time-phasing to make the schedule follow the demand curve instead of front-loading. Campaign min-run forces longer single-SKU runs (AAAA-then-BBBB) — fewer setups/changeovers, more holding."}/>
     </Card>
   );
 }
@@ -97,7 +129,18 @@ function StageNode({ st }) {
   );
 }
 
-function ProdArch() {
+function ProdArch({ prod }) {
+  // PR-C — line utilization now reads the SOLVED gantt (same basis as the Cycle tab's
+  // Line-Load preview) when a schedule exists: monthly-equivalent volume on the line
+  // = Σ(solved units) / horizon_weeks × 4.33, ÷ line cap. Falls back to the annual-demand
+  // mock (demand/12) only before the first solve — labelled accordingly, never a fake-solved.
+  const res = prod && prod.result;
+  let solvedMonthly = null;
+  if(res && res.gantt){
+    const T = res.periods || 1; solvedMonthly = {};
+    res.gantt.forEach(g=>{ solvedMonthly[g.line] = (solvedMonthly[g.line]||0) + g.quantity; });
+    Object.keys(solvedMonthly).forEach(k=>{ solvedMonthly[k] = solvedMonthly[k] / T * 4.33; });
+  }
   return (
     <div>
       <Grid cols={3}>
@@ -124,33 +167,47 @@ function ProdArch() {
         ))}
       </Grid>
       <div style={{marginTop:12}}>
-        <Card icon="📉" title="Derived Capacities & Bottlenecks" badge="min(stage)" info={{ what:'Each line is capped by its slowest stage.', flows:'Line cap → aggregate & production MILP.' }}
-          dev={{ comp:'BottleneckTable', props:'lines (computed)' }}>
+        <Card icon="📉" title="Derived Capacities & Bottlenecks" badge={solvedMonthly?'min(stage) · solved load':'min(stage)'} badgeTone={solvedMonthly?'g':undefined}
+          right={solvedMonthly ? <Provenance kind="solved" asOf={prod.ranAt?prod.ranAt.toLocaleTimeString():undefined}/> : null}
+          info={{ what:'Each line is capped by its slowest stage; utilization is the solved schedule load when a plan exists.', flows:'Line cap → aggregate & production MILP.' }}
+          dev={{ comp:'BottleneckTable', props:'lines, prod.result.gantt' }}>
           <DataTable cols={['Line','Bottleneck Stage','Bottleneck Cap','Line OEE','Util @ plan']} align={['left','left','right','right','right']}
             rows={M.lines.map(l=>{
-              // util DERIVED: Σ(monthly demand of finished SKUs on this line) ÷ line cap (was hardcoded 94/88/96%).
-              const mDem = M.products.filter(p=>p.cat==='Finished'&&p.line===l.id).reduce((s,p)=>s+p.demand/12,0);
-              const util = l.cap ? mDem/l.cap : 0;
+              // PR-C — util from the SOLVED gantt (monthly-equiv) when available; else the annual-demand mock.
+              const monthly = solvedMonthly
+                ? (solvedMonthly[l.name] || 0)
+                : M.products.filter(p=>p.cat==='Finished'&&p.line===l.id).reduce((s,p)=>s+p.demand/12,0);
+              const util = l.cap ? monthly/l.cap : 0;
               return {cells:[l.id, l.bottleneck, `${l.cap.toLocaleString('en-IN')} u/mo`, `${(l.oee*100).toFixed(0)}%`,
-                <span style={{fontWeight:700, color: util>0.95?C.dg:C.tx}}>{(util*100).toFixed(0)}%</span>]};
+                <span style={{fontWeight:700, color: util>0.95?C.dg:C.tx}}>{(util*100).toFixed(0)}%{solvedMonthly?'':' ·seed'}</span>]};
             })}/>
-          <Reading formula="util = Σ(monthly demand of SKUs on the line) ÷ line capacity" soWhat="A line over ~95% has no slack — its capacity dual turns positive on Plan, which is where added capacity earns its return."/>
+          <Reading formula={solvedMonthly?"util = (Σ solved units on line ÷ horizon weeks × 4.33) ÷ line capacity":"util = Σ(monthly demand of SKUs on the line) ÷ line capacity (pre-solve estimate)"} soWhat={solvedMonthly?"This is the same solved load the Cycle-tab preview shows — a line over ~95% has no slack and its capacity dual turns positive on Plan.":"Run the schedule (⚡) to replace this annual-demand estimate with the solved per-line load; a line over ~95% earns added capacity on Plan."}/>
         </Card>
       </div>
     </div>
   );
 }
 
-function ProdCycle({ p, prod, onNav }) {
+function ProdCycle({ p, prod, config, setConfig, onNav }) {
   // PR-5 — flat rate (rate x run-hours) is the SIMPLE default; the OEE
   // decomposition is opt-in behind "Advanced" for shops that measure the losses.
   const [advanced, setAdvanced] = useState(false);
   const capMode = advanced ? 'oee' : 'flat';
-  const flatRate = (60/p.cycle).toFixed(1);
-  const effRate = (60/p.cycle*p.oee).toFixed(1);
+  // PR-B — cycle time + assigned line are now GOVERNED (seed→override, written to
+  // config.prodRouting[sku]) and flow straight into productionPayload. Editing them
+  // and re-running re-pins the SKU and re-prices its throughput — no longer display-only.
+  const route = config.prodRouting || {};
+  const ov = route[p.sku] || {};
+  const setRoute = (patch)=> setConfig({ prodRouting: { ...route, [p.sku]: { ...ov, ...patch } } });
+  const cycSet = ov.cycle != null && ov.cycle !== '';
+  const lineSet = ov.line != null && ov.line !== '';
+  const effCycle = cycSet ? Number(ov.cycle) : p.cycle;
+  const effLine  = lineSet ? ov.line : p.line;
+  const flatRate = (60/effCycle).toFixed(1);
+  const effRate = (60/effCycle*p.oee).toFixed(1);
   // Line-load preview reads the REAL solve: this SKU's assigned line, util/week
   // = sum(scheduled units on the line) / weekly capacity (cap / 4.33).
-  const line = M.lines.find(l=>l.id===p.line);
+  const line = M.lines.find(l=>l.id===effLine);
   const wkCap = line ? line.cap/4.33 : 0;
   const res = prod && prod.result;
   let load = null;
@@ -167,13 +224,17 @@ function ProdCycle({ p, prod, onNav }) {
           <input type="checkbox" checked={advanced} onChange={e=>setAdvanced(e.target.checked)}/>ADVANCED · OEE
         </label>}>
         <Grid cols={2} gap={8}>
-          <Field label="Cycle Time"><NumInput value={p.cycle} suffix="min/u"/></Field>
-          <Field label="Assigned Line"><Select value={p.line} options={['LINE-01','LINE-02','LINE-03']}/></Field>
+          <SolverInput label="Cycle Time" seed={p.cycle} value={ov.cycle}
+            onChange={v=>setRoute({ cycle:v })} min={0.1} suffix="min/u" hint="re-prices throughput"/>
+          <Field label={`Assigned Line${lineSet?'':' · seed'}`}>
+            <Select value={effLine} options={['LINE-01','LINE-02','LINE-03']}
+              onChange={v=>setRoute({ line:v })}/>
+          </Field>
           {capMode==='oee'
             ? <Field label="OEE"><NumInput value={(p.oee*100).toFixed(0)} suffix="%"/></Field>
             : <Field label="Run hours / day"><NumInput value="20"/></Field>}
           <Field label="Effective Rate"><NumInput value={capMode==='oee'?effRate:flatRate} suffix="u/hr" disabled/></Field>
-          <Field label="Batch Size" span={2}><NumInput value={p.moq}/></Field>
+          <Field label="Batch Size · MOQ" span={2}><NumInput value={p.moq}/></Field>
         </Grid>
         {capMode==='oee'
           ? <Reading formula={`theoretical ${flatRate} u/hr × OEE ${(p.oee*100).toFixed(0)}% = ${effRate} u/hr effective`}
@@ -223,6 +284,9 @@ function ProdMPS({ prod, planning, item }){
   const bySku = {};
   res.gantt.forEach(g=>{ (bySku[g.product] = bySku[g.product] || Array(T).fill(0))[g.period] += g.quantity; });
   const skus = Object.keys(bySku);
+  // PR-A — solved per-period ending inventory (only present when time-phased was requested).
+  const invBy = {}; (res.projected_inventory || []).forEach(pi=>{ invBy[pi.name] = pi.ending_inventory; });
+  const timePhased = !!res.time_phased;
   const selSku = item && item.id;
   const shown = (scope==='selected' && selSku && bySku[selSku]) ? [selSku] : skus;
   // calendar-aware day drill across the frozen fence (Sundays + Indian holidays excluded).
@@ -270,7 +334,8 @@ function ProdMPS({ prod, planning, item }){
           </tr></thead>
           <tbody>
             {shown.map((sku,ri)=>(
-              <tr key={sku} style={{borderTop:`1px solid ${C.line2}`, background: ri%2?C.bg3:C.paper}}>
+              <React.Fragment key={sku}>
+              <tr style={{borderTop:`1px solid ${C.line2}`, background: ri%2?C.bg3:C.paper}}>
                 <td style={{padding:'5px 9px', fontWeight:700}}>{sku}</td>
                 {grain==='week'
                   ? bySku[sku].map((q,i)=>(
@@ -283,12 +348,21 @@ function ProdMPS({ prod, planning, item }){
                       <td key={i} className="num" style={{textAlign:'right', padding:'5px 7px', color: q?C.tx:C.tx3, background: dayCols[i] && dayCols[i].wk%2?'transparent':C.bg4}}>{q||'·'}</td>
                     ))}
               </tr>
+              {timePhased && grain==='week' && invBy[sku] && (
+                <tr style={{background: ri%2?C.bg3:C.paper}}>
+                  <td style={{padding:'2px 9px 5px', fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>↳ on-hand cover</td>
+                  {invBy[sku].slice(0,T).map((v,i)=>(
+                    <td key={i} className="num" style={{textAlign:'right', padding:'2px 9px 5px', fontSize:9, color:C.tx3}}>{Math.round(v)||'·'}</td>
+                  ))}
+                </tr>
+              )}
+              </React.Fragment>
             ))}
           </tbody>
         </table>
       </div>
-      <Reading formula={grain==='day'?"daily qty = solved weekly MPS spread across that week's working days (Sundays + Indian holidays excluded)":'weekly MPS = production MILP gantt, summed per SKU per week'}
-        soWhat={grain==='day'?`Inside the ${frozen}-week frozen fence the schedule is executable by dated working day — ${dayCols.length} real working days, holidays already removed.`:'Each cell is solved output, not a target — switch to day to release dated work inside the fence.'}/>
+      <Reading formula={grain==='day'?"daily qty = solved weekly MPS spread across that week's working days (Sundays + Indian holidays excluded)":(timePhased?'time-phased MPS = production MILP tracking committed weekly demand (inv ≥ 0 each week)':'weekly MPS = production MILP gantt, summed per SKU per week')}
+        soWhat={grain==='day'?`Inside the ${frozen}-week frozen fence the schedule is executable by dated working day — ${dayCols.length} real working days, holidays already removed.`:(timePhased?'The on-hand cover row stays near zero — production follows demand week by week instead of front-loading. Turn time-phasing off (Solver Parameters) to see the makespan-minimizing build.':'Each cell is solved output, not a target — switch to day to release dated work inside the fence. Turn on time-phasing (Solver Parameters) to make the schedule follow the demand curve.')}/>
     </Card>
   );
 }

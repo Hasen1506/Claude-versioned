@@ -254,6 +254,29 @@ def solve_production(data):
         salaried_fixed_cost = wf_salaried_monthly_cost * (T / 4.33)
         obj.append(salaried_fixed_cost)
 
+    # PR-A (W3 follow-up) — OPT-IN time-phased MPS. When params.time_phased is set and a
+    # product carries demand_by_period[], we add a no-backorder inventory balance per
+    # (product, period). That forces cumulative production to COVER cumulative demand by
+    # every period (not just the horizon total), so the schedule tracks the demand curve
+    # instead of front-loading everything into week 1-2 to minimize makespan; a holding cost
+    # on the carried inventory penalizes building early. Default OFF ⇒ model byte-unchanged
+    # (the W3-verified total-demand behavior). This is the additive L3 production-truth gain.
+    time_phased = bool(params.get('time_phased', False))
+    holding_cost_per_unit = float(params.get('holding_cost_per_unit', 0) or 0)
+    # PR-4 (W10) — campaign min-run lever. When > 0, a product that is set up on a line
+    # in a period must produce at least `campaign_min_run` units (x ≥ min_run·y, replacing
+    # the legacy x ≥ y "at least 1"). This forces CAMPAIGNS — long single-SKU runs (AAAA
+    # then BBBB) instead of fragmenting a SKU across many small lots — trading more holding
+    # for fewer setups/changeovers. Default 0 ⇒ floor = 1 ⇒ model byte-identical to W3.
+    campaign_min_run = int(params.get('campaign_min_run', 0) or 0)
+    inv = {}
+    if time_phased:
+        for k in range(n_prod):
+            for t in range(T):
+                inv[k, t] = pulp.LpVariable(f'inv_{k}_{t}', lowBound=0)
+                if holding_cost_per_unit > 0:
+                    obj.append(holding_cost_per_unit * inv[k, t])
+
     prob += pulp.lpSum(obj)
 
     # Constraints
@@ -289,9 +312,12 @@ def solve_production(data):
         for l in range(n_lines):
             cap_route, eligible_route, _ = _route_cap(k, l)
             cap = cap_route if eligible_route else lines[l].get('capacity', 50)
+            # PR-4 — campaign floor per active run, capped to the route capacity (and ≥1) so
+            # the min-run can never exceed what the line can physically make in a period.
+            run_floor = max(1, min(campaign_min_run, cap)) if cap > 0 else 1
             for t in range(T):
                 prob += x[k, l, t] <= cap * y[k, l, t], f"Link_{k}_{l}_{t}"
-                prob += x[k, l, t] >= y[k, l, t], f"MinProd_{k}_{l}_{t}"
+                prob += x[k, l, t] >= run_floor * y[k, l, t], f"MinProd_{k}_{l}_{t}"
 
         # C4: Completion tracking
         for l in range(n_lines):
@@ -371,6 +397,27 @@ def solve_production(data):
     if wf_ot_cap_hrs > 0:
         for t in range(T):
             prob += pulp.lpSum(ot[l, t] for l in range(n_lines)) <= wf_ot_cap_hrs, f"OrgOTCap_{t}"
+
+    # PR-A (W3 follow-up) — time-phased inventory balance (no backorder). Yield matches C1's
+    # routing-cascaded fy exactly, so the balance and the demand ceiling agree.
+    #   inv[k,t] = inv[k,t-1] (or opening_inventory at t=0) + Σ_l x[k,l,t]·fy − demand[k,t]
+    #   inv[k,t] ≥ 0 (declared lowBound) ⇒ on-hand never goes negative ⇒ demand met each period.
+    if time_phased:
+        for k in range(n_prod):
+            dbp = products[k].get('demand_by_period') or []
+            fy = products[k].get('yield_pct', 0.95)
+            prod_route = products[k].get('routing') or []
+            if prod_route:
+                fy_route = 1.0
+                for op in prod_route:
+                    fy_route *= op.get('yieldPct', op.get('yield_pct', 100)) / 100.0
+                fy = fy_route if fy_route > 0 else fy
+            opening = float(products[k].get('opening_inventory', 0) or 0)
+            for t in range(T):
+                d_t = float(dbp[t]) if t < len(dbp) else 0.0
+                prev = inv[k, t - 1] if t > 0 else opening
+                prob += inv[k, t] == prev + pulp.lpSum(
+                    x[k, l, t] for l in range(n_lines)) * fy - d_t, f"InvBal_{k}_{t}"
 
     # Solve
     solver = pulp.PULP_CBC_CMD(msg=0, timeLimit=60, gapRel=0.05)
@@ -539,9 +586,35 @@ def solve_production(data):
             seq['sequence_saving_min'] = round(seq['averaged_approx_min'] - seq['total_changeover_min'], 2)
             sequence_plans.append(seq)
 
+    # PR-A (W3 follow-up) — emit the solved per-(product, period) ending inventory so the MPS can
+    # show on-hand cover tracking the demand curve (only when time_phased was requested).
+    projected_inventory = []
+    if time_phased and inv:
+        for k in range(n_prod):
+            projected_inventory.append({
+                'name': products[k].get('name', f'P{k}'),
+                'product_idx': k,
+                'ending_inventory': [round(float(pulp.value(inv[k, t]) or 0), 1) for t in range(T)],
+                'demand_by_period': [round(float(d), 1) for d in (products[k].get('demand_by_period') or [])],
+            })
+
+    # PR-4 — campaign metrics: a "run" is one (product,line,period) lot. Fewer, larger runs =
+    # campaigned; many small runs = fragmented. avg_run_units exposes the setup↔holding trade.
+    _total_units = sum(g['quantity'] for g in gantt)
+    _n_runs = len(gantt)
+    campaign_summary = {
+        'min_run': campaign_min_run,
+        'runs': _n_runs,
+        'avg_run_units': round(_total_units / _n_runs, 1) if _n_runs else 0,
+        'total_units': _total_units,
+    }
+
     return {
         'status': 'Optimal',
         'total_cost': round(total_cost, 2),
+        'time_phased': time_phased,
+        'campaign': campaign_summary,
+        'projected_inventory': projected_inventory,
         # GAP-8 — true sequence-dependent changeover run order per line (vs averaged MILP cost).
         'sequence_plans': sequence_plans,
         # R14.1 / Phase 3 · D6 — labor cost transparency.

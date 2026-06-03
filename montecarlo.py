@@ -1,12 +1,31 @@
 """
 Monte Carlo Simulation Engine
 ==============================
-Runs N stochastic simulations of the supply chain with randomized:
-  - Demand (normal distribution around forecast)
-  - Lead times (normal distribution around mean LT)
-  - Prices (normal distribution around base cost)
+Runs N stochastic simulations of the committed plan with randomized:
+  - Demand  (per-period draws ~ N(forecast, mape·forecast), truncated ≥ 0)
+  - Material cost (per-part draws ~ N(landed_cost, cost_cv·cost), optionally
+    bivariate-correlated with the demand shock via corr_demand_cost; Cholesky)
 
-Returns: cost distribution, VaR95, CVaR95, fill rate distribution
+RK-D (lead-time lag — now MODELLED, was previously only documented away): when a
+positive production/inbound lead time is supplied (`prod_lead_time`, per-product
+or via params), a unit BUILT in period t is not available to serve until period
+t + L, where L ~ N(prod_lead_time, prod_lead_time_cv·prod_lead_time) truncated at
+0 (a fresh draw per build event). Costs are charged at BUILD time; units whose
+draw lands them beyond the horizon are paid for but never serve — so a committed
+plan that mis-times a build against a demand shock is penalised exactly as it
+would be in execution. This is the depth fix the old "R-3" docstring deferred:
+earlier the loop produced and served WITHIN the same period (no lag), and the
+docstring merely *explained* that gap instead of closing it. With
+prod_lead_time = 0 the legacy same-period behaviour is preserved exactly.
+Demand-side / supply-LT-demand risk still also lives in the CVaR layer (cvar.py
+over lead-time demand); this adds the *timing* risk to the FG simulation itself.
+
+In 'plan' mode (auto-selected when a committed production schedule is supplied)
+the simulator REPLAYS the fixed MILP schedule against the demand draws — it
+reports the risk of the plan that will actually execute, not a re-derived
+base-stock policy. Falls back to base-stock when no plan is passed.
+
+Returns: cost distribution, VaR95, CVaR95, fill-rate distribution.
 """
 import numpy as np
 import time
@@ -125,8 +144,16 @@ def run_montecarlo(data, n_runs=500):
             plan_arr = prod.get('plan') or prod.get('production_plan') or []
             use_plan = (policy == 'plan') and len(plan_arr) > 0
 
+            # RK-D — stochastic production/inbound lead-time lag. A unit BUILT in period
+            # t is received at t + L, with L ~ N(lt_mean, lt_cv·lt_mean) truncated at 0
+            # (fresh draw per build). Read per-product with a params-level default; with
+            # lt_mean = 0 the legacy same-period receipt is preserved exactly.
+            lt_mean = max(0.0, float(prod.get('prod_lead_time', params.get('prod_lead_time', 0)) or 0))
+            lt_cv = max(0.0, float(prod.get('prod_lead_time_cv', params.get('prod_lead_time_cv', 0.5)) or 0.0))
+
             # Simulation: replenish up to demand + SS, age cohorts, expire past shelf life.
             lots = []  # list of [qty, age_in_periods], oldest first
+            arrivals = {}   # RK-D — in-transit pipeline: period_due → good units scheduled to land
             init_inv = prod.get('init_inventory', 0)
             if init_inv > 0:
                 lots.append([init_inv, 0])
@@ -140,19 +167,33 @@ def run_montecarlo(data, n_runs=500):
                     # Fixed committed schedule — the plan cannot react to the demand draw.
                     prod_qty = max(0, round(plan_arr[t] if t < len(plan_arr) else 0))
                 else:
-                    # Base-stock policy: replenish up to demand + SS, net of on-hand.
-                    target = d + ss - on_hand
+                    # Base-stock policy: replenish up to demand + SS, net of on-hand AND
+                    # the in-transit pipeline (RK-D — don't re-order what's already inbound).
+                    pipeline = sum(arrivals.values())
+                    target = d + ss - on_hand - pipeline
                     prod_qty = max(0, min(target, cap))
                 good_qty = round(prod_qty * fy)
 
-                # Costs
+                # Costs — charged at BUILD time t (capital is committed when you produce,
+                # not when the units land).
                 if prod_qty > 0:
                     cost_k += setup_cost
                     cost_k += var_cost * prod_qty
                     cost_k += unit_mat_cost * prod_qty
 
+                # RK-D — schedule the good units to land after the lead-time lag; receive
+                # everything due by now. With lt_mean = 0 they land this same period (legacy).
                 if good_qty > 0:
-                    lots.append([good_qty, 0])
+                    if lt_mean > 0:
+                        draw = rng.normal(lt_mean, lt_cv * lt_mean) if lt_cv > 0 else lt_mean
+                        L = max(0, int(round(draw)))
+                        due = t + L
+                        arrivals[due] = arrivals.get(due, 0) + good_qty
+                    else:
+                        lots.append([good_qty, 0])
+                if arrivals:
+                    for due in [k for k in arrivals if k <= t]:
+                        lots.append([arrivals.pop(due), 0])
 
                 # Serve demand FEFO (oldest cohort first — uses near-expiry stock before it spoils)
                 remaining = d
@@ -207,6 +248,8 @@ def run_montecarlo(data, n_runs=500):
     return {
         'n_runs': n_runs,
         'policy_simulated': policy,  # GAP-1 — 'plan' = the committed MILP schedule; 'base_stock' = re-derived policy
+        'prod_lead_time': params.get('prod_lead_time', 0),   # RK-D — production/inbound lag applied (0 = same-period legacy)
+        'prod_lead_time_cv': params.get('prod_lead_time_cv', 0.5),
         'avg_cost': round(avg_cost, 2),
         'median_cost': round(float(np.median(costs)), 2),
         'std_cost': round(float(np.std(costs)), 2),

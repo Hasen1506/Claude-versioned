@@ -40,17 +40,32 @@ async function apiGet(path){
 // ── 2. useSolve — solve-state hook (busy / result / error / run) ───────────
 // run() resolves with the data and also stashes it; pass an explicit payload to
 // override buildPayload(). ranAt is a Date for the Provenance/AsOf stamp.
-function useSolve(endpoint, buildPayload){
+//   opts.solveKey (LP-C — tab hydration): when given, this tab HYDRATES from the
+//   cross-stage solve cache (solveResults[key]) until it runs its own solve, and
+//   a successful run writes back to the cache. So after a full-loop run (which
+//   caches every step) every tab keyed to a step shows the fresh chained number
+//   without being re-run by hand — the full payoff of the W7 cache.
+function useSolve(endpoint, buildPayload, opts){
+  opts = opts || {};
+  const key = opts.solveKey || null;
   const [solving, setSolving] = useState(false);
   const [result,  setResult]  = useState(null);
   const [error,   setError]   = useState(null);
   const [ranAt,   setRanAt]   = useState(null);
+  // subscribe to the cache for this key (dummy key when unused — hooks stay unconditional).
+  const cache = useSolveResult(key || '__nokey__');
+  useEffect(()=>{
+    // hydrate from the cache as a FALLBACK: only when this tab hasn't solved
+    // locally yet (result == null). The tab's own run() always takes precedence.
+    if(key && cache.result && !result){ setResult(cache.result); setRanAt(cache.ranAt || null); }
+  }, [key, cache.result]); // eslint-disable-line
   const run = async (override)=>{
     setSolving(true); setError(null);
     try{
       const payload = (override!==undefined) ? override : (buildPayload ? buildPayload() : {});
       const data = await apiPost(endpoint, payload);
       setResult(data); setRanAt(new Date());
+      if(key) cacheSolve(key, data);          // keep the cross-stage cache fresh
       return data;
     }catch(e){ setError(e.message || String(e)); setResult(null); throw e; }
     finally{ setSolving(false); }
@@ -96,6 +111,10 @@ const _STATE_SEED = {
   // so every downstream solver plans the SAME demand the forecast produced.
   // Empty until a forecast lands; reads fall back to M.products[].demand spread evenly.
   demand: {},
+  // Imported / like-modeled HISTORY per SKU (W9 · D-7). histImports[sku] =
+  // { grain, series, importedAt, source }. historyFor() prefers this over the seed
+  // M.historyAt when the grain matches — so the forecast competes on REAL uploaded data.
+  histImports: {},
   // ── Orchestration foundations (W0 · P1, P2) ──────────────────────────────
   // solves: per-solver freshness ledger { <solveKey>: {stale, ranAt} }. A solve
   // goes STALE when an input it depends on (SOLVE_DEPS) changes; cleared when it
@@ -123,6 +142,20 @@ const _STATE_SEED = {
   // LANDED cost the procurement/policy MILP plans against (S-1); the truck fields
   // drive the stepwise inbound-freight curve (S-2, D-DEC-3 option b).
   sourcing: {},
+  // ── Cross-stage solve-result cache (W7 · orchestration) ──────────────────
+  // The latest result of each solver, keyed by solveKey, so a DOWNSTREAM stage
+  // can read an UPSTREAM solve's real output without re-running it (each tab's
+  // useSolve is local). markSolved(key, result) writes here; getSolveResult /
+  // useSolveResult read it. This is what lets Risk simulate the SAME production
+  // schedule Production solved, and lets runFullLoop() chain one solve into the
+  // next on ONE dataset (W7 acceptance). { <solveKey>: {result, ranAt} }.
+  solveResults: {},
+  // ── Scenario engine (W10/W11 · Platform L4) ──────────────────────────────
+  // Named branches of the input model + their last solved KPIs. list[id] =
+  // { id, name, note, parent, createdAt, inputs:{<slice snapshots>}, kpis, ranAt }.
+  // `active` = which branch the live working set currently mirrors ('base' = the
+  // unsaved live edits). See §4½ — branch · run (transparent) · compare · merge.
+  scenarios: { list:{}, order:[], active:'base' },
 };
 
 const appStore = {
@@ -143,6 +176,16 @@ const appStore = {
   },
   reset(){ this.s = JSON.parse(JSON.stringify(_STATE_SEED));
     try{ localStorage.removeItem('es_state'); }catch(e){} this.subs.forEach(f=>f()); },
+  // replace: overwrite whole slices (no per-slice merge). Used by the scenario engine
+  // so applying a scenario's input snapshot DROPS keys absent from it (true isolation) —
+  // set() would leave a stale SKU/part behind. Persists + notifies like set().
+  replace(patch){
+    const next = { ...this.get() };
+    for(const k of Object.keys(patch)) next[k] = patch[k];
+    this.s = next;
+    try{ localStorage.setItem('es_state', JSON.stringify(next)); }catch(e){}
+    this.subs.forEach(f=>f());
+  },
 };
 
 // useStore(selector?) — subscribes; returns the whole state or a selected slice.
@@ -219,6 +262,74 @@ function getFinishedDemand(T){
     .map(p=>({ sku:p.sku, name:p.name, demand:getItemDemand(p.sku, T) }));
 }
 
+// ── Imported / like-modeled HISTORY (W9 · D-7 CSV import, NPI like-modeling) ──
+// histImports[sku] = { grain, series:[...], importedAt, source }. When present and
+// its grain matches the requested grain, historyFor() returns it INSTEAD of the
+// seed M.historyAt — so the forecast engine competes models on the user's REAL
+// uploaded history (D-7) or an analog-scaled NPI prior. Tagged by grain so a
+// monthly upload never masquerades as a daily series (honest — switch grain to
+// forecast on it). Editing re-flags demand stale so the forecast re-runs.
+function getHistoryImport(sku){ return (appStore.get().histImports || {})[sku] || null; }
+function setHistoryImport(sku, rec){
+  if(!sku) return;
+  const cur = { ...(appStore.get().histImports || {}) };
+  if(rec) cur[sku] = rec; else delete cur[sku];
+  appStore.set({ histImports: cur });
+  markStale('demand');
+}
+function useHistoryImport(sku){
+  const { state } = useStore(s=>s.histImports || {});
+  return { imp: state[sku] || null, setImp:(rec)=>setHistoryImport(sku, rec) };
+}
+// historyFor(sku, grain): the history the forecast should consume — imported series
+// when one exists at THIS grain, else the seed M.historyAt. Single resolver used by
+// fcPayload + the loop forecast step so every forecast path honors an import.
+function historyFor(sku, grain){
+  const imp = getHistoryImport(sku);
+  if(imp && imp.grain === grain && Array.isArray(imp.series) && imp.series.length) return imp.series.slice();
+  const M = window.M || {};
+  return (typeof M.historyAt === 'function') ? M.historyAt(sku, grain) : [];
+}
+// parseHistoryCsv(text): tolerant CSV/TSV → {rows:[{date?,val}], hasDates, error}.
+// Detects a delimiter, skips a header row, and reads the LAST numeric column as the
+// value (a leading parseable date column is captured for bucketing). Real ingestion,
+// not a mock — the planner pastes their own series.
+function parseHistoryCsv(text){
+  const out = { rows:[], hasDates:false, error:null };
+  const lines = String(text||'').split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length);
+  if(!lines.length){ out.error = 'empty input'; return out; }
+  const delim = lines[0].indexOf('\t')>=0 ? '\t' : lines[0].indexOf(';')>=0 ? ';' : ',';
+  const _num = (s)=>{ const v = Number(String(s).replace(/[, ]/g,'')); return isFinite(v)?v:null; };
+  const _date = (s)=>{ const d = new Date(s); return isNaN(d.getTime()) ? null : d; };
+  lines.forEach((ln, i)=>{
+    const cells = ln.split(delim).map(c=>c.trim());
+    const val = _num(cells[cells.length-1]);
+    if(val==null){ if(i===0) return; /* header */ return; }   // skip non-numeric (header/junk)
+    const d = cells.length>1 ? _date(cells[0]) : null;
+    if(d) out.hasDates = true;
+    out.rows.push({ date:d, val });
+  });
+  if(!out.rows.length) out.error = 'no numeric rows found';
+  return out;
+}
+// bucketHistory(rows, hasDates, grain): roll the parsed rows up to the target grain.
+// With dates → group by ISO month / ISO week / day (summing values in a bucket),
+// chronologically. Without dates → take the values in file order (the planner's own
+// pre-bucketed series). Returns a flat numeric array the forecast consumes.
+function bucketHistory(rows, hasDates, grain){
+  if(!hasDates) return rows.map(r=>Math.max(0, Math.round(r.val)));
+  const key = (d)=>{
+    if(grain==='monthly') return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0');
+    if(grain==='weekly'){ const t=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()));
+      const day=(t.getUTCDay()+6)%7; t.setUTCDate(t.getUTCDate()-day);
+      return t.getUTCFullYear()+'-W'+String(Math.ceil(((t-new Date(Date.UTC(t.getUTCFullYear(),0,1)))/86400000+1)/7)).padStart(2,'0'); }
+    return d.toISOString().slice(0,10);   // daily
+  };
+  const buckets = new Map();
+  rows.slice().sort((a,b)=>a.date-b.date).forEach(r=>{ const k=key(r.date); buckets.set(k, (buckets.get(k)||0)+r.val); });
+  return Array.from(buckets.values()).map(v=>Math.max(0, Math.round(v)));
+}
+
 // ── Demand-shaping inputs (W1 · D-1/D-3) — governed per-SKU forecast inputs ──
 // getDemandInputs(sku): hook-free reader so fcPayload() can pull promos/lifecycle
 // without a React hook. Always returns a fully-shaped object (never undefined).
@@ -278,10 +389,27 @@ function useSourcing(part, bomRow){
   const src = { ...seed, ...stored, _prov: Object.keys(stored).length ? 'user' : 'seed' };
   return { src, setSrc:(p)=>{ patch({ sourcing:{ [part]:{ ...stored, ...p } } }); markStale('sourcing'); } };
 }
-// effLandedCost(rawCost, src): quoted cost → landed cost the MILP plans against.
+// SS-D — landed cost ↔ LIVE FX table. An imported part's ₹ cost tracks the
+// rate of its quote currency; the seed ₹ cost IS the as-of-base value (FX_BASE =
+// the seeded config.fxRates). fxFactor = current rate ÷ base rate, so editing the
+// FX table in Finance/Setup (config.fxRates) re-prices every imported part's landed
+// cost — one source of truth for $→₹, which then re-flows the procurement MILP,
+// the policy autopilot, MEIO and the MC cost shocks. Domestic parts → factor 1.
+const FX_BASE = { USD:84.20, EUR:91.40, JPY:0.563 };
+function fxFactor(src){
+  if(!(src && src.imported)) return 1;
+  const ccy = (src.quoteCcy) || 'USD';
+  const cur = Number(((appStore.get().config||{}).fxRates||{})[ccy]);
+  const base = FX_BASE[ccy];
+  if(!cur || !base) return 1;
+  return cur / base;
+}
+// effLandedCost(rawCost, src): quoted cost → landed cost the MILP plans against
+// (duty+freight % uplift × live FX factor). At seed FX the factor is 1 ⇒ landed is
+// byte-identical to the pre-SS-D value, so nothing changes until a rate is edited.
 function effLandedCost(rawCost, src){
   const pct = Number(src && src.dutyFreightPct) || 0;
-  return Math.round(Number(rawCost||0) * (1 + pct/100) * 100) / 100;
+  return Math.round(Number(rawCost||0) * (1 + pct/100) * fxFactor(src) * 100) / 100;
 }
 // freightSteps(qty, src): the stepwise inbound-freight lot. Returns the truck count,
 // total freight, amortised per-unit freight, and where the NEXT truck tips in — so
@@ -317,23 +445,36 @@ function bomParts(periodDays){
 // finished-goods flow for one period. Tonnage = monthly FG units × an assumed
 // unit weight (TPAC bearings ≈ 3 kg — the one documented assumption, since the
 // mock lanes carry no weights); value = units × price. Shared by Console + Logistics.
-const _UNIT_WEIGHT_KG = 3.0;   // assumption: avg finished-bearing shipping weight
+const _UNIT_WEIGHT_KG = 3.0;   // fallback avg finished-bearing shipping weight
+// LG-2 — per-SKU shipping weight (kg/unit). Seed masses for the TPAC bearing range
+// (a hub bearing is heavier than a seal cartridge); honest seed provenance, edit when
+// real BOM masses land. Replaces the flat 3 kg/unit so a lane's tonnage reflects its
+// actual SKU MIX, not a portfolio average.
+const _SKU_WEIGHT_KG = { 'TPA-4471':3.4, 'TPA-3215':1.9, 'TPA-9904':2.6, 'TPA-2188':4.1, 'TPA-5540':3.0, 'TPA-7722':2.2 };
+function skuWeightKg(sku){ return _SKU_WEIGHT_KG[sku] || _UNIT_WEIGHT_KG; }
 function transportPayload(){
   const M = window.M || {};
   const net = getNetwork();
   const outbound = (net.lanes||[]).filter(l=>l.direction==='outbound');
   const fin = (M.products||[]).filter(p=>p.cat==='Finished');
-  const totalMonthly = fin.reduce((s,p)=>s + getItemDemand(p.sku,12).reduce((a,b)=>a+b,0)/12, 0);
-  const avgPrice = fin.length ? fin.reduce((s,p)=>s+p.price,0)/fin.length : 1850;
-  // spread the monthly FG flow across the outbound lanes
-  const perLane = outbound.length ? totalMonthly / outbound.length : totalMonthly;
+  // LG-2 — per-SKU monthly flow, its own weight, and value (not a flat avg price).
+  const skuFlows = fin.map(p=>{ const monthly = getItemDemand(p.sku,12).reduce((a,b)=>a+b,0)/12;
+    return { sku:p.sku, monthly, weightKg:skuWeightKg(p.sku), price:Number(p.price)||1850 }; });
+  const totalMonthly = skuFlows.reduce((s,f)=>s+f.monthly, 0);
+  const totalWeight  = skuFlows.reduce((s,f)=>s+f.monthly*f.weightKg, 0);   // mix-accurate tonnage
+  const totalValue   = skuFlows.reduce((s,f)=>s+f.monthly*f.price, 0);
+  const nLanes = outbound.length || 1;
+  // spread the FG flow across the outbound lanes, but each lane now carries the real
+  // mix-weighted tonnage/value (even lane split — the topology has no per-lane SKU map).
   const shipments = (outbound.length?outbound:[{from:'PLANT',to:'DC',mode:'FTL'}]).map(l=>({
     name:`${l.from}→${l.to}`, origin:l.from, destination:l.to,
-    weight_kg:Math.max(30, Math.round(perLane * _UNIT_WEIGHT_KG)),
-    volume_cbm:Math.max(0.1, +(perLane * 0.004).toFixed(1)),
-    value:Math.round(perLane * avgPrice), deadline_days:7,
+    weight_kg:Math.max(30, Math.round(totalWeight / nLanes)),
+    volume_cbm:Math.max(0.1, +((totalMonthly / nLanes) * 0.004).toFixed(1)),
+    value:Math.round(totalValue / nLanes), deadline_days:7,
   }));
-  return { shipments, params:{} };
+  // sku_flows surfaced so the Logistics tab can show the per-SKU outbound breakdown.
+  return { shipments, params:{ sku_flows: skuFlows.map(f=>({ sku:f.sku, monthly_units:Math.round(f.monthly),
+    weight_kg_per_unit:f.weightKg, monthly_weight_kg:Math.round(f.monthly*f.weightKg) })) } };
 }
 
 // ── Production schedule (W3) — REAL /api/solve/production payload ───────────
@@ -365,27 +506,51 @@ function productionPayload(planning, opts){
   const hrsPerShift = 8;
   const hrsPerPeriod = wdays * hrsPerShift;                 // weekly available hrs/line
   const rate = Number(opts.laborRate) || 0;
+  const timePhased = !!opts.timePhased;                      // PR-A — opt-in MPS that tracks the curve
+  const route = opts.routing || {};                         // PR-B — governed per-SKU cycle/line/yield
   const fin = (M.products || []).filter(p=>p.cat==='Finished');
+  // PR-B — resolve each FG's effective routing: governed override (config.prodRouting[sku])
+  // falls back to the mock master. Provenance for the override is shown in ProdCycle.
+  const eff = (p)=>{
+    const ov = route[p.sku] || {};
+    const cyc  = (ov.cycle != null && ov.cycle !== '') ? Number(ov.cycle) : p.cycle;
+    const line = ov.line || p.line;
+    const yld  = (ov.yieldPct != null && ov.yieldPct !== '') ? Number(ov.yieldPct)/100 : (p.yield || 0.95);
+    return { cyc, line, yld };
+  };
   const products = fin.map(p=>{
     const dem = finishedWeeklyDemand(p.sku, planning, T);
-    return {
+    const e = eff(p);
+    const prod = {
       name: p.sku,
       required_qty: dem.reduce((a,b)=>a+b, 0),
-      oee: p.oee, yield_pct: (p.yield || 0.95), setup_cost: 50,
-      routing: [{ line_id: p.line, cycleTimeMin: p.cycle, parallelism: 1,
-                  yieldPct: (p.yield || 0.95) * 100 }],
+      oee: p.oee, yield_pct: e.yld, setup_cost: 50,
+      routing: [{ line_id: e.line, cycleTimeMin: e.cyc, parallelism: 1,
+                  yieldPct: e.yld * 100 }],
     };
+    if(timePhased) prod.demand_by_period = dem;               // PR-A — per-period demand curve
+    return prod;
   });
   // sequence-dependent setup matrix (M.changeover is in HOURS → ×60 to minutes).
+  // PR-D — emit a PER-LINE changeover sub-matrix over only the SKUs pinned to that line,
+  // not one global 4×4 averaged across every line. A line running one SKU has no changeover;
+  // a line running 2+ gets the asymmetric pairs that actually occur on it.
   const coSkus = ['TPA-4471','TPA-3215','TPA-9904','TPA-2188'];
-  const coMatrix = {};
-  coSkus.forEach((a, ri)=>{ coMatrix[a] = {}; coSkus.forEach((b, ci)=>{
-    const v = (M.changeover[ri] || [])[ci]; if(typeof v === 'number') coMatrix[a][b] = v * 60; }); });
+  const coIdx = {}; coSkus.forEach((s,i)=>{ coIdx[s] = i; });
+  const skuLine = {}; fin.forEach(p=>{ skuLine[p.sku] = eff(p).line; });
+  const subMatrix = (skus)=>{
+    const m = {};
+    skus.forEach(a=>{ m[a] = {}; skus.forEach(b=>{
+      const v = ((M.changeover[coIdx[a]] || [])[coIdx[b]]);
+      if(typeof v === 'number') m[a][b] = v * 60; }); });
+    return m;
+  };
   const lines = (M.lines || []).map(l=>{
     const bn = (l.stages || []).find(s=>s.bottleneck) || (l.stages || [])[0] || {};
+    const lineSkus = coSkus.filter(s => skuLine[s] === l.id);   // PR-D — only this line's SKUs
     const ln = { id: l.id, name: l.name,
       capacity: Math.round((l.cap || 0) / 4.33),             // u/mo → u/week
-      oee: l.oee, changeover_matrix: coMatrix, changeover_mins: 30,
+      oee: l.oee, changeover_matrix: subMatrix(lineSkus), changeover_mins: 30,
       workers_per_shift: bn.m || 1, shifts_per_day: 1 };
     if(rate > 0) ln.hourly_rate = rate;                       // priced OT + shutdown
     return ln;
@@ -394,8 +559,449 @@ function productionPayload(planning, opts){
     labor_cost_mode: rate > 0 ? 'hourly' : 'per_unit',
     params: { periods: T, hrs_per_period: hrsPerPeriod, hours_per_shift: hrsPerShift,
       horizon_start_date: planning.startDate,
+      time_phased: timePhased,                                // PR-A
+      holding_cost_per_unit: Number(opts.holdingCost) || 0,   // PR-A — penalizes early build
+      campaign_min_run: Number(opts.campaignMinRun) || 0,     // PR-4 — campaign min-run lever
       shutdown_threshold_pct: Number(opts.shutdownPct) || 25, rehire_notice_hrs: 80 } };
 }
+
+// ── Monte Carlo on the COMMITTED plan (W6 · R-1) ───────────────────────────
+// productionPlanBySku(prodResult, T): fold the production MILP's gantt[] into a
+// per-SKU per-period build array — the exact schedule that will execute, so the
+// risk sim REPLAYS it (policy='plan') instead of re-deriving a base-stock policy
+// the MILP never chose. Returns {} when no production solve is cached.
+function productionPlanBySku(prodResult, T){
+  const out = {};
+  const g = (prodResult && prodResult.gantt) || [];
+  g.forEach(e=>{
+    const k = e.product, t = e.period;
+    if(k == null || t == null) return;
+    if(!out[k]) out[k] = Array(T).fill(0);
+    if(t < T) out[k][t] += Number(e.quantity)||0;
+  });
+  return out;
+}
+// montecarloPayload(planning, opts): the /api/solve/montecarlo input. Each finished
+// SKU carries its committed demand curve, its landed-cost BOM (so material-cost
+// shocks hit the real costed bill), and — when a production solve is cached — its
+// committed build plan (R-1: simulate the plan of record, not a textbook policy).
+// opts.corr (demand↔cost correlation), opts.serviceLevel, opts.nRuns are governed.
+function montecarloPayload(planning, opts){
+  const M = window.M || {};
+  opts = opts || {};
+  const T = productionScheduleHorizon(planning);            // align with the production schedule
+  const prod = opts.prodResult || getSolveResult('production');
+  const planBySku = productionPlanBySku(prod, T);
+  // MN-D — per-SKU costed bill. Each finished SKU's cost shocks now hit ONLY the
+  // parts it actually consumes (from M.skuBom), at that SKU's own qty_per — so a
+  // material-price spike on a part used by 3 of 6 SKUs raises cost for those 3, not
+  // the whole portfolio uniformly (which the single shared BOM did). landed_cost
+  // carries the duty/freight % AND the live FX factor (SS-D). Falls back to the
+  // shared M.bom when a SKU has no skuBom cohort (honest, fully compatible).
+  const _bomRow = (partId)=> (M.bom || []).find(b=>b.part===partId) || {};
+  const _sharedParts = (M.bom || []).map(b=>{
+    const src = getSourcing(b.part, b);
+    return { name:b.part, landed_cost: effLandedCost(b.cost, src), cost_cv:0.05, qty_per:b.qty };
+  });
+  const skuParts = (sku)=>{
+    const lines = (M.skuBom || {})[sku];
+    if(!lines || !lines.length) return _sharedParts;
+    return lines.map(ln=>{ const b=_bomRow(ln.part); const src=getSourcing(ln.part, b);
+      return { name:ln.part, landed_cost: effLandedCost(b.cost, src), cost_cv:0.05, qty_per:Number(ln.qty)||0 }; });
+  };
+  const fin = (M.products || []).filter(p=>p.cat==='Finished');
+  // RK-A — uniform plan-mode coverage. If ANY SKU has a committed schedule, give
+  // EVERY SKU a plan so the whole portfolio simulates under ONE policy (=plan):
+  // an unbuilt SKU falls back to its committed demand series as its build plan
+  // (build-to-demand) rather than silently dropping to base-stock for that SKU
+  // (which produced a mixed policy in a single run). With no production solve at
+  // all, no SKU gets a plan → base-stock for all (consistent).
+  const anyPlan = Object.keys(planBySku).length > 0;
+  const products = fin.map(p=>{
+    const dem = finishedWeeklyDemand(p.sku, planning, T);
+    const planArr = planBySku[p.sku] || (anyPlan ? dem : null);  // real schedule, else demand-as-plan
+    return {
+      name: p.sku,
+      demand: dem,
+      mape_pct: Number(p.mape) || 12,
+      capacity: Math.round((dem.reduce((a,b)=>a+b,0)/Math.max(T,1)) * 3),  // generous per-period cap
+      setup_cost: 50,
+      variable_cost: Number(p.cost) || 0,
+      sell_price: Number(p.price) || 0,
+      shelf_life: Math.max(1, Math.round((Number(p.shelf)||365)/7)),       // days → weeks
+      yield_pct: Number(p.yield) || 0.95,
+      salvage_rate: 0.8,
+      parts: skuParts(p.sku),                                              // MN-D — per-SKU costed bill
+      init_inventory: 0,
+      ...(planArr ? { production_plan: planArr } : {}),
+    };
+  });
+  // RK-D — apply a stochastic production lead-time lag ONLY in plan mode (a committed
+  // schedule that mis-times a build against a shock is then penalised). Governed via
+  // opts.prodLeadTime (weeks) / opts.prodLeadCv; 0 = legacy same-period receipt.
+  const ltMean = anyPlan ? (opts.prodLeadTime != null ? Number(opts.prodLeadTime) : 1) : 0;
+  const ltCv = opts.prodLeadCv != null ? Number(opts.prodLeadCv) : 0.5;
+  return { products, n_runs: Number(opts.nRuns) || 500,
+    params: { periods: T, periods_per_year: 52, carry_rate: 0.24,
+      service_level: Number(opts.serviceLevel) || (M && 0.95),
+      corr_demand_cost: (opts.corr != null ? Number(opts.corr) : 0.4),
+      policy: opts.policy || 'auto',
+      prod_lead_time: ltMean, prod_lead_time_cv: ltCv,
+      plan_committed: anyPlan } };
+}
+
+// ── End-to-end loop orchestrator (W7 · the loop → L3) ──────────────────────
+// runFullLoop({planning,opts,onStep}) chains the planning solves on ONE dataset,
+// in dependency order, CACHING each result so the next step reads the previous
+// step's real output (Kinaxis-style "run the whole plan"): committed demand →
+// procurement (landed-cost MILP) → aggregate S&OP → production schedule →
+// capital (line-capacity NPV) → Monte-Carlo risk on the just-built schedule.
+// Each step's payload is the SAME builder the owning tab uses, so the loop can
+// never diverge from what a tab would solve. Returns a per-step log
+// [{key,label,ok,ms,summary,error}]; onStep(partialLog) streams progress to the UI.
+// Loop-local payload builders. Self-contained (call only store primitives + the
+// global tab helpers that exist at run time: partsWithSourcing, planParam,
+// PLAN_PARAMS, lineRegistryCapacity, linecapPayload) so the chain runs whole even
+// if a tab hasn't mounted. Each reads the SAME committed demand / landed BOM the
+// tabs use, and downstream steps receive the upstream result (prev) — one dataset.
+function _loopProcurementPayload(planning){
+  const M = window.M || {};
+  const pd = planning.timeGrain==='week'?7:planning.timeGrain==='day'?1:30;
+  const grain = planning.timeGrain==='week'?'weekly':planning.timeGrain==='day'?'daily':'monthly';
+  const parts = (typeof partsWithSourcing==='function') ? partsWithSourcing(pd) : bomParts(pd);
+  const fin = (M.products||[]).filter(p=>p.cat==='Finished');
+  const products = fin.map(p=>{ const dem = getItemDemand(p.sku,12);
+    return { name:p.sku, demand:dem, capacity:Math.max(400, Math.ceil(Math.max(...dem)*1.5)),
+      variable_cost:p.cost, sell_price:p.price, yield_pct:p.yield||0.97, parts }; });
+  return { products, params:{ periods:12, time_grain:grain,
+    service_level:(appStore.get().config||{}).serviceLevel || 0.95 } };
+}
+function _loopAggregatePayload(planning){
+  const M = window.M || {};
+  const cfg = appStore.get().config || {};
+  const pp = (window.PLAN_PARAMS) || {};
+  const pget = (k, d)=> (typeof planParam==='function' ? planParam(cfg, k) : ((cfg.planParams||{})[k] ?? pp[k] ?? d));
+  const rate = pget('rate_per_worker', 30) || 1;
+  const lineCap = (typeof lineRegistryCapacity==='function') ? lineRegistryCapacity()
+                : (M.lines||[]).reduce((s,l)=>s+(l.cap||0),0);
+  const fg = (M.products||[]).filter(p=>p.cat==='Finished');
+  const months = (M.aggregate && M.aggregate.months) || [];
+  const totAnnual = fg.reduce((s,p)=>s+(p.demand||0),0) || 1;
+  const wfCeiling = Math.max((pget('min_workforce',5)||5)+1, Math.round(lineCap/rate));
+  return { products: fg.map(p=>({ name:p.sku,
+      forecast: months.map(mo=>Math.max(0, Math.round(mo.dem*(p.demand||0)/totAnnual))),
+      labor_hours_per_unit:1 })),
+    params:{ periods:months.length||6, init_workforce:pget('init_workforce',35),
+      rate_per_worker:rate, reg_cost_per_unit:pget('reg_cost_per_unit',120),
+      ot_cost_per_unit:pget('ot_cost_per_unit',180), holding_cost_per_unit:pget('holding_cost_per_unit',24),
+      backorder_cost_per_unit:pget('backorder_cost_per_unit',300), hire_cost:pget('hire_cost',8000),
+      fire_cost:pget('fire_cost',12000), wage_per_worker:pget('wage_per_worker',22000),
+      max_ot_pct:pget('max_ot_pct',0.2), min_workforce:pget('min_workforce',5),
+      max_workforce:wfCeiling, allow_backorder:pget('allow_backorder',1) } };
+}
+function _loopLinecapPayload(prevAgg){
+  // reuse the Plan tab's exact builder when the aggregate result is available
+  // (its sku_plans give the disaggregated per-line load); else fall back to a
+  // committed-demand build so the chain still produces a real ₹ line dual.
+  if(prevAgg && typeof linecapPayload==='function') return linecapPayload(prevAgg);
+  const M = window.M || {};
+  const lines = (M.lines||[]).map(l=>({ id:l.id, name:l.name, cap:Number(l.cap)||0 }));
+  const skus = (M.products||[]).filter(p=>p.cat==='Finished').map(p=>({
+    name:p.sku, line:p.line, demand:Math.round(getItemDemand(p.sku,12).reduce((a,b)=>a+b,0)/12),
+    lost_margin_per_unit:Math.max(0,(p.price||0)-(p.cost||0)) }));
+  return { lines, skus, params:{} };
+}
+// LP-A — forecast-first loop step 0. Re-run the demand model competition on each
+// finished SKU's real history (M.historyAt) and WRITE the winning series back into
+// the committed demand slice (setItemDemand), so every downstream loop step plans
+// to FRESH demand truth — the loop closes the demand half, not just supply→risk.
+function _loopForecastPayload(planning){
+  const M = window.M || {};
+  const grain = planning.timeGrain==='week'?'weekly':planning.timeGrain==='day'?'daily':'monthly';
+  const holidays = appStore.get().holidays || [];
+  const fin = (M.products||[]).filter(p=>p.cat==='Finished');
+  const products = fin.map(p=>{
+    const hist = historyFor(p.sku, grain);   // W9 — honor an imported / like-modeled history
+    const di = getDemandInputs(p.sku);
+    const promo_periods = (di.promos||[]).map(x=> hist.length + (x.fidx|0)).filter(x=>x>=0);
+    return { name:p.sku, history:hist, promo_periods };
+  });
+  return { products, params:{
+    h_periods: (typeof M.horizonFor==='function') ? M.horizonFor(grain) : 12,
+    time_grain: grain,
+    season_length: (typeof M.seasonFor==='function') ? M.seasonFor(grain) : undefined,
+    horizon_start_date: (M.calendar && M.calendar.start) || undefined,
+    holidays: (holidays && holidays.length) ? holidays : undefined } };
+}
+// LP-B — the loop's production step plans with the SAME governed opts the Production
+// tab uses (laborRate, shutdown threshold, time-phasing, holding cost, per-SKU
+// routing), read from config. Without this the loop silently used solver defaults,
+// so the chained schedule could diverge from what the tab would actually solve.
+function productionOptsFromConfig(config){
+  config = config || appStore.get().config || {};
+  const eff = (v,seed)=> (v!=null && v!=='') ? Number(v) : seed;
+  return {
+    laborRate:   eff(config.prodLaborRate, 120),
+    shutdownPct: eff(config.prodShutdownPct, 25),
+    timePhased:  !!config.prodTimePhased,
+    holdingCost: eff(config.prodHoldingCost, 2),
+    campaignMinRun: eff(config.prodCampaignMinRun, 0),   // PR-4
+    routing:     config.prodRouting || {},
+  };
+}
+const LOOP_STEPS = [
+  { key:'forecast', label:'Demand — model competition (re-forecast)',
+    endpoint:'/api/forecast', build:(pl)=>_loopForecastPayload(pl),
+    after:(r)=>{ (r.products||[]).forEach(op=>{ const lb=op.leaderboard||[];
+      const w = lb.find(l=>l.model===(op.winner||op.recommendation)) || lb.find(l=>l.status==='ok'&&l.forecast) || lb[0];
+      if(w && w.forecast && w.forecast.length) setItemDemand(op.name, w.forecast); }); },
+    summary:(r)=>`${(r.products||[]).length} SKUs re-forecast${r.reconciliation?' · reconciled':''}` },
+  { key:'procurement', label:'Procurement — landed-cost MILP',
+    endpoint:'/api/solve/procurement', build:(pl)=>_loopProcurementPayload(pl),
+    summary:(r)=>`${r.status||'solved'} · ${(r.materials||[]).length} parts` },
+  { key:'aggregate', label:'Aggregate plan — Hax–Meal S&OP',
+    endpoint:'/api/solve/aggregate', build:(pl)=>_loopAggregatePayload(pl),
+    summary:(r)=>`strategy ${r.strategy||'?'} · ${(r.periods||[]).length} periods` },
+  { key:'production', label:'Production schedule — finite-capacity',
+    endpoint:'/api/solve/production', build:(pl,opts)=>productionPayload(pl,(opts&&opts.production)||productionOptsFromConfig()),  // LP-B
+    summary:(r)=>`${r.status||'?'} · ${(r.gantt||[]).length} runs · ${r.periods||0} periods` },
+  { key:'linecap', label:'Capital signal — ₹ line-capacity dual',
+    endpoint:'/api/solve/linecap', build:(pl,opts,prev)=>_loopLinecapPayload(prev.aggregate),
+    summary:(r)=>`${(r.lines||[]).filter(l=>l.binding).length}/${(r.lines||[]).length} lines binding` },
+  { key:'montecarlo', label:'Risk — Monte Carlo on the committed schedule',
+    endpoint:'/api/solve/montecarlo', build:(pl,opts,prev)=>montecarloPayload(pl,{ ...(opts&&opts.montecarlo||{}), prodResult:prev.production }),
+    summary:(r)=>`policy ${r.policy_simulated} · CVaR95 ₹${((r.cvar95||0)/1e5).toFixed(2)}L · fill ${r.avg_fill}%` },
+];
+async function runFullLoop(cfg){
+  cfg = cfg || {};
+  const planning = cfg.planning || (appStore.get().planning);
+  const opts = cfg.opts || {};
+  const prev = {};                 // chained results: prev[stepKey] = result
+  const log = [];
+  for(const step of LOOP_STEPS){
+    const entry = { key:step.key, label:step.label, ok:false, ms:0, summary:'', error:null };
+    log.push(entry);
+    if(cfg.onStep) cfg.onStep([...log]);
+    const t0 = (typeof performance!=='undefined'?performance.now():Date.now());
+    try{
+      const payload = step.build(planning, opts, prev);
+      if(!payload){ throw new Error('payload builder unavailable'); }
+      const r = await apiPost(step.endpoint, payload);
+      prev[step.key] = r;
+      if(step.after) step.after(r);               // LP-A — side effect (forecast writes committed demand)
+      cacheSolve(step.key, r);                    // downstream tabs read this
+      markSolved(step.key);                       // clear staleness on the owning tab
+      entry.ok = true; entry.summary = step.summary(r);
+    }catch(e){ entry.error = e.message || String(e); }
+    entry.ms = Math.round((typeof performance!=='undefined'?performance.now():Date.now()) - t0);
+    if(cfg.onStep) cfg.onStep([...log]);
+  }
+  return log;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// 4½. SCENARIO ENGINE (W10/W11 · Platform L4 — branch · run · compare · merge)
+//   Kinaxis-style concurrent what-if on ONE model. A scenario is a SNAPSHOT of
+//   the editable input slices (committed demand, config, planning, sourcing,
+//   network, demand-shaping, costs, holidays) plus the SOLVED KPIs captured when
+//   it was last run. Running a scenario is TRANSPARENT to the live working set:
+//   we save live (inputs + the solve cache), apply the scenario's inputs, run the
+//   full loop, capture KPIs, then RESTORE live — so branches never disturb each
+//   other or the base. applyScenario()/mergeScenario() are the deliberate
+//   "switch the working set to this branch" actions (they DO overwrite live).
+//   Every op is logged to the immutable event trail (§4b) — the audit/version
+//   history. Evidence: W10 (scenario branching/compare), W11 (concurrent what-if).
+// ════════════════════════════════════════════════════════════════════════
+const _SCN_INPUT_KEYS = ['demand','config','planning','sourcing','network','demandInputs','productCosts','holidays'];
+function _snapshotSlices(keys){
+  const s = appStore.get(); const out = {};
+  for(const k of keys) out[k] = JSON.parse(JSON.stringify(s[k] !== undefined ? s[k] : (k==='holidays'?[]:{})));
+  return out;
+}
+function _restoreSlices(snap){ if(snap) appStore.replace(JSON.parse(JSON.stringify(snap))); }
+// the full transparent-run envelope: inputs + the solve freshness/cache, so a
+// scenario run leaves the live tabs exactly as it found them.
+function _snapshotForRun(){ return _snapshotSlices([..._SCN_INPUT_KEYS, 'solves', 'solveResults']); }
+
+// _captureKpis(): read the cross-stage solve cache into a flat, comparable KPI row.
+// Pure reads of getSolveResult — the REAL solved numbers, never fabricated. Null
+// for any solve not present (honest "not run in this scenario").
+function _captureKpis(){
+  const ag = getSolveResult('aggregate'), pr = getSolveResult('production'),
+        lc = getSolveResult('linecap'),  mc = getSolveResult('montecarlo'),
+        pc = getSolveResult('procurement');
+  const prodUnits = pr && pr.gantt ? pr.gantt.reduce((a,e)=>a+(Number(e.quantity)||0),0) : null;
+  const lcLines = lc && lc.lines ? lc.lines : null;
+  return {
+    planCost:    ag ? (ag.total_cost ?? null) : null,
+    planStrategy:ag ? (ag.strategy || null) : null,
+    prodStatus:  pr ? (pr.status || null) : null,
+    prodUnits,
+    prodRuns:    pr && pr.campaign ? (pr.campaign.runs ?? null) : (pr && pr.gantt ? pr.gantt.length : null),
+    avgRunUnits: pr && pr.campaign ? (pr.campaign.avg_run_units ?? null) : null,
+    procParts:   pc && pc.materials ? pc.materials.length : null,
+    bindingLines: lcLines ? lcLines.filter(x=>x.binding).length : null,
+    lineShadowMax: lcLines ? Math.max(0, ...lcLines.map(x=>Number(x.shadow_price)||0)) : null,
+    mcMeanCost:  mc ? (mc.avg_cost ?? null) : null,
+    var95:       mc ? (mc.var95 ?? null) : null,
+    cvar95:      mc ? (mc.cvar95 ?? null) : null,
+    avgFill:     mc ? (mc.avg_fill ?? null) : null,
+    minFill:     mc ? (mc.min_fill ?? null) : null,
+    policy:      mc ? (mc.policy_simulated || null) : null,
+  };
+}
+// a hook-free scenario-store accessor (initialised lazily).
+function getScenarios(){ const sc = appStore.get().scenarios; return sc || { list:{}, order:[], active:'base' }; }
+function _putScenarios(sc){ appStore.set({ scenarios: sc }); }
+function _newScnId(){ return 'scn_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5); }
+
+// captureScenario(name, note): snapshot the CURRENT live inputs (+ whatever KPIs
+// are cached right now) as a named scenario. This is how you "save the base" or
+// pin an edited working set as a branch point.
+function captureScenario(name, note){
+  const sc = getScenarios();
+  const id = _newScnId();
+  const scn = { id, name: name || ('Scenario ' + ((sc.order||[]).length + 1)), note: note||'',
+    parent: sc.active && sc.active!=='base' ? sc.active : null, createdAt: new Date().toISOString(),
+    inputs: _snapshotSlices(_SCN_INPUT_KEYS), kpis: _captureKpis(), ranAt: null };
+  _putScenarios({ ...sc, list:{ ...sc.list, [id]: scn }, order:[...(sc.order||[]), id] });
+  logEvent('scenario_create', id, { name: scn.name });
+  return id;
+}
+// branchScenario(fromId, name): copy a scenario's inputs into a new sibling branch.
+function branchScenario(fromId, name, note){
+  const sc = getScenarios(); const from = (sc.list||{})[fromId]; if(!from) return null;
+  const id = _newScnId();
+  const scn = { id, name: name || (from.name + ' ✦'), note: note||'', parent: fromId,
+    createdAt: new Date().toISOString(), inputs: JSON.parse(JSON.stringify(from.inputs)),
+    kpis: null, ranAt: null };
+  _putScenarios({ ...sc, list:{ ...sc.list, [id]: scn }, order:[...(sc.order||[]), id] });
+  logEvent('scenario_branch', id, { from: fromId });
+  return id;
+}
+// updateScenarioInputs(id, transform): mutate a scenario's input snapshot in place
+// via transform(inputs)→inputs (used by the what-if bot to perturb a clone). Clears
+// stale KPIs so the row reads "re-run to score".
+function updateScenarioInputs(id, transform){
+  const sc = getScenarios(); const scn = (sc.list||{})[id]; if(!scn) return;
+  const inputs = transform(JSON.parse(JSON.stringify(scn.inputs))) || scn.inputs;
+  _putScenarios({ ...sc, list:{ ...sc.list, [id]: { ...scn, inputs, kpis:null, ranAt:null } } });
+}
+function deleteScenario(id){
+  const sc = getScenarios(); if(!(sc.list||{})[id]) return;
+  const list = { ...sc.list }; delete list[id];
+  _putScenarios({ ...sc, list, order:(sc.order||[]).filter(x=>x!==id),
+    active: sc.active===id ? 'base' : sc.active });
+  logEvent('scenario_delete', id, {});
+}
+// runScenario(id, opts): the concurrent what-if. Save live → apply this scenario's
+// inputs → runFullLoop → capture the solved KPIs onto the scenario → RESTORE live.
+// Returns {log, kpis}. The live working set and its solve cache are byte-restored,
+// so you can score many branches without ever leaving (or disturbing) the base.
+async function runScenario(id, opts){
+  opts = opts || {};
+  const sc = getScenarios(); const scn = (sc.list||{})[id];
+  if(!scn) throw new Error('scenario not found: ' + id);
+  const restore = _snapshotForRun();
+  try{
+    _restoreSlices(scn.inputs);
+    const log = await runFullLoop({ planning: appStore.get().planning, opts: opts.loopOpts, onStep: opts.onStep });
+    const kpis = _captureKpis();
+    const sc2 = getScenarios();
+    if((sc2.list||{})[id]) _putScenarios({ ...sc2, list:{ ...sc2.list,
+      [id]: { ...sc2.list[id], kpis, ranAt:new Date().toISOString(), loopLog:log } } });
+    logEvent('scenario_run', id, { ok: log.filter(s=>s.ok).length, of: log.length });
+    return { log, kpis };
+  } finally {
+    _restoreSlices(restore);   // live + its solve cache are exactly as before — true isolation
+  }
+}
+// applyScenario(id): DELIBERATELY switch the live working set to this branch's
+// inputs (the editable surface every tab reads), mark it active, and flag all
+// solves stale so the tabs re-solve against it. This is the non-transparent path.
+function applyScenario(id){
+  const sc = getScenarios(); const scn = (sc.list||{})[id]; if(!scn) return;
+  _restoreSlices(scn.inputs);
+  _putScenarios({ ...getScenarios(), active:id });
+  ['procurement','aggregate','production','linecap','montecarlo','meionet','cvar','profitmix','transport','capital']
+    .forEach(k=>markStale(k));
+  logEvent('scenario_apply', id, {});
+}
+// mergeScenario(id): adopt a scenario as the working set of record (apply + an
+// explicit merge marker in the audit trail). The Kinaxis "promote this branch".
+function mergeScenario(id){ applyScenario(id); logEvent('scenario_merge', id, { note:'promoted to working set' }); }
+function useScenarios(){
+  const { state } = useStore(s=>s.scenarios || { list:{}, order:[], active:'base' });
+  return state;
+}
+
+// ── EVA-driven scenario branch (Finance L4 — the ops↔finance wedge) ──────────
+// scenarioPruneSkus(skus): clone the live base into a branch that PRUNES the named
+// value-destroyer SKUs (zero their committed demand) so the full loop re-solves the
+// portfolio WITHOUT them — quantifying whether dropping ROIC<hurdle SKUs actually
+// lifts company cost / fill / EVA, or whether their shared-line/shared-part
+// contribution was load-bearing. Beyond IBP: a finance flag drives an ops re-plan.
+function scenarioPruneSkus(skus, name, note){
+  skus = skus || [];
+  const id = captureScenario(name || ('Prune ' + skus.length + ' destroyer' + (skus.length===1?'':'s')),
+                             note || 'EVA-driven — drop ROIC<hurdle SKUs and re-solve the portfolio');
+  updateScenarioInputs(id, (inp)=>{
+    const dem = { ...(inp.demand || {}) };
+    skus.forEach(s=>{ if(dem[s]) dem[s] = dem[s].map(()=>0); });
+    inp.demand = dem; return inp;
+  });
+  logEvent('scenario_eva_prune', id, { skus });
+  return id;
+}
+
+// ── Event-sourced replay + version diff/merge (W11 · Platform L4 depth) ──────
+// _envelopeOf(idOrBase): the input snapshot for a scenario id, or the LIVE working
+// set when 'base'/null. The unit both diff and merge operate on.
+function _envelopeOf(idOrBase){
+  if(idOrBase === 'base' || idOrBase == null) return _snapshotSlices(_SCN_INPUT_KEYS);
+  const scn = (getScenarios().list || {})[idOrBase];
+  return scn ? scn.inputs : null;
+}
+// scenarioDiff(a, b): structural diff between two input envelopes over the fields a
+// planner reasons about — committed-demand totals per SKU, config scalars, sourcing
+// overrides — so two versions can be COMPARED before a merge. Each row {slice, field,
+// a, b}. Pure read; never mutates.
+function scenarioDiff(a, b){
+  const ea = _envelopeOf(a), eb = _envelopeOf(b);
+  if(!ea || !eb) return [];
+  const out = [];
+  const sum = (arr)=> (arr||[]).reduce((x,y)=>x+(Number(y)||0),0);
+  const skus = new Set([...Object.keys(ea.demand||{}), ...Object.keys(eb.demand||{})]);
+  skus.forEach(s=>{ const ta=Math.round(sum(ea.demand[s])), tb=Math.round(sum(eb.demand[s]));
+    if(ta!==tb) out.push({ slice:'demand', field:s, a:ta, b:tb }); });
+  const cfgKeys = new Set([...Object.keys(ea.config||{}), ...Object.keys(eb.config||{})]);
+  cfgKeys.forEach(k=>{ const va=(ea.config||{})[k], vb=(eb.config||{})[k];
+    if(va && typeof va==='object') return;
+    if(va!==vb) out.push({ slice:'config', field:k, a:va, b:vb }); });
+  const srcKeys = new Set([...Object.keys(ea.sourcing||{}), ...Object.keys(eb.sourcing||{})]);
+  srcKeys.forEach(k=>{ const va=JSON.stringify((ea.sourcing||{})[k]||{}), vb=JSON.stringify((eb.sourcing||{})[k]||{});
+    if(va!==vb) out.push({ slice:'sourcing', field:k, a:'override', b:'override' }); });
+  return out;
+}
+// mergeScenarioFields(targetId, sourceId, picks): a real cherry-pick VERSION MERGE —
+// copy the chosen {slice,field} values FROM source INTO target's input snapshot
+// (vs applyScenario's whole-branch overwrite). Clears the target's KPIs so it reads
+// "re-run to score". Logged to the immutable trail.
+function mergeScenarioFields(targetId, sourceId, picks){
+  const sc = getScenarios(); const tgt = (sc.list||{})[targetId]; const src = _envelopeOf(sourceId);
+  if(!tgt || !src) return;
+  const inputs = JSON.parse(JSON.stringify(tgt.inputs));
+  (picks||[]).forEach(({ slice, field })=>{
+    if(!inputs[slice]) inputs[slice] = {};
+    inputs[slice][field] = JSON.parse(JSON.stringify((src[slice]||{})[field]));
+  });
+  _putScenarios({ ...sc, list:{ ...sc.list, [targetId]:{ ...tgt, inputs, kpis:null, ranAt:null } } });
+  logEvent('scenario_merge_fields', targetId, { from: sourceId, picks });
+}
+// replayLog(): the event trail as a replayable version history — a pure read of the
+// immutable events[], the auditable "what changed, when, by which op". The UI steps
+// through it to reconstruct how the working set reached its current state.
+function replayLog(){ return (appStore.get().events || []).map(e=>({ ...e })); }
 
 // ── MSME tier — single derived fact, reused by Setup + Sourcing + Finance ──
 // MSMED Act 2020 (₹Cr): Micro inv≤1 & TO≤5; Small ≤10 & ≤50; Medium ≤50 & ≤250; else not an MSME.
@@ -432,13 +1038,15 @@ const SOLVE_DEPS = {
   policy:      ['demand','network','productCosts','planning','bom','config','sourcing'],  // (s,S)/(R,Q) autopilot
   rolling:     ['demand','network','productCosts','planning','bom','config','sourcing'],  // rolling re-plan / nervousness
   meio:        ['demand','productCosts','planning','bom','config','sourcing'],            // multi-echelon SS placement (RM→WIP→FG)
+  meionet:     ['demand','productCosts','planning','bom','config','sourcing'],            // W8 — multi-product risk pooling on shared parts
   cvar:        ['demand','productCosts','planning','bom','config','sourcing'],            // costly-item newsvendor (h vs p) + CVaR robust stock
   production:  ['demand','planning','productCosts'],
   aggregate:   ['demand','planning','productCosts'],   // S&OP
+  linecap:     ['demand','planning','productCosts'],   // PL-A — line-capacity shadow price (₹/unit)
   profitmix:   ['demand','productCosts','config'],
   transport:   ['demand','network'],
   capital:     ['demand','productCosts','config'],
-  montecarlo:  ['demand','procurement'],   // risk runs on the committed supply plan
+  montecarlo:  ['demand','procurement','production','sourcing'],   // risk runs on the committed plan (R-1)
 };
 
 // markStale(key): flag every solve that depends — directly or transitively — on
@@ -461,14 +1069,38 @@ function markStale(key){
   if(touched) appStore.set({ solves: cur });
 }
 
-// markSolved(solveKey): a solver just produced a fresh result — clear its stale
-// flag, stamp ranAt, and invalidate anything computed from its (now superseded)
-// previous output. Call from a stage right after useSolve.run() resolves.
-function markSolved(solveKey){
+// markSolved(solveKey, result?): a solver just produced a fresh result — clear its
+// stale flag, stamp ranAt, and invalidate anything computed from its (now
+// superseded) previous output. If the fresh `result` is passed it is CACHED
+// (solveResults[key]) so downstream stages / runFullLoop can read this solve's
+// real output without re-running it. Call right after useSolve.run() resolves.
+function markSolved(solveKey, result){
   const cur = { ...(appStore.get().solves || {}) };
-  cur[solveKey] = { stale:false, ranAt:new Date().toISOString() };
-  appStore.set({ solves: cur });
+  const ts = new Date().toISOString();
+  cur[solveKey] = { stale:false, ranAt:ts };
+  const patch = { solves: cur };
+  if(result !== undefined){
+    const rc = { ...(appStore.get().solveResults || {}) };
+    rc[solveKey] = { result, ranAt:ts };
+    patch.solveResults = rc;
+  }
+  appStore.set(patch);
   markStale(solveKey);   // downstream consumers must now re-run
+}
+// getSolveResult(key): non-reactive read of the last cached result for a solve
+// (null if never run / not cached). cacheSolve(key,result): write without
+// touching freshness (used by the orchestrator between chained steps).
+function getSolveResult(key){ const e = (appStore.get().solveResults||{})[key]; return e ? e.result : null; }
+function cacheSolve(key, result){
+  const rc = { ...(appStore.get().solveResults || {}) };
+  rc[key] = { result, ranAt:new Date().toISOString() };
+  appStore.set({ solveResults: rc });
+  return result;
+}
+function useSolveResult(key){
+  const { state } = useStore(s=>s.solveResults||{});
+  const e = state[key] || {};
+  return { result: e.result || null, ranAt: e.ranAt ? new Date(e.ranAt) : null };
 }
 
 // useStale(solveKey): subscribe to one solve's freshness for the StaleMark UI.
@@ -506,6 +1138,12 @@ Object.assign(window, {
   getItemDemand, setItemDemand, getFinishedDemand, bomParts, transportPayload,
   productionPayload, finishedWeeklyDemand,
   getDemandInputs, useDemandInputs, useHolidays,
-  sourcingDefault, getSourcing, useSourcing, effLandedCost, freightSteps,
+  getHistoryImport, setHistoryImport, useHistoryImport, historyFor, parseHistoryCsv, bucketHistory,
+  sourcingDefault, getSourcing, useSourcing, effLandedCost, fxFactor, freightSteps, skuWeightKg,
   SOLVE_DEPS, markStale, markSolved, useStale, logEvent, getEvents, useEvents,
+  cacheSolve, getSolveResult, useSolveResult,
+  montecarloPayload, productionPlanBySku, runFullLoop, LOOP_STEPS, productionOptsFromConfig,
+  getScenarios, useScenarios, captureScenario, branchScenario, updateScenarioInputs,
+  deleteScenario, runScenario, applyScenario, mergeScenario, _captureKpis,
+  scenarioPruneSkus, scenarioDiff, mergeScenarioFields, replayLog,
 });

@@ -73,7 +73,7 @@ function StagePlan({ onNav }) {
         allow_backorder: PLAN_PARAMS.allow_backorder,
       },
     };
-  });
+  }, { solveKey:'aggregate' });   // LP-C hydrate from loop cache
   const { stale, ranAt } = (typeof useStale==='function') ? useStale('aggregate') : { stale:false };
   const runAgg = ()=> agg.run().then(d=>{ if(typeof markSolved==='function') markSolved('aggregate'); return d; }).catch(()=>{});
   return (
@@ -217,12 +217,37 @@ function linePressure(res){
   });
 }
 
+// PL-A — payload for the line-capacity shadow-price LP. Each disaggregated SKU carries its
+// MONTHLY planned demand (total_planned ÷ horizon), its assigned line, and its contribution
+// margin (price − cost) as the lost-margin if that line can't build it. The LP's capacity
+// dual is then the true ₹/unit value of one more unit of that line's capacity.
+function linecapPayload(res){
+  const T = (res && res.periods && res.periods.length) || 1;
+  const lines = (M.lines || []).map(l=>({ id:l.id, name:l.name, cap:Number(l.cap)||0 }));
+  const skus = ((res && res.sku_plans) || []).map(sp=>{
+    const prod = M.products.find(p=>p.sku===sp.name) || {};
+    return { name:sp.name, line:prod.line, demand:Math.round((sp.total_planned||0)/T),
+             lost_margin_per_unit:Math.max(0, (prod.price||0)-(prod.cost||0)) };
+  });
+  return { lines, skus, params:{} };
+}
+
 function PlanCapacity({ onNav, agg, lineCap }) {
   const res = agg && agg.result;
   const months = aggMonths(res);
   const shadow = res && res.shadow_prices;
   const press = linePressure(res);
-  const bind = press && press.find(p=>p.binding);
+  // PL-A — the true ₹ line shadow price (dual of the line-capacity constraint). Manual run
+  // (needs the solved sku_plans first). When solved, it replaces utilization-only "binding"
+  // with an economically-grounded one: a line binds iff its capacity dual > 0.
+  const lc = useSolve('/api/solve/linecap', ()=>linecapPayload(res), { solveKey:'linecap' });   // LP-C hydrate from loop cache
+  const lcByLine = {};
+  if(lc.result && lc.result.lines) lc.result.lines.forEach(l=>{ lcByLine[l.line_id] = l; });
+  const lcSolved = !!(lc.result && lc.result.lines);
+  const bind = lcSolved
+    ? press && press.find(p=>(lcByLine[p.id]||{}).binding)
+    : press && press.find(p=>p.binding);
+  const runLc = ()=> lc.run().catch(()=>{});
   return (
     <Grid cols={2}>
       <Card icon="📊" title="Capacity vs Demand" badge={`${(months||M.aggregate.months).length} periods · ceiling ${lineCap?lineCap.toLocaleString('en-IN'):'—'} u/mo`} info={{ what:'Monthly demand against the planned regular-labor capacity (rate × workforce), bounded by the line-registry ceiling.', flows:'Shortfalls → prebuild & overtime.' }} span={2}
@@ -247,20 +272,28 @@ function PlanCapacity({ onNav, agg, lineCap }) {
         <Reading formula="labor dual λ = ∂(objective) / ∂(worker-period capacity)  — ₹ saved per extra worker-unit"
           soWhat="A binding labor dual means the answer is hire/overtime, not machines. Line/machine CapEx is justified by the line-pressure table below — a different constraint."/>
       </Card>
-      <Card icon="🏭" title="Line Capacity Pressure" badge={press?(bind?`${bind.line} binding`:'all slack'):'solve first'} badgeTone="k" span={2}
-        info={{ what:'The disaggregated SKU plan loaded onto each line vs its registry capacity. The binding line is where machine CapEx pays back — this is the line/machine signal Capital consumes (not the labor dual).', flows:'Binding line → Capital / Investment Decision.' }}
-        right={res && bind ? <button onClick={()=>onNav&&onNav('finance')} style={{marginLeft:'auto', fontFamily:F.mono, fontSize:9.5, fontWeight:700, color:C.a2, background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline'}}>invest in {bind.line} →</button> : undefined}
-        dev={{ comp:'LinePressureTable', props:'aggregate.sku_plans grouped by M.products.line vs M.lines.cap' }}>
+      <Card icon="🏭" title="Line Capacity Pressure" badge={press?(bind?`${bind.line} binding`:(lcSolved?'all slack · ₹0':'all slack')):'solve first'} badgeTone="k" span={2}
+        info={{ what:'The disaggregated SKU plan loaded onto each line vs its registry capacity, plus the TRUE ₹ shadow price of each line\'s capacity (PL-A, dual of a min-cost assignment LP). The binding line is where machine CapEx pays back — the line/machine signal Capital consumes (not the labor dual).', flows:'Binding line + ₹ shadow price → Capital / Investment Decision.' }}
+        right={<div style={{marginLeft:'auto', display:'flex', alignItems:'center', gap:10}}>
+          {res ? (lcSolved ? <Provenance kind="solved" asOf={lc.ranAt?lc.ranAt.toLocaleTimeString():undefined}/>
+            : <Btn kind="primary" sm onClick={runLc}>{lc.solving?'⏳ Pricing…':'₹ Price capacity'}</Btn>) : null}
+          {res && bind ? <button onClick={()=>onNav&&onNav('finance')} style={{fontFamily:F.mono, fontSize:9.5, fontWeight:700, color:C.a2, background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline'}}>invest in {bind.line} →</button> : null}
+        </div>}
+        dev={{ comp:'LinePressureTable', props:'aggregate.sku_plans grouped by line vs M.lines.cap + /api/solve/linecap dual' }}>
+        {lc.error && <div style={{marginBottom:8, fontFamily:F.mono, fontSize:9.5, color:C.dg}}>Line-capacity LP: {lc.error}</div>}
         {press ? (
-          <DataTable cols={['Line','Planned u/mo','Registry cap','Util','Shortfall u/mo','Status']} align={['left','right','right','right','right','left']}
-            rows={press.map(p=>({__hl:p.binding, cells:[p.line, p.loadPerMo.toLocaleString('en-IN'), p.cap.toLocaleString('en-IN'),
+          <DataTable cols={['Line','Planned u/mo','Registry cap','Util','Shortfall u/mo','₹ shadow / cap unit','Status']} align={['left','right','right','right','right','right','left']}
+            rows={press.map(p=>{ const l = lcByLine[p.id]; const binds = lcSolved ? (l&&l.binding) : p.binding;
+              return {__hl:binds, cells:[p.line, p.loadPerMo.toLocaleString('en-IN'), p.cap.toLocaleString('en-IN'),
               <span style={{fontWeight:700, color:p.util>0.95?C.dg:C.tx}}>{(p.util*100).toFixed(0)}%</span>,
-              p.shortfall?`+${p.shortfall.toLocaleString('en-IN')}`:'—', <Tag c={p.binding?'k':'w'}>{p.binding?'BINDING':'slack'}</Tag>]}))}/>
+              p.shortfall?`+${p.shortfall.toLocaleString('en-IN')}`:'—',
+              lcSolved ? <span style={{fontWeight:700, color:(l&&l.shadow_price)?C.dg:C.tx3}}>{l&&l.shadow_price?`₹${l.shadow_price.toLocaleString('en-IN')}`:'₹0'}</span> : <span style={{color:C.tx3}}>—</span>,
+              <Tag c={binds?'k':'w'}>{binds?'BINDING':'slack'}</Tag>]};})}/>
         ) : (
           <div style={{padding:'12px', fontFamily:F.mono, fontSize:10.5, color:C.tx3, border:`2px dashed ${C.line2}`}}>Solve the aggregate plan — the SKU disaggregation loads each line against its registry capacity here.</div>
         )}
-        <Reading formula="line util = Σ(planned SKU qty on the line) ÷ (line registry cap × horizon)"
-          soWhat={press?(bind?`${bind.line} is at ${(bind.util*100).toFixed(0)}% — the binding line, short ${bind.shortfall} u/mo. THAT is the CapEx case to carry into Finance, valued by re-solving production with +1 shift.`:'Every line has slack at this demand — no machine CapEx is justified; the constraint is labor (see the labor duals above), not the lines.'):'—'}/>
+        <Reading formula={lcSolved?"₹ shadow = dual of (Σ SKU load on line ≤ line cap) in a min-cost assignment LP — ₹ of contribution margin one more unit of capacity unlocks":"line util = Σ(planned SKU qty on the line) ÷ (line registry cap × horizon)"}
+          soWhat={press?(bind?`${bind.line} binds at a ₹${(lcByLine[bind.id]||{}).shadow_price||'—'}/unit shadow price — every extra unit of its capacity recovers that much lost margin. THAT is the CapEx case Finance capitalizes (F-8 consumes this as the capacity shadow price).`:(lcSolved?'Priced: every line\'s capacity dual is ₹0 — they all have slack, so no machine CapEx is justified at this demand. The constraint is labor (see the duals above), not the lines. The mechanism is live: when demand pressures a line its dual turns positive here.':'Every line has slack at this demand — press "₹ Price capacity" to confirm the line duals are ₹0 (no CapEx case) vs the labor dual above.')):'—'}/>
       </Card>
     </Grid>
   );

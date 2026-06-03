@@ -68,6 +68,7 @@ def derive_policies(data):
                 'hold_pct': float(part.get('hold_pct', carry_rate_annual * 100) or carry_rate_annual * 100),
                 'lt_cv': float(part.get('lt_cv', 0) or 0),
                 'moq': float(part.get('moq', 0) or 0),
+                'supplier': part.get('supplier') or part.get('sup') or None,   # SS-B — joint replenishment grouping
             })
             for t in range(T):
                 acc['demand'][t] += dem[t] * qty_per / max(fy, 1e-6)
@@ -99,6 +100,9 @@ def derive_policies(data):
 
         policies.append({
             'part': nm,
+            'supplier': a['supplier'],
+            'annual_demand_val': D_annual,           # SS-B — raw values for the joint-replenishment roll-up
+            'annual_holding_val': h,
             'avg_period_demand': round(mu, 2),
             'demand_std': round(sigma, 2),
             'demand_cv': round(cv, 3),
@@ -118,12 +122,70 @@ def derive_policies(data):
             'recommended_policy': recommended,
         })
 
+    # ── SS-B · JOINT REPLENISHMENT for shared-supplier parts ──
+    # Parts derived independently above each pay their OWN fixed order cost. When
+    # several parts come from one supplier, ordering them on a COMMON review cycle
+    # amortises the per-PO major cost (truck/admin/inspection) over the whole basket
+    # — the classic joint-replenishment / coordinated-review win. Common cycle (years):
+    #     T* = √( 2·(S + Σ sᵢ) / Σ Dᵢ·hᵢ )
+    # joint annual cost  = √( 2·(S + Σ sᵢ)·(Σ Dᵢ·hᵢ) );  independent = Σ √(2·Dᵢ·(S+sᵢ)·hᵢ)
+    # where S = the shared major cost per joint PO (joint_major_cost), sᵢ = each part's
+    # own (minor) ordering cost. Reported per supplier with ≥2 parts; honest — a
+    # single-part supplier has nothing to coordinate.
+    major_cost = float(params.get('joint_major_cost', 0) or 0)
+    by_supplier = {}
+    for p in policies:
+        sup = p.get('supplier')
+        if not sup:
+            continue
+        by_supplier.setdefault(sup, []).append(p)
+    jr_groups = []
+    jr_total_saving = 0.0
+    for sup, grp in by_supplier.items():
+        if len(grp) < 2:
+            continue
+        S = major_cost if major_cost > 0 else max(g['ordering_cost'] for g in grp)
+        sum_minor = sum(g['ordering_cost'] for g in grp)
+        sum_Dh = sum(g['annual_demand_val'] * g['annual_holding_val'] for g in grp)
+        if sum_Dh <= 0:
+            continue
+        T_star = math.sqrt(2 * (S + sum_minor) / sum_Dh)               # years between joint orders
+        joint_cost = math.sqrt(2 * (S + sum_minor) * sum_Dh)
+        indep_cost = sum(math.sqrt(2 * g['annual_demand_val'] * (S + g['ordering_cost']) * g['annual_holding_val'])
+                         for g in grp)
+        saving = indep_cost - joint_cost
+        jr_total_saving += max(0.0, saving)
+        jr_groups.append({
+            'supplier': sup,
+            'parts': [g['part'] for g in grp],
+            'n_parts': len(grp),
+            'major_cost': round(S, 2),
+            'common_cycle_periods': round(T_star * periods_per_year, 2),
+            'orders_per_year': round(1.0 / T_star, 1) if T_star > 0 else 0,
+            'independent_annual_cost': round(indep_cost, 0),
+            'joint_annual_cost': round(joint_cost, 0),
+            'annual_saving': round(saving, 0),
+            'order_qtys': [{'part': g['part'], 'qty': round(g['annual_demand_val'] * T_star, 1)} for g in grp],
+            'recommend_joint': bool(saving > 0),
+        })
+    jr_groups.sort(key=lambda x: x['annual_saving'], reverse=True)
+
+    # strip the raw roll-up scratch values from the public per-part rows
+    for p in policies:
+        p.pop('annual_demand_val', None)
+        p.pop('annual_holding_val', None)
+
     policies.sort(key=lambda p: p['annual_demand'] * p['unit_cost'], reverse=True)
     return {
         'policies': policies,
         'service_level': service_level,
         'z': round(z, 3),
         'periods_per_year': periods_per_year,
+        'joint_replenishment': {                          # SS-B
+            'groups': jr_groups,
+            'total_annual_saving': round(jr_total_saving, 0),
+            'note': 'Parts sharing a supplier ordered on one review cycle amortise the per-PO major cost.',
+        },
         'note': 'Validate by rolling-horizon re-solve (/api/solve/rolling): a good policy keeps '
                 'nervousness low as the forecast tail is revealed.',
     }

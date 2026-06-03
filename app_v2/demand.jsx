@@ -11,6 +11,7 @@ const FCAST_MODEL_LABEL = {
   random_forest:'Random Forest (ML)', gradient_boost:'Gradient Boost (ML)',
   xgboost:'XGBoost (ML)', mlp:'MLP (DL)', hybrid:'Hybrid (HW+ML)',
   croston:'Croston', sba:'SBA', tsb:'TSB',
+  ensemble:'Ensemble (top-N blend)',   // W9·D-5
 };
 const FCAST_INT = new Set(['croston','sba','tsb']);
 // pull the winning model's forward forecast array out of a /api/forecast result.
@@ -30,7 +31,7 @@ function winnerForecast(res){
 // holidays are global ISO dates; horizon_start_date anchors the calendar features.
 function fcPayload(item, grain, di, holidays){
   const sku = (item && item.code) || '';
-  const hist = M.historyAt(sku, grain);
+  const hist = historyFor(sku, grain);   // W9 D-7 — imported / like-modeled history wins over the seed
   const promos = (di && di.promos) || [];
   const promo_periods = promos.map(p=> hist.length + (p.fidx|0)).filter(x=>x>=0);
   return {
@@ -80,6 +81,7 @@ function StageDemand({ onNav }) {
       <div style={{padding:18}}>
         {fc.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Forecast engine: {fc.error}</div>}
         <DemHistory item={item} grain={grain}/>
+        <DemImport item={item} grain={grain} onApplied={()=>runForecast()}/>
         <DemForecast item={item} fc={fc} grain={grain}/>
         <DemActuals item={item} fc={fc} grain={grain}/>
         <DemModels onNav={onNav} fc={fc} item={item}/>
@@ -96,7 +98,7 @@ function DemHistory({ item, grain }) {
   const [mode, setMode] = useState('history');
   const { profile } = useProfile();
   const g = grain || 'daily';
-  const series = M.historyAt((item&&item.code)||'', g);
+  const series = historyFor((item&&item.code)||'', g);  // W9 — reflects an imported series
   const vals = series.slice(-12);                       // last 12 buckets of the real series
   const gl = M.grainLabel(g);
   const ext = profile.externalForecast;
@@ -183,22 +185,32 @@ function DemHistory({ item, grain }) {
   );
 }
 
-function ForecastChart({ forecast, history }) {
+function ForecastChart({ forecast, history, pi }) {
   // history + forecast must be at the SAME grain. The forecast overlay draws ONLY
   // when the live engine returned one — no mock curve stands in for it.
   const hist=(history&&history.length)?history:M.history24, fc=(forecast&&forecast.length)?forecast:[], W=780, H=240, pad=34;
   const hasF=fc.length>0, total=hist.length+fc.length;
-  const all=hasF?[...hist,...fc]:hist, mx=Math.max(...all,1)*1.1;
+  // DM-A — include the P90 ceiling in the y-scale so the uncertainty cone fits.
+  const band = (pi && pi.length) ? pi : null;
+  const all=hasF?[...hist,...fc,...(band?band.map(b=>b.p90):[])]:hist, mx=Math.max(...all,1)*1.1;
   const xs=(i)=> pad + i/Math.max(1,total-1)*(W-pad-8);
   const y=(v)=> H-22-(v/mx)*(H-40);
   const histPts = hist.map((v,i)=>[xs(i), y(v)]);
   const fcPts = fc.map((v,i)=>[xs(hist.length+i), y(v)]);
   const ln = pts=>pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+  // DM-A — shaded P10–P90 cone behind the forecast line (closed polygon p90→ then p10 back).
+  let bandPath = null;
+  if(band && fc.length){
+    const up = band.map((b,i)=>[xs(hist.length+i), y(b.p90)]);
+    const lo = band.map((b,i)=>[xs(hist.length+i), y(b.p10)]).reverse();
+    bandPath = ln(up) + ' ' + lo.map(p=>'L'+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ') + ' Z';
+  }
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%', height:H, display:'block'}}>
       {[0,1,2,3,4].map(i=>(<line key={i} x1={pad} x2={W-8} y1={18+i*((H-40)/4)} y2={18+i*((H-40)/4)} stroke={C.line2} strokeWidth=".8"/>))}
       {[0,1,2,3,4].map(i=>(<text key={i} x={pad-5} y={22+i*((H-40)/4)} fontSize="9" fontFamily={F.mono} fill={C.tx3} textAnchor="end">{Math.round(mx*(1-i/4))}</text>))}
       {hasF && <rect x={xs(hist.length-0.5)} y="14" width={W-8-xs(hist.length-0.5)} height={H-36} fill={C.ac} opacity=".1"/>}
+      {bandPath && <path d={bandPath} fill={C.ac2} opacity=".15" stroke="none"/>}
       <path d={hasF?`${ln(histPts)} L${fcPts[0][0]} ${fcPts[0][1]}`:ln(histPts)} fill="none" stroke={C.ink} strokeWidth="2"/>
       {hasF && <path d={ln(fcPts)} fill="none" stroke={C.ac2} strokeWidth="2.4" strokeDasharray="5 3"/>}
       {histPts.filter((_,i)=>i%3===0).map((p,i)=><circle key={i} cx={p[0]} cy={p[1]} r="2.4" fill={C.ink}/>)}
@@ -215,7 +227,7 @@ function ForecastChart({ forecast, history }) {
 // The chart shows the SHAPE; planners commit to NUMBERS. This renders every
 // forecast period as date + units, straight from the winner's forecast array —
 // promo-flagged periods (D-1) are marked so the two inputs stay visibly linked.
-function PerPeriodTable({ item, fcastArr, grain }) {
+function PerPeriodTable({ item, fcastArr, grain, prod }) {
   const sku = (item && item.code) || '';
   const { di } = useDemandInputs(sku);
   const g = grain || 'daily';
@@ -223,30 +235,46 @@ function PerPeriodTable({ item, fcastArr, grain }) {
   if(!fcastArr || !fcastArr.length) return null;
   const total = fcastArr.reduce((a,b)=>a+(b||0),0);
   const avg = total / fcastArr.length;
+  // DM-A — per-period prediction interval (P10/P90), keyed by step. DM-B — promo
+  // uplift attribution (baseline vs the share the promo flag is driving).
+  const pi = (prod && prod.forecast_pi) || null;
+  const attr = (prod && prod.promo_attribution) || null;
+  const attrByStep = {}; if(attr && attr.periods) attr.periods.forEach(r=>{ attrByStep[r.step] = r; });
   return (
     <div style={{marginTop:12}}>
-      <SubLabel>Forecast by {M.grainLabel(g)} · {fcastArr.length} periods · Σ {Math.round(total).toLocaleString('en-IN')} u</SubLabel>
+      <SubLabel>Forecast by {M.grainLabel(g)} · {fcastArr.length} periods · Σ {Math.round(total).toLocaleString('en-IN')} u{pi?' · P10–P90 band':''}</SubLabel>
       <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
         <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10}}>
           <thead><tr style={{background:C.ink}}>
             <th style={{color:C.paper, textAlign:'left', padding:'5px 8px', fontSize:8.5}}>#</th>
             <th style={{color:C.paper, textAlign:'left', padding:'5px 8px', fontSize:8.5}}>Date</th>
             <th style={{color:C.paper, textAlign:'right', padding:'5px 8px', fontSize:8.5}}>Units</th>
+            {pi && <th style={{color:C.paper, textAlign:'right', padding:'5px 8px', fontSize:8.5}}>P10–P90</th>}
+            {attr && <th style={{color:C.paper, textAlign:'right', padding:'5px 8px', fontSize:8.5}}>promo Δ</th>}
             <th style={{color:C.paper, textAlign:'left', padding:'5px 8px', fontSize:8.5}}>vs avg</th>
           </tr></thead>
           <tbody>
             {fcastArr.map((v,i)=>{ const promo = promoSet.has(i); const hi = v>avg*1.15;
+              const band = pi && pi[i]; const ar = attrByStep[i+1];
               return (
               <tr key={i} style={{background: promo?C.ac: i%2?C.bg3:C.paper, borderTop:`1px solid ${C.line2}`}}>
                 <td style={{padding:'3px 8px', fontWeight:700, color: promo?C.onAc:C.tx2}}>P{i+1}</td>
                 <td style={{padding:'3px 8px', color: promo?C.onAc:C.tx2}}>{futureLabel(g,i)}{promo && <Tag c="k">PROMO</Tag>}</td>
                 <td className="num" style={{padding:'3px 8px', textAlign:'right', fontWeight:700, color: promo?C.onAc:C.tx, fontFamily:F.disp, fontSize:12}}>{Math.round(v||0).toLocaleString('en-IN')}</td>
+                {pi && <td className="num" style={{padding:'3px 8px', textAlign:'right', fontSize:9, color: promo?C.onAc:C.tx3}}>{band?`${Math.round(band.p10).toLocaleString('en-IN')}–${Math.round(band.p90).toLocaleString('en-IN')}`:'—'}</td>}
+                {attr && <td className="num" style={{padding:'3px 8px', textAlign:'right', fontSize:9, fontWeight:700, color: (ar&&ar.uplift>0)?(promo?C.onAc:C.gn):(promo?C.onAc:C.tx3)}}>{ar&&Math.abs(ar.uplift)>=0.5?`+${Math.round(ar.uplift).toLocaleString('en-IN')}`:'·'}</td>}
                 <td style={{padding:'3px 8px', fontSize:9, color: promo?C.onAc:(hi?C.gn:C.tx3)}}>{v>=avg?'▲':'▽'} {Math.round(((v-avg)/Math.max(1,avg))*100)}%</td>
               </tr>
             );})}
           </tbody>
         </table>
       </div>
+      {attr && attr.promo_uplift_total>0 && (
+        <div style={{marginTop:6, fontFamily:F.mono, fontSize:9.5, color:C.tx2}}>
+          <b>DM-B promo attribution</b> ({attr.model}): of the forecast total, <b style={{color:C.gn}}>+{Math.round(attr.promo_uplift_total).toLocaleString('en-IN')} u</b> is the promo flag's causal uplift over the no-promo baseline (winner counterfactual).
+        </div>
+      )}
+      {pi && <div style={{marginTop:4, fontFamily:F.mono, fontSize:9, color:C.tx3}}>DM-A band = ±1.28·σ_resid·√step (P10/P90) — the cone of forecast uncertainty the safety-stock/CVaR cards consume.</div>}
     </div>
   );
 }
@@ -266,8 +294,8 @@ function DemForecast({ item, fc, grain }) {
           right={res ? <Provenance kind="solved" asOf={fc.ranAt?fc.ranAt.toLocaleTimeString():undefined}/> : undefined}
           info={{ what:'History with the winning model\u2019s forecast overlaid.', flows:'Forecast → S&OP aggregate & profit mix.' }}
           dev={{ comp:'ForecastChart', props:'item, forecastResults' }}>
-          <ForecastChart forecast={fcastArr} history={M.historyAt((item&&item.code)||'', grain||'daily')}/>
-          <PerPeriodTable item={item} fcastArr={fcastArr} grain={grain||'daily'}/>
+          <ForecastChart forecast={fcastArr} history={M.historyAt((item&&item.code)||'', grain||'daily')} pi={prod && prod.forecast_pi}/>
+          <PerPeriodTable item={item} fcastArr={fcastArr} grain={grain||'daily'} prod={prod}/>
           <Reading formula={fcastArr?`winner = ${winLabel} (lowest holdout MAPE)`:"the curve overlays only once the live engine returns a winner"} soWhat={fcastArr?"Forecast curve is the live engine winner over this item's history — the override beside it edits a period and writes back to committed demand.":"No forecast yet — the chart shows history only; nothing is drawn for the forecast line until the engine runs."}/>
         </Card>
         <OverrideCard item={item} fcastArr={fcastArr}/>
@@ -343,8 +371,20 @@ function DemActuals({ item, fc, grain }) {
   }));
   const r = sense.result;
   const blended = r && r.blended_forecast;
-  const runSense = ()=>{ if(!base || !base.length) return;
-    sense.run().then(res=>{ logEvent('actuals', sku, { n:acts.length, pattern: res && res.primary_pattern }); }).catch(()=>{}); };
+  const runSense = (manual)=>{ if(!base || !base.length) return Promise.resolve();
+    return sense.run().then(res=>{ if(manual) logEvent('actuals', sku, { n:acts.length, pattern: res && res.primary_pattern }); }).catch(()=>{}); };
+  // DM-C — sensing CADENCE: once a baseline exists, auto-re-sense (debounced) when
+  // the actuals change, so the loop closes without a manual click — new actuals
+  // immediately re-pattern-match against the baseline. The manual button still logs
+  // the 'actuals' event; the auto path is silent (no event-log spam). The planner
+  // still COMMITS explicitly — sensing never overwrites the forecast on its own.
+  const actSig = acts.join(',');
+  const autoRef = React.useRef('');
+  useEffect(()=>{ if(!base || !base.length) return;
+    if(autoRef.current === actSig) return;
+    const h = setTimeout(()=>{ autoRef.current = actSig; runSense(false); }, 700);
+    return ()=>clearTimeout(h);
+  }, [actSig, !!(base && base.length)]); // eslint-disable-line
   const commit = ()=>{ if(!blended || !blended.length || !sku) return;
     setItemDemand(sku, blended);                          // → markStale('demand') cascades downstream
     logEvent('replan', sku, { source:'demand-sensing', pattern: r.primary_pattern }); };
@@ -377,7 +417,7 @@ function DemActuals({ item, fc, grain }) {
               </tr></tbody>
             </table>
           </div>
-          <Btn kind="accent" sm onClick={runSense}>{sense.solving?'⏳ Sensing…':'📡 Run demand sensing'}</Btn>
+          <Btn kind="accent" sm onClick={()=>runSense(true)}>{sense.solving?'⏳ Sensing…':'📡 Run demand sensing'}</Btn>
           {r && (
             <div style={{marginTop:12}}>
               <div style={{display:'flex', gap:8, flexWrap:'wrap', marginBottom:8}}>
@@ -529,7 +569,7 @@ function DemModels({ onNav, fc, item }) {
                 return (
                 <tr key={i} style={{background: win?C.ac: i%2?C.bg3:C.paper, borderTop:`1px solid ${C.line2}`, opacity: ok?1:0.5}}>
                   <td style={{padding:'4px 9px', fontWeight:700, color:win?C.onAc:C.tx2}}>{i+1}</td>
-                  <td style={{padding:'4px 9px', fontWeight:700, whiteSpace:'nowrap'}}>{win&&'★ '}{FCAST_MODEL_LABEL[m.model]||m.model} {FCAST_INT.has(m.model) && <Tag c="v">INT</Tag>}</td>
+                  <td style={{padding:'4px 9px', fontWeight:700, whiteSpace:'nowrap'}}>{win&&'★ '}{FCAST_MODEL_LABEL[m.model]||m.model} {FCAST_INT.has(m.model) && <Tag c="v">INT</Tag>}{m.model==='ensemble' && <Tag c="c" title={(m.components||[]).map(c=>`${FCAST_MODEL_LABEL[c.model]||c.model} ${(c.weight*100).toFixed(0)}%`).join(' · ')}>BLEND</Tag>}</td>
                   <td className="num" style={{textAlign:'right', padding:'4px 9px', fontWeight:700}}>{m.mape!=null?m.mape.toFixed(1)+'%':'—'}</td>
                   <td className="num" style={{textAlign:'right', padding:'4px 9px'}}>{m.rmse!=null?m.rmse.toFixed(1):'—'}</td>
                   <td className="num" style={{textAlign:'right', padding:'4px 9px'}}>{m.mae!=null?m.mae.toFixed(1):'—'}</td>
@@ -557,11 +597,59 @@ function DemModels({ onNav, fc, item }) {
         <Reading formula="holdout MAPE = mean |actual − pred| / actual on the held-back tail (lower wins)"
           soWhat={lb?`Live engine ranked ${lb.length} models on your history; ★ ${FCAST_MODEL_LABEL[winnerKey]||winnerKey} won${winMape!=null?` at ${winMape.toFixed(1)}% MAPE`:''}. Models that failed to fit (greyed) are shown honestly, not hidden.`:"The leaderboard populates only from a live run — there is no illustrative table standing in for it."}/>
       </Card>
+      {/* W9 · Demand L4 — accuracy-by-horizon backtest + ensemble gate + reconciliation. */}
+      {prod && (prod.accuracy_by_horizon || prod.ensemble || (res && res.reconciliation)) &&
+        <div style={{marginTop:14}}><DemHorizon prod={prod} res={res}/></div>}
       {/* FVA — scores the FORECAST process, computed from the live leaderboard. */}
       <div style={{marginTop:14}}><FVACard lb={lb} winnerKey={winnerKey}/></div>
       {/* D-6 — trigger monitor on the winner's quality metrics (live). */}
       <div style={{marginTop:14}}><TriggerMonitor winner={lb && winnerKey ? lb.find(m=>m.model===winnerKey) : null} item={item}/></div>
     </StageSection>
+  );
+}
+
+// ── W9 · Demand L4 — accuracy-by-horizon + ensemble gate + reconciliation ──
+// Three depth signals the headline MAPE hides: how the winner's error grows step
+// by step into the future (a held-back backtest), whether a top-N ensemble was
+// blended or honestly skipped on thin data (D-5), and the bottom-up reconciliation
+// that makes the SKU and aggregate forecasts agree by construction (D-8). All read
+// straight from the live /api/forecast result — nothing fabricated.
+function DemHorizon({ prod, res }){
+  const abh = prod && prod.accuracy_by_horizon;
+  const rec = res && res.reconciliation;
+  const ens = prod && prod.ensemble;
+  if(!abh && !rec && !ens) return null;
+  const mx = abh && abh.length ? Math.max(5, ...abh.map(s=>s.ape)) : 1;
+  return (
+    <Card icon="📐" title="Accuracy by Horizon & Reconciliation" badge="W9 · Demand L4" badgeTone="c"
+      info={{ what:'How the winner\'s error grows step-by-step into the future (the headline MAPE averages it away), whether a top-N ensemble was blended or skipped, and the bottom-up reconciliation that makes the SKU and total forecasts agree.', flows:'Horizon decay → how far out to trust the plan; reconciliation → coherent SKU↔aggregate.' }}
+      right={<Provenance kind="solved"/>}
+      dev={{ comp:'DemHorizon', props:'prod.accuracy_by_horizon, prod.ensemble, res.reconciliation' }}>
+      {abh && abh.length>0 && <>
+        <SubLabel>Winner APE by horizon step (holdout backtest)</SubLabel>
+        <div style={{display:'flex', alignItems:'flex-end', gap:6, height:90, marginBottom:6}}>
+          {abh.map((s,i)=>(
+            <div key={i} style={{flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:3}}>
+              <div style={{width:'70%', height:`${Math.max(2,s.ape/mx*70)}px`, background:s.ape>15?C.dg:C.ac, border:`1px solid ${C.line}`}} title={`${s.ape}% APE`}/>
+              <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>h{s.step}</span>
+            </div>
+          ))}
+        </div>
+        <Reading formula="APEₖ = |actualₖ − forecastₖ| / actualₖ on the held-back tail, per step k ahead"
+          soWhat={`Step-1 error ${abh[0].ape}% → step-${abh.length} ${abh[abh.length-1].ape}%: ${abh[abh.length-1].ape>abh[0].ape*1.4?'accuracy decays materially further out — trust the near horizon, re-forecast the far one':'error stays stable across the horizon — the forecast holds out to '+abh.length+' steps'}.`}/>
+      </>}
+      {ens && <div style={{marginTop:10, fontFamily:F.mono, fontSize:9.5, color:C.tx2, padding:'7px 9px', border:`2px solid ${C.line2}`, background:C.bg3}}>
+        {ens.skipped ? `🔀 Ensemble skipped — ${ens.reason}.` : `🔀 Ensemble (D-5): ${(ens.components||[]).map(c=>`${FCAST_MODEL_LABEL[c.model]||c.model} ${(c.weight*100).toFixed(0)}%`).join(' + ')} · gated on ${ens.gated_on}.`}
+      </div>}
+      {rec && <div style={{marginTop:10}}>
+        <SubLabel>Hierarchical reconciliation ({(rec.method||'bottom_up').replace('_','-')})</SubLabel>
+        <KpiRow cols={2}>
+          <Blk label="Series reconciled" value={`${rec.n_series}`} tone="c"/>
+          <Blk label="Coherent total / horizon" value={`${Math.round(rec.total_horizon).toLocaleString('en-IN')} u`} tone="y"/>
+        </KpiRow>
+        <div style={{marginTop:4, fontFamily:F.mono, fontSize:9, color:C.tx3}}>{rec.note}</div>
+      </div>}
+    </Card>
   );
 }
 
@@ -572,6 +660,17 @@ function DemModels({ onNav, fc, item }) {
 // are the textbook ones; the MAPE target is the item's own accuracy target (seed
 // `item.mape`) so "breach" means worse than this SKU is expected to forecast.
 // Acknowledging writes a 'trigger' event — no side-effects fire during render.
+// DM-C — effect-only child (mounted ONLY when a breach exists, so its hook order is
+// stable): on a NEW breach signature it auto-flags downstream solves stale via the
+// recompute DAG (a forecast that's out of control shouldn't silently drive the plan)
+// and logs an immutable 'auto_trigger' event. Fires once per unique breach set.
+function BreachFlagger({ sig, item, metrics }){
+  const ref = React.useRef('');
+  useEffect(()=>{ if(sig && ref.current!==sig){ ref.current = sig; markStale('demand');
+    logEvent('auto_trigger', item&&item.code, { breaches: sig.split('|'), ...(metrics||{}) }); }
+  }, [sig]); // eslint-disable-line
+  return null;
+}
 function TriggerMonitor({ winner, item }) {
   const [ack, setAck] = useState(null);
   if(!winner) return (
@@ -609,8 +708,9 @@ function TriggerMonitor({ winner, item }) {
       </div>
       {breaches.length>0 && (
         <div style={{marginTop:10, display:'flex', alignItems:'center', gap:10}}>
+          <BreachFlagger sig={breaches.map(b=>b.k).join('|')} item={item} metrics={{ mape, bias, ts }}/>
           <Btn kind="danger" sm onClick={fire}>Log review trigger</Btn>
-          <span style={{fontFamily:F.mono, fontSize:8.5, color: ack?C.gn:C.dg}}>{ack?`✓ trigger logged · ${ack.toLocaleTimeString()}`:`${breaches.length} metric(s) out of control — re-forecast or review`}</span>
+          <span style={{fontFamily:F.mono, fontSize:8.5, color: ack?C.gn:C.dg}}>{ack?`✓ trigger logged · ${ack.toLocaleTimeString()}`:`${breaches.length} metric(s) out of control — auto-flagged downstream stale; re-forecast or review`}</span>
         </div>
       )}
       <Reading formula="breach if MAPE>target+5pt · |bias|>0.3·target · |tracking signal|>4 (or engine out_of_control)"
@@ -850,4 +950,114 @@ function DemEvents({ item, grain }) {
     </StageSection>
   );
 }
+// ════════════════════════════════════════════════════════════════════════
+// W9 (Demand L4 tail) · DemImport — REAL CSV history ingestion (D-7) + NPI
+// like-modeling. Two cards:
+//   D-7  Paste a CSV/TSV series → parse (delimiter + header detection) → bucket to
+//        the active grain (by date when present) → preview → "Use as history".
+//        Writes histImports[sku]; the forecast then competes models on YOUR data.
+//   NPI  A new/low-history item is modeled on an ANALOG SKU: analog history × scale
+//        × an adoption ramp → a like-modeled prior, written as committed demand
+//        (provenance = derived). Surrogate forecasting, the standard NPI method.
+// ════════════════════════════════════════════════════════════════════════
+function DemImport({ item, grain, onApplied }){
+  const sku = (item && item.code) || '';
+  const g = grain || 'daily';
+  const gl = M.grainLabel(g);
+  const { imp, setImp } = useHistoryImport(sku);
+  const [text, setText] = useState('');
+  const parsed = React.useMemo(()=> text.trim() ? parseHistoryCsv(text) : null, [text]);
+  const series = parsed && !parsed.error ? bucketHistory(parsed.rows, parsed.hasDates, g) : [];
+  const applyCsv = ()=>{
+    if(!sku || !series.length) return;
+    setImp({ grain:g, series, importedAt:new Date().toISOString(), source:'csv' });
+    logEvent('import', sku, { rows:series.length, grain:g, source:'csv' });
+    setText(''); onApplied && onApplied();
+  };
+  const clearImp = ()=>{ setImp(null); logEvent('import_clear', sku, {}); onApplied && onApplied(); };
+
+  // NPI like-model
+  const fin = (M.products||[]).filter(p=>p.cat==='Finished' && p.sku!==sku);
+  const [ref, setRef] = useState(fin[0]?fin[0].sku:'');
+  const [scale, setScale] = useState('80');
+  const [ramp, setRamp] = useState('3');
+  const refHist = ref ? historyFor(ref, g) : [];
+  const npiSeries = React.useMemo(()=>{
+    if(!refHist.length) return [];
+    const sc = (Number(scale)||0)/100, rp = Math.max(0, Math.round(Number(ramp)||0));
+    return refHist.map((v,i)=>{ const adopt = rp>0 ? Math.min(1, (i+1)/rp) : 1;
+      return Math.max(0, Math.round(v*sc*adopt)); });
+  }, [ref, scale, ramp, g, refHist.length]);
+  const applyNpi = ()=>{
+    if(!sku || !npiSeries.length) return;
+    setItemDemand(sku, npiSeries);
+    logEvent('npi_likemodel', sku, { analog:ref, scalePct:Number(scale)||0, rampPeriods:Number(ramp)||0 });
+    onApplied && onApplied();
+  };
+
+  const spark = (arr, color)=>{ if(!arr.length) return null;
+    const mx = Math.max(1,...arr), w=Math.max(2, 200/arr.length);
+    return <svg viewBox={`0 0 200 36`} style={{width:'100%', height:36, display:'block'}}>
+      {arr.map((v,i)=><rect key={i} x={i*w} y={36-v/mx*32} width={Math.max(1,w-1)} height={v/mx*32} fill={color}/>)}
+    </svg>;
+  };
+
+  return (
+    <StageSection step="1b" title={`Import history & NPI · ${item?item.name:''}`} sub="upload your own history (real CSV ingestion) or model a new product on an analog SKU — both feed the live model competition">
+      <Grid cols={2}>
+        {/* D-7 · CSV import */}
+        <Card icon="⤓" title="Import history (CSV / TSV)" badge={imp?`imported · ${imp.series.length} ${gl}s`:'paste a series'} badgeTone={imp?'g':'k'}
+          right={imp ? <Btn kind="secondary" sm onClick={clearImp}>Clear → seed</Btn> : null}
+          info={{ what:'Paste a date,value (or value-only) series. The parser detects the delimiter + a header row and buckets dated rows to the active grain; the forecast engine then competes models on it.', flows:'histImports[sku] → fcPayload.history → /api/forecast.' }}
+          dev={{ comp:'DemImport·csv', props:'parseHistoryCsv + bucketHistory', state:'histImports[sku]={grain,series}' }}>
+          {imp ? <>
+            <div style={{fontFamily:F.mono, fontSize:10, color:C.tx2, marginBottom:6}}>Active import · <b>{imp.series.length}</b> {M.grainLabel(imp.grain)}s · {new Date(imp.importedAt).toLocaleString('en-IN')}{imp.grain!==g?<span style={{color:C.dg}}> · imported at {M.grainLabel(imp.grain)} grain — switch to that grain to forecast on it</span>:''}</div>
+            {spark(imp.series.slice(-40), C.a2)}
+            <Reading formula="histImports wins over the seed M.historyAt when its grain matches" soWhat={`The forecast above is now competing models on YOUR ${imp.series.length}-point series (re-run with 🤖). Clear to revert to the seed history.`}/>
+          </> : <>
+            <textarea value={text} onChange={e=>setText(e.target.value)} rows={5} placeholder={"2025-01-01,120\n2025-02-01,138\n2025-03-01,151\n…  (or one value per line)"}
+              style={{width:'100%', boxSizing:'border-box', border:`2px solid ${C.line}`, padding:'7px 9px', fontFamily:F.mono, fontSize:10, color:C.tx, outline:'none', resize:'vertical'}}/>
+            {parsed && parsed.error && <div style={{fontFamily:F.mono, fontSize:10, color:C.dg, marginTop:6}}>⚠ {parsed.error}</div>}
+            {parsed && !parsed.error && <div style={{marginTop:8}}>
+              <div style={{fontFamily:F.mono, fontSize:10, color:C.tx2, marginBottom:4}}>
+                {parsed.rows.length} rows parsed{parsed.hasDates?` · dated → bucketed to ${gl}`:' · value-only (file order)'} → <b>{series.length}</b> {gl} buckets
+              </div>
+              {spark(series.slice(-40), C.ac)}
+              <div style={{display:'flex', gap:8, marginTop:8}}>
+                <Btn kind="primary" sm onClick={applyCsv}>Use as history</Btn>
+                <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3, alignSelf:'center'}}>writes histImports[{sku||'—'}] · re-runs the forecast</span>
+              </div>
+            </div>}
+          </>}
+        </Card>
+
+        {/* NPI like-modeling */}
+        <Card icon="🌱" title="NPI like-modeling (analog SKU)" badge="surrogate prior" badgeTone="y"
+          info={{ what:'A new or low-history item inherits the demand shape of an analog SKU, scaled and ramped to launch. analog × scale% × adoption-ramp → a like-modeled committed prior (provenance derived) the downstream plan can use until real actuals arrive.', flows:'analog history → setItemDemand[sku] → all MILPs.' }}
+          dev={{ comp:'DemImport·npi', props:'analog × scale × ramp', state:'demand[sku] via setItemDemand' }}>
+          <div style={{display:'flex', gap:8, flexWrap:'wrap', alignItems:'flex-end', marginBottom:8}}>
+            <div>
+              <SubLabel>Analog SKU</SubLabel>
+              <select value={ref} onChange={e=>setRef(e.target.value)} style={{border:`2px solid ${C.line}`, padding:'5px 7px', fontFamily:F.mono, fontSize:10, outline:'none', background:C.paper, color:C.tx}}>
+                {fin.map(p=><option key={p.sku} value={p.sku}>{p.sku} · {p.name}</option>)}
+              </select>
+            </div>
+            <SolverInput label="Scale" seed={80} value={scale} onChange={setScale} min={5} max={300} suffix="%" w={84} hint="of analog volume"/>
+            <SolverInput label="Adoption ramp" seed={3} value={ramp} onChange={setRamp} min={0} integer suffix={gl+'s'} w={96} hint="periods to full"/>
+          </div>
+          {npiSeries.length ? <>
+            <div style={{fontFamily:F.mono, fontSize:10, color:C.tx2, marginBottom:4}}>like-modeled prior · {npiSeries.length} {gl}s · Σ {npiSeries.reduce((a,b)=>a+b,0).toLocaleString('en-IN')}u (analog {ref} × {Number(scale)||0}% × {Number(ramp)||0}-{gl} ramp)</div>
+            {spark(npiSeries, C.a4)}
+            <div style={{display:'flex', gap:8, marginTop:8}}>
+              <Btn kind="primary" sm onClick={applyNpi}>Apply as committed prior</Btn>
+              <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3, alignSelf:'center'}}>writes committed demand for {sku||'—'}</span>
+            </div>
+            <Reading formula="prior[t] = analog_history[t] × scale × min(1, (t+1)/ramp)" soWhat={`Until ${item?item.name:'the item'} has its own actuals, it plans to ${ref}'s shape scaled to ${Number(scale)||0}% with a ${Number(ramp)||0}-${gl} adoption ramp. Replace it once real sales land (Actuals → sensing).`}/>
+          </> : <div style={{fontFamily:F.mono, fontSize:11, color:C.tx3, padding:'10px 0'}}>Pick an analog SKU with history to build a like-modeled launch prior.</div>}
+        </Card>
+      </Grid>
+    </StageSection>
+  );
+}
+
 window.StageDemand = StageDemand;

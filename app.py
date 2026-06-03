@@ -36,6 +36,9 @@ from solvers.cvar import solve_cvar
 from solvers.reconcile import run_sop_pipeline
 from solvers.policy import derive_policies
 from solvers.meio import solve_meio
+from solvers.meio_network import solve_meio_network
+from solvers.linecap import solve_linecap
+from solvers.capital_structure import blended_hurdle, min_wacc_structure
 from solvers.capital_capacity import solve_capital_capacity
 from solvers.sequencing import evaluate_line as sequence_evaluate_line
 from solvers.transport import consolidate_shipments, MODE_SPECS as TRANSPORT_MODE_SPECS
@@ -645,6 +648,54 @@ def api_solve_meio():
     single-echelon policy.py cannot give."""
     try:
         return jsonify(solve_meio(request.json or {}))
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+@app.route('/api/solve/meio-network', methods=['POST'])
+def api_solve_meio_network():
+    """Risk-pool shared parts across the finished SKUs that consume them (W8 · L4).
+    meio.py places ONE buffer per assembly TREE; this pools a part shared by N SKUs
+    into one buffer with σ_pool = √(Σσ² + 2ρΣσᵢσⱼ) ≤ Σσ (square-root law), so it
+    frees the safety-stock capital single-tree MEIO leaves on the table."""
+    try:
+        return jsonify(solve_meio_network(request.json or {}))
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+# ─── Finance wedge: source-weighted hurdle + min-WACC structure (W5 · F-1, F-2) ───
+@app.route('/api/calc/hurdle', methods=['POST'])
+def api_calc_hurdle():
+    """F-1 — the owner's REAL cost of capital: the amount-weighted blend of every equity
+    source (retained/promoter/PE) and debt source (bank/family), debt tax-shielded. Returns
+    the blended hurdle WACC + each source's ₹ weight and contribution."""
+    try:
+        return jsonify(blended_hurdle(request.json or {}))
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+@app.route('/api/calc/wacc-structure', methods=['POST'])
+def api_calc_wacc_structure():
+    """F-2 — the WACC-vs-leverage curve (Hamada re-levering + a widening credit spread) and
+    the debt ratio that MINIMIZES WACC, capped by a DSCR covenant. Returns the curve, the
+    unconstrained trough, and the DSCR-feasible optimum."""
+    try:
+        return jsonify(min_wacc_structure(request.json or {}))
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
+# ─── Line-capacity shadow price (PL-A · W4 follow-up) ───
+@app.route('/api/solve/linecap', methods=['POST'])
+def api_solve_linecap():
+    """The true ₹/unit marginal value of each production line's monthly capacity, as the
+    dual of the capacity constraint in a continuous min-cost assignment LP (valid duals,
+    unlike a MILP's). Slack lines return 0 (no CapEx case); a pressured line returns the
+    lost margin one more unit of its capacity would recover — what Finance F-8 capitalizes."""
+    try:
+        return jsonify(solve_linecap(request.json or {}))
     except Exception as e:
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 

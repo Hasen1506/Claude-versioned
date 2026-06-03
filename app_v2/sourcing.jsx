@@ -18,7 +18,9 @@ function partsWithSourcing(pd){
   return base.map((p,i)=>{
     const b = bom[i] || {};
     const src = getSourcing(b.part, b);
-    return { ...p, landed_cost: effLandedCost(p.cost, src) };
+    // supplier carried through so policy.py can group parts into joint-replenishment
+    // baskets (SS-B); landed_cost lifted by duty/freight % AND the live FX factor (SS-D).
+    return { ...p, landed_cost: effLandedCost(p.cost, src), supplier: b.sup };
   });
 }
 function procurementPayload(sku, planning, serviceLevel){
@@ -36,7 +38,10 @@ function procurementPayload(sku, planning, serviceLevel){
 // the identical landed economics the MILP plans on.
 function policyPayload(sku, planning, serviceLevel){
   const base = procurementPayload(sku, planning, serviceLevel);
-  base.params = { ...base.params, carry_rate: 0.24 };   // annual holding rate
+  // SS-B — joint_major_cost = the shared per-PO cost amortised across a supplier's
+  // basket (truck booking + admin + inbound inspection). Seed ₹2,500; the per-part
+  // ordering_cost (₹120) is the minor cost added per line on a joint order.
+  base.params = { ...base.params, carry_rate: 0.24, joint_major_cost: 2500 };
   return base;
 }
 // S-4 rolling re-plan: replay the procurement MILP over a sliding horizon. waves =
@@ -79,6 +84,60 @@ function meioPayload(sku, serviceLevel, maxServiceDays){
     unit_cost: Number(p.cost)||0, hold_pct:24, mu:muFg, sigma:sigFg,
     max_service: Math.max(0, Math.round(Number(maxServiceDays)||0)), suppliers:['WIP'] });
   return { stages, params:{ service_level: serviceLevel, time_unit:'days' } };
+}
+// W8 · NETWORK / POOLED MEIO payload — risk-pool each shared BOM part across the
+// finished SKUs that consume it. meioPayload places ONE buffer per FG TREE; this
+// pools a part shared by N SKUs into a single buffer (σ_pool = √(Σσ²+2ρΣσᵢσⱼ) ≤ Σσ).
+// Each FG contributes its part-level component demand μ_part = μ_fg·qty/yield with
+// σ_part = CV·μ_part (CV = the FG's forecast MAPE — its real demand variability).
+// unit_cost = LANDED cost (S-1), lead_time/hold from the BOM row.
+// MN-A — the pooled cohort per part is now the REAL subset of SKUs that consume it
+// (from M.skuBom), each with its OWN qty_per, not all-6-FG on one shared qty. MN-B —
+// each part carries two PLACEMENT echelons (raw upstream: cheap unit, long lead; or
+// finished/postponed: dearer unit, short lead), and the solver places the pooled buffer
+// at the cheaper one. MN-C — opts.pairwise builds a per-pair ρ matrix from XYZ
+// co-movement so correlated SKUs pool poorly and independent ones richly.
+const _MEIONET_VALUE_MULT = 2.6;   // finished-stage value of a raw part unit (embedded conversion)
+const _MEIONET_ASSY_LT = 3;        // final-assembly lead time (days) the FG echelon must cover
+function meioNetworkPayload(serviceLevel, correlation, poolingFixedCost, opts){
+  opts = opts || {};
+  const bom = M.bom || [];
+  const fin = (M.products||[]).filter(p=>p.cat==='Finished');
+  const skuBom = M.skuBom || {};
+  const rhoBase = Number(correlation)||0;
+  const xyzRank = { X:0, Y:1, Z:2 };
+  // which finished SKUs consume a given part, with each one's own qty_per (MN-A).
+  const consumers = (partId)=>{ const out=[];
+    fin.forEach(p=>{ const ln=(skuBom[p.sku]||[]).find(x=>x.part===partId); if(ln) out.push({ p, qty:Number(ln.qty)||0 }); });
+    return out; };
+  // pairwise ρ matrix from XYZ class distance: same class co-moves at ρ; one apart ρ/2;
+  // two apart independent. A documented co-movement heuristic (no fabricated covariance).
+  const corrMatrix = (skus)=>{ const n=skus.length, m=[];
+    for(let i=0;i<n;i++){ m[i]=[]; for(let j=0;j<n;j++){
+      if(i===j){ m[i][j]=1; continue; }
+      const d=Math.abs((xyzRank[skus[i].xyz]??1)-(xyzRank[skus[j].xyz]??1));
+      m[i][j] = d===0?rhoBase : d===1?rhoBase/2 : 0; } }
+    return m; };
+  const parts = bom.map(b=>{
+    const src = getSourcing(b.part, b);
+    const cons = consumers(b.part);
+    const landed = effLandedCost(b.cost, src);
+    const fgs = cons.map(({p, qty})=>{
+      const cv = Math.max(Number(p.mape)||1, 1) / 100;
+      const muFg = (Number(p.demand)||0) / MEIO_DPY;          // FG units/day
+      return { name:p.sku, mu:muFg, sigma:cv*muFg, qty_per:qty, yield:Number(p.yield)||0.97 };
+    });
+    const part = { id:b.part, name:b.name, unit_cost:landed, hold_pct:b.hold, lead_time:b.lt, fgs,
+      echelons:[
+        { node:'raw (upstream)',       lead_time:b.lt,             unit_cost:landed,                                    hold_pct:b.hold },
+        { node:'finished (postponed)', lead_time:_MEIONET_ASSY_LT, unit_cost:Math.round(landed*_MEIONET_VALUE_MULT*100)/100, hold_pct:24 },
+      ] };
+    if(opts.pairwise) part.corr_matrix = corrMatrix(cons.map(c=>c.p));
+    return part;
+  });
+  return { parts, params:{ service_level: serviceLevel,
+    correlation: rhoBase, pooling_fixed_cost: Number(poolingFixedCost)||0,
+    time_unit:'days' } };
 }
 // S-7 · COSTLY-ITEM NEWSVENDOR (h vs p) + CVaR payload — for ONE chosen part, the
 // single-period stocking economics: overage h (cost of a leftover unit) vs underage p
@@ -147,6 +206,7 @@ function StageSourcing({ onNav }) {
         <SrcPolicy sku={sku} planning={planning} sl={sl}/>
         <SrcRolling sku={sku} planning={planning} sl={sl}/>
         <SrcMEIO sku={sku} sl={sl}/>
+        <SrcMEIONet sl={sl}/>
         <SrcNewsvendor sku={sku}/>
         <SrcPostpone proc={proc}/>
         <SrcResults proc={proc}/>
@@ -210,7 +270,8 @@ function SrcTermRow({ b }){
       </td>
       <td style={{...num, color:C.tx2}}>₹{b.cost.toLocaleString('en-IN')}</td>
       <td style={{...num}}>{inp(src.dutyFreightPct, 'dutyFreightPct', 0.5, 52)}</td>
-      <td style={{...num, fontWeight:700, color: up>0?C.dg:C.tx}}>₹{landed.toLocaleString('en-IN')}{up>0?<span style={{fontSize:8.5, color:C.dg}}> +{((up/b.cost)*100).toFixed(1)}%</span>:''}</td>
+      <td style={{...num, fontWeight:700, color: up>0?C.dg:C.tx}}>₹{landed.toLocaleString('en-IN')}{up>0?<span style={{fontSize:8.5, color:C.dg}}> +{((up/b.cost)*100).toFixed(1)}%</span>:''}
+        {src.imported && Math.abs(fxFactor(src)-1)>0.001 && <div style={{fontSize:8, color:C.a4, fontFamily:F.mono}}>FX ×{fxFactor(src).toFixed(3)}</div>}</td>
       <td style={{...num}}>{inp(src.unitsPerTruck, 'unitsPerTruck', 100, 64)}</td>
       <td style={{...num}}>{inp(src.costPerTruck, 'costPerTruck', 1000, 70)}</td>
       <td style={{...num}}><Tag c={src._prov==='user'?'g':'w'}>{src._prov==='user'?'user':'seed'}</Tag></td>
@@ -238,6 +299,26 @@ function SrcFreight({ proc }){
   const fmt = n=> Math.round(n).toLocaleString('en-IN');
   // build a small step ladder around the current qty so the cliff is visible
   const ladderQ = ordered>0 ? [steps.cap*Math.max(0,steps.trucks-1)+1, ordered, steps.nextStepAt] : [];
+  // SS-A — supplier-level truck CONSOLIDATION. Real inbound from ONE supplier shares
+  // trucks: each part fills a fraction (ordered ÷ units-per-truck) of a truck, so the
+  // supplier's trucks = ⌈Σ fractions⌉ vs the Σ⌈fraction⌉ booked part-by-part. The diff
+  // is the consolidation dividend (fewer trucks for the same freight ₹/truck). Uses the
+  // SAME MILP order qty per part — no extra solve, no faking.
+  const mats = (proc && proc.result && proc.result.materials) || [];
+  const consol = (()=>{
+    if(!mats.length || !b.sup) return null;
+    const grp = bom.map((bb,i)=>({ bb, i })).filter(x=> x.bb.sup === b.sup);
+    if(grp.length < 2) return null;
+    let fracSum=0, indepTrucks=0, indepCost=0, anyOrder=false; const rows=[];
+    grp.forEach(({bb,i})=>{ const s=getSourcing(bb.part,bb); const ord=(mats[i]&&mats[i].total_ordered)||0;
+      const fs=freightSteps(ord, s); if(ord>0) anyOrder=true;
+      fracSum += ord / Math.max(1, s.unitsPerTruck); indepTrucks += fs.trucks; indepCost += fs.cost;
+      rows.push({ part:bb.part, ord, trucks:fs.trucks }); });
+    const perTruck = Number(src.costPerTruck)||0;
+    const consTrucks = Math.max(anyOrder?1:0, Math.ceil(fracSum));
+    const consCost = consTrucks * perTruck;
+    return { rows, indepTrucks, indepCost, consTrucks, consCost, saving: indepCost-consCost, anyOrder, sup:b.sup };
+  })();
   return (
     <StageSection step="5" title="Stepwise Inbound Freight" sub="freight is booked by the truck/container, not the unit — see the marginal-truck cliff on the selected part's planned order">
       <Card icon="🚚" title="Truck-step freight" badge={mat?'on MILP order':'run procurement first'} badgeTone={mat?'g':'k'}
@@ -287,6 +368,21 @@ function SrcFreight({ proc }){
             </div>
             <Reading formula="freight = ⌈qty / units-per-truck⌉ × ₹/truck   ·   the cost is flat per truck, so per-unit freight is cheapest at a full truck and jumps at every boundary"
               soWhat={`This order books ${steps.trucks} truck${steps.trucks===1?'':'s'} at ${steps.fillPct.toFixed(0)}% fill on the last one. ${steps.fillPct<70?`Rounding the lot up toward ${fmt(steps.cap*steps.trucks)} fills the booked truck at no extra freight; going one unit over ⇒ a whole extra ₹${fmt(steps.marginalTruck)} truck.`:'The last truck is well-filled — freight per unit is near its floor.'}`}/>
+            {consol && consol.anyOrder && (
+              <div style={{marginTop:14, border:`2px solid ${consol.saving>0?C.gn:C.line}`, borderLeft:`5px solid ${consol.saving>0?C.gn:C.line2}`, padding:'9px 11px', background:C.bg3}}>
+                <div style={{fontFamily:F.disp, fontWeight:800, fontSize:12, marginBottom:6}}>SS-A · Supplier consolidation — {consol.sup} <Tag c={consol.saving>0?'g':'k'}>{consol.rows.length} parts share trucks</Tag></div>
+                <div style={{display:'flex', gap:8, marginBottom:8, flexWrap:'wrap'}}>
+                  <Blk label="Part-by-part trucks" value={`${consol.indepTrucks}`} sub={`₹${fmt(consol.indepCost)}`} tone="k"/>
+                  <Blk label="Consolidated trucks" value={`${consol.consTrucks}`} sub={`₹${fmt(consol.consCost)}`} tone="y"/>
+                  <Blk label="Trucks saved" value={`${Math.max(0,consol.indepTrucks-consol.consTrucks)}`} accent={C.gn}/>
+                  <Blk label="Freight saved" value={`₹${fmt(Math.max(0,consol.saving))}`} accent={consol.saving>0?C.gn:C.tx3}/>
+                </div>
+                <div style={{fontFamily:F.mono, fontSize:9.5, color:C.tx2, lineHeight:1.6}}>
+                  {consol.rows.filter(r=>r.ord>0).map(r=>`${r.part} (${fmt(r.ord)}u, ${r.trucks}t)`).join(' + ')} → ⌈Σ truck-fractions⌉ = {consol.consTrucks} shared truck{consol.consTrucks===1?'':'s'}.
+                  {consol.saving>0?` Booking ${consol.sup}'s parts together cuts ${consol.indepTrucks-consol.consTrucks} truck(s) of dead freight.`:' Already truck-efficient — no consolidation gain at these volumes.'}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Card>
@@ -599,6 +695,33 @@ function SrcPolicy({ sku, planning, sl }){
                 </div>
               </div>
             )}
+            {res.joint_replenishment && (res.joint_replenishment.groups||[]).length>0 && (
+              <div style={{marginTop:12, border:`2px solid ${C.gn}`, borderLeft:`5px solid ${C.gn}`, background:C.bg3, padding:'9px 11px'}}>
+                <div style={{fontFamily:F.disp, fontWeight:800, fontSize:12, marginBottom:6}}>SS-B · Joint replenishment <Tag c="g">₹{fmt(res.joint_replenishment.total_annual_saving)}/yr saved</Tag></div>
+                <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
+                  <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10}}>
+                    <thead><tr style={{background:C.ink}}>
+                      {['Supplier','Parts','Common cycle','Indep ₹/yr','Joint ₹/yr','Saving'].map((h,i)=>(
+                        <th key={i} style={{color:C.paper, textAlign:i?'right':'left', padding:'5px 9px', fontSize:8.5, textTransform:'uppercase'}}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {res.joint_replenishment.groups.map((g,i)=>(
+                        <tr key={i} style={{borderTop:`1px solid ${C.line2}`}}>
+                          <td style={{padding:'5px 9px', fontWeight:700}}>{g.supplier}</td>
+                          <td style={{padding:'5px 9px', textAlign:'right', color:C.tx2}}>{g.parts.join('+')}</td>
+                          <td style={{padding:'5px 9px', textAlign:'right'}}>every {g.common_cycle_periods}p · {g.orders_per_year}/yr</td>
+                          <td style={{padding:'5px 9px', textAlign:'right', color:C.tx3}}>₹{fmt(g.independent_annual_cost)}</td>
+                          <td style={{padding:'5px 9px', textAlign:'right', fontWeight:700}}>₹{fmt(g.joint_annual_cost)}</td>
+                          <td style={{padding:'5px 9px', textAlign:'right', fontWeight:700, color: g.annual_saving>0?C.gn:C.tx3}}>{g.annual_saving>0?`₹${fmt(g.annual_saving)}`:'·'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{fontFamily:F.mono, fontSize:9, color:C.tx2, marginTop:5, lineHeight:1.6}}>Parts from one supplier ordered on a COMMON review cycle T*=√(2(S+Σsᵢ)/ΣDᵢhᵢ) amortise the per-PO major cost (₹2,500 truck/admin) across the basket — the coordinated-review win for the steady cohort.</div>
+              </div>
+            )}
             <Reading formula="EOQ = √(2·D·K / h)  ·  s = μ_L + z·σ_LTD  ·  S = s + EOQ   (D, h on LANDED cost; z from service level α)"
               soWhat={`${steady.length} steady part${steady.length===1?'':'s'} get a standing reorder rule at α = ${sl}; validate it by checking the rolling re-plan below stays low-nervousness as the forecast tail is revealed.`}/>
           </div>
@@ -768,6 +891,93 @@ function SrcMEIO({ sku, sl }){
               soWhat={mto
                 ? `At a ${maxSvc}-day quote the model makes ${fg?fg.name:sku} to order — zero finished buffer — and holds only ₹${fmt(res.total_holding_cost)}/yr of cheap upstream stock at ${buffers.join(', ')||'no node'}. This is the multi-echelon answer single-echelon policy can't give: it would have prescribed a finished buffer you'd never want.`
                 : `The buffer sits at ${buffers.join(', ')||'no node'} for ₹${fmt(res.total_holding_cost)}/yr. Lengthen the committed service time to let the FG go make-to-order and shift capital to cheaper upstream inventory; shorten it to serve faster off a finished buffer.`}/>
+          </div>
+        )}
+      </Card>
+    </StageSection>
+  );
+}
+// ════════════════════════════════════════════════════════════════════════
+// W8 · NETWORK / POOLED MEIO — multi-product risk pooling on SHARED parts. SrcMEIO
+// (above) places ONE buffer per FG assembly TREE; but TPAC's finished SKUs share the
+// same RM/CN parts, so a part buffered per-tree is over-buffered. This card pools each
+// shared part across the SKUs that consume it: σ_pool = √(Σσ²+2ρΣσᵢσⱼ) ≤ Σσ (the
+// square-root law), so one central buffer holds strictly less stock at the same service
+// level. The gap (decentralised − pooled) is capital freed; pooling is only RECOMMENDED
+// when its annual holding dividend clears the pooling fixed cost — an honest decision,
+// not a free lunch. New module meio_network.py; existing solver logic untouched.
+// ════════════════════════════════════════════════════════════════════════
+function SrcMEIONet({ sl }){
+  const [rho, setRho] = useState('');           // demand correlation (seed 0)
+  const [fixed, setFixed] = useState('');       // pooling fixed cost ₹/yr (seed 0)
+  const [pairwise, setPairwise] = useState(false);   // MN-C — per-pair ρ from XYZ co-movement
+  const net = useSolve('/api/solve/meio-network',
+    ()=>meioNetworkPayload(sl, rho===''?0:rho, fixed===''?0:fixed, { pairwise }));
+  const { stale } = useStale('meionet');
+  const run = ()=> net.run().then(d=>{ markSolved('meionet'); return d; }).catch(()=>{});
+  const res = net.result;
+  const parts = res ? (res.parts||[]) : [];
+  const fmt = n=> Math.round(n).toLocaleString('en-IN');
+  const shared = parts.filter(p=>p.poolable);
+  return (
+    <StageSection step="8b" title="Network Risk Pooling (multi-product MEIO)" sub="pool a SHARED part's buffer across every finished SKU that uses it — the cross-tree capital single-tree MEIO leaves on the table">
+      <Card icon="🕸️" title="Pooled-buffer placement" badge={res?`${res.recommended_pool.length} part${res.recommended_pool.length===1?'':'s'} to pool`:'pool shared parts'} badgeTone={res?(res.recommended_pool.length?'g':'k'):undefined}
+        right={res ? <Provenance kind="solved" asOf={net.ranAt}/> : undefined}
+        info={{ what:'Statistical risk pooling: a part shared by N SKUs needs σ_pool=√(Σσ²+2ρΣσᵢσⱼ) ≤ Σσ of safety stock as ONE central buffer vs a buffer per tree. The gap is capital freed at the same service level.', flows:'meio_network.py ← shared BOM parts × per-SKU forecast variability (MAPE).' }}
+        dev={{ comp:'SrcMEIONet', props:'solve.meionet.parts, recommended_pool', state:'rho, pooling_fixed_cost' }}>
+        <Grid cols={4}>
+          <SolverInput label="Demand correlation ρ" seed={0} value={rho} onChange={setRho} min={-0.99} max={0.99} w={90} hint={pairwise?'base ρ — scaled per pair by XYZ':'across SKUs · 0 = full pooling benefit'}/>
+          <SolverInput label="Pooling fixed cost" seed={0} value={fixed} onChange={setFixed} min={0} prefix="₹" w={110} hint="central-buffer running cost / yr"/>
+          <Field label="Pairwise ρ (MN-C)" hint="per-pair from XYZ co-movement">
+            <label style={{display:'flex', alignItems:'center', gap:6, fontFamily:F.mono, fontSize:10, fontWeight:700, color:C.tx2, cursor:'pointer', paddingTop:5}}>
+              <input type="checkbox" checked={pairwise} onChange={e=>setPairwise(e.target.checked)}/>{pairwise?'matrix':'scalar'}
+            </label>
+          </Field>
+          <Field label=" " hint=" "><Btn kind="accent" sm onClick={run}>{net.solving?'⏳ Pooling…':'🕸️ Pool buffers'}</Btn></Field>
+        </Grid>
+        {stale && res && <div style={{margin:'8px 0'}}><StaleMark since="(sourcing or demand changed)" onNav={run} go="re-pool"/></div>}
+        {net.error && <div style={{margin:'8px 0', padding:'7px 11px', border:`2px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Pooling error: {net.error}</div>}
+        {!res ? (
+          <div style={{marginTop:10, padding:'12px', border:`2px dashed ${C.line}`, fontFamily:F.mono, fontSize:11, color:C.tx3}}>
+            Pool the shared-part buffers across the finished portfolio. The model reports, per part, the safety stock held separately per SKU vs one pooled buffer — and the capital that consolidation frees at the same service level.
+          </div>
+        ) : (
+          <div style={{marginTop:12}}>
+            <div style={{display:'flex', gap:8, marginBottom:12}}>
+              <Blk label="Capital freed" value={`₹${fmt(res.total_capital_freed)}`} sub="SS value: separate − pooled" accent={C.gn}/>
+              <Blk label="Annual dividend" value={`₹${fmt(res.total_annual_dividend)}`} sub="holding saved on pooled parts" tone="c"/>
+              <Blk label="Parts to pool" value={`${res.recommended_pool.length}`} sub={`of ${shared.length} shared`} tone="y"/>
+              <Blk label="Service level" value={`${(res.service_level*100).toFixed(1)}%`} sub={`z = ${res.z} · ρ = ${res.correlation}`} tone="k"/>
+            </div>
+            <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
+              <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10.5}}>
+                <thead><tr style={{background:C.ink}}>
+                  {['Shared part','# SKUs','Σσ','σ pooled','SS separate','SS pooled','Place at','Units freed','Dividend ₹/yr','Verdict'].map((h,i)=>(
+                    <th key={i} style={{color:C.paper, textAlign:i<1?'left':i===6?'center':'right', padding:'6px 8px', fontSize:8.5, textTransform:'uppercase'}}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {parts.map((p,i)=>(
+                    <tr key={i} style={{borderTop:`1px solid ${C.line2}`, background: p.recommend_pool?C.bg3:C.paper}}>
+                      <td style={{padding:'5px 8px', fontWeight:700}}>{p.name}{p.pairwise_corr?<span title="pairwise ρ matrix" style={{color:C.ac}}> ⊞</span>:''}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right', color: p.poolable?C.tx:C.tx3}}>{p.n_skus}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right', color:C.tx3}}>{p.sum_sigma}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right', color:C.tx2}}>{p.sigma_pooled}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right'}}>{fmt(p.ss_decentralised)}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right', fontWeight:700}}>{fmt(p.ss_pooled)}</td>
+                      <td style={{padding:'5px 8px', textAlign:'center', fontSize:9, color: (p.placed_at||'').indexOf('finished')>=0?C.ac:C.tx2}}>{p.poolable?(p.placed_at||'raw').split(' ')[0]:'·'}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right', color: p.units_saved>0?C.gn:C.tx3, fontWeight:700}}>{p.units_saved>0?fmt(p.units_saved):'·'}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right', color:C.tx2}}>{p.annual_dividend>0?`₹${fmt(p.annual_dividend)}`:'·'}</td>
+                      <td style={{padding:'5px 8px', textAlign:'right'}}><Tag c={p.recommend_pool?'g':(p.poolable?'w':'k')}>{p.recommend_pool?'POOL':(p.poolable?'marginal':'single')}</Tag></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Reading formula="σ_pool = √(Σσᵢ² + 2ρᵢⱼ·Σσᵢσⱼ) ≤ Σσᵢ   ·   place pooled buffer at argmin(holding₹) echelon   ·   dividend = decentralised − pooled holding"
+              soWhat={res.recommended_pool.length
+                ? `Pooling ${res.recommended_pool.join(', ')} into central buffer(s) frees ₹${fmt(res.total_capital_freed)} (₹${fmt(res.total_annual_dividend)}/yr holding) at the SAME ${(res.service_level*100).toFixed(0)}% service${parts.some(p=>(p.placed_at||'').indexOf('finished')>=0)?' — and some buffers are cheaper held POSTPONED at the finished echelon (shorter lead to cover) than as raw (MN-B place+pool)':' (each placed at its cheapest echelon — MN-B)'}. The cohort per part is its REAL consuming SKUs (MN-A); ${parts.some(p=>p.pairwise_corr)?'ρ is per-pair from XYZ co-movement (MN-C ⊞) — correlated cohorts pool less':'raise ρ toward 1 and the dividend shrinks (correlated demand pools poorly)'}.`
+                : `No part clears the pooling fixed cost at ρ = ${res.correlation}: either the shared parts are too correlated to pool or the central-buffer cost outweighs the dividend. Honest "don't pool" — not a fabricated saving.`}/>
           </div>
         )}
       </Card>

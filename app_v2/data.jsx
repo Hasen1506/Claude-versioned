@@ -61,6 +61,20 @@ const M = {
     { part:'CN-LUB02', name:'MoS₂ Dry Lubricant',      qty:0.04, cost:340, lt:9,  moq:200,  S:80,   hold:15, shelf:365, sup:'SUP-031' },
   ],
 
+  // MN-A · real multi-product BOM — which finished SKU actually consumes which part,
+  // and in what qty/unit. Replaces the "every FG uses every part" illustrative single
+  // BOM: each part is now shared by a real SUBSET of the portfolio, so the W8 pooling
+  // cohort (and its dividend) is exact rather than all-6-FG. qty_per is the part units
+  // per 1 finished unit of that SKU.
+  skuBom:{
+    'TPA-4471':[{part:'RM-STL42',qty:0.90},{part:'RM-BRG18',qty:1.00},{part:'CN-SEAL9',qty:2.0},{part:'CN-LUB02',qty:0.05}],
+    'TPA-3215':[{part:'RM-STL42',qty:0.55},{part:'CN-SEAL9',qty:3.0},{part:'CN-BLT04',qty:8.0}],
+    'TPA-9904':[{part:'RM-BRG18',qty:0.60},{part:'CN-LUB02',qty:0.03}],
+    'TPA-2188':[{part:'RM-STL42',qty:1.40},{part:'RM-BRG18',qty:0.50},{part:'CN-BLT04',qty:6.0}],
+    'TPA-5540':[{part:'RM-STL42',qty:1.10},{part:'CN-SEAL9',qty:1.0},{part:'CN-BLT04',qty:4.0},{part:'CN-LUB02',qty:0.04}],
+    'TPA-7722':[{part:'RM-BRG18',qty:0.40},{part:'CN-SEAL9',qty:2.0},{part:'CN-BLT04',qty:10.0}],
+  },
+
   // MTO order book
   orders:[
     { po:'MTO-9001', cust:'Maruti Suzuki', sku:'TPA-4471', qty:480, due:'2026-06-12', price:1850, status:'firm' },
@@ -259,10 +273,11 @@ const M = {
   // behind Advanced inside Cash & WC.
   financeSubtabs:[
     { id:'cash',    n:'a', label:'Cash & WC',   count:6 },
-    { id:'capital', n:'b', label:'Capital',     count:5 },
-    { id:'invest',  n:'c', label:'Investments', count:6 },
-    { id:'assets',  n:'d', label:'Assets',      count:2 },
-    { id:'fx',      n:'e', label:'FX & Hedging',count:3 },
+    { id:'capital', n:'b', label:'Capital',     count:6 },
+    { id:'value',   n:'c', label:'Value (EVA)', count:3 },
+    { id:'invest',  n:'d', label:'Investments', count:4 },
+    { id:'assets',  n:'e', label:'Assets',      count:2 },
+    { id:'fx',      n:'f', label:'FX & Hedging',count:3 },
   ],
   npv:[
     { y:'Y0', cf:-22000000, dcf:-22000000 },
@@ -387,9 +402,12 @@ const M = {
   // S&OP Gap → Plan; FVA → Demand; KPI Dashboard cut (dup of Home); Version
   // History → masthead. Risk · Cost · Explore are the real three.
   scenarioSubtabs:[
-    { id:'risk', n:'a', label:'Risk', count:7 },
-    { id:'cost', n:'b', label:'Cost', count:3 },
-    { id:'explore', n:'c', label:'Explore', count:6 },
+    { id:'cockpit',   n:'a', label:'S&OP Cockpit', count:1 },
+    { id:'scenarios', n:'b', label:'Scenarios', count:1 },
+    { id:'risk',      n:'c', label:'Risk', count:4 },
+    { id:'loop',      n:'d', label:'Loop', count:1 },
+    { id:'cost',      n:'e', label:'Cost', count:2 },
+    { id:'explore',   n:'f', label:'Explore', count:2 },
   ],
   controlTower:[
     { sev:'H', area:'Supply',  msg:'POSCO LT slipped to 44d (+2)', kpi:'Procure', t:'12m ago' },

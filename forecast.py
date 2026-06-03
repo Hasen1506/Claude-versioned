@@ -411,6 +411,40 @@ def _hybrid(history, h_periods, season, dates, future_dates, promo, holidays_set
     return forecast, fitted
 
 
+def _forecast_full(model_name, history, h, hist_dates, future_dates, promo, holidays_set, season, lags):
+    """Re-run ONE model for its h-step forecast only (no holdout split). Mirrors the
+    `full_fcst` branch of run_forecast exactly, so a counterfactual run can never
+    diverge from the headline forecast. Used by DM-B (promo uplift attribution):
+    the same winner re-run with promo flags STRIPPED gives the baseline, and
+    uplift = committed − baseline. Returns a plain float list, or None for an
+    unknown model; raises like the underlying model on a genuine failure."""
+    if model_name == 'naive':
+        f, _ = _naive_seasonal(history, h, season)
+    elif model_name == 'holt_winters':
+        f, _ = _holt_winters(history, h, season)
+    elif model_name == 'arima':
+        f, _ = _arima(history, h)
+    elif model_name == 'random_forest':
+        f, _ = _ml_regressor(RandomForestRegressor, history, h, hist_dates, future_dates, promo, holidays_set, lags=lags, n_estimators=100, max_depth=6, random_state=0)
+    elif model_name == 'gradient_boost':
+        f, _ = _ml_regressor(GradientBoostingRegressor, history, h, hist_dates, future_dates, promo, holidays_set, lags=lags, n_estimators=100, max_depth=3, learning_rate=0.1, random_state=0)
+    elif model_name == 'xgboost':
+        f, _ = _xgboost(history, h, hist_dates, future_dates, promo, holidays_set, lags=lags)
+    elif model_name == 'mlp':
+        f, _ = _ml_regressor(MLPRegressor, history, h, hist_dates, future_dates, promo, holidays_set, lags=lags, hidden_layer_sizes=(32, 16), max_iter=500, random_state=0)
+    elif model_name == 'hybrid':
+        f, _ = _hybrid(history, h, season, hist_dates, future_dates, promo, holidays_set, lags=lags)
+    elif model_name == 'croston':
+        f, _ = _croston(history, h)
+    elif model_name == 'sba':
+        f, _ = _sba(history, h)
+    elif model_name == 'tsb':
+        f, _ = _tsb(history, h)
+    else:
+        return None
+    return [float(v) for v in f]
+
+
 # ─── Main entry point ───
 def run_forecast(payload):
     """Run all available models and return a leaderboard ranked by holdout MAPE.
@@ -490,6 +524,7 @@ def run_forecast(payload):
         test_dates = hist_dates[len(train):n_hist]
 
         leaderboard = []
+        preds = {}          # W9·D-5 — per-model {test, full} predictions, for the ensemble + accuracy-by-horizon
         recommendations = {
             'small': ['naive', 'holt_winters', 'arima'],   # <12 obs
             'medium': ['holt_winters', 'arima', 'random_forest', 'hybrid'],   # 12-36
@@ -557,6 +592,9 @@ def run_forecast(payload):
                     'fitted': [round(float(v), 2) for v in full_fit[:n_hist]],
                     'status': 'ok',
                 })
+                # W9·D-5 — keep raw holdout + full predictions for the ensemble blend
+                # and the accuracy-by-horizon backtest.
+                preds[model_name] = {'test': list(test_pred), 'full': list(full_fcst)}
             except Exception as e:
                 leaderboard.append({
                     'model': model_name,
@@ -572,6 +610,45 @@ def run_forecast(payload):
         # (zeros), so rank by MASE and steer the recommendation to Croston/SBA/TSB.
         adi, cv2, intermit_label = _intermittence(history)
         is_intermittent = intermit_label in ('intermittent', 'lumpy')
+
+        # ── W9 · D-5 — ENSEMBLE (top-N inverse-error-weighted blend), depth-gated ──
+        # A blend of the best few models beats any single one when the data is deep
+        # enough to estimate their relative skill; on THIN data it overfits the tiny
+        # holdout, so it is gated on n_hist ≥ 18 AND a real holdout AND ≥2 components.
+        # Components are the top-N by the ranking metric (MASE on intermittent series,
+        # else MAPE); weights ∝ 1/error so the most accurate model dominates honestly.
+        ensemble_meta = None
+        metric = 'mase' if is_intermittent else 'mape'
+        ok_rows = [r for r in leaderboard if r['status'] == 'ok' and preds.get(r['model'])
+                   and r.get(metric) is not None and math.isfinite(r.get(metric, float('inf'))) and r.get(metric) > 0]
+        if len(test) >= 2 and n_hist >= 18 and len(ok_rows) >= 2:
+            top = sorted(ok_rows, key=lambda r: r[metric])[:3]
+            inv = [1.0 / r[metric] for r in top]
+            wsum = sum(inv) or 1.0
+            comps = [(r['model'], w / wsum) for r, w in zip(top, inv)]
+            ens_test = [0.0] * len(test)
+            ens_full = [0.0] * h
+            for (m, w) in comps:
+                tp, fp = preds[m]['test'], preds[m]['full']
+                for k in range(min(len(ens_test), len(tp))): ens_test[k] += w * float(tp[k])
+                for k in range(min(len(ens_full), len(fp))): ens_full[k] += w * float(fp[k])
+            e_mape = _mape(test, ens_test); e_rmse = _rmse(test, ens_test); e_mae = _mae(test, ens_test)
+            e_mase = _mase(test, ens_test, train, season); e_bias = _bias(test, ens_test); e_ts = _tracking_signal(test, ens_test)
+            leaderboard.append({
+                'model': 'ensemble', 'mape': round(e_mape, 2), 'rmse': round(e_rmse, 2), 'mae': round(e_mae, 2),
+                'mase': round(e_mase, 3) if math.isfinite(e_mase) else None,
+                'bias': round(e_bias, 2), 'tracking_signal': round(e_ts, 2), 'out_of_control': bool(abs(e_ts) > 4),
+                'forecast': [round(float(v), 2) for v in ens_full], 'fitted': [], 'status': 'ok',
+                'components': [{'model': m, 'weight': round(w, 3)} for (m, w) in comps],
+            })
+            preds['ensemble'] = {'test': ens_test, 'full': ens_full}
+            ensemble_meta = {'gated_on': f'n_hist≥18 ({n_hist}) · holdout {len(test)} · {metric}',
+                             'components': [{'model': m, 'weight': round(w, 3)} for (m, w) in comps]}
+        elif len(ok_rows) >= 1:
+            ensemble_meta = {'skipped': True,
+                             'reason': ('history < 18 periods — a blend would overfit the holdout' if n_hist < 18
+                                        else 'need ≥2 scorable models for a blend')}
+
         if is_intermittent:
             # rank by MASE (finite on zeros); push the intermittent methods up
             leaderboard.sort(key=lambda r: (r['status'] != 'ok',
@@ -581,6 +658,78 @@ def run_forecast(payload):
             leaderboard.sort(key=lambda r: (r['status'] != 'ok', r['mape']))
         winner = leaderboard[0]['model'] if leaderboard and leaderboard[0]['status'] == 'ok' else None
 
+        # ── W9 — ACCURACY BY HORIZON. The headline MAPE averages the whole holdout;
+        # this exposes how the WINNER's error grows step-by-step into the future
+        # (period 1 ahead vs period h ahead), the honest read on how far out the
+        # forecast can be trusted. Per-step absolute % error on the holdout window.
+        accuracy_by_horizon = None
+        wp = preds.get(winner)
+        if wp and test:
+            tp = wp['test']
+            accuracy_by_horizon = []
+            for k in range(min(len(test), len(tp))):
+                a = float(test[k]); f = float(tp[k])
+                accuracy_by_horizon.append({'step': k + 1, 'actual': round(a, 1), 'forecast': round(f, 1),
+                                            'ape': round(abs(a - f) / max(abs(a), 1e-9) * 100, 1)})
+
+        # ── DM-A · per-period PREDICTION INTERVAL on the winner ──
+        # Honest forecast-uncertainty band from the winner's in-sample residual
+        # dispersion, WIDENING with the horizon step (error compounds the further
+        # out you forecast): σ_k = σ_resid·√(k+1), P10/P90 via the normal quantile
+        # ±1.2816σ. The safety-stock (z·σ) and CVaR cards already consume this
+        # dispersion implicitly — DM-A surfaces it per period so the planner sees
+        # the cone of uncertainty, not just the point line.
+        forecast_pi = None
+        wrow = next((r for r in leaderboard if r['model'] == winner), None) if winner else None
+        if wrow and wrow.get('forecast'):
+            # Prefer OUT-OF-SAMPLE holdout error dispersion — in-sample fitted residuals
+            # badly understate uncertainty for ML models that overfit the training fit.
+            sigma = 0.0
+            wp2 = preds.get(winner)
+            if wp2 and test:
+                e = [test[k] - wp2['test'][k] for k in range(min(len(test), len(wp2['test'])))]
+                sigma = float(np.std(e)) if len(e) >= 2 else (abs(e[0]) if e else 0.0)
+            if sigma <= 0:                       # no holdout → fall back to fitted residuals
+                fit = wrow.get('fitted') or []
+                resid = [history[i] - fit[i] for i in range(min(len(fit), n_hist))]
+                sigma = float(np.std(resid)) if len(resid) >= 2 else 0.0
+            z90 = 1.2816
+            forecast_pi = []
+            for k, f in enumerate(wrow['forecast']):
+                band = z90 * sigma * math.sqrt(k + 1)
+                forecast_pi.append({'step': k + 1, 'point': round(float(f), 1),
+                                    'p10': round(max(0.0, float(f) - band), 1),
+                                    'p90': round(float(f) + band, 1)})
+
+        # ── DM-B · PROMO UPLIFT ATTRIBUTION on the winner ──
+        # Re-run the winner with promo flags STRIPPED → a baseline counterfactual;
+        # uplift = committed − baseline, per period. Decomposes how many forecast
+        # units the promo flag is actually driving (the causal contribution), vs
+        # the total — only when there are FUTURE promo periods to attribute, and
+        # only honestly: a model with no promo regressor (naive/croston) yields
+        # zero uplift, which is the truthful answer for it.
+        promo_attribution = None
+        future_promos = [p - n_hist for p in promo_periods if p >= n_hist]
+        if winner and future_promos and wrow and wrow.get('forecast'):
+            try:
+                baseline = _forecast_full(winner, history, h, hist_dates, future_dates, [], holidays_set, season, lags)
+                if baseline:
+                    fc = wrow['forecast']
+                    rows = []
+                    for k in range(min(len(fc), len(baseline))):
+                        up = float(fc[k]) - float(baseline[k])
+                        rows.append({'step': k + 1, 'baseline': round(float(baseline[k]), 1),
+                                     'uplift': round(up, 1), 'total': round(float(fc[k]), 1),
+                                     'is_promo': k in future_promos})
+                    promo_attribution = {
+                        'periods': rows,
+                        'promo_uplift_total': round(sum(r['uplift'] for r in rows if r['is_promo']), 1),
+                        'model': winner,
+                        'method': 'winner counterfactual (promo flags stripped)',
+                    }
+            except Exception:
+                promo_attribution = None
+
         out_products.append({
             'name': name,
             'history_length': n_hist,
@@ -589,6 +738,11 @@ def run_forecast(payload):
             'winner': winner,
             'horizon_periods': h,
             'leaderboard': leaderboard,
+            'ensemble': ensemble_meta,                       # W9·D-5
+            'accuracy_by_horizon': accuracy_by_horizon,      # W9
+            'forecast_pi': forecast_pi,                      # DM-A — per-period P10/P90 band
+            'promo_attribution': promo_attribution,          # DM-B — baseline vs promo uplift
+
             # GAP-7 — demand-pattern classification (Syntetos–Boylan).
             'intermittence': {'adi': round(adi, 2) if math.isfinite(adi) else None,
                               'cv2': round(cv2, 3), 'label': intermit_label,
