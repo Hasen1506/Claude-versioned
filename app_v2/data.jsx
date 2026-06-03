@@ -691,7 +691,7 @@ M.solverModel = {
       { t:'lead_time', src:'Products / Network → supplier LT', wired:true },
       { t:'ordering · setup cost', src:'Products → costs', wired:true },
       { t:'service_level', src:'Sourcing → solver param', wired:true },
-      { t:'carry / holding rate', src:'— partially defaulted in .py', wired:false },
+      { t:'carry / holding rate', src:'Sourcing → carry rate = Finance WACC + holding spread (carryRate)', wired:true },
       { t:'budget · early-pay · inflation', src:'— defaulted (no input)', wired:false },
     ], extras:['regime-aware sourcing','VMI','CVaR fill-rate sourcing','supplier & FX concentration caps','transport disruptions','milk-run / terminal-anchor','RM warehouse area/volume limits','working-capital & locked-PO replan'] },
   production: {

@@ -29,9 +29,14 @@ function procurementPayload(sku, planning, serviceLevel){
   const dem = getItemDemand(sku, 12);
   const p = (M.products||[]).find(x=>x.sku===sku) || {};
   const cap = Math.max(400, Math.ceil(Math.max(...dem) * 1.5));
+  // carry_rate is the FG-level annual holding rate — NO longer a hardcoded 0.24; it
+  // reads the governed blended WACC + holding spread from Finance (carryRate()), so the
+  // MILP's FG-holding term reflects the real cost of capital. Per-part RM hold_pct stays
+  // per-BOM. Defaults preserve the prior 24%/yr behaviour at the seed WACC.
+  const carry = (typeof carryRate==='function') ? carryRate() : 0.24;
   return { products:[{ name:sku, demand:dem, capacity:cap,
     variable_cost:p.cost||1190, sell_price:p.price||1850, yield_pct:p.yield||0.97, parts:partsWithSourcing(pd) }],
-    params:{ periods:12, time_grain:grain, service_level: serviceLevel } };
+    params:{ periods:12, time_grain:grain, service_level: serviceLevel, carry_rate: carry } };
 }
 // S-3 autopilot uses the SAME procurement-shaped payload (policy.py reads
 // products[].parts[] with landed_cost) — so the (s,S)/(R,Q) policy is derived on
@@ -41,7 +46,9 @@ function policyPayload(sku, planning, serviceLevel){
   // SS-B — joint_major_cost = the shared per-PO cost amortised across a supplier's
   // basket (truck booking + admin + inbound inspection). Seed ₹2,500; the per-part
   // ordering_cost (₹120) is the minor cost added per line on a joint order.
-  base.params = { ...base.params, carry_rate: 0.24, joint_major_cost: 2500 };
+  // carry_rate now flows from procurementPayload (governed WACC + spread via carryRate());
+  // keep an explicit fallback only if the base ever omits it.
+  base.params = { ...base.params, carry_rate: base.params.carry_rate ?? ((typeof carryRate==='function') ? carryRate() : 0.24), joint_major_cost: 2500 };
   return base;
 }
 // S-4 rolling re-plan: replay the procurement MILP over a sliding horizon. waves =
@@ -727,6 +734,27 @@ function SrcResults({ proc }) {
 // (recommended '(s,S) continuous') are NOT given an EOQ beside the MILP plan — they
 // stay on the time-phased PO schedule, and we say so. No EOQ for one-offs.
 // ════════════════════════════════════════════════════════════════════════
+// Carry-rate control — the ONE editable knob for inventory holding economics, placed in
+// its natural home (the reorder-policy card, where EOQ's h term lives). Shows the full
+// rate decomposed: blended WACC (from Finance, read-only here) + holding spread (editable).
+// Editing the spread marks procurement/policy/rolling/montecarlo stale via setConfig.
+function CarryRateControl(){
+  const { config, setConfig } = useConfig();
+  const cp = (typeof carryRateParts==='function') ? carryRateParts(config) : { wacc:11.24, spread:12.8, total:24.0 };
+  return (
+    <div style={{marginBottom:10, border:`2px solid ${C.line}`, borderLeft:`5px solid ${C.ac}`, background:C.bg3, padding:'8px 11px',
+      display:'flex', alignItems:'center', gap:14, flexWrap:'wrap'}}>
+      <div style={{fontFamily:F.disp, fontWeight:800, fontSize:11.5}}>Inventory carry rate <Tag c="b">{cp.total}% / yr</Tag></div>
+      <div style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>
+        = WACC <b style={{color:C.tx}}>{cp.wacc}%</b> <span style={{color:C.tx3}}>(from Finance · blended hurdle)</span> + holding spread
+      </div>
+      <Field label="Holding spread (storage·insurance·obsolescence)" hint="cost above the WACC of keeping a unit a year">
+        <NumInput value={config.invHoldingSpread==null?12.8:config.invHoldingSpread} suffix="%/yr" w={92}
+          onChange={v=>setConfig({ invHoldingSpread: v===''?12.8:Number(v) })}/>
+      </Field>
+    </div>
+  );
+}
 function SrcPolicy({ sku, planning, sl }){
   const pol = useSolve('/api/solve/policy', ()=>policyPayload(sku, planning, sl));
   const { stale } = useStale('policy');
@@ -743,6 +771,7 @@ function SrcPolicy({ sku, planning, sl }){
         dev={{ comp:'SrcPolicy', props:'solve.policy.policies', state:'service_level, carry_rate' }}>
         {stale && res && <div style={{marginBottom:10}}><StaleMark since="(sourcing or demand changed)" onNav={run} go="re-derive"/></div>}
         {pol.error && <div style={{margin:'0 0 10px', padding:'7px 11px', border:`2px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>policy error: {pol.error}</div>}
+        <CarryRateControl/>
         {!res ? (
           <div style={{padding:'12px', border:`2px dashed ${C.line}`, fontFamily:F.mono, fontSize:11, color:C.tx3}}>
             Derive standing reorder policies (EOQ, reorder point, order-up-to) for the steady parts — the rule the planner executes day-to-day between full MILP re-plans.

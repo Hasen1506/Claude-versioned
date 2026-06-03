@@ -148,6 +148,27 @@ function finBlendedHurdle(config){
   const wacc = (eE/V)*ke + (eD/V)*kd*(1-tax);
   return { ke:+ke.toFixed(2), kd_after:+(kd*(1-tax)).toFixed(2), wacc:+wacc.toFixed(2), tax, V, eE, eD };
 }
+// Inventory CARRY RATE (annual fraction) — the cost of holding one rupee of inventory
+// value for a year. Wiring fix (audit follow-through): this used to be a hardcoded 0.24
+// magic constant in every procurement/policy/Monte-Carlo payload, ignoring Finance.
+// Economically it = cost of capital (the GOVERNED blended WACC from the hurdle card)
+// + a holding spread (storage + insurance + obsolescence + shrink, config.invHoldingSpread
+// %). Seed spread 12.8 ⇒ ≈24%/yr total at the seed WACC, so default economics are
+// unchanged — but raise the WACC in Finance (more debt, higher Ke) and every holding-cost
+// term in procurement/policy now moves with it. Hook-free so payload builders can call it.
+function carryRate(config){
+  const cfg = config || (typeof appStore!=='undefined' ? (appStore.get().config||{}) : {});
+  const wacc = (typeof finBlendedHurdle==='function') ? finBlendedHurdle(cfg).wacc/100 : 0.1124;
+  const spread = _effNum(cfg.invHoldingSpread, 12.8)/100;
+  return Math.round((wacc + spread)*10000)/10000;
+}
+// Plain-English breakdown for the provenance Reading — { wacc, spread, total } as %.
+function carryRateParts(config){
+  const cfg = config || (typeof appStore!=='undefined' ? (appStore.get().config||{}) : {});
+  const wacc = (typeof finBlendedHurdle==='function') ? finBlendedHurdle(cfg).wacc : 11.24;
+  const spread = _effNum(cfg.invHoldingSpread, 12.8);
+  return { wacc:+wacc.toFixed(2), spread:+spread.toFixed(1), total:+(wacc+spread).toFixed(1) };
+}
 // FV-A · invested capital from the REAL ops plan (not a turns proxy). Reads the
 // cached solves: the time-phased production schedule's projected_inventory (avg
 // ending FG inventory × unit cost = working capital actually tied up), the pooled

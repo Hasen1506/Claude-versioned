@@ -240,3 +240,26 @@ EXISTING homes (no new UI, no cluster dump):
       concentration caps/disruptions) remain intentionally out of scope (no input surface).
 
 Verified: jsx parse + app.py compile + live profitmix floor proof + 13/13 browser smoke + Lab pass.
+
+**Next tier (done) — procurement/policy/MC carry rate ⇒ Finance WACC + holding spread.**
+Same class of bug: the inventory **carry rate** (annual cost of holding a unit) was a hardcoded
+`0.24` magic constant duplicated across `policyPayload`, `montecarloPayload`, and *defaulted*
+inside procurement.py (the main `procurementPayload`/`_loopProcurementPayload` sent none) —
+ignoring Finance entirely.
+
+- [x] **New `carryRate(config)` / `carryRateParts(config)` helpers** (finance.jsx, next to
+      `finBlendedHurdle`): carry rate = **governed blended WACC** (live, from the Finance hurdle
+      card) **+ a holding spread** (`config.invHoldingSpread` %, seed 12.8 — storage/insurance/
+      obsolescence/shrink). Seed ⇒ ≈24%/yr at the seed WACC, so default economics are **unchanged**;
+      but raise leverage/Ke in Finance and every holding term in procurement/policy/MC now moves.
+- [x] **All four payloads wired** to `carryRate()` — `procurementPayload` + `policyPayload`
+      (sourcing.jsx), `_loopProcurementPayload` + `montecarloPayload` (store.jsx).
+- [x] **One editable knob, in its natural home:** `CarryRateControl` in the existing Sourcing
+      reorder-policy card (where EOQ's `h` lives) — shows `carry = WACC X% (from Finance) + spread
+      [12.8]%/yr`, the spread is the only new input; editing it marks procurement/policy/rolling/MC
+      stale via `setConfig`. New config seed `invHoldingSpread:12.8`. No new card, no cluster dump.
+- [x] `M.solverModel` procurement "carry / holding rate" flipped ⚠→✓.
+- **Proven live:** procurement objective moves with the rate — ₹1,862,757 (10%) → ₹1,866,100 (24%)
+      → ₹1,864,229 (60%), the optimiser trading FG holding against other costs; policy.py also
+      inherits the governed rate for any part lacking an explicit `hold_pct` (line 68). 4/4 jsx parse
+      + 13/13 browser smoke + Lab pass.

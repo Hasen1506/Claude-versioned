@@ -82,6 +82,11 @@ const _STATE_SEED = {
     companyName:'Tata Precision Auto Components Pvt. Ltd.',
     currency:'₹', currencyName:'INR', currencyRate:1,
     taxRate:25.17, serviceLevel:0.95,
+    // Inventory holding spread (% / yr) ABOVE the cost of capital — storage,
+    // insurance, obsolescence, shrink. The full carry rate = blended WACC (live,
+    // from Finance) + this spread (see carryRate()); seed 12.8 ⇒ ≈24%/yr total
+    // at the seed WACC, so default procurement/policy economics are unchanged.
+    invHoldingSpread:12.8,
     gstRegistered:true, city:'Chennai', plantState:'TN',
     // MSMED Act classification inputs — the tier is DERIVED from these (see msmeTier()).
     annualTurnoverCr:38.40,   // ₹ Cr
@@ -665,7 +670,9 @@ function montecarloPayload(planning, opts){
   const ltMean = anyPlan ? (opts.prodLeadTime != null ? Number(opts.prodLeadTime) : 1) : 0;
   const ltCv = opts.prodLeadCv != null ? Number(opts.prodLeadCv) : 0.5;
   return { products, n_runs: Number(opts.nRuns) || 500,
-    params: { periods: T, periods_per_year: 52, carry_rate: 0.24,
+    params: { periods: T, periods_per_year: 52,
+      // carry_rate from governed WACC + holding spread (carryRate), not a 0.24 constant.
+      carry_rate: (typeof carryRate==='function') ? carryRate(appStore.get().config) : 0.24,
       service_level: Number(opts.serviceLevel) || (M && 0.95),
       corr_demand_cost: (opts.corr != null ? Number(opts.corr) : 0.4),
       policy: opts.policy || 'auto',
@@ -696,8 +703,11 @@ function _loopProcurementPayload(planning){
   const products = fin.map(p=>{ const dem = getItemDemand(p.sku,12);
     return { name:p.sku, demand:dem, capacity:Math.max(400, Math.ceil(Math.max(...dem)*1.5)),
       variable_cost:p.cost, sell_price:p.price, yield_pct:p.yield||0.97, parts }; });
+  const _cfg = appStore.get().config || {};
   return { products, params:{ periods:12, time_grain:grain,
-    service_level:(appStore.get().config||{}).serviceLevel || 0.95 } };
+    service_level:_cfg.serviceLevel || 0.95,
+    // carry_rate from governed WACC + holding spread (carryRate), not a 0.24 constant.
+    carry_rate:(typeof carryRate==='function') ? carryRate(_cfg) : 0.24 } };
 }
 function _loopAggregatePayload(planning){
   const M = window.M || {};
