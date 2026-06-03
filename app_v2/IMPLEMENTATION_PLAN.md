@@ -210,3 +210,33 @@ term in the solver formulas have an input?" + "set up browser tooling, don't do 
       **Final: ✅ 13/13 tabs render clean · onboarding wizard greets · Lab source-view + live-solve
       pass · all 20 solver-source endpoints 200.** render.yaml/requirements need nothing new (new
       endpoint uses only stdlib os+ast; Flask already serves app_v2; Playwright is a dev-only dep).
+
+### Batch 6b — wiring the most-critical unwired terms (audit follow-through)
+
+The audit's whole point: "you kept saying integrated, but terms remained unwired." Fixed
+the two most-critical ones — both cases where the INPUT/DATA already existed in the UI and
+the solver simply ignored it (a correctness bug, not a missing feature), wired in their
+EXISTING homes (no new UI, no cluster dump):
+
+- [x] **profitmix ▸ firm MTO orders as a production floor.** `M.orders` (the firm order book,
+      already shown in Products → Make-to-Order and Demand consensus) was never sent to the
+      profit-mix LP, so the optimiser could drop a *contracted* SKU to zero to chase margin.
+      `profitmixPayload` now sends `min_quantity = Σ firm orders[sku]` (`_firmOrderFloor`,
+      firm-only — planned orders stay advisory). profitmix.py already supports the floor; it
+      just wasn't fed. Placement: one honest `Reading` line in the existing Products MTO card
+      ("q[k] ≥ Σ firm orders[k]"). **Proven live:** a dominated SKU goes 0→200 (the floor) and
+      the mix rebalances the rest, status stays Optimal.
+- [x] **capital ▸ budget + WACC from Finance (was hardcoded ₹2.5 Cr / 11.24%).** `capitalPayload`
+      now reads the SAME governed Finance inputs the capital-capacity solver already uses —
+      `config.finCapexBudget` ("Budget/yr") + the live blended WACC (`finBlendedHurdle`) —
+      falling back to the old seeds when Finance is untouched. Placement: reused the existing
+      Finance inputs (zero new UI); the Console capital result `Reading` now prints the live
+      budget/WACC and says "from Finance". **Verified live** in-browser (solve clean).
+- `M.solverModel` flipped both terms ⚠→✓ so the Anatomy Lab reflects reality.
+- **Deferred, honestly:** `aggregate.labor_hours_per_unit` is the SKU-aggregation *weight*;
+      changing it from the flat 1.0 silently rescales the family vs the governed `rate_per_worker`,
+      so it needs the rate reconciled in the same units — not a safe drop-in, left as a named
+      follow-up rather than a breaking wire. Advanced procurement extras (regime/VMI/CVaR-fill/
+      concentration caps/disruptions) remain intentionally out of scope (no input surface).
+
+Verified: jsx parse + app.py compile + live profitmix floor proof + 13/13 browser smoke + Lab pass.

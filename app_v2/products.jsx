@@ -305,14 +305,19 @@ function ProdMTO() {
   const custN  = new Set(M.orders.map(o=>o.cust)).size;
   const totQty = M.orders.reduce((s,o)=>s+(Number(o.qty)||0),0);
   const totVal = M.orders.reduce((s,o)=>s+(Number(o.qty)||0)*(Number(o.price)||0),0);
+  const firm   = M.orders.filter(o=>o.status==='firm');
+  const firmQty= firm.reduce((s,o)=>s+(Number(o.qty)||0),0);
+  const firmSku= new Set(firm.map(o=>o.sku)).size;
   return (
     <StageSection step="5" title="Make-to-Order" sub="firm customer orders that floor the demand plan">
       <Card icon="📋" title="Make-to-Order (MTO)" badge={`${M.orders.length} orders`}
-        info={{ what:'Per-SKU customer orders.', flows:'MTO floor → demand & profit constraints.' }}
-        dev={{ comp:'MTOEditor', props:'state.orders', state:'orders[]' }}>
+        info={{ what:'Per-SKU customer orders. Firm orders are a production floor the profit-mix optimizer must satisfy.', flows:'Firm MTO → profit-mix min_quantity (floor) + Demand consensus.' }}
+        dev={{ comp:'MTOEditor', props:'state.orders', state:'orders[] → profitmixPayload.min_quantity' }}>
         <DataTable cols={['PO','Customer','SKU','Qty','Due','Price','Status']} align={['left','left','left','right','right','right','left']}
           rows={M.orders.map(o=>({cells:[o.po, o.cust, o.sku, o.qty, o.due.slice(5), `₹${o.price}`, <Tag c={o.status==='firm'?'g':'w'}>{o.status}</Tag>]}))}
           foot={['TOTAL',`${custN} customers`,'',totQty.toLocaleString('en-IN'),'',`₹${(totVal/1e5).toFixed(1)}L`,'']}/>
+        <Reading formula="profit-mix floor: q[k] ≥ Σ firm orders[k]  (planned orders excluded — not a commitment)"
+          soWhat={`${firmQty.toLocaleString('en-IN')} u of firm orders across ${firmSku} SKU${firmSku===1?'':'s'} are now enforced as a production floor in the profit-mix optimizer — it can no longer drop a contracted SKU to zero to chase margin. Planned orders stay advisory.`}/>
       </Card>
     </StageSection>
   );

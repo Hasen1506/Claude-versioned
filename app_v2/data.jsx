@@ -676,9 +676,9 @@ M.solverModel = {
       { t:'demand ceiling (forecast)', src:'Demand → committed series', wired:true },
       { t:'cycle_time / capacity hrs', src:'Production → stage cycle time, line hours', wired:true },
       { t:'material availability', src:'Products → BOM (qty_per, yield)', wired:true },
+      { t:'mto_orders floor', src:'Products → MTO order book (firm orders) → min_quantity', wired:true },
       { t:'budget (₹ cap)', src:'— defaulted in profitmix.py (no input)', wired:false },
       { t:'warehouse space', src:'— defaulted (no input)', wired:false },
-      { t:'mto_orders floor', src:'— order book exists (M.orders) but not fed', wired:false },
     ], extras:['dedicated/fixed-open line economics','planning_mode · shelf_life','salvage_rate'] },
   procurement: {
     objective:'minimise setup + FG holding + production + expiry + shortage + RM purchase + RM holding + RM ordering',
@@ -742,7 +742,7 @@ M.solverModel = {
       { t:'annual cash flow', src:'Finance → Investment options', wired:true },
       { t:'WACC (discount)', src:'Finance → WACC card', wired:true },
       { t:'residual value · useful life', src:'Finance → Investment options', wired:true },
-      { t:'budget cap', src:'— defaulted (no input)', wired:false },
+      { t:'budget cap', src:'Finance → CapEx budget/yr (config.finCapexBudget)', wired:true },
       { t:'exclusivity / dependencies', src:'— defaulted (no input)', wired:false },
     ], extras:['buy-vs-lease split'] },
   montecarlo: {

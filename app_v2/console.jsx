@@ -455,6 +455,16 @@ function ResProduce() {
 // Build the profit-mix payload from the finished-goods master; bind shared
 // capacity at ~82% of total demand-hours so the LP must ration scarce hours
 // (otherwise every SKU just runs to its ceiling and there's no decision).
+// CRITICAL wire (audit fix): committed FIRM MTO orders (the M.orders order book shown
+// in Products) are a production FLOOR the profit-mix MUST satisfy — profitmix.py reads
+// it as min_quantity (its else/mts branch: floor = min_quantity). Before this the LP
+// ignored firm orders and could drop a contracted SKU to zero. Firm-only (planned
+// orders are not a commitment); all firm totals sit below each SKU's max_demand, so the
+// floor stays feasible.
+function _firmOrderFloor(sku){
+  const o = (window.M && M.orders || []).filter(x=>x.sku===sku && x.status==='firm');
+  return o.length ? o.reduce((a,b)=>a+(Number(b.qty)||0),0) : 0;
+}
 function profitmixPayload(){
   const fin = M.products.filter(p=>p.cat==='Finished');
   // shelf_life must be in WEEKS here (profitmix.py compares shelf_weeks→months vs the
@@ -462,6 +472,7 @@ function profitmixPayload(){
   // never bite (365 "weeks" ≫ horizon). salvage_rate + yield_pct are real levers too.
   const prods = fin.map(p=>({ name:p.sku, sell_price:p.price, variable_cost:p.cost,
     max_demand:p.demand, cycle_time:p.cycle,
+    min_quantity:_firmOrderFloor(p.sku),    // firm MTO order book → production floor
     shelf_life:Math.max(1, Math.round((Number(p.shelf)||365)/7)),
     yield_pct:p.yield||0.95, salvage_rate:Number(p.salvage)||0.8 }));
   const demandHours = prods.reduce((s,p)=>s+p.max_demand*p.cycle_time, 0);
@@ -861,13 +872,26 @@ function capitalPayload(){
   // scope ("Identifier '_excluded' already declared") — which blanks the whole app.
   // Strip `dcap` without rest-destructuring so lib.jsx stays the only _excluded emitter.
   const _stripDcap = (p)=>{ const r = Object.assign({}, p); delete r.dcap; return r; };
-  return { investments:CAPEX_PROPOSALS.map(_stripDcap), params:{ budget:25000000, wacc:0.1124 } };
+  // CRITICAL wire (audit fix): the CapEx budget and WACC are NOT hardcoded — they read
+  // the SAME governed Finance inputs the capital-capacity solver already uses
+  // (config.finCapexBudget "Budget/yr" + the live blended WACC from finBlendedHurdle),
+  // so changing them in Finance re-prices this selection too. Falls back to the prior
+  // seeds when Finance hasn't been touched, so default behaviour is unchanged.
+  const cfg = ((typeof appStore!=='undefined' && appStore.get().config) || {});
+  const budget = (typeof _effNum==='function') ? _effNum(cfg.finCapexBudget, 25000000) : (cfg.finCapexBudget||25000000);
+  const wacc = (typeof finBlendedHurdle==='function') ? finBlendedHurdle(cfg).wacc/100 : 0.1124;
+  return { investments:CAPEX_PROPOSALS.map(_stripDcap), params:{ budget, wacc } };
 }
 function ResCapital() {
   const cap = useSolve('/api/solve/capital', capitalPayload);
   const r = cap.result;
   const dcapOf = n=>{ const p=CAPEX_PROPOSALS.find(x=>x.name===n); return p?p.dcap:'—'; };
   const all = r ? [...(r.selected||[]), ...(r.rejected||[])] : null;
+  // budget + WACC now come from Finance (config.finCapexBudget + blended WACC) — show
+  // the live figures the solve actually used instead of a hardcoded "₹2.5 Cr".
+  const _cfg = ((typeof appStore!=='undefined' && appStore.get().config) || {});
+  const _budget = (typeof _effNum==='function') ? _effNum(_cfg.finCapexBudget, 25000000) : 25000000;
+  const _wacc = (typeof finBlendedHurdle==='function') ? finBlendedHurdle(_cfg).wacc : 11.24;
   return (
     <Grid cols={2}>
       <Card icon="🏗️" title="Capital Budget Results" badge={r?`fund ${r.selected.length}/${CAPEX_PROPOSALS.length} · ₹${(r.total_capex/1e7).toFixed(2)}Cr`:'endogenous'} badgeTone="y"
@@ -880,7 +904,7 @@ function ResCapital() {
                  s.irr!=null?`${s.irr}%`:'—', s.selected?<Tag c="g">FUND</Tag>:<Tag c="w">DEFER</Tag>])
                : [['Heat-Treat #2','₹1.8 Cr','+38%','₹24L','19.2%',<Tag c="g">FUND</Tag>],['Grinder upgrade','₹0.9 Cr','+12%','₹14L','16.4%',<Tag c="g">FUND</Tag>],['Honing cell','₹1.2 Cr','+9%','₹9L','13.1%',<Tag c="w">DEFER</Tag>]]}/>
         {r && <Reading formula="max Σ NPVᵢ·xᵢ  s.t.  Σ CapExᵢ·xᵢ ≤ budget,  xᵢ ∈ {0,1}"
-          soWhat={`Budget ₹2.5 Cr funds ${r.selected.map(s=>s.name.split(' (')[0]).join(' + ')||'nothing'} for ₹${(r.total_npv/1e5).toFixed(1)}L NPV — the knapsack can defer a higher single-NPV item to fit two that together return more.`}/>}
+          soWhat={`Budget ₹${(_budget/1e7).toFixed(2)} Cr @ WACC ${_wacc.toFixed(2)}% (both from Finance · CapEx budget/yr + blended WACC, not hardcoded) funds ${r.selected.map(s=>s.name.split(' (')[0]).join(' + ')||'nothing'} for ₹${(r.total_npv/1e5).toFixed(1)}L NPV — the knapsack can defer a higher single-NPV item to fit two that together return more.`}/>}
       </Card>
     </Grid>
   );
