@@ -9,11 +9,15 @@ services:
   - type: web
     name: enterprise-simulator
     runtime: python
-    plan: starter            # 512 MB / 0.5 CPU — enough for CBC on this dataset
+    plan: free               # 512 MB / shared CPU. Note: free instances SPIN DOWN
+                             # after ~15 min idle — the first request then takes
+                             # ~30–60 s to cold-start (the --timeout 120 covers it).
     buildCommand: pip install -r requirements.txt
-    # 2 workers x 120s timeout: MILP solves (procurement, profit-mix) can take
-    # tens of seconds; a short timeout would 502 mid-solve.
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    # 1 worker on free: the app imports numpy/scipy/scikit-learn/statsmodels/xgboost,
+    # so each gunicorn worker is heavy — 2 workers would OOM the 512 MB free instance.
+    # 120s timeout because MILP solves (procurement, profit-mix) can take tens of
+    # seconds and a short timeout would 502 mid-solve.
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
     healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
