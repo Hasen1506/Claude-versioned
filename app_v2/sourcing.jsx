@@ -183,6 +183,10 @@ function StageSourcing({ onNav }) {
       <ItemSelector/>
       <StageContext item={item} asOf={ranAt ? ranAt.toLocaleString('en-IN') : null} stale={stale}/>
       <div style={{padding:18}}>
+        <ScopeBanner kind="sourcing" name={`Parts of ${(item&&item.name)||sku}`} code={sku}
+          sub="edit landed-cost terms, freight lots & policy for this product's parts"
+          right={onNav && <button onClick={()=>onNav('products')} style={{cursor:'pointer', border:`1.5px solid ${C.ac}`, background:'transparent', color:C.ac, fontFamily:F.mono, fontSize:9, fontWeight:700, padding:'3px 9px'}}>↗ Part costs & BOM in Products</button>}/>
+        <SolverExplain id="procurement"/>
         {stale && <StaleMark since="(demand or cost inputs changed)" onNav={()=>runProc()} go="rerun"/>}
         {proc.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Procurement MILP: {proc.error}</div>}
         <StageSection step="0" title="Solver Parameters" sub="governed inputs — a seed default until you override it; an override re-flags the plan to re-solve">
@@ -198,7 +202,11 @@ function StageSourcing({ onNav }) {
               soWhat={`The MILP is currently planning to α = ${sl} ${(config.serviceLevelOverride!=null && config.serviceLevelOverride!=='')?'(your override)':'(default)'}. Change it and re-run — the safety buffer and PO release schedule shift (a tighter α consolidates releases to keep cover).`}/>
           </Card>
         </StageSection>
-        <SrcExternalSignals planning={planning} onRerun={runProc}/>
+        <StageSection step="0b" title="External-Signal Drivers" sub="commodity / port-congestion / FX indices — planning signals (not IoT telemetry); hidden by default to keep the default view focused">
+          <Advanced label="Show external-signal drivers · commodity / port / FX" count={3}>
+            <SrcExternalSignals planning={planning} onRerun={runProc} bare/>
+          </Advanced>
+        </StageSection>
         <SrcMRP item={item} view={view} onNav={onNav} proc={proc}/>
         <SrcIncoterms/>
         <SrcSourcingTerms/>
@@ -227,7 +235,7 @@ function StageSourcing({ onNav }) {
 // rolling / MEIO stale. Neutral seed (0% / 0d) ⇒ nothing moves until a planner sets
 // an index. The card proves the propagation on real BOM parts — no fabricated number.
 // ════════════════════════════════════════════════════════════════════════
-function SrcExternalSignals({ planning, onRerun }){
+function SrcExternalSignals({ planning, onRerun, bare }){
   const { config, setConfig } = useConfig();
   const sig = config.signals || {};
   const setSig = (p)=> setConfig({ signals: { ...sig, ...p } });
@@ -239,8 +247,12 @@ function SrcExternalSignals({ planning, onRerun }){
   const fxRates = config.fxRates || {};
   // solves that consume bomParts (so the commodity/port signals genuinely drive them)
   const driven = ['procurement','policy','rolling','meio','meionet'];
+  // bare = rendered inside an <Advanced> disclosure (no duplicate StageSection header)
+  const Wrap = bare
+    ? ({ children })=> <div>{children}</div>
+    : ({ children })=> <StageSection step="0b" title="External-Signal Drivers" sub="commodity / port-congestion / FX indices that drive the procurement & policy solvers — planning signals, not IoT telemetry">{children}</StageSection>;
   return (
-    <StageSection step="0b" title="External-Signal Drivers" sub="commodity / port-congestion / FX indices that drive the procurement & policy solvers — planning signals, not IoT telemetry">
+    <Wrap>
       <Card icon="📡" title="External signals → solver inputs" badge={active?'driving':'neutral'} badgeTone={active?'g':'k'} span={2}
         right={<Provenance kind="external" note="planning-cadence indices"/>}
         info={{ what:'External market signals the plan should react to — a steel/alloy price index, port-congestion days, and the FX table. Each one feeds a real solver input (BOM material cost, inbound lead time, imported-part landed cost), so moving an index re-prices the plan and re-flags the affected solves stale.', flows:'Signal → bomParts / fxFactor → procurement·policy·rolling·MEIO MILPs.' }}
@@ -285,7 +297,7 @@ function SrcExternalSignals({ planning, onRerun }){
             ? `These external signals are now driving the plan: BOM material is re-priced ×${cf.toFixed(3)} and inbound lead carries +${portP} period(s). The procurement, policy, rolling and MEIO solves are flagged stale — re-solve to see the buy plan, safety stock and pooling shift. This is how a commodity spike or a port backlog re-plans supply, automatically.`
             : 'Both signals are at their neutral seed, so the plan is byte-identical to the base case. Set a commodity index or port delay to drive a re-plan — the impact propagates to every solver that consumes the BOM.'}/>
       </Card>
-    </StageSection>
+    </Wrap>
   );
 }
 

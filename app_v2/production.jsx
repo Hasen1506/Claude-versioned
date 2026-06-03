@@ -42,6 +42,7 @@ function StageProduction({ onNav }) {
       <ItemSelector/>
       <SubTabNav tabs={tabs} active={sub} onChange={setSub}/>
       <div style={{padding:18}}>
+        <SolverExplain id="production"/>
         {prod.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Production MILP: {prod.error}</div>}
         {sub==='arch'   && <StageSection step="1" title="Architecture" sub="line → stage → machine tree · the slowest stage caps the line"><ProdArch prod={prod}/></StageSection>}
         {sub==='cycle'  && <StageSection step="2" title={`Cycle & Line · ${p.name}`} sub="cycle time and line assignment are line properties (moved here from Products)"><ProdCycle p={p} prod={prod} config={config} setConfig={setConfig} onNav={onNav}/></StageSection>}
@@ -109,27 +110,33 @@ function ProdParams({ config, setConfig, prod, ranAt }){
   );
 }
 
-function StageNode({ st }) {
+// compact inline cell editor for the architecture table (raw input, tight)
+function PCell({ value, onChange, w, step, suffix, text, align }){
+  const [v, setV] = useState(value);
+  React.useEffect(()=>{ setV(value); }, [value]);
   return (
-    <div style={{border:`2px solid ${C.line}`, background: st.bottleneck?C.ac:C.paper, color:C.tx, position:'relative'}}>
-      {st.bottleneck && <div style={{position:'absolute', top:-9, right:6, fontFamily:F.mono, fontSize:8, fontWeight:700, background:C.dg, color:'#fff', padding:'1px 5px', border:`1.5px solid ${C.line}`}}>BOTTLENECK</div>}
-      <div style={{padding:'7px 9px', borderBottom:`1.5px solid ${C.line}`, display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-        <span style={{fontFamily:F.disp, fontSize:11, fontWeight:800}}>{st.name}</span>
-        <span style={{fontFamily:F.mono, fontSize:8.5, color: st.bottleneck?C.onAc:C.tx3}}>{st.id}</span>
-      </div>
-      <div style={{padding:'7px 9px', display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:4, fontFamily:F.mono, fontSize:9.5}}>
-        <div><div style={{color: st.bottleneck?C.onAc:C.tx3, fontSize:8}}>MACHINES</div><div className="num" style={{fontWeight:700, fontFamily:F.disp, fontSize:13}}>{st.m}</div></div>
-        <div><div style={{color: st.bottleneck?C.onAc:C.tx3, fontSize:8}}>CYCLE</div><div className="num" style={{fontWeight:700, fontFamily:F.disp, fontSize:13}}>{st.ct}</div></div>
-        <div><div style={{color: st.bottleneck?C.onAc:C.tx3, fontSize:8}}>OEE</div><div className="num" style={{fontWeight:700, fontFamily:F.disp, fontSize:13}}>{(st.oee*100).toFixed(0)}%</div></div>
-      </div>
-      <div style={{padding:'4px 9px', borderTop:`1.5px solid ${C.line2}`, fontFamily:F.mono, fontSize:9, display:'flex', justifyContent:'space-between'}}>
-        <span style={{color: st.bottleneck?C.onAc:C.tx3}}>CAP</span><span className="num" style={{fontWeight:700}}>{st.cap.toLocaleString('en-IN')} u/mo</span>
-      </div>
-    </div>
+    <span style={{display:'inline-flex', alignItems:'center', gap:2}}>
+      <input type={text?'text':'number'} value={v} step={step||1}
+        onChange={e=>setV(e.target.value)}
+        onBlur={()=>{ if(String(v)!==String(value)) onChange(text?v:(v===''?value:Number(v))); }}
+        onKeyDown={e=>{ if(e.key==='Enter') e.target.blur(); }}
+        style={{ width:w||52, fontFamily:F.mono, fontSize:10.5, textAlign:align||'right', padding:'2px 4px',
+          border:`1px solid ${C.line}`, background:C.paper, color:C.tx }}/>
+      {suffix && <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>{suffix}</span>}
+    </span>
   );
 }
 
+// Batch 3 — the line → stage → machine tree is now EDITABLE master data (was a
+// read-only Fact-5 bug). Each stage's machines/workers/cycle/OEE/capacity is a
+// real input; line capacity & the bottleneck are DERIVED (slowest stage), so the
+// "min(stage)" rule is enforced, not typed. A simple/detailed toggle hides the OEE
+// decomposition for shops that only track cycle time.
 function ProdArch({ prod }) {
+  useMasterRev();                                   // re-render on any line/stage edit
+  const [mode, setMode] = useState('detailed');     // 'detailed' = show OEE+workers, 'simple' = cycle-only
+  const detailed = mode==='detailed';
+  const lines = M.lines || [];
   // PR-C — line utilization now reads the SOLVED gantt (same basis as the Cycle tab's
   // Line-Load preview) when a schedule exists: monthly-equivalent volume on the line
   // = Σ(solved units) / horizon_weeks × 4.33, ÷ line cap. Falls back to the annual-demand
@@ -141,31 +148,74 @@ function ProdArch({ prod }) {
     res.gantt.forEach(g=>{ solvedMonthly[g.line] = (solvedMonthly[g.line]||0) + g.quantity; });
     Object.keys(solvedMonthly).forEach(k=>{ solvedMonthly[k] = solvedMonthly[k] / T * 4.33; });
   }
+  const cols = detailed
+    ? ['Stage','Machines','Workers','Cycle','OEE','Capacity','',''  ]
+    : ['Stage','Machines','Cycle','Capacity','',''];
   return (
     <div>
-      <Grid cols={3}>
-        {M.lines.map(line=>(
+      <ScopeBanner kind="factory" name="Production architecture"
+        code={`${lines.length} line${lines.length===1?'':'s'} · ${lines.reduce((s,l)=>s+(l.stages||[]).length,0)} stages`}
+        sub="lines → stages → machines · line capacity = its slowest stage"
+        right={<div style={{display:'flex', border:`2px solid ${C.ac}`}}>
+          {[['detailed','OEE'],['simple','CYCLE-ONLY']].map(([v,l],i)=>(
+            <button key={v} onClick={()=>setMode(v)} style={{fontFamily:F.mono, fontSize:9, fontWeight:700, padding:'3px 8px',
+              border:'none', borderRight:i===0?`2px solid ${C.ac}`:'none', cursor:'pointer',
+              background:mode===v?C.ac:'transparent', color:mode===v?C.onAc:C.paper}}>{l}</button>
+          ))}
+        </div>}/>
+      <div style={{display:'flex', flexDirection:'column', gap:14}}>
+        {lines.map(line=>{
+          const stages = line.stages || [];
+          return (
           <div key={line.id} style={{border:`2px solid ${C.line}`, background:C.bg2}}>
-            <div style={{padding:'9px 11px', background:C.ink, color:C.paper, display:'flex', alignItems:'center', gap:8}}>
+            <div style={{padding:'9px 11px', background:C.ink, color:C.paper, display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
               <span style={{fontFamily:F.disp, fontSize:13, fontWeight:800}}>{line.id}</span>
-              <span style={{fontFamily:F.mono, fontSize:9, color:C.ac}}>{line.name}</span>
-              <span style={{marginLeft:'auto', fontFamily:F.mono, fontSize:9}}>OEE {(line.oee*100).toFixed(0)}%</span>
+              <PCell text value={line.name} w={150} align="left" onChange={v=>editLine(line.id,{name:v})}/>
+              <label style={{display:'flex', alignItems:'center', gap:4, fontFamily:F.mono, fontSize:9, color:C.ac}}>OEE
+                <PCell value={Math.round((line.oee||0)*100)} w={42} suffix="%" onChange={v=>editLine(line.id,{oee:Math.max(0,Math.min(100,v))/100})}/></label>
+              <label style={{display:'flex', alignItems:'center', gap:4, fontFamily:F.mono, fontSize:9, color:C.ac}}>Shifts
+                <PCell value={line.shifts!=null?line.shifts:1} w={36} onChange={v=>editLine(line.id,{shifts:Math.max(1,v)})}/></label>
+              <button onClick={()=>{ if(lines.length>1) delLine(line.id); }} disabled={lines.length<=1}
+                title={lines.length<=1?'keep at least one line':'remove line'}
+                style={{marginLeft:'auto', cursor:lines.length<=1?'not-allowed':'pointer', border:`1.5px solid ${C.dg}`, background:'transparent', color:C.dg, fontFamily:F.mono, fontSize:9, fontWeight:700, padding:'2px 7px', opacity:lines.length<=1?.4:1}}>✕ line</button>
             </div>
-            <div style={{padding:11, display:'flex', flexDirection:'column', gap:14}}>
-              {line.stages.map((st,i)=>(
-                <div key={st.id} style={{position:'relative'}}>
-                  <StageNode st={st}/>
-                  {i<line.stages.length-1 && <div style={{position:'absolute', left:'50%', bottom:-12, transform:'translateX(-50%)', color:C.tx3, fontSize:13}}>↓</div>}
-                </div>
-              ))}
+            <div style={{padding:11}}>
+              <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10}}>
+                <thead><tr style={{background:C.bg3}}>
+                  {cols.map((h,i)=><th key={i} style={{textAlign:i===0?'left':(i>=cols.length-2?'center':'right'), padding:'4px 7px', fontSize:8.5, color:C.tx3, textTransform:'uppercase', borderBottom:`1.5px solid ${C.line2}`}}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {stages.map((st,i)=>(
+                    <tr key={st.id} style={{borderTop:`1px solid ${C.line2}`, background: st.bottleneck?'color-mix(in srgb,var(--ac) 14%,transparent)':C.paper}}>
+                      <td style={{padding:'4px 7px'}}>
+                        <PCell text value={st.name} w={120} align="left" onChange={v=>editStage(line.id,st.id,{name:v})}/>
+                        <div style={{fontSize:8, color:C.tx3}}>{st.id}</div>
+                      </td>
+                      <td style={{padding:'4px 7px', textAlign:'right'}}><PCell value={st.m} w={40} onChange={v=>editStage(line.id,st.id,{m:Math.max(0,v)})}/></td>
+                      {detailed && <td style={{padding:'4px 7px', textAlign:'right'}}><PCell value={st.w!=null?st.w:st.m} w={40} onChange={v=>editStage(line.id,st.id,{w:Math.max(0,v)})}/></td>}
+                      <td style={{padding:'4px 7px', textAlign:'right'}}><PCell value={st.ct} w={46} step={0.1} suffix="min" onChange={v=>editStage(line.id,st.id,{ct:Math.max(0.1,v)})}/></td>
+                      {detailed && <td style={{padding:'4px 7px', textAlign:'right'}}><PCell value={Math.round((st.oee||0)*100)} w={42} suffix="%" onChange={v=>editStage(line.id,st.id,{oee:Math.max(0,Math.min(100,v))/100})}/></td>}
+                      <td style={{padding:'4px 7px', textAlign:'right'}}><PCell value={st.cap} w={64} step={10} suffix="u/mo" onChange={v=>editStage(line.id,st.id,{cap:Math.max(0,v)})}/></td>
+                      <td style={{padding:'4px 7px', textAlign:'center'}}>{st.bottleneck && <span style={{fontFamily:F.mono, fontSize:8, fontWeight:700, background:C.dg, color:'#fff', padding:'1px 5px'}}>BOTTLENECK</span>}</td>
+                      <td style={{padding:'4px 7px', textAlign:'center'}}>
+                        <button onClick={()=>{ if(stages.length>1) delStage(line.id,st.id); }} disabled={stages.length<=1}
+                          title={stages.length<=1?'keep at least one stage':'remove stage'}
+                          style={{cursor:stages.length<=1?'not-allowed':'pointer', border:'none', background:'transparent', color:C.dg, fontSize:12, opacity:stages.length<=1?.3:1}}>✕</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <button onClick={()=>addStage(line.id)} style={{marginTop:8, cursor:'pointer', border:`2px dashed ${C.line2}`, background:'transparent', color:C.tx2, fontFamily:F.mono, fontSize:9.5, fontWeight:700, padding:'4px 10px'}}>+ Add stage</button>
             </div>
             <div style={{padding:'8px 11px', borderTop:`2px solid ${C.line}`, background:C.bg3, display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-              <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3}}>LINE CAPACITY</span>
-              <span className="num" style={{fontFamily:F.disp, fontSize:15, fontWeight:800, color:C.dg}}>{line.cap.toLocaleString('en-IN')} u/mo</span>
+              <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3}}>LINE CAPACITY = slowest stage{line.bottleneck&&line.bottleneck!=='—'?` (${line.bottleneck})`:''}</span>
+              <span className="num" style={{fontFamily:F.disp, fontSize:15, fontWeight:800, color:C.dg}}>{(line.cap||0).toLocaleString('en-IN')} u/mo</span>
             </div>
           </div>
-        ))}
-      </Grid>
+        );})}
+      </div>
+      <button onClick={()=>addLine()} style={{marginTop:14, cursor:'pointer', border:`2px solid ${C.line}`, background:C.ink, color:C.paper, fontFamily:F.disp, fontSize:11, fontWeight:800, letterSpacing:'.04em', padding:'7px 16px'}}>+ Add production line</button>
       <div style={{marginTop:12}}>
         <Card icon="📉" title="Derived Capacities & Bottlenecks" badge={solvedMonthly?'min(stage) · solved load':'min(stage)'} badgeTone={solvedMonthly?'g':undefined}
           right={solvedMonthly ? <Provenance kind="solved" asOf={prod.ranAt?prod.ranAt.toLocaleTimeString():undefined}/> : null}
@@ -227,7 +277,7 @@ function ProdCycle({ p, prod, config, setConfig, onNav }) {
           <SolverInput label="Cycle Time" seed={p.cycle} value={ov.cycle}
             onChange={v=>setRoute({ cycle:v })} min={0.1} suffix="min/u" hint="re-prices throughput"/>
           <Field label={`Assigned Line${lineSet?'':' · seed'}`}>
-            <Select value={effLine} options={['LINE-01','LINE-02','LINE-03']}
+            <Select value={effLine} options={(M.lines||[]).map(l=>l.id)}
               onChange={v=>setRoute({ line:v })}/>
           </Field>
           {capMode==='oee'
@@ -466,6 +516,7 @@ function ProdCapacity({ prod, rateIsSeed, laborRate }){
 }
 
 function ProdChange() {
+  useMasterRev();                                    // re-render on matrix edits
   const skus=['TPA-4471','TPA-3215','TPA-9904','TPA-2188'];
   // build the nested {from:{to:min}} matrix the sequence solver wants (skip '—' diagonal).
   const seq = useSolve('/api/solve/sequence', ()=>{
@@ -485,8 +536,8 @@ function ProdChange() {
   const saved = sres && sres.sequence_saving_min!=null ? sres.sequence_saving_min : (alpha-opt);
   return (
     <Grid cols={2}>
-      <Card icon="🔀" title="Changeover Matrix" badge="setup hrs" info={{ what:'Setup time depends on from→to SKU sequence.', flows:'Matrix → sequencing MILP.' }}
-        dev={{ comp:'ChangeoverMatrix', props:'state.production.changeover', state:'production.changeover[from][to]' }}>
+      <Card icon="🔀" title="Changeover Matrix" badge="editable · setup hrs" badgeTone="y" info={{ what:'Setup time (hrs) for each from→to SKU transition — editable master data. The diagonal is self-to-self (no changeover).', flows:'Matrix → sequencing (ATSP heuristic) & production setup.' }}
+        dev={{ comp:'ChangeoverMatrix', props:'M.changeover', state:'M.changeover[from][to] via setChangeover' }}>
         <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
           <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10}}>
             <thead><tr style={{background:C.ink}}>
@@ -498,14 +549,16 @@ function ProdChange() {
                 <tr key={ri} style={{borderTop:`1px solid ${C.line2}`}}>
                   <td style={{padding:'5px 7px', fontWeight:700, background:C.bg3}}>{skus[ri].slice(4)}</td>
                   {row.map((v,ci)=>(
-                    <td key={ci} className="num" style={{textAlign:'center', padding:'5px 7px', background: v==='—'?C.bg4: typeof v==='number'&&v>2?'color-mix(in srgb,var(--dg) 16%,transparent)':C.paper, fontWeight:700}}>{v}</td>
+                    <td key={ci} className="num" style={{textAlign:'center', padding:'3px 5px', background: ri===ci?C.bg4: typeof v==='number'&&v>2?'color-mix(in srgb,var(--dg) 16%,transparent)':C.paper, fontWeight:700}}>
+                      {ri===ci ? '—' : <PCell value={v} w={44} step={0.1} onChange={nv=>setChangeover(ri,ci,nv)}/>}
+                    </td>
                   ))}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <div style={{marginTop:8, fontFamily:F.mono, fontSize:9, color:C.tx3}}>Red = high penalty — the sequencer avoids these transitions.</div>
+        <div style={{marginTop:8, fontFamily:F.mono, fontSize:9, color:C.tx3}}>Red = high penalty — the sequencer avoids these transitions. Edit a cell and re-run the schedule to see the run order shift.</div>
       </Card>
       <Card icon="⚡" title="Chosen Run Order" badge={`−${saved.toFixed(1)} hrs`} badgeTone="y" info={{ what:'The sequence the solver picks and the setup time it saves vs alphabetical.', flows:'Order → production schedule.' }}
         right={sres ? <Provenance kind="solved" asOf={seq.ranAt?seq.ranAt.toLocaleTimeString():undefined}/> : <Btn kind="primary" sm onClick={()=>seq.run().catch(()=>{})}>{seq.solving?'⏳ …':'⚡ Sequence'}</Btn>}

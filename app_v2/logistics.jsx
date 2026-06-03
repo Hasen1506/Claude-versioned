@@ -12,6 +12,7 @@ function StageLogistics({ onNav }) {
       <StageHeader n="08" title="Logistics · Transport Optimization" kicker="Allocation (DC→customer LP) · consolidation (LTL→FTL) · center-of-gravity — all network-flow visuals"
         right={<Btn kind="accent" onClick={()=>tr.run().catch(()=>{})}>{tr.solving?'⏳ Routing…':'⚡ Solve Transport'}</Btn>}/>
       <div style={{padding:18}}>
+        <SolverExplain id="transport"/>
         {gate.transport && <GateNote onNav={onNav}>Your profile is <b>single-site distribution</b> — there is nothing to ship between locations, so the transport solver is off. Switch to a network in Setup to enable it.</GateNote>}
         <PrereqNote onNav={onNav} go="network" goLabel="open Network →">Nodes, lanes and contracts are master data — defined once in <b>Network (03)</b>. This stage only shows the transport solver's output.</PrereqNote>
         {tr.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Transport solver: {tr.error}</div>}
@@ -77,7 +78,7 @@ function IndiaMap({ marks, cog, flows }) {
 function LogAllocation({ tr }) {
   const r = tr && tr.result;
   // LG-1 — allocation matrix BUILT FROM THE SOLVE: each solved shipment is a lane that
-  // picked ONE mode (the transport MILP's choice); the matrix is lane × chosen-mode with
+  // picked ONE mode (the transport LP's choice); the matrix is lane × chosen-mode with
   // the cell = that lane's value share on its picked mode (100% — one mode per lane).
   // Falls back to the illustrative literal only before the first solve.
   const SEED_LANES=['CHN→BLR','CHN→PUN','PUN→GGN','BLR→GGN'];
@@ -107,7 +108,7 @@ function LogAllocation({ tr }) {
         <IndiaMap marks={M.nodes.filter(n=>n.type!=='supplier')} flows={flows}/>
         <div style={{marginTop:6, fontFamily:F.mono, fontSize:9, color:C.tx3}}>Line weight = shipped volume · deterministic LP, not a simulation.</div>
       </Card>
-      <Card icon="🚛" title="Allocation Matrix" badge="lane × mode" info={{ what:'How shipments split across modes per lane.', flows:'From transport MILP.' }}
+      <Card icon="🚛" title="Allocation Matrix" badge="lane × mode" info={{ what:'How shipments split across modes per lane.', flows:'From transport LP.' }}
         dev={{ comp:'TransportAllocationCard', props:'solve.transport.allocation' }}>
         <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
           <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10.5}}>

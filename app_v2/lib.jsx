@@ -621,6 +621,9 @@ const _PROV = {
 };
 function Provenance({ kind='solved', asOf, run, stale, style }){
   const m = _PROV[kind] || _PROV.solved;
+  // a Date can't be a React child — coerce defensively (several call sites pass a
+  // raw Date, e.g. Logistics' tr.ranAt, which otherwise throws and blanks the tab).
+  const asOfStr = (asOf instanceof Date) ? asOf.toLocaleTimeString('en-IN') : asOf;
   return (
     <span title={m.t} style={{
       display:'inline-flex', alignItems:'center', gap:5, padding:'1px 6px',
@@ -630,7 +633,7 @@ function Provenance({ kind='solved', asOf, run, stale, style }){
       <span style={{color:m.c, fontSize:9.5}}>{m.i}</span>
       <span style={{color:C.tx2}}>{m.l}</span>
       {run && <span style={{color:C.tx3, fontWeight:600}}>· {run}</span>}
-      {asOf && <span style={{color:C.tx3, fontWeight:400}}>· {asOf}</span>}
+      {asOfStr && <span style={{color:C.tx3, fontWeight:400}}>· {asOfStr}</span>}
       {stale && <span style={{color:C.a4, fontWeight:800}}>· STALE</span>}
     </span>
   );
@@ -740,6 +743,83 @@ function StageContext({ item, asOf, stale, extra }){
   );
 }
 
+// ───────────── ScopeBanner — loud "what am I editing" band (review Theme 3) ──
+// Item-scoped tabs (Products/Network/Sourcing/Demand) felt like disconnected cards
+// because the item selector was too quiet — "no clue what product I'm looking at"
+// recurs all over the notes. This is the loud answer: a high-contrast band that
+// states the entity every card below is scoped to, with an optional kind chip and
+// right-slot (e.g. a switcher or count). Pure presentation, no state.
+function ScopeBanner({ kind, name, code, sub, right, tone }){
+  const bg = tone==='accent' ? C.ac : C.ink;
+  const fg = tone==='accent' ? C.onAc : C.paper;
+  return (
+    <div style={{display:'flex', alignItems:'center', gap:12, padding:'9px 14px', background:bg, color:fg,
+      border:`2px solid ${C.line}`, marginBottom:14, flexWrap:'wrap'}}>
+      <span style={{fontFamily:F.mono, fontSize:9, letterSpacing:'.14em', color: tone==='accent'?C.ink:C.ac}}>EDITING ▸</span>
+      {kind && <span style={{fontFamily:F.mono, fontSize:9, fontWeight:700, padding:'2px 6px', border:`1.5px solid ${tone==='accent'?C.ink:C.ac}`, color: tone==='accent'?C.ink:C.ac, textTransform:'uppercase'}}>{kind}</span>}
+      <span style={{fontFamily:F.disp, fontSize:15, fontWeight:900, letterSpacing:'.01em'}}>{name}</span>
+      {code && <span style={{fontFamily:F.mono, fontSize:10, opacity:.7}}>{code}</span>}
+      {sub && <span style={{fontFamily:F.mono, fontSize:9.5, opacity:.6}}>{sub}</span>}
+      {right && <span style={{marginLeft:'auto'}}>{right}</span>}
+    </div>
+  );
+}
+
+// ───────────── ActivityLog — the change-log surface (review Theme 5) ──
+// One chronological reader of the immutable event trail (useEvents) — the
+// "record a change as of a date, see its impact" ledger the notes asked for in
+// Products (price changes), Demand, and Sourcing. Reads only; the trail is written
+// by editProductAttr/editPartAttr/logEvent across the app. `filter` narrows by
+// event type or target; `limit` caps rows (newest first); `compact` for sidebars.
+const _EVENT_META = {
+  override:    { icon:'✎', label:'edit',        c:C.a2 },
+  commit:      { icon:'✔', label:'commit',      c:C.gn },
+  replan:      { icon:'↻', label:'re-plan',     c:C.a3 },
+  cancel:      { icon:'✕', label:'cancel',      c:C.dg },
+  actuals:     { icon:'◉', label:'actuals',     c:C.a4 },
+  template_apply:{ icon:'▦', label:'template',  c:C.a3 },
+  rec_apply:   { icon:'★', label:'applied rec', c:C.gn },
+  scenario_create:{ icon:'⎘', label:'scenario', c:C.a2 },
+  scenario_run:{ icon:'⚙', label:'scenario run',c:C.gn },
+};
+function ActivityLog({ filter, limit, compact, title, empty }){
+  const { events } = (typeof useEvents==='function') ? useEvents() : { events:[] };
+  let rows = (events||[]).slice();
+  if(typeof filter === 'function') rows = rows.filter(filter);
+  else if(typeof filter === 'string') rows = rows.filter(e=>e.type===filter || e.target===filter);
+  rows = rows.reverse();                              // newest first
+  if(limit) rows = rows.slice(0, limit);
+  const fmt = (ts)=>{ try{ const d=new Date(ts); return d.toLocaleDateString(undefined,{day:'2-digit',month:'short'})+' '+d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}); }catch(e){ return ts; } };
+  const detail = (e)=>{
+    if(!e.detail) return '';
+    if(e.detail.fields) return e.detail.fields.join(', ') + (e.detail.to ? ' → '+Object.values(e.detail.to).join(', ') : '');
+    if(e.detail.name) return e.detail.name;
+    try{ return Object.entries(e.detail).slice(0,2).map(([k,v])=>`${k}:${typeof v==='object'?'…':v}`).join(' · '); }catch(x){ return ''; }
+  };
+  return (
+    <div>
+      {title && <SubLabel>{title}{rows.length?` · ${rows.length}`:''}</SubLabel>}
+      {!rows.length ? (
+        <div style={{padding:'12px', textAlign:'center', fontFamily:F.mono, fontSize:10, color:C.tx3, border:`2px dashed ${C.line2}`}}>{empty||'no activity yet — edits and solves you make are logged here with a timestamp.'}</div>
+      ) : (
+        <div style={{display:'flex', flexDirection:'column', border:`2px solid ${C.line}`}}>
+          {rows.map((e,i)=>{ const m = _EVENT_META[e.type] || { icon:'·', label:e.type, c:C.tx3 };
+            return (
+              <div key={e.id||i} style={{display:'flex', alignItems:'center', gap:9, padding: compact?'5px 9px':'7px 11px', borderBottom:i<rows.length-1?`1px solid ${C.line2}`:'none', background:i%2?C.bg3:C.paper}}>
+                <span style={{color:m.c, fontSize:12, width:14, textAlign:'center', flexShrink:0}}>{m.icon}</span>
+                <span style={{fontFamily:F.mono, fontSize:8.5, fontWeight:700, letterSpacing:'.06em', color:m.c, textTransform:'uppercase', width:74, flexShrink:0}}>{m.label}</span>
+                <span style={{fontFamily:F.disp, fontSize:11, fontWeight:700, color:C.tx, flexShrink:0}}>{e.target||'—'}</span>
+                <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2, flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{detail(e)}</span>
+                <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3, flexShrink:0}}>{fmt(e.ts)}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── (R14) ModelIO — real Export/Import of the live editable model (was an inert
 // header button). Export downloads exportModelJson(); Import reads a chosen .json
 // file and applies it via importModelJson(). Shared by Products/Setup/Network headers.
@@ -781,6 +861,120 @@ function ReportExport(){
   );
 }
 
+// ───────────── SolverExplain — plain-language "what is this?" on a solver card ──
+// Batch 5 (🧭). The terse SolverIO grid (ANSWERS·FROM·FEEDS) is for planners who
+// already speak the jargon. This is the one friendly sentence a first-time user
+// needs — built from the same Fact-4 roster (M.solverIO) so it can never drift from
+// what the engine actually does. SOLVER_PLAIN supplies the layman wording; any id
+// without one falls back to the roster's `answers` so every engine still explains.
+const SOLVER_PLAIN = {
+  forecast:   'Looks at your past sales and predicts how much you’ll sell in each upcoming period.',
+  aggregate:  'Decides, month by month, whether to run the factory at a steady pace or chase demand — and how many people that needs.',
+  disaggregate:'Splits the family-level plan back down to a number for each individual SKU.',
+  reconcile:  'Makes the sales plan and the operations plan agree on one committed set of numbers.',
+  profitmix:  'When you can’t make everything, picks the product mix that earns the most profit from the capacity you have.',
+  procurement:'Works out which raw materials to buy, how much, from which supplier, and when each order must be placed.',
+  production: 'Lays the build out over time on each line, respecting lot sizes, changeovers and capacity.',
+  sequencing: 'Puts the day’s jobs in the best order on a line to minimise changeover time.',
+  lotsizing:  'Finds the order quantity that balances setup cost against the cost of holding inventory.',
+  transport:  'Chooses how to ship finished goods across your lanes and carriers at the lowest cost.',
+  allocation: 'Decides which distribution centre serves which customer from the stock on hand.',
+  consolidate:'Merges small shipments onto shared trucks to cut freight cost.',
+  montecarlo: 'Runs the committed plan through thousands of “what could go wrong” scenarios to see how fragile it is.',
+  cvar:       'Sizes the worst-case (tail) cost so you can plan for bad luck, not just the average.',
+  capital:    'Tells you whether spending money to add capacity actually pays for itself.',
+  capital_capacity:'Works out how much extra capacity is worth adding before the payback stops.',
+  meionet:    'Pools safety stock across products and sites so you hold less inventory for the same service.',
+};
+function SolverExplain({ id }){
+  const io = window.M && M.solverIO[id];
+  const plain = SOLVER_PLAIN[id] || (io && io.answers ? `Works out ${io.answers}.` : null);
+  if(!plain) return null;
+  return (
+    <div style={{display:'flex', alignItems:'flex-start', gap:10, padding:'9px 12px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${C.a2}`, background:C.bg3, marginBottom:12}}>
+      <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, color:C.a2, letterSpacing:'.08em', whiteSpace:'nowrap', marginTop:1}}>WHAT IS THIS?</span>
+      <span style={{fontFamily:F.body, fontSize:11.5, color:C.tx2, lineHeight:1.45, flex:1}}>
+        {plain}{io && <span style={{color:C.tx3}}> · it reads {io.from} and its answer feeds {io.feeds}.</span>}
+      </span>
+    </div>
+  );
+}
+
+// ───────────── OnboardingWizard — first-run greeting that sets the profile ──
+// Batch 5 (🧭, Theme 2). A new user shouldn't meet all 16 engines at once. On the
+// first load (no es_onboarded flag) this greeting asks the same six profile
+// questions Setup holds, in plain words, sets the profile (which gates the spine),
+// and shows live how many capabilities that hides. Skippable; re-answerable any time
+// in Setup. Pure UI over the existing profileStore — no new state model.
+const ONB_Q = [
+  { k:'makePolicy',     label:'How do you fulfil customer orders?',  opts:[['MTS','Make to stock'],['MTS+MTO','A bit of both'],['MTO','Make to order'],['ATO','Assemble to order']] },
+  { k:'capacity',       label:'Is factory capacity tight or ample?', opts:[['tight','Usually tight'],['ample','Plenty spare']] },
+  { k:'imports',        label:'Do you import raw materials?',        opts:[[true,'Yes, we import'],[false,'All domestic']] },
+  { k:'lines',          label:'How many production lines?',          opts:[['1','Just one'],['many','Several']] },
+  { k:'distribution',   label:'One site, or a distribution network?',opts:[['single','Single site'],['network','A network']] },
+  { k:'externalForecast',label:'Who makes your demand forecast?',    opts:[[false,'We forecast here'],[true,'It’s supplied to us']] },
+];
+function OnboardingWizard(){
+  const { profile, gate, setProfile } = useProfile();
+  const [open, setOpen] = useState(()=>{ try{ return !localStorage.getItem('es_onboarded'); }catch(e){ return true; } });
+  if(!open) return null;
+  const close = ()=>{ try{ localStorage.setItem('es_onboarded','1'); }catch(e){} setOpen(false); };
+  const offList = [
+    gate.profitmix    && 'Profit-mix + seasonal Aggregate',
+    gate.sequencing   && 'Sequencing',
+    gate.transport    && 'Transport / Logistics',
+    gate.landed       && 'Landed cost · FX · Incoterms',
+    gate.demandModels && 'Demand model-competition',
+  ].filter(Boolean);
+  const Seg = ({ k, opts }) => (
+    <div style={{display:'flex', border:`2px solid ${C.line}`}}>
+      {opts.map(([v,l],i)=>(
+        <button key={String(v)} onClick={()=>setProfile({ [k]:v })} style={{
+          flex:1, textAlign:'center', padding:'7px 8px', fontFamily:F.mono, fontSize:9.5, fontWeight:700,
+          border:'none', borderRight:i<opts.length-1?`2px solid ${C.line}`:'none', cursor:'pointer',
+          background: profile[k]===v?C.ink:C.paper, color: profile[k]===v?C.ac:C.tx3, whiteSpace:'nowrap',
+        }}>{profile[k]===v?'● ':'○ '}{l}</button>
+      ))}
+    </div>
+  );
+  return (
+    <div style={{position:'fixed', inset:0, zIndex:9999, background:'rgba(0,0,0,.5)', display:'flex', alignItems:'flex-start', justifyContent:'center', overflowY:'auto', padding:'40px 18px'}}>
+      <div style={{width:'100%', maxWidth:680, background:C.paper, border:`2px solid ${C.line}`, boxShadow:'0 12px 40px rgba(0,0,0,.3)'}}>
+        <div style={{padding:'14px 18px', borderBottom:`2px solid ${C.line}`, background:C.card, display:'flex', alignItems:'center', gap:10}}>
+          <span style={{fontSize:20}}>👋</span>
+          <div>
+            <div style={{fontFamily:F.disp, fontSize:15, fontWeight:900, letterSpacing:'.02em'}}>Welcome — let’s right-size the workspace</div>
+            <div style={{fontFamily:F.mono, fontSize:9.5, color:C.tx3, marginTop:2}}>Six quick answers so you only see the engines your operation actually needs. Change them any time in Setup.</div>
+          </div>
+        </div>
+        <div style={{padding:'16px 18px'}}>
+          <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px 16px'}}>
+            {ONB_Q.map(q=>(
+              <div key={q.k}>
+                <div style={{fontFamily:F.mono, fontSize:9.5, fontWeight:700, color:C.tx2, marginBottom:4}}>{q.label}</div>
+                <Seg k={q.k} opts={q.opts}/>
+              </div>
+            ))}
+          </div>
+          <div style={{marginTop:14, padding:'10px 12px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${offList.length?C.a4:C.gn}`, background:C.bg3}}>
+            {offList.length ? (
+              <div style={{fontFamily:F.body, fontSize:11.5, color:C.tx2, lineHeight:1.5}}>
+                Based on your answers we’ll <b>hide {offList.length} capabilit{offList.length===1?'y':'ies'}</b> you don’t need: <span style={{color:C.tx3}}>{offList.join(' · ')}</span>. They stay one toggle away in Setup.
+              </div>
+            ) : (
+              <div style={{fontFamily:F.body, fontSize:11.5, color:C.tx2, lineHeight:1.5}}>Your answers keep <b>every engine on</b> — the full S&OP spine. You can trim it later in Setup.</div>
+            )}
+          </div>
+        </div>
+        <div style={{padding:'12px 18px', borderTop:`2px solid ${C.line}`, display:'flex', alignItems:'center', gap:10}}>
+          <button onClick={close} style={{fontFamily:F.mono, fontSize:10, fontWeight:700, color:C.tx3, background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline'}}>Skip — show me everything</button>
+          <span style={{marginLeft:'auto'}}><Btn kind="accent" onClick={close}>Start planning →</Btn></span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 Object.assign(window, {
   C, F, BUILD, Box, Sep, Blk, KPI, KpiRow, Tag, Badge, Btn, SectionInfo, DevNote, Card,
   DataTable, Field, NumInput, TextInput, Select, Advanced, SubTabNav, StageHeader,
@@ -788,5 +982,6 @@ Object.assign(window, {
   useActiveItem, ItemSelector, Reading, StageSection, PrereqNote, SolverNetwork,
   useProfile, GateNote, MethodTag, SolverIO, PlanningSpine,
   Provenance, AsOf, StaleMark, SolverInput, StageContext,
+  ScopeBanner, ActivityLog, SolverExplain, OnboardingWizard,
   ModelIO, ReportExport,
 });

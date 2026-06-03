@@ -107,7 +107,7 @@ const _STATE_SEED = {
   network: {},
   // KEYSTONE: per-SKU forecast demand series, written by the Demand stage when a
   // forecast solves (setItemDemand). The single source the procurement / production /
-  // transport / capital MILP payloads read via getItemDemand / getFinishedDemand —
+  // transport / capital LP payloads read via getItemDemand / getFinishedDemand —
   // so every downstream solver plans the SAME demand the forecast produced.
   // Empty until a forecast lands; reads fall back to M.products[].demand spread evenly.
   demand: {},
@@ -230,7 +230,7 @@ function useNetwork(){
   return { network, setNetwork:(p)=>{ patch({ network:{ ...state, ...p } }); markStale('network'); } };
 }
 
-// ── Demand series (KEYSTONE) — the shared per-SKU forecast the MILPs plan to ──
+// ── Demand series (KEYSTONE) — the shared per-SKU forecast the solvers plan to ──
 // getItemDemand(sku,T): the forecast series the Demand stage wrote, resampled to
 // T periods; falls back to M.products[].demand spread evenly when no forecast yet.
 // setItemDemand(sku,series): the Demand stage calls this when a forecast solves.
@@ -574,7 +574,7 @@ function productionPayload(planning, opts){
     const ln = { id: l.id, name: l.name,
       capacity: Math.round((l.cap || 0) / 4.33),             // u/mo → u/week
       oee: l.oee, changeover_matrix: subMatrix(lineSkus), changeover_mins: 30,
-      workers_per_shift: bn.m || 1, shifts_per_day: 1 };
+      workers_per_shift: bn.w || bn.m || 1, shifts_per_day: Number(l.shifts) || 1 };
     if(rate > 0) ln.hourly_rate = rate;                       // priced OT + shutdown
     return ln;
   });
@@ -1063,9 +1063,9 @@ const SOLVE_DEPS = {
   meio:        ['demand','productCosts','planning','bom','config','sourcing'],            // multi-echelon SS placement (RM→WIP→FG)
   meionet:     ['demand','productCosts','planning','bom','config','sourcing'],            // W8 — multi-product risk pooling on shared parts
   cvar:        ['demand','productCosts','planning','bom','config','sourcing'],            // costly-item newsvendor (h vs p) + CVaR robust stock
-  production:  ['demand','planning','productCosts'],
-  aggregate:   ['demand','planning','productCosts'],   // S&OP
-  linecap:     ['demand','planning','productCosts'],   // PL-A — line-capacity shadow price (₹/unit)
+  production:  ['demand','planning','productCosts','prodArch'],   // prodArch = editable lines/stages/changeover
+  aggregate:   ['demand','planning','productCosts','prodArch'],   // S&OP
+  linecap:     ['demand','planning','productCosts','prodArch'],   // PL-A — line-capacity shadow price (₹/unit)
   profitmix:   ['demand','productCosts','config'],
   transport:   ['demand','network'],
   capital:     ['demand','productCosts','config'],
@@ -1078,11 +1078,17 @@ const SOLVE_DEPS = {
 // stale" guard terminates the walk and prevents cycles.
 function markStale(key){
   const cur = { ...(appStore.get().solves || {}) };
+  const ts = new Date().toISOString();
   let touched = false;
+  // Batch 4 — remember the ROOT source that triggered staleness (the thing the user
+  // actually changed, e.g. 'demand'/'prodArch'/'config') so the Exception Cockpit can
+  // say "stale because you edited X" instead of a generic "inputs changed". The root
+  // is the original markStale argument, carried unchanged through the cascade.
+  const root = key;
   const visit = (k)=>{
     for(const [solve, deps] of Object.entries(SOLVE_DEPS)){
       if(deps.includes(k) && !(cur[solve] && cur[solve].stale)){
-        cur[solve] = { ...(cur[solve]||{}), stale:true };
+        cur[solve] = { ...(cur[solve]||{}), stale:true, staleSrc: root, staleAt: ts };
         touched = true;
         visit(solve);   // cascade to this solve's own consumers
       }
@@ -1193,6 +1199,81 @@ function addProduct(seed){
   return np;
 }
 
+// ── Production architecture editing (Batch 3) ───────────────────────────────
+// Lines → stages → machines is master data and was read-only (a Fact-5 bug). We
+// mutate window.M.lines / M.changeover IN PLACE (the same discipline as
+// editProductAttr) + bump _masterRev to re-render + flag the production-family
+// solves stale via the new 'prodArch' source. productionPayload already reads
+// M.lines/M.changeover directly, so no payload rewiring is needed.
+//   • Line capacity & bottleneck are DERIVED, never typed: line.cap = its slowest
+//     stage's cap; bottleneck = that stage. So editing one stage re-derives the
+//     line — the "a line is only as fast as its slowest stage" rule stays true.
+//   • A stage carries machines (m), workers (w), cycle (ct), OEE and capacity (cap).
+function _recalcLine(l){
+  const sts = (l && l.stages) || [];
+  if(!sts.length){ if(l){ l.cap = 0; l.bottleneck = '—'; } return; }
+  let min = Infinity, bn = sts[0];
+  sts.forEach(s=>{ const c = Number(s.cap)||0; if(c < min){ min = c; bn = s; } });
+  l.cap = (min===Infinity ? 0 : min);
+  l.bottleneck = bn.name;
+  sts.forEach(s=>{ s.bottleneck = (s===bn); });
+}
+function _prodChanged(target, patch){
+  bumpMaster(); try{ markStale('prodArch'); }catch(e){}
+  logEvent('override', target, patch);
+}
+function editLine(lineId, patch){
+  const M = window.M || {}; const l = (M.lines||[]).find(x=>x.id===lineId); if(!l) return;
+  Object.assign(l, patch); _prodChanged(lineId, { fields:Object.keys(patch), to:patch });
+}
+function editStage(lineId, stageId, patch){
+  const M = window.M || {}; const l = (M.lines||[]).find(x=>x.id===lineId); if(!l) return;
+  const s = (l.stages||[]).find(x=>x.id===stageId); if(!s) return;
+  Object.assign(s, patch); _recalcLine(l);
+  _prodChanged(lineId+'/'+stageId, { fields:Object.keys(patch), to:patch });
+}
+function addStage(lineId){
+  const M = window.M || {}; const l = (M.lines||[]).find(x=>x.id===lineId); if(!l) return;
+  const n = (l.stages||[]).length + 1;
+  const st = { id:`ST-${lineId.replace('LINE-','L')}-${Date.now()%10000}`, name:`Stage ${n}`,
+    m:1, w:1, ct:2, oee:0.85, cap:1200 };
+  (l.stages = l.stages||[]).push(st); _recalcLine(l);
+  bumpMaster(); try{ markStale('prodArch'); }catch(e){}
+  logEvent('commit', lineId, { addedStage:st.id });
+  return st;
+}
+function delStage(lineId, stageId){
+  const M = window.M || {}; const l = (M.lines||[]).find(x=>x.id===lineId); if(!l) return;
+  l.stages = (l.stages||[]).filter(s=>s.id!==stageId); _recalcLine(l);
+  bumpMaster(); try{ markStale('prodArch'); }catch(e){}
+  logEvent('cancel', lineId, { removedStage:stageId });
+}
+function addLine(){
+  const M = window.M || {}; const lines = (M.lines = M.lines||[]);
+  let n = lines.length + 1, id = `LINE-${String(n).padStart(2,'0')}`;
+  while(lines.some(l=>l.id===id)){ n++; id = `LINE-${String(n).padStart(2,'0')}`; }
+  const ln = { id, name:`New Line ${n}`, oee:0.82, shifts:1, cap:1200, bottleneck:'—', stages:[
+    { id:`ST-${id}-1`, name:'Stage 1', m:1, w:1, ct:2, oee:0.85, cap:1200 } ] };
+  _recalcLine(ln); lines.push(ln);
+  bumpMaster(); try{ markStale('prodArch'); }catch(e){}
+  logEvent('commit', id, { addedLine:true });
+  return ln;
+}
+function delLine(lineId){
+  const M = window.M || {}; M.lines = (M.lines||[]).filter(l=>l.id!==lineId);
+  bumpMaster(); try{ markStale('prodArch'); }catch(e){}
+  logEvent('cancel', lineId, { removedLine:true });
+}
+function setChangeover(ri, ci, val){
+  const M = window.M || {};
+  if(!M.changeover || !M.changeover[ri] || ri===ci) return;     // diagonal stays '—'
+  const num = Number(val);
+  if(val==='' || val==null || isNaN(num)) return;
+  M.changeover[ri][ci] = Math.max(0, num);
+  bumpMaster(); try{ markStale('prodArch'); }catch(e){}
+  logEvent('override', `changeover[${ri}][${ci}]`, { to:num });
+}
+
 // ── (R14) Model JSON round-trip — real backing for the "Import / Export" headers
 // (was inert). Exports the editable master fields + the persisted store slices;
 // import matches master rows by sku/part and replaces the store slices.
@@ -1250,6 +1331,7 @@ async function reportPdf(extra){
 Object.assign(window, {
   apiPost, apiGet, useSolve,
   bumpMaster, useMasterRev, editProductAttr, editPartAttr, addProduct,
+  editLine, editStage, addStage, delStage, addLine, delLine, setChangeover,
   exportModelJson, importModelJson, downloadText, reportPdf,
   appStore, useStore, useConfig, usePlanning, useCalendar, useProductCosts,
   getNetwork, useNetwork, msmeTier,

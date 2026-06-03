@@ -12,6 +12,7 @@ function StageFinance({ onNav }) {
         right={<Btn kind="secondary">📄 Board pack</Btn>}/>
       <SubTabNav tabs={tabs} active={sub} onChange={setSub}/>
       <div style={{padding:14}}>
+        {sub==='capital' && <SolverExplain id="capital"/>}
         {sub==='cash'    && <FinCash/>}
         {sub==='capital' && <FinCapital/>}
         {sub==='value'   && <FinValue/>}

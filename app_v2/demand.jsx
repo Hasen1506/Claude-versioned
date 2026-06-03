@@ -14,6 +14,21 @@ const FCAST_MODEL_LABEL = {
   ensemble:'Ensemble (top-N blend)',   // W9·D-5
 };
 const FCAST_INT = new Set(['croston','sba','tsb']);
+// Batch 4 (🟥) — distinguish a cold-start "warming up" (too little data yet) from a
+// genuine engine failure. A thin-history error is EXPECTED on a new SKU, so we show
+// it as amber guidance ("add more history, re-run"), not a red FAILED banner. Only a
+// real backend fault (timeout, traceback, missing engine) reads as an error.
+function fcStatus(fc){
+  if(!fc) return { kind:'idle' };
+  if(fc.solving) return { kind:'running' };
+  const e = fc.error;
+  if(e){
+    const cold = /histor|data|insufficient|too few|short|empty|length|at least|series|warm|min(imum)?\s*\d/i.test(String(e));
+    return { kind: cold?'warming':'error', msg:String(e) };
+  }
+  if(fc.result) return { kind:'ok' };
+  return { kind:'idle' };
+}
 // pull the winning model's forward forecast array out of a /api/forecast result.
 function winnerForecast(res){
   const p = res && res.products && res.products[0];
@@ -43,10 +58,11 @@ function fcPayload(item, grain, di, holidays){
 }
 function StageDemand({ onNav }) {
   const { item } = useActiveItem();
-  // Grain is the USER's choice — default DAY, because that's where demand spikes
-  // are visible and production gets scheduled. Week/Month are roll-ups of the
-  // daily signal; the engine runs at the chosen grain with a matching season.
-  const [grain, setGrain] = useState('daily');
+  // Grain is the USER's choice — default WEEK (Batch 4 🧭): the weekly roll-up shows
+  // a smooth, readable demand curve instead of the jagged day-grain "heart-monitor"
+  // spikes that confuse a first read. Day is one click away for spike-level planning;
+  // Month is the coarsest. The engine runs at the chosen grain with a matching season.
+  const [grain, setGrain] = useState('weekly');
   const sku = (item && item.code) || '';
   // Governed forecast INPUTS (W1 · D-1): planned promos + global holidays feed the
   // engine; re-running re-applies them. These are inputs, not the committed output.
@@ -74,12 +90,21 @@ function StageDemand({ onNav }) {
   );
   return (
     <div>
-      <StageHeader n="04" title="Demand Planning" kicker="Pick the grain (day shows the spikes) · run the model competition · read ABC/XYZ · override — all for the selected item"
+      <StageHeader n="04" title="Demand Planning" kicker="Pick the grain (week is the smooth default; day exposes the spikes) · run the model competition · read ABC/XYZ · override — all for the selected item"
         right={<div style={{display:'flex', alignItems:'center', gap:8}}>{grainToggle}<Btn kind="accent" onClick={()=>runForecast()}>{fc.solving?'⏳ Running…':'🤖 Run Forecast'}</Btn></div>}/>
       <ItemSelector/>
       <StageContext item={item} asOf={fc.ranAt ? fc.ranAt.toLocaleString('en-IN') : null}/>
       <div style={{padding:18}}>
-        {fc.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Forecast engine: {fc.error}</div>}
+        <SolverExplain id="forecast"/>
+        {(()=>{ const s=fcStatus(fc);
+          if(s.kind==='warming') return (
+            <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.a4}`, borderLeft:`5px solid ${C.a4}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.a4}}>
+              🌱 <b>Warming up</b> — not enough history yet to fit the full model competition ({s.msg}). Add more history in step 1 / import a series in step 1b, then re-run. This is a cold start, <b>not</b> a failure.
+            </div>);
+          if(s.kind==='error') return (
+            <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Forecast engine: {s.msg}</div>);
+          return null;
+        })()}
         <DemHistory item={item} grain={grain}/>
         <DemImport item={item} grain={grain} onApplied={()=>runForecast()}/>
         <DemForecast item={item} fc={fc} grain={grain}/>
@@ -324,7 +349,7 @@ function OverrideCard({ item, fcastArr }) {
   };
   return (
     <Card icon="✏️" title="Override + Schedule" badge={base?'writes to demand':'run forecast first'}
-      info={{ what:'Planner override on a forecast period; Apply writes back to the committed demand series the MILPs read.', flows:'Override -> committed demand -> Sourcing / Production.' }}
+      info={{ what:'Planner override on a forecast period; Apply writes back to the committed demand series the downstream solvers read.', flows:'Override -> committed demand -> Sourcing / Production.' }}
       dev={{ comp:'OverrideCard', props:'item, fcastArr', state:'demand[sku][period] via setItemDemand' }}>
       {!base ? (
         <div style={{padding:'16px', fontFamily:F.mono, fontSize:10.5, color:C.tx3, textAlign:'center', border:`2px dashed ${C.line2}`, background:C.bg3}}>
@@ -426,7 +451,7 @@ function DemActuals({ item, fc, grain }) {
                 <Blk label="Sensed horizon" value={`${(blended||[]).length} ${gl}s`} sub="blended" accent={C.gn}/>
               </div>
               <Reading formula="blended = sensed (pattern-matched actuals) ⊕ statistical baseline, decaying across the blend window"
-                soWhat={`Recent actuals match a ${r.primary_pattern||'none'} pattern — committing rewrites the near-term demand the MILPs plan to and re-flags every downstream solver to re-run.`}/>
+                soWhat={`Recent actuals match a ${r.primary_pattern||'none'} pattern — committing rewrites the near-term demand the downstream solvers plan to and re-flags every one to re-run.`}/>
               <div style={{marginTop:8}}><Btn kind="primary" sm onClick={commit}>Commit sensed → committed demand</Btn></div>
             </div>
           )}
@@ -451,19 +476,25 @@ function DemCommit({ item, fc }) {
   const lastFor = (code)=>{ for(let i=events.length-1;i>=0;i--){ const e=events[i];
     if(e.target===code && COMMIT_SRC[e.type]) return e; } return null; };
   const sumOf = (code)=>{ const s=demand[code]; return (s&&s.length)?s.reduce((a,b)=>a+(b||0),0):null; };
+  // Batch 4 (🟨, Theme 4) — the firm MTO order book, summed per SKU, so the unified
+  // consensus table shows the forecast-driven (MTS) number and the contracted (MTO)
+  // backlog side by side. `null` ⇒ this SKU has no firm orders (honest dash).
+  const firmFor = (code)=>{ const o=(M.orders||[]).filter(x=>x.sku===code && x.status==='firm');
+    return o.length ? o.reduce((a,b)=>a+(b.qty||0),0) : null; };
   const myS = demand[sku]; const myTot = sumOf(sku); const myEv = lastFor(sku);
   const grand = finished.reduce((a,p)=>a+(sumOf(p.sku)||0),0);
+  const grandFirm = finished.reduce((a,p)=>a+(firmFor(p.sku)||0),0);
   const committedCount = finished.filter(p=>sumOf(p.sku)!=null).length;
   return (
-    <StageSection step="7" title="Committed Demand" sub="the one number the plant plans to — the live series you built above, per item and rolled up to the company; no illustrative consensus table">
+    <StageSection step="7" title="Committed Demand & Consensus" sub="the one number the plant plans to — the live series you built above, per item and rolled up across every SKU with forecast-driven (MTS) and firm-order (MTO) demand side by side">
       <Grid cols={2}>
         <Card icon="✅" title={`Committed · ${item?item.name:'—'}`} badge={myTot!=null?'committed':'not committed'} badgeTone={myTot!=null?'y':'k'}
           right={myTot!=null ? <Provenance kind="solved" asOf={myEv?new Date(myEv.ts).toLocaleString('en-IN'):undefined}/> : <Provenance kind="derived"/>}
-          info={{ what:'The committed demand series the MILPs read for this item, with the action that last set it.', flows:'Committed → Sourcing / Production / Console.' }}
+          info={{ what:'The committed demand series the downstream solvers read for this item, with the action that last set it.', flows:'Committed → Sourcing / Production / Console.' }}
           dev={{ comp:'DemCommit', props:'demand[sku], events', state:'appStore.demand[sku]' }}>
           {myTot==null ? (
             <div style={{padding:'16px', fontFamily:F.mono, fontSize:10.5, color:C.tx3, textAlign:'center', border:`2px dashed ${C.line2}`, background:C.bg3}}>
-              No committed series yet — run the forecast (step 2). Until then the MILPs fall back to the seed annual demand spread evenly.
+              No committed series yet — run the forecast (step 2). Until then the solvers fall back to the seed annual demand spread evenly.
             </div>
           ) : (<>
             <div style={{display:'flex', gap:8, marginBottom:8}}>
@@ -479,35 +510,37 @@ function DemCommit({ item, fc }) {
             <Reading soWhat="This is the live committed series — overrides, demand-sensing and lifecycle shaping all write here, and the event trail above records which one set the current numbers."/>
           </>)}
         </Card>
-        <Card icon="🏢" title="Company Rollup" badge={`${committedCount}/${finished.length} committed`} badgeTone="y"
+        <Card icon="🏢" title="All-SKU Consensus" badge={`${committedCount}/${finished.length} committed`} badgeTone="y"
           right={<Provenance kind="derived"/>}
-          info={{ what:'Every finished SKU’s committed demand summed to a company total — the consolidated S&OP number.', flows:'Rollup → S&OP aggregate / capital plan.' }}
-          dev={{ comp:'CompanyRollup', props:'demand (all SKUs)', state:'Σ appStore.demand' }}>
+          info={{ what:'Every finished SKU on one line: the forecast-driven committed number (MTS) and the contracted firm-order backlog (MTO) side by side, summed to a company total.', flows:'Consensus → S&OP aggregate / capital plan.' }}
+          dev={{ comp:'AllSkuConsensus', props:'demand (all SKUs) + M.orders (firm)', state:'Σ appStore.demand · Σ firm MTO' }}>
           <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
             <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10}}>
               <thead><tr style={{background:C.ink}}>
-                {['SKU','Item','Committed Σ','Set by'].map((h,i)=><th key={i} style={{color:C.paper, textAlign:i>1?'right':'left', padding:'5px 8px', fontSize:8.5}}>{h}</th>)}
+                {['SKU','Item','Committed Σ (MTS)','Firm MTO','Set by'].map((h,i)=><th key={i} style={{color:C.paper, textAlign:i>1?'right':'left', padding:'5px 8px', fontSize:8.5}}>{h}</th>)}
               </tr></thead>
               <tbody>
-                {finished.map((p,i)=>{ const t=sumOf(p.sku); const e=lastFor(p.sku); const me=p.sku===sku;
+                {finished.map((p,i)=>{ const t=sumOf(p.sku); const fm=firmFor(p.sku); const e=lastFor(p.sku); const me=p.sku===sku;
                   return (
                   <tr key={p.sku} style={{background: me?C.ac: i%2?C.bg3:C.paper, borderTop:`1px solid ${C.line2}`}}>
                     <td style={{padding:'4px 8px', fontWeight:700, color:me?C.onAc:C.tx2}}>{p.sku}</td>
                     <td style={{padding:'4px 8px', color:me?C.onAc:C.tx2}}>{p.name}</td>
                     <td className="num" style={{padding:'4px 8px', textAlign:'right', fontWeight:700, fontFamily:F.disp, fontSize:12, color: me?C.onAc:(t!=null?C.tx:C.tx3)}}>{t!=null?Math.round(t).toLocaleString('en-IN'):'—'}</td>
+                    <td className="num" style={{padding:'4px 8px', textAlign:'right', fontWeight:700, fontFamily:F.disp, fontSize:12, color: me?C.onAc:(fm!=null?C.a2:C.tx3)}}>{fm!=null?Math.round(fm).toLocaleString('en-IN'):'—'}</td>
                     <td style={{padding:'4px 8px', textAlign:'right', fontSize:9, color:me?C.onAc:C.tx3}}>{t!=null?(e?COMMIT_SRC[e.type]:'Forecast'):'not run'}</td>
                   </tr>
                 );})}
                 <tr style={{background:C.ink}}>
                   <td colSpan={2} style={{padding:'5px 8px', color:C.paper, fontWeight:800, fontFamily:F.disp}}>COMPANY Σ</td>
                   <td className="num" style={{padding:'5px 8px', textAlign:'right', color:C.paper, fontWeight:800, fontFamily:F.disp, fontSize:13}}>{Math.round(grand).toLocaleString('en-IN')}</td>
-                  <td style={{padding:'5px 8px', textAlign:'right', color:C.ac, fontSize:9, fontWeight:700}}>committed</td>
+                  <td className="num" style={{padding:'5px 8px', textAlign:'right', color:C.ac2, fontWeight:800, fontFamily:F.disp, fontSize:13}}>{grandFirm?Math.round(grandFirm).toLocaleString('en-IN'):'—'}</td>
+                  <td style={{padding:'5px 8px', textAlign:'right', color:C.ac, fontSize:9, fontWeight:700}}>consensus</td>
                 </tr>
               </tbody>
             </table>
           </div>
-          <Reading formula="company committed = Σ over finished SKUs of each committed series"
-            soWhat={committedCount<finished.length ? `${finished.length-committedCount} SKU(s) have no committed series yet — run their forecast so the rollup reflects the whole portfolio, not a partial total.` : 'Every finished SKU has a committed series — this is the full consolidated demand the S&OP and capital plans consume.'}/>
+          <Reading formula="MTS committed = Σ each forecast/override series · MTO firm = Σ firm orders in the order book (status='firm')"
+            soWhat={committedCount<finished.length ? `${finished.length-committedCount} SKU(s) have no committed series yet — run their forecast so the consensus reflects the whole portfolio. Firm MTO orders (₹-blue) are already contracted backlog independent of the forecast.` : 'Every finished SKU has a committed MTS number; the firm MTO column (₹-blue) is contracted backlog already on the books — together they are the full consensus demand the S&OP and capital plans consume.'}/>
         </Card>
       </Grid>
     </StageSection>
@@ -582,11 +615,12 @@ function DemModels({ onNav, fc, item }) {
         </div>
         ) : (
         <div style={{padding:'20px 14px', border:`2px dashed ${C.line2}`, background:C.bg3, textAlign:'center', fontFamily:F.mono, fontSize:10.5, color:C.tx2, lineHeight:1.6}}>
-          {fc&&fc.error
-            ? <span style={{color:C.dg}}>Forecast engine error: {fc.error}</span>
-            : fc&&fc.solving
-              ? 'Running the model competition on your history…'
-              : <>No live result yet — press <b>🤖 Run Forecast</b> (top right). Nothing is fabricated here.</>}
+          {(()=>{ const s=fcStatus(fc);
+            if(s.kind==='warming') return <span style={{color:C.a4}}>🌱 Warming up — too little history to run the competition yet ({s.msg}). Add/import more history and re-run; this is a cold start, not an error.</span>;
+            if(s.kind==='error') return <span style={{color:C.dg}}>Forecast engine error: {s.msg}</span>;
+            if(s.kind==='running') return <>Running the model competition on your history…</>;
+            return <>No live result yet — press <b>🤖 Run Forecast</b> (top right). Nothing is fabricated here.</>;
+          })()}
         </div>
         )}
         {env && (
@@ -761,7 +795,7 @@ function DemSegment({ item, fc }) {
     <StageSection step="5" title="Segmentation & Lifecycle" sub="ABC = annual ₹-value Pareto · XYZ = demand CV · each cell prescribes a policy + model">
       <Grid cols={2}>
         <Card icon="🏷️" title="ABC / XYZ → method" badge="9-box"
-          info={{ what:'Value (ABC) × variability (XYZ) classification — and the planning method it routes to.', flows:'Segment → policy, forecast-model, and autopilot-vs-MILP routing.' }}
+          info={{ what:'Value (ABC) × variability (XYZ) classification — and the planning method it routes to.', flows:'Segment → policy, forecast-model, and autopilot-vs-optimizer routing.' }}
           dev={{ comp:'ABCXYZCard', props:'products, M.itemMethod' }}>
           <div style={{display:'grid', gridTemplateColumns:'40px 1fr 1fr 1fr', gap:4, marginTop:6}}>
             <div/>{['X · steady','Y · variable','Z · erratic'].map((h,i)=><div key={i} style={{fontFamily:F.mono, fontSize:9, color:C.tx3, textAlign:'center', textTransform:'uppercase'}}>{h}</div>)}
@@ -787,7 +821,7 @@ function DemSegment({ item, fc }) {
                 </div>
               ))}
             </div>
-            <div style={{marginTop:6, fontFamily:F.mono, fontSize:8.5, color:C.tx3, lineHeight:1.5}}>autopilot = (s,S)/ROP/EOQ rule, no solver · optimized = MILP (coupled capacity/MOQ/budget). Don’t drag a stable washer through the optimizer.</div>
+            <div style={{marginTop:6, fontFamily:F.mono, fontSize:8.5, color:C.tx3, lineHeight:1.5}}>autopilot = (s,S)/ROP/EOQ rule, no solver · optimized = LP/MILP optimizer (coupled capacity/MOQ/budget). Don’t drag a stable washer through the optimizer.</div>
           </div>
         </Card>
         <LifecycleCard item={item} fc={fc}/>
@@ -1003,9 +1037,9 @@ function DemImport({ item, grain, onApplied }){
   };
 
   return (
-    <StageSection step="1b" title={`Import history & NPI · ${item?item.name:''}`} sub="upload your own history (real CSV ingestion) or model a new product on an analog SKU — both feed the live model competition">
-      <Grid cols={2}>
-        {/* D-7 · CSV import */}
+    <StageSection step="1b" title={`Import history & NPI · ${item?item.name:''}`} sub="upload your own history (real CSV ingestion) or — for a brand-new product — model it on an analog SKU; both feed the live model competition">
+      <div>
+        {/* D-7 · CSV import — the common path, always visible */}
         <Card icon="⤓" title="Import history (CSV / TSV)" badge={imp?`imported · ${imp.series.length} ${gl}s`:'paste a series'} badgeTone={imp?'g':'k'}
           right={imp ? <Btn kind="secondary" sm onClick={clearImp}>Clear → seed</Btn> : null}
           info={{ what:'Paste a date,value (or value-only) series. The parser detects the delimiter + a header row and buckets dated rows to the active grain; the forecast engine then competes models on it.', flows:'histImports[sku] → fcPayload.history → /api/forecast.' }}
@@ -1031,9 +1065,12 @@ function DemImport({ item, grain, onApplied }){
           </>}
         </Card>
 
-        {/* NPI like-modeling */}
+        {/* NPI like-modeling — niche (only for brand-new products), hidden behind
+            Advanced (Batch 4 🧭) so the default view stays the one common path. */}
+        <div style={{marginTop:12}}>
+        <Advanced label="New-product (NPI) like-modeling · model a launch on an analog SKU" count={1}>
         <Card icon="🌱" title="NPI like-modeling (analog SKU)" badge="surrogate prior" badgeTone="y"
-          info={{ what:'A new or low-history item inherits the demand shape of an analog SKU, scaled and ramped to launch. analog × scale% × adoption-ramp → a like-modeled committed prior (provenance derived) the downstream plan can use until real actuals arrive.', flows:'analog history → setItemDemand[sku] → all MILPs.' }}
+          info={{ what:'A new or low-history item inherits the demand shape of an analog SKU, scaled and ramped to launch. analog × scale% × adoption-ramp → a like-modeled committed prior (provenance derived) the downstream plan can use until real actuals arrive.', flows:'analog history → setItemDemand[sku] → all downstream solvers.' }}
           dev={{ comp:'DemImport·npi', props:'analog × scale × ramp', state:'demand[sku] via setItemDemand' }}>
           <div style={{display:'flex', gap:8, flexWrap:'wrap', alignItems:'flex-end', marginBottom:8}}>
             <div>
@@ -1055,7 +1092,9 @@ function DemImport({ item, grain, onApplied }){
             <Reading formula="prior[t] = analog_history[t] × scale × min(1, (t+1)/ramp)" soWhat={`Until ${item?item.name:'the item'} has its own actuals, it plans to ${ref}'s shape scaled to ${Number(scale)||0}% with a ${Number(ramp)||0}-${gl} adoption ramp. Replace it once real sales land (Actuals → sensing).`}/>
           </> : <div style={{fontFamily:F.mono, fontSize:11, color:C.tx3, padding:'10px 0'}}>Pick an analog SKU with history to build a like-modeled launch prior.</div>}
         </Card>
-      </Grid>
+        </Advanced>
+        </div>
+      </div>
     </StageSection>
   );
 }

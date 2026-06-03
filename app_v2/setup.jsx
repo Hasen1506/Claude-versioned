@@ -51,8 +51,11 @@ function SetupIdentity({ onNav }) {
               {['ON','OFF'].map((o,i)=>{ const on=config.gstRegistered===(o==='ON');
                 return <div key={o} onClick={()=>setConfig({gstRegistered:o==='ON'})} style={{flex:1, textAlign:'center', padding:'5px 0', fontFamily:F.mono, fontSize:10, fontWeight:700, background:on?C.ink:C.paper, color:on?C.ac:C.tx3, borderRight:o==='ON'?`2px solid ${C.line}`:'none', cursor:'pointer'}}>{o}</div>; })}
             </div></Field>
+            <Field label="CIN" hint="corporate identity number — your registry of record">
+              <TextInput value={config.cin!=null?config.cin:M.cin} onChange={(v)=>setConfig({cin:v})} w={220}/>
+            </Field>
             <div style={{display:'flex', gap:6, flexWrap:'wrap', alignSelf:'flex-end', paddingBottom:4}}>
-              {config.gstRegistered && <Tag c="k">GST · ITC RECOVERABLE</Tag>}<span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx3}}>CIN {M.cin}</span>
+              {config.gstRegistered && <Tag c="k">GST · ITC RECOVERABLE</Tag>}
             </div>
           </div>
         </Card>
@@ -184,11 +187,29 @@ function SetupTemplates({ onNav }) {
   );
 }
 
+// horizonRange(planning): the date window the horizon ACTUALLY spans, computed live
+// from startDate + horizonLength × grain — so the banner follows the user's input
+// (the review's "I set 52 but the banner is stuck on the seed periods" bug). Returns
+// formatted start/end labels; pure date math, no seed period array.
+function horizonRange(planning){
+  const fmt = (d)=>d.toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'});
+  const start = new Date(planning.startDate || '2026-06-01');
+  if(isNaN(start.getTime())) return { start:'—', end:'—', days:0 };
+  const n = Math.max(1, Number(planning.horizonLength)||1);
+  const end = new Date(start);
+  if(planning.timeGrain==='day')        end.setDate(start.getDate() + (n-1));
+  else if(planning.timeGrain==='month'){ end.setMonth(start.getMonth() + n); end.setDate(end.getDate()-1); }
+  else                                   end.setDate(start.getDate() + (n*7 - 1));   // week (default)
+  const days = Math.round((end - start)/86400000) + 1;
+  return { start:fmt(start), end:fmt(end), days };
+}
+
 function SetupCalendar() {
-  const { config } = useConfig();
+  const { config, setConfig } = useConfig();
   const { planning, setPlanning } = usePlanning();
   const { calendar, setCalendar } = useCalendar();
   const grain = planning.timeGrain;
+  const customHolidays = config.customHolidays || [];
   // start_month is 0-indexed (Jan=0); derive from the YYYY-MM-DD start date.
   const startD = new Date(planning.startDate);
   const cal = useSolve('/api/calc/calendar', ()=>({
@@ -196,15 +217,35 @@ function SetupCalendar() {
     indian_holidays: planning.indianHolidays,
     start_month: startD.getMonth(),
     year: startD.getFullYear(),
+    state: config.plantState,                                            // selector now drives the gazette
+    custom_holidays: customHolidays.map(h=>[h.month, h.day, h.name]),     // per-day add/remove
   }));
   const recompute = async ()=>{ try{ const r=await cal.run(); setCalendar({ result:r, computedAt:new Date().toISOString() }); }catch(e){} };
+  // auto-compute once on load and whenever an input that changes the calendar moves —
+  // so the card is never silently showing stale seed and the plant-state selector is live.
+  React.useEffect(()=>{ recompute(); /* eslint-disable-next-line */ },
+    [config.plantState, planning.workDaysPerWeek, planning.startDate, planning.indianHolidays, customHolidays.length]);
   // live totals from the last /api/calc/calendar run (fall back to seed display)
   const res = calendar.result;
+  const yr = startD.getFullYear();
+  const daysInYear = (yr%4===0 && (yr%100!==0||yr%400===0)) ? 366 : 365;
   const workdays = res ? res.total_working_days : 270;
   const holidays = res ? res.total_holidays : 22;
-  const weekoff  = res ? Math.max(0, 365 - workdays - holidays) : 73;
+  const weekoff  = res ? Math.max(0, daysInYear - workdays - holidays) : 73;
   const tot = workdays + holidays + weekoff || 1;
-  const pdate = (p)=>{ const arr=M.periods; return arr[p]||{label:'—',date:''}; };
+  const hr = horizonRange(planning);
+  const stateName = {TN:'Tamil Nadu',MH:'Maharashtra',GJ:'Gujarat',KA:'Karnataka'}[config.plantState] || config.plantState;
+  // add-holiday local form state
+  const [nd, setNd] = React.useState(''); const [nn, setNn] = React.useState('');
+  const addHoliday = ()=>{ if(!nd) return; const d=new Date(nd); if(isNaN(d.getTime())) return;
+    const rec = { month:d.getMonth()+1, day:d.getDate(), name:nn||'Custom holiday', date:nd };
+    const dup = customHolidays.some(h=>h.month===rec.month && h.day===rec.day);
+    if(!dup){ setConfigCustom([...customHolidays, rec]); }
+    setNd(''); setNn(''); };
+  const setConfigCustom = (arr)=>{ setConfig({ customHolidays: arr });
+    if(typeof logEvent==='function') logEvent('override', 'calendar', { fields:['customHolidays'], to:{ count:arr.length } }); };
+  const removeHoliday = (i)=> setConfigCustom(customHolidays.filter((_,j)=>j!==i));
+  const isCustom = (m,d)=> customHolidays.some(h=>h.month===m && h.day===d);
   return (
     <StageSection step="3" title="Planning Calendar" sub="the one clock the whole app renders against — grain + horizon drive every period axis">
       <Grid cols={3}>
@@ -221,40 +262,55 @@ function SetupCalendar() {
           </Field>
           <div style={{marginTop:10, display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}}>
             <Field label="Horizon"><NumInput value={planning.horizonLength} suffix={grain+'s'} onChange={(v)=>setPlanning({horizonLength:v})}/></Field>
-            <Field label="Start Date"><TextInput value={planning.startDate} onChange={(v)=>setPlanning({startDate:v})}/></Field>
+            <Field label="Start Date" hint="pick a date — drives every period axis">
+              <input type="date" value={planning.startDate} onChange={(e)=>setPlanning({startDate:e.target.value})} style={{
+                border:`2px solid ${C.line}`, background:C.paper, color:C.tx, fontFamily:F.disp, fontWeight:600,
+                fontSize:13, padding:'5px 8px', height:30, width:'100%', outline:'none'}}/>
+            </Field>
             <Field label="Work Days / Wk"><NumInput value={planning.workDaysPerWeek} onChange={(v)=>setPlanning({workDaysPerWeek:v})}/></Field>
             <Field label="Frozen / Slushy"><TextInput value={`${planning.frozenWeeks}w / ${planning.slushyWeeks}w`}/></Field>
           </div>
           <div style={{marginTop:12, padding:'9px 11px', background:C.ac, color:C.onAc, fontFamily:F.mono, fontSize:10, fontWeight:600, lineHeight:1.5}}>
-            ◆ Planning {planning.horizonLength} {grain}ly buckets · {pdate(0).label} {pdate(0).date}-26 → {pdate(M.periods.length-1).label} {pdate(M.periods.length-1).date}-27 · {config.currency} · {(config.serviceLevel*100).toFixed(0)}% service.
+            ◆ Planning {planning.horizonLength} {grain}ly buckets · {hr.start} → {hr.end} ({hr.days} days) · {config.currency} · {(config.serviceLevel*100).toFixed(0)}% service.
           </div>
           <div style={{marginTop:8, padding:'7px 10px', border:`2px dashed ${C.a2}`, fontFamily:F.mono, fontSize:9, color:C.tx2, lineHeight:1.5}}>
-            ⛓ MPS · Procurement · Contracts all render this same horizon — change the grain or count here and the whole app re-buckets.
+            ⛓ MPS · Procurement · Contracts all render this same horizon — change the grain, count or start date here and the whole app re-buckets.
           </div>
         </Card>
 
-        <Card icon="📆" title="TN Gazetted Holidays 2026" badge={String(holidays)}
-          info={{ what:'State holidays removed from available workdays.', flows:'Net workdays → capacity calc.' }}
-          dev={{ comp:'HolidayEditor', props:'useSolve(/api/calc/calendar)', state:'calendar.result.holiday_list' }} span={2}
+        <Card icon="📆" title={`${config.plantState} · ${stateName} Holidays ${yr}`} badge={String(holidays)}
+          info={{ what:'Gazetted + regional state holidays removed from available workdays; you can add your own.', flows:'Net workdays → capacity calc.' }}
+          dev={{ comp:'HolidayEditor', props:'useSolve(/api/calc/calendar)', state:'calendar.result.holiday_list + config.customHolidays' }} span={2}
           right={<div style={{display:'flex', alignItems:'center', gap:8}}>
             {res && <Provenance kind="solved" run="calendar.py" asOf={calendar.computedAt ? new Date(calendar.computedAt).toLocaleTimeString() : undefined}/>}
-            <Btn kind={res?'secondary':'primary'} onClick={recompute}>{cal.solving?'computing…':res?'↻ Recompute':'⚙ Compute calendar'}</Btn>
+            <Btn kind="secondary" onClick={recompute}>{cal.solving?'computing…':'↻ Recompute'}</Btn>
           </div>}>
           {cal.error && <div style={{marginBottom:10, padding:'7px 10px', border:`2px solid ${C.dg}`, color:C.dg, fontFamily:F.mono, fontSize:10}}>⚠ {cal.error}</div>}
-          {!res && <div style={{marginBottom:10, padding:'7px 10px', border:`2px dashed ${C.line2}`, fontFamily:F.mono, fontSize:9.5, color:C.tx3}}>showing seed figures — click <b>Compute calendar</b> to derive working days from the real engine for {startD.getFullYear()}.</div>}
+          {!res && !cal.solving && <div style={{marginBottom:10, padding:'7px 10px', border:`2px dashed ${C.line2}`, fontFamily:F.mono, fontSize:9.5, color:C.tx3}}>showing seed figures — computing from the real engine…</div>}
+          {/* add-a-holiday row — the per-day editor the review asked for */}
+          <div style={{display:'flex', alignItems:'flex-end', gap:8, marginBottom:10, flexWrap:'wrap', padding:'8px 10px', border:`2px dashed ${C.line2}`, background:C.bg3}}>
+            <Field label="Add holiday — date">
+              <input type="date" value={nd} onChange={(e)=>setNd(e.target.value)} style={{border:`2px solid ${C.line}`, background:C.paper, color:C.tx, fontFamily:F.disp, fontWeight:600, fontSize:12, padding:'4px 7px', height:28, outline:'none'}}/>
+            </Field>
+            <Field label="Label"><TextInput value={nn} onChange={setNn} w={160}/></Field>
+            <Btn kind="accent" sm onClick={addHoliday}>＋ Add</Btn>
+            <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3, marginLeft:'auto'}}>regional add-ons for {config.plantState} are bundled · your customs marked ◆</span>
+          </div>
           {/* holiday list — from the solver when available, else the mock gazette */}
           <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'2px 16px'}}>
             {(res && res.holiday_list && res.holiday_list.length
-              ? res.holiday_list.map(h=>[`${String(h.day).padStart(2,'0')}/${String(h.month).padStart(2,'0')}`, h.name])
-              : M.holidays
-            ).map(([d,n],i)=>(
-              <div key={i} style={{display:'flex', justifyContent:'space-between', fontFamily:F.mono, fontSize:11, padding:'5px 0', borderBottom:`1px dotted ${C.line2}`}}>
-                <span style={{fontWeight:700}}>{d}</span><span style={{color:C.tx2}}>{n}</span>
+              ? res.holiday_list.slice().sort((a,b)=>a.month-b.month||a.day-b.day).map(h=>({d:`${String(h.day).padStart(2,'0')}/${String(h.month).padStart(2,'0')}`, n:h.name, cust:isCustom(h.month,h.day), m:h.month, day:h.day}))
+              : M.holidays.map(([d,n])=>({d,n,cust:false}))
+            ).map((h,i)=>(
+              <div key={i} style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:6, fontFamily:F.mono, fontSize:11, padding:'5px 0', borderBottom:`1px dotted ${C.line2}`}}>
+                <span style={{fontWeight:700, whiteSpace:'nowrap'}}>{h.cust?'◆ ':''}{h.d}</span>
+                <span style={{color:C.tx2, flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', textAlign:'right'}}>{h.n}</span>
+                {h.cust && <button onClick={()=>removeHoliday(customHolidays.findIndex(x=>x.month===h.m&&x.day===h.day))} title="remove custom holiday" style={{border:'none', background:'transparent', color:C.dg, cursor:'pointer', fontSize:11, padding:0, lineHeight:1}}>✕</button>}
               </div>
             ))}
           </div>
           <div style={{marginTop:12}}>
-            <SubLabel>Workday availability · {startD.getFullYear()}{res?'':' (seed)'}</SubLabel>
+            <SubLabel>Workday availability · {yr}{res?'':' (seed)'}</SubLabel>
             <div style={{display:'flex', height:26, border:`2px solid ${C.line}`}}>
               <div style={{width:`${workdays/tot*100}%`, background:C.gn, color:'#fff', display:'grid', placeItems:'center', fontFamily:F.mono, fontSize:10, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden'}}>{workdays} WORKDAYS</div>
               <div style={{width:`${weekoff/tot*100}%`, background:C.bg3, display:'grid', placeItems:'center', fontFamily:F.mono, fontSize:9, whiteSpace:'nowrap', overflow:'hidden'}}>{weekoff} WK-OFF</div>
@@ -294,7 +350,7 @@ function SetupProfile() {
           info={{ what:'Adaptive triage: each answer hides stages that don\u2019t apply to your operation.', flows:'Profile → spine gating, nav, solver readiness.' }}
           dev={{ comp:'PlanningProfileCard', props:'state.profile, dispatch(SET_PROFILE)', state:'profile.{makePolicy,capacity,imports,lines,distribution,externalForecast}', note:'Drives M.profileGate — gated stages render <GateNote/>, not empty grids.' }}>
           <Grid cols={2} gap={12}>
-            <Field label="Make policy"><Seg k="makePolicy" opts={[['MTS + MTO','MTS+MTO'],['MTO','pure MTO'],['ATO','ATO']]}/></Field>
+            <Field label="Make policy"><Seg k="makePolicy" opts={[['MTS','pure MTS'],['MTS+MTO','MTS+MTO'],['MTO','pure MTO'],['ATO','ATO']]}/></Field>
             <Field label="Capacity tightness"><Seg k="capacity" opts={[['tight','tight'],['ample','ample']]}/></Field>
             <Field label="Imports?"><Seg k="imports" opts={[[true,'yes'],[false,'no']]}/></Field>
             <Field label="Production lines"><Seg k="lines" opts={[['1','single'],['many','many']]}/></Field>

@@ -313,7 +313,7 @@ const M = {
     { id:'plan',     name:'Plan · S&OP', kind:'LP (closed-loop)',    accent:'a3' },
     { id:'optimize', name:'Optimize',    kind:'LP / MILP',          accent:'ink' },
     { id:'risk',     name:'Risk',        kind:'simulation / robust', accent:'a4' },
-    { id:'capital',  name:'Capital',     kind:'MILP',               accent:'gn' },
+    { id:'capital',  name:'Capital',     kind:'LP / MILP',          accent:'gn' },
   ],
   solvers:[
     { id:'forecast',         name:'Forecast',        fam:'forecast', engine:'HW·ARIMA·ML·DL·Croston', status:'done',    obj:'MAPE 6.8%',  go:'demand' },
@@ -323,14 +323,14 @@ const M = {
     { id:'profitmix',        name:'Profit Mix',      fam:'optimize', engine:'LP',          status:'done',    obj:'₹6.84 Cr',   go:'console' },
     { id:'procurement',      name:'Procurement',     fam:'optimize', engine:'MILP',        status:'running', obj:'₹3.12 Cr',   go:'console' },
     { id:'production',        name:'Production',      fam:'optimize', engine:'MILP',        status:'queued',  obj:'₹42 L',      go:'console' },
-    { id:'sequencing',       name:'Sequencing',      fam:'optimize', engine:'MILP',        status:'queued',  obj:'−18% setup',  go:'production' },
-    { id:'lotsizing',        name:'Lot Sizing',      fam:'optimize', engine:'MILP',        status:'idle',    obj:'EOQ / WW',   go:'console' },
-    { id:'transport',        name:'Transport',       fam:'optimize', engine:'MILP',        status:'queued',  obj:'₹24.8 L',    go:'logistics' },
+    { id:'sequencing',       name:'Sequencing',      fam:'optimize', engine:'ATSP heuristic',status:'queued',  obj:'−18% setup',  go:'production' },
+    { id:'lotsizing',        name:'Lot Sizing',      fam:'optimize', engine:'closed-form / DP',status:'idle',  obj:'EOQ / WW',   go:'console' },
+    { id:'transport',        name:'Transport',       fam:'optimize', engine:'LP',          status:'queued',  obj:'₹24.8 L',    go:'logistics' },
     { id:'allocation',       name:'Allocation',      fam:'optimize', engine:'LP',          status:'idle',    obj:'DC→cust',    go:'logistics' },
-    { id:'consolidate',      name:'Consolidate',     fam:'optimize', engine:'MILP',        status:'idle',    obj:'₹3.2 L',     go:'logistics' },
+    { id:'consolidate',      name:'Consolidate',     fam:'optimize', engine:'heuristic',   status:'idle',    obj:'₹3.2 L',     go:'logistics' },
     { id:'montecarlo',       name:'Monte Carlo',     fam:'risk',     engine:'SIM',         status:'idle',    obj:'1,000 runs', go:'scenarios' },
-    { id:'cvar',             name:'CVaR',            fam:'risk',     engine:'robust LP',   status:'idle',    obj:'₹528 L',     go:'scenarios' },
-    { id:'capital',          name:'Capital',         fam:'capital',  engine:'MILP',        status:'idle',    obj:'NPV +₹24L',  go:'finance' },
+    { id:'cvar',             name:'CVaR',            fam:'risk',     engine:'stochastic LP',status:'idle',    obj:'₹528 L',     go:'scenarios' },
+    { id:'capital',          name:'Capital',         fam:'capital',  engine:'LP',          status:'idle',    obj:'NPV +₹24L',  go:'finance' },
     { id:'capital_capacity', name:'Capital Capacity',fam:'capital',  engine:'MILP',        status:'idle',    obj:'+38% cap',   go:'finance' },
   ],
   // real /api/solve hand-offs (data dependencies) drawn as edges
@@ -351,9 +351,9 @@ const M = {
     { id:'procurement', label:'Procurement MILP', sel:true },
     { id:'production',  label:'Production MILP' },
     { id:'profitmix',   label:'Profit Maximizer LP' },
-    { id:'transport',   label:'Transport MILP' },
+    { id:'transport',   label:'Transport LP' },
     { id:'montecarlo',  label:'Monte Carlo SIM' },
-    { id:'capital',     label:'Capital Budget MILP' },
+    { id:'capital',     label:'Capital Budget LP' },
     { id:'sop',         label:'Closed-Loop S&OP' },
     { id:'pipeline',    label:'Full Pipeline' },
     { id:'rolling',     label:'Rolling-Horizon' },
@@ -612,6 +612,162 @@ M.solverIO = {
   capital_capacity:{ answers:'how much capacity to add',       from:'persistent duals · CapEx',         feeds:'Finance verdict' },
 };
 
+// ════════════════════════════════════════════════════════════════════════
+// AUTHORITATIVE SOLVER TAXONOMY (audit fix) — what each engine ACTUALLY is.
+// Read straight off each module's docstring + variable categories in the .py:
+//   • MILP  — has integer/binary decision vars (procurement, production,
+//             capital_capacity, meio)
+//   • LP    — continuous decision vars, valid duals (profitmix*, aggregate,
+//             transport, capital*, linecap, cvar; *optional binary extension)
+//   • closed-form / DP — analytical formulas, no math-program (lot_sizing,
+//             policy, meio_network, disaggregate, reconcile)
+//   • heuristic — combinatorial search, no LP (sequencing ATSP, consolidate)
+//   • simulation — Monte-Carlo sampling, NOT an optimizer (montecarlo)
+//   • statistical / ML — model competition (forecast, pattern_sensing)
+// The platform was labelling half of these "MILP" — corrected here and in the
+// roster. `tag` is a Tag colour. `solves` distinguishes optimiser vs not.
+M.solverType = {
+  forecast:        { type:'Statistical / ML',  tag:'a2', solves:false, method:'A competition of classical (Holt-Winters, ARIMA), intermittent (Croston/SBA/TSB) and ML/DL models, ranked by held-out MAPE. It fits and predicts — it does not optimise anything.' },
+  aggregate:       { type:'LP',                tag:'a3', solves:true,  method:'Hax–Meal multi-period aggregate-planning linear program: continuous production / inventory / workforce over monthly buckets (level-vs-chase). Valid duals.' },
+  disaggregate:    { type:'Closed-form',       tag:'w',  solves:false, method:'Proportional split of the family plan to SKUs by seasonal + working-day profile. Arithmetic, not a solver.' },
+  reconcile:       { type:'Closed-form',       tag:'w',  solves:false, method:'Iterative S&OP reconciliation — feeds production back into the mix until the gap closes. Arithmetic loop.' },
+  profitmix:       { type:'LP',                tag:'a3', solves:true,  method:'A TRUE linear program maximising contribution margin (continuous q[k], x[k,l]); emits shadow prices, reduced costs and crossover. Optional binary open_line for multi-line.' },
+  procurement:     { type:'MILP',              tag:'k',  solves:true,  method:'Mixed-integer program: continuous buy/produce quantities + BINARY setup/order indicators (y, o). Integer ⇒ no valid duals.' },
+  production:      { type:'MILP',              tag:'k',  solves:true,  method:'Mixed-integer scheduler: continuous build quantities + BINARY produce/changeover indicators over lines × periods.' },
+  sequencing:      { type:'Heuristic (ATSP)',  tag:'v',  solves:true,  method:'Shortest Hamiltonian path over the asymmetric changeover matrix — exact (Held-Karp) for few SKUs, nearest-neighbour + local search above. Combinatorial, no LP.' },
+  lotsizing:       { type:'Closed-form / DP',  tag:'v',  solves:true,  method:'EOQ (Wilson), POQ, (s,S), EPQ and Wagner-Whitin dynamic programming. Analytical / DP — not a math-program.' },
+  transport:       { type:'LP',                tag:'a3', solves:true,  method:'Transportation / min-cost-flow linear program: continuous shipment quantities x[i,j] minimising lane cost. Valid duals.' },
+  allocation:      { type:'LP',                tag:'a3', solves:true,  method:'DC→customer assignment as a weighted min-cost flow LP.' },
+  consolidate:     { type:'Heuristic',         tag:'v',  solves:true,  method:'LTL→FTL truck consolidation by ⌈Σ truck-fractions⌉ — a packing rule, not an optimiser.' },
+  montecarlo:      { type:'Simulation',        tag:'a4', solves:false, method:'Monte-Carlo: thousands of demand/cost draws replayed against the committed plan to get a fill / cost distribution. Sampling, not optimisation.' },
+  cvar:            { type:'Stochastic LP',     tag:'a4', solves:true,  method:'Rockafellar–Uryasev CVaR newsvendor: a scenario-based linear program minimising the β-tail cost. Continuous, valid duals.' },
+  capital:         { type:'LP',                tag:'gn', solves:true,  method:'Capital-budgeting LP: maximise portfolio NPV under a budget (0–1 selection variables, continuous by default — an LP relaxation of the knapsack).' },
+  capital_capacity:{ type:'MILP',              tag:'k',  solves:true,  method:'Multi-period capacity expansion with BINARY invest[i,t] timing + budget rollover. True mixed-integer.' },
+  meio:            { type:'MILP',              tag:'k',  solves:true,  method:'Graves–Willems guaranteed-service placement: INTEGER service times + BINARY hold flags over the assembly tree.' },
+  meionet:         { type:'Closed-form',       tag:'w',  solves:false, method:'Square-root-law risk pooling across the SKUs that share a part — an analytical consolidation, not a math-program.' },
+  policy:          { type:'Closed-form',       tag:'w',  solves:false, method:'(s,S) / (R,Q) reorder policy from EOQ + z·σ safety stock (Hadley-Whitin). Formulas, not a solver.' },
+};
+
+// ── TERM → INPUT PROVENANCE (audit fix) — does every term in the model actually
+// have a DEFINE-section input feeding it, or is the solver carrying capability we
+// never wire (the "too much stuff")? Per headline engine: the objective, decision
+// vars, constraints, each cost/RHS term mapped to the tab that supplies it
+// (wired:true) or honestly flagged as defaulted inside the .py (wired:false), and
+// `extras` = modelled capability with NO input surface at all. Authored from the
+// .py docstrings + the payload builders in store.jsx / the stage tabs.
+M.solverModel = {
+  forecast: {
+    objective:'minimise held-out forecast error (MAPE) across competing models — then predict h periods ahead',
+    vars:['fitted model parameters per candidate (HW/ARIMA/ML/…)','the winning forecast series'],
+    constraints:['none — it is an estimator, not a feasibility problem'],
+    terms:[
+      { t:'demand history', src:'Demand → history / CSV import', wired:true },
+      { t:'promo flags', src:'Demand → Promotions', wired:true },
+      { t:'holiday calendar', src:'Setup / Demand → Holidays', wired:true },
+      { t:'season length · horizon · grain', src:'derived from the grain toggle', wired:true },
+    ], extras:['external-forecast bypass (gate)'] },
+  profitmix: {
+    objective:'maximise Σ (sell_price − variable_cost)·q[k] − Σ line fixed/open costs',
+    vars:['q[k] ≥ 0 units per SKU (continuous)','x[k,l] units of k on line l','open_line[l] binary (optional)'],
+    constraints:['demand ceiling (forecast) & MTO floor','shared + per-line capacity (hours)','budget','material availability (BOM)','warehouse space'],
+    terms:[
+      { t:'sell_price', src:'Products → price', wired:true },
+      { t:'variable_cost', src:'Products → cost', wired:true },
+      { t:'demand ceiling (forecast)', src:'Demand → committed series', wired:true },
+      { t:'cycle_time / capacity hrs', src:'Production → stage cycle time, line hours', wired:true },
+      { t:'material availability', src:'Products → BOM (qty_per, yield)', wired:true },
+      { t:'budget (₹ cap)', src:'— defaulted in profitmix.py (no input)', wired:false },
+      { t:'warehouse space', src:'— defaulted (no input)', wired:false },
+      { t:'mto_orders floor', src:'— order book exists (M.orders) but not fed', wired:false },
+    ], extras:['dedicated/fixed-open line economics','planning_mode · shelf_life','salvage_rate'] },
+  procurement: {
+    objective:'minimise setup + FG holding + production + expiry + shortage + RM purchase + RM holding + RM ordering',
+    vars:['p[k,t] produce qty (continuous)','r[i,t] RM order qty','y[k,t] BINARY produce flag','o[i,t] BINARY order flag'],
+    constraints:['inventory balance (FG & RM)','BOM material requirement','capacity','service-level safety stock','MOQ / shelf-life'],
+    terms:[
+      { t:'demand', src:'Demand → committed series', wired:true },
+      { t:'BOM qty_per · yield', src:'Products → BOM', wired:true },
+      { t:'part cost → landed', src:'Network contracts + Sourcing → duty/freight', wired:true },
+      { t:'lead_time', src:'Products / Network → supplier LT', wired:true },
+      { t:'ordering · setup cost', src:'Products → costs', wired:true },
+      { t:'service_level', src:'Sourcing → solver param', wired:true },
+      { t:'carry / holding rate', src:'— partially defaulted in .py', wired:false },
+      { t:'budget · early-pay · inflation', src:'— defaulted (no input)', wired:false },
+    ], extras:['regime-aware sourcing','VMI','CVaR fill-rate sourcing','supplier & FX concentration caps','transport disruptions','milk-run / terminal-anchor','RM warehouse area/volume limits','working-capital & locked-PO replan'] },
+  production: {
+    objective:'minimise setup + overtime + makespan penalty + FG holding',
+    vars:['build[k,l,t] qty (continuous)','run[k,l,t] BINARY produce flag','changeover indicators (binary)'],
+    constraints:['line capacity (hours, OEE)','changeover time','inventory balance ≥ committed demand','campaign minimum run'],
+    terms:[
+      { t:'required_qty (demand)', src:'Demand → committed series', wired:true },
+      { t:'cycle_time · OEE', src:'Production → stage editor', wired:true },
+      { t:'changeover matrix', src:'Production → changeover (editable)', wired:true },
+      { t:'line hours · shifts · workers', src:'Production → line/stage editor', wired:true },
+      { t:'holding cost', src:'Plan / Production → solver param', wired:true },
+      { t:'overtime · labor rate', src:'Production → solver param', wired:true },
+      { t:'campaign_min_run', src:'Production → ProdParams', wired:true },
+    ], extras:['salaried-vs-hourly labour mode','headcount / OT caps','rehire-notice cost','shared-stage ids','parallelism','planned maintenance'] },
+  aggregate: {
+    objective:'minimise regular + overtime production + holding + backorder + hire + fire + wage',
+    vars:['P,O,I,B ≥ 0 (production/OT/inventory/backorder)','W,H,F workforce (continuous, optional integer)'],
+    constraints:['inventory balance','workforce balance (W=W₋₁+H−F)','capacity = rate·W','min/max workforce ≤ line registry'],
+    terms:[
+      { t:'forecast', src:'Demand → committed series', wired:true },
+      { t:'reg / OT / holding / backorder cost', src:'Plan → cost inputs', wired:true },
+      { t:'hire / fire / wage', src:'Plan → cost inputs', wired:true },
+      { t:'rate_per_worker', src:'Plan → cost inputs', wired:true },
+      { t:'min/max workforce', src:'derived from line registry capacity', wired:true },
+      { t:'labor_hours_per_unit', src:'— defaulted to 1 (no input)', wired:false },
+      { t:'init inventory / workforce', src:'— seed constant', wired:false },
+      { t:'safety stock · ending-inv target', src:'— defaulted (no input)', wired:false },
+    ], extras:['integer-workforce toggle'] },
+  transport: {
+    objective:'minimise Σ cost_matrix[i,j]·x[i,j] (lane cost)',
+    vars:['x[i,j] ≥ 0 shipment qty origin→dest (continuous)'],
+    constraints:['supply at each origin','demand at each destination'],
+    terms:[
+      { t:'demand at destinations', src:'Demand → committed series', wired:true },
+      { t:'supply / DC stock', src:'Network → on-hand', wired:true },
+      { t:'cost_matrix (lane rate × distance)', src:'Network → lanes', wired:true },
+      { t:'weight per unit', src:'derived (SKU weight)', wired:true },
+      { t:'customs / import duty', src:'— defaulted (no input)', wired:false },
+      { t:'demand spike / stockout risk', src:'— defaulted (no input)', wired:false },
+    ], extras:['mode overrides','carrier tracking','disruption sensing'] },
+  capital: {
+    objective:'maximise Σ NPVᵢ·xᵢ subject to budget',
+    vars:['xᵢ ∈ [0,1] select option i (continuous LP-relaxation; binary optional)'],
+    constraints:['Σ capexᵢ·xᵢ ≤ budget','mutual exclusivity groups','dependencies'],
+    terms:[
+      { t:'capex per option', src:'Finance → Investment options', wired:true },
+      { t:'annual cash flow', src:'Finance → Investment options', wired:true },
+      { t:'WACC (discount)', src:'Finance → WACC card', wired:true },
+      { t:'residual value · useful life', src:'Finance → Investment options', wired:true },
+      { t:'budget cap', src:'— defaulted (no input)', wired:false },
+      { t:'exclusivity / dependencies', src:'— defaulted (no input)', wired:false },
+    ], extras:['buy-vs-lease split'] },
+  montecarlo: {
+    objective:'(none — simulation) estimate the fill-rate & cost DISTRIBUTION of the committed plan',
+    vars:['random demand & cost draws per run (not decisions)'],
+    constraints:['replays the cached production schedule / base-stock policy'],
+    terms:[
+      { t:'mean demand + MAPE (σ)', src:'Demand → committed + forecast error', wired:true },
+      { t:'unit cost · sell price', src:'Products → cost / price', wired:true },
+      { t:'service level', src:'Sourcing → solver param', wired:true },
+      { t:'policy (production plan)', src:'cached production solve', wired:true },
+      { t:'prod lead-time + CV', src:'— defaulted (no input)', wired:false },
+      { t:'demand–cost correlation', src:'— defaulted (no input)', wired:false },
+    ], extras:['per-SKU bill draw','shelf-life expiry in the sim'] },
+  cvar: {
+    objective:'minimise CVaR_β (expected cost in the worst β-tail) of the newsvendor position',
+    vars:['Q order-up-to ≥ 0','α VaR level (free)','o,u,z ≥ 0 scenario over/under/excess-tail'],
+    constraints:['z_s ≥ L_s − α (tail linearisation) per sampled scenario'],
+    terms:[
+      { t:'mean & std of demand', src:'derived from committed demand + forecast error', wired:true },
+      { t:'β (tail level)', src:'Scenarios → governed param', wired:true },
+      { t:'holding · shortage cost', src:'— defaulted in cvar.py (no input)', wired:false },
+    ], extras:['scenario count n_scenarios'] },
+};
+
 // ── 7.4 — item-method routing: not everything needs MILP ──
 // AX/AY coupled → optimized (MILP). CZ stable → autopilot (s,S)/ROP/EOQ.
 M.itemMethod = (sku)=>{
@@ -620,7 +776,7 @@ M.itemMethod = (sku)=>{
 };
 M.methodMeta = {
   autopilot:{ label:'autopilot (s,S)', tag:'g', note:'independent-demand, stable, low-value — managed by a reorder rule, no solver' },
-  optimized:{ label:'optimized (MILP)', tag:'v', note:'dependent / coupled decision — shared capacity, MOQs, price breaks, budget split → MILP' },
+  optimized:{ label:'optimized (LP/MILP)', tag:'v', note:'dependent / coupled decision — shared capacity, MOQs, price breaks, budget split → LP/MILP optimizer' },
 };
 
 // ── 7.5 — two ingestion modes (replace the toy entry grid) ──

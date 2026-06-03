@@ -76,11 +76,23 @@ function StagePlan({ onNav }) {
   }, { solveKey:'aggregate' });   // LP-C hydrate from loop cache
   const { stale, ranAt } = (typeof useStale==='function') ? useStale('aggregate') : { stale:false };
   const runAgg = ()=> agg.run().then(d=>{ if(typeof markSolved==='function') markSolved('aggregate'); return d; }).catch(()=>{});
+  // Batch 4 — make the level-of-aggregation explicit. The S&OP plan pools every
+  // finished SKU into a family/portfolio capacity & workforce plan; SKUs come back
+  // in step 4. Users kept reading the family numbers as per-SKU numbers.
+  const _finP = M.products.filter(p=>p.cat==='Finished');
+  const famN = [...new Set(_finP.map(p=>p.family).filter(Boolean))].length;
   return (
     <div>
       <StageHeader n="05" title="Plan · Sales & Operations" kicker="Level-vs-chase strategy · seasonal prebuild · workforce plan · capacity duals · SKU disaggregation"
         right={<Btn kind="accent" onClick={runAgg}>{agg.solving?'⏳ Solving…':'⚡ Solve Aggregate'}</Btn>}/>
+      <div style={{padding:'9px 18px', borderBottom:`2px solid ${C.line}`, background:C.bg3, display:'flex', alignItems:'center', gap:10}}>
+        <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.12em', color:C.onAc, background:C.ink, padding:'3px 8px', whiteSpace:'nowrap'}}>VIEWING ▸ FAMILIES</span>
+        <span style={{fontFamily:F.body, fontSize:11.5, color:C.tx2, lineHeight:1.4}}>
+          You're looking at <b>{famN||'all'} product {famN===1?'family':'families'}</b>, not individual SKUs. The aggregate plan pools every finished SKU's committed demand into one capacity &amp; workforce plan — per-SKU numbers are recovered in <b>step 4 · Disaggregation</b>.
+        </span>
+      </div>
       <div style={{padding:18}}>
+        <SolverExplain id="aggregate"/>
         {agg.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Aggregate solver: {agg.error}</div>}
         {stale && <StaleMark since="(demand or cost inputs changed)" onNav={runAgg} go="rerun"/>}
         <StageSection step="0" title="Plan Cost Inputs" sub="governed — seed defaults you may override; the workforce is bounded so the plan can never exceed the line registry"><PlanParamsCard config={config} setConfig={setConfig} lineCap={lineCap} rate={rate} wfCeiling={wfCeiling} agg={agg} ranAt={ranAt}/></StageSection>

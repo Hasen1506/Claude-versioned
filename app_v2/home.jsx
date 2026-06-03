@@ -39,6 +39,14 @@ function _agoH(ts){ if(!ts) return ''; try{ const m=Math.round((Date.now()-new D
   return m<1?'just now':m<60?`${m}m ago`:`${Math.round(m/60)}h ago`; }catch(e){ return ''; } }
 const _crH = n => (n==null||isNaN(n)) ? '—' : '₹ '+(n/1e7).toFixed(2)+' Cr';
 const _lkH = n => (n==null||isNaN(n)) ? '—' : '₹'+(n/1e5).toFixed(1)+'L';
+// Batch 4 — lifecycle-state presentation map (one source for the merged strip).
+const LIFE_META = {
+  blocked: { tag:'r', label:'BLOCKED', col:'var(--dg)' },
+  ready:   { tag:'w', label:'READY',   col:'var(--tx3)' },
+  fresh:   { tag:'g', label:'FRESH',   col:'var(--gn)' },
+  stale:   { tag:'y', label:'STALE',   col:'var(--a4)' },
+};
+const _capH = s => s ? s.charAt(0).toUpperCase()+s.slice(1) : s;
 
 // ── HOME · LIVE STATE-OF-PLAN BOARD ───────────────────────────────────────────
 // Restructured (R13): Home answers one question on load — "is my committed plan
@@ -46,8 +54,9 @@ const _lkH = n => (n==null||isNaN(n)) ? '—' : '₹'+(n/1e5).toFixed(1)+'L';
 // cache (solveResults) with a freshness stamp; "—" until solved (never faked). One
 // primary action re-plans the whole model (runFullLoop). It absorbs the monitoring
 // surfaces that used to live in Scenarios — the D8 exception inbox and the D2 value
-// ledger (rendered from their global defs) — and keeps the pre-flight readiness
-// gate. The duplicated SolverNetwork graph now lives ONLY on Console.
+// ledger (rendered from their global defs). The pre-flight readiness gate and the
+// per-stage freshness panel are now MERGED into one Solver-Lifecycle strip (Batch 4):
+// BLOCKED → READY → FRESH → STALE per solver. The SolverNetwork graph lives on Console.
 function StageHome({ onNav }) {
   const [drill, setDrill] = useState(null);
   const { planning } = usePlanning();
@@ -85,20 +94,25 @@ function StageHome({ onNav }) {
     changeover: M.changeover.length>0, assets: M.assets.length>0, wacc: !!M.wacc,
     aggregate: !!M.aggregate, consensus: M.consensus.length>0, distributions: false,
   };
-  const readiness = [
-    { solver:'Profit Mix', inputs:['Demand fc','Prices','Capacity'], ready: has.demand&&has.prices&&has.capacity },
-    { solver:'Procurement', inputs:['BOM','Suppliers'], ready: has.bom&&has.suppliers },
-    { solver:'Production', inputs:['Lines','Changeover'], ready: has.capacity&&has.changeover },
-    { solver:'Transport', inputs:['Lanes','3PL'], ready: has.lanes&&has.tpl },
-    { solver:'Monte Carlo', inputs:['Distributions'], ready: has.distributions },
-    { solver:'Capital', inputs:['Assets','WACC'], ready: has.assets&&has.wacc },
-    { solver:'S&OP', inputs:['Aggregate','Consensus'], ready: has.aggregate&&has.consensus },
-  ].map(r=> r.ready ? r : { ...r, missing:r.inputs.join(' + '), fixGo: r.solver==='Monte Carlo'?'scenarios':'network', fixLabel: r.solver==='Monte Carlo'?'Scenarios':'Network' });
-
-  // per-stage freshness panel — fresh / stale / not-run from the recompute DAG.
-  const stageRows = [['Demand','forecast','demand'],['Plan / S&OP','aggregate','plan'],
-    ['Procurement','procurement','sourcing'],['Production','production','production'],
-    ['Line capital','linecap','plan'],['Risk · Monte Carlo','montecarlo','scenarios']];
+  // Batch 4 (🧭, Theme 6) — ONE solver-lifecycle model, merging the old readiness gate
+  // (are the inputs present?) with plan freshness (did it run, is it stale?), keyed by
+  // each solver's solve-cache key. Lifecycle per solver: BLOCKED → READY → FRESH → STALE.
+  const _life = [
+    { solver:'Demand',         key:'forecast',   go:'demand',    inputs:['History'],                       ready: has.demand },
+    { solver:'Profit Mix',     key:'profitmix',  go:'plan',      inputs:['Demand fc','Prices','Capacity'], ready: has.demand&&has.prices&&has.capacity },
+    { solver:'S&OP Aggregate', key:'aggregate',  go:'plan',      inputs:['Aggregate','Consensus'],         ready: has.aggregate&&has.consensus },
+    { solver:'Procurement',    key:'procurement',go:'sourcing',  inputs:['BOM','Suppliers'],               ready: has.bom&&has.suppliers },
+    { solver:'Production',     key:'production', go:'production', inputs:['Lines','Changeover'],            ready: has.capacity&&has.changeover },
+    { solver:'Line capital',   key:'linecap',    go:'finance',   inputs:['Assets','WACC'],                 ready: has.assets&&has.wacc },
+    { solver:'Transport',      key:'transport',  go:'logistics', inputs:['Lanes','3PL'],                   ready: has.lanes&&has.tpl },
+    { solver:'Monte Carlo',    key:'montecarlo', go:'scenarios', inputs:['Committed plan'],                ready: has.demand&&has.capacity },
+  ];
+  const lifecycle = _life.map(r=>{ const st=(solves||{})[r.key]||{}; const hasRes=!!R(r.key);
+    const state = !r.ready ? 'blocked' : st.stale ? 'stale' : hasRes ? 'fresh' : 'ready';
+    return { ...r, state, asOf: st.ranAt }; });
+  const readyN  = lifecycle.filter(r=>r.ready).length;
+  const freshN  = lifecycle.filter(r=>r.state==='fresh').length;
+  const blockedN= lifecycle.filter(r=>r.state==='blocked').length;
 
   return (
     <div>
@@ -140,53 +154,42 @@ function StageHome({ onNav }) {
           {/* D8 · exception inbox — the "what needs my attention" list (moved from Scenarios) */}
           <ExceptionCockpit onNav={onNav}/>
 
-          {/* pre-flight readiness gate */}
-          <Card icon="✅" title="Solver Input Readiness" badge={`${readiness.filter(r=>r.ready).length}/${readiness.length} ready`}
-            info={{ what:'Pre-flight gate: a missing input BLOCKS its solver and names what to enter + where. Derived from actual data presence.', flows:'Gates the Console run button per mode.' }}
-            dev={{ comp:'ReadinessGrid', props:'derived from M data presence', note:'Not a passive checkmark — computed from whether each solver’s inputs actually exist.' }}>
+          {/* MERGED solver-lifecycle strip — readiness gate + plan freshness on ONE
+              card (Batch 4 🧭, Theme 6). Each solver shows its full lifecycle state. */}
+          <Card icon="✅" title="Solver Lifecycle" badge={`${readyN}/${lifecycle.length} ready · ${freshN} fresh`} badgeTone={blockedN?'r':(staleN?'y':'g')}
+            right={<Provenance kind="derived" note="readiness + recompute DAG"/>}
+            info={{ what:'Every solver across its whole lifecycle on one strip: BLOCKED (an input is missing) → READY (inputs present, not yet run) → FRESH (solved, current) → STALE (an input changed since it ran). Merges the pre-flight input gate with plan freshness.', flows:'Blocked → enter the input · Stale → re-plan · drill any row to its tab.' }}
+            dev={{ comp:'SolverLifecycle', props:'has(data presence) + solves(DAG) + solveResults', note:'One source replacing the separate readiness + freshness cards.' }}>
             <div style={{display:'flex', flexDirection:'column', gap:6}}>
-              {readiness.map((r,i)=>(
-                <div key={i} style={{border:`2px solid ${r.ready?C.line:C.dg}`, background: r.ready?C.paper:'color-mix(in srgb,var(--dg) 7%,transparent)', padding:'7px 9px', display:'flex', alignItems:'center', gap:9}}>
-                  <span style={{width:16, height:16, flexShrink:0, display:'grid', placeItems:'center', background:r.ready?C.gn:C.dg, color:'#fff', fontFamily:F.disp, fontWeight:900, fontSize:11}}>{r.ready?'✓':'!'}</span>
+              {lifecycle.map((r,i)=>{ const m=LIFE_META[r.state]; const blocked=r.state==='blocked';
+                return (
+                <div key={i} style={{border:`2px solid ${blocked?C.dg:C.line}`, borderLeft:`5px solid ${m.col}`, background: blocked?'color-mix(in srgb,var(--dg) 7%,transparent)':C.paper, padding:'7px 9px', display:'flex', alignItems:'center', gap:9}}>
+                  <Tag c={m.tag}>{m.label}</Tag>
                   <div style={{minWidth:0, flex:1}}>
                     <div style={{display:'flex', alignItems:'center', gap:7}}>
                       <span style={{fontFamily:F.disp, fontSize:12, fontWeight:800}}>{r.solver}</span>
-                      {!r.ready && <Tag c="r">blocked</Tag>}
+                      <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>{r.key}</span>
                     </div>
-                    {r.ready ? (
-                      <div style={{display:'flex', gap:4, marginTop:3, flexWrap:'wrap'}}>
-                        {r.inputs.map((inp,j)=><Tag key={j} c="w">{inp}</Tag>)}
-                      </div>
+                    {blocked ? (
+                      <div style={{fontFamily:F.mono, fontSize:9.5, color:C.dg, marginTop:3, fontWeight:600}}>missing: {r.inputs.join(' + ')} — enter in {_capH(r.go)}</div>
                     ) : (
-                      <div style={{fontFamily:F.mono, fontSize:9.5, color:C.dg, marginTop:3, fontWeight:600}}>
-                        missing: {r.missing} — enter in {r.fixLabel}
+                      <div style={{display:'flex', gap:4, marginTop:3, flexWrap:'wrap', alignItems:'center'}}>
+                        {r.inputs.map((inp,j)=><Tag key={j} c="w">{inp}</Tag>)}
+                        {r.state==='stale' && <span style={{fontFamily:F.mono, fontSize:9, color:C.a4, fontWeight:700}}>· input changed since last run</span>}
+                        {r.state==='ready' && <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3}}>· ready, not yet run</span>}
                       </div>
                     )}
                   </div>
-                  {!r.ready && <button onClick={()=>onNav(r.fixGo)} style={{fontFamily:F.mono, fontSize:9.5, fontWeight:700, color:C.a2, background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', whiteSpace:'nowrap'}}>fix in {r.fixLabel} →</button>}
+                  <div style={{display:'flex', flexDirection:'column', alignItems:'flex-end', gap:2, whiteSpace:'nowrap'}}>
+                    {r.asOf && !blocked && <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>{_agoH(r.asOf)}</span>}
+                    <button onClick={()=>onNav(r.go)} style={{fontFamily:F.mono, fontSize:9.5, fontWeight:700, color:C.a2, background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline'}}>{blocked?'fix':r.state==='stale'?'re-plan':'open'} →</button>
+                  </div>
                 </div>
-              ))}
+              );})}
             </div>
-          </Card>
-
-          {/* per-stage freshness — fresh / stale / not-run from the recompute DAG */}
-          <Card icon="🧭" title="Plan freshness · drill to a stage" badge={anySolve?(staleN?`${staleN} stale`:'all fresh'):'not solved'} badgeTone={anySolve?(staleN?'y':'g'):'k'}
-            right={<Provenance kind="derived" note="recompute DAG"/>}
-            info={{ what:'Each planning stage’s freshness from the recompute DAG — fresh, stale (an input changed since it ran), or not yet run. Click a stage to open the owning tab.', flows:'Freshness → re-plan or drill.' }}
-            dev={{ comp:'HomePlanStatus', props:'solves[] · solveResults' }}>
-            <DataTable dense cols={['Stage','Solve','State','As of']} align={['left','left','left','right']}
-              rows={stageRows.map(([label,key,go])=>{ const st=(solves||{})[key]||{}; const has=!!R(key);
-                const state = st.stale?'STALE':(has?'fresh':'not run');
-                const col = state==='STALE'?C.dg:state==='fresh'?C.gn:C.tx3;
-                return { cells:[
-                  <span style={{cursor:'pointer', textDecoration:'underline', textDecorationColor:C.line2}} onClick={()=>onNav&&onNav(go)}>{label}</span>,
-                  <span style={{fontFamily:F.mono, fontSize:9}}>{key}</span>,
-                  <span style={{color:col, fontWeight:700}}>{state}</span>,
-                  st.ranAt?_agoH(st.ranAt):'—'] };
-              })}/>
-            <Reading tone={anySolve?(staleN?C.a4:C.gn):C.tx3}
-              formula={`${stageRows.filter(([,k])=>!!R(k)).length}/${stageRows.length} stages solved · ${staleN} stale`}
-              soWhat={anySolve?(staleN?'A stale stage means an input changed since it last solved — re-plan the whole model to bring every stage back onto one consistent dataset.':'Every solved stage is fresh and off the same committed dataset — the plan is internally consistent.'):'Nothing solved yet — re-plan the whole model to populate every stage from one dataset.'}/>
+            <Reading tone={blockedN?C.dg:(staleN?C.a4:C.gn)}
+              formula={`${readyN}/${lifecycle.length} have inputs · ${freshN} fresh · ${staleN} stale · ${blockedN} blocked`}
+              soWhat={(blockedN?`${blockedN} solver(s) blocked on missing inputs — enter them to unlock the run. `:'')+(staleN?`${staleN} solved stage(s) went stale after an edit — re-plan the whole model to realign every stage on one dataset.`:(freshN?'Every solved stage is fresh and off the same committed dataset — the plan is internally consistent.':'Nothing solved yet — re-plan the whole model to populate every stage from one dataset.'))}/>
           </Card>
 
           {/* D2 · value ledger — the tool measuring its own ROI (moved from Scenarios) */}

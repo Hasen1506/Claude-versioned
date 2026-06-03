@@ -39,12 +39,25 @@ function StageScenarios({ onNav }) {
 // ── derive live control-tower alerts from REAL app state (R-4) ──────────────
 // No hardcoded alert list: each alert is a fact about the current model — a
 // stale solve, a logged trigger/replan event, or a live MC tail signal.
+// Batch 4 — friendly name for the ROOT source that staled a solve (markStale records
+// it as solves[k].staleSrc). Turns "inputs changed" into "stale because you edited X".
+const STALE_SRC_LABEL = {
+  demand:'committed demand', network:'the network (nodes / lanes / on-hand)',
+  productCosts:'product costs', config:'a setup / config value', planning:'the planning calendar',
+  bom:'the BOM', sourcing:'sourcing terms', prodArch:'the production line / stage setup',
+  procurement:'the procurement solve re-ran', aggregate:'the S&OP aggregate re-ran',
+  production:'the production schedule re-ran', linecap:'the line-capital solve re-ran',
+  montecarlo:'the Monte-Carlo run', meionet:'the inventory-pooling solve re-ran',
+};
 function liveAlerts(solves, events, mc){
   const out = [];
   const STAGE = { procurement:'Sourcing', production:'Production', aggregate:'Plan',
                   montecarlo:'Risk', linecap:'Plan', cvar:'Sourcing', meio:'Sourcing' };
   Object.entries(solves||{}).forEach(([k,v])=>{
-    if(v && v.stale) out.push({ sev:'M', area:'Stale', msg:`${k} plan is stale — inputs changed since last solve`, go:STAGE[k], t:'now' });
+    if(v && v.stale){ const why = v.staleSrc ? (STALE_SRC_LABEL[v.staleSrc]||v.staleSrc) : null;
+      out.push({ sev:'M', area:'Stale',
+        msg:`${k} plan is stale — ${why?`because you changed ${why}`:'inputs changed since last solve'}`,
+        go:STAGE[k], t: v.staleAt?_ago(v.staleAt):'now' }); }
   });
   (events||[]).slice(-4).reverse().forEach(e=>{
     if(e.type==='trigger') out.push({ sev:'H', area:'Demand', msg:`Forecast review trigger fired on ${e.target||'an item'}`, go:'demand', t:_ago(e.ts) });

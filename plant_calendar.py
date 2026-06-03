@@ -43,8 +43,32 @@ NATIONAL_HOLIDAYS_2026 = [
     (10, 2, "Gandhi Jayanti"),
 ]
 
+# Per-state REGIONAL add-ons (representative, on top of the TN gazette base). These
+# are real, well-known state holidays that genuinely differ between Indian states —
+# so the "Plant State" selector actually changes the working calendar instead of
+# always showing Tamil Nadu. HONEST scope (same caveat as TN_HOLIDAYS_2026): fixed
+# (month, day) holidays are exact every year; lunar / movable ones are exact for
+# 2026 and approximate otherwise. A planner overrides any of this with custom_holidays.
+STATE_HOLIDAYS = {
+    'TN': [],  # the base set IS Tamil Nadu (TN_HOLIDAYS_2026)
+    'MH': [    # Maharashtra
+        (5, 1, "Maharashtra Day"),
+        (2, 19, "Chhatrapati Shivaji Maharaj Jayanti"),
+        (3, 19, "Gudi Padwa"),
+    ],
+    'GJ': [    # Gujarat
+        (5, 1, "Gujarat Day"),
+        (1, 14, "Uttarayan / Makar Sankranti"),
+        (10, 31, "Sardar Patel Jayanti"),
+    ],
+    'KA': [    # Karnataka
+        (11, 1, "Kannada Rajyotsava"),
+        (8, 1, "Varamahalakshmi Vratam"),
+    ],
+}
 
-def build_calendar(work_days_per_week=6, use_indian_holidays=True, custom_holidays=None, start_month=0, year=2026):
+
+def build_calendar(work_days_per_week=6, use_indian_holidays=True, custom_holidays=None, start_month=0, year=2026, state='TN'):
     """
     Build a day-by-day working calendar for `year`.
 
@@ -57,6 +81,8 @@ def build_calendar(work_days_per_week=6, use_indian_holidays=True, custom_holida
               `year`. NOTE: the TN_HOLIDAYS_2026 dates are (month, day) pairs and apply to any
               year as-is; the lunar-calendar holidays (Ramzan, Bakrid, Muharram, Milad) are only
               exact for 2026 and approximate for other years.
+        state: plant state code (TN/MH/GJ/KA) — merges that state's REGIONAL add-ons
+               (STATE_HOLIDAYS) on top of the base set so the selector drives the result.
 
     Returns:
         dict with monthly working days, total, holiday list, and day-by-day array
@@ -64,14 +90,21 @@ def build_calendar(work_days_per_week=6, use_indian_holidays=True, custom_holida
     # Build holiday set
     holiday_set = set()
     holiday_list = []
-    
+
     if use_indian_holidays:
         for m, d, name in TN_HOLIDAYS_2026:
             holiday_set.add((m, d))
             holiday_list.append({'month': m, 'day': d, 'name': name})
-    
+        # regional add-ons for the selected plant state (skip dups already in base)
+        for m, d, name in STATE_HOLIDAYS.get(state or 'TN', []):
+            if (m, d) not in holiday_set:
+                holiday_set.add((m, d))
+                holiday_list.append({'month': m, 'day': d, 'name': name})
+
     if custom_holidays:
         for m, d, name in custom_holidays:
+            if (m, d) in holiday_set:
+                continue
             holiday_set.add((m, d))
             holiday_list.append({'month': m, 'day': d, 'name': name})
     
@@ -104,7 +137,7 @@ def build_calendar(work_days_per_week=6, use_indian_holidays=True, custom_holida
         holiday_name = None
         if is_holiday:
             monthly_holidays[m] += 1
-            for hm, hd, hn in (TN_HOLIDAYS_2026 if use_indian_holidays else []) + (custom_holidays or []):
+            for hm, hd, hn in ((TN_HOLIDAYS_2026 + STATE_HOLIDAYS.get(state or 'TN', [])) if use_indian_holidays else []) + (custom_holidays or []):
                 if hm == d.month and hd == d.day:
                     holiday_name = hn
                     break

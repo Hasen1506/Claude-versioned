@@ -101,6 +101,7 @@ function StageConsole({ onNav }) {
             <div style={{marginTop:10}}><SubLabel>Shadow prices · binding</SubLabel></div>
             <DataTable dense cols={['Resource','Dual','Status']} align={['left','right','left']}
               rows={M.shadow.filter(s=>s.binding).map(s=>[s.res, `₹${s.dual.toFixed(0)}`, <Tag c="k">BIND</Tag>])}/>
+            <div style={{marginTop:10}}><SolverExplain id={sel}/></div>
             <SolverIO id={sel}/>
           </Card>
         </div>
@@ -133,6 +134,170 @@ function StageConsole({ onNav }) {
           </div>
         </div>
       </div>
+
+      <JobBand n="③" title="Anatomy Lab" sub="glass-box — the REAL model, what feeds each term, and a live solve (Cartesian-style)"
+        right={<span style={{display:'inline-flex', alignItems:'center', gap:8}}>
+          <span style={{fontFamily:F.mono, fontSize:9, color:'rgba(255,255,255,.55)'}}>dissecting</span>
+          <Tag c="g">{selSolver?selSolver.name:sel}</Tag>
+        </span>}/>
+      <div style={{padding:'14px 14px 18px'}}><SolverLab sel={sel} onNav={onNav}/></div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// SolverLab (Cartesian-style glass-box) — three panes for the SELECTED engine:
+//   ① The model   — its REAL type (LP/MILP/closed-form/sim/ML, from M.solverType,
+//                    read straight off the .py docstring), objective, decision vars,
+//                    constraints + a read-only source view (/api/meta/solver-source).
+//   ② Inputs      — every objective/constraint TERM mapped to the define-section that
+//                    feeds it (✓ wired) or honestly flagged ⚠ defaulted-in-the-.py,
+//                    plus `extras` = capability modelled but never wired ("too much
+//                    stuff"). This is the term→input cross-reference, made visible.
+//   ③ Live solve  — runs the engine's REAL endpoint on the committed dataset (for the
+//                    engines with a shared payload builder) or reads its cached solve;
+//                    shows status, objective, runtime + duals / binding / distribution.
+// NO editable-code→execution path (that would be RCE): the source pane is read-only,
+// and the solve only ever calls the existing curated /api/solve endpoints.
+const LAB_EP = {
+  forecast:'/api/forecast', aggregate:'/api/solve/aggregate', profitmix:'/api/solve/profitmix',
+  procurement:'/api/solve/procurement', production:'/api/solve/production', transport:'/api/solve/transport',
+  allocation:'/api/solve/transport', consolidate:'/api/solve/consolidate', montecarlo:'/api/solve/montecarlo',
+  cvar:'/api/solve/cvar', capital:'/api/solve/capital', capital_capacity:'/api/solve/capital-capacity',
+  sequencing:'/api/solve/sequence', lotsizing:'/api/solve/lotsizing', linecap:'/api/solve/linecap',
+  policy:'/api/solve/policy', meio:'/api/solve/meio', meionet:'/api/solve/meio-network',
+};
+function SolverLab({ sel, onNav }){
+  const { planning } = (typeof usePlanning==='function') ? usePlanning() : { planning:{} };
+  const ty = (window.M && M.solverType && M.solverType[sel]) || null;
+  const model = (window.M && M.solverModel && M.solverModel[sel]) || null;
+  const [src, setSrc] = useState(null);
+  const [srcOpen, setSrcOpen] = useState(false);
+  const [run, setRun] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  React.useEffect(()=>{ setRun(null); setErr(null); setSrc(null); setSrcOpen(false); }, [sel]);
+  // shared payload builders (globals from store.jsx) — only these can re-solve live
+  const builders = {
+    forecast: ()=>_loopForecastPayload(planning), aggregate: ()=>_loopAggregatePayload(planning),
+    procurement: ()=>_loopProcurementPayload(planning), production: ()=>productionPayload(planning),
+    transport: ()=>transportPayload(), montecarlo: ()=>montecarloPayload(planning),
+  };
+  const canRun = !!(builders[sel] && LAB_EP[sel]);
+  const cached = (typeof getSolveResult==='function') ? getSolveResult(sel) : null;
+  const result = run || (cached && cached.result) || null;
+  const fromCache = !run && !!(cached && cached.result);
+  const loadSrc = ()=>{ setSrcOpen(o=>!o); if(src) return;
+    fetch('/api/meta/solver-source/'+sel).then(r=>r.json()).then(d=>setSrc(d)).catch(e=>setSrc({ error:String(e.message||e) })); };
+  const doRun = ()=>{ if(!canRun) return; setBusy(true); setErr(null); const t0=performance.now();
+    fetch(LAB_EP[sel], { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(builders[sel]()) })
+      .then(r=>r.json()).then(d=>{ if(d && d.error) throw new Error(d.error); setRun({ ...d, _ms:Math.round(performance.now()-t0) }); })
+      .catch(e=>setErr(String(e.message||e))).finally(()=>setBusy(false)); };
+  // adaptive result read-out
+  const num = (v)=> (v==null||isNaN(v))?null:v;
+  const objLine = (()=>{ if(!result) return null;
+    if(result.total_cost!=null) return `min cost ₹${(result.total_cost/1e5).toFixed(1)}L`;
+    if(result.total_npv!=null) return `max NPV ₹${(result.total_npv/1e5).toFixed(1)}L`;
+    if(result.objective!=null) return `objective ${Math.round(result.objective).toLocaleString('en-IN')}`;
+    if(result.avg_fill!=null) return `mean fill ${result.avg_fill}% · CVaR95 ₹${((result.cvar95||0)/1e5).toFixed(1)}L`;
+    if(result.products && result.products[0]) { const p=result.products[0]; return `winner ${p.winner||p.recommendation||'—'}`; }
+    if(result.total_changeover_min!=null) return `changeover ${result.total_changeover_min} min`;
+    return null; })();
+  const status = result ? (result.status || (result.products?'Fitted':(result.avg_fill!=null?'Simulated':'OK'))) : null;
+  const duals = (()=>{ if(!result) return null;
+    if(Array.isArray(result.shadow_prices) && result.shadow_prices.length) return result.shadow_prices.map(s=>({ k:s.resource||s.name||s.res, v:s.shadow_price!=null?s.shadow_price:s.dual, bind:s.binding }));
+    if(Array.isArray(result.lines) && result.lines.some(l=>l.shadow_price!=null)) return result.lines.map(l=>({ k:l.name||l.id, v:l.shadow_price, bind:l.binding }));
+    return null; })();
+  const Pane = ({ n, title, children, tone })=>(
+    <div style={{border:`2px solid ${C.line}`, background:C.paper, display:'flex', flexDirection:'column', minWidth:0}}>
+      <div style={{padding:'7px 11px', borderBottom:`2px solid ${C.line}`, background:tone||C.bg3, display:'flex', alignItems:'center', gap:7}}>
+        <span style={{fontFamily:F.disp, fontWeight:900, fontSize:11, color:C.ac}}>{n}</span>
+        <span style={{fontFamily:F.disp, fontSize:11, fontWeight:800, letterSpacing:'.05em', textTransform:'uppercase'}}>{title}</span>
+      </div>
+      <div style={{padding:11, flex:1}}>{children}</div>
+    </div>
+  );
+  return (
+    <div style={{display:'grid', gridTemplateColumns:'1.05fr 1.05fr 0.9fr', gap:12}}>
+      {/* ① THE MODEL */}
+      <Pane n="①" title="The model">
+        {ty ? <>
+          <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:8}}>
+            <Tag c={ty.tag}>{ty.type}</Tag>
+            <span style={{fontFamily:F.mono, fontSize:9, color: ty.solves?C.gn:C.tx3}}>{ty.solves?'optimiser':'estimator / sim'}</span>
+          </div>
+          <div style={{fontFamily:F.body, fontSize:11.5, color:C.tx2, lineHeight:1.5, marginBottom:10}}>{ty.method}</div>
+          {model ? <>
+            <SubLabel>Objective</SubLabel>
+            <div style={{fontFamily:F.mono, fontSize:10, color:C.tx, padding:'6px 9px', border:`2px solid ${C.line2}`, background:C.bg3, marginBottom:8, lineHeight:1.4}}>{model.objective}</div>
+            <SubLabel>Decision variables</SubLabel>
+            <div style={{marginBottom:8}}>{model.vars.map((v,i)=><div key={i} style={{fontFamily:F.mono, fontSize:9.5, color:C.tx2, lineHeight:1.5}}>• {v}</div>)}</div>
+            <SubLabel>Constraints</SubLabel>
+            <div>{model.constraints.map((c,i)=><div key={i} style={{fontFamily:F.mono, fontSize:9.5, color:C.tx2, lineHeight:1.5}}>· {c}</div>)}</div>
+          </> : <div style={{fontFamily:F.mono, fontSize:10, color:C.tx3}}>Anatomy detail not authored for this engine yet — type + source still apply.</div>}
+          <div style={{marginTop:10}}>
+            <button onClick={loadSrc} style={{fontFamily:F.mono, fontSize:9.5, fontWeight:700, color:C.a2, background:'transparent', border:`1.5px solid ${C.line2}`, cursor:'pointer', padding:'4px 9px'}}>{srcOpen?'▾ hide source':'▸ view real source (read-only)'}</button>
+            {srcOpen && <div style={{marginTop:8}}>
+              {!src ? <div style={{fontFamily:F.mono, fontSize:9.5, color:C.tx3}}>loading source…</div>
+                : src.error ? <div style={{fontFamily:F.mono, fontSize:9.5, color:C.dg}}>⚠ {src.error}</div>
+                : <><div style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3, marginBottom:4}}>{src.file} · {src.lines} lines · docstring + first {src.excerpt_lines}</div>
+                  <pre style={{margin:0, maxHeight:240, overflow:'auto', background:C.ink, color:'#cbd5e1', fontFamily:F.mono, fontSize:9, lineHeight:1.45, padding:'8px 10px', whiteSpace:'pre-wrap'}}>{src.docstring}{'\n\n— — — source excerpt — — —\n\n'}{src.excerpt}</pre></>}
+            </div>}
+          </div>
+        </> : <div style={{fontFamily:F.mono, fontSize:10.5, color:C.tx3}}>No type metadata for "{sel}".</div>}
+      </Pane>
+
+      {/* ② INPUTS & PROVENANCE (the audit) */}
+      <Pane n="②" title="Inputs ▸ does every term have a source?">
+        {model ? <>
+          <div style={{display:'flex', flexDirection:'column', gap:5}}>
+            {model.terms.map((t,i)=>(
+              <div key={i} style={{display:'flex', alignItems:'flex-start', gap:8, border:`2px solid ${t.wired?C.line2:C.a4}`, borderLeft:`5px solid ${t.wired?C.gn:C.a4}`, background: t.wired?C.paper:C.bg3, padding:'5px 8px'}}>
+                <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, color: t.wired?C.gn:C.a4, marginTop:1, whiteSpace:'nowrap'}}>{t.wired?'✓ WIRED':'⚠ DEFAULT'}</span>
+                <div style={{minWidth:0, flex:1}}>
+                  <div style={{fontFamily:F.disp, fontSize:11, fontWeight:700}}>{t.t}</div>
+                  <div style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>{t.src}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          {model.extras && model.extras.length>0 && <div style={{marginTop:9, padding:'7px 9px', border:`2px solid ${C.line2}`, background:C.bg3}}>
+            <div style={{fontFamily:F.mono, fontSize:8.5, fontWeight:800, color:C.dg, letterSpacing:'.08em', marginBottom:4}}>MODELLED BUT NOT WIRED · the "too much stuff"</div>
+            <div style={{fontFamily:F.mono, fontSize:9, color:C.tx2, lineHeight:1.5}}>{model.extras.join(' · ')}</div>
+            <div style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3, marginTop:4}}>These capabilities live in the .py but have no define-section input — they run on built-in defaults (mostly "off"). Either wire an input or treat as out-of-scope.</div>
+          </div>}
+          {(()=>{ const wired=model.terms.filter(t=>t.wired).length, tot=model.terms.length;
+            return <div style={{marginTop:8, fontFamily:F.mono, fontSize:9.5, color: wired===tot?C.gn:C.a4}}>{wired}/{tot} core terms fed by a real input{model.extras&&model.extras.length?` · ${model.extras.length} extra capabilit${model.extras.length===1?'y':'ies'} unwired`:''}</div>; })()}
+        </> : <div style={{fontFamily:F.mono, fontSize:10, color:C.tx3}}>Term→input map not authored for this engine — see the SolverIO contract above for its inputs.</div>}
+      </Pane>
+
+      {/* ③ LIVE SOLVE */}
+      <Pane n="③" title="Live solve">
+        <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:8}}>
+          {canRun
+            ? <Btn kind="accent" sm onClick={doRun}>{busy?'⏳ solving…':'▶ Run live'}</Btn>
+            : <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx3}}>no shared payload — <button onClick={()=>onNav && onNav((M.solvers.find(s=>s.id===sel)||{}).go||'home')} style={{color:C.a2, background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', fontFamily:F.mono, fontSize:9.5, fontWeight:700}}>run from its tab →</button></span>}
+          {result && <Tag c={fromCache?'w':'g'}>{fromCache?'cached solve':'live'}</Tag>}
+        </div>
+        {err && <div style={{fontFamily:F.mono, fontSize:9.5, color:C.dg, marginBottom:6}}>⚠ {err}</div>}
+        {!result ? <div style={{fontFamily:F.mono, fontSize:10, color:C.tx3, padding:'10px 0'}}>{canRun?'Run to solve this engine on the committed dataset — status, objective and duals appear here.':'No cached solve yet for this engine.'}</div> : <>
+          <KpiRow cols={2}>
+            <Blk label="Status" value={status||'—'} tone={status==='Optimal'?'y':'c'}/>
+            <Blk label="Runtime" value={run&&run._ms!=null?`${run._ms} ms`:(fromCache?'cached':'—')}/>
+          </KpiRow>
+          {objLine && <div style={{marginTop:8, fontFamily:F.mono, fontSize:10.5, fontWeight:700, color:C.tx, padding:'6px 9px', border:`2px solid ${C.line2}`, background:C.bg3}}>{objLine}</div>}
+          {duals ? <div style={{marginTop:8}}>
+            <SubLabel>Shadow prices (duals)</SubLabel>
+            <div style={{maxHeight:150, overflow:'auto'}}>{duals.slice(0,10).map((d,i)=>(
+              <div key={i} style={{display:'flex', justifyContent:'space-between', alignItems:'center', fontFamily:F.mono, fontSize:9.5, padding:'2px 0', borderBottom:`1px solid ${C.line2}`}}>
+                <span style={{color:C.tx2}}>{d.bind?'🔴 ':'⬜ '}{d.k}</span>
+                <span style={{fontWeight:700}}>{d.v!=null?`₹${Math.round(d.v)}`:'—'}</span>
+              </div>
+            ))}</div>
+            <div style={{fontFamily:F.mono, fontSize:8, color:C.tx3, marginTop:3}}>valid duals — this is an LP. (MILPs report binding/gap instead.)</div>
+          </div> : (ty && !ty.solves && result ? <div style={{marginTop:8, fontFamily:F.mono, fontSize:9, color:C.tx3}}>{ty.type==='Simulation'?'Distribution-based — no duals (it is a simulation, not an optimiser).':'Estimator — no duals.'}</div> : (ty && ty.type==='MILP' && result ? <div style={{marginTop:8, fontFamily:F.mono, fontSize:9, color:C.tx3}}>MILP — integer vars, so no valid shadow prices; read binding constraints / optimality gap instead.</div> : null))}
+        </>}
+      </Pane>
     </div>
   );
 }
@@ -690,7 +855,13 @@ const CAPEX_PROPOSALS = [
   { name:'Honing cell (LINE-02)', capex:12000000, annual_cash_flow:2213000, useful_life:10, residual_value:1200000, dcap:'+9%' },
 ];
 function capitalPayload(){
-  return { investments:CAPEX_PROPOSALS.map(({dcap,...r})=>r), params:{ budget:25000000, wacc:0.1124 } };
+  // NB: avoid object-REST destructuring here. Babel-standalone hoists a top-level
+  // `const _excluded` helper per transpiled file for `{a, ...r}`; lib.jsx (Box/Btn)
+  // already declares one, and a second in this file collides in the shared global
+  // scope ("Identifier '_excluded' already declared") — which blanks the whole app.
+  // Strip `dcap` without rest-destructuring so lib.jsx stays the only _excluded emitter.
+  const _stripDcap = (p)=>{ const r = Object.assign({}, p); delete r.dcap; return r; };
+  return { investments:CAPEX_PROPOSALS.map(_stripDcap), params:{ budget:25000000, wacc:0.1124 } };
 }
 function ResCapital() {
   const cap = useSolve('/api/solve/capital', capitalPayload);

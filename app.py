@@ -911,6 +911,7 @@ def api_calendar():
             custom_holidays=data.get('custom_holidays'),
             start_month=data.get('start_month', 0),
             year=int(data.get('year', 2026) or 2026),
+            state=data.get('state', 'TN'),
         )
         # Don't send the full daily array by default (too large)
         if not data.get('include_daily', False):
@@ -988,6 +989,54 @@ def api_meta_solvers():
             'base': request.host_url.rstrip('/'),
             'endpoints': rules,
             'note': 'One shared dataset, one HTTP call per solver — a lightweight digital twin.',
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ─── Glass-box source view (Cartesian-style Solver Anatomy Lab) ───
+# READ-ONLY: returns a solver module's real docstring + a bounded source excerpt so
+# the frontend Lab can show the ACTUAL model (objective, decision vars, constraints)
+# next to the live inputs and result. There is deliberately NO code-execution path —
+# arbitrary Python against a PuLP server would be RCE; the Lab only ever shows source
+# and calls the existing, curated /api/solve/* endpoints. The module's own docstring
+# is the source of truth for its type, so the UI can never drift from the code.
+_SOLVER_FILES = {
+    'procurement': 'procurement.py', 'production': 'production.py', 'profitmix': 'profitmix.py',
+    'aggregate': 'aggregate.py', 'transport': 'transport.py', 'capital': 'capital.py',
+    'capital_capacity': 'capital_capacity.py', 'montecarlo': 'montecarlo.py', 'cvar': 'cvar.py',
+    'forecast': 'forecast.py', 'policy': 'policy.py', 'meio': 'meio.py', 'meionet': 'meio_network.py',
+    'sequencing': 'sequencing.py', 'lotsizing': 'lot_sizing.py', 'linecap': 'linecap.py',
+    'disaggregate': 'disaggregate.py', 'reconcile': 'reconcile.py',
+    'consolidate': 'transport.py', 'allocation': 'transport.py',
+}
+
+
+@app.route('/api/meta/solver-source/<sid>')
+def api_meta_solver_source(sid):
+    """Read-only docstring + bounded source excerpt for one solver (no execution)."""
+    import ast
+    fname = _SOLVER_FILES.get(sid)
+    if not fname:
+        return jsonify({'error': 'unknown solver id "%s"' % sid}), 404
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), fname)
+    if not os.path.exists(path):
+        return jsonify({'error': 'source file missing: %s' % fname}), 404
+    try:
+        with open(path, 'r') as fh:
+            src = fh.read()
+        try:
+            doc = ast.get_docstring(ast.parse(src)) or ''
+        except Exception:
+            doc = ''
+        lines = src.splitlines()
+        # excerpt: skip the module docstring block, hand back the model-building head
+        # (objective + constraints usually live in the first ~140 lines), bounded.
+        excerpt = '\n'.join(lines[:160])
+        return jsonify({
+            'id': sid, 'file': fname, 'lines': len(lines),
+            'docstring': doc, 'excerpt': excerpt, 'excerpt_lines': min(160, len(lines)),
+            'note': 'Read-only source. The Lab runs the curated /api/solve endpoint, never this text.',
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500

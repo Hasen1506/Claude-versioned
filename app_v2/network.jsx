@@ -25,69 +25,104 @@ function StageNetwork({ onNav }) {
 
 // ── the answer to "for what product is what" — light up the active item's chain ──
 function NetFlows({ item, view }) {
-  const { network } = useNetwork();
+  const { network, setNetwork } = useNetwork();
   const inbound  = network.lanes.filter(l=>l.direction==='inbound');
   const outbound = network.lanes.filter(l=>l.direction==='outbound');
   const nById = Object.fromEntries(network.nodes.map(n=>[n.id,n]));
-  // build outbound hop chain WH→DC→CUST for the active FG
-  const chain = [
-    { id:'PLANT-CHN' },
-    ...outbound.map(l=>({ id:l.to, lane:l })),
-  ];
+  // (review §4.1) REAL directed lane graph — not the old linear conga line. Place each
+  // node in a role column (supplier→plant→wh→dc→customer) and draw every lane as its
+  // own from→to edge, so hub-and-spoke and parallel paths appear exactly as defined.
+  const lanes = view==='parts' ? inbound : outbound;
+  const ORDER = ['supplier','plant','wh','dc','customer'];
+  const ids = [...new Set(lanes.flatMap(l=>[l.from,l.to]))];
+  const colOf = (id)=>{ const n=nById[id]; const t=n&&ORDER.includes(n.type)?n.type:'plant'; return t; };
+  const byCol = {}; ORDER.forEach(t=>byCol[t]=[]);
+  ids.forEach(id=>{ byCol[colOf(id)].push(id); });
+  const cols = ORDER.filter(t=>byCol[t].length);
+  const boxW=148, boxH=44, gapX=58, gapY=20, padT=42, padL=20;
+  const colX = {}; cols.forEach((t,i)=> colX[t] = padL + i*(boxW+gapX));
+  const maxRows = Math.max(1, ...cols.map(t=>byCol[t].length));
+  const pos = {};
+  cols.forEach(t=>{ const list=byCol[t]; const startY = padT + ((maxRows-list.length)*(boxH+gapY))/2;
+    list.forEach((id,r)=>{ const x=colX[t], y=startY+r*(boxH+gapY); pos[id]={x,y,cx:x+boxW,cy:y+boxH/2,lx:x}; }); });
+  const W = padL*2 + cols.length*boxW + Math.max(0,cols.length-1)*gapX;
+  const H = padT + maxRows*(boxH+gapY) + 6;
+  const roleColor = { supplier:C.a2, plant:C.ink, wh:C.a3, dc:C.a4, customer:C.gn };
+  const setLane=(id,patch)=>{ setNetwork({ lanes: network.lanes.map(l=> l.id===id?{...l,...patch}:l ) }); if(typeof logEvent==='function') logEvent('override','lane:'+id,{fields:Object.keys(patch),to:patch}); };
   return (
     <StageSection step="A" title={`Flow · ${item?item.name:''}`} sub="inbound part lanes feed the plant · outbound FG lanes serve customers — each hop shows mode · ₹rate · lead time">
       <Card icon="🧭" title={view==='parts'?'Inbound Chain · purchased parts':'Outbound Chain · finished good'} badge={view==='parts'?`${inbound.length} parts`:`${outbound.length} hops`} badgeTone="y"
-        info={{ what:'Directed, per-item material flow: a node\u2019s capacity is consumed by specific items.', flows:'Lanes → transport MILP & landed cost.' }}
+        info={{ what:'Directed, per-item material flow: a node\u2019s capacity is consumed by specific items.', flows:'Lanes → transport LP & landed cost.' }}
         dev={{ comp:'NetworkFlowCard', props:'state.network.lanes, activeItem', state:'network.lanes[] {direction,item}' }}>
-        <svg viewBox="0 0 880 280" style={{width:'100%', height:280, display:'block', border:`2px solid ${C.line}`, background:C.paper}}>
-          {/* inbound suppliers → plant */}
-          {inbound.map((l,i)=>{ const y=40+i*64;
-            const intl = l.mode==='CIF';
-            return (
-              <g key={l.id}>
-                <line x1="190" y1={y+18} x2="330" y2="140" stroke={intl?C.a3:C.tx2} strokeWidth="1.6" strokeDasharray={intl?'5 3':'none'} markerEnd="url(#nfah)" opacity=".7"/>
-                <rect x="18" y={y} width="172" height="38" fill={C.bg3} stroke={C.line} strokeWidth="2"/>
-                <rect x="18" y={y} width="5" height="38" fill={C.a2}/>
-                <text x="30" y={y+16} fontFamily={F.disp} fontWeight="800" fontSize="10.5" fill={C.tx}>{nById[l.from]?nById[l.from].name:l.from}</text>
-                <text x="30" y={y+30} fontFamily={F.mono} fontSize="8" fill={C.tx3}>{l.item} · {l.mode} · {l.leadDays}d</text>
-              </g>
-            );
-          })}
-          <text x="18" y="24" fontFamily={F.mono} fontSize="8.5" fill={C.tx3} letterSpacing=".1em">INBOUND · per purchased part →</text>
-          {/* plant hub */}
-          <rect x="330" y="120" width="150" height="46" fill={C.ink}/>
-          <text x="342" y="142" fontFamily={F.disp} fontWeight="900" fontSize="13" fill={C.ac}>PLANT-CHN</text>
-          <text x="342" y="156" fontFamily={F.mono} fontSize="8" fill={C.paper}>Chennai · 4,360 u/mo</text>
-          {/* outbound plant → wh → dc → customer */}
-          {outbound.map((l,i)=>{
-            const xs=[480,560,640,720,800]; const x1=xs[i], x2=xs[i+1]||xs[i]+80;
-            return (
-              <g key={l.id}>
-                <line x1={x1} y1="143" x2={x1+74} y2="143" stroke={C.tx2} strokeWidth="1.6" markerEnd="url(#nfah)" opacity=".7"/>
-                <text x={x1+37} y="134" textAnchor="middle" fontFamily={F.mono} fontSize="7.5" fill={C.tx2}>{l.mode}·₹{l.rate}</text>
-                <text x={x1+37} y="160" textAnchor="middle" fontFamily={F.mono} fontSize="7.5" fill={C.tx3}>{l.leadDays}d</text>
-              </g>
-            );
-          })}
-          {[['WH-CHN',506],['DC-BLR',586],['DC-PUN',666],['GGN',760]].map(([lbl,x],i)=>(
-            <g key={i}>
-              <rect x={x-2} y="124" width="58" height="38" fill={i===3?C.bg3:C.paper} stroke={C.line} strokeWidth="2"/>
-              <text x={x+27} y="147" textAnchor="middle" fontFamily={F.disp} fontWeight="800" fontSize="9" fill={C.tx}>{lbl}</text>
-            </g>
-          ))}
-          <text x="480" y="24" fontFamily={F.mono} fontSize="8.5" fill={C.tx3} letterSpacing=".1em">OUTBOUND · finished good →</text>
+        <svg viewBox={`0 0 ${Math.max(W,320)} ${H}`} style={{width:'100%', height:Math.max(H,160), display:'block', border:`2px solid ${C.line}`, background:C.paper}}>
           <defs><marker id="nfah" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6 Z" fill={C.tx2}/></marker></defs>
+          {cols.map((t)=>(<text key={t} x={colX[t]+boxW/2} y="14" textAnchor="middle" fontFamily={F.mono} fontSize="8.5" fill={C.tx3} letterSpacing=".1em">{t.toUpperCase()}</text>))}
+          {/* edges — one per lane, from the real from→to */}
+          {lanes.map(l=>{ const a=pos[l.from], b=pos[l.to]; if(!a||!b) return null;
+            const intl = l.mode==='CIF'; const mx=(a.cx+b.lx)/2;
+            const d=`M${a.cx} ${a.cy} C${mx} ${a.cy}, ${mx} ${b.cy}, ${b.lx} ${b.cy}`;
+            return (<g key={l.id}>
+              <path d={d} fill="none" stroke={intl?C.a3:C.tx2} strokeWidth="1.6" strokeDasharray={intl?'5 3':'none'} markerEnd="url(#nfah)" opacity=".75"/>
+              <text x={mx} y={(a.cy+b.cy)/2 - 4} textAnchor="middle" fontFamily={F.mono} fontSize="7.5" fill={C.tx2}>{l.mode}·₹{l.rate}·{l.leadDays}d</text>
+            </g>);
+          })}
+          {/* node boxes */}
+          {ids.map(id=>{ const n=nById[id]||{id,name:id,type:'plant'}; const p=pos[id]; if(!p) return null;
+            const on = item && (id===item.id); const col=roleColor[n.type]||C.ink;
+            return (<g key={id}>
+              <rect x={p.x} y={p.y} width={boxW} height={boxH} fill={n.type==='plant'?C.ink:C.paper} stroke={on?C.ac:C.line} strokeWidth={on?3:2}/>
+              <rect x={p.x} y={p.y} width="5" height={boxH} fill={col}/>
+              <text x={p.x+13} y={p.y+18} fontFamily={F.disp} fontWeight="800" fontSize="10.5" fill={n.type==='plant'?C.ac:C.tx}>{n.id}</text>
+              <text x={p.x+13} y={p.y+32} fontFamily={F.mono} fontSize="7.5" fill={n.type==='plant'?C.paper:C.tx3}>{(n.name||'').slice(0,22)}</text>
+            </g>);
+          })}
         </svg>
-        <Reading formula="utilization = Σ(item volume × on-hand) ÷ node capacity"
-          soWhat={`Switch the item selector to “its parts” to trace the inbound side; international lanes (POSCO/CIF, dashed) carry the long ${inbound.find(l=>l.mode==='CIF')?inbound.find(l=>l.mode==='CIF').leadDays:18}-day lead.`}/>
+        <Reading formula="each edge = one network.lanes[] row drawn from its real from→to"
+          soWhat={`This is the true topology, not a linear chain: ${view==='parts'?'each supplier feeds the plant on its own inbound lane (CIF/international dashed).':'the warehouse feeds DC-BLR and DC-PUN in parallel, and the customer is reachable from either DC directly.'} Edit the lanes below — the graph and the transport LP both re-read them.`}/>
+
+        {/* editable lane table — lanes were un-editable; trunk capacity was the missing field */}
+        {(()=>{ const tin={ border:`1.5px solid ${C.line2}`, background:C.paper, color:C.tx, fontFamily:F.disp, fontWeight:700, fontSize:11, padding:'3px 5px', outline:'none', boxSizing:'border-box', textAlign:'right' };
+          const EN=({v,on,w,pfx,sfx})=> <span style={{display:'inline-flex',alignItems:'center',gap:2,justifyContent:'flex-end'}}>{pfx&&<span style={{color:C.tx3,fontSize:9}}>{pfx}</span>}<input className="num" value={v==null?'':v} onChange={e=>{const s=e.target.value;const n=Number(s);on(s===''?'':(Number.isNaN(n)?v:n));}} style={{...tin,width:w||50}}/>{sfx&&<span style={{color:C.tx3,fontSize:9}}>{sfx}</span>}</span>;
+          return (
+          <div style={{marginTop:12}}>
+            <SubLabel right={<span style={{fontFamily:F.mono, fontSize:9, color:C.tx3}}>editable · mode / rate / lead / trunk capacity</span>}>Lane terms</SubLabel>
+            <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
+              <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10.5}}>
+                <thead><tr style={{background:C.ink}}>{['Lane','From','To','Item','Mode','₹/unit','Lead','Trunk cap (u)'].map((h,i)=><th key={i} style={{color:C.paper, textAlign:i<4?'left':'right', padding:'5px 8px', fontSize:8.5, textTransform:'uppercase', whiteSpace:'nowrap'}}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {lanes.map((l,ri)=>(
+                    <tr key={l.id} style={{borderTop:`1px solid ${C.line2}`, background:ri%2?C.bg3:C.paper}}>
+                      <td style={{padding:'4px 8px', fontWeight:700}}>{l.id}</td>
+                      <td style={{padding:'4px 8px', color:C.tx2}}>{l.from}</td>
+                      <td style={{padding:'4px 8px', color:C.tx2}}>{l.to}</td>
+                      <td style={{padding:'4px 8px', color:C.tx2}}>{l.item}</td>
+                      <td style={{padding:'4px 6px'}}><input value={l.mode} onChange={e=>setLane(l.id,{mode:e.target.value})} style={{...tin,textAlign:'left',width:58}}/></td>
+                      <td style={{padding:'4px 6px', textAlign:'right'}}><EN v={l.rate} pfx="₹" on={v=>setLane(l.id,{rate:Number(v)||0})}/></td>
+                      <td style={{padding:'4px 6px', textAlign:'right'}}><EN v={l.leadDays} sfx="d" on={v=>setLane(l.id,{leadDays:Number(v)||0, lt:Number(v)||0})}/></td>
+                      <td style={{padding:'4px 6px', textAlign:'right'}}><EN v={l.cap!=null?l.cap:''} w={72} on={v=>setLane(l.id,{cap:v===''?null:(Number(v)||0)})}/></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{marginTop:6, fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>trunk capacity = units per vehicle/container on this lane (blank = uncapped) — the missing planning field the review flagged; feeds shipment consolidation.</div>
+          </div>
+          ); })()}
       </Card>
     </StageSection>
   );
 }
 
 function NetNodes() {
-  const { network } = useNetwork();
+  const { network, setNetwork } = useNetwork();
   const ttl = { plant:'Plant', wh:'Warehouse', dc:'Dist. Center', customer:'Customer', supplier:'Supplier' };
+  const setNode=(id,patch)=>{ setNetwork({ nodes: network.nodes.map(n=> n.id===id?{...n,...patch}:n ) }); if(typeof logEvent==='function') logEvent('override','node:'+id,{fields:Object.keys(patch)}); };
+  const addNode=()=>{ const n=network.nodes.length+1; const id='NODE-'+String(n).padStart(2,'0');
+    if(network.nodes.some(x=>x.id===id)) return;
+    setNetwork({ nodes:[...network.nodes, { id, type:'wh', name:'New node '+n, lat:0, lng:0, capacityUom:'m³', capacity:1000, cap:'1,000 m³' }] });
+    if(typeof logEvent==='function') logEvent('commit','node:'+id,{added:true}); };
+  const delNode=(id)=>{ setNetwork({ nodes: network.nodes.filter(n=>n.id!==id) }); if(typeof logEvent==='function') logEvent('cancel','node:'+id,{removed:true}); };
+  const tin={ border:`1.5px solid ${C.line2}`, background:C.paper, color:C.tx, fontFamily:F.disp, fontWeight:700, fontSize:11, padding:'3px 5px', outline:'none', boxSizing:'border-box' };
   // (R13) storage utilisation now DERIVED — Σ(on-hand qty × volume) ÷ node cube,
   // volume from the single store authority (skuVolM3). Was hardcoded 62/74/48%.
   const vol = (typeof skuVolM3==='function') ? skuVolM3 : (()=>0);
@@ -97,11 +132,27 @@ function NetNodes() {
   return (
     <StageSection step="B" title="Nodes" sub="plants · warehouses · DCs · customers · suppliers — capacity is item-aware">
       <Grid cols={2}>
-        <Card icon="🏭" title="Node Master" badge={`${network.nodes.length} nodes`}
-          info={{ what:'Every physical node with geo and capacity (uom per node).', flows:'Topology → lanes, transport solver, CoG.' }}
-          dev={{ comp:'NodeMaster', props:'state.network.nodes', state:'network.nodes[]' }}>
-          <DataTable dense cols={['Node','Type','Name','Capacity']} align={['left','left','left','right']}
-            rows={network.nodes.map(n=>[n.id, ttl[n.type]||n.type, n.name, n.cap])}/>
+        <Card icon="🏭" title="Node Master" badge={`${network.nodes.length} nodes · editable`} badgeTone="y"
+          info={{ what:'Every physical node with geo and capacity (uom per node). Editable master data — add/rename/resize/remove.', flows:'Topology → lanes, transport solver, CoG.' }}
+          dev={{ comp:'NodeMaster', props:'setNetwork({nodes})', state:'network.nodes[]' }}>
+          <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
+            <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10.5}}>
+              <thead><tr style={{background:C.ink}}>{['Node','Type','Name','Capacity','UoM',''].map((h,i)=><th key={i} style={{color:C.paper, textAlign:i===3?'right':'left', padding:'5px 8px', fontSize:8.5, textTransform:'uppercase', whiteSpace:'nowrap'}}>{h}</th>)}</tr></thead>
+              <tbody>
+                {network.nodes.map((n,ri)=>(
+                  <tr key={n.id} style={{borderTop:`1px solid ${C.line2}`, background:ri%2?C.bg3:C.paper}}>
+                    <td style={{padding:'4px 8px', fontWeight:700, whiteSpace:'nowrap'}}>{n.id}</td>
+                    <td style={{padding:'4px 6px'}}><select value={n.type} onChange={e=>setNode(n.id,{type:e.target.value})} style={{...tin, cursor:'pointer'}}>{['plant','wh','dc','customer','supplier'].map(t=><option key={t} value={t}>{ttl[t]}</option>)}</select></td>
+                    <td style={{padding:'4px 6px', minWidth:120}}><input value={n.name} onChange={e=>setNode(n.id,{name:e.target.value})} style={{...tin, width:'100%'}}/></td>
+                    <td style={{padding:'4px 6px', textAlign:'right'}}><input className="num" value={n.capacity==null?'':n.capacity} onChange={e=>{const v=Number(e.target.value)||0; setNode(n.id,{capacity:v, cap:v.toLocaleString('en-IN')+' '+(n.capacityUom||'')});}} style={{...tin, width:74, textAlign:'right'}}/></td>
+                    <td style={{padding:'4px 6px', color:C.tx3}}>{n.capacityUom}</td>
+                    <td style={{padding:'4px 6px', textAlign:'center'}}><button onClick={()=>delNode(n.id)} title="remove node" style={{border:'none', background:'transparent', color:C.dg, cursor:'pointer', fontSize:11}}>✕</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{marginTop:8}}><Btn kind="primary" sm onClick={addNode}>+ Add node</Btn></div>
         </Card>
         <Card icon="📦" title="Storage Utilization" badge="item-aware · derived" badgeTone="y"
           right={<Provenance kind="derived" note="Σ vol·on-hand / cube"/>}
@@ -195,10 +246,16 @@ function NetContracts() {
 }
 
 function NetOnHand({ item }) {
-  const { network } = useNetwork();
+  const { network, setNetwork } = useNetwork();
   const locs = [...new Set(network.onHand.map(o=>o.loc))];
   const items = [...new Set(network.onHand.map(o=>o.item))];
   const cell = (it,loc)=> network.onHand.find(o=>o.item===it && o.loc===loc);
+  const uomFor = (it)=>{ const r=network.onHand.find(o=>o.item===it); return r?r.uom:'u'; };
+  const setQty = (it,loc,v)=>{ const q=Math.max(0, Number(v)||0); const exists=cell(it,loc);
+    const next = exists ? network.onHand.map(o=> (o.item===it&&o.loc===loc)?{...o,qty:q}:o )
+                        : [...network.onHand, { item:it, loc, qty:q, uom:uomFor(it) }];
+    setNetwork({ onHand: next }); if(typeof logEvent==='function') logEvent('override','onhand:'+it+'@'+loc,{to:{qty:q}}); };
+  const tin={ border:`1.5px solid ${C.line2}`, background:C.paper, color:C.tx, fontFamily:F.disp, fontWeight:700, fontSize:11, padding:'2px 4px', outline:'none', width:62, textAlign:'right', boxSizing:'border-box' };
   return (
     <StageSection step="E" title="Opening On-Hand" sub="item × location — only meaningful now that both products AND nodes exist">
       <Card icon="📦" title="On-Hand Matrix" badge="opening stock"
@@ -215,7 +272,11 @@ function NetOnHand({ item }) {
                 <tr key={it} style={{borderTop:`1px solid ${C.line2}`, background: item&&it===item.id?C.ac: ri%2?C.bg3:C.paper}}>
                   <td style={{padding:'5px 9px', fontWeight:700}}>{it}</td>
                   {locs.map(l=>{ const c=cell(it,l);
-                    return <td key={l} className="num" style={{textAlign:'right', padding:'5px 9px', color: c?C.tx:C.tx3}}>{c?`${c.qty.toLocaleString('en-IN')} ${c.uom}`:'·'}</td>;
+                    return <td key={l} style={{textAlign:'right', padding:'3px 6px'}}>
+                      <span style={{display:'inline-flex', alignItems:'center', gap:3, justifyContent:'flex-end'}}>
+                        <input className="num" value={c?c.qty:''} placeholder="·" onChange={e=>setQty(it,l,e.target.value)} style={tin}/>
+                        <span style={{color:C.tx3, fontSize:9}}>{uomFor(it)}</span>
+                      </span></td>;
                   })}
                 </tr>
               ))}
