@@ -13,16 +13,19 @@
 // W7 (the loop → L3) adds the "Loop" subtab: runFullLoop() chains
 //   procurement→aggregate→production→line-capital→risk on ONE dataset.
 // ════════════════════════════════════════════════════════════════════════
+// R13 · Scenarios is now the LAB — branch/compare/what-if + risk/stress + the loop.
+// The monitoring half (S&OP cockpit board, D8 exception inbox, D2 value ledger) moved
+// to Home, which is where you check "is the plan current & healthy?". Here you EXPLORE
+// alternatives and STRESS them. Default opens on the what-if branches.
 function StageScenarios({ onNav }) {
-  const [sub, setSub] = useState('cockpit');
+  const [sub, setSub] = useState('scenarios');
   const tabs = M.scenarioSubtabs.map(t=>({ id:t.id, n:t.n, label:t.label, count:t.count }));
   return (
     <div>
-      <StageHeader n="11" title="Risk & Scenarios" kicker="Monte Carlo on the committed plan · CVaR robust stock · end-to-end loop · what-if (W6/W7)"
-        right={<Btn kind="secondary">📄 Report export</Btn>}/>
+      <StageHeader n="11" title="Scenario & Risk Lab" kicker="Branch · compare on solved KPIs · what-if re-solve · Monte Carlo + resilience stress · end-to-end loop"
+        right={<ReportExport/>}/>
       <SubTabNav tabs={tabs} active={sub} onChange={setSub}/>
       <div style={{padding:14}}>
-        {sub==='cockpit'   && <ScnCockpit onNav={onNav}/>}
         {sub==='scenarios' && <ScnScenarios onNav={onNav}/>}
         {sub==='risk'      && <ScnRisk onNav={onNav}/>}
         {sub==='loop'      && <ScnLoop onNav={onNav}/>}
@@ -54,6 +57,95 @@ function liveAlerts(solves, events, mc){
   return out;
 }
 function _ago(ts){ try{ const s=Math.round((Date.now()-new Date(ts))/60000); return s<1?'just now':s<60?`${s}m ago`:`${Math.round(s/60)}h ago`; }catch(e){ return ''; } }
+
+// ── D8 · EXCEPTION COCKPIT — the unified "what needs my attention" inbox ───────
+// One ranked list of EVERY open exception, each a real fact about live state:
+//   · STALE   — a solve whose inputs changed (recompute DAG)
+//   · SENSED  — a forecast-quality breach / auto-trigger from the event log
+//   · RISK    — a Monte-Carlo tail signal on the COMMITTED plan
+//   · VALUE   — ₹ a solve IDENTIFIED that no decision has yet adopted (the miss)
+// Nothing invented: stale flags from solves[], triggers from events[], risk from
+// the cached montecarlo, value-misses from the cached pooling/linecap solves cross-
+// referenced against the acceptance events. This is the planner-productivity moat —
+// exception-driven, not dashboard-driven. Reuses liveAlerts for stale/trigger/risk.
+function exceptionInbox(solves, events, sr){
+  const out = liveAlerts(solves, events, sr ? (sr.montecarlo ? sr.montecarlo.result : null) : null)
+    .map(a=>({ sev:a.sev, cat:a.area==='Stale'?'STALE':a.area==='Demand'?'SENSED':(a.area==='Service'||a.area==='Cost')?'RISK':'OTHER',
+               msg:a.msg, go:a.go, t:a.t }));
+  // sensed: recent auto-triggers from BreachFlagger (forecast out of control)
+  (events||[]).slice(-6).reverse().forEach(e=>{
+    if(e.type==='auto_trigger') out.push({ sev:'H', cat:'SENSED',
+      msg:`Forecast out of control on ${e.target||'an item'}${e.detail&&e.detail.breaches?` (${e.detail.breaches.join(', ')})`:''} — downstream auto-flagged stale`, go:'demand', t:_ago(e.ts) });
+  });
+  // VALUE misses — ₹ a solve found that no decision has adopted yet
+  const mn = sr && sr.meionet ? sr.meionet.result : null;
+  const lc = sr && sr.linecap ? sr.linecap.result : null;
+  const adopted = (events||[]).filter(e=>['scenario_apply','scenario_merge','scenario_eva_prune','scenario_merge_fields','rec_apply'].includes(e.type)).length;
+  if(mn){
+    const div = mn.total_annual_dividend;
+    if(div!=null && div>0 && adopted===0) out.push({ sev:'M', cat:'VALUE',
+      msg:`Risk pooling identified ₹${_N(div)}/yr of freed safety-stock holding — no recommendation adopted yet`, go:'sourcing', t:'open' });
+  }
+  if(lc && lc.lines){
+    const bind = lc.lines.filter(x=>x.binding).length;
+    const shadowMax = Math.max(0,...lc.lines.map(x=>+x.shadow_price||0));
+    if(bind>0 && shadowMax>0) out.push({ sev:'M', cat:'VALUE',
+      msg:`${bind} line${bind>1?'s':''} binding — relieving capacity is worth ₹${Math.round(shadowMax)}/unit, no expansion decision logged`, go:'production', t:'open' });
+  }
+  const rank = { H:0, M:1, L:2 };
+  out.sort((a,b)=>(rank[a.sev]??3)-(rank[b.sev]??3));
+  return out;
+}
+const _EXC_CAT = { STALE:{c:'y', icon:'♻'}, SENSED:{c:'k', icon:'📡'}, RISK:{c:'k', icon:'🎲'}, VALUE:{c:'g', icon:'₹'}, OTHER:{c:'w', icon:'•'} };
+function ExceptionCockpit({ onNav }){
+  const { state:solves } = useStore(s=>s.solves||{});
+  const { state:sr }     = useStore(s=>s.solveResults||{});
+  const { events } = useEvents();
+  const items = exceptionInbox(solves, events, sr);
+  const hi = items.filter(i=>i.sev==='H').length;
+  const byCat = items.reduce((m,i)=>{ m[i.cat]=(m[i.cat]||0)+1; return m; }, {});
+  return (
+    <Card icon={items.length?(hi?'🚨':'📥'):'✅'} title="Exception Cockpit — what needs my attention" span={2}
+      badge={items.length?`${items.length} open${hi?` · ${hi} high`:''}`:'all clear'} badgeTone={items.length?(hi?'k':'y'):'g'}
+      right={<Provenance kind="derived" note="solves · events · cached solves"/>}
+      info={{ what:'One ranked inbox of every open exception — stale solves, forecast breaches, risk-tail signals, and ₹ a solve identified that no decision has adopted. Each item is a live fact, click to act on it.', flows:'Exception-driven planning — work the list, not the dashboard.' }}
+      dev={{ comp:'ExceptionCockpit (D8)', props:'exceptionInbox(solves,events,solveResults)' }}>
+      {items.length>0 ? (
+        <React.Fragment>
+          <div style={{display:'flex', gap:8, flexWrap:'wrap', marginBottom:10}}>
+            {Object.entries(byCat).map(([k,n])=>(
+              <div key={k} style={{display:'flex', alignItems:'center', gap:5, border:`2px solid ${C.line}`, padding:'3px 9px', fontFamily:F.mono, fontSize:9.5, color:C.tx2}}>
+                <span>{(_EXC_CAT[k]||_EXC_CAT.OTHER).icon}</span><span style={{fontWeight:700}}>{n}</span><span style={{color:C.tx3}}>{k.toLowerCase()}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{display:'flex', flexDirection:'column', gap:5}}>
+            {items.map((it,i)=>{ const cat=_EXC_CAT[it.cat]||_EXC_CAT.OTHER;
+              return (
+                <div key={i} style={{display:'flex', alignItems:'center', gap:9, padding:'7px 10px', border:`2px solid ${C.line}`,
+                  borderLeft:`5px solid ${it.sev==='H'?C.dg:it.sev==='M'?C.a4:C.line2}`, background:C.paper}}>
+                  <Tag c={cat.c}>{it.cat}</Tag>
+                  <span style={{flex:1, fontSize:11, color:C.tx}}>{it.msg}</span>
+                  <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>{it.t||''}</span>
+                  {it.go && <Btn kind="ghost" sm onClick={()=>onNav&&onNav(it.go)}>open →</Btn>}
+                </div>
+              );
+            })}
+          </div>
+          <Reading tone={hi?C.dg:C.a4}
+            formula={`${items.length} open · ${byCat.STALE||0} stale · ${byCat.SENSED||0} sensed · ${byCat.RISK||0} risk · ${byCat.VALUE||0} value`}
+            soWhat={hi
+              ? `${hi} high-severity exception(s) need action now — a forecast is out of control or the committed plan misses its service target. Work the red items first.`
+              : 'Open exceptions are advisory — stale solves to refresh and ₹ a solve found but no decision has banked. Nothing is breaching, but there is value on the table.'}/>
+        </React.Fragment>
+      ) : (
+        <div style={{padding:'12px 14px', border:`2px dashed ${C.line2}`, fontFamily:F.mono, fontSize:11, color:C.tx3, lineHeight:1.5}}>
+          ✅ Nothing needs your attention — every solve is fresh, the forecast is in control, the committed plan holds its service target, and no identified ₹ is sitting unadopted. Re-plan or change an input and any new exception surfaces here.
+        </div>
+      )}
+    </Card>
+  );
+}
 
 // ── CVaR-plan payload (R-2) — portfolio finished-buffer newsvendor ──────────
 // Aggregate the committed FG monthly series into a portfolio lead-time-demand
@@ -96,6 +188,134 @@ function cvarSkuPayload(p, beta){
   return { mean:Math.round(mean), std:Math.max(1,Math.round(std)),
     holding_cost:Math.round(holding), shortage_cost:Math.round(margin),
     beta:Number(beta)||0.95, n_scenarios:300, _holding:Math.round(holding) };
+}
+
+// ── D3 · RESILIENCE PACKAGING — stress-to-failure on the COMMITTED plan ────────
+// Packages an existing strength (Monte-Carlo on the committed schedule) into the
+// "how much shock does my plan survive?" answer the incumbents can't give simply.
+// A named disruption playbook ramps ONE real lever (demand surge / supply lead-time /
+// material cost) and RE-RUNS the MC solver at each step — a real multi-solve sweep,
+// not a formula — recording fill and cost-tail. The breaking point (first step where
+// fill drops below the service target) becomes a "survives to X" badge on the plan.
+// Demand & lead-time move service; a cost shock doesn't (honest — it escalates the
+// cost tail, not fill), so the cost playbook reports the CVaR exposure curve instead.
+const _PLAYBOOKS = [
+  { id:'demand', name:'Demand spike', icon:'📈', metric:'fill',
+    levels:[0,10,20,30,40,50,60,80,100], fmt:m=>`+${m}%`,
+    apply:(pl,m)=>({ ...pl, products: pl.products.map(p=>({ ...p, demand:(p.demand||[]).map(d=>Math.round(d*(1+m/100))) })) }) },
+  { id:'lead', name:'Supply lead-time (port strike)', icon:'⏱', metric:'fill',
+    levels:[0,1,2,3,4,5,6,8], fmt:m=>`+${m}wk`,
+    apply:(pl,m)=>({ ...pl, params:{ ...pl.params, prod_lead_time:(Number(pl.params.prod_lead_time)||0)+m } }) },
+  { id:'cost', name:'Material cost shock', icon:'💸', metric:'cvar',
+    levels:[0,10,20,30,40,60,80,100], fmt:m=>`+${m}%`,
+    apply:(pl,m)=>({ ...pl, products: pl.products.map(p=>({ ...p,
+      variable_cost:Math.round((p.variable_cost||0)*(1+m/100)),
+      parts:(p.parts||[]).map(pt=>({ ...pt, landed_cost:Math.round((pt.landed_cost||0)*(1+m/100)*100)/100 })) })) }) },
+];
+function ResilienceStress({ planning, config, onNav }){
+  const [pbId, setPbId] = useState('demand');
+  const [busy, setBusy] = useState(false);
+  const [prog, setProg] = useState(0);
+  const [rows, setRows] = useState(null);   // [{m, fill, cvar, mean}]
+  const [at, setAt]     = useState(null);
+  const [err, setErr]   = useState(null);
+  const pb = _PLAYBOOKS.find(x=>x.id===pbId) || _PLAYBOOKS[0];
+  const target = Math.round((Number(config.serviceLevel)||0.95)*100);
+  const planned = !!(montecarloPayload(planning,{}).params.plan_committed);
+
+  const run = async ()=>{
+    setBusy(true); setErr(null); setRows(null); setProg(0);
+    try{
+      const base = montecarloPayload(planning, { nRuns:200, serviceLevel:config.serviceLevel });
+      const out = [];
+      for(let i=0;i<pb.levels.length;i++){
+        const m = pb.levels[i];
+        const res = await apiPost('/api/solve/montecarlo', pb.apply(base, m));
+        out.push({ m, fill:Number(res.avg_fill), cvar:Number(res.cvar95), mean:Number(res.avg_cost), minFill:Number(res.min_fill) });
+        setProg(Math.round((i+1)/pb.levels.length*100));
+        setRows([...out]);
+      }
+      setAt(new Date());
+      if(typeof logEvent==='function') logEvent('resilience_stress', pb.id, { target, levels:pb.levels.length });
+    }catch(e){ setErr(e.message||String(e)); } finally{ setBusy(false); }
+  };
+
+  // breaking point: first level where fill drops below the service target
+  let survivesTo=null, breaksAt=null;
+  if(rows && pb.metric==='fill'){
+    for(const r of rows){ if(r.fill>=target) survivesTo=r.m; else { breaksAt=r.m; break; } }
+  }
+  const baseRow = rows && rows[0];
+  const lastRow = rows && rows[rows.length-1];
+  const fmax = rows ? 100 : 100;
+  const cmax = rows ? Math.max(1,...rows.map(r=>r.cvar||0)) : 1;
+
+  return (
+    <Card icon="🛡" title="Resilience — stress the committed plan to failure" span={2}
+      badge={rows ? (pb.metric==='fill' ? (breaksAt!=null?`breaks at ${pb.fmt(breaksAt)}`:`survives all ${pb.fmt(pb.levels[pb.levels.length-1])}`) : 'cost-exposure curve') : 'not run'}
+      badgeTone={rows ? (pb.metric!=='fill'?'y':breaksAt!=null?'k':'g') : 'k'}
+      right={<Btn kind="primary" sm onClick={run} style={busy?{opacity:.6}:undefined}>{busy?`Stressing… ${prog}%`:'▶ Run stress test'}</Btn>}
+      info={{ what:'Ramps a named disruption (demand / lead-time / cost) and re-runs the Monte-Carlo solver at each step on the committed plan — a real multi-solve sweep. The breaking point (fill below the service target) is the "survives to X" badge.', flows:'Resilience proof for the committed plan → buffers, dual-sourcing, hedges.' }}
+      dev={{ comp:'ResilienceStress (D3)', props:'montecarloPayload + N× /api/solve/montecarlo', note:'Stress-to-failure on the committed schedule — packages MC into a survivability answer.' }}>
+      <div style={{display:'flex', gap:8, flexWrap:'wrap', marginBottom:10}}>
+        {_PLAYBOOKS.map(p=>(
+          <button key={p.id} onClick={()=>{ setPbId(p.id); setRows(null); }} style={{
+            display:'flex', alignItems:'center', gap:6, border:`2px solid ${p.id===pbId?C.ink:C.line}`, cursor:'pointer',
+            background:p.id===pbId?C.ink:C.paper, color:p.id===pbId?C.ac:C.tx, padding:'6px 11px', fontFamily:F.disp, fontSize:11, fontWeight:700}}>
+            <span>{p.icon}</span>{p.name}</button>
+        ))}
+      </div>
+      {!planned && <div style={{marginBottom:9, padding:'7px 11px', border:`2px solid ${C.a4}`, background:C.bg3, fontFamily:F.mono, fontSize:9.5, color:C.a4, lineHeight:1.5}}>
+        No production schedule cached — the stress runs against a base-stock policy. Run Production / the Loop first to stress the schedule that will actually EXECUTE{onNav?<span> · <span style={{textDecoration:'underline', cursor:'pointer'}} onClick={()=>onNav('production')}>open Production</span></span>:null}.</div>}
+      {err && <div style={{marginBottom:9, fontFamily:F.mono, fontSize:10, color:C.dg}}>⚠ {err}</div>}
+
+      {rows && pb.metric==='fill' && (
+        <KpiRow cols={3}>
+          <Blk label="Survives to" value={survivesTo!=null?pb.fmt(survivesTo):'breaks immediately'} tone={survivesTo!=null?'g':'k'} accent={survivesTo!=null?C.gn:C.dg} sub={`fill ≥ ${target}% target`}/>
+          <Blk label="Breaking point" value={breaksAt!=null?pb.fmt(breaksAt):'—'} accent={breaksAt!=null?C.dg:undefined} sub={breaksAt!=null?'service drops below target':'holds across the ramp'}/>
+          <Blk label="Worst-case fill" value={lastRow?`${lastRow.fill}%`:'—'} sub={`at ${pb.fmt(pb.levels[pb.levels.length-1])} · CVaR ${lastRow?(lastRow.cvar/1e5).toFixed(1)+'L':'—'}`} tone="y"/>
+        </KpiRow>
+      )}
+      {rows && pb.metric==='cvar' && (
+        <KpiRow cols={3}>
+          <Blk label="Base CVaR95" value={baseRow?`₹${(baseRow.cvar/1e5).toFixed(2)}L`:'—'}/>
+          <Blk label="Stressed CVaR95" value={lastRow?`₹${(lastRow.cvar/1e5).toFixed(2)}L`:'—'} accent={C.dg} sub={`at ${pb.fmt(pb.levels[pb.levels.length-1])}`}/>
+          <Blk label="Tail escalation" value={baseRow&&lastRow&&baseRow.cvar?`${(lastRow.cvar/baseRow.cvar).toFixed(2)}×`:'—'} tone="y" sub="cost tail, not service"/>
+        </KpiRow>
+      )}
+
+      {rows && (
+        <svg viewBox="0 0 700 130" style={{width:'100%', height:130, display:'block', marginTop:10}}>
+          {pb.metric==='fill' && <line x1="0" y1={120-target/fmax*110} x2="700" y2={120-target/fmax*110} stroke={C.a4} strokeWidth="1" strokeDasharray="4 3"/>}
+          {rows.map((r,i)=>{ const w=700/pb.levels.length;
+            const val = pb.metric==='fill' ? r.fill/fmax : r.cvar/cmax;
+            const h = Math.max(1, val*110);
+            const broke = pb.metric==='fill' && r.fill<target;
+            return <rect key={i} x={i*w+3} y={120-h} width={w-6} height={h} fill={broke?C.dg:pb.metric==='cvar'?C.a4:C.ac}/>;
+          })}
+          <line x1="0" y1="120" x2="700" y2="120" stroke={C.line} strokeWidth="1"/>
+        </svg>
+      )}
+      {rows && (
+        <div style={{display:'flex', gap:14, fontFamily:F.mono, fontSize:9, color:C.tx3, marginTop:2}}>
+          {pb.metric==='fill' ? <><span style={{color:C.a4}}>┄ {target}% service target</span><span style={{color:C.dg}}>◼ below target</span></> : <span style={{color:C.a4}}>◼ CVaR95 by stress level</span>}
+          <span style={{flex:1}}/>
+          <span>{pb.levels.map(pb.fmt).join(' · ')}</span>
+        </div>
+      )}
+
+      {!rows && !busy && <div style={{fontFamily:F.mono, fontSize:11, color:C.tx3, padding:'12px 0'}}>
+        Pick a disruption playbook and run — each step re-solves the Monte-Carlo on the committed plan, ramping the shock until {pb.metric==='fill'?'fill drops below the service target':'the cost tail is fully stressed'}. {pb.levels.length} solves.</div>}
+
+      {rows && <Reading tone={pb.metric!=='fill'?C.a4:(breaksAt!=null?C.dg:C.gn)}
+        formula={`${pb.name}: ${pb.levels.length} MC re-solves on the committed plan · target fill ${target}%`}
+        soWhat={pb.metric==='fill'
+          ? (breaksAt!=null
+              ? `The committed plan holds its ${target}% service target up to a ${pb.fmt(survivesTo!=null?survivesTo:0)} shock, then breaks at ${pb.fmt(breaksAt)} (fill falls to ${(rows.find(r=>r.m===breaksAt)||{}).fill}%). That is your resilience headroom — buffer or dual-source before a disruption of that size, and note the cost tail rises to ₹${lastRow?(lastRow.cvar/1e5).toFixed(1):'—'}L at the extreme.`
+              : `The committed plan survives the entire ramp to ${pb.fmt(pb.levels[pb.levels.length-1])} without dropping below the ${target}% target — a genuinely robust plan against this disruption (worst-case fill ${lastRow?lastRow.fill:'—'}%).`)
+          : `A material cost shock doesn't move service (fill is supply-timing, not price) — it escalates the cost tail. CVaR95 rises ${baseRow&&lastRow&&baseRow.cvar?(lastRow.cvar/baseRow.cvar).toFixed(2):'—'}× from base to a ${pb.fmt(pb.levels[pb.levels.length-1])} shock. Hedge the spend, not the schedule.`}/>}
+    </Card>
+  );
 }
 
 function ScnRisk({ onNav }) {
@@ -189,6 +409,9 @@ function ScnRisk({ onNav }) {
               : `No committed schedule cached — this simulates a re-derived base-stock policy. Run Production / the Loop to price the actual plan (R-1).`}/>
         </>}
       </Card>
+
+      {/* D3 · Resilience packaging — stress-to-failure on the committed plan */}
+      <ResilienceStress planning={planning} config={config} onNav={onNav}/>
 
       {/* R-2 · CVaR robust finished buffer — per-SKU rolled up (RK-B) */}
       <Card icon="🛡" title="CVaR-robust stock — hold N more (per SKU)"
@@ -490,85 +713,78 @@ function ScnExplore() {
 const _L = v => (v==null||isNaN(v)) ? '—' : '₹'+(v/1e5).toFixed(2)+'L';
 const _N = v => (v==null||isNaN(v)) ? '—' : Math.round(v).toLocaleString('en-IN');
 function _R(sr,key){ const e=sr[key]; return e ? e.result : null; }
-function ScnCockpit({ onNav }){
-  const { planning } = usePlanning();
-  const { state:sr }     = useStore(s=>s.solveResults||{});
-  const { state:solves } = useStore(s=>s.solves||{});
+// ── D2 · VALUE LEDGER ────────────────────────────────────────────────────────
+// The renewal/expansion weapon: a tool that MEASURES ITS OWN ROI. Everything here
+// is real — decisions counted from the immutable event log, ₹ value read from the
+// cached solves that surfaced it. It deliberately separates value IDENTIFIED (a
+// solve found it) from recommendations ACCEPTED (applied/merged into the committed
+// plan, per the event log). No invented "₹X saved" — every figure traces to a
+// solve or a logged event, with provenance shown.
+function ValueLedger(){
+  const { state:sr } = useStore(s=>s.solveResults||{});
   const { events } = useEvents();
-  const [running, setRunning] = useState(false);
-  const [log, setLog] = useState(null);
-  const [doneAt, setDoneAt] = useState(null);
-  const ag = _R(sr,'aggregate'), pr = _R(sr,'production'), lc = _R(sr,'linecap'),
-        mc = _R(sr,'montecarlo'), pc = _R(sr,'procurement'), mn = _R(sr,'meionet');
-  const fin = (M.products||[]).filter(p=>p.cat==='Finished');
-  const committedYr = fin.reduce((s,p)=>s+getItemDemand(p.sku,12).reduce((a,b)=>a+b,0),0);
-  const prodUnits = pr && pr.gantt ? pr.gantt.reduce((a,e)=>a+(Number(e.quantity)||0),0) : null;
-  const bind = lc && lc.lines ? lc.lines.filter(x=>x.binding).length : null;
-  const shadowMax = lc && lc.lines ? Math.max(0,...lc.lines.map(x=>Number(x.shadow_price)||0)) : null;
-  const dividend = mn ? (mn.total_annual_dividend != null ? mn.total_annual_dividend : null) : null;
-  const staleCount = Object.values(solves||{}).filter(v=>v&&v.stale).length;
-  const alerts = liveAlerts(solves, events, mc);
-  const runLoop = async ()=>{ setRunning(true); setLog(null);
-    try{ const fl = await runFullLoop({ planning, onStep:(l)=>setLog([...l]) }); setLog(fl); setDoneAt(new Date()); }
-    finally{ setRunning(false); } };
-  const okN = (log||[]).filter(s=>s.ok).length, stepN = (typeof LOOP_STEPS!=='undefined'?LOOP_STEPS.length:6);
-  // freshness of the whole plan
-  const anySolve = !!(ag||pr||lc||mc||pc);
-  return (
-    <Grid cols={2}>
-      <Card icon="🛰" title="S&OP Cockpit — the whole plan at a glance" span={2}
-        badge={anySolve ? (staleCount?`${staleCount} stale`:'all fresh') : 'not solved'} badgeTone={anySolve?(staleCount?'y':'g'):'k'}
-        right={<Btn kind="primary" sm onClick={runLoop}>{running?'Re-planning…':'▶ Re-plan whole model'}</Btn>}
-        info={{ what:'Every stage of the committed plan, read from the cross-stage solve cache — the same solved numbers each tab shows. One button re-runs the end-to-end loop; the board refreshes from the cache.', flows:'Executive S&OP review → drill into any stage.' }}
-        dev={{ comp:'ScnCockpit', props:'solveResults cache', note:'W10 — rollup of aggregate/production/linecap/montecarlo/procurement/meionet.' }}>
-        <Provenance kind={anySolve?'solved':'derived'} asOf={doneAt?doneAt.toLocaleTimeString():(anySolve?'from cached solves':'not yet solved')} stale={staleCount>0} style={{marginBottom:10}}/>
-        <KpiRow cols={4}>
-          <Blk label="Committed demand /yr" value={`${_N(committedYr)} u`} sub={`${fin.length} FG`}/>
-          <Blk label="Plan strategy" value={ag?(ag.strategy||'—'):'—'} sub={ag?`cost ${_L(ag.total_cost)}`:'run aggregate'} tone={ag?'c':'k'}/>
-          <Blk label="Schedule" value={pr?(pr.status||'—'):'—'} sub={pr?`${_N(prodUnits)} u · ${pr.campaign?pr.campaign.runs+' runs':''}`:'run production'} tone={pr?'g':'k'}/>
-          <Blk label="Line capital" value={bind==null?'—':`${bind} binding`} sub={bind!=null?(shadowMax>0?`₹${Math.round(shadowMax)}/u max`:'all slack'):'run linecap'} accent={bind?C.dg:undefined}/>
-        </KpiRow>
-        <KpiRow cols={4}>
-          <Blk label="Risk · CVaR95" value={mc?_L(mc.cvar95):'—'} sub={mc?`mean ${_L(mc.avg_cost)}`:'run MC'} accent={mc?C.dg:undefined}/>
-          <Blk label="Mean fill" value={mc?`${mc.avg_fill}%`:'—'} accent={mc&&mc.avg_fill<95?C.dg:(mc?C.gn:undefined)} sub={mc?`policy ${mc.policy_simulated}`:'—'}/>
-          <Blk label="Pooling dividend" value={dividend==null?'—':`₹${_N(dividend)}/yr`} sub={dividend!=null?'SS holding freed':'run pooling'} tone={dividend?'g':'k'}/>
-          <Blk label="Control tower" value={`${alerts.length} live`} sub={`${staleCount} stale solves`} accent={alerts.length?C.dg:undefined}/>
-        </KpiRow>
-        {log && <div style={{marginTop:10, display:'flex', flexDirection:'column', gap:4}}>
-          {log.map((e)=>(<div key={e.key} style={{display:'flex', alignItems:'center', gap:8, fontFamily:F.mono, fontSize:10}}>
-            <span style={{width:14, color:e.ok?C.gn:e.error?C.dg:C.tx3}}>{e.ok?'✓':e.error?'✕':'…'}</span>
-            <span style={{flex:1, color:C.tx2}}>{e.label}</span>
-            <span style={{color:e.error?C.dg:C.tx3}}>{e.error?('⚠ '+e.error):e.summary}{e.ms?` · ${e.ms}ms`:''}</span>
-          </div>))}
-        </div>}
-        <Reading tone={anySolve?(staleCount?C.a4:C.gn):C.tx3}
-          formula={`committed ${_N(committedYr)}u/yr · plan ${ag?_L(ag.total_cost):'—'} · risk CVaR95 ${mc?_L(mc.cvar95):'—'} @ ${mc?mc.avg_fill+'%':'—'} fill`}
-          soWhat={anySolve
-            ? (staleCount ? `${staleCount} solve(s) are stale — an input changed since they ran. Re-plan to refresh the board.` : 'The committed model is internally consistent — every stage solved off the same demand. This is the executive view a Kinaxis S&OP cockpit gives.')
-            : 'Nothing solved yet. Re-plan the whole model (or run each tab) to populate the cockpit from real solves.'}/>
-      </Card>
+  const evs = events||[];
+  const cnt = t => evs.filter(e=>e.type===t).length;
+  const explored = cnt('scenario_create')+cnt('scenario_branch');
+  const applied  = cnt('scenario_apply')+cnt('scenario_merge')+cnt('scenario_eva_prune')+cnt('scenario_merge_fields');
+  const replans  = cnt('replan')+cnt('scenario_run');
+  const sensed   = cnt('actuals')+cnt('import')+cnt('npi_likemodel')+cnt('auto_trigger')+cnt('trigger');
+  const sinceTs  = evs.length ? evs[0].ts : null;
+  const acceptPct = explored>0 ? Math.round(applied/explored*100) : null;
 
-      {/* drill links */}
-      <Card icon="🧭" title="Stage status & drill" span={2}
-        info={{ what:'Per-stage freshness from the recompute DAG. Click to open the owning tab.', flows:'Cockpit → stage.' }}
-        dev={{ comp:'ScnCockpit·drill', props:'solves[] freshness' }}>
-        <DataTable dense cols={['Stage','Solve','State','As of']} align={['left','left','left','right']}
-          rows={[['Demand','—',null,null],
-            ['Plan / S&OP','aggregate','plan'],['Production','production','produce'],
-            ['Line capital','linecap','plan'],['Procurement','procurement','sourcing'],
-            ['Pooling','meionet','sourcing'],['Risk','montecarlo','analysis']].map(([label,key,go])=>{
-            const st = (solves||{})[key]||{}; const has = key!=='—' && _R(sr,key);
-            const state = key==='—' ? 'derived' : (st.stale?'STALE':(has?'fresh':'not run'));
-            const col = state==='STALE'?C.dg:state==='fresh'?C.gn:C.tx3;
-            return { cells:[
-              go ? <span style={{cursor:'pointer', textDecoration:'underline', textDecorationColor:C.line2}} onClick={()=>onNav&&onNav(go)}>{label}</span> : label,
-              key, <span style={{color:col, fontWeight:700}}>{state}</span>,
-              st.ranAt?_ago(st.ranAt):'—'] };
-          })}/>
-      </Card>
-    </Grid>
+  // ₹ value SURFACED — read only from solves that are actually cached
+  const mn=_R(sr,'meionet'), lc=_R(sr,'linecap'), mc=_R(sr,'montecarlo');
+  const dividend  = mn && mn.total_annual_dividend!=null ? mn.total_annual_dividend : null;
+  const capFreed  = mn && mn.total_capital_freed!=null ? mn.total_capital_freed : null;
+  const shadowMax = lc && lc.lines ? Math.max(0,...lc.lines.map(x=>+x.shadow_price||0)) : null;
+  const bindN     = lc && lc.lines ? lc.lines.filter(x=>x.binding).length : null;
+  const tailGap   = mc && mc.cvar95!=null && mc.avg_cost!=null ? (mc.cvar95-mc.avg_cost) : null;
+
+  // only surface value a solve ACTUALLY found (>0) — a ₹0 pooling result means
+  // "nothing to pool", an honest non-event, not a line in the ROI ledger.
+  const rows = [];
+  if(dividend!=null && dividend>0)   rows.push({ src:'Risk pooling (MEIO)', what:'Safety-stock holding freed by central buffers', amt:`₹${_N(dividend)}/yr`, prov:'meio-network solve' });
+  if(capFreed!=null && capFreed>0)   rows.push({ src:'Risk pooling (MEIO)', what:'Working capital released (one-time)',           amt:`₹${_N(capFreed)}`,    prov:'meio-network solve' });
+  if(shadowMax!=null && shadowMax>0) rows.push({ src:'Line capacity',       what:`Worth of relieving the binding line${bindN>1?'s':''}`, amt:`₹${Math.round(shadowMax)}/unit`, prov:'linecap dual' });
+  if(tailGap!=null && tailGap>0)     rows.push({ src:'Risk (Monte Carlo)',  what:'Cost-tail exposure the plan now quantifies',       amt:`₹${_N(tailGap)}`,     prov:'montecarlo CVaR95−mean' });
+
+  const annualSurfaced = (dividend!=null && dividend>0) ? dividend : null;   // like-typed ₹/yr only — no dishonest blended total
+
+  return (
+    <Card icon="📈" title="Value Ledger — what the platform has returned" span={2}
+      badge={evs.length?`${_N(evs.length)} decisions logged`:'no activity yet'} badgeTone={evs.length?'g':'k'}
+      right={<Provenance kind={evs.length?'solved':'derived'} note="event log + solves"/>}
+      info={{ what:'The tool measuring its OWN ROI — decisions taken (immutable event log) and ₹ value surfaced (cached solves). Separates value IDENTIFIED by a solve from recommendations ACCEPTED into the committed plan. No invented totals.', flows:'The renewal / expansion business case.' }}
+      dev={{ comp:'ValueLedger (D2)', props:'events[] · solveResults cache' }}>
+      <KpiRow cols={4}>
+        <Blk label="Decisions logged" value={evs.length?_N(evs.length):'—'} sub={sinceTs?`first ${_ago(sinceTs)}`:'no events'} tone={evs.length?'c':'k'}/>
+        <Blk label="Scenarios explored" value={_N(explored)} sub={`${replans} re-plans · ${sensed} sensed`}/>
+        <Blk label="Recommendations applied" value={_N(applied)} sub={acceptPct!=null?`${acceptPct}% of explored`:'none applied yet'} tone={applied?'g':'k'} accent={applied?C.gn:undefined}/>
+        <Blk label="Annual value surfaced" value={annualSurfaced!=null?`₹${_N(annualSurfaced)}/yr`:'—'} sub={annualSurfaced!=null?'pooling dividend':'run the loop'} tone={annualSurfaced!=null?'g':'k'}/>
+      </KpiRow>
+
+      <div style={{marginTop:10}}><SubLabel>Value identified by the platform (each traced to a solve)</SubLabel></div>
+      {rows.length>0 ? (
+        <DataTable dense cols={['Source','What','Amount','From']} align={['left','left','right','left']}
+          rows={rows.map(r=>[r.src, r.what, r.amt, <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3}}>{r.prov}</span>])}/>
+      ) : (
+        <div style={{padding:'9px 11px', border:`2px dashed ${C.line2}`, fontFamily:F.mono, fontSize:10.5, color:C.tx3}}>
+          No solved value surfaced yet — run the end-to-end loop (or the pooling, line-capacity and risk solves) and the ₹ opportunities each one finds appear here, each traceable to its solve.
+        </div>
+      )}
+
+      <Reading tone={applied?C.gn:(evs.length?C.a4:C.tx3)}
+        formula={`${_N(evs.length)} decisions · ${explored} scenarios explored · ${applied} applied${acceptPct!=null?` (${acceptPct}%)`:''}${annualSurfaced!=null?` · ₹${_N(annualSurfaced)}/yr surfaced`:''}`}
+        soWhat={evs.length
+          ? `Value the platform has SURFACED and decisions it has RECORDED — traced to solves and the audit log, not a claim of cash banked. ${applied} recommendation(s) have been promoted into the committed plan. This is the evidence a renewal conversation runs on: decision throughput, acceptance rate, and identified ₹ — all from real solves.`
+          : 'No decisions logged yet. As you run solves, branch scenarios and apply recommendations, the ledger accrues the audit trail and the ₹ value each solve surfaced — the ROI case for the tool.'}/>
+    </Card>
   );
 }
+
+// (R13) ScnCockpit REMOVED — the S&OP cockpit board, the D8 ExceptionCockpit and
+// the D2 ValueLedger now live on Home (the "is my plan current & healthy?" surface).
+// ExceptionCockpit + ValueLedger remain defined above and are rendered from Home.
 
 // ════════════════════════════════════════════════════════════════════════
 // W10/W11 · SCENARIOS — branch · run (concurrent what-if) · compare · merge.
@@ -728,10 +944,132 @@ function ScnScenarios({ onNav }){
 
       {/* Event-sourced replay + version diff/merge (W11 · Platform L4 depth) */}
       <ScnVersions sc={sc}/>
+
+      {/* D5 — Excel round-trip model surface */}
+      <ModelSurface/>
     </Grid>
   );
 }
 function _dl(v){ return (v==null||isNaN(v)) ? '—' : (v>=0?'+':'−')+'₹'+(Math.abs(v)/1e5).toFixed(2)+'L'; }
+
+// ── D5 · EXCEL ROUND-TRIP MODEL SURFACE ───────────────────────────────────────
+// The sharp version of "Excel config": not a dead XLSX dump, but a round-trip model
+// surface — export the editable input envelope (per-SKU committed-demand totals +
+// governed config scalars) as a spreadsheet, edit it in Excel, re-import, DIFF the
+// change field-by-field, then APPLY + re-solve. The diff is the same field set the
+// version-merge reasons over. Honest format: CSV (Excel opens it natively) — we don't
+// claim a native .xlsx writer we don't have. Demand edits scale the series
+// proportionally (seasonality preserved); a stated assumption, shown in-card.
+function _parseSurfaceCsv(text){
+  const env = { demand:{}, config:{} };
+  const lines = String(text||'').split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length);
+  let n = 0;
+  lines.forEach(ln=>{
+    const c = ln.split(',').map(x=>x.trim());
+    if(c.length<3) return;
+    if(c[0].toLowerCase()==='slice') return;   // header
+    const slice=c[0], field=c[1], raw=c[2];
+    if(slice!=='demand' && slice!=='config') return;
+    const num = Number(String(raw).replace(/[, ]/g,''));
+    env[slice][field] = (raw!=='' && isFinite(num)) ? num : raw;
+    n++;
+  });
+  return { env, n };
+}
+function ModelSurface(){
+  const { config, setConfig } = useConfig();
+  const { planning } = usePlanning();
+  const fileRef = useRef(null);
+  const [paste, setPaste] = useState('');
+  const [diff, setDiff] = useState(null);     // [{slice,field,live,imp}]
+  const [msg, setMsg]   = useState(null);
+  const [busy, setBusy] = useState(false);
+  const fin = (M.products||[]).filter(p=>p.cat==='Finished');
+  const liveTotal = sku => getItemDemand(sku,12).reduce((a,b)=>a+b,0);
+
+  const exportCsv = ()=>{
+    const lines = ['slice,field,value'];
+    fin.forEach(p=> lines.push(`demand,${p.sku},${Math.round(liveTotal(p.sku))}`));
+    Object.entries(config||{}).forEach(([k,v])=>{ if(v!==null && (typeof v==='number'||typeof v==='string')) lines.push(`config,${k},${v}`); });
+    const csv = lines.join('\n');
+    try{ const blob=new Blob([csv],{type:'text/csv'}); const url=URL.createObjectURL(blob);
+      const a=document.createElement('a'); a.href=url; a.download='model_surface.csv'; document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(url);
+    }catch(e){ setMsg('⚠ download blocked — copy the table below instead'); }
+    if(typeof logEvent==='function') logEvent('model_export', null, { rows: lines.length-1 });
+  };
+
+  const computeDiff = (text)=>{
+    const { env, n } = _parseSurfaceCsv(text);
+    if(!n){ setMsg('⚠ no slice,field,value rows found — export first, edit the value column, re-import'); setDiff(null); return; }
+    const rows = [];
+    fin.forEach(p=>{ const imp=env.demand[p.sku]; if(imp==null) return;
+      const live=Math.round(liveTotal(p.sku)); if(Math.round(imp)!==live) rows.push({ slice:'demand', field:p.sku, live, imp:Math.round(imp) }); });
+    Object.entries(env.config||{}).forEach(([k,v])=>{ const live=config[k];
+      if(String(live)!==String(v)) rows.push({ slice:'config', field:k, live:live==null?'—':live, imp:v }); });
+    setDiff(rows); setMsg(rows.length?`${rows.length} change(s) detected`:'no changes vs the live model');
+  };
+  const onFile = (e)=>{ const f=e.target.files&&e.target.files[0]; if(!f) return;
+    const r=new FileReader(); r.onload=()=>{ setPaste(String(r.result||'')); computeDiff(String(r.result||'')); }; r.readAsText(f); };
+
+  const apply = async (reSolve)=>{
+    if(!diff || !diff.length) return; setBusy(true);
+    try{
+      diff.forEach(r=>{
+        if(r.slice==='demand'){ const series=getItemDemand(r.field,12); const lt=series.reduce((a,b)=>a+b,0); const tgt=Number(r.imp)||0;
+          const scaled = lt>0 ? series.map(v=>v*tgt/lt) : Array(series.length).fill(tgt/series.length);
+          setItemDemand(r.field, scaled); }
+        else if(r.slice==='config'){ const num=Number(r.imp); setConfig({ [r.field]: (r.imp!==''&&isFinite(num))?num:r.imp }); }
+      });
+      if(typeof logEvent==='function') logEvent('model_import', null, { changed: diff.length, reSolve: !!reSolve });
+      if(reSolve){ await runFullLoop({ planning }); }
+      setMsg(`✓ applied ${diff.length} change(s)${reSolve?' and re-solved the whole model':' — solves now stale, re-plan to refresh'}`);
+      setDiff(null);
+    }catch(e){ setMsg('⚠ '+(e.message||String(e))); } finally{ setBusy(false); }
+  };
+
+  return (
+    <Card icon="📑" title="Excel round-trip — model surface" span={2} badge={diff?`${diff.length} change(s)`:'export ↔ edit ↔ re-import'} badgeTone={diff&&diff.length?'y':'k'}
+      right={<Provenance kind="input" note="input envelope ⇄ CSV"/>}
+      info={{ what:'Export the editable model (per-SKU committed-demand totals + config scalars) to a spreadsheet, edit in Excel, re-import. The change is diffed field-by-field, then applied and re-solved. Round-trip config without leaving Excel.', flows:'Export → edit in Excel → re-import → diff → apply + re-solve.' }}
+      dev={{ comp:'ModelSurface (D5)', props:'config · getItemDemand/setItemDemand · runFullLoop', note:'CSV (Excel-native); demand edits scale the series proportionally.' }}>
+      <div style={{display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', marginBottom:8}}>
+        <Btn kind="accent" sm onClick={exportCsv}>⬇ Export model (.csv)</Btn>
+        <Btn kind="secondary" sm onClick={()=>fileRef.current&&fileRef.current.click()}>⬆ Re-import edited file</Btn>
+        <input ref={fileRef} type="file" accept=".csv,.tsv,.txt" style={{display:'none'}} onChange={onFile}/>
+        <span style={{flex:1}}/>
+        {diff && diff.length>0 && <React.Fragment>
+          <Btn kind="primary" sm onClick={()=>apply(false)} style={busy?{opacity:.5}:undefined}>{busy?'…':'Apply'}</Btn>
+          <Btn kind="primary" sm onClick={()=>apply(true)} style={busy?{opacity:.5}:undefined}>{busy?'Solving…':'Apply + re-solve'}</Btn>
+        </React.Fragment>}
+      </div>
+
+      <textarea value={paste} onChange={e=>{ setPaste(e.target.value); }} onBlur={()=>paste&&computeDiff(paste)}
+        placeholder={'…or paste the edited CSV here (slice,field,value). Export first to get the template.'}
+        style={{width:'100%', minHeight:64, border:`2px solid ${C.line}`, background:C.paper, color:C.tx2,
+          fontFamily:F.mono, fontSize:9.5, padding:8, outline:'none', boxSizing:'border-box', resize:'vertical'}}/>
+
+      {msg && <div style={{marginTop:8, fontFamily:F.mono, fontSize:10.5, color: msg[0]==='⚠'?C.dg:msg[0]==='✓'?C.gn:C.tx2}}>{msg}</div>}
+
+      {diff && diff.length>0 && (
+        <div style={{marginTop:8}}>
+          <SubLabel>Changes vs the live model</SubLabel>
+          <DataTable dense cols={['Slice','Field','Live','Imported','Δ']} align={['left','left','right','right','right']}
+            rows={diff.map(r=>{ const dl = (typeof r.live==='number'&&typeof r.imp==='number') ? r.imp-r.live : null;
+              return [<Tag c={r.slice==='demand'?'c':'w'}>{r.slice}</Tag>, <span style={{fontFamily:F.mono, fontSize:9.5}}>{r.field}</span>,
+                String(r.live), <span style={{fontWeight:700}}>{String(r.imp)}</span>,
+                <span style={{fontFamily:F.mono, fontSize:9.5, color: dl==null?C.tx3:(dl>0?C.dg:C.gn)}}>{dl==null?'—':(dl>0?'+':'')+Math.round(dl).toLocaleString('en-IN')}</span>]; })}/>
+        </div>
+      )}
+
+      <Reading tone={diff&&diff.length?C.a4:C.tx3}
+        formula="export envelope → edit in Excel → re-import → field diff → apply (demand scales the series) → re-solve"
+        soWhat={diff&&diff.length
+          ? `${diff.length} field(s) differ from the live model. Apply writes them back through the same setters the tabs use (demand totals scale the committed series, preserving seasonality) and flags the dependent solves stale — Apply + re-solve runs the full loop so you see the new plan immediately. The whole edit happened in Excel.`
+          : 'Round-trip the model through Excel: export the envelope, edit demand or a config scalar in any spreadsheet, re-import, and the diff shows exactly what changed before you commit it. FX & external-signal indices have their own governed surfaces.'}/>
+    </Card>
+  );
+}
 
 // ── Event-sourced replay + version diff/merge (W11 · Platform L4 depth) ──────
 // LEFT: the immutable event trail replayed as a version history — every plan-changing

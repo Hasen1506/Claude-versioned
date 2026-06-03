@@ -4,35 +4,61 @@
 // ──────────────────────────────────────────────────────────────────────
 
 // ── pipeline ribbon (P6): solver spine, doubles as nav ──
+// LIVE: the 6 stages map 1:1 onto the real LOOP_STEPS solve keys, so each dot and
+// value reflects the cross-stage solve cache (solveResults) + freshness (solves) —
+// done / stale / not-run. No hardcoded statuses or values; an unsolved stage reads
+// "—" and goes grey. Subscribes to the store so a re-plan animates the whole ribbon.
+const _RIBBON_STAGES = [
+  { key:'forecast',    stage:'DEMAND',  sub:'forecast', go:'demand',
+    val:r=>`${(r.products||[]).length||'—'} SKUs` },
+  { key:'aggregate',   stage:'PLAN',    sub:'S&OP',     go:'plan',
+    val:r=>r.strategy?String(r.strategy):'solved' },
+  { key:'procurement', stage:'PROCURE', sub:'MILP',     go:'sourcing',
+    val:r=>`${(r.materials||[]).length||0} parts` },
+  { key:'production',  stage:'PRODUCE', sub:'schedule', go:'production',
+    val:r=>`${(r.gantt||[]).length||0} runs` },
+  { key:'linecap',     stage:'CAPITAL', sub:'₹ dual',   go:'plan',
+    val:r=>`${(r.lines||[]).filter(l=>l.binding).length} binding` },
+  { key:'montecarlo',  stage:'RISK',    sub:'CVaR',     go:'scenarios',
+    val:r=>r.avg_fill!=null?`${r.avg_fill}% fill`:'solved' },
+];
 function PipelineRibbon({ onNav }) {
-  const stColor = { done:C.gn, running:C.ac, queued:C.tx3, idle:C.tx3 };
+  const { state:sr }     = useStore(s=>s.solveResults||{});
+  const { state:solves } = useStore(s=>s.solves||{});
+  const stColor = { done:C.gn, stale:C.a4, idle:C.tx3 };
+  const solvedN = _RIBBON_STAGES.filter(s=>sr[s.key]).length;
+  const staleN  = _RIBBON_STAGES.filter(s=>(solves[s.key]||{}).stale).length;
   return (
     <div style={{display:'flex', alignItems:'stretch', borderBottom:`2px solid ${C.line}`, background:C.bg2}}>
       <div style={{display:'flex', flexDirection:'column', justifyContent:'center', gap:1, padding:'0 14px', borderRight:`2px solid ${C.line}`, background:C.ink, color:C.paper}}>
-        <span style={{fontFamily:F.disp, fontSize:10, fontWeight:800, letterSpacing:'.1em', whiteSpace:'nowrap'}}>ONE PIPELINE · 6 STAGES</span>
-        <span style={{fontFamily:F.mono, fontSize:7.5, color:C.ac, letterSpacing:'.04em', whiteSpace:'nowrap'}}>one end-to-end solve · click a stage</span>
+        <span style={{fontFamily:F.disp, fontSize:10, fontWeight:800, letterSpacing:'.1em', whiteSpace:'nowrap'}}>ONE PIPELINE · {solvedN}/{_RIBBON_STAGES.length} SOLVED</span>
+        <span style={{fontFamily:F.mono, fontSize:7.5, color: staleN?C.a4:C.ac, letterSpacing:'.04em', whiteSpace:'nowrap'}}>{staleN?`${staleN} stale — re-plan from Home`:'live solve cache · click a stage'}</span>
       </div>
       <div style={{display:'flex', flex:1, minWidth:0}}>
-        {M.pipeline.map((p,i)=>(
-          <button key={p.id} onClick={()=>onNav(p.go)} style={{
-            flex:1, minWidth:0, border:'none', borderRight: i<M.pipeline.length-1?`1px solid ${C.line2}`:'none',
-            background:'transparent', cursor:'pointer', padding:'7px 10px', display:'flex', alignItems:'center', gap:9, textAlign:'left',
-          }}>
-            <span style={{
-              width:9, height:9, flexShrink:0, background:stColor[p.status],
-              borderRadius: p.status==='running'?'50%':0, border:`1.5px solid ${C.line}`,
-              boxShadow: p.status==='running'?`0 0 0 3px color-mix(in srgb, ${C.ac} 35%, transparent)`:'none',
-            }}/>
-            <span style={{minWidth:0}}>
-              <span style={{display:'flex', alignItems:'center', gap:6}}>
-                <span style={{fontFamily:F.disp, fontSize:11, fontWeight:800, letterSpacing:'.03em'}}>{p.stage}</span>
-                <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>{p.sub}</span>
+        {_RIBBON_STAGES.map((p,i)=>{
+          const res    = sr[p.key] ? sr[p.key].result : null;
+          const st     = solves[p.key] || {};
+          const status = !res ? 'idle' : (st.stale ? 'stale' : 'done');
+          const val    = res ? p.val(res) : '—';
+          return (
+            <button key={p.key} onClick={()=>onNav(p.go)} title={status==='stale'?'stale — inputs changed since last solve':status==='done'?'fresh':'not solved yet'} style={{
+              flex:1, minWidth:0, border:'none', borderRight: i<_RIBBON_STAGES.length-1?`1px solid ${C.line2}`:'none',
+              background:'transparent', cursor:'pointer', padding:'7px 10px', display:'flex', alignItems:'center', gap:9, textAlign:'left',
+            }}>
+              <span style={{
+                width:9, height:9, flexShrink:0, background:stColor[status], border:`1.5px solid ${C.line}`,
+              }}/>
+              <span style={{minWidth:0}}>
+                <span style={{display:'flex', alignItems:'center', gap:6}}>
+                  <span style={{fontFamily:F.disp, fontSize:11, fontWeight:800, letterSpacing:'.03em'}}>{p.stage}</span>
+                  <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>{p.sub}</span>
+                </span>
+                <span className="num" style={{fontFamily:F.mono, fontSize:10, color: status==='idle'?C.tx3:status==='stale'?C.a4:C.tx, fontWeight:600}}>{val}</span>
               </span>
-              <span className="num" style={{fontFamily:F.mono, fontSize:10, color: p.status==='running'?C.tx:C.tx2, fontWeight:600}}>{p.val}</span>
-            </span>
-            {i<M.pipeline.length-1 && <span style={{marginLeft:'auto', color:C.tx3, fontSize:12}}>›</span>}
-          </button>
-        ))}
+              {i<_RIBBON_STAGES.length-1 && <span style={{marginLeft:'auto', color:C.tx3, fontSize:12}}>›</span>}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

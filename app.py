@@ -43,14 +43,25 @@ from solvers.capital_capacity import solve_capital_capacity
 from solvers.sequencing import evaluate_line as sequence_evaluate_line
 from solvers.transport import consolidate_shipments, MODE_SPECS as TRANSPORT_MODE_SPECS
 
-app = Flask(__name__, static_folder='static', static_url_path='')
+# The live frontend is the multi-file app_v2/ build (index_v2.html + *.jsx,
+# compiled in-browser by Babel-standalone — no bundle step). We serve that folder
+# as the static root so GET /lib.jsx → app_v2/lib.jsx, etc. The legacy monolith
+# index.html (repo root) is intentionally NOT served — it is kept untouched as an
+# archived reference and reachable at /legacy for comparison only.
+app = Flask(__name__, static_folder='app_v2', static_url_path='')
 CORS(app)
 
 
-# ─── Static Frontend ───
+# ─── Static Frontend (app_v2) ───
 @app.route('/')
 def index():
-    return send_from_directory('static', 'index.html')
+    return send_from_directory('app_v2', 'index_v2.html')
+
+
+# ─── Legacy monolith (archived, untouched) ───
+@app.route('/legacy')
+def legacy():
+    return send_from_directory('.', 'index.html')
 
 
 # ─── Favicon (inline SVG, no file needed) ───
@@ -905,6 +916,79 @@ def api_calendar():
         if not data.get('include_daily', False):
             result.pop('daily', None)
         return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ─── Composability / open-solve substrate (D7) ───
+# A LIVE, self-describing catalog of every solver endpoint — introspected from the
+# real Flask url_map, NOT a hand-kept list (so it can never drift from what's
+# actually registered). This is the "open substrate" pitch: each optimiser is a
+# standalone HTTP call against one shared dataset, so a best-of-breed tool or the
+# customer's own scripts can invoke a single solver without buying the whole suite.
+# The one-line descriptions are documentation; the route list itself is truth.
+_SOLVER_DOCS = {
+    '/api/solve/procurement':         'Multi-period material buy plan (MOQ, lead time, holding) — PuLP/CBC MILP.',
+    '/api/solve/production':          'Lot-sized production schedule (setup vs holding, campaign min-run).',
+    '/api/solve/profitmix':           'Profit-max product mix under shared capacity — returns shadow prices + crossover.',
+    '/api/solve/transport':           'Outbound lane flow / mode selection (cost vs tonnage).',
+    '/api/solve/capital':             'Capital-budget project selection under a CapEx ceiling.',
+    '/api/solve/montecarlo':          'Risk simulation on the COMMITTED plan — fill, cost CVaR95, fragility.',
+    '/api/solve/sensitivity':         'Profit-mix tornado — per-constraint shadow-price sensitivity.',
+    '/api/solve/aggregate':           'Aggregate S&OP plan (level / chase / hybrid strategy choice).',
+    '/api/solve/cvar':                'Costly-item newsvendor + CVaR-robust order-up-to (h vs p).',
+    '/api/solve/policy':              '(s,S)/(R,Q) inventory-policy autopilot + joint replenishment.',
+    '/api/solve/meio':                'Multi-echelon safety-stock placement (RM→WIP→FG).',
+    '/api/solve/meio-network':        'Multi-product risk pooling on shared parts (square-root law).',
+    '/api/solve/linecap':             'Line-capacity shadow price (₹/unit of relieving the binding line).',
+    '/api/solve/production-sensitivity': 'CapEx line-expansion suggester (Δmargin + payback per scenario).',
+    '/api/solve/sop':                 'S&OP reconciliation pipeline (top-down / bottom-up / middle-out).',
+    '/api/solve/lotsizing':           'Wagner-Whitin / Silver-Meal dynamic lot sizing.',
+    '/api/solve/consolidate':         'Shipment consolidation (truck fill / freight steps).',
+    '/api/solve/sequence':            'Line sequencing / changeover evaluation.',
+    '/api/solve/capital-capacity':    'Capacity expansion under a capital budget.',
+    '/api/forecast':                  'Demand forecast ensemble (model competition + reconciliation).',
+    '/api/demand/sense':              'Pattern-sense latest actuals (promo/holiday/outage/trend-break).',
+    '/api/risk/regimes':              'Regime / structural-break detection on a series.',
+    '/api/whatif':                    'Advisory what-if delta against the committed plan.',
+    '/api/calc/landed-cost':          'Landed-cost build-up (duty + freight + FX).',
+    '/api/calc/npv':                  'NPV of a cash-flow stream.',
+    '/api/calc/depreciation':         'Depreciation schedule (SLM / WDV).',
+    '/api/calc/wacc':                 'Weighted average cost of capital.',
+    '/api/calc/hurdle':               'Blended project hurdle rate.',
+    '/api/calc/wacc-structure':       'Min-WACC capital structure.',
+    '/api/calc/disaggregate':         'Disaggregate an aggregate plan to SKU/period.',
+    '/api/calc/calendar':             'Working calendar (shifts, holidays, net hours).',
+}
+
+
+@app.route('/api/meta/solvers')
+def api_meta_solvers():
+    """Live introspection of the registered API surface — the digital-twin substrate."""
+    try:
+        rules = []
+        for rule in app.url_map.iter_rules():
+            path = str(rule.rule)
+            if not path.startswith('/api/') or path == '/api/meta/solvers':
+                continue
+            methods = sorted(m for m in rule.methods if m not in ('HEAD', 'OPTIONS'))
+            kind = ('solve' if path.startswith('/api/solve') else
+                    'calc' if path.startswith('/api/calc') else
+                    'forecast' if 'forecast' in path or 'demand' in path else
+                    'risk' if 'risk' in path or 'montecarlo' in path else 'util')
+            rules.append({
+                'path': path,
+                'methods': methods,
+                'kind': kind,
+                'doc': _SOLVER_DOCS.get(path, ''),
+            })
+        rules.sort(key=lambda r: (r['kind'] != 'solve', r['path']))
+        return jsonify({
+            'count': len(rules),
+            'base': request.host_url.rstrip('/'),
+            'endpoints': rules,
+            'note': 'One shared dataset, one HTTP call per solver — a lightweight digital twin.',
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

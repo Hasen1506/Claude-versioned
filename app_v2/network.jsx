@@ -10,7 +10,7 @@ function StageNetwork({ onNav }) {
     <div>
       <StageHeader n="03" title="Network · Nodes, Flows & Contracts"
         kicker="Physical nodes · per-item inbound/outbound lanes · time-varying contracts · opening on-hand — defined AFTER products exist"
-        right={<Btn kind="secondary">⤓ Import topology</Btn>}/>
+        right={<ModelIO label="Import model"/>}/>
       <ItemSelector/>
       <div style={{padding:18}}>
         <NetFlows item={item} view={view}/>
@@ -88,7 +88,12 @@ function NetFlows({ item, view }) {
 function NetNodes() {
   const { network } = useNetwork();
   const ttl = { plant:'Plant', wh:'Warehouse', dc:'Dist. Center', customer:'Customer', supplier:'Supplier' };
-  const util = { 'WH-CHN':62, 'DC-BLR':74, 'DC-PUN':48 };
+  // (R13) storage utilisation now DERIVED — Σ(on-hand qty × volume) ÷ node cube,
+  // volume from the single store authority (skuVolM3). Was hardcoded 62/74/48%.
+  const vol = (typeof skuVolM3==='function') ? skuVolM3 : (()=>0);
+  const usedM3 = (nodeId)=> (network.onHand||[])
+    .filter(o=>o.loc===nodeId)
+    .reduce((s,o)=>s + (Number(o.qty)||0)*vol(o.item), 0);
   return (
     <StageSection step="B" title="Nodes" sub="plants · warehouses · DCs · customers · suppliers — capacity is item-aware">
       <Grid cols={2}>
@@ -98,20 +103,27 @@ function NetNodes() {
           <DataTable dense cols={['Node','Type','Name','Capacity']} align={['left','left','left','right']}
             rows={network.nodes.map(n=>[n.id, ttl[n.type]||n.type, n.name, n.cap])}/>
         </Card>
-        <Card icon="📦" title="Storage Utilization" badge="item-aware" badgeTone="y"
-          info={{ what:'Σ(item volume × on-hand) ÷ node capacity — storage is not a lump.', flows:'Util → CoG, capacity gates.' }}
-          dev={{ comp:'NodeUtilCard', props:'nodes, onHand, item volumes (computed)' }}>
+        <Card icon="📦" title="Storage Utilization" badge="item-aware · derived" badgeTone="y"
+          right={<Provenance kind="derived" note="Σ vol·on-hand / cube"/>}
+          info={{ what:'Σ(item volume × on-hand) ÷ node capacity — computed from opening on-hand and the single volume master, not a lump or a seed.', flows:'Util → CoG, capacity gates.' }}
+          dev={{ comp:'NodeUtilCard', props:'network.onHand × skuVolM3 ÷ node.capacity', note:'R13 — real derivation; was hardcoded 62/74/48%.' }}>
           <div style={{display:'flex', flexDirection:'column', gap:10, marginTop:2}}>
-            {network.nodes.filter(n=>n.type==='wh'||n.type==='dc').map((n,i)=>(
-              <div key={n.id}>
-                <div style={{display:'flex', justifyContent:'space-between', fontFamily:F.mono, fontSize:10, marginBottom:3}}>
-                  <span style={{fontWeight:700}}>{n.id}</span><span className="num" style={{color:C.tx2}}>{util[n.id]||40}% of {n.cap}</span>
+            {network.nodes.filter(n=>n.type==='wh'||n.type==='dc').map((n)=>{
+              const cap = Number(n.capacity)||0; const used = usedM3(n.id);
+              const pct = cap>0 ? used/cap*100 : 0;
+              return (
+                <div key={n.id}>
+                  <div style={{display:'flex', justifyContent:'space-between', fontFamily:F.mono, fontSize:10, marginBottom:3}}>
+                    <span style={{fontWeight:700}}>{n.id}</span>
+                    <span className="num" style={{color:C.tx2}}>{used.toFixed(2)} m³ · {pct<0.1&&pct>0?'<0.1':pct.toFixed(1)}% of {n.cap}</span>
+                  </div>
+                  <MiniBar v={pct} max={100} color={pct>70?C.a4:C.ink} h={12}/>
                 </div>
-                <MiniBar v={util[n.id]||40} max={100} color={(util[n.id]||40)>70?C.a4:C.ink} h={12}/>
-              </div>
-            ))}
+              );
+            })}
           </div>
-          <Reading formula="util = Σ(volᵢ · onhandᵢ) / capacity_node" soWhat="DC-BLR at 74% — nearing the cube limit; the CoG study (Logistics) tests a Kurnool hub to relieve it."/>
+          <Reading formula="util = Σ(volᵢ · onhandᵢ) / capacity_node"
+            soWhat="Computed from opening on-hand × the volume master: the DCs start nearly empty (a few m³ of a multi-thousand-m³ cube) — utilisation builds as production lands. The CoG study (Logistics) sizes the hub against full-flow volume, not opening stock."/>
         </Card>
       </Grid>
     </StageSection>

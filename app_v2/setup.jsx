@@ -8,9 +8,10 @@ function StageSetup({ onNav }) {
     <div>
       <StageHeader n="01" title="Setup · Identity & Calendar"
         kicker="Just two things: who you are, and the clock everything plans against. WACC/CAC live in Finance; nodes/on-hand in Network."
-        right={<Btn kind="secondary">⤓ Import JSON</Btn>}/>
+        right={<ModelIO label="Import JSON"/>}/>
       <div style={{padding:18}}>
         <SetupIdentity onNav={onNav}/>
+        <SetupTemplates onNav={onNav}/>
         <SetupProfile/>
         <SetupCalendar/>
       </div>
@@ -81,6 +82,104 @@ function SetupIdentity({ onNav }) {
           })()}
         </Card>
       </Grid>
+    </StageSection>
+  );
+}
+
+// ── D4 · INDUSTRY TEMPLATE LOADER (differentiation track) ────────────────────
+// Time-to-value / low-TCO wedge: incumbents need a 6-month consulting build to
+// stand up a usable model. A planner here picks an industry archetype and starts
+// from TUNED defaults instead of a blank slate. HONESTY: a preset retunes the
+// planning PARAMETERS that solvers actually consume (service level → safety stock
+// & CVaR; freeze/slush horizon → re-plan nervousness; profile → which engines the
+// spine shows) and flags the modules that matter for that industry. It does NOT
+// fabricate a dataset — your own products/BOM/network stay exactly as entered;
+// the native dataset here is automotive, so CPG/pharma reshape the knobs, not the
+// data. Every value below is written straight into the live config/planning/profile
+// slices the rest of the app reads — nothing cosmetic, nothing faked.
+const INDUSTRY_TEMPLATES = [
+  { id:'auto', name:'Automotive · discrete JIT', icon:'🚗', native:true,
+    tag:'native fit for this dataset',
+    blurb:'Tight-capacity, multi-line discrete manufacturing on a JIT inbound. Sequencing & changeover dominate; supplier consolidation cuts inbound freight.',
+    cfg:{ serviceLevel:0.95 },
+    plan:{ timeGrain:'week', frozenWeeks:4, slushyWeeks:12, horizonLength:52 },
+    profile:{ makePolicy:'MTS+MTO', capacity:'tight', imports:true, lines:'many', distribution:'network', externalForecast:false },
+    emphasis:[ ['console','Line-capacity shadow price'], ['production','Sequencing & changeover'], ['sourcing','JIT supplier consolidation'] ],
+    audit:'standard' },
+  { id:'cpg', name:'CPG / FMCG · high-velocity', icon:'🛒',
+    tag:'promo-driven · short freeze',
+    blurb:'Fast-moving, promo-driven demand with a short responsive freeze. Forecast accuracy and service-vs-inventory are the battleground; sensing reacts to in-week swings.',
+    cfg:{ serviceLevel:0.98 },
+    plan:{ timeGrain:'week', frozenWeeks:2, slushyWeeks:8, horizonLength:52 },
+    profile:{ makePolicy:'MTS+MTO', capacity:'tight', imports:false, lines:'many', distribution:'network', externalForecast:false },
+    emphasis:[ ['demand','Promo-uplift forecast + sensing'], ['sourcing','Safety stock vs service'], ['scenarios','Live control tower'] ],
+    audit:'standard' },
+  { id:'pharma', name:'Pharma · regulated batch', icon:'💊',
+    tag:'audit trail bundled · 99% service',
+    blurb:'Regulated, expiry-critical batch production with imported APIs. Long freeze for compliance, very high service, and a full audit trail of every plan change.',
+    cfg:{ serviceLevel:0.99 },
+    plan:{ timeGrain:'week', frozenWeeks:8, slushyWeeks:16, horizonLength:52 },
+    profile:{ makePolicy:'MTS+MTO', capacity:'tight', imports:true, lines:'many', distribution:'network', externalForecast:false },
+    emphasis:[ ['scenarios','Audit trail & version replay'], ['demand','Very-high (99%) service'], ['sourcing','Cold-chain carry & expiry'] ],
+    audit:'bundled' },
+];
+
+function SetupTemplates({ onNav }) {
+  const { config, setConfig } = useConfig();
+  const { setPlanning } = usePlanning();
+  const { setProfile } = useProfile();
+  const active = config.industryProfile || null;
+  const apply = (t)=>{
+    setConfig({ serviceLevel:t.cfg.serviceLevel, industryProfile:t.id });
+    setPlanning({ timeGrain:t.plan.timeGrain, frozenWeeks:t.plan.frozenWeeks, slushyWeeks:t.plan.slushyWeeks, horizonLength:t.plan.horizonLength });
+    setProfile(t.profile);
+    if(typeof logEvent==='function') logEvent('template_apply', t.id, { name:t.name, serviceLevel:t.cfg.serviceLevel, freeze:t.plan.frozenWeeks });
+  };
+  return (
+    <StageSection step="★" title="Industry Quick-Start" sub="pick an archetype to start from tuned planning defaults instead of a blank model — your data stays, the knobs retune">
+      <Card icon="🏭" title="Industry Templates" badge={active?`active: ${active}`:'choose a preset'} badgeTone={active?'g':'y'} span={3}
+        info={{ what:'Each preset writes industry-tuned defaults into the live config, planning horizon and planning profile — the knobs solvers actually consume.', flows:'service level → safety stock & CVaR · freeze/slush → re-plan nervousness · profile → which engines the spine shows.' }}
+        dev={{ comp:'SetupTemplates (D4)', props:'useConfig/usePlanning/useProfile', state:'config.industryProfile + tuned config/planning/profile patches' }}
+        right={<Provenance kind="input"/>}>
+        <div style={{padding:'8px 11px', marginBottom:12, border:`2px dashed ${C.a2}`, background:C.bg2, fontFamily:F.mono, fontSize:9.5, color:C.tx2, lineHeight:1.55}}>
+          ⓘ A preset <b>retunes planning defaults &amp; highlights the right modules</b> — it does <b>not</b> generate synthetic data. Your products, BOM and network are untouched; the seeded dataset is automotive, so CPG/pharma reshape the parameters, not the data. Tweak anything afterwards in Setup, Demand or the Profile card below.
+        </div>
+        <Grid cols={3} gap={12}>
+          {INDUSTRY_TEMPLATES.map(t=>{ const on=active===t.id; return (
+            <div key={t.id} style={{border:`2px solid ${on?C.gn:C.line2}`, background:on?C.bg2:C.bg3, padding:'12px 13px', display:'flex', flexDirection:'column', gap:8}}>
+              <div style={{display:'flex', alignItems:'center', gap:8}}>
+                <span style={{fontSize:18}}>{t.icon}</span>
+                <div style={{minWidth:0}}>
+                  <div style={{fontFamily:F.disp, fontWeight:900, fontSize:12.5, color:C.tx}}>{t.name}</div>
+                  <div style={{fontFamily:F.mono, fontSize:8.5, color:on?C.gn:C.tx3, letterSpacing:'.04em'}}>{on?'● ACTIVE':t.tag}{t.native&&!on?' · ◆ native':''}</div>
+                </div>
+              </div>
+              <div style={{fontFamily:F.body, fontSize:11, color:C.tx2, lineHeight:1.45}}>{t.blurb}</div>
+              <div style={{display:'flex', flexWrap:'wrap', gap:5, fontFamily:F.mono, fontSize:8.5}}>
+                <Tag c="k">{(t.cfg.serviceLevel*100).toFixed(0)}% service</Tag>
+                <Tag c="k">{t.plan.frozenWeeks}w freeze</Tag>
+                <Tag c="k">{t.plan.timeGrain}ly</Tag>
+                {t.audit==='bundled' && <Tag c="g">audit trail</Tag>}
+              </div>
+              <div style={{borderTop:`1px dotted ${C.line2}`, paddingTop:7, marginTop:'auto'}}>
+                <div style={{fontFamily:F.mono, fontSize:8, color:C.tx3, letterSpacing:'.08em', marginBottom:5}}>EMPHASISES</div>
+                <div style={{display:'flex', flexDirection:'column', gap:3}}>
+                  {t.emphasis.map(([go,lbl],i)=>(
+                    <button key={i} onClick={()=>onNav&&onNav(go)} style={{textAlign:'left', background:'transparent', border:'none', cursor:'pointer', fontFamily:F.mono, fontSize:10, color:C.a2, padding:0, textDecoration:'underline'}}>→ {lbl}</button>
+                  ))}
+                </div>
+              </div>
+              <Btn kind={on?'secondary':'accent'} sm onClick={()=>apply(t)} style={{justifyContent:'center', marginTop:4}}>
+                {on?'✓ Applied — re-apply':'Apply preset →'}
+              </Btn>
+            </div>
+          ); })}
+        </Grid>
+        {active && (()=>{ const t=INDUSTRY_TEMPLATES.find(x=>x.id===active); return t?(
+          <Reading formula={`preset → serviceLevel ${(t.cfg.serviceLevel*100).toFixed(0)}% · freeze ${t.plan.frozenWeeks}w / slush ${t.plan.slushyWeeks}w · ${t.plan.timeGrain}ly · profile retuned`}
+            soWhat={`These are now the live defaults every solver reads. ${t.audit==='bundled'?'The audit trail (every plan change logged + version replay) is the pharma compliance differentiator — see Scenarios → Versions.':'Re-solve any stage to plan against the tuned numbers.'} Override anything below or in Demand/Sourcing.`}/>
+        ):null; })()}
+      </Card>
     </StageSection>
   );
 }

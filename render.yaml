@@ -1,10 +1,24 @@
+# Render Blueprint (Infrastructure-as-Code).
+# Render reads THIS file when you create a "Blueprint" from the repo. It provisions
+# one Python web service that runs the Flask app (app.py), which now serves BOTH:
+#   • the API  (/api/solve/*, /api/report/pdf, /api/meta/solvers, …)
+#   • the live frontend — the multi-file app_v2/ build (index_v2.html + *.jsx),
+#     served as the static root by Flask (static_folder='app_v2' in app.py).
+# Gunicorn runs the WSGI app `app` from module `app` → `app:app`.
 services:
   - type: web
     name: enterprise-simulator
     runtime: python
+    plan: starter            # 512 MB / 0.5 CPU — enough for CBC on this dataset
     buildCommand: pip install -r requirements.txt
+    # 2 workers x 120s timeout: MILP solves (procurement, profit-mix) can take
+    # tens of seconds; a short timeout would 502 mid-solve.
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.0"
-    plan: starter
+      # Optional - only needed if you use the /api/ai/* Claude endpoints.
+      # Set the value in the Render dashboard (Environment), do NOT commit a key.
+      - key: ANTHROPIC_API_KEY
+        sync: false

@@ -740,6 +740,47 @@ function StageContext({ item, asOf, stale, extra }){
   );
 }
 
+// ── (R14) ModelIO — real Export/Import of the live editable model (was an inert
+// header button). Export downloads exportModelJson(); Import reads a chosen .json
+// file and applies it via importModelJson(). Shared by Products/Setup/Network headers.
+function ModelIO({ label }){
+  const fileRef = useRef(null);
+  const [msg, setMsg] = useState(null);
+  const flash = (t)=>{ setMsg(t); setTimeout(()=>setMsg(null), 4000); };
+  const onExport = ()=>{
+    if(typeof exportModelJson!=='function') return;
+    downloadText('es-model.json', exportModelJson(), 'application/json');
+    flash('exported es-model.json');
+  };
+  const onFile = (e)=>{
+    const f = e.target.files && e.target.files[0]; if(!f) return;
+    const r = new FileReader();
+    r.onload = ()=>{ const res = importModelJson(String(r.result));
+      flash(res.ok ? `imported ${res.products} SKUs · ${res.parts} parts` : `⚠ ${res.error}`); };
+    r.readAsText(f); e.target.value='';
+  };
+  return (
+    <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+      {msg && <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3}}>{msg}</span>}
+      <Btn kind="secondary" sm onClick={onExport}>⬇ Export</Btn>
+      <Btn kind="secondary" sm onClick={()=>fileRef.current&&fileRef.current.click()}>⤓ {label||'Import'}</Btn>
+      <input ref={fileRef} type="file" accept=".json,application/json" style={{display:'none'}} onChange={onFile}/>
+    </span>
+  );
+}
+// ReportExport — real PDF download from /api/report/pdf (reportlab). Was inert.
+function ReportExport(){
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState(null);
+  const go = async ()=>{ setBusy(true); setErr(null);
+    try{ await reportPdf(); }catch(e){ setErr(String(e.message||e)); } finally{ setBusy(false); } };
+  return (
+    <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+      {err && <span style={{fontFamily:F.mono, fontSize:9, color:C.dg}}>⚠ {err}</span>}
+      <Btn kind="secondary" sm onClick={go}>{busy?'building…':'📄 Report PDF'}</Btn>
+    </span>
+  );
+}
+
 Object.assign(window, {
   C, F, BUILD, Box, Sep, Blk, KPI, KpiRow, Tag, Badge, Btn, SectionInfo, DevNote, Card,
   DataTable, Field, NumInput, TextInput, Select, Advanced, SubTabNav, StageHeader,
@@ -747,4 +788,5 @@ Object.assign(window, {
   useActiveItem, ItemSelector, Reading, StageSection, PrereqNote, SolverNetwork,
   useProfile, GateNote, MethodTag, SolverIO, PlanningSpine,
   Provenance, AsOf, StaleMark, SolverInput, StageContext,
+  ModelIO, ReportExport,
 });

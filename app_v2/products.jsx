@@ -10,10 +10,11 @@ function StageProducts({ onNav }) {
   return (
     <div>
       <StageHeader n="02" title="Products" kicker="Step 1 — tell us what you make. Then its bill of materials, costs, and the inventory policy we derive."
-        right={<Btn kind="secondary">📁 Import / Export</Btn>}/>
+        right={<ModelIO/>}/>
       <ItemSelector/>
       <div style={{padding:18}}>
         <ProdDefine/>
+        <ProdYieldExpiry p={p}/>
         <ProdBOM p={p}/>
         <ProdCosts p={p}/>
         <ProdPolicy p={p}/>
@@ -25,13 +26,20 @@ function StageProducts({ onNav }) {
 
 // ── NEW first screen — the catalog the prototype assumed existed ──
 function ProdDefine() {
+  useMasterRev();   // re-render when yield/shelf/salvage are edited or a product is added
+  const { setItem } = useActiveItem();
+  const onAdd = ()=>{ const np=addProduct(); if(np) setItem(np.sku); };   // select the new SKU so the flow has something to edit
+  // make/mode/target-margin/lifecycle are catalog attributes (static seed — not
+  // computed). Weight & volume are NO LONGER duplicated here: they read the single
+  // store authority (skuWeightKg/skuVolM3), the same source Logistics tonnage and
+  // Network storage utilisation use — so one SKU has one weight, one volume.
   const ex = {
-    'TPA-4471':{ make:'Make', mode:'MTS', tgt:36, wt:0.84, vol:0.0021, life:'Maturity' },
-    'TPA-3215':{ make:'Make', mode:'MTS', tgt:38, wt:0.31, vol:0.0009, life:'Growth' },
-    'TPA-9904':{ make:'Make', mode:'MTO', tgt:36, wt:0.22, vol:0.0006, life:'Maturity' },
-    'TPA-2188':{ make:'Make', mode:'MTO', tgt:33, wt:1.40, vol:0.0042, life:'Maturity' },
-    'TPA-5540':{ make:'Make', mode:'ATO', tgt:32, wt:0.96, vol:0.0031, life:'Growth' },
-    'TPA-7722':{ make:'Buy', mode:'MTO', tgt:31, wt:0.18, vol:0.0005, life:'Decline' },
+    'TPA-4471':{ make:'Make', mode:'MTS', tgt:36, life:'Maturity' },
+    'TPA-3215':{ make:'Make', mode:'MTS', tgt:38, life:'Growth' },
+    'TPA-9904':{ make:'Make', mode:'MTO', tgt:36, life:'Maturity' },
+    'TPA-2188':{ make:'Make', mode:'MTO', tgt:33, life:'Maturity' },
+    'TPA-5540':{ make:'Make', mode:'ATO', tgt:32, life:'Growth' },
+    'TPA-7722':{ make:'Buy', mode:'MTO', tgt:31, life:'Decline' },
   };
   return (
     <StageSection step="1" title="Define Products" sub="one row per finished good — a new user starts HERE, adds a product, then the selector has something to select">
@@ -41,7 +49,7 @@ function ProdDefine() {
         <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
           <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10}}>
             <thead><tr style={{background:C.ink}}>
-              {['Code','Name','Family','UoM','Make/Buy','Mode','Sell ₹','Tgt %','Wt kg','Vol m³','Shelf','Lifecycle','Method','Status'].map((h,i)=>(
+              {['Code','Name','Family','UoM','Make/Buy','Mode','Sell ₹','Tgt %','Wt kg','Vol m³','Shelf','Yield','Lifecycle','Method','Status'].map((h,i)=>(
                 <th key={i} style={{color:C.paper, textAlign:i<2?'left':'right', padding:'6px 8px', fontSize:8.5, letterSpacing:'.04em', textTransform:'uppercase', whiteSpace:'nowrap'}}>{h}</th>
               ))}
             </tr></thead>
@@ -57,9 +65,10 @@ function ProdDefine() {
                     <td style={{padding:'5px 8px', textAlign:'right'}}><Tag c={e.mode==='MTO'?'v':'w'}>{e.mode}</Tag></td>
                     <td className="num" style={{padding:'5px 8px', textAlign:'right', fontWeight:700}}>{p.price}</td>
                     <td className="num" style={{padding:'5px 8px', textAlign:'right'}}>{e.tgt}%</td>
-                    <td className="num" style={{padding:'5px 8px', textAlign:'right'}}>{e.wt}</td>
-                    <td className="num" style={{padding:'5px 8px', textAlign:'right'}}>{e.vol}</td>
+                    <td className="num" style={{padding:'5px 8px', textAlign:'right'}}>{skuWeightKg(p.sku)}</td>
+                    <td className="num" style={{padding:'5px 8px', textAlign:'right'}}>{skuVolM3(p.sku)}</td>
                     <td className="num" style={{padding:'5px 8px', textAlign:'right'}}>{p.shelf}d</td>
+                    <td className="num" style={{padding:'5px 8px', textAlign:'right'}}>{Math.round((Number(p.yield)||0.95)*100)}%</td>
                     <td style={{padding:'5px 8px', textAlign:'right', color:C.tx2}}>{e.life}</td>
                     <td style={{padding:'5px 8px', textAlign:'right'}}><MethodTag sku={p.sku}/></td>
                     <td style={{padding:'5px 8px', textAlign:'right'}}><Tag c="g">active</Tag></td>
@@ -70,15 +79,56 @@ function ProdDefine() {
           </table>
         </div>
         <div style={{marginTop:10, display:'flex', gap:8}}>
-          <Btn kind="primary" sm>+ Add product</Btn>
-          <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx3, alignSelf:'center'}}>weight & volume drive storage utilization on Network · shelf-life gates lot policy · target margin is a goal — actual mix is an output of Profit-mix, never typed here</span>
+          <Btn kind="primary" sm onClick={onAdd}>+ Add product</Btn>
+          <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx3, alignSelf:'center'}}>adds a finished SKU (template defaults · zero demand) and selects it · weight & volume drive storage utilization on Network · shelf-life gates lot policy · target margin is a goal — actual mix is an output of Profit-mix, never typed here</span>
         </div>
       </Card>
     </StageSection>
   );
 }
 
+// ── (R14) Editable yield-loss & expiry parameters for the SELECTED item. These are
+// the solvers' REAL levers (procurement effective_qty, profit-mix/MC expiry write-off)
+// that were previously buried JS constants. The discipline (per the input audit):
+// yield biases EVERY solve, so it leads; salvage + shelf only change cost when expiry
+// actually occurs (shelf < horizon), so they're flagged honestly, not hidden.
+function ProdYieldExpiry({ p }){
+  useMasterRev();
+  const { planning } = usePlanning();
+  const T = planning.horizonLength || 52;
+  const shelfWk = Math.max(1, Math.round((Number(p.shelf)||365)/7));
+  const expires = shelfWk < T;     // expiry only bites inside the horizon
+  return (
+    <StageSection step="1a" title={`Yield & expiry · ${p.name}`} sub="the real solver levers — what fraction comes out good, and what happens to stock that ages out">
+      <Card icon="⚗️" title="Yield-loss & expiry parameters" badge="drives the solvers" badgeTone="y"
+        right={<Provenance kind="input"/>}
+        info={{ what:'Yield = good units per unit started (grosses up material + capacity everywhere). Shelf-life gates expiry write-offs; salvage = fraction of make-cost recovered when expired/excess stock is scrapped.', flows:'→ procurement effective_qty=qty·(1+scrap)/yield · profit-mix & Monte-Carlo expiry write-off.' }}
+        dev={{ comp:'ProdYieldExpiry', props:'editProductAttr(sku,…)', state:'M.products[sku].{yield,shelf,salvage}' }}>
+        <Grid cols={3} gap={10}>
+          <Field label="Yield % (good units / started)">
+            <NumInput value={Math.round((Number(p.yield)||0.95)*1000)/10} suffix="%"
+              onChange={(v)=>editProductAttr(p.sku, { yield: Math.min(1, Math.max(0.01, Number(v)/100)) })}/>
+          </Field>
+          <Field label="Shelf-life (days)">
+            <NumInput value={p.shelf} suffix="d"
+              onChange={(v)=>editProductAttr(p.sku, { shelf: Math.max(1, Number(v)||1) })}/>
+          </Field>
+          <Field label="Salvage % of make-cost">
+            <NumInput value={Math.round((Number(p.salvage)||0.8)*100)} suffix="%"
+              onChange={(v)=>editProductAttr(p.sku, { salvage: Math.min(1, Math.max(0, Number(v)/100)) })}/>
+          </Field>
+        </Grid>
+        <Reading formula={`shelf ${shelfWk} wk vs horizon ${T} wk → expiry ${expires?'ACTIVE':'inactive'}`}
+          soWhat={expires
+            ? `This SKU's stock ages out inside the plan, so salvage % is a live lever: lower salvage raises the write-off the optimiser pays on excess/expired units. Re-run Profit-mix / Monte-Carlo to see it move.`
+            : `Shelf-life ≥ horizon, so nothing expires within the plan — salvage % is inert for this SKU at the current horizon (honest: it only bites if you shorten shelf-life below ${T} weeks or lengthen the horizon). Yield still drives every solve.`}/>
+      </Card>
+    </StageSection>
+  );
+}
+
 function ProdBOM({ p }) {
+  useMasterRev();
   const c = M.contracts.find(x=>x.item==='RM-STL42');
   return (
     <StageSection step="2" title={`Bill of Materials · ${p.name}`} sub="physical structure + commercial terms (time-varying contract price, supplier from Network master)">
@@ -95,6 +145,17 @@ function ProdBOM({ p }) {
               return [b.part, b.moq.toLocaleString('en-IN'), `₹${b.S}`, `${b.hold}%`, ct?`₹${ct.rateByPeriod[0][1]}→₹${ct.rateByPeriod[ct.rateByPeriod.length-1][1]}`:`₹${b.cost}`, b.sup];
             })}/>
           <Reading formula="commercial price = contract.rateByPeriod[t] (Network)" soWhat="Steel steps from ₹142 to ₹151 at W29 — the procurement MILP times buys around it."/>
+          <SubLabel right={<span style={{fontFamily:F.mono, fontSize:9, color:C.tx3}}>per-part · distinct from product yield</span>}>Conversion scrap (material lost)</SubLabel>
+          <div style={{display:'flex', flexWrap:'wrap', gap:10}}>
+            {M.bom.map(b=>(
+              <Field key={b.part} label={`${b.part} scrap %`}>
+                <NumInput value={Math.round((Number(b.scrap)||0.01)*1000)/10} suffix="%" w={92}
+                  onChange={(v)=>editPartAttr(b.part, { scrap: Math.min(0.5, Math.max(0, Number(v)/100)) })}/>
+              </Field>
+            ))}
+          </div>
+          <Reading formula="effective material = qty · (1 + scrap) / yield  (procurement.py)"
+            soWhat="Scrap is the fraction of THIS part's material lost in conversion (chips, offcuts) — separate from product yield, which is the fraction of finished units that come out good. Both gross up what procurement must buy."/>
         </Advanced>
       </Card>
     </StageSection>
@@ -205,6 +266,10 @@ function ProdPolicy({ p }) {
 }
 
 function ProdMTO() {
+  // footer totals DERIVED from the rows (was hardcoded '6 customers' / '₹ 48.6 L').
+  const custN  = new Set(M.orders.map(o=>o.cust)).size;
+  const totQty = M.orders.reduce((s,o)=>s+(Number(o.qty)||0),0);
+  const totVal = M.orders.reduce((s,o)=>s+(Number(o.qty)||0)*(Number(o.price)||0),0);
   return (
     <StageSection step="5" title="Make-to-Order" sub="firm customer orders that floor the demand plan">
       <Card icon="📋" title="Make-to-Order (MTO)" badge={`${M.orders.length} orders`}
@@ -212,7 +277,7 @@ function ProdMTO() {
         dev={{ comp:'MTOEditor', props:'state.orders', state:'orders[]' }}>
         <DataTable cols={['PO','Customer','SKU','Qty','Due','Price','Status']} align={['left','left','left','right','right','right','left']}
           rows={M.orders.map(o=>({cells:[o.po, o.cust, o.sku, o.qty, o.due.slice(5), `₹${o.price}`, <Tag c={o.status==='firm'?'g':'w'}>{o.status}</Tag>]}))}
-          foot={['TOTAL','6 customers','','—','','₹ 48.6 L','']}/>
+          foot={['TOTAL',`${custN} customers`,'',totQty.toLocaleString('en-IN'),'',`₹${(totVal/1e5).toFixed(1)}L`,'']}/>
       </Card>
     </StageSection>
   );

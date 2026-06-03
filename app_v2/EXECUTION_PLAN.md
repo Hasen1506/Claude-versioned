@@ -445,4 +445,99 @@ The follow-ups registered after W9/W10/W11 — **every one now implemented and v
 - **Product decisions — ✅ ALL RESOLVED 2026-06-02 (see §0.5):** D-DEC-1 tax jurisdictions = US+India
   seeded-with-override; D-DEC-2 consolidated-view = combined item-dossier + company rollup; D-DEC-3
   contract depth = freight-included stepwise (option b first, →a later). No open blockers. (AUDIT §H)
-</content>
+
+---
+
+## §7 · DIFFERENTIATION TRACK (W12) — "why pick us over IBP/Kinaxis/o9?"
+
+**Registered 2026-06-03.** Origin: a set of differentiation prompts (Grok-sourced) + a critical triage.
+The capability ladder (§0) answers *"are we deep enough?"* (L4 parity). This section answers the
+*orthogonal* question: *"deep AND at-parity is necessary but not sufficient to make someone switch."*
+
+> **Thesis (the honest finding).** We do **not** have a feature gap — we have a **naming/packaging**
+> gap. The genuinely differentiating items on the analyst checklist are the ones **already half-built**
+> (glass-box solve, provenance, control-tower-on-the-committed-plan, concurrent what-if, low/no-build TCO).
+> The differentiation play is to **name and sharpen the wedge**, NOT to bolt on new categories. Sprawl is
+> the enemy. Every lane below either **packages an existing strength** or is a **cheap, in-DNA extension** —
+> nothing here is a new capability silo.
+
+### §7.1 · The wedge (one sentence)
+**A glass-box optimizer where every number is solved-not-faked with visible provenance, you can run
+concurrent what-ifs on the committed plan without forking it, and the tool measures the ₹ value it
+returns — at a no-consultant, no-build TCO.** The incumbents are black boxes that need an army to interpret.
+
+### §7.2 · Triage of the analyst checklist (keep / sharpen / drop)
+| Suggested | Verdict | Rationale |
+|---|---|---|
+| Risk/resilience: control tower + scenario on committed plan + MEIO under disruption | ✅ **Lead** | Already built (W6/W8/W10/W11). Proven differentiator — we monitor & re-solve the *committed* plan. |
+| Metrics that matter | ✅ **Reframe → value ledger** | Don't just *show* fill/cost/accuracy — make the tool **measure its own ROI** off the event log. The renewal weapon. |
+| Implementation / TCO / no-consultant | ✅ **Core identity** | No-build, one-dataset, governed-inputs = the anti-SAP TCO story. Name + template it. |
+| Industry templates (CPG/pharma/automotive) | ✅ **Cheap & strong** | Template = seeded dataset + tuned defaults + module emphasis. Seed/config arch makes it near-free. Pharma ↔ audit trail. |
+| Excel / no-code config | 🟡 **Narrow** | Generic XLSX export = hygiene. Sharp version = **round-trip model surface** (export→edit→re-import→diff+re-solve) on `scenarioDiff`. |
+| Integration / composability / digital twin | 🟡 **Keep composability only** | Open `/api/solve/*` substrate is cheap & real. "Digital twin" = already true (one dataset → every solver); frame, don't rebuild. ERP connectors = sales eng, not product. |
+| Real-time IoT ingestion | ❌ **Drop (re-scope)** | Planning cadence ≠ MES telemetry. In-fit version: ingest **external *signals*** (commodity/FX/lead-time/port indices) as **solver drivers** (extends sensing + `fxFactor`). |
+
+### §7.3 · What the checklist MISSED (our actual moat — Grok did not name these)
+- **Glass-box / explainable optimization** — shadow prices, binding constraints, "why this decision,"
+  transparent re-solving what-if. ~60% built (sensitivity tornado, EVA branch, MC what-if bot). THE biggest card.
+- **Decision provenance as a compliance product** — `replayLog`/`scenarioDiff`/event trail = lineage. The
+  pharma/food/regulated sale.
+- **Concurrent what-if without forking the plan** — byte-restore scenario engine (W11). Kinaxis charges a fortune.
+- **Exception-driven planner cockpit** — "what needs my attention" inbox (breach-flags + stale solves + MC tail).
+  Started (`BreachFlagger`, control tower).
+
+### §7.4 · Lanes (ALL ✅ BUILT 2026-06-03 — D1·D1+·D2·D3·D4·D5·D6·D7·D8; ordered by differentiation-per-effort)
+| ID | Lane | Packages / extends | Effort | Differentiation |
+|---|---|---|---|---|
+| **D1** | **Glass-box decision explainer** — ✅ **BUILT 2026-06-03.** `DecisionExplainer` (console.jsx, in `ResProfit`) reads the REAL profit-mix duals (`shadow_prices`/`reduced_costs`/`crossover`) and rewrites them in **plain layman English**: 🔴 bottleneck ("one more machine-hour is worth ~₹775"), ⬜ why a SKU was dropped ("lift margin ~₹298/u and it makes the cut"), 💡 crossover price to bring it back, 🟢 where there's spare ("don't invest here"). Translators `explainConstraint`/`explainProduct` + `_diResource` friendly-name parser; `DiRow` plain-language card. No new numbers — translation only. Verified live (820-hr cap binds, dual ₹775, TPA-9904 rc −297.5). | sensitivity, EVA branch, MC bot | M | **Highest** — the unnamed core wedge |
+| **D2** | **Value ledger** — ✅ **BUILT 2026-06-03.** `ValueLedger` (scenarios.jsx, in `ScnCockpit`) — the tool measuring its OWN ROI. From the immutable `events[]`: decisions logged · scenarios explored · **recommendations applied** (apply/merge/eva_prune/merge_fields = acceptance) · accept-%. From the cached solves: a **value-identified table** (pooling dividend ₹/yr + capital freed, line-bottleneck ₹/unit, MC cost-tail ₹) — each row only when its solve found value >0, each provenance-traced. Honest split: IDENTIFIED (a solve found it) vs ACCEPTED (promoted to committed plan); no invented blended total. Honest empty states throughout. Verified live (meio fields real; 18/18 jsx parse). | event log, solve cache | M | **High** — renewal/expansion weapon |
+| **D3** | **Resilience packaging** — ✅ **BUILT 2026-06-03.** `ResilienceStress` (scenarios.jsx, in `ScnRisk` below the MC card) — named disruption playbooks (`_PLAYBOOKS`: demand spike / supply lead-time / material cost) each ramp ONE real lever and RE-RUN `/api/solve/montecarlo` on the committed plan at every step (a real multi-solve sweep, nRuns=200), recording fill + CVaR. The breaking point (first step fill < service target) → a **"survives to X / breaks at Y"** badge + degradation bar chart with the target line. Honest per-metric: demand & lead move fill; a cost shock doesn't (it escalates the CVaR tail) → cost playbook shows the tail-escalation curve, not a service break. Base-stock warning when no schedule cached. Logs `resilience_stress`. Verified live: demand ×1→×2 drops fill 94.5%→52.3%, CVaR ₹8.6L→₹21.5L (monotonic, real solves). | MC, MEIO, control tower | M | **High** — proven, just unpackaged |
+| **D4** | **Industry template loader** — ✅ **BUILT 2026-06-03.** `SetupTemplates` (setup.jsx, new "Industry Quick-Start" section) — pick Automotive-JIT / CPG-FMCG / Pharma-batch → writes REAL tuned defaults into the live `config.serviceLevel` + `planning.{timeGrain,frozenWeeks,slushyWeeks,horizonLength}` + the `useProfile` spine-gating profile, tags `config.industryProfile`, logs `template_apply`. HONEST: retunes the knobs solvers consume (service→safety-stock/CVaR · freeze→nervousness · profile→engines shown) + per-template "emphasises" nav links; does NOT fabricate data (native dataset = automotive, so CPG/pharma reshape params not data — stated in-card). Pharma bundles the audit trail (99% service, 8w freeze, → Scenarios·Versions). `INDUSTRY_TEMPLATES` data table. | seed/config arch | S | **High/effort** — TCO + time-to-value proof |
+| **D5** | **Excel round-trip model surface** — ✅ **BUILT 2026-06-03.** `ModelSurface` (scenarios.jsx, in `ScnScenarios` after `ScnVersions`) — exports the editable input envelope (per-SKU committed-demand totals + governed config SCALARS) as CSV (Excel-native; honest — no fake .xlsx writer), re-imports an edited file or pasted CSV, DIFFS it field-by-field vs the live model (`_parseSurfaceCsv`), then APPLIES (demand edits scale the committed series proportionally → seasonality preserved; config scalars via setConfig) + optional **Apply + re-solve** (`runFullLoop`). Logs `model_export`/`model_import`; markStale fires via the setters. FX/external-signal indices excluded (own governed surfaces — stated in-card). | scenario engine, scenarioDiff | M | **Medium-high** |
+| **D6** | **External-signal drivers** — ✅ **BUILT 2026-06-03.** `SrcExternalSignals` (sourcing.jsx, new StageSection step 0b) + store.jsx wiring: `signals()`/`commodityFactor()`/`portDelayPeriods()` read `config.signals` and feed `bomParts` (commodity index ×material cost; port-congestion days → +whole periods of inbound lead). REAL solver drivers — they re-price the procurement/policy/rolling/MEIO payloads and re-flag those solves stale (config dep). Neutral seed (0%/0d) ⇒ byte-identical until set. In-DNA twin of `fxFactor`. Card proves propagation on real BOM parts (cost Δ + lead Δ table) + re-solve button; honest one-index-all-material + grain-rounding limitations stated. The in-fit replacement for "IoT": external SIGNALS, not MES telemetry. | demand sensing, fxFactor | M | **Medium** |
+| **D7** | **Composability / open solve API** — ✅ **BUILT 2026-06-03.** Backend `/api/meta/solvers` (app.py) introspects the LIVE Flask `url_map` (never a hand-kept list → can't drift) → real `{path,methods,kind,doc}` catalog. Frontend `RefAPI` (reference.jsx, new "Open API" sub-tab) fetches it via `apiGet`, renders the digital-twin framing + a copy-paste `curl` against the real base URL + the grouped endpoint catalog. Verified live: 38 endpoints, solve-kind first, documented. Pure packaging — no solver behavior change. | Flask routes | S | **Medium** |
+| **D8** | **Exception cockpit** — ✅ **BUILT 2026-06-03.** `exceptionInbox(solves,events,sr)` + `ExceptionCockpit` (scenarios.jsx, rendered at the TOP of `ScnCockpit`) — one ranked inbox of every open exception, each a live fact: STALE (recompute DAG) · SENSED (forecast breach / `auto_trigger` from events) · RISK (MC tail on committed plan) · VALUE (₹ a solve IDENTIFIED that no acceptance event has adopted — pooling dividend / binding-line relief). Reuses `liveAlerts`; severity-ranked, category chips, per-item nav `open →`, honest all-clear empty state. Exception-driven, not dashboard-driven. | BreachFlagger, control tower | S | **Medium** — planner productivity |
+
+**Explicitly NOT pursuing (table-stakes / wrong fit):** real-time IoT telemetry; pre-built ERP connectors
+*as a differentiator* (sales-engineering, not product); generic "no-code builder." These are claimed by every
+vendor and don't move a switch decision for this product's shape.
+
+> **STATUS 2026-06-03 — DIFFERENTIATION TRACK OPEN · D1 + D2 SHIPPED.** Capability backlog (§1–§5) closed;
+> this is a *new, orthogonal* track about why-switch-to-us. **D1 (glass-box explainer) ✅** `DecisionExplainer`
+> (console.jsx `ResProfit`) translates real profit-mix duals into plain layman English (bottleneck · what one
+> more unit is worth · why a SKU dropped · price to bring it back · spare). **D2 (value ledger) ✅** `ValueLedger`
+> (scenarios.jsx `ScnCockpit`) — the tool measuring its own ROI from `events[]` (decisions · scenarios explored ·
+> recommendations APPLIED · accept-%) + cached solves (value-identified table, each row provenance-traced, value>0
+> only). Both read real state, invent no numbers. **D1+ (sandboxed-testable recommendation) ✅ BUILT 2026-06-03:**
+> `RecTest` (console.jsx) — each glass-box recommendation gets a "🧪 Prove it" button that re-solves the SAME
+> profit-mix model with the one perturbation applied (a stateless POST — NO live state touched) and shows the
+> ACTUAL Δprofit vs the dual's linear estimate, including the honest OVERSTATE verdict when a second limit binds
+> within the step (`_recVerdict`: confirm ≥90% / overstate / no-gain). Capacity & demand-ceiling bottlenecks are
+> testable via the payload; the dropped-SKU crossover tests "does it enter" then offers an **explicit Apply**
+> (`_applyPrice` writes `M.products` sell-price + `markStale('config')` + `logEvent('rec_apply')`) — sandboxed
+> prove-it → explicit apply, never silent. Also fixed the latent D1 bug (read `crossover_analysis`, not the
+> non-existent `r.crossover`). Verified live: +140hr cap predicted ₹87,500 = actual ₹87,500 (ratio 1.00); C@₹1007.5
+> enters at qty 1666.7. **D4 (industry templates) ✅ BUILT 2026-06-03** — see §7.4 row.
+>
+> **STATUS 2026-06-03 (later) — D5·D6·D7·D8 ALL SHIPPED.** **D5 (Excel round-trip) ✅** `ModelSurface`
+> (scenarios.jsx `ScnScenarios`) — export the input envelope (per-SKU demand totals + config scalars) to CSV,
+> edit in Excel, re-import, field-diff vs live, Apply (demand scales the series) + optional re-solve via `runFullLoop`.
+> **D6 (external-signal drivers) ✅** `SrcExternalSignals` (sourcing.jsx step 0b) + store.jsx `commodityFactor`/
+> `portDelayPeriods` threaded into `bomParts` → commodity index re-prices BOM material, port-congestion days add
+> inbound lead, both real drivers of procurement/policy/rolling/MEIO (config dep ⇒ stale); neutral seed ⇒ no-op
+> until set. **D7 (composability/open API) ✅** backend `/api/meta/solvers` introspects the live Flask `url_map`
+> (38 endpoints, can't drift) + `RefAPI` "Open API" sub-tab (reference.jsx) renders the catalog, a real `curl`, and
+> the lightweight-digital-twin framing. **D8 (exception cockpit) ✅** `exceptionInbox` + `ExceptionCockpit`
+> (scenarios.jsx, top of `ScnCockpit`) — one ranked inbox: STALE · SENSED · RISK · VALUE-miss, each a live fact
+> with a nav `open →` and an honest all-clear state. Verified: 18/18 jsx parse · app.py + all solvers compile ·
+> `/api/meta/solvers` live (38 endpoints) · profitmix smoke still Optimal (no backend regression).
+>
+> **STATUS 2026-06-03 (final) — D3 SHIPPED · DIFFERENTIATION TRACK COMPLETE.** **D3 (resilience packaging) ✅**
+> `ResilienceStress` (scenarios.jsx `ScnRisk`) — disruption playbooks (demand / lead-time / cost) ramp one real
+> lever and re-run the MC solver on the committed plan at each step (real multi-solve sweep), surfacing a
+> "survives to X / breaks at Y" badge + degradation curve; honest cost-shock-doesn't-move-service framing.
+> Verified live: demand ×1→×2 drops fill 94.5%→52.3%, CVaR ₹8.6L→₹21.5L (monotonic, real solves). **Every §7
+> differentiation lane now BUILT: D1 · D1+ · D2 · D3 · D4 · D5 · D6 · D7 · D8 ✅. NO open lane in the track.**
+> All verified (18/18 jsx · app.py+solvers compile · live MC stress + meta route + profitmix smoke). Still ALL
+> uncommitted since `a91e341` — user has not asked to commit.
+

@@ -26,15 +26,8 @@ const M = {
     // masthead "Learn" button. Still registered in main.jsx so it renders when active.
   ],
 
-  // ── solver pipeline ribbon (P6): the product spine ──
-  pipeline:[
-    { id:'demand',   stage:'DEMAND',    sub:'17 models', status:'done',    val:'MAPE 6.8%', go:'demand' },
-    { id:'aggregate',stage:'AGGREGATE', sub:'S&OP',      status:'done',    val:'Level-mix', go:'plan' },
-    { id:'profit',   stage:'PROFIT',    sub:'LP',        status:'done',    val:'₹6.84 Cr',  go:'console' },
-    { id:'procure',  stage:'PROCURE',   sub:'MILP',      status:'running', val:'128 POs',   go:'console' },
-    { id:'produce',  stage:'PRODUCE',   sub:'MILP',      status:'queued',  val:'3 lines',   go:'console' },
-    { id:'ship',     stage:'SHIP',      sub:'Transport', status:'queued',  val:'—',         go:'logistics' },
-  ],
+  // (R13) M.pipeline removed — the ribbon (chrome.jsx) now derives its 6 stages
+  // live from the LOOP_STEPS solve cache, not a hardcoded status/val seed.
 
   // ── headline KPIs ──
   kpis:{ totalCost:'₹ 12.64 Cr', savings:'₹ 1.82 Cr', fillRate:'96.4%', inventoryDoh:'28 d',
@@ -402,19 +395,14 @@ const M = {
   // S&OP Gap → Plan; FVA → Demand; KPI Dashboard cut (dup of Home); Version
   // History → masthead. Risk · Cost · Explore are the real three.
   scenarioSubtabs:[
-    { id:'cockpit',   n:'a', label:'S&OP Cockpit', count:1 },
-    { id:'scenarios', n:'b', label:'Scenarios', count:1 },
-    { id:'risk',      n:'c', label:'Risk', count:4 },
-    { id:'loop',      n:'d', label:'Loop', count:1 },
-    { id:'cost',      n:'e', label:'Cost', count:2 },
-    { id:'explore',   n:'f', label:'Explore', count:2 },
+    { id:'scenarios', n:'a', label:'What-if', count:1 },
+    { id:'risk',      n:'b', label:'Risk & Stress', count:4 },
+    { id:'loop',      n:'c', label:'Loop', count:1 },
+    { id:'cost',      n:'d', label:'Cost', count:2 },
+    { id:'explore',   n:'e', label:'Explore', count:2 },
   ],
-  controlTower:[
-    { sev:'H', area:'Supply',  msg:'POSCO LT slipped to 44d (+2)', kpi:'Procure', t:'12m ago' },
-    { sev:'M', area:'Demand',  msg:'TPA-7722 tracking signal > 4σ', kpi:'Forecast', t:'1h ago' },
-    { sev:'M', area:'Capacity',msg:'Line-03 Heat Treat at 96% util', kpi:'Produce', t:'2h ago' },
-    { sev:'L', area:'Finance', msg:'WC tied-up ₹3.8Cr near cap',     kpi:'Cash', t:'4h ago' },
-  ],
+  // (R13) controlTower seed removed — Home's exception inbox derives live alerts
+  // from real state (stale solves · breach triggers · MC tail) via liveAlerts().
   mcBuckets:[ {x:420,n:12},{x:430,n:28},{x:440,n:52},{x:450,n:88},{x:460,n:124},{x:470,n:162},{x:480,n:178},{x:490,n:148},{x:500,n:102},{x:510,n:58},{x:520,n:28},{x:530,n:14},{x:540,n:6} ],
   mcStats:{ mean:478.4, median:476.2, p5:432.1, p95:518.7, var95:518.7, cvar95:528.4, fragility:0.073 },
   tornado:[
@@ -547,6 +535,15 @@ M.items = M.products.filter(p=>p.cat==='Finished').map(p=>({
 }));
 M.partsOf = (sku)=> M.bom.map(b=>({ id:b.part, code:b.part, name:b.name, kind:'part', uom:'unit', qty:b.qty, lt:b.lt, sup:b.sup }));
 M.itemById = (id)=> M.items.find(i=>i.id===id) || M.items[0];
+
+// (R14) Yield-loss / expiry master fields, defaulted so the solvers' real levers are
+// addressable from the UI instead of buried JS constants. salvage_rate = fraction of
+// a unit's make-cost recovered when expired/excess stock is scrapped (only bites when
+// shelf_life < horizon — see the Products "Yield & expiry" panel); scrap_factor =
+// per-PART material lost in conversion (distinct from yield — see procurement.py
+// effective_qty = qty·(1+scrap)/yield). Edit them in Products; these are just seeds.
+M.products.forEach(p=>{ if(p.salvage==null) p.salvage = p.cat==='Finished' ? 0.8 : 1; });
+M.bom.forEach(b=>{ if(b.scrap==null) b.scrap = 0.01; });
 
 // bind every time-bound record to the period axis (handoff v2 §1.2 — no 'W12' literals)
 M.promos.forEach((p,i)=>{ p.pid = [10,24,38][i]; });
@@ -693,12 +690,11 @@ M.seasonFor  = (grain)=> grain==='daily' ? 7  : grain==='weekly' ? 13 : 12;
 M.horizonFor = (grain)=> grain==='daily' ? 30 : grain==='weekly' ? 13 : 12;
 M.grainLabel = (grain)=> grain==='daily' ? 'day' : grain==='weekly' ? 'week' : 'month';
 
-// ── honesty (AUDIT A4): the pipeline ribbon + solver-network status/objective
-// were fabricated ("PROCURE running · 128 POs", "PROFIT · ₹6.84 Cr") and shown on
-// every screen though nothing had run. Neutralise to a truthful idle state — the
-// engine TYPE stays (real), the result reads "—" until a live run. A session
-// run-registry that flips these to "done" with real numbers is the Phase-2 fix.
-M.pipeline.forEach(p=>{ p.status='idle'; p.val='—'; });
+// ── honesty (AUDIT A4): the solver-network status/objective were fabricated
+// ("PROFIT · ₹6.84 Cr") and shown though nothing had run. Neutralise to a truthful
+// idle state — the engine TYPE stays (real), the result reads "—" until a live run.
+// (R13: the pipeline ribbon is now fully live off the solve cache, so its seed —
+// M.pipeline — was deleted outright rather than neutralised here.)
 M.solvers.forEach(s=>{ s.status='idle'; s.obj='—'; });
 
 window.M = M;

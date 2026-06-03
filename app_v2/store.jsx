@@ -424,17 +424,34 @@ function freightSteps(qty, src){
     cap, costPerTruck: per, fillPct: trucks > 0 ? (q / (trucks * cap)) * 100 : 0,
     nextStepAt: trucks * cap + 1, marginalTruck: per };
 }
+// D6 — EXTERNAL-SIGNAL DRIVERS. Planning-cadence external indices (NOT MES/IoT
+// telemetry — the in-fit replacement): a commodity-price index re-prices BOM
+// material, a port-congestion bump lengthens inbound lead time, and the FX table
+// (SS-D, fxFactor above) re-prices imported parts. All three are real SOLVER
+// DRIVERS — they flow into the procurement / policy / rolling / MEIO payloads via
+// bomParts and (because they live on config) re-flag those solves stale on edit.
+// config.signals seeds at the NEUTRAL point (0% / 0d) so the schema is byte-identical
+// to pre-D6 until a planner moves an index. In-DNA twin of fxFactor.
+function signals(){ return (appStore.get().config || {}).signals || {}; }
+function commodityFactor(){ const p = Number(signals().commodityIndexPct) || 0; return 1 + p/100; }
+// port congestion in DAYS → whole PERIODS of extra inbound lead (rounded to the
+// planning grain; a sub-period delay honestly doesn't shift a monthly MILP bucket).
+function portDelayPeriods(periodDays){ const d = Number(signals().portDelayDays) || 0; return d>0 ? Math.round(d/(periodDays||30)) : 0; }
+
 // bomParts(periodDays): map mock `M.bom` rows → the procurement solver's part
 // schema (one shared illustrative BOM — documented limitation). Reused by Sourcing
 // + Console. Lead time on `M.bom` is in DAYS; the solver counts in PERIODS, so we
 // convert by the period length (30d monthly / 7d weekly) — otherwise a 14-day lead
-// reads as 14 months and the part can never arrive within the horizon.
+// reads as 14 months and the part can never arrive within the horizon. D6: the
+// commodity index scales material cost and the port-congestion bump adds lead.
 function bomParts(periodDays){
   const M = window.M || {};
   const pd = periodDays || 30;
+  const cf = commodityFactor(), portP = portDelayPeriods(pd);
   return (M.bom || []).map(b=>({
-    name:b.name, cost:b.cost, qty_per:b.qty, lead_time:Math.max(1, Math.round(b.lt / pd)),
-    moq:b.moq, hold_pct:b.hold, ordering_cost:120, scrap_factor:0.01, rm_shelf:b.shelf,
+    name:b.name, cost:Math.round(b.cost * cf * 100)/100, qty_per:b.qty,
+    lead_time:Math.max(1, Math.round(b.lt / pd) + portP),
+    moq:b.moq, hold_pct:b.hold, ordering_cost:120, scrap_factor:(Number(b.scrap)||0.01), rm_shelf:b.shelf,
     // size order/storage caps off the MOQ so a single MOQ lot is always orderable
     // and storable (defaults of 9999 go infeasible against a 10 000-unit bolt MOQ).
     max_order:Math.max(b.moq * 5, 50000), rm_capacity:Math.max(b.moq * 3, 50000),
@@ -452,6 +469,12 @@ const _UNIT_WEIGHT_KG = 3.0;   // fallback avg finished-bearing shipping weight
 // actual SKU MIX, not a portfolio average.
 const _SKU_WEIGHT_KG = { 'TPA-4471':3.4, 'TPA-3215':1.9, 'TPA-9904':2.6, 'TPA-2188':4.1, 'TPA-5540':3.0, 'TPA-7722':2.2 };
 function skuWeightKg(sku){ return _SKU_WEIGHT_KG[sku] || _UNIT_WEIGHT_KG; }
+// (R13) the ONE volume authority (m³/unit) — Products shows it and Network derives
+// storage utilisation from it (Σ vol·on-hand / node cube). Was a duplicate hardcode
+// in products.jsx `ex` alongside a SECOND, conflicting weight table; unified here so
+// weight & volume have a single source, like every other master attribute.
+const _SKU_VOL_M3 = { 'TPA-4471':0.0021, 'TPA-3215':0.0009, 'TPA-9904':0.0006, 'TPA-2188':0.0042, 'TPA-5540':0.0031, 'TPA-7722':0.0005 };
+function skuVolM3(sku){ return _SKU_VOL_M3[sku] || 0; }
 function transportPayload(){
   const M = window.M || {};
   const net = getNetwork();
@@ -630,7 +653,7 @@ function montecarloPayload(planning, opts){
       sell_price: Number(p.price) || 0,
       shelf_life: Math.max(1, Math.round((Number(p.shelf)||365)/7)),       // days → weeks
       yield_pct: Number(p.yield) || 0.95,
-      salvage_rate: 0.8,
+      salvage_rate: Number(p.salvage) || 0.8,
       parts: skuParts(p.sku),                                              // MN-D — per-SKU costed bill
       init_inventory: 0,
       ...(planArr ? { production_plan: planArr } : {}),
@@ -1131,15 +1154,111 @@ function useEvents(){
   return { events: state, log: logEvent };
 }
 
+// ── (R14) Editable master data — direct M.* edits, reactive + stale cascade ────
+// Every payload builder reads window.M LIVE, so editing the master in place is the
+// ONE change that reaches all solvers at once (no per-builder threading). React
+// can't see a plain-object mutation, so we bump a counter slice (_masterRev) to
+// re-render subscribers, and flag the owning source slice stale so the recompute
+// DAG prompts a re-run. Backs the editable Products catalog (yield/shelf/salvage)
+// and the per-part BOM scrap. NOTE the discipline (see the audit): yield is a real
+// lever for EVERY SKU; salvage/shelf only bite when shelf_life < horizon (expiry
+// actually occurs), so the UI exposes those as governed advanced inputs, not a
+// field scattered on every row.
+function bumpMaster(){ appStore.set({ _masterRev: (appStore.get()._masterRev||0)+1 }); }
+function useMasterRev(){ const { state } = useStore(s=>s._masterRev||0); return state; }
+function editProductAttr(sku, patch){
+  const M = window.M || {}; const p = (M.products||[]).find(x=>x.sku===sku); if(!p) return;
+  Object.assign(p, patch); bumpMaster(); try{ markStale('productCosts'); }catch(e){}
+  logEvent('override', sku, { fields:Object.keys(patch), to:patch });
+}
+function editPartAttr(part, patch){
+  const M = window.M || {}; const b = (M.bom||[]).find(x=>x.part===part); if(!b) return;
+  Object.assign(b, patch); bumpMaster(); try{ markStale('bom'); }catch(e){}
+  logEvent('override', part, { fields:Object.keys(patch), to:patch });
+}
+function addProduct(seed){
+  const M = window.M || {};
+  const fin = (M.products||[]).filter(p=>p.cat==='Finished');
+  const base = fin[0] || {};
+  const n = fin.length + 1;
+  const sku = (seed&&seed.sku) || `TPA-NEW${n}`;
+  if((M.products||[]).some(p=>p.sku===sku)) return null;          // no dup skus
+  // copy a finished template for safe solver defaults, zero demand (won't be built
+  // until the user gives it demand), then overlay the seed.
+  const np = { ...base, sku, name:(seed&&seed.name)||`New Product ${n}`, demand:0, ...seed, cat:'Finished' };
+  M.products.push(np);
+  if(Array.isArray(M.items)) M.items.push({ id:sku, code:sku, name:np.name, kind:'FG', uom:'unit', family:'General' });
+  bumpMaster(); try{ markStale('productCosts'); }catch(e){}
+  logEvent('commit', sku, { added:true });
+  return np;
+}
+
+// ── (R14) Model JSON round-trip — real backing for the "Import / Export" headers
+// (was inert). Exports the editable master fields + the persisted store slices;
+// import matches master rows by sku/part and replaces the store slices.
+function exportModelJson(){
+  const M = window.M || {}; const s = appStore.get();
+  return JSON.stringify({
+    _kind:'es-model', _version:'2.0', exportedAt:new Date().toISOString(),
+    products:(M.products||[]).map(p=>({ sku:p.sku, name:p.name, cat:p.cat, demand:p.demand,
+      price:p.price, cost:p.cost, yield:p.yield, shelf:p.shelf, salvage:p.salvage, moq:p.moq })),
+    bom:(M.bom||[]).map(b=>({ part:b.part, name:b.name, qty:b.qty, cost:b.cost, lt:b.lt, moq:b.moq, scrap:b.scrap })),
+    state:{ config:s.config, planning:s.planning, productCosts:s.productCosts,
+      sourcing:s.sourcing, demandInputs:s.demandInputs },
+  }, null, 2);
+}
+function downloadText(filename, text, mime){
+  try{ const blob = new Blob([text], { type:mime||'application/json' });
+    const url = URL.createObjectURL(blob); const a = document.createElement('a');
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+    a.remove(); setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  }catch(e){}
+}
+function importModelJson(text){
+  let m; try{ m = JSON.parse(text); }catch(e){ return { ok:false, error:'Not valid JSON' }; }
+  if(!m || m._kind!=='es-model') return { ok:false, error:'Not an es-model export (missing _kind)' };
+  const M = window.M || {}; let nP=0, nB=0;
+  (m.products||[]).forEach(row=>{ const p=(M.products||[]).find(x=>x.sku===row.sku); if(p){ Object.assign(p, row); nP++; } });
+  (m.bom||[]).forEach(row=>{ const b=(M.bom||[]).find(x=>x.part===row.part); if(b){ Object.assign(b, row); nB++; } });
+  if(m.state) appStore.set(m.state);
+  bumpMaster(); try{ markStale('productCosts'); markStale('bom'); }catch(e){}
+  logEvent('replan', 'model-import', { products:nP, parts:nB });
+  return { ok:true, products:nP, parts:nB };
+}
+// reportPdf(extra): builds a forgiving payload from the live master + cached solves
+// and downloads the real PDF from /api/report/pdf (generate_report, reportlab).
+async function reportPdf(extra){
+  const M = window.M || {}; const s = appStore.get();
+  const sr = s.solveResults || {};
+  const products = (M.products||[]).filter(p=>p.cat==='Finished').map(p=>({
+    name:p.name, sku:p.sku, sell_price:p.price, variable_cost:p.cost,
+    shelf_life:Math.round((Number(p.shelf)||365)/7), yield_pct:p.yield||0.95,
+    capacity:p.demand, bom:(M.bom||[]).map(b=>({ name:b.name, qty_per:b.qty, cost:b.cost, lead_time:b.lt, moq:b.moq })) }));
+  const payload = { config:s.config||{}, products,
+    solver_results:(sr.profit&&sr.profit.result)||(sr.procurement&&sr.procurement.result)||{},
+    mc_results:(sr.montecarlo&&sr.montecarlo.result)||{}, ...(extra||{}) };
+  const res = await fetch('/api/report/pdf', { method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+  if(!res.ok) throw new Error('report failed ('+res.status+')');
+  const blob = await res.blob(); const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'supply_chain_report.pdf';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  logEvent('commit', 'report-pdf', { products:products.length });
+}
+
 Object.assign(window, {
   apiPost, apiGet, useSolve,
+  bumpMaster, useMasterRev, editProductAttr, editPartAttr, addProduct,
+  exportModelJson, importModelJson, downloadText, reportPdf,
   appStore, useStore, useConfig, usePlanning, useCalendar, useProductCosts,
   getNetwork, useNetwork, msmeTier,
   getItemDemand, setItemDemand, getFinishedDemand, bomParts, transportPayload,
   productionPayload, finishedWeeklyDemand,
   getDemandInputs, useDemandInputs, useHolidays,
   getHistoryImport, setHistoryImport, useHistoryImport, historyFor, parseHistoryCsv, bucketHistory,
-  sourcingDefault, getSourcing, useSourcing, effLandedCost, fxFactor, freightSteps, skuWeightKg,
+  sourcingDefault, getSourcing, useSourcing, effLandedCost, fxFactor, freightSteps, skuWeightKg, skuVolM3,
+  signals, commodityFactor, portDelayPeriods,
   SOLVE_DEPS, markStale, markSolved, useStale, logEvent, getEvents, useEvents,
   cacheSolve, getSolveResult, useSolveResult,
   montecarloPayload, productionPlanBySku, runFullLoop, LOOP_STEPS, productionOptsFromConfig,

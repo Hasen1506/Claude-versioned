@@ -1,12 +1,23 @@
 // ════════════════════════════════════════════════════════════════════════
-// console.jsx — Optimize & Solve (OptimizeTab) — the god-tab, split per P1:
-//   · CARTESIAN SOLVER-MAP (priority layout): 7 solvers plotted on a
-//     horizon × decision-domain plane, edges = data hand-offs.
-//   · RUN CONSOLE: mode picker + constraint toggles + solve + status.
-//   · RESULT SUB-TABS grouped by solver.
+// console.jsx — Optimize & Solve. R13: the two jobs Console quietly did are now
+// EXPLICIT, banded top-to-bottom:
+//   ① ORCHESTRATE — the planning spine, the SOLE solver-network graph (Home no
+//      longer duplicates it), the run console + solve status. "Pick & run."
+//   ② INTERPRET   — the selected solver's results + the D1 glass-box explainer
+//      and D1+ prove-it. "Run & understand." The header names the live selection.
+// SolverNetwork is rendered ONLY here now (Home links to it) — one graph, one job.
 // ════════════════════════════════════════════════════════════════════════
-// (Removed the bespoke CartesianSolverMap — Console now renders the SAME
-// <SolverNetwork/> component as Home, from the same data, per handoff v2 §1.3.)
+// small labeled divider naming each of Console's two jobs.
+function JobBand({ n, title, sub, right }){
+  return (
+    <div style={{display:'flex', alignItems:'center', gap:10, padding:'9px 14px', borderTop:`2px solid ${C.line}`, borderBottom:`2px solid ${C.line}`, background:C.ink, color:C.paper}}>
+      <span style={{fontFamily:F.disp, fontWeight:900, fontSize:13, color:C.ac, width:18}}>{n}</span>
+      <span style={{fontFamily:F.disp, fontSize:12, fontWeight:800, letterSpacing:'.06em', textTransform:'uppercase'}}>{title}</span>
+      {sub && <span style={{fontFamily:F.mono, fontSize:9, color:'rgba(255,255,255,.55)'}}>{sub}</span>}
+      {right && <span style={{marginLeft:'auto'}}>{right}</span>}
+    </div>
+  );
+}
 
 function StageConsole({ onNav }) {
   const [sel, setSel] = useState('procurement');          // selected engine (graph ↔ results)
@@ -18,8 +29,10 @@ function StageConsole({ onNav }) {
 
   return (
     <div>
-      <StageHeader n="10" title="Optimize & Solve Console" kicker={`${M.solverLabel} on one shared network · run control · solver-grouped results that deep-link to stages`}
+      <StageHeader n="10" title="Optimize & Solve Console" kicker="Two jobs, banded — ① orchestrate (pick & run a solver) and ② interpret (read its result + the glass-box explainer)"
         right={<Btn kind="accent">⚡ Solve all queued</Btn>}/>
+
+      <JobBand n="①" title="Orchestrate" sub="the planning spine · the one solver network · run control + status"/>
 
       {/* PLANNING SPINE (handoff v2 §7.1) — the ordered solve chain, conditional on profile */}
       <div style={{padding:'14px 14px 0'}}>
@@ -32,8 +45,8 @@ function StageConsole({ onNav }) {
 
       <div style={{padding:14, display:'grid', gridTemplateColumns:'1.5fr 1fr', gap:14}}>
         {/* SHARED SOLVER NETWORK (same component as Home) */}
-        <Card icon="🧭" title="Solver Network" badge={M.solverLabel} badgeTone="y" info={{ what:'The same 5-family network shown on Home; click a node to load its run mode + results.', flows:'One graph, one data source.' }}
-          dev={{ comp:'SolverNetwork', props:'solvers, edges, sel, onSelect', note:'Identical to Home (handoff v2 §1.3).' }}>
+        <Card icon="🧭" title="Solver Network" badge={M.solverLabel} badgeTone="y" info={{ what:'The 5-family engine network — the one place it lives now (Home links here). Click a node to load its run mode + results in ② below.', flows:'One graph, one data source.' }}
+          dev={{ comp:'SolverNetwork', props:'solvers, edges, sel, onSelect', note:'R13 — sole home of the graph; Home no longer duplicates it.' }}>
           <div style={{overflowX:'auto'}}><SolverNetwork sel={sel} onSelect={setSel}/></div>
           <div style={{marginTop:8, display:'flex', gap:8, alignItems:'center'}}>
             <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx3}}>selected:</span>
@@ -93,8 +106,15 @@ function StageConsole({ onNav }) {
         </div>
       </div>
 
+      <JobBand n="②" title="Interpret" sub="the selected solver's result + the plain-English glass-box explainer & prove-it"
+        right={<span style={{display:'inline-flex', alignItems:'center', gap:8}}>
+          <span style={{fontFamily:F.mono, fontSize:9, color:'rgba(255,255,255,.55)'}}>showing</span>
+          <Tag c="g">{selSolver?selSolver.name:sel}</Tag>
+          {selSolver && <button onClick={()=>onNav(selSolver.go)} style={{fontFamily:F.mono, fontSize:9, fontWeight:700, color:C.ac, background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline'}}>open {selSolver.go} →</button>}
+        </span>}/>
+
       {/* RESULT SUB-TABS grouped by solver */}
-      <div style={{padding:'0 14px 14px'}}>
+      <div style={{padding:'14px 14px 14px'}}>
         <div style={{border:`2px solid ${C.line}`, background:C.bg2}}>
           <div style={{display:'flex', flexWrap:'wrap', borderBottom:`2px solid ${C.line}`}}>
             {[['profitmix','Profit'],['procurement','Procurement'],['production','Production'],['transport','Transport'],['montecarlo','Risk/MC'],['capital','Capital'],['sop','S&OP']].map(([id,lbl])=>{
@@ -272,11 +292,262 @@ function ResProduce() {
 // (otherwise every SKU just runs to its ceiling and there's no decision).
 function profitmixPayload(){
   const fin = M.products.filter(p=>p.cat==='Finished');
+  // shelf_life must be in WEEKS here (profitmix.py compares shelf_weeks→months vs the
+  // horizon); p.shelf is in DAYS, so convert — passing raw days made the expiry penalty
+  // never bite (365 "weeks" ≫ horizon). salvage_rate + yield_pct are real levers too.
   const prods = fin.map(p=>({ name:p.sku, sell_price:p.price, variable_cost:p.cost,
-    max_demand:p.demand, cycle_time:p.cycle, shelf_life:p.shelf }));
+    max_demand:p.demand, cycle_time:p.cycle,
+    shelf_life:Math.max(1, Math.round((Number(p.shelf)||365)/7)),
+    yield_pct:p.yield||0.95, salvage_rate:Number(p.salvage)||0.8 }));
   const demandHours = prods.reduce((s,p)=>s+p.max_demand*p.cycle_time, 0);
   return { products:prods, constraints:{ shared_capacity:Math.round(demandHours*0.82) } };
 }
+// ── D1 · GLASS-BOX DECISION EXPLAINER ────────────────────────────────────────
+// The wedge: incumbents are black boxes. We read the REAL optimiser duals — the
+// constraint shadow prices, slacks and reduced costs PuLP hands back — and rewrite
+// them in plain English a non-modeller can act on: what's capping your profit,
+// what one more unit is worth, and why each SKU made or missed the cut. Every
+// figure here is a solved dual/slack/reduced-cost; this layer only TRANSLATES —
+// it invents no numbers (the "no faking" contract).
+function _diMoney(n){ const a=Math.abs(+n||0);
+  return a>=1e5?`₹${(a/1e5).toFixed(1)}L`:a>=1e3?`₹${(a/1e3).toFixed(0)}K`:`₹${Math.round(a)}`; }
+
+// friendly resource name + unit-noun, parsed from the solver's constraint label
+function _diResource(name){
+  const n=String(name||'');
+  if(/^Line hrs:/i.test(n))        return { who:n.replace(/^Line hrs:\s*/i,'').trim(), unit:'hour', kind:'capacity' };
+  if(/Shared Capacity/i.test(n))   return { who:'your shared machine line', unit:'machine-hour', kind:'capacity' };
+  if(/Org Labor Hours/i.test(n))   return { who:'your people / labour hours', unit:'labour hour', kind:'labour' };
+  if(/^Material:/i.test(n))        return { who:n.replace(/^Material:\s*/i,'').trim()+' stock', unit:'unit', kind:'material' };
+  if(/Budget/i.test(n))            return { who:'your cash budget', unit:'rupee', kind:'budget' };
+  if(/Warehouse/i.test(n))         return { who:'warehouse space', unit:'storage slot', kind:'space' };
+  if(/^Max prod:/i.test(n))        return { who:n.replace(/^Max prod:\s*/i,'').trim(), unit:'order', kind:'demand' };
+  if(/^(Min prod|Floor|MTO)/i.test(n)) return { who:n.replace(/^[^:]*:\s*/,'').trim()+' minimum', unit:'unit', kind:'floor' };
+  return { who:n, unit:'unit', kind:'other' };
+}
+
+// one constraint dual → a plain-English verdict {tone,tag,icon,head,plain,action}
+function explainConstraint(s){
+  const f=_diResource(s.constraint), v=Math.abs(+s.shadow_price||0);
+  if(s.binding && v>0){
+    let action;
+    if(f.kind==='demand')
+      action=`You're already making and selling every ${f.who} you possibly can — demand is the ceiling, not your factory. Each extra order you could win would add about ${_diMoney(v)} of profit, so this is where sales & marketing effort pays back.`;
+    else if(f.kind==='budget')
+      action=`Your cash is fully spent. Freeing up one more rupee to invest returns about ₹${v.toFixed(2)} of profit — so this money is working hard; more of it would help.`;
+    else if(f.kind==='floor')
+      action=`You're forced to make this minimum even though it's not the most profitable use of the line. Dropping the requirement by one ${f.unit} would free up about ${_diMoney(v)} of profit elsewhere.`;
+    else
+      action=`This is your #1 bottleneck. One more ${f.unit} of ${f.who} is worth about ${_diMoney(v)} in extra profit — the best place to add overtime, speed up a changeover, or invest, and the most costly thing to lose.`;
+    return { tone:C.dg, tag:'BOTTLENECK', icon:'🔴', head:`${f.who} — maxed out`,
+             plain:`There's no spare left here. This is one of the things capping your profit right now.`, action,
+             kind:f.kind, who:f.who, unit:f.unit, sp:v, cname:s.constraint };
+  }
+  const slack = s.slack!=null ? Math.abs(+s.slack) : null;
+  return { tone:C.gn, tag:'SPARE', icon:'🟢', head:`${f.who} — room to spare`,
+           plain: slack!=null ? `You're using less than you have — about ${Math.round(slack)} ${f.unit}${slack>=2?'s':''} sitting idle.` : `Not a limiting factor right now.`,
+           action:`This isn't what's holding you back, so spending money to add more of it won't raise profit — leave it until a real bottleneck frees up.`,
+           kind:f.kind, who:f.who, unit:f.unit, sp:v, cname:s.constraint };
+}
+
+// reduced cost → why a SKU made / missed the cut
+function explainProduct(rc){
+  const dj=Math.abs(+rc.reduced_cost||0);
+  if(rc.in_solution){
+    if(dj<=0.01) return null;
+    return { tone:C.gn, icon:'✅', head:`${rc.variable} earns its place`,
+      plain:`It's worth making. Its margin could fall by up to ₹${dj.toFixed(0)}/unit before it'd stop being worth the line time.` };
+  }
+  return { tone:C.tx3, icon:'⬜', head:`${rc.variable} left out`,
+    plain:`It isn't profitable enough per scarce hour to earn a slot. Lift its margin by about ₹${dj.toFixed(0)}/unit — raise the price or cut the cost — and it would make the cut.` };
+}
+
+// ── D1+ · SANDBOXED, TESTABLE RECOMMENDATION ─────────────────────────────────
+// A shadow price is a LINEAR estimate — true only until the next constraint binds.
+// Incumbents assert it; we PROVE it. "🧪 Prove it" re-solves the SAME profit-mix
+// model with the one perturbation applied (a stateless POST — it touches NO live
+// state, the committed plan is never mutated) and shows the ACTUAL Δprofit vs the
+// dual's prediction, including where the linear estimate OVERSTATES the gain
+// because a second limit kicks in. Only THEN, on an explicit click, does "Apply"
+// write the change to the working set (price only — capacity is a capital call,
+// routed not auto-written). Sandboxed prove-it → explicit apply, never silent.
+async function _solveProfit(payload){ return await apiPost('/api/solve/profitmix', payload); }
+
+// the ONE explicit write: set a finished-good's sell price on the working set
+// (M.products is the live master data every payload derives from), flag the
+// dependent solves stale so the user re-solves, and audit it on the event log
+// (so the D2 value ledger counts a recommendation that was actually acted on).
+function _applyPrice(sku, price){
+  const p=((window.M&&window.M.products)||[]).find(x=>x.sku===sku);
+  if(!p) return;
+  p.price=Math.round(price);
+  if(typeof markStale==='function') markStale('config');     // profitmix/capital depend on config
+  if(typeof logEvent==='function') logEvent('rec_apply', sku, { field:'sell_price', to:p.price, source:'glass-box crossover' });
+}
+
+// honesty verdict comparing the solver's actual Δ to the dual's linear prediction
+function _recVerdict(predicted, actual){
+  if(predicted==null){                       // crossover / "does it enter" tests
+    return { tone:C.gn, txt:'' };
+  }
+  const a=+actual||0, p=+predicted||0;
+  if(p<=0) return { tone:C.tx3, txt:'No measurable gain — another limit dominates.' };
+  const ratio = a/p;
+  if(a<=0)        return { tone:C.dg, txt:`⚠ The estimate doesn't hold here — re-solving delivered ~₹0. Another constraint absorbs the extra capacity, so don't invest on the shadow price alone.` };
+  if(ratio>=0.9)  return { tone:C.gn, txt:`✓ Confirmed — the full re-solve delivers ${_diMoney(a)}, matching the ${_diMoney(p)} estimate. The recommendation holds at this size.` };
+  return { tone:C.a4, txt:`⚠ The shadow price OVERSTATES it: predicted ${_diMoney(p)}, but only ${_diMoney(a)} (${Math.round(ratio*100)}%) actually materialises — a second limit binds partway through. Size any investment to the proven figure, not the headline.` };
+}
+
+// one testable recommendation: a "🧪 Prove it" button → real re-solve → verdict,
+// then an explicit Apply (when the change maps to one editable input).
+function RecTest({ build, predicted, predLabel, enterSku, apply, applyLabel, applied }){
+  const [busy,setBusy]=useState(false);
+  const [out,setOut]=useState(null);     // {actual, entered, err}
+  const [done,setDone]=useState(false);
+  const run=async()=>{
+    setBusy(true); setOut(null);
+    try{
+      const { payload, baseProfit } = build();
+      const res = await _solveProfit(payload);
+      const actual = (+res.total_profit||0) - (+baseProfit||0);
+      const entered = enterSku ? ((res.products||[]).find(p=>p.name===enterSku)||{}).quantity>0.5 : null;
+      setOut({ actual, entered });
+    }catch(e){ setOut({ err:e.message||String(e) }); }
+    finally{ setBusy(false); }
+  };
+  const verdict = out && !out.err ? _recVerdict(predicted, out.actual) : null;
+  return (
+    <div style={{margin:'-3px 0 9px 25px', padding:'7px 10px', borderLeft:`2px dashed ${C.line2}`, background:C.bg2}}>
+      <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+        <Btn sm onClick={run} disabled={busy}>{busy?'⏳ re-solving…':'🧪 Prove it'}</Btn>
+        <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3}}>
+          {predLabel || (predicted!=null ? `shadow-price says ≈ ${_diMoney(predicted)}` : 'sandboxed re-solve — no live state touched')}
+        </span>
+      </div>
+      {out && out.err && <div style={{marginTop:6, fontFamily:F.mono, fontSize:10, color:C.dg}}>re-solve failed: {out.err}</div>}
+      {out && !out.err && (
+        <div style={{marginTop:6}}>
+          {enterSku
+            ? <div style={{fontFamily:F.body, fontSize:11.5, color:out.entered?C.gn:C.tx3, fontWeight:600}}>
+                {out.entered ? `✓ Proven — at that price ${enterSku} wins a slot in the re-solved plan.`
+                             : `✗ Even at that price ${enterSku} stays out — another limit (demand or a tighter SKU) keeps it off the line.`}
+              </div>
+            : <div style={{fontFamily:F.body, fontSize:11.5, color:verdict.tone, fontWeight:600}}>{verdict.txt}</div>}
+          {apply && (out.entered!==false) && !done && (
+            <div style={{marginTop:7}}>
+              <Btn sm kind="accent" onClick={()=>{ apply(); setDone(true); }}>{applyLabel||'Apply to working set →'}</Btn>
+              <span style={{marginLeft:8, fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>explicit — writes the input, then re-solve to ripple it through</span>
+            </div>
+          )}
+          {(done||applied) && <div style={{marginTop:6, fontFamily:F.mono, fontSize:9.5, color:C.gn}}>✓ applied to the working set · re-solve the mix to see it ripple through</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DiRow({ icon, tone, head, plain, action, tag }){
+  return (
+    <div style={{display:'flex', gap:10, padding:'9px 11px', border:`1.5px solid ${C.line2}`, borderLeft:`4px solid ${tone}`, background:C.bg3, marginBottom:7}}>
+      <span style={{fontSize:15, lineHeight:1.2}}>{icon}</span>
+      <div style={{minWidth:0, flex:1}}>
+        <div style={{display:'flex', alignItems:'center', gap:8}}>
+          <span style={{fontFamily:F.disp, fontSize:12.5, fontWeight:900, color:C.tx}}>{head}</span>
+          {tag && <span style={{fontFamily:F.mono, fontSize:8.5, fontWeight:800, letterSpacing:'.08em', color:tone, border:`1.5px solid ${tone}`, padding:'1px 5px'}}>{tag}</span>}
+        </div>
+        <div style={{fontFamily:F.body, fontSize:11.5, color:C.tx2, marginTop:3, lineHeight:1.45}}>{plain}</div>
+        {action && <div style={{fontFamily:F.body, fontSize:11.5, color:C.tx, marginTop:4, lineHeight:1.45, fontWeight:600}}>→ {action}</div>}
+      </div>
+    </div>
+  );
+}
+
+function DecisionExplainer({ r }){
+  if(!r) return (
+    <Card icon="🔍" title="Why this plan? — plain-English explainer" badge="run to explain" span={2}
+      info={{ what:'Translates the optimiser’s shadow prices & reduced costs into plain language — your bottleneck, what one more unit is worth, and why each SKU made or missed the cut.', flows:'Reads the profit-mix solve. No new numbers — only translation of the duals.' }}
+      dev={{ comp:'DecisionExplainer (D1)', props:'solve.profit.{shadow_prices,reduced_costs,crossover}' }}>
+      <div style={{fontFamily:F.body, fontSize:12, color:C.tx3, padding:'10px 2px'}}>Optimize the mix above, then this reads the solver’s own reasoning back to you in plain English.</div>
+    </Card>
+  );
+  const cons=(r.shadow_prices||[]).map(explainConstraint);
+  const bottlenecks=cons.filter(c=>c.tag==='BOTTLENECK');
+  const spare=cons.filter(c=>c.tag==='SPARE');
+  const prods=(r.reduced_costs||[]).map(explainProduct).filter(Boolean);
+  const dropped=prods.filter(p=>p.icon==='⬜');
+  const cross=(r.crossover_analysis||r.crossover||[]);   // solver emits crossover_analysis
+  // D1+ · build a sandboxed test spec for a perturbable bottleneck (else null → no test offered)
+  function specFor(c){
+    const b0=profitmixPayload();
+    if(c.kind==='capacity' && b0.constraints && b0.constraints.shared_capacity>0){
+      const cap=b0.constraints.shared_capacity, dU=Math.max(1,Math.round(cap*0.05));
+      return { predicted:c.sp*dU, predLabel:`test +${dU.toLocaleString('en-IN')} ${c.unit}s · estimate ≈ ${_diMoney(c.sp*dU)}`,
+        build:()=>({ payload:{...b0, constraints:{...b0.constraints, shared_capacity:cap+dU}}, baseProfit:r.total_profit }) };
+    }
+    if(c.kind==='demand'){
+      const prod=(b0.products||[]).find(p=>p.name===c.who); if(!prod) return null;
+      const dU=Math.max(1,Math.round((prod.max_demand||0)*0.05));
+      return { predicted:c.sp*dU, predLabel:`test +${dU.toLocaleString('en-IN')} units of demand · estimate ≈ ${_diMoney(c.sp*dU)}`,
+        build:()=>({ payload:{...b0, products:b0.products.map(p=>p.name===c.who?{...p,max_demand:(p.max_demand||0)+dU}:p)}, baseProfit:r.total_profit }) };
+    }
+    return null;
+  }
+  const heroWho=bottlenecks[0] ? bottlenecks[0].head.replace(/ —.*/,'') : null;
+  return (
+    <Card icon="🔍" title="Why this plan? — plain-English explainer" badge={`${bottlenecks.length} bottleneck${bottlenecks.length===1?'':'s'}`} badgeTone={bottlenecks.length?'r':'g'} span={2}
+      right={<Provenance kind="solved" note="constraint duals"/>}
+      info={{ what:'Translates the optimiser’s shadow prices & reduced costs into plain language — your bottleneck, what one more unit is worth, and why each SKU made or missed the cut.', flows:'Reads the profit-mix solve. No new numbers — only translation of the duals.' }}
+      dev={{ comp:'DecisionExplainer (D1)', props:'solve.profit.{shadow_prices,reduced_costs,crossover}' }}>
+
+      <div style={{border:`2px solid ${C.line}`, background:C.bg2, padding:'10px 12px', marginBottom:12}}>
+        <div style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.12em', color:C.tx3, marginBottom:4}}>IN PLAIN TERMS</div>
+        <div style={{fontFamily:F.body, fontSize:12.5, color:C.tx, lineHeight:1.5, fontWeight:600}}>
+          {heroWho
+            ? <>The optimiser made every SKU compete for scarce capacity. <b>{heroWho}</b> is the main thing capping your profit — relieve it first. Everything below is the optimiser’s own maths, in words.</>
+            : <>Nothing is binding — you have spare capacity everywhere, so the plan simply makes whatever sells at a profit. No bottleneck to relieve.</>}
+        </div>
+      </div>
+
+      {bottlenecks.length>0 && <>
+        <SubLabel>What’s holding profit back (relieve these first) · 🧪 prove each before you spend</SubLabel>
+        {bottlenecks.map((c,i)=>{ const spec=specFor(c); return (
+          <React.Fragment key={'b'+i}>
+            <DiRow {...c}/>
+            {spec && <RecTest build={spec.build} predicted={spec.predicted} predLabel={spec.predLabel}/>}
+          </React.Fragment>
+        ); })}
+      </>}
+
+      {dropped.length>0 && <>
+        <div style={{marginTop:8}}><SubLabel>Why some SKUs didn’t make the plan</SubLabel></div>
+        {dropped.map((c,i)=><DiRow key={'d'+i} {...c}/>)}
+      </>}
+
+      {cross.length>0 && <>
+        <div style={{marginTop:8}}><SubLabel>What it would take to bring a dropped SKU back · 🧪 prove it, then apply</SubLabel></div>
+        {cross.map((c,i)=>(
+          <React.Fragment key={'c'+i}>
+            <DiRow icon="💡" tone={C.a4} head={`${c.product} → raise price to ${_diMoney(c.crossover_price)}`}
+              plain={`Lift ${c.product}’s price to about ${_diMoney(c.crossover_price)} — a ${_diMoney(c.price_increase_needed)} (${c.price_increase_pct}%) bump — and it earns enough per hour to win a slot back in the plan.`}/>
+            <RecTest enterSku={c.product}
+              build={()=>{ const b0=profitmixPayload(); return { payload:{...b0, products:b0.products.map(p=>p.name===c.product?{...p,sell_price:c.crossover_price}:p)}, baseProfit:r.total_profit }; }}
+              apply={()=>_applyPrice(c.product, c.crossover_price)} applyLabel={`Apply ₹${Math.round(c.crossover_price).toLocaleString('en-IN')} price →`}/>
+          </React.Fragment>
+        ))}
+      </>}
+
+      {spare.length>0 && <>
+        <div style={{marginTop:8}}><SubLabel>Where you have room to spare (don’t invest here)</SubLabel></div>
+        {spare.map((c,i)=><DiRow key={'s'+i} {...c}/>)}
+      </>}
+
+      <div style={{marginTop:10, fontFamily:F.mono, fontSize:9.5, color:C.tx3, lineHeight:1.5}}>
+        Every figure above is a solved value from the optimisation — shadow prices (₹ per extra unit of a limit) and reduced costs (₹ a dropped SKU’s margin must improve). Nothing here is hand-entered.
+      </div>
+    </Card>
+  );
+}
+
 function ResProfit() {
   const pm = useSolve('/api/solve/profitmix', profitmixPayload);
   const r = pm.result;
@@ -310,6 +581,7 @@ function ResProfit() {
             foot={['TOTAL','','','','₹68.4L','100%']}/>
         )}
       </Card>
+      <DecisionExplainer r={r}/>
     </Grid>
   );
 }

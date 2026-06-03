@@ -198,6 +198,7 @@ function StageSourcing({ onNav }) {
               soWhat={`The MILP is currently planning to α = ${sl} ${(config.serviceLevelOverride!=null && config.serviceLevelOverride!=='')?'(your override)':'(default)'}. Change it and re-run — the safety buffer and PO release schedule shift (a tighter α consolidates releases to keep cover).`}/>
           </Card>
         </StageSection>
+        <SrcExternalSignals planning={planning} onRerun={runProc}/>
         <SrcMRP item={item} view={view} onNav={onNav} proc={proc}/>
         <SrcIncoterms/>
         <SrcSourcingTerms/>
@@ -213,6 +214,78 @@ function StageSourcing({ onNav }) {
         <SrcExceptions proc={proc}/>
       </div>
     </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// D6 · EXTERNAL-SIGNAL DRIVERS — planning-cadence external indices (the in-fit
+// replacement for "real-time IoT": we ingest external SIGNALS, not MES telemetry).
+// A commodity-price index re-prices BOM material, a port-congestion bump lengthens
+// inbound lead, and the FX table (SS-D) re-prices imported parts. All three are
+// REAL solver drivers: bomParts (store.jsx) applies the commodity factor + port
+// lead, and because they live on config, editing one re-flags procurement / policy /
+// rolling / MEIO stale. Neutral seed (0% / 0d) ⇒ nothing moves until a planner sets
+// an index. The card proves the propagation on real BOM parts — no fabricated number.
+// ════════════════════════════════════════════════════════════════════════
+function SrcExternalSignals({ planning, onRerun }){
+  const { config, setConfig } = useConfig();
+  const sig = config.signals || {};
+  const setSig = (p)=> setConfig({ signals: { ...sig, ...p } });
+  const pd = planning.timeGrain==='week'?7:planning.timeGrain==='day'?1:30;
+  const cf = commodityFactor(), portP = portDelayPeriods(pd);
+  const idxPct = Number(sig.commodityIndexPct)||0, portDays = Number(sig.portDelayDays)||0;
+  const active = Math.abs(idxPct)>0.001 || portDays>0;
+  const bom = (M.bom||[]).slice(0,4);
+  const fxRates = config.fxRates || {};
+  // solves that consume bomParts (so the commodity/port signals genuinely drive them)
+  const driven = ['procurement','policy','rolling','meio','meionet'];
+  return (
+    <StageSection step="0b" title="External-Signal Drivers" sub="commodity / port-congestion / FX indices that drive the procurement & policy solvers — planning signals, not IoT telemetry">
+      <Card icon="📡" title="External signals → solver inputs" badge={active?'driving':'neutral'} badgeTone={active?'g':'k'} span={2}
+        right={<Provenance kind="external" note="planning-cadence indices"/>}
+        info={{ what:'External market signals the plan should react to — a steel/alloy price index, port-congestion days, and the FX table. Each one feeds a real solver input (BOM material cost, inbound lead time, imported-part landed cost), so moving an index re-prices the plan and re-flags the affected solves stale.', flows:'Signal → bomParts / fxFactor → procurement·policy·rolling·MEIO MILPs.' }}
+        dev={{ comp:'SrcExternalSignals (D6)', props:'config.signals · commodityFactor · portDelayPeriods', state:'config.signals (seed 0%/0d)' }}>
+        <Grid cols={3}>
+          <Field label="Commodity price index" hint="±% vs base on all BOM material cost">
+            <NumInput value={idxPct} suffix="%" onChange={v=>setSig({ commodityIndexPct: v===''?0:v })}/>
+          </Field>
+          <Field label="Port congestion" hint="extra inbound transit (days) → lead time">
+            <NumInput value={portDays} suffix="d" onChange={v=>setSig({ portDelayDays: v===''?0:v })}/>
+          </Field>
+          <Field label="FX table (USD→₹)" hint="edited in Finance/Setup · drives imported parts">
+            <NumInput value={fxRates.USD!=null?fxRates.USD:84.2} disabled/>
+          </Field>
+        </Grid>
+
+        <div style={{marginTop:10}}><SubLabel>Propagation onto real BOM parts</SubLabel></div>
+        <DataTable dense cols={['Part','Base cost','Index cost','Δ','Base lead','+Port']} align={['left','right','right','right','right','right']}
+          rows={bom.map(b=>{ const ic=Math.round(b.cost*cf*100)/100, dlt=ic-b.cost;
+            const baseLeadP=Math.max(1,Math.round(b.lt/pd)), newLeadP=baseLeadP+portP;
+            return [
+              <span style={{fontFamily:F.mono, fontSize:9.5}}>{b.part}</span>,
+              `₹${b.cost}`,
+              <span style={{color: Math.abs(dlt)>0.001?(dlt>0?C.dg:C.gn):C.tx3, fontWeight:700}}>₹{ic}</span>,
+              <span style={{color: Math.abs(dlt)>0.001?(dlt>0?C.dg:C.gn):C.tx3, fontFamily:F.mono, fontSize:9.5}}>{Math.abs(dlt)>0.001?(dlt>0?'+':'−')+'₹'+Math.abs(dlt).toFixed(1):'—'}</span>,
+              <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx3}}>{baseLeadP}p</span>,
+              <span style={{fontWeight:700, color: newLeadP>baseLeadP?C.dg:C.tx3}}>{newLeadP}p</span>];
+          })}/>
+
+        <div style={{marginTop:8, fontFamily:F.mono, fontSize:9, color:C.tx3, lineHeight:1.5}}>
+          Note: one shared index applies to all BOM material (the mock BOM carries no material class — a documented limitation). Port days round to whole planning periods ({pd}d), so a sub-period delay honestly doesn't shift a {planning.timeGrain==='week'?'weekly':planning.timeGrain==='day'?'daily':'monthly'} bucket. FX is one source of truth — edit it where imported parts are quoted.
+        </div>
+
+        {active && onRerun && <div style={{marginTop:8}}>
+          <Btn kind="primary" sm onClick={onRerun}>▶ Re-solve procurement on these signals</Btn>
+          <span style={{marginLeft:10, fontFamily:F.mono, fontSize:9, color:C.a4}}>drives: {driven.join(' · ')} (now stale)</span>
+        </div>}
+
+        <Reading tone={active?C.a4:C.tx3}
+          formula={`material ×${cf.toFixed(3)} (index ${idxPct>=0?'+':''}${idxPct}%) · inbound +${portP} period${portP===1?'':'s'} (${portDays}d port)`}
+          soWhat={active
+            ? `These external signals are now driving the plan: BOM material is re-priced ×${cf.toFixed(3)} and inbound lead carries +${portP} period(s). The procurement, policy, rolling and MEIO solves are flagged stale — re-solve to see the buy plan, safety stock and pooling shift. This is how a commodity spike or a port backlog re-plans supply, automatically.`
+            : 'Both signals are at their neutral seed, so the plan is byte-identical to the base case. Set a commodity index or port delay to drive a re-plan — the impact propagates to every solver that consumes the BOM.'}/>
+      </Card>
+    </StageSection>
   );
 }
 
