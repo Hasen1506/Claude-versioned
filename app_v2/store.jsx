@@ -501,6 +501,10 @@ function transportPayload(){
     value:Math.round(totalValue / nLanes), deadline_days:7,
   }));
   // sku_flows surfaced so the Logistics tab can show the per-SKU outbound breakdown.
+  // (NOTE: transport.py's stockout_risk_factor weights an air-vs-sea tradeoff, but it only
+  // bites when a shipment carries demand-sensing fields — current_stock/daily_consumption/
+  // demand_spike. Outbound FG lanes don't carry those, so we DON'T pretend to drive it here;
+  // it lives in the Anatomy-Lab extras until per-lane spike sensing is wired.)
   return { shipments, params:{ sku_flows: skuFlows.map(f=>({ sku:f.sku, monthly_units:Math.round(f.monthly),
     weight_kg_per_unit:f.weightKg, monthly_weight_kg:Math.round(f.monthly*f.weightKg) })) } };
 }
@@ -744,6 +748,7 @@ function _loopAggregatePayload(planning){
       forecast: months.map(mo=>Math.max(0, Math.round(mo.dem*(p.demand||0)/totAnnual))),
       labor_hours_per_unit: lw[p.sku] != null ? lw[p.sku] : 1 })),
     params:{ periods:months.length||6, init_workforce:pget('init_workforce',35),
+      init_inventory:pget('init_inventory',0),                     // opening FG stock (0 = greenfield)
       rate_per_worker:rate, reg_cost_per_unit:pget('reg_cost_per_unit',120),
       ot_cost_per_unit:pget('ot_cost_per_unit',180), holding_cost_per_unit:pget('holding_cost_per_unit',24),
       backorder_cost_per_unit:pget('backorder_cost_per_unit',300), hire_cost:pget('hire_cost',8000),

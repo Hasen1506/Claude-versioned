@@ -677,8 +677,8 @@ M.solverModel = {
       { t:'cycle_time / capacity hrs', src:'Production → stage cycle time, line hours', wired:true },
       { t:'material availability', src:'Products → BOM (qty_per, yield)', wired:true },
       { t:'mto_orders floor', src:'Products → MTO order book (firm orders) → min_quantity', wired:true },
-      { t:'budget (₹ cap)', src:'— defaulted in profitmix.py (no input)', wired:false },
-      { t:'warehouse space', src:'— defaulted (no input)', wired:false },
+      { t:'budget (₹ cap)', src:'Console → Profit-mix optional cash budget (config.pmBudget · 0=unbounded)', wired:true },
+      { t:'warehouse space', src:'Console → Profit-mix optional warehouse slots (config.pmWarehouse · 0=unbounded)', wired:true },
     ], extras:['dedicated/fixed-open line economics','planning_mode · shelf_life','salvage_rate'] },
   procurement: {
     objective:'minimise setup + FG holding + production + expiry + shortage + RM purchase + RM holding + RM ordering',
@@ -692,8 +692,8 @@ M.solverModel = {
       { t:'ordering · setup cost', src:'Products → costs', wired:true },
       { t:'service_level', src:'Sourcing → solver param', wired:true },
       { t:'carry / holding rate', src:'Sourcing → carry rate = Finance WACC + holding spread (carryRate)', wired:true },
-      { t:'budget · early-pay · inflation', src:'— defaulted (no input)', wired:false },
-    ], extras:['regime-aware sourcing','VMI','CVaR fill-rate sourcing','supplier & FX concentration caps','transport disruptions','milk-run / terminal-anchor','RM warehouse area/volume limits','working-capital & locked-PO replan'] },
+      { t:'RM-spend budget', src:'Sourcing → Procurement MILP inputs (config.procBudget · blank=unbounded)', wired:true },
+    ], extras:['early-payment discount · annual-inflation escalation (advanced cash terms)','regime-aware sourcing','VMI','CVaR fill-rate sourcing','supplier & FX concentration caps','transport disruptions','milk-run / terminal-anchor','RM warehouse area/volume limits','working-capital & locked-PO replan'] },
   production: {
     objective:'minimise setup + overtime + makespan penalty + FG holding',
     vars:['build[k,l,t] qty (continuous)','run[k,l,t] BINARY produce flag','changeover indicators (binary)'],
@@ -718,9 +718,8 @@ M.solverModel = {
       { t:'rate_per_worker', src:'Plan → cost inputs', wired:true },
       { t:'min/max workforce', src:'derived from line registry capacity', wired:true },
       { t:'labor_hours_per_unit', src:'Products → cycle time (demand-wtd mean-normalised · aggLaborWeights)', wired:true },
-      { t:'init inventory / workforce', src:'— seed constant', wired:false },
-      { t:'safety stock · ending-inv target', src:'— defaulted (no input)', wired:false },
-    ], extras:['integer-workforce toggle'] },
+      { t:'init inventory / workforce', src:'Plan → opening FG inventory + init workforce (PlanParamsCard)', wired:true },
+    ], extras:['safety-stock / ending-inventory floor (set a target to enforce end-cover)','integer-workforce toggle'] },
   transport: {
     objective:'minimise Σ cost_matrix[i,j]·x[i,j] (lane cost)',
     vars:['x[i,j] ≥ 0 shipment qty origin→dest (continuous)'],
@@ -730,9 +729,7 @@ M.solverModel = {
       { t:'supply / DC stock', src:'Network → on-hand', wired:true },
       { t:'cost_matrix (lane rate × distance)', src:'Network → lanes', wired:true },
       { t:'weight per unit', src:'derived (SKU weight)', wired:true },
-      { t:'customs / import duty', src:'— defaulted (no input)', wired:false },
-      { t:'demand spike / stockout risk', src:'— defaulted (no input)', wired:false },
-    ], extras:['mode overrides','carrier tracking','disruption sensing'] },
+    ], extras:['stockout-risk factor (air-vs-sea mode penalty) — needs per-lane demand-sensing (current stock / daily use / spike) wired first; inert on plain outbound FG lanes','import duty / customs — priced UPSTREAM in Sourcing landed cost (outbound FG lanes are domestic)','mode overrides','carrier tracking','disruption sensing'] },
   capital: {
     objective:'maximise Σ NPVᵢ·xᵢ subject to budget',
     vars:['xᵢ ∈ [0,1] select option i (continuous LP-relaxation; binary optional)'],
@@ -743,8 +740,7 @@ M.solverModel = {
       { t:'WACC (discount)', src:'Finance → WACC card', wired:true },
       { t:'residual value · useful life', src:'Finance → Investment options', wired:true },
       { t:'budget cap', src:'Finance → CapEx budget/yr (config.finCapexBudget)', wired:true },
-      { t:'exclusivity / dependencies', src:'— defaulted (no input)', wired:false },
-    ], extras:['buy-vs-lease split'] },
+    ], extras:['mutual-exclusivity / dependency groups — declare when two options conflict or require each other (no conflict in the current line set)','buy-vs-lease split'] },
   montecarlo: {
     objective:'(none — simulation) estimate the fill-rate & cost DISTRIBUTION of the committed plan',
     vars:['random demand & cost draws per run (not decisions)'],
@@ -754,8 +750,8 @@ M.solverModel = {
       { t:'unit cost · sell price', src:'Products → cost / price', wired:true },
       { t:'service level', src:'Sourcing → solver param', wired:true },
       { t:'policy (production plan)', src:'cached production solve', wired:true },
-      { t:'prod lead-time + CV', src:'— defaulted (no input)', wired:false },
-      { t:'demand–cost correlation', src:'— defaulted (no input)', wired:false },
+      { t:'prod lead-time + CV', src:'Scenarios → MC controls (opts.prodLeadTime / prodLeadCv · RK-D, plan-mode lag)', wired:true },
+      { t:'demand–cost correlation', src:'Scenarios → MC controls (opts.corr → corr_demand_cost)', wired:true },
     ], extras:['per-SKU bill draw','shelf-life expiry in the sim'] },
   cvar: {
     objective:'minimise CVaR_β (expected cost in the worst β-tail) of the newsvendor position',
@@ -764,7 +760,7 @@ M.solverModel = {
     terms:[
       { t:'mean & std of demand', src:'derived from committed demand + forecast error', wired:true },
       { t:'β (tail level)', src:'Scenarios → governed param', wired:true },
-      { t:'holding · shortage cost', src:'— defaulted in cvar.py (no input)', wired:false },
+      { t:'holding · shortage cost', src:'Risk → derived from carry rate × unit cost (holding) and unit margin (shortage), per SKU', wired:true },
     ], extras:['scenario count n_scenarios'] },
 };
 

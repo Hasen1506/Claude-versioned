@@ -288,7 +288,31 @@ demand against a units/worker rate (garbage / infeasibility). The reconciliation
       parse + 13/13 browser smoke + Lab pass.
 
 **Audit status: every CORRECTNESS-class term is now wired** (profitmix MTO floor · capital budget+WACC ·
-procurement/policy/MC carry rate · aggregate labor weight). What remains is strictly *feature* work —
-terms with NO input surface today (profitmix ₹budget cap / warehouse space, transport customs, cvar
-holding/shortage, advanced procurement extras: regime/VMI/CVaR-fill/concentration caps/disruptions).
-Those need a deliberate new input, not a silent wire, and are out of scope until asked for.
+procurement/policy/MC carry rate · aggregate labor weight).
+
+**FINISH-FULLY pass — every remaining `terms[]` entry resolved (zero `wired:false` left).**
+Triaged the rest into three honest buckets:
+- *Already wired, stale label → flipped ✓:* montecarlo prod lead-time+CV (store.jsx:679, RK-D) ·
+  montecarlo demand–cost correlation (store.jsx:677) · cvar holding/shortage (scenarios.jsx:187/202).
+- *Genuinely wired with an OPTIONAL input (seed = current behaviour, in an EXISTING param card):*
+  - profitmix **budget** + **warehouse** → Console profit-mix constraints strip (config.pmBudget/pmWarehouse,
+    0=unbounded). Live: budget ₹2M ⇒ profit 2.93M→1.20M, qty 5375→3268; warehouse 3000 ⇒ qty capped exactly 3000.
+  - procurement **RM-spend budget** → Sourcing "Procurement MILP inputs" (config.procBudget, blank=unbounded).
+    Live: None→₹1,866,100; ₹600k binds (JIT re-time) →₹1,864,664 Optimal; below required spend ⇒ Infeasible.
+  - aggregate **opening FG inventory** → Plan PlanParamsCard (planParams.init_inventory). Wired into
+    aggregate.py period-0 inv balance (prev_i=init_inv). Live: opening 500 ⇒ horizon production −~500, cost
+    2.64M→2.33M. (Aggregate runs in labor-weighted units; mean-normalised ⇒ physical≈aggregate at avg mix.)
+- *Reclassified to `extras` (real solver capability, NO honest scalar input — a number would itself be faking):*
+  transport **stockout-risk factor** (transport.py only applies it when a shipment carries demand-sensing
+  fields current_stock/daily_consumption/demand_spike; outbound FG lanes don't, so wiring config→param would
+  be INERT — caught & reverted rather than ship a dead knob) · transport import-duty (priced UPSTREAM in
+  Sourcing landed cost; outbound FG lanes domestic) · capital mutual-exclusivity/dependency groups (no conflict
+  in the current line set) · procurement early-pay-discount / inflation escalation · aggregate
+  safety-stock/ending-inventory floor.
+
+Result: the Anatomy Lab's per-solver `terms[]` are now 100% `wired:true` AND each one genuinely drives the
+LIVE app payload (not just a curl) — the honest "capability that needs more inputs first" items live in
+`extras` where they belong. Verified: 5/5 jsx parse + 13/13 browser smoke + Lab pass + 4 live solves that
+move with the new inputs (profitmix budget 2.93M→1.20M & warehouse qty→3000, procurement budget gate
+1.866M→1.865M JIT, aggregate opening-inv cost 2.64M→2.33M). Transport stockout-risk was DROPPED, not shipped
+inert. No `wired:false` term remains anywhere.

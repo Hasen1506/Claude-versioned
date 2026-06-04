@@ -64,6 +64,7 @@ function StagePlan({ onNav }) {
       params: {
         periods: months.length,
         init_workforce: PLAN_PARAMS.init_workforce,
+        init_inventory: planParam(config,'init_inventory') || 0,   // opening FG stock (0 = greenfield)
         rate_per_worker: rate,
         reg_cost_per_unit: planParam(config,'reg_cost_per_unit'),
         ot_cost_per_unit: planParam(config,'ot_cost_per_unit'),
@@ -130,6 +131,7 @@ function PlanParamsCard({ config, setConfig, lineCap, rate, wfCeiling, agg, ranA
         <SolverInput label="Hire cost" seed={PLAN_PARAMS.hire_cost} value={pp.hire_cost} onChange={v=>set('hire_cost',v)} min={0} prefix="₹"/>
         <SolverInput label="Fire cost" seed={PLAN_PARAMS.fire_cost} value={pp.fire_cost} onChange={v=>set('fire_cost',v)} min={0} prefix="₹"/>
         <SolverInput label="Wage / worker" seed={PLAN_PARAMS.wage_per_worker} value={pp.wage_per_worker} onChange={v=>set('wage_per_worker',v)} min={0} prefix="₹"/>
+        <SolverInput label="Opening FG inventory" seed={0} value={pp.init_inventory} onChange={v=>set('init_inventory',v)} min={0} suffix="u" hint="stock on hand at period 0 (0 = greenfield); offsets early-period production"/>
       </Grid>
       <Reading formula={`line-registry ceiling = Σ line cap = ${lineCap.toLocaleString('en-IN')} u/mo  ⇒  max workforce = ${lineCap.toLocaleString('en-IN')} ÷ ${rate} = ${wfCeiling} heads`}
         soWhat={`The plan is bounded to the SAME ${(M.lines||[]).length}-line capacity the production schedule respects (${(M.lines||[]).map(l=>l.cap.toLocaleString('en-IN')).join(' + ')} u/mo) — it can never promise more than the floor can physically build. Override the rate to re-scale the ceiling.`}/>

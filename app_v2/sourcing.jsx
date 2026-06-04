@@ -34,9 +34,15 @@ function procurementPayload(sku, planning, serviceLevel){
   // MILP's FG-holding term reflects the real cost of capital. Per-part RM hold_pct stays
   // per-BOM. Defaults preserve the prior 24%/yr behaviour at the seed WACC.
   const carry = (typeof carryRate==='function') ? carryRate() : 0.24;
+  // optional RM-spend budget (₹/period) — blank/0 ⇒ omit ⇒ procurement.py treats it as
+  // unbounded (params.get('budget', None)). A real cap forces deferral/splitting of POs.
+  const _cfg = (typeof appStore!=='undefined') ? (appStore.get().config||{}) : {};
+  const _budget = Number(_cfg.procBudget) || 0;
+  const params = { periods:12, time_grain:grain, service_level: serviceLevel, carry_rate: carry };
+  if(_budget > 0) params.budget = _budget;
   return { products:[{ name:sku, demand:dem, capacity:cap,
     variable_cost:p.cost||1190, sell_price:p.price||1850, yield_pct:p.yield||0.97, parts:partsWithSourcing(pd) }],
-    params:{ periods:12, time_grain:grain, service_level: serviceLevel, carry_rate: carry } };
+    params };
 }
 // S-3 autopilot uses the SAME procurement-shaped payload (policy.py reads
 // products[].parts[] with landed_cost) — so the (s,S)/(R,Q) policy is derived on
@@ -198,15 +204,18 @@ function StageSourcing({ onNav }) {
         {proc.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Procurement MILP: {proc.error}</div>}
         <StageSection step="0" title="Solver Parameters" sub="governed inputs — a seed default until you override it; an override re-flags the plan to re-solve">
           <Card icon="🎛️" title="Procurement MILP inputs" badge="governed" badgeTone="y"
-            info={{ what:'The service level sets the cycle-service target the MILP sizes safety stock to. Seeded at 0.95; override per run.', flows:'→ procurement MILP params.service_level.' }}
-            dev={{ comp:'SolverInput', props:'config.serviceLevelOverride', state:'config.serviceLevelOverride (seed 0.95)' }}>
+            info={{ what:'The service level sets the cycle-service target the MILP sizes safety stock to. The optional RM-spend budget caps purchasing cash per period (blank = unbounded). Seeded; override per run.', flows:'→ procurement MILP params.service_level, params.budget.' }}
+            dev={{ comp:'SolverInput', props:'config.serviceLevelOverride, config.procBudget', state:'config.serviceLevelOverride (seed 0.95), config.procBudget (blank=unbounded)' }}>
             <Grid cols={3}>
               <SolverInput label="Service level (α)" seed={0.95} value={config.serviceLevelOverride}
                 onChange={v=>setConfig({ serviceLevelOverride:v })} min={0.5} max={0.999}
                 hint="cycle-service target → safety stock"/>
+              <SolverInput label="RM-spend budget / period" seed={0} value={config.procBudget}
+                onChange={v=>setConfig({ procBudget:v })} min={0} prefix="₹"
+                hint="0 / blank = unbounded; a cap forces the MILP to defer or split purchases to stay within working capital"/>
             </Grid>
-            <Reading formula="safety stock = z(α) · σ_LTD   ·   higher α ⇒ more buffer, fewer stockouts, more capital tied up"
-              soWhat={`The MILP is currently planning to α = ${sl} ${(config.serviceLevelOverride!=null && config.serviceLevelOverride!=='')?'(your override)':'(default)'}. Change it and re-run — the safety buffer and PO release schedule shift (a tighter α consolidates releases to keep cover).`}/>
+            <Reading formula={`safety stock = z(α) · σ_LTD   ·   Σ RM purchase[t] ≤ budget (when set)`}
+              soWhat={`The MILP is currently planning to α = ${sl} ${(config.serviceLevelOverride!=null && config.serviceLevelOverride!=='')?'(your override)':'(default)'}${(Number(config.procBudget)>0)?`, capped at ₹${Number(config.procBudget).toLocaleString('en-IN')}/period of RM spend — purchases that breach it are deferred or split`:', with no spend cap (enter a budget to enforce a working-capital limit)'}. Change either and re-run — the safety buffer and PO release schedule shift.`}/>
           </Card>
         </StageSection>
         <StageSection step="0b" title="External-Signal Drivers" sub="commodity / port-congestion / FX indices — planning signals (not IoT telemetry); hidden by default to keep the default view focused">

@@ -476,7 +476,12 @@ function profitmixPayload(){
     shelf_life:Math.max(1, Math.round((Number(p.shelf)||365)/7)),
     yield_pct:p.yield||0.95, salvage_rate:Number(p.salvage)||0.8 }));
   const demandHours = prods.reduce((s,p)=>s+p.max_demand*p.cycle_time, 0);
-  return { products:prods, constraints:{ shared_capacity:Math.round(demandHours*0.82) } };
+  // optional ₹ working-capital budget (Σ variable_cost·q) and warehouse storage slots (Σ q)
+  // — profitmix.py treats 0 as UNBOUNDED, so the seed-0 default leaves the mix unconstrained.
+  const _cfg = (typeof appStore!=='undefined') ? (appStore.get().config||{}) : {};
+  const constraints = { shared_capacity:Math.round(demandHours*0.82),
+    budget: Number(_cfg.pmBudget)||0, warehouse: Number(_cfg.pmWarehouse)||0 };
+  return { products:prods, constraints };
 }
 // ── D1 · GLASS-BOX DECISION EXPLAINER ────────────────────────────────────────
 // The wedge: incumbents are black boxes. We read the REAL optimiser duals — the
@@ -725,15 +730,29 @@ function DecisionExplainer({ r }){
 }
 
 function ResProfit() {
+  const { config, setConfig } = useConfig();
   const pm = useSolve('/api/solve/profitmix', profitmixPayload);
   const r = pm.result;
   const fmtL = n=>`₹${(n/1e5).toFixed(1)}L`;
   return (
     <Grid cols={2}>
-      <Card icon="💰" title="Profit Maximizer Results" badge={r?fmtL(r.total_profit):'₹6.84 Cr'} badgeTone="y" info={{ what:'Optimal product mix maximising contribution under a binding capacity ration.', flows:'Mix → procurement & production targets.' }} span={2}
+      <Card icon="💰" title="Profit Maximizer Results" badge={r?fmtL(r.total_profit):'₹6.84 Cr'} badgeTone="y" info={{ what:'Optimal product mix maximising contribution under a binding capacity ration. Optional ₹ budget (caps Σ variable-cost·qty) and warehouse slots (caps Σ qty) add working-capital / storage limits.', flows:'Mix → procurement & production targets.' }} span={2}
         right={r ? <Provenance kind="solved" asOf={pm.ranAt}/> : <Btn kind="accent" sm onClick={()=>pm.run().catch(()=>{})}>{pm.solving?'⏳ Optimizing…':'💰 Optimize mix'}</Btn>}
-        dev={{ comp:'ProfitResults', props:'solve.profit' }}>
+        dev={{ comp:'ProfitResults', props:'solve.profit', state:'config.pmBudget, config.pmWarehouse (0=unbounded)' }}>
         {pm.error && <div style={{margin:'0 0 10px', padding:'7px 11px', border:`2px solid ${C.dg}`, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>profit-mix error: {pm.error}</div>}
+        <div style={{display:'flex', gap:14, flexWrap:'wrap', alignItems:'flex-end', marginBottom:12, paddingBottom:11, borderBottom:`2px solid ${C.line2}`}}>
+          <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.1em', color:C.tx3, alignSelf:'center'}}>OPTIONAL CONSTRAINTS</span>
+          <Field label="Cash budget (Σ var-cost·qty)" hint="0 = unbounded; caps the working capital the mix can deploy">
+            <NumInput value={config.pmBudget==null?0:config.pmBudget} prefix="₹" w={120}
+              onChange={v=>setConfig({ pmBudget: v===''?0:Number(v) })}/>
+          </Field>
+          <Field label="Warehouse slots (Σ qty)" hint="0 = unbounded; caps total units the FG store can hold">
+            <NumInput value={config.pmWarehouse==null?0:config.pmWarehouse} suffix="u" w={110}
+              onChange={v=>setConfig({ pmWarehouse: v===''?0:Number(v) })}/>
+          </Field>
+          {r && (Number(config.pmBudget)>0 || Number(config.pmWarehouse)>0) &&
+            <span style={{fontFamily:F.mono, fontSize:9, color:C.tx2, alignSelf:'center'}}>active — re-optimize to apply</span>}
+        </div>
         {r ? (
           <>
             <DataTable cols={['SKU','Optimal Qty','Margin/u','Margin/hr','Profit','% of profit','Status']} align={['left','right','right','right','right','right','left']}
