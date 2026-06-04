@@ -713,18 +713,31 @@ function _loopProcurementPayload(planning){
     // carry_rate from governed WACC + holding spread (carryRate), not a 0.24 constant.
     carry_rate:(typeof carryRate==='function') ? carryRate(_cfg) : 0.24 } };
 }
-// Aggregate labor-content weights — REPLACES the flat labor_hours_per_unit:1 that
-// silently treated every SKU as equal capacity load. Each finished SKU is weighted by
-// its labor content (cycle minutes → hours). CRITICAL reconciliation (the reason this
-// wasn't a blind drop-in): aggregate.py expresses rate_per_worker in these SAME weighted
-// units, so raw hours would compare an hours demand against a units/worker rate. The
-// weights are therefore DEMAND-WEIGHTED MEAN-NORMALISED to 1.0 — the aggregate-unit scale
-// (and thus the existing rate_per_worker = 30 u/worker calibration) is provably preserved;
-// only the MIX of capacity consumption shifts (a labor-heavy SKU now consumes proportionally
-// more family capacity). Falls back to flat 1.0 when no cycle data exists ⇒ unchanged default.
+// Per-SKU hands-on LABOR fraction — the share of the machine cycle a WORKER is actually
+// occupied (the rest is automated, unattended machine time). 1.0 = fully manual (worker
+// busy the whole cycle, the default ⇒ unchanged behaviour); 0.2 = a highly-automated cell
+// a worker only loads/unloads. config.skuLaborFrac{sku→0..1}. THIS is the field that makes
+// the aggregate's LABOR weighting correct: machine cycle ≠ worker-time when automation varies.
+function skuLaborFrac(sku){
+  const cfg = (typeof appStore!=='undefined') ? (appStore.get().config||{}) : {};
+  const v = (cfg.skuLaborFrac||{})[sku];
+  return (v==null || v==='') ? 1.0 : Math.max(0, Math.min(1, Number(v)));
+}
+// Per-SKU WORKER-minutes per unit = machine cycle × hands-on fraction. The honest labor
+// content the people-bound aggregate plan should weight by (NOT raw machine cycle).
+function skuWorkerMin(p){ return Math.max(0, (Number(p.cycle)||0) * skuLaborFrac(p.sku)); }
+// Aggregate labor-content weights — REPLACES the flat labor_hours_per_unit:1 that silently
+// treated every SKU as equal capacity load. The aggregate constraint is P ≤ rate·WORKERS
+// (people-bound), so each SKU is weighted by its WORKER-time per unit (cycle × hands-on
+// fraction — an automated SKU with a long machine cycle but little attention weighs LESS).
+// CRITICAL reconciliation (why it's not a blind drop-in): aggregate.py expresses rate_per_worker
+// in these SAME weighted units, so raw minutes would compare a minutes demand against a
+// units/worker rate. The weights are therefore DEMAND-WEIGHTED MEAN-NORMALISED to 1.0 — the
+// aggregate-unit scale (and thus the rate_per_worker = 30 u/worker calibration) is provably
+// preserved; only the MIX of LABOR consumption shifts. Flat 1.0 when no cycle data ⇒ default.
 function aggLaborWeights(fg){
   const items = (fg||[]).map(p=>({ sku:p.sku, dem:Math.max(0, Number(p.demand)||0),
-    hrs:Math.max(0, (Number(p.cycle)||0)/60) }));
+    hrs:Math.max(0, skuWorkerMin(p)/60) }));        // WORKER-hours/unit (not machine cycle)
   const dTot = items.reduce((s,i)=>s+i.dem,0);
   const wbar = dTot ? items.reduce((s,i)=>s+i.dem*i.hrs,0)/dTot : 0;   // demand-weighted mean labor content
   const w = {};

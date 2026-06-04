@@ -717,7 +717,7 @@ M.solverModel = {
       { t:'hire / fire / wage', src:'Plan → cost inputs', wired:true },
       { t:'rate_per_worker', src:'Plan → cost inputs', wired:true },
       { t:'min/max workforce', src:'derived from line registry capacity', wired:true },
-      { t:'labor_hours_per_unit', src:'Products → cycle time (demand-wtd mean-normalised · aggLaborWeights)', wired:true },
+      { t:'labor_hours_per_unit', src:'Plan → per-SKU worker-time = cycle × hands-on % (workforce-bound · demand-wtd mean-normalised · aggLaborWeights)', wired:true },
       { t:'init inventory / workforce', src:'Plan → opening FG inventory + init workforce (PlanParamsCard)', wired:true },
     ], extras:['safety-stock / ending-inventory floor (set a target to enforce end-cover)','integer-workforce toggle'] },
   transport: {

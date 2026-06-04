@@ -102,6 +102,7 @@ function StagePlan({ onNav }) {
         {agg.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Aggregate solver: {agg.error}</div>}
         {stale && <StaleMark since="(demand or cost inputs changed)" onNav={runAgg} go="rerun"/>}
         <StageSection step="0" title="Plan Cost Inputs" sub="governed — seed defaults you may override; the workforce is bounded so the plan can never exceed the line registry"><PlanParamsCard config={config} setConfig={setConfig} lineCap={lineCap} rate={rate} wfCeiling={wfCeiling} agg={agg} ranAt={ranAt}/></StageSection>
+        <StageSection step="0b" title="Labor content (workforce weighting)" sub="this plan sizes PEOPLE — so each SKU is pooled by worker-time, not machine cycle; set the automated SKUs' hands-on % lower"><PlanLaborContent/></StageSection>
         <StageSection step="1" title="Strategy" sub="level vs chase, and the seasonal prebuild it implies"><PlanStrategy agg={agg}/></StageSection>
         <StageSection step="2" title="Capacity & Duals" sub="demand vs the line-registry ceiling; the labor dual vs the binding line"><PlanCapacity onNav={onNav} agg={agg} lineCap={lineCap}/></StageSection>
         <StageSection step="3" title="Workforce" sub="hire / fire / overtime by period — and the capacity gap each fills"><PlanWorkforce agg={agg} rate={rate}/></StageSection>
@@ -135,6 +136,37 @@ function PlanParamsCard({ config, setConfig, lineCap, rate, wfCeiling, agg, ranA
       </Grid>
       <Reading formula={`line-registry ceiling = Σ line cap = ${lineCap.toLocaleString('en-IN')} u/mo  ⇒  max workforce = ${lineCap.toLocaleString('en-IN')} ÷ ${rate} = ${wfCeiling} heads`}
         soWhat={`The plan is bounded to the SAME ${(M.lines||[]).length}-line capacity the production schedule respects (${(M.lines||[]).map(l=>l.cap.toLocaleString('en-IN')).join(' + ')} u/mo) — it can never promise more than the floor can physically build. Override the rate to re-scale the ceiling.`}/>
+    </Card>
+  );
+}
+
+// Per-SKU labor content — the input that makes the people-bound aggregate weighting honest.
+// The aggregate constraint is production ≤ rate × WORKERS, so a SKU's family weight must be
+// WORKER-time, not machine cycle time. Hands-on % = the share of the machine cycle a worker
+// is actually occupied (1.0 = fully manual default; low = automated cell). worker-min = cycle ×
+// hands-on; weights are demand-mean-normalised so the average SKU stays 1.00× (rate/worker
+// calibration untouched) and only the labor MIX shifts.
+function PlanLaborContent(){
+  const { config, setConfig } = useConfig();
+  const fg = M.products.filter(p=>p.cat==='Finished');
+  const w = (typeof aggLaborWeights==='function') ? aggLaborWeights(fg) : {};
+  const frac = (sku)=>{ const m=config.skuLaborFrac||{}; const v=m[sku]; return (v==null||v==='')?1.0:Number(v); };
+  const setFrac = (sku,v)=> setConfig({ skuLaborFrac:{ ...(config.skuLaborFrac||{}), [sku]:v } });
+  return (
+    <Card icon="🧑‍🏭" title="Per-SKU labor content" badge="workforce-bound weighting" badgeTone="y"
+      info={{ what:'The aggregate plan is workforce-bound (production ≤ rate × workers), so it weights each SKU by WORKER-time, not machine cycle. Hands-on % = the share of the machine cycle a worker is actually occupied (100% = fully manual; lower = more automated). Worker-min/unit = cycle × hands-on %.', flows:'→ aggLaborWeights → /api/solve/aggregate labor_hours_per_unit.' }}
+      dev={{ comp:'PlanLaborContent', props:'config.skuLaborFrac', state:'config.skuLaborFrac{sku→0..1}' }}>
+      <DataTable cols={['SKU','Machine cycle','Hands-on %','Worker-min / unit','Family weight']} align={['left','right','right','right','right']}
+        rows={fg.map(p=>({cells:[
+          p.name||p.sku,
+          `${(Number(p.cycle)||0).toFixed(1)} min`,
+          <NumInput value={Math.round(frac(p.sku)*100)} suffix="%" w={84}
+            onChange={v=> setFrac(p.sku, v===''?1 : Math.max(0, Math.min(1, Number(v)/100)))}/>,
+          `${((Number(p.cycle)||0)*frac(p.sku)).toFixed(1)} min`,
+          <span style={{fontWeight:700, color:(w[p.sku]||1)>1.001?C.ac:((w[p.sku]||1)<0.999?C.tx3:C.tx2)}}>{(w[p.sku]||1).toFixed(2)}×</span>,
+        ]}))}/>
+      <Reading formula="worker-min/unit = machine cycle × hands-on %   ·   family weight = worker-min ÷ demand-weighted-average (so the average SKU = 1.00×)"
+        soWhat="Set the automated SKUs to a low hands-on % — they then weigh LESS than their long machine cycle implies, because a worker only loads/unloads them. The weights are normalised so the average stays 1.00× (your rate/worker number is untouched); only the labor MIX shifts. Leave everything at 100% to treat every station as fully manual."/>
     </Card>
   );
 }
@@ -276,7 +308,7 @@ function PlanCapacity({ onNav, agg, lineCap }) {
         <DataTable dense cols={['Period','Demand','Labor cap','Production','Net Inv']} align={['left','right','right','right','right']}
           rows={(months||M.aggregate.months).map(m=>({cells:[m.m, m.dem, m.cap, m.prod, <span style={{color:m.inv<0?C.dg:C.tx, fontWeight:700}}>{m.inv>0?'+':''}{m.inv}</span>]}))}/>
         <Reading formula={`line-registry ceiling = Σ line cap = ${lineCap?lineCap.toLocaleString('en-IN'):'—'} u/mo  ·  "Labor cap" column = rate × workforce that period`}
-          soWhat="The capacity the plan deploys each period is the LABOR capacity (rate × heads); it can rise only to the line-registry ceiling above. Demand under the ceiling means the lines are not the constraint — labor is. The family demand is labor-weighted by each SKU's cycle time (mean-normalised, so the rate/worker calibration is preserved) — a labor-heavy SKU correctly consumes more of this capacity, and the family plan is split back to physical SKU units in step 4."/>
+          soWhat="The capacity the plan deploys each period is the LABOR capacity (rate × heads); it can rise only to the line-registry ceiling above. Demand under the ceiling means the lines are not the constraint — labor is. The family demand is weighted by each SKU's WORKER-time (machine cycle × the hands-on % you set in step 0b, mean-normalised so the rate/worker calibration is preserved) — a labor-heavy SKU consumes more of this capacity, an automated one less, and the family plan is split back to physical SKU units in step 4."/>
       </Card>
       <Card icon="🔑" title="Labor Capacity Shadow Prices" badge={shadow?`${shadow.length} duals · live`:'duals'} badgeTone="y" info={{ what:'Marginal value of one more WORKER-PERIOD of regular capacity (the aggregate LP dual). This is a labor dual — not a line/machine dual.', flows:'Labor duals → hire/OT decision, NOT line CapEx.' }} span={2}
         right={res ? <Provenance kind="solved" asOf={agg.ranAt?agg.ranAt.toLocaleTimeString():undefined}/> : undefined}
