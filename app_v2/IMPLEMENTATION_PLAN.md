@@ -263,3 +263,32 @@ ignoring Finance entirely.
       → ₹1,864,229 (60%), the optimiser trading FG holding against other costs; policy.py also
       inherits the governed rate for any part lacking an explicit `hold_pct` (line 68). 4/4 jsx parse
       + 13/13 browser smoke + Lab pass.
+
+**Final correctness item (done) — aggregate `labor_hours_per_unit` ⇒ SKU cycle time.**
+The last term I had deferred (the units-reconciliation risk). aggregate.py weights each SKU's
+units by labor content to form one capacity-equivalent family, and `rate_per_worker` is expressed
+in those SAME weighted units — so a blind flip from flat `1.0` to raw hours would compare an hours
+demand against a units/worker rate (garbage / infeasibility). The reconciliation that makes it safe:
+
+- [x] **New `aggLaborWeights(fg)` helper** (store.jsx): weight = SKU labor content (cycle min → hrs),
+      **demand-weighted MEAN-NORMALISED to 1.0**. This preserves the aggregate-unit scale (and thus
+      the existing `rate_per_worker = 30 u/worker` calibration) exactly at the reference mix — only
+      the *mix* of capacity consumption shifts (a labor-heavy SKU consumes proportionally more).
+      Flat 1.0 fallback when no cycle data ⇒ unchanged default.
+- [x] **Both aggregate builders wired** — the interactive Plan card (plan.jsx) and `_loopAggregatePayload`
+      (store.jsx). One honest clause added to the existing Capacity-vs-Demand `Reading` (no new card).
+- [x] `M.solverModel` aggregate term flipped ⚠→✓.
+- **Why it's coherent, not a hack:** aggregate.py's OWN disaggregation (line 293) divides the family
+      plan back by `weights[k]` to recover physical SKU units — the solver was *designed* for non-unit
+      weights; we were starving it with flat 1.0.
+- **Proven live** (differing-seasonality stress, `allow_backorder:False`): weights light 0.685 /
+      heavy 1.591 (mean 1.0 preserved); a P6 spike in the labor-heavy SKU lifts the labor-equivalent
+      demand the solver plans against **860 → 1096**, and total cost **2,088,933 → 2,106,201** — the
+      flat model had *understated* the capacity strain. Both stay Optimal (no infeasibility). 3/3 jsx
+      parse + 13/13 browser smoke + Lab pass.
+
+**Audit status: every CORRECTNESS-class term is now wired** (profitmix MTO floor · capital budget+WACC ·
+procurement/policy/MC carry rate · aggregate labor weight). What remains is strictly *feature* work —
+terms with NO input surface today (profitmix ₹budget cap / warehouse space, transport customs, cvar
+holding/shortage, advanced procurement extras: regime/VMI/CVaR-fill/concentration caps/disruptions).
+Those need a deliberate new input, not a silent wire, and are out of scope until asked for.

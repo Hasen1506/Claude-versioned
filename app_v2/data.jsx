@@ -717,7 +717,7 @@ M.solverModel = {
       { t:'hire / fire / wage', src:'Plan → cost inputs', wired:true },
       { t:'rate_per_worker', src:'Plan → cost inputs', wired:true },
       { t:'min/max workforce', src:'derived from line registry capacity', wired:true },
-      { t:'labor_hours_per_unit', src:'— defaulted to 1 (no input)', wired:false },
+      { t:'labor_hours_per_unit', src:'Products → cycle time (demand-wtd mean-normalised · aggLaborWeights)', wired:true },
       { t:'init inventory / workforce', src:'— seed constant', wired:false },
       { t:'safety stock · ending-inv target', src:'— defaulted (no input)', wired:false },
     ], extras:['integer-workforce toggle'] },

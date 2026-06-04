@@ -709,6 +709,24 @@ function _loopProcurementPayload(planning){
     // carry_rate from governed WACC + holding spread (carryRate), not a 0.24 constant.
     carry_rate:(typeof carryRate==='function') ? carryRate(_cfg) : 0.24 } };
 }
+// Aggregate labor-content weights — REPLACES the flat labor_hours_per_unit:1 that
+// silently treated every SKU as equal capacity load. Each finished SKU is weighted by
+// its labor content (cycle minutes → hours). CRITICAL reconciliation (the reason this
+// wasn't a blind drop-in): aggregate.py expresses rate_per_worker in these SAME weighted
+// units, so raw hours would compare an hours demand against a units/worker rate. The
+// weights are therefore DEMAND-WEIGHTED MEAN-NORMALISED to 1.0 — the aggregate-unit scale
+// (and thus the existing rate_per_worker = 30 u/worker calibration) is provably preserved;
+// only the MIX of capacity consumption shifts (a labor-heavy SKU now consumes proportionally
+// more family capacity). Falls back to flat 1.0 when no cycle data exists ⇒ unchanged default.
+function aggLaborWeights(fg){
+  const items = (fg||[]).map(p=>({ sku:p.sku, dem:Math.max(0, Number(p.demand)||0),
+    hrs:Math.max(0, (Number(p.cycle)||0)/60) }));
+  const dTot = items.reduce((s,i)=>s+i.dem,0);
+  const wbar = dTot ? items.reduce((s,i)=>s+i.dem*i.hrs,0)/dTot : 0;   // demand-weighted mean labor content
+  const w = {};
+  items.forEach(i=>{ w[i.sku] = (wbar>0 && i.hrs>0) ? Math.round((i.hrs/wbar)*1000)/1000 : 1.0; });
+  return w;
+}
 function _loopAggregatePayload(planning){
   const M = window.M || {};
   const cfg = appStore.get().config || {};
@@ -721,9 +739,10 @@ function _loopAggregatePayload(planning){
   const months = (M.aggregate && M.aggregate.months) || [];
   const totAnnual = fg.reduce((s,p)=>s+(p.demand||0),0) || 1;
   const wfCeiling = Math.max((pget('min_workforce',5)||5)+1, Math.round(lineCap/rate));
+  const lw = aggLaborWeights(fg);
   return { products: fg.map(p=>({ name:p.sku,
       forecast: months.map(mo=>Math.max(0, Math.round(mo.dem*(p.demand||0)/totAnnual))),
-      labor_hours_per_unit:1 })),
+      labor_hours_per_unit: lw[p.sku] != null ? lw[p.sku] : 1 })),
     params:{ periods:months.length||6, init_workforce:pget('init_workforce',35),
       rate_per_worker:rate, reg_cost_per_unit:pget('reg_cost_per_unit',120),
       ot_cost_per_unit:pget('ot_cost_per_unit',180), holding_cost_per_unit:pget('holding_cost_per_unit',24),

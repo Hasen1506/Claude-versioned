@@ -50,11 +50,16 @@ function StagePlan({ onNav }) {
     const fg = M.products.filter(p=>p.cat==='Finished');
     const months = M.aggregate.months;
     const totAnnual = fg.reduce((s,p)=>s+(p.demand||0),0) || 1;
+    // labor_hours_per_unit — demand-weighted, mean-normalised labor content (cycle/60),
+    // so a labor-heavy SKU consumes proportionally more family capacity WITHOUT rescaling
+    // the aggregate vs the governed rate_per_worker (aggLaborWeights, store.jsx). Flat 1.0
+    // fallback when no cycle data ⇒ unchanged default.
+    const lw = (typeof aggLaborWeights==='function') ? aggLaborWeights(fg) : {};
     return {
       products: fg.map(p=>({
         name:p.sku,
         forecast: months.map(mo=> Math.max(0, Math.round(mo.dem * (p.demand||0)/totAnnual))),
-        labor_hours_per_unit: 1,
+        labor_hours_per_unit: lw[p.sku] != null ? lw[p.sku] : 1,
       })),
       params: {
         periods: months.length,
@@ -269,7 +274,7 @@ function PlanCapacity({ onNav, agg, lineCap }) {
         <DataTable dense cols={['Period','Demand','Labor cap','Production','Net Inv']} align={['left','right','right','right','right']}
           rows={(months||M.aggregate.months).map(m=>({cells:[m.m, m.dem, m.cap, m.prod, <span style={{color:m.inv<0?C.dg:C.tx, fontWeight:700}}>{m.inv>0?'+':''}{m.inv}</span>]}))}/>
         <Reading formula={`line-registry ceiling = Σ line cap = ${lineCap?lineCap.toLocaleString('en-IN'):'—'} u/mo  ·  "Labor cap" column = rate × workforce that period`}
-          soWhat="The capacity the plan deploys each period is the LABOR capacity (rate × heads); it can rise only to the line-registry ceiling above. Demand under the ceiling means the lines are not the constraint — labor is."/>
+          soWhat="The capacity the plan deploys each period is the LABOR capacity (rate × heads); it can rise only to the line-registry ceiling above. Demand under the ceiling means the lines are not the constraint — labor is. The family demand is labor-weighted by each SKU's cycle time (mean-normalised, so the rate/worker calibration is preserved) — a labor-heavy SKU correctly consumes more of this capacity, and the family plan is split back to physical SKU units in step 4."/>
       </Card>
       <Card icon="🔑" title="Labor Capacity Shadow Prices" badge={shadow?`${shadow.length} duals · live`:'duals'} badgeTone="y" info={{ what:'Marginal value of one more WORKER-PERIOD of regular capacity (the aggregate LP dual). This is a labor dual — not a line/machine dual.', flows:'Labor duals → hire/OT decision, NOT line CapEx.' }} span={2}
         right={res ? <Provenance kind="solved" asOf={agg.ranAt?agg.ranAt.toLocaleTimeString():undefined}/> : undefined}
