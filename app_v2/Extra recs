@@ -1,0 +1,35 @@
+
+
+I viewed the observability map and research part - i want you to expand this in depth like i have been trying to expand but i am only able to like graze over upto like demand planning and so on segments it isnt in depth-But you could take the evaluation structure as inspiration -like You have labelled products and have assigned them as high value runner, assigned weights(explain this concept), tail sku- eva destroyer what does that mean.- Genuinely how do you categorize these stuff labellings and how do you expect a user to understand their impacts, do they have any impacts?
+
+Six finished skus also says stuff like line shared with this sku, so how does a user define that?
+
+
+Parts master- does it clearly show what are each skus parts for separately? Have you put shelf life, storage capacity etc., and other stuff that could interfere with each product separately and categorized them as one? No such mistakes are ensured?
+
+Is it clear for user what product he is viewing? He shouldn't get confused in one page he is viewing and filling details for one part and in other page he is viewing and filling details of another part yeah?
+
+Not all parts are gonna be imported, a sku may have some parts, are we defining those clearly? And the following calculation that follows it for finding landed costs and stuff, user may have to specify whether the part for that sku it has tariffs or not how that alters calculations, and where should that claculation then flow? Is landed cost what big orgs use for as ordering cost? Is this accurate?
+
+Then i see it says what will sell, demand forecasting part- so like where exactly does a user define the demand for his product? Like, does he like just paste stuff directly? Should it be like you chose your order types as MTO + MTS for this horizon period enter your historical sales data for mts type orders and for known mto type orders how will the segregation look like? If pure mto and other case how will the programmability and wiring will look like, into a user has no historical data or about to introduce a new product in how does a user define those? And run the modelling, if promo is there how the impact flows?, i also dont like that some sections always hover in the UI like most people aren't going to launch a new product often so the npi like modelling Tab consuming lot of space shouldn't be there right, so how to place it strategically and helpful for user, what else will he require.
+
+
+For promotions and other stuff when exactly should a user specify and run? Like I run demand forecast, hit solve or forecast button, I get a output but if I now define promotions(should this also show up always or could go as could I add a button that then opens this kinda stuff?) and other stuff how do we know it's impacts and other stuff? Will the forecast update? And where would a user come in and update actuals, are they in proper format? Clicking on month opens up,  weeks, clicking on weeks, opens up days. And some people maynot require day to day details and so options there? Week alone or day alone and such stuff for the entire horizon with exact calendar dates not 01, 02,03 like that but respecting the chosen horizon.
+
+And if a user only manufactures only one product then there are no need for having profit mix, What are the details it requires all defined? The doc shows we then do s&op planning and Production? Is this accurate? After doing s&op plan or like it could clearly say whether like how to strategise,  what product to build, whether it will go into overtime and stuff and if overtime or so then cost will be laid out yeah, (we had the concept of laying budgets- but this kinda takes it complex so we can choose to expand on this later for now we will keep it simple) So after figuring out how to build and what other constraints does the s&op output me?, now then what occurs? 
+
+
+Right now i see us that we only define work hours clearly, not machine hours so that should be defined.,across lines and stages? 
+
+Then a users on hand finished good inventory of a product across , scheduled receipts, realizing that each products parts may have a qty of inventory, we have stuff defined as Yield, across raw material and finished goods, but I am not so sure how exactly this should be defined and updated because it isnt right to just assume numbers and say this is expected yield, we have safety stocks for a reason correct? How do big corps do this, they dont consider such stuff? 
+
+And I am assuming stuff for a single location type, multi locations will be even more complex good to record their intricacies for now,
+
+Safety stock levels and other stuff would go when? I have defined a service level so assuming single location you can build out a safety stock out for me but will be much more intricate for complex cases.
+
+Never really touched upon transportation definitions and how that should have been modelled, so check that too, across inbound and outbound flow, what are definitions and units of measurements all done proper.
+
+Then you see whether you're company what to produce based on profit mix output if multi prducts is defined or we see and view s&op part and check for whether we can build them as such our capacity levels and how to structure our production schedule, yeah?
+
+
+
