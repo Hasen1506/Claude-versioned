@@ -4,12 +4,14 @@
 // Single canonical WACC editor lives here (P4).
 // ════════════════════════════════════════════════════════════════════════
 function StageFinance({ onNav }) {
-  const [sub, setSub] = useState('cash');
+  // Ph3 (IA re-segment): default to the SOLVED Capital tab, not the illustrative-seed
+  // Cash & WC tab — Finance leads with a decision-grade solve (lead-with-solved).
+  const [sub, setSub] = useState('capital');
   const tabs = M.financeSubtabs.map(t=>({ id:t.id, n:t.n, label:t.label, count:t.count }));
   return (
     <div>
       <StageHeader n="09" title="Finance & Costs" kicker="Cash & working capital · capital structure · investment decisions · assets · FX hedging"
-        right={<Btn kind="secondary">📄 Board pack</Btn>}/>
+        right={<ReportExport/>}/>
       <SubTabNav tabs={tabs} active={sub} onChange={setSub}/>
       <div style={{padding:14}}>
         {sub==='capital' && <SolverExplain id="capital"/>}
@@ -38,6 +40,7 @@ function FinCash() {
     </div>
     <Grid cols={2}>
       <Card icon="📊" title="Working Capital — Period View" badge="6 months" info={{ what:'AR, AP, inventory and net working capital by month.', flows:'WC → cash cycle & budget gate.' }} span={2}
+        right={<Provenance kind="seed"/>}
         dev={{ comp:'WorkingCapitalPeriodCard', props:'state.finance.cashflow', state:'finance.cashflow[]' }}>
         <div style={{display:'flex', alignItems:'flex-end', gap:14, height:140, padding:'0 6px'}}>
           {cf.map((m,i)=>(
@@ -58,12 +61,15 @@ function FinCash() {
           <span style={{marginLeft:'auto'}}>₹ Cr</span>
         </div>
       </Card>
-      <Card icon="📒" title="Payment Ledger" badge="43B(h)" info={{ what:'Payables aged against the 45-day MSME rule.', flows:'Late MSME payments → tax disallowance.' }}
-        dev={{ comp:'PaymentLedgerCard', props:'state.finance.payables' }}>
+      <Card icon="📒" title="Payment Ledger" badge="43B(h)" info={{ what:'Payables aged against the 45-day MSME rule — illustrative vendors; the 43B(h) tag is an example, not a posted aging.', flows:'Late MSME payments → tax disallowance.' }}
+        right={<Provenance kind="seed"/>}
+        dev={{ comp:'PaymentLedgerCard', props:'state.finance.payables', note:'FIN-6: seed chip — vendor aging + 43B flag are illustrative, no live AP ledger.' }}>
         <DataTable dense cols={['Vendor','Amount','Age','Status']} align={['left','right','right','left']}
-          rows={[['Bharat Forge','₹4.2L','22d',<Tag c="g">ok</Tag>],['Sundaram (MSME)','₹1.8L','41d',<Tag c="a">due soon</Tag>],['POSCO','₹7.2L','18d',<Tag c="g">ok</Tag>],['Kalyani (MSME)','₹0.9L','47d',<Tag c="r">43B risk</Tag>]]}/>
+          rows={[['Bharat Forge','₹4.2L','22d',<Tag c="g">ok</Tag>],['Sundaram (MSME)','₹1.8L','41d',<Tag c="a">due soon</Tag>],['POSCO','₹7.2L','18d',<Tag c="g">ok</Tag>],['Kalyani (MSME)','₹0.9L','47d',<Tag c="r">43B risk*</Tag>]]}/>
+        <div style={{marginTop:6, fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>* illustrative — a real §43B(h) disallowance call needs the posted AP ledger + invoice dates.</div>
       </Card>
       <Card icon="📈" title="Budget — Plan vs Actual" badge="variance" info={{ what:'Budget heads: planned vs actual with variance.', flows:'Variance → re-forecast & control tower.' }}
+        right={<Provenance kind="seed"/>}
         dev={{ comp:'BudgetPlanVsActualCard', props:'state.budget, actuals' }}>
         <DataTable dense cols={['Head','Plan','Actual','Var']} align={['left','right','right','right']}
           rows={[['Procurement','₹8.5L','₹8.1L',<span style={{color:C.gn,fontWeight:700}}>-5%</span>],['CapEx','₹2.2L','₹2.4L',<span style={{color:C.dg,fontWeight:700}}>+9%</span>],['Logistics','₹1.4L','₹1.3L',<span style={{color:C.gn,fontWeight:700}}>-7%</span>],['WC','₹3.8L','₹3.8L',<span style={{color:C.tx2}}>0%</span>]]}/>
@@ -72,8 +78,8 @@ function FinCash() {
       {/* EVM — moved here from Scenarios (it's cost/schedule controlling, the
           disciplined twin of Budget vs Actual above) */}
       <Card icon="📈" title="Earned Value (EVM)" badge={`CPI ${e.cpi}`} badgeTone="y" info={{ what:'Planned vs earned vs actual cost, with schedule (SPI) and cost (CPI) indices — the disciplined twin of Budget vs Actual.', flows:'CPI → EAC forecast → board pack.' }} span={2}
-        right={<Provenance kind="derived" asOf={M.updated.split('·')[1].trim()} run="v3.2.1"/>}
-        dev={{ comp:'EVMCard', props:'finance.evm', note:'Relocated from Scenarios·Performance (app_v2).' }}>
+        right={<Provenance kind="seed"/>}
+        dev={{ comp:'EVMCard', props:'finance.evm', note:'Relocated from Scenarios·Performance (app_v2). FIN-2: kind=seed — M.evm is a flat illustrative constant, not computed.' }}>
         <KpiRow cols={4}>
           <Blk label="Planned Value" value={`₹${(e.pv/100000).toFixed(0)}L`}/>
           <Blk label="Earned Value" value={`₹${(e.ev/100000).toFixed(0)}L`} tone="c"/>
@@ -89,8 +95,8 @@ function FinCash() {
 
       {/* CCC — moved here from Scenarios·Cost (pure cash-cycle finance) */}
       <Card icon="💳" title="Cash Conversion Cycle" badge="CCC 41d" badgeTone="y" info={{ what:'Days cash is locked in the operating cycle: inventory + receivables − payables.', flows:'CCC → financing need & working-capital target.' }} span={2}
-        right={<Provenance kind="derived" asOf={M.updated.split('·')[1].trim()}/>}
-        dev={{ comp:'CashCycleCard', props:'finance.cashflow', note:'Relocated from Scenarios·Cost (app_v2).' }}>
+        right={<Provenance kind="seed"/>}
+        dev={{ comp:'CashCycleCard', props:'finance.cashflow', note:'Relocated from Scenarios·Cost (app_v2). FIN-2: kind=seed — DIO/DSO/DPO are hardcoded illustrative literals, not derived.' }}>
         <div style={{display:'flex', alignItems:'center', height:30, border:`2px solid ${C.line}`, fontFamily:F.mono, fontSize:9, fontWeight:700}}>
           <div style={{width:'52%', background:C.ink, color:C.paper, height:'100%', display:'grid', placeItems:'center'}}>DIO 52d</div>
           <div style={{width:'26%', background:C.ac, color:C.onAc, height:'100%', display:'grid', placeItems:'center'}}>DSO 28d</div>
@@ -158,14 +164,14 @@ function finBlendedHurdle(config){
 // term in procurement/policy now moves with it. Hook-free so payload builders can call it.
 function carryRate(config){
   const cfg = config || (typeof appStore!=='undefined' ? (appStore.get().config||{}) : {});
-  const wacc = (typeof finBlendedHurdle==='function') ? finBlendedHurdle(cfg).wacc/100 : 0.1124;
+  const wacc = (typeof finBlendedHurdle==='function') ? finBlendedHurdle(cfg).wacc/100 : (((window.M&&M.wacc&&M.wacc.rate)||11.4)/100);  // FIN-8: fallback from M.wacc, not a drifting literal
   const spread = _effNum(cfg.invHoldingSpread, 12.8)/100;
   return Math.round((wacc + spread)*10000)/10000;
 }
 // Plain-English breakdown for the provenance Reading — { wacc, spread, total } as %.
 function carryRateParts(config){
   const cfg = config || (typeof appStore!=='undefined' ? (appStore.get().config||{}) : {});
-  const wacc = (typeof finBlendedHurdle==='function') ? finBlendedHurdle(cfg).wacc : 11.24;
+  const wacc = (typeof finBlendedHurdle==='function') ? finBlendedHurdle(cfg).wacc : ((window.M&&M.wacc&&M.wacc.rate)||11.4);  // FIN-8: fallback from M.wacc
   const spread = _effNum(cfg.invHoldingSpread, 12.8);
   return { wacc:+wacc.toFixed(2), spread:+spread.toFixed(1), total:+(wacc+spread).toFixed(1) };
 }
@@ -226,8 +232,17 @@ function finEva(config){
   });
   const tot = rows.reduce((a,r)=>({ rev:a.rev+r.rev, cogs:a.cogs+r.cogs, contrib:a.contrib+r.contrib,
     nopat:a.nopat+r.nopat, cap:a.cap+r.cap, eva:a.eva+r.eva }), { rev:0,cogs:0,contrib:0,nopat:0,cap:0,eva:0 });
+  // G-F2 — the capital base composition, so the EVA number's GRADE is legible: how much is
+  // solved FG-inventory WC vs pooled safety-stock vs net-block fixed assets (and which are solved).
+  const capBreakdown = {
+    inv:   ops.solvedInv ? ops.invTotal : (cogsTot/turns),
+    invSolved: !!ops.solvedInv,
+    ss:    ops.solvedSS ? ops.ssCapital : 0,
+    ssSolved:  !!ops.solvedSS,
+    fixed: fixedBase,
+  };
   return { hurdle, rows, tot, turns, tax, marginPct:tot.rev?tot.contrib/tot.rev:0,
-    capitalBasis:(ops.solvedInv?'solved inventory':'turns proxy'), ops };
+    capitalBasis:(ops.solvedInv?'solved inventory':'turns proxy'), ops, capBreakdown };
 }
 
 function FinCapital() {
@@ -247,7 +262,10 @@ function FinCapital() {
     min_dscr:_effNum(config.finMinDscr, 1.5), max_debt_ratio:0.8, step:0.05 }));
   const hr = hurdle.result, sr = struct.result;
   const rate = hr ? hr.hurdle_wacc : M.wacc.rate;
-  // NPV with F-7 tax + depreciation shield (toggle): after-tax CF + depₜ×t.
+  // NPV with F-7 depreciation tax shield (toggle). FIN-3 fix: M.npv.cf are ALREADY after-tax
+  // operating free cash flows (data.jsx) — so the shield must only ADD the depreciation tax
+  // saving depₜ·t (the tax depreciation shelters), NOT re-apply (1−t) which would double-tax
+  // and falsely DEPRESS the NPV/IRR. Shield ON ⇒ higher NPV (the saving is real cash).
   const taxShield = !!config.finTaxShield;
   const capex0 = Math.abs(M.npv[0].cf);
   const projLife = M.npv.length - 1;
@@ -262,7 +280,7 @@ function FinCapital() {
   const depArr = (()=>{ if(depMethod==='SLM') return Array(projLife).fill(annualDep);
     const out=[]; let bv=capex0; for(let y=0;y<projLife;y++){ const d=bv*wdvRate; out.push(d); bv-=d; } return out; })();
   const npvCfs = M.npv.map((p,i)=> i===0 ? p.cf
-    : (taxShield ? Math.round(p.cf*(1-tax/100) + (depArr[i-1]||0)*(tax/100)) : p.cf));
+    : (taxShield ? Math.round(p.cf + (depArr[i-1]||0)*(tax/100)) : p.cf));   // FIN-3: ADD dep·t only (cf already after-tax)
   const npv = useSolve('/api/calc/npv', ()=>({ cash_flows:npvCfs,
     wacc:(hr?hr.hurdle_wacc:rate)/100, annual_debt_service: totalCap*(struct.result?struct.result.dscr_feasible_optimum.debt_ratio:0.38)*0.195, net_operating_income:noi }));
   const nr = npv.result;
@@ -332,6 +350,13 @@ function FinCapital() {
               </g>; })()}
           </svg>
           <div style={{marginTop:6, fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>● DSCR-feasible · <span style={{color:C.dg}}>●</span> covenant-breaching</div>
+          {/* FIN-4 — reconcile the two costs of equity on this subtab so a controller isn't left
+              guessing which is "the" cost of capital. */}
+          {(()=>{ const capmKe = +(M.wacc.rf + _effNum(config.finBetaU,0.9)*M.wacc.erp).toFixed(2);
+            const srcKe = hr?hr.blended_ke:null; const gap = srcKe!=null?+(srcKe-capmKe).toFixed(1):null;
+            return (<div style={{marginTop:8, padding:'7px 9px', border:`2px dashed ${C.line2}`, background:C.bg3, fontFamily:F.mono, fontSize:9, color:C.tx2, lineHeight:1.6}}>
+              ⓘ <b>Two costs of equity, on purpose.</b> This curve prices Ke off the <b>market CAPM</b> (rf {M.wacc.rf}% + βᵤ·ERP {M.wacc.erp}% ≈ {capmKe}%) to trace how leverage moves WACC. The <b>Hurdle</b> card above blends your <b>actual source costs</b> {srcKe!=null?<>(Ke {srcKe}%)</>:''}. <b>Gate projects on the source-weighted hurdle</b> ({hr?`${hr.hurdle_wacc}%`:'compute it'}); use this curve only to pick the <b>target debt ratio</b>{gap!=null?<> — the {gap>0?'+':''}{gap}pt gap is your idiosyncratic-vs-market equity premium</>:''}.
+            </div>); })()}
           <Reading formula="WACC(d) = (1−d)·Ke(d) + d·Kd(d)·(1−t)   ·   Ke,Kd both rise with leverage; trough capped at DSCR ≥ {min}"
             soWhat={`Min WACC ${sr.dscr_feasible_optimum.wacc}% at ${(sr.dscr_feasible_optimum.debt_ratio*100).toFixed(0)}% debt${sr.dscr_capped?` — the DSCR covenant caps it here (the unconstrained trough at ${(sr.min_wacc_point.debt_ratio*100).toFixed(0)}% would breach ${sr.min_dscr}× cover)`:` (DSCR ${sr.dscr_feasible_optimum.dscr}× — covenant has room)`}.`}/>
         </>) : (
@@ -363,14 +388,14 @@ function FinCapital() {
       </Card>
 
       {/* NPV/IRR with F-7 tax + depreciation shield */}
-      <Card icon="💎" title="NPV / IRR — Program DCF" badge={nr?(taxShield?'after-tax · solved':'pre-tax · solved'):'DCF'} badgeTone={nr?'g':undefined} span={2}
-        info={{ what:'Discounted cash flow of the investment program at the blended hurdle. Tax shield adds the depreciation tax saving to after-tax operating cash flows (F-7).', flows:'NPV/IRR → investment verdict.' }}
+      <Card icon="💎" title="NPV / IRR — Program DCF" badge={nr?(taxShield?'after-tax + dep shield · solved':'after-tax · solved'):'DCF'} badgeTone={nr?'g':undefined} span={2}
+        info={{ what:'Discounted cash flow of the investment program at the blended hurdle. The cash flows are already after-tax; the shield toggle ADDS the depreciation tax saving (depₜ·t) on top, which LIFTS the NPV (F-7).', flows:'NPV/IRR → investment verdict.' }}
         right={nr ? <Provenance kind="solved" asOf={npv.ranAt}/> : undefined}
         dev={{ comp:'NPVCard', props:'cashflows(after-tax+dep shield), hurdle' }}>
         <div style={{display:'flex', alignItems:'center', gap:14, marginBottom:8, flexWrap:'wrap'}}>
           <label style={{display:'flex', alignItems:'center', gap:7, fontFamily:F.mono, fontSize:9.5, fontWeight:700, color:C.tx2, cursor:'pointer'}}>
             <input type="checkbox" checked={taxShield} onChange={e=>{ setConfig({ finTaxShield:e.target.checked }); }}/>
-            TAX + DEPRECIATION SHIELD · CF→CF·(1−t) + depₜ·t
+            DEPRECIATION TAX SHIELD · after-tax CFₜ + depₜ·t
           </label>
           {taxShield && <div style={{display:'flex', alignItems:'center', gap:6}}>
             {['SLM','WDV'].map(m=>(
@@ -398,8 +423,8 @@ function FinCapital() {
             </KpiRow>
           </div>
         </div>
-        {nr && <Reading formula={taxShield?`CFₜ = operating CFₜ·(1−t) + depₜ·t  ·  ${depMethod==='WDV'?`WDV declining balance @ ${(wdvRate*100).toFixed(0)}%/yr (front-loaded)`:'SLM (flat over life)'}`:"pre-tax cash flows discounted at the blended hurdle"}
-          soWhat={taxShield?`${depMethod==='WDV'?`WDV front-loads the shield: ₹${(depArr[0]*tax/100/1e5).toFixed(1)}L of tax saving in Y1 (vs ₹${(annualDep*tax/100/1e5).toFixed(1)}L flat under SLM), worth more in PV — switch to SLM to see the call change.`:`SLM gives a flat ₹${(annualDep*tax/100/1e5).toFixed(1)}L/yr shield. Switch to WDV (India block-of-assets) to front-load it and lift the after-tax NPV.`} Toggling the shield off drops NPV — ignoring it understates returns.`:`Turn on the shield to value the program after tax (SLM or WDV) — the depreciation tax saving is real cash.`}/>}
+        {nr && <Reading formula={taxShield?`CFₜ = after-tax CFₜ + depₜ·t  ·  ${depMethod==='WDV'?`WDV declining balance @ ${(wdvRate*100).toFixed(0)}%/yr (front-loaded)`:'SLM (flat over life)'}`:"after-tax operating cash flows discounted at the blended hurdle (no dep shield)"}
+          soWhat={taxShield?`${depMethod==='WDV'?`WDV front-loads the shield: ₹${(depArr[0]*tax/100/1e5).toFixed(1)}L of tax saving in Y1 (vs ₹${(annualDep*tax/100/1e5).toFixed(1)}L flat under SLM), worth more in PV — switch to SLM to see the call change.`:`SLM gives a flat ₹${(annualDep*tax/100/1e5).toFixed(1)}L/yr shield. Switch to WDV (India block-of-assets) to front-load it and lift the NPV further.`} The shield ADDS this saving on top of the after-tax cash flows — toggling it off drops NPV, so ignoring depreciation understates returns.`:`Turn on the depreciation tax shield — the tax saved on depreciation (depₜ·t) is real cash the raw after-tax flows omit; it LIFTS the NPV. SLM is flat, WDV (India block-of-assets) front-loads it.`}/>}
       </Card>
 
       {/* capital structure bar — now from the SOLVED hurdle weights */}
@@ -500,7 +525,7 @@ function FinValue() {
   return (
     <Grid cols={3}>
       <Card icon="📊" title="EVA / ROIC Scoreboard" badge={`hurdle ${hurdlePct}% · ${destroyers.length} destroyer${destroyers.length===1?'':'s'} · cap ${e.capitalBasis}`} badgeTone={destroyers.length?'k':'g'} span={3}
-        info={{ what:'Per-SKU economic value added: NOPAT vs the capital charge (hurdle × invested capital). Invested capital is the SOLVED working capital (production projected inventory + pooled safety stock) + net-block fixed assets when a plan is cached (FV-A); else a COGS÷turns proxy. ROIC below the hurdle destroys value even at a book profit.', flows:'Value-destroyers → shutdown/pivot/re-price decision.' }}
+        info={{ what:'Per-SKU economic value added: NOPAT vs the capital charge (hurdle × invested capital). Invested capital is the SOLVED working capital (production projected FG inventory + pooled safety stock) + net-block fixed assets when a plan is cached (FV-A); else a COGS÷turns proxy. It EXCLUDES raw-material/WIP cycle stock, so the capital base is a floor and ROIC an upper bound — a marginal destroyer could be worse than shown. ROIC below the hurdle destroys value even at a book profit.', flows:'Value-destroyers → shutdown/pivot/re-price decision.' }}
         right={<Provenance kind={e.capitalBasis==='solved inventory'?'solved':'derived'}/>}
         dev={{ comp:'EVAScoreboard', props:'finEva(config) — M.products × blended hurdle', note:'FV-A: capital = solved FG inventory + pooled SS + net-block assets (fallback: COGS÷turns).' }}>
         <DataTable cols={['SKU','ABC','Revenue','Contribution','NOPAT','Invested cap','ROIC','EVA','Verdict']} align={['left','left','right','right','right','right','right','right','left']}
@@ -510,6 +535,17 @@ function FinValue() {
             <Tag c={r.destroyer?'r':'g'}>{r.destroyer?'DESTROYS':'creates'}</Tag>]}))}
           foot={['COMPANY','', FIN_L(e.tot.rev), FIN_L(e.tot.contrib), FIN_L(e.tot.nopat), FIN_L(e.tot.cap),
             `${(e.tot.cap?e.tot.nopat/e.tot.cap*100:0).toFixed(1)}%`, `${e.tot.eva<0?'−':'+'}${FIN_L(Math.abs(e.tot.eva)).replace('₹ ','₹')}`, '']}/>
+        {/* G-F2 — capital-base composition: which base the EVA charged, by component, with each tagged solved vs proxy */}
+        {e.capBreakdown && (()=>{ const b=e.capBreakdown;
+          return (
+            <div style={{marginTop:9, padding:'7px 10px', border:`1px solid ${C.line2}`, background:C.bg3, display:'flex', gap:16, flexWrap:'wrap', alignItems:'center', fontFamily:F.mono, fontSize:9.5, color:C.tx2}}>
+              <span style={{fontWeight:800, color:C.tx3, letterSpacing:'.06em'}}>CAPITAL BASE {FIN_L(e.tot.cap)} =</span>
+              <span>FG inventory <b style={{color:C.tx}}>{FIN_L(b.inv)}</b> <Tag c={b.invSolved?'g':'k'}>{b.invSolved?'solved':'turns proxy'}</Tag></span>
+              <span>+ pooled SS <b style={{color:C.tx}}>{FIN_L(b.ss)}</b> <Tag c={b.ssSolved?'g':'k'}>{b.ssSolved?'solved (W8)':'not pooled'}</Tag></span>
+              <span>+ fixed assets <b style={{color:C.tx}}>{FIN_L(b.fixed)}</b> <Tag c={(b.invSolved||b.ssSolved)?'g':'k'}>{(b.invSolved||b.ssSolved)?'net block':'gross'}</Tag></span>
+            </div>
+          );
+        })()}
         <Reading formula={e.capitalBasis==='solved inventory'
           ? "EVA = NOPAT − hurdle × invested capital   ·   capital = SOLVED FG inventory (production schedule) + pooled SS (W8) + net-block fixed assets"
           : "EVA = NOPAT − hurdle × invested capital   ·   capital = COGS÷turns proxy + fixed-asset revenue share (run Production time-phased to solve the real base)"}
@@ -561,7 +597,6 @@ function FinValue() {
         <Reading formula="contribution = (price − cost) × demand, summed by ABC class"
           soWhat={`Class A SKUs carry the contribution; the bar shows each class's share. Cross-reference the EVA column — a high-revenue class can still be a net value-destroyer if its ROIC trails the hurdle.`}/>
       </Card>
-      <FinBVL/>
     </Grid>
   );
 }
@@ -712,31 +747,72 @@ function FinAssets() {
   );
 }
 
+// FIN-1 — Buy vs Lease was a hardcoded "LEASE wins by ₹5L" card rendered TWICE (FinValue + FinInvest).
+// Now a SINGLE real two-leg NPV-of-costs solve at the blended hurdle: BUY = upfront + after-tax
+// maintenance − depreciation tax shield (+ salvage recovered at end); LEASE = after-tax rentals
+// (fully deductible). Each leg's cost stream is discounted via /api/calc/npv; the lower PV-of-costs
+// wins. Inputs are a worked-example asset (editable); the math is live — no hardcoded verdict.
 function FinBVL() {
+  const { config, setConfig } = useConfig();
+  const bvl = config.bvl || {};
+  const hurdle = finBlendedHurdle(config).wacc/100;
+  const tax = _effNum(config.taxRate, M.wacc.taxShield)/100;
+  const price   = _effNum(bvl.price, 8400000);     // ₹84L buy upfront
+  const life    = Math.max(1, Math.round(_effNum(bvl.life, 5)));
+  const maint   = _effNum(bvl.maint, 600000);      // ₹6L/yr maintenance (buy)
+  const lease   = _effNum(bvl.lease, 2000000);     // ₹20L/yr lease rental
+  const salvage = _effNum(bvl.salvage, 2500000);   // ₹25L residual the owner keeps (don't ignore it)
+  const set = (k,v)=> setConfig({ bvl:{ ...(config.bvl||{}), [k]:v } });
+  // SLM depreciation on (price − salvage) → annual tax shield dep·t (buy only).
+  const depAnnual = (price - salvage)/life;
+  // Cost streams (NEGATIVE = cash out), discounted at the hurdle. npv() of a cost stream = PV of costs.
+  const buyCfs = [ -Math.round(price), ...Array.from({length:life}, (_,y)=>{
+    const base = -maint*(1-tax) + depAnnual*tax;            // maintenance deductible; depreciation shelters tax
+    return Math.round(y===life-1 ? base + salvage : base);  // salvage recovered in the final year
+  }) ];
+  const leaseCfs = [ 0, ...Array.from({length:life}, ()=> Math.round(-lease*(1-tax))) ];  // rentals fully deductible
+  const buy   = useSolve('/api/calc/npv', ()=>({ cash_flows: buyCfs,   wacc: hurdle }));
+  const lse   = useSolve('/api/calc/npv', ()=>({ cash_flows: leaseCfs, wacc: hurdle }));
+  const pvBuy = buy.result?buy.result.npv:null, pvLease = lse.result?lse.result.npv:null;
+  const solved = pvBuy!=null && pvLease!=null;
+  const winner = solved ? (pvBuy >= pvLease ? 'BUY' : 'LEASE') : null;   // higher (less-negative) PV of costs = cheaper
+  const edge = solved ? Math.abs(pvBuy - pvLease) : null;
+  const runBoth = ()=>{ buy.run().then(()=>lse.run()).catch(()=>{}); };
   return (
-    <Card icon="🔄" title="Buy vs Lease" badge="decision" span={3} info={{ what:'NPV comparison of buying vs leasing an asset.', flows:'Lower-cost option → capital plan.' }}
-      dev={{ comp:'BuyVsLeaseCard', props:'asset, wacc' }}>
+    <Card icon="🔄" title="Buy vs Lease — PV of Costs" badge={solved?`${winner} cheaper · solved`:'NPV at blended hurdle'} badgeTone={solved?'g':'y'} span={3}
+      info={{ what:'A real NPV-of-costs comparison of buying vs leasing an asset, both discounted at your blended hurdle. BUY = upfront + after-tax maintenance − depreciation tax shield (+ salvage recovered at end); LEASE = after-tax rentals (fully deductible). The lower PV of costs wins.', flows:'Cheaper option → capital plan / CapEx.' }}
+      right={solved ? <Provenance kind="solved" asOf={buy.ranAt}/> : <Btn kind="accent" sm onClick={runBoth}>{buy.solving||lse.solving?'⏳ Solving…':'💹 Solve buy-vs-lease'}</Btn>}
+      dev={{ comp:'BuyVsLeaseCard', props:'config.bvl → /api/calc/npv ×2 (buy, lease) at finBlendedHurdle', state:'config.bvl{price,life,maint,lease,salvage}', note:'FIN-1: was a hardcoded card rendered twice; now one real two-leg NPV solve. Worked-example asset (editable); math is live.' }}>
+      {(buy.error||lse.error) && <div style={{marginBottom:8, padding:'6px 9px', border:`2px solid ${C.dg}`, fontFamily:F.mono, fontSize:10, color:C.dg}}>solve error: {buy.error||lse.error}</div>}
+      <div style={{display:'flex', gap:10, flexWrap:'wrap', alignItems:'flex-end', marginBottom:12}}>
+        <SolverInput label="Buy upfront" seed={8400000} value={bvl.price} onChange={v=>set('price',v)} min={0} prefix="₹"/>
+        <SolverInput label="Useful life" seed={5} value={bvl.life} onChange={v=>set('life',v)} min={1} max={20} suffix="yr"/>
+        <SolverInput label="Maint/yr (buy)" seed={600000} value={bvl.maint} onChange={v=>set('maint',v)} min={0} prefix="₹"/>
+        <SolverInput label="Lease/yr" seed={2000000} value={bvl.lease} onChange={v=>set('lease',v)} min={0} prefix="₹"/>
+        <SolverInput label="Salvage (buy)" seed={2500000} value={bvl.salvage} onChange={v=>set('salvage',v)} min={0} prefix="₹"/>
+        <Field label="Hurdle"><NumInput value={(hurdle*100).toFixed(2)} suffix="%" disabled/></Field>
+      </div>
       <Grid cols={2}>
-        <div style={{border:`2px solid ${C.line}`, padding:14}}>
-          <div style={{fontFamily:F.disp, fontSize:14, fontWeight:800, marginBottom:8}}>BUY · DMG CNC</div>
+        <div style={{border:`2px solid ${solved&&winner==='BUY'?C.gn:C.line}`, padding:14, background:solved&&winner==='BUY'?'color-mix(in srgb,var(--gn) 8%,transparent)':C.paper}}>
+          <div style={{fontFamily:F.disp, fontSize:14, fontWeight:800, marginBottom:8}}>BUY {solved&&winner==='BUY'?'✓':''}</div>
           <KpiRow cols={1}>
-            <Blk label="Upfront" value="₹ 84 L"/>
-            <Blk label="PV of costs" value="₹ 71 L" tone="c"/>
-            <Blk label="Tax shield" value="₹ 13 L" accent={C.gn}/>
+            <Blk label="Upfront" value={FIN_L(price)}/>
+            <Blk label="Dep tax shield / yr" value={FIN_L(depAnnual*tax)} accent={C.gn}/>
+            <Blk label="PV of costs" value={pvBuy!=null?FIN_L(Math.abs(pvBuy)):'—'} tone="c"/>
           </KpiRow>
         </div>
-        <div style={{border:`2px solid ${C.line}`, padding:14, background:C.ac}}>
-          <div style={{fontFamily:F.disp, fontSize:14, fontWeight:800, marginBottom:8}}>LEASE · 5yr ✓</div>
+        <div style={{border:`2px solid ${solved&&winner==='LEASE'?C.gn:C.line}`, padding:14, background:solved&&winner==='LEASE'?'color-mix(in srgb,var(--gn) 8%,transparent)':C.paper}}>
+          <div style={{fontFamily:F.disp, fontSize:14, fontWeight:800, marginBottom:8}}>LEASE {solved&&winner==='LEASE'?'✓':''}</div>
           <KpiRow cols={1}>
-            <Blk label="Annual lease" value="₹ 18 L"/>
-            <Blk label="PV of costs" value="₹ 66 L" tone="k"/>
-            <Blk label="Flexibility" value="HIGH"/>
+            <Blk label="Rental / yr" value={FIN_L(lease)}/>
+            <Blk label="After-tax rental" value={FIN_L(lease*(1-tax))} tone="k"/>
+            <Blk label="PV of costs" value={pvLease!=null?FIN_L(Math.abs(pvLease)):'—'} tone="c"/>
           </KpiRow>
         </div>
       </Grid>
-      <div style={{marginTop:10, padding:'10px', background:C.gn, color:'#fff', fontFamily:F.disp, fontWeight:800, fontSize:14, textAlign:'center'}}>
-        ✓ LEASE wins by ₹5L PV — preserves working capital for procurement
-      </div>
+      {solved && <Reading formula="PV of costs = Σ costₜ / (1+hurdle)ᵗ   ·   buy: −upfront − maint(1−t) + dep·t (+salvage);  lease: −rental(1−t)"
+        soWhat={`${winner} is cheaper by ${FIN_L(edge)} in PV at the ${(hurdle*100).toFixed(2)}% hurdle. ${winner==='LEASE'?`Leasing defers the ₹${(price/1e5).toFixed(0)}L upfront and preserves it for working capital, at the cost of the depreciation shield and the ₹${(salvage/1e5).toFixed(0)}L residual. A near-tie means the lease is fairly priced; a big lease edge usually means the rental understates the lessor's true cost recovery — sanity-check it.`:`Buying captures the depreciation tax shield (₹${(depAnnual*tax/1e5).toFixed(1)}L/yr) and the ₹${(salvage/1e5).toFixed(0)}L residual, but ties up ₹${(price/1e5).toFixed(0)}L upfront.`} Edit the terms to re-solve at your live hurdle.`}/>}
+      {!solved && <div style={{marginTop:6, fontFamily:F.mono, fontSize:9.5, color:C.tx3}}>Worked-example asset (terms editable). Press solve to discount both legs at your blended hurdle ({(hurdle*100).toFixed(2)}%).</div>}
     </Card>
   );
 }
@@ -764,29 +840,43 @@ function FinCAC() {
 }
 
 function FinFX() {
+  const { config, setConfig } = useConfig();
+  const live = config.fxRates || {};
+  const asOf = config.fxAsOf || M.fxRates.asOf;
+  const liveRate = (r)=> (live[r.ccy]!=null && live[r.ccy]!=='') ? live[r.ccy] : r.rate;
+  const setRate = (ccy,v)=> setConfig({ fxRates: { ...live, [ccy]: (v===''?'':Number(v)) } });
+  const anyOverride = M.fxRates.rows.some(r => Number(liveRate(r)) !== r.rate);
+  const resetSeed = ()=>{ const seed={...live}; M.fxRates.rows.forEach(r=>{ seed[r.ccy]=r.rate; }); setConfig({ fxRates:seed, fxAsOf:M.fxRates.asOf }); };
   return (
     <Grid cols={2}>
-      <Card icon="💱" title="FX Rate Table" badge={`as of ${M.fxRates.asOf.split('·')[0].trim()}`} badgeTone="y" info={{ what:'Editable spot rates with an as-of date — every $→₹ in the app reads this, nothing is hard-coded.', flows:'Rates → landed cost, hedging, procurement VaR.' }} span={2}
-        dev={{ comp:'FXRateTable', props:'state.finance.fxRates', state:'finance.fxRates.{asOf,rows[]}', note:'Single source of truth — landed-cost CIF, hedge marks and VaR all read this.' }}>
+      <Card icon="💱" title="FX Rate Table" badge={`as of ${asOf.split('·')[0].trim()}`} badgeTone={anyOverride?'g':'y'} info={{ what:'The spot rates every $→₹ in the app reads — the single LIVE source of truth, nothing hard-coded. Edit a rate and it re-prices landed cost, hedge marks and procurement VaR together; the dependent solves (procurement, policy, MEIO, profit-mix…) go stale until you re-run.', flows:'Rates → landed cost, hedging, procurement VaR.' }} span={2}
+        dev={{ comp:'FXRateTable', props:'config.fxRates, config.fxAsOf', state:'config.fxRates{ccy→₹}, config.fxAsOf', note:'Ph2 live editor — setConfig→markStale("config") re-flags procurement/policy/rolling/meio/meionet/cvar/profitmix; fxFactor() reads config.fxRates ÷ seed.' }}>
         <div style={{display:'flex', gap:10, flexWrap:'wrap', alignItems:'flex-end', marginBottom:10}}>
-          {M.fxRates.rows.map((r,i)=>(
-            <Field key={i} label={`${r.ccy} / ₹ · ${r.src}`}><NumInput value={r.rate} prefix="₹"/></Field>
-          ))}
-          <Field label="As-of timestamp"><TextInput value={M.fxRates.asOf}/></Field>
+          {M.fxRates.rows.map((r,i)=>{
+            const v = liveRate(r); const isOv = Number(v) !== r.rate;
+            return (
+              <Field key={i} label={`${r.ccy} / ₹ · ${r.src}`} hint={isOv?`override · seed ₹${r.rate}`:'seed'}>
+                <NumInput value={v} prefix="₹" onChange={(val)=>setRate(r.ccy,val)}/>
+              </Field>
+            );
+          })}
+          <Field label="As-of timestamp"><TextInput value={asOf} onChange={(v)=>setConfig({ fxAsOf:v })}/></Field>
+          {anyOverride && <Field label=" "><Btn kind="secondary" sm onClick={resetSeed}>↺ Reset to seed</Btn></Field>}
         </div>
-        <Reading formula="all conversions read fxRates[ccy] at the as-of date — no literal 84.20 anywhere" soWhat="Update the rate here and the POSCO landed cost, hedge marks and VaR all re-price together."/>
+        <Reading formula="landed ₹ = raw ₹ × (1 + duty/freight%) × fxFactor;   fxFactor = fxRates[ccy] ÷ seed" soWhat={anyOverride?'You’ve overridden at least one rate — the POSCO landed cost, hedge marks and VaR re-price off it, and the procurement family is flagged stale until you re-run.':'All rates at seed. Edit one to re-price imported parts (CIF landed cost) and re-flag the dependent solves — one source of truth for $→₹.'}/>
       </Card>
       <Card icon="🛡️" title="Currency Hedging" badge="exposures" info={{ what:'FX exposures and hedge coverage.', flows:'Hedge → procurement risk.' }} span={2}
         dev={{ comp:'CurrencyHedgeCard', props:'state.finance.fx', state:'finance.fxHedge[]' }}>
         <DataTable cols={['Exposure','Amount','Due','Hedge Instrument','Coverage']} align={['left','right','left','left','right']}
           rows={M.fxHedge.map(h=>({cells:[h.exp, h.amt, h.due, h.hedge, <Tag c={h.cover==='0%'?'r':h.cover==='60%'?'a':'g'}>{h.cover}</Tag>]}))}/>
       </Card>
-      <Card icon="⚠" title="Procurement Risk & FX" badge="VaR" info={{ what:'Combined supply + currency risk on procurement spend.', flows:'Risk → hedge decision & Monte Carlo.' }} span={2}
+      <Card icon="⚠" title="Procurement Risk & FX" badge="illustrative" info={{ what:'Combined supply + currency risk on procurement spend.', flows:'Risk → hedge decision & Monte Carlo.' }} span={2}
         dev={{ comp:'ProcurementRiskCard', props:'fx, suppliers' }}>
+        <SeedFence>Illustrative FX/VaR exposure — these figures are hardcoded, <b>not</b> a solved risk number. Real currency-at-risk comes from the Monte-Carlo run on the committed plan (<b>Scenarios · Risk</b>); the live FX rates that drive landed cost are edited on the <b>FX Rate Table</b> above.</SeedFence>
         <KpiRow cols={3}>
           <Blk label="Unhedged FX" value="€12.0K" accent={C.dg}/>
-          <Blk label="VaR @95%" value="₹ 2.4 L" tone="c"/>
-          <Blk label="If ₹→86.5" value="+₹1.8L cost" accent={C.dg}/>
+          <Blk label="Exposure @ ₹90/€" value="₹ 10.8 L" tone="c"/>
+          <Blk label="If ₹/€ +₹5" value="+₹0.6L cost" accent={C.dg}/>
         </KpiRow>
         <div style={{marginTop:10, padding:'8px 10px', border:`2px dashed ${C.a4}`, fontFamily:F.mono, fontSize:9.5, color:C.tx2}}>
           ⚠ EUR steel import unhedged — recommend forward cover before W26 (see Scenarios · What-If).

@@ -30,6 +30,11 @@ function planParam(config, k){
   const v = (config.planParams || {})[k];
   return (v!=null && v!=='') ? Number(v) : PLAN_PARAMS[k];
 }
+// boolean governed override (allow_backorder etc.) — config wins if explicitly set, else seed.
+function planBool(config, k){
+  const v = (config.planParams || {})[k];
+  return (v===true || v===false) ? v : PLAN_PARAMS[k];
+}
 // W4 · PL-1 — the line registry total monthly capacity: the SAME M.lines the
 // production MILP respects. The aggregate plan must reconcile to THIS ceiling,
 // not to an arbitrary labor number (was the mock's single-line 1,240 u/mo).
@@ -63,20 +68,22 @@ function StagePlan({ onNav }) {
       })),
       params: {
         periods: months.length,
-        init_workforce: PLAN_PARAMS.init_workforce,
-        init_inventory: planParam(config,'init_inventory') || 0,   // opening FG stock (0 = greenfield)
+        init_workforce: planParam(config,'init_workforce'),
+        init_inventory: planOpeningInv(config),   // PL-G5′ — auto-reconciled from Network FG on-hand (labor-weighted); explicit override wins
         rate_per_worker: rate,
         reg_cost_per_unit: planParam(config,'reg_cost_per_unit'),
         ot_cost_per_unit: planParam(config,'ot_cost_per_unit'),
         holding_cost_per_unit: planParam(config,'holding_cost_per_unit'),
-        backorder_cost_per_unit: PLAN_PARAMS.backorder_cost_per_unit,
+        backorder_cost_per_unit: planParam(config,'backorder_cost_per_unit'),
         hire_cost: planParam(config,'hire_cost'),
         fire_cost: planParam(config,'fire_cost'),
         wage_per_worker: planParam(config,'wage_per_worker'),
-        max_ot_pct: PLAN_PARAMS.max_ot_pct,
-        min_workforce: PLAN_PARAMS.min_workforce,
+        max_ot_pct: planParam(config,'max_ot_pct'),
+        min_workforce: planParam(config,'min_workforce'),
         max_workforce: wfCeiling,                 // PL-1 — line-registry ceiling
-        allow_backorder: PLAN_PARAMS.allow_backorder,
+        allow_backorder: planBool(config,'allow_backorder'),   // PL-G8 — governed demand-shorting lever
+        // G-P2 — service-driven horizon-end cover (no-op when config.planEndCoverEnabled is off).
+        ...(typeof aggEndCoverParams==='function' ? aggEndCoverParams(config) : {}),
       },
     };
   }, { solveKey:'aggregate' });   // LP-C hydrate from loop cache
@@ -86,28 +93,31 @@ function StagePlan({ onNav }) {
   // finished SKU into a family/portfolio capacity & workforce plan; SKUs come back
   // in step 4. Users kept reading the family numbers as per-SKU numbers.
   const _finP = M.products.filter(p=>p.cat==='Finished');
-  const famN = [...new Set(_finP.map(p=>p.family).filter(Boolean))].length;
+  // PL-G2 — family count comes from M.items (which carries the family map via _FAMILY);
+  // M.products has NO .family field, so the old `_finP.map(p=>p.family)` was always undefined.
+  const famN = [...new Set((M.items||[]).map(it=>it.family).filter(Boolean))].length;
+  const nFin = _finP.length;
   return (
     <div>
       <StageHeader n="05" title="Plan · Sales & Operations" kicker="Level-vs-chase strategy · seasonal prebuild · workforce plan · capacity duals · SKU disaggregation"
         right={<Btn kind="accent" onClick={runAgg}>{agg.solving?'⏳ Solving…':'⚡ Solve Aggregate'}</Btn>}/>
       <div style={{padding:'9px 18px', borderBottom:`2px solid ${C.line}`, background:C.bg3, display:'flex', alignItems:'center', gap:10}}>
-        <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.12em', color:C.onAc, background:C.ink, padding:'3px 8px', whiteSpace:'nowrap'}}>VIEWING ▸ FAMILIES</span>
+        <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.12em', color:C.onAc, background:C.ink, padding:'3px 8px', whiteSpace:'nowrap'}}>VIEWING ▸ PORTFOLIO AGGREGATE</span>
         <span style={{fontFamily:F.body, fontSize:11.5, color:C.tx2, lineHeight:1.4}}>
-          You're looking at <b>{famN||'all'} product {famN===1?'family':'families'}</b>, not individual SKUs. The aggregate plan pools every finished SKU's committed demand into one capacity &amp; workforce plan — per-SKU numbers are recovered in <b>step 4 · Disaggregation</b>.
+          This is <b>ONE pooled aggregate plan across your whole finished portfolio</b> — {nFin} SKUs{famN>1?<> spanning <b>{famN} families</b></>:null}, <b>not</b> a separate plan per family. Every finished SKU's committed demand is pooled by <b>worker-time</b> into one capacity &amp; workforce plan; per-SKU numbers are recovered in <b>step 4 · Disaggregation</b>.
         </span>
       </div>
       <div style={{padding:18}}>
         <SolverExplain id="aggregate"/>
         {agg.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Aggregate solver: {agg.error}</div>}
         {stale && <StaleMark since="(demand or cost inputs changed)" onNav={runAgg} go="rerun"/>}
-        <StageSection step="0" title="Plan Cost Inputs" sub="governed — seed defaults you may override; the workforce is bounded so the plan can never exceed the line registry"><PlanParamsCard config={config} setConfig={setConfig} lineCap={lineCap} rate={rate} wfCeiling={wfCeiling} agg={agg} ranAt={ranAt}/></StageSection>
+        <StageSection step="0" title="Plan Cost Inputs" sub="governed — seed defaults you may override; the workforce is bounded so the plan can never exceed the line registry"><PlanParamsCard config={config} setConfig={setConfig} lineCap={lineCap} rate={rate} wfCeiling={wfCeiling} agg={agg} ranAt={ranAt} onNav={onNav}/></StageSection>
         <StageSection step="0b" title="Labor content (workforce weighting)" sub="this plan sizes PEOPLE — so each SKU is pooled by worker-time, not machine cycle; set the automated SKUs' hands-on % lower"><PlanLaborContent/></StageSection>
         <StageSection step="1" title="Strategy" sub="level vs chase, and the seasonal prebuild it implies"><PlanStrategy agg={agg}/></StageSection>
         <StageSection step="2" title="Capacity & Duals" sub="demand vs the line-registry ceiling; the labor dual vs the binding line"><PlanCapacity onNav={onNav} agg={agg} lineCap={lineCap}/></StageSection>
-        <StageSection step="3" title="Workforce" sub="hire / fire / overtime by period — and the capacity gap each fills"><PlanWorkforce agg={agg} rate={rate}/></StageSection>
+        <StageSection step="3" title="Workforce" sub="hire / fire / overtime by period — and the capacity gap each fills"><PlanWorkforce agg={agg} rate={rate} initWf={planParam(config,'init_workforce')}/></StageSection>
         <StageSection step="4" title="Disaggregation" sub="family plan split back to SKUs by mix"><PlanDisagg agg={agg}/></StageSection>
-        <StageSection step="5" title="Gap to Target" sub="committed consensus plan vs business target — the S&OP outcome (moved here from Scenarios)"><PlanGap/></StageSection>
+        <StageSection step="5" title="Gap to Target" sub="committed consensus plan vs business target — the S&OP outcome (moved here from Scenarios)"><PlanGap onNav={onNav}/></StageSection>
       </div>
     </div>
   );
@@ -116,26 +126,84 @@ function StagePlan({ onNav }) {
 // W4 · PL-3 — governed plan cost inputs (replaces the PLAN_PARAMS hardcodes as
 // the EDITABLE surface; seeds still come from PLAN_PARAMS). Seed→override with
 // provenance, same pattern as the Production + Sourcing solver-parameter cards.
-function PlanParamsCard({ config, setConfig, lineCap, rate, wfCeiling, agg, ranAt }){
+function PlanParamsCard({ config, setConfig, lineCap, rate, wfCeiling, agg, ranAt, onNav }){
   const set = (k,v)=> setConfig({ planParams: { ...(config.planParams||{}), [k]:v } });
   const pp = config.planParams || {};
+  // PL-G5′ — the plan's t=0 opening stock auto-reconciles FROM Network FG on-hand. The
+  // user holds _net.phys physical units (the headline); the solver consumes _net.weighted,
+  // the SAME stock measured in the plan's worker-time yardstick (labor-light mix ⇒ fewer
+  // worker-hours — a translation, NOT a reduction). aggregate.py InvBal nets Σ qty·weight,
+  // so feeding the weighted value is the dimensionally-consistent choice. Override wins.
+  // useNetwork() keeps this card reactive to Network edits.
+  const { network } = (typeof useNetwork==='function') ? useNetwork() : { network:{} };
+  const _net = (typeof networkOpeningInv==='function') ? networkOpeningInv() : { phys:0, weighted:0 };
+  const hasOpenOverride = pp.init_inventory!=null && pp.init_inventory!=='';
+  const effOpen = hasOpenOverride ? Number(pp.init_inventory) : _net.weighted;
+  // PL-G8 — the two demand-shorting levers (decide level-vs-chase) are now governed, not hardcoded.
+  const allowBO  = planBool(config,'allow_backorder');
   return (
     <Card icon="🎛️" title="Aggregate-plan cost & capacity inputs" badge="governed" badgeTone="y"
       right={agg && agg.result ? <Provenance kind="solved" asOf={ranAt?ranAt.toLocaleTimeString():undefined}/> : null}
-      info={{ what:'Per-unit production/holding costs and hire/fire/wage costs the Hax–Meal aggregate LP minimizes. Seeds you may override per run.', flows:'→ /api/solve/aggregate params.' }}
-      dev={{ comp:'SolverInput', props:'config.planParams', state:'config.planParams.{rate_per_worker,reg_cost_per_unit,…}' }}>
+      info={{ what:'Per-unit production/holding/backorder costs, hire/fire/wage costs, and the workforce + overtime + backorder levers the Hax–Meal aggregate LP minimizes. Every field here is a seed you may override per run — including the demand-shorting levers (allow-backorder + backorder cost) that decide level-vs-chase.', flows:'→ /api/solve/aggregate params.' }}
+      dev={{ comp:'SolverInput', props:'config.planParams', state:'config.planParams.{rate_per_worker,reg_cost_per_unit,backorder_cost_per_unit,init_workforce,min_workforce,max_ot_pct,allow_backorder,…}' }}>
       <Grid cols={4}>
         <SolverInput label="Rate / worker" seed={PLAN_PARAMS.rate_per_worker} value={pp.rate_per_worker} onChange={v=>set('rate_per_worker',v)} min={1} suffix="u/mo"/>
         <SolverInput label="Regular cost" seed={PLAN_PARAMS.reg_cost_per_unit} value={pp.reg_cost_per_unit} onChange={v=>set('reg_cost_per_unit',v)} min={0} prefix="₹"/>
         <SolverInput label="Overtime cost" seed={PLAN_PARAMS.ot_cost_per_unit} value={pp.ot_cost_per_unit} onChange={v=>set('ot_cost_per_unit',v)} min={0} prefix="₹"/>
         <SolverInput label="Holding cost" seed={PLAN_PARAMS.holding_cost_per_unit} value={pp.holding_cost_per_unit} onChange={v=>set('holding_cost_per_unit',v)} min={0} prefix="₹"/>
+        <SolverInput label="Backorder cost" seed={PLAN_PARAMS.backorder_cost_per_unit} value={pp.backorder_cost_per_unit} onChange={v=>set('backorder_cost_per_unit',v)} min={0} prefix="₹" hint="penalty per unit of demand shorted — the lever that pushes the plan toward meeting demand vs carrying the backlog"/>
         <SolverInput label="Hire cost" seed={PLAN_PARAMS.hire_cost} value={pp.hire_cost} onChange={v=>set('hire_cost',v)} min={0} prefix="₹"/>
         <SolverInput label="Fire cost" seed={PLAN_PARAMS.fire_cost} value={pp.fire_cost} onChange={v=>set('fire_cost',v)} min={0} prefix="₹"/>
         <SolverInput label="Wage / worker" seed={PLAN_PARAMS.wage_per_worker} value={pp.wage_per_worker} onChange={v=>set('wage_per_worker',v)} min={0} prefix="₹"/>
-        <SolverInput label="Opening FG inventory" seed={0} value={pp.init_inventory} onChange={v=>set('init_inventory',v)} min={0} suffix="u" hint="stock on hand at period 0 (0 = greenfield); offsets early-period production"/>
+        <SolverInput label="Initial workforce" seed={PLAN_PARAMS.init_workforce} value={pp.init_workforce} onChange={v=>set('init_workforce',v)} min={1} suffix="heads" hint="crew on the books at period 0 (the starting point hire/fire moves from)"/>
+        <SolverInput label="Min workforce" seed={PLAN_PARAMS.min_workforce} value={pp.min_workforce} onChange={v=>set('min_workforce',v)} min={0} suffix="heads" hint="floor the plan can fire down to"/>
+        <SolverInput label="Opening FG inventory" seed={_net.weighted} value={pp.init_inventory} onChange={v=>set('init_inventory',v)} min={0} suffix="u" hint={`auto-reconciled from your Network FG on-hand: ${_net.phys.toLocaleString('en-IN')} u physical → ${_net.weighted.toLocaleString('en-IN')} labor-weighted u (the plan's worker-time yardstick — same stock, NOT a cut). Leave blank to stay linked to Network; type a value only to pin a different opening stock.`}/>
       </Grid>
+      <div style={{display:'flex', alignItems:'center', gap:22, marginTop:11, flexWrap:'wrap'}}>
+        <label style={{display:'flex', alignItems:'center', gap:7, fontFamily:F.mono, fontSize:10.5, color:C.tx2, cursor:'pointer'}}>
+          <input type="checkbox" checked={allowBO} onChange={e=>set('allow_backorder', e.target.checked)}/>
+          Allow backorder <span style={{color:C.tx3}}>— off ⇒ demand MUST be met every period (no shorting; forces hire / OT / prebuild)</span>
+        </label>
+        <div style={{display:'flex', alignItems:'center', gap:7, fontFamily:F.mono, fontSize:10.5, color:C.tx2}}>
+          Max overtime
+          <NumInput value={Math.round(planParam(config,'max_ot_pct')*100)} suffix="%" w={76}
+            onChange={v=> set('max_ot_pct', v===''?'' : Math.max(0, Math.min(1, Number(v)/100)))}/>
+          <span style={{color:C.tx3}}>of regular capacity</span>
+        </div>
+      </div>
+      {/* G-P2 — service-driven horizon-end cover. OFF by default ⇒ the plan ends at zero;
+          ON ⇒ aggregate.py floors I_T at z(serviceLevel)·σ(agg_demand)·√cover so the horizon
+          doesn't end empty. serviceLevel is the shared §7 service target (config.serviceLevel). */}
+      <div style={{display:'flex', alignItems:'center', gap:18, marginTop:11, flexWrap:'wrap'}}>
+        <label style={{display:'flex', alignItems:'center', gap:7, fontFamily:F.mono, fontSize:10.5, color:C.tx2, cursor:'pointer'}}>
+          <input type="checkbox" checked={!!config.planEndCoverEnabled}
+            onChange={e=>setConfig({ planEndCoverEnabled: e.target.checked })}/>
+          Service-driven end-cover <span style={{color:C.tx3}}>— floor horizon-end inventory at z({Math.round((Number(config.serviceLevel)||0.95)*100)}%)·σ(demand) so the plan doesn't run terminal stock to zero</span>
+        </label>
+        {config.planEndCoverEnabled && <div style={{display:'flex', alignItems:'center', gap:7, fontFamily:F.mono, fontSize:10.5, color:C.tx2}}>
+          Cover
+          <NumInput value={config.planEndCoverPeriods==null?1:config.planEndCoverPeriods} suffix="periods" w={92}
+            onChange={v=> setConfig({ planEndCoverPeriods: v===''?1 : Math.max(1, Number(v)) })}/>
+          <span style={{color:C.tx3}}>of demand-σ</span>
+        </div>}
+        {config.planEndCoverEnabled && agg && agg.result && agg.result.ending_floor!=null && (()=>{
+          const b = agg.result.ending_floor_basis||{}; const endInv = agg.result.ending_inventory;
+          const met = endInv!=null && endInv >= agg.result.ending_floor - 0.5;
+          return <span style={{fontFamily:F.mono, fontSize:10, fontWeight:700, color:met?C.gn:C.dg}}>
+            {met?'✓':'⚠'} floor {Math.round(agg.result.ending_floor).toLocaleString('en-IN')} u
+            {b.z!=null && <span style={{color:C.tx3, fontWeight:400}}> = z{b.z}·σ{b.sigma_agg_demand}{b.cover_periods>1?`·√${b.cover_periods}`:''}</span>}
+            <span style={{color:C.tx3, fontWeight:400}}> · ends {endInv!=null?Math.round(endInv).toLocaleString('en-IN'):'—'} u</span>
+          </span>;
+        })()}
+      </div>
       <Reading formula={`line-registry ceiling = Σ line cap = ${lineCap.toLocaleString('en-IN')} u/mo  ⇒  max workforce = ${lineCap.toLocaleString('en-IN')} ÷ ${rate} = ${wfCeiling} heads`}
         soWhat={`The plan is bounded to the SAME ${(M.lines||[]).length}-line capacity the production schedule respects (${(M.lines||[]).map(l=>l.cap.toLocaleString('en-IN')).join(' + ')} u/mo) — it can never promise more than the floor can physically build. Override the rate to re-scale the ceiling.`}/>
+      {_net.phys>0 && <div style={{marginTop:10, padding:'9px 11px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${hasOpenOverride?C.a4:C.gn}`, background:C.bg3, fontFamily:F.mono, fontSize:10, lineHeight:1.55, color:C.tx2}}>
+        {hasOpenOverride
+          ? <>✎ <b style={{color:C.tx}}>Opening stock is pinned (override).</b> You set <b>{effOpen.toLocaleString('en-IN')} u</b> by hand; the auto-reconcile from Network — <b>{_net.phys.toLocaleString('en-IN')} u</b> physical → <b>{_net.weighted.toLocaleString('en-IN')} u</b> labor-weighted — is <b>ignored</b> until you clear the field. </>
+          : <>✓ <b style={{color:C.tx}}>Opening stock auto-reconciled from Network.</b> You hold <b>{_net.phys.toLocaleString('en-IN')} u</b> of finished goods across DCs; the plan opens with that same stock, expressed as <b>{_net.weighted.toLocaleString('en-IN')} labor-weighted u</b> for the workforce math — <span style={{color:C.tx3}}>your labor-light mix just carries fewer worker-hours, so it's a yardstick conversion, NOT a reduction.</span> Either way it won't tell you to re-build stock you already hold. </>}
+        {onNav && <button onClick={()=>onNav('network')} style={{marginLeft:4, fontFamily:F.mono, fontSize:9.5, fontWeight:700, color:C.a2, background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline'}}>{hasOpenOverride?'open Network on-hand →':'adjust at source in Network →'}</button>}
+      </div>}
     </Card>
   );
 }
@@ -166,7 +234,7 @@ function PlanLaborContent(){
           <span style={{fontWeight:700, color:(w[p.sku]||1)>1.001?C.ac:((w[p.sku]||1)<0.999?C.tx3:C.tx2)}}>{(w[p.sku]||1).toFixed(2)}×</span>,
         ]}))}/>
       <Reading formula="worker-min/unit = machine cycle × hands-on %   ·   family weight = worker-min ÷ demand-weighted-average (so the average SKU = 1.00×)"
-        soWhat="Set the automated SKUs to a low hands-on % — they then weigh LESS than their long machine cycle implies, because a worker only loads/unloads them. The weights are normalised so the average stays 1.00× (your rate/worker number is untouched); only the labor MIX shifts. Leave everything at 100% to treat every station as fully manual."/>
+        soWhat="Set the automated SKUs to a low hands-on % — they then weigh LESS than their long machine cycle implies, because a worker only loads/unloads them. The weights are normalised so the average stays 1.00× (your rate/worker number is untouched); only the labor MIX shifts. Leave everything at 100% to treat every station as fully manual. Worked example: a 6.0-min cycle at 30% hands-on = 1.8 worker-min/unit, while a fully-manual 3.0-min cycle = 3.0 worker-min/unit — so the 'slower' automated part actually consumes LESS of your crew than the faster manual one. That reversal is the whole point: a people-bound plan must weight by hands-on time, not machine time."/>
     </Card>
   );
 }
@@ -216,13 +284,36 @@ function PlanStrategy({ agg }) {
             ).map(([k,v,c],i)=>(
               <div key={i} style={{marginBottom:8}}>
                 <div style={{display:'flex', justifyContent:'space-between', fontFamily:F.mono, fontSize:10, marginBottom:3}}><span>{k}</span><span className="num" style={{fontWeight:700}}>{res?(v*100).toFixed(1)+'%':(v*100).toFixed(0)+'%'}</span></div>
-                <MiniBar v={res?Math.min(1,v*4):v} max={1} color={c} h={14}/>
+                {/* PL-G3 — honest scale: full bar = CV 0.10, so the 0.05 level/chase pivot sits at mid-bar (was a magic ×4). */}
+                <MiniBar v={res?Math.min(1, v/0.10):v} max={1} color={c} h={14}/>
               </div>
             ))}
-            {res && <div style={{fontFamily:F.mono, fontSize:8, color:C.tx3, lineHeight:1.4}}>classifier: low workforce-CV + non-trivial inventory-CV ⇒ level</div>}
+            {res
+              ? <div style={{fontFamily:F.mono, fontSize:8, color:C.tx3, lineHeight:1.4}}>bar: full = CV 0.10 · pivot at 0.05 · rule: workforce-CV &lt; 0.05 ⇒ hold the crew (LEVEL); ≥ 0.05 ⇒ flex it (CHASE)</div>
+              : <div style={{fontFamily:F.mono, fontSize:8, color:C.tx3, lineHeight:1.4}}>seed fit scores — solve for the live workforce / inventory CV</div>}
           </div>
         </div>
         <div style={{marginTop:12}}><CapacityChart data={months}/></div>
+        {res && (()=>{
+          // PL-G4 — "did I need S&OP?" — bound to the live CV branch (mirrors aggregate.py:245-256).
+          const wfcv=res.workforce_cv||0, icv=res.inventory_cv||0;
+          const flat     = wfcv<0.05 && icv<0.05;
+          const seasonal = !flat && icv>=0.05 && icv>=wfcv;
+          const chase    = !flat && wfcv>=0.05 && wfcv>icv;
+          const tone = flat?C.tx3:(seasonal?C.gn:C.ac);
+          const msg = flat
+            ? `Your demand is essentially flat — both swings are under 5%. Level-vs-chase is moot this cycle: a steady crew covers it, so S&OP added little decision value here. The plan is near-trivial — spend your attention on the mix (Profit-mix) and buffers instead.`
+            : seasonal
+            ? `This is where S&OP pays. Demand swings far more (inventory CV ${(icv*100).toFixed(0)}%) than your crew (${(wfcv*100).toFixed(0)}%) — the plan is deliberately building ahead rather than hiring/firing. Check the prebuild detector and the peak inventory you'll carry.`
+            : chase
+            ? `S&OP is doing real work: your crew is flexing (workforce CV ${(wfcv*100).toFixed(0)}%) to chase demand rather than carrying inventory. Watch the hire/fire churn and its cost in the Workforce plan.`
+            : `Mixed plan — partial crew flex plus partial build-ahead. S&OP is choosing a blend; the duals in step 2 show which lever is binding.`;
+          return <div style={{marginTop:12, padding:'10px 12px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${tone}`, background:C.bg3, fontFamily:F.body, fontSize:11.5, lineHeight:1.5, color:C.tx2}}>
+            <b style={{fontFamily:F.mono, fontSize:9.5, letterSpacing:'.08em', color:tone}}>DID I NEED S&OP? </b>{msg}
+          </div>;
+        })()}
+        <Reading formula="CV (coefficient of variation) = σ ÷ μ — how much a series swings relative to its own average"
+          soWhat="Workforce CV = how much the crew size swings month to month; Inventory CV = how much stock swings. Low crew-swing + high stock-swing ⇒ LEVEL (hold the crew, let inventory flex the seasonality). High crew-swing ⇒ CHASE (flex the crew, carry little stock). The 0.05 line is the level/chase pivot the solver uses."/>
       </Card>
       <Card icon="📦" title="Seasonal Prebuild Detector" badge={(res?res.seasonal_prebuild:a.prebuild.detected)?'DETECTED':'none'} badgeTone="k" info={{ what:'Flags months where demand exceeds capacity → prebuild earlier.', flows:'Prebuild qty → inventory plan.' }}
         right={res ? <Provenance kind="solved" asOf={agg.ranAt?agg.ranAt.toLocaleTimeString():undefined}/> : undefined}
@@ -308,7 +399,7 @@ function PlanCapacity({ onNav, agg, lineCap }) {
         <DataTable dense cols={['Period','Demand','Labor cap','Production','Net Inv']} align={['left','right','right','right','right']}
           rows={(months||M.aggregate.months).map(m=>({cells:[m.m, m.dem, m.cap, m.prod, <span style={{color:m.inv<0?C.dg:C.tx, fontWeight:700}}>{m.inv>0?'+':''}{m.inv}</span>]}))}/>
         <Reading formula={`line-registry ceiling = Σ line cap = ${lineCap?lineCap.toLocaleString('en-IN'):'—'} u/mo  ·  "Labor cap" column = rate × workforce that period`}
-          soWhat="The capacity the plan deploys each period is the LABOR capacity (rate × heads); it can rise only to the line-registry ceiling above. Demand under the ceiling means the lines are not the constraint — labor is. The family demand is weighted by each SKU's WORKER-time (machine cycle × the hands-on % you set in step 0b, mean-normalised so the rate/worker calibration is preserved) — a labor-heavy SKU consumes more of this capacity, an automated one less, and the family plan is split back to physical SKU units in step 4."/>
+          soWhat="The capacity the plan deploys each period is the LABOR capacity (rate × heads); it can rise only to the line-registry ceiling above. Demand under the ceiling means the lines are not the constraint — labor is. The family demand is weighted by each SKU's WORKER-time (machine cycle × the hands-on % you set in step 0b, mean-normalised so the rate/worker calibration is preserved) — a labor-heavy SKU consumes more of this capacity, an automated one less, and the family plan is split back to physical SKU units in step 4. Units: every column here (Demand · Labor cap · Production · Net Inv) is in aggregate (labor-weighted) units — ≈ physical because the weights mean-normalise to 1.0, but the physical SKU split in step 4 will not foot exactly to the aggregate Production total unless every SKU is at 100% hands-on."/>
       </Card>
       <Card icon="🔑" title="Labor Capacity Shadow Prices" badge={shadow?`${shadow.length} duals · live`:'duals'} badgeTone="y" info={{ what:'Marginal value of one more WORKER-PERIOD of regular capacity (the aggregate LP dual). This is a labor dual — not a line/machine dual.', flows:'Labor duals → hire/OT decision, NOT line CapEx.' }} span={2}
         right={res ? <Provenance kind="solved" asOf={agg.ranAt?agg.ranAt.toLocaleTimeString():undefined}/> : undefined}
@@ -346,34 +437,40 @@ function PlanCapacity({ onNav, agg, lineCap }) {
         <Reading formula={lcSolved?"₹ shadow = dual of (Σ SKU load on line ≤ line cap) in a min-cost assignment LP — ₹ of contribution margin one more unit of capacity unlocks":"line util = Σ(planned SKU qty on the line) ÷ (line registry cap × horizon)"}
           soWhat={press?(bind?`${bind.line} binds at a ₹${(lcByLine[bind.id]||{}).shadow_price||'—'}/unit shadow price — every extra unit of its capacity recovers that much lost margin. THAT is the CapEx case Finance capitalizes (F-8 consumes this as the capacity shadow price).`:(lcSolved?'Priced: every line\'s capacity dual is ₹0 — they all have slack, so no machine CapEx is justified at this demand. The constraint is labor (see the duals above), not the lines. The mechanism is live: when demand pressures a line its dual turns positive here.':'Every line has slack at this demand — press "₹ Price capacity" to confirm the line duals are ₹0 (no CapEx case) vs the labor dual above.')):'—'}/>
       </Card>
+      {lcSolved && typeof explainLinecap==='function' && typeof GlassBoxExplainer==='function' &&
+        <GlassBoxExplainer icon="🏭" title="What the line duals mean — plain-English" rows={explainLinecap(lc.result)} prov="linecap dual LP"
+          note="Each line's bottleneck/spare verdict is its own capacity shadow price (₹/unit) — translated, not re-decided. A binding line is a machine-CapEx case; a slack line (₹0) is not."/>}
     </Grid>
   );
 }
 
-function PlanWorkforce({ agg, rate }) {
+function PlanWorkforce({ agg, rate, initWf }) {
   const res = agg && agg.result;
   const r = Number(rate) || PLAN_PARAMS.rate_per_worker || 1;
+  const wf0 = (initWf!=null && initWf!=='') ? Number(initWf) : PLAN_PARAMS.init_workforce;
   // PL-5 — tie each period's hire/OT back to the capacity GAP it fills:
   // gap = demand − regular capacity at the START-of-period headcount (rate × prior heads).
   // A positive gap is exactly what the hire + overtime in that row exist to cover.
   const wf = res && res.periods
     ? res.periods.map((p,i,arr)=>{
-        const priorHeads = i===0 ? PLAN_PARAMS.init_workforce : Math.round(arr[i-1].workforce);
+        const priorHeads = i===0 ? wf0 : Math.round(arr[i-1].workforce);
         const gap = Math.max(0, Math.round((p.demand||0) - r*priorHeads));
         return { period:'P'+p.period, base:Math.round(p.workforce), hire:Math.round(p.hires), fire:Math.round(p.fires),
-                 ot:Math.round(p.overtime_production), gap };
+                 ot:Math.round(p.overtime_production), otCost:(p.overtime_cost!=null?p.overtime_cost:null), gap };
       })
-    : M.aggregate.workforce.map(w=>({ ...w, gap:null }));
+    : M.aggregate.workforce.map(w=>({ ...w, otCost:null, gap:null }));
   const otLabel = res ? 'Overtime (u)' : 'Overtime (hrs)';
+  const otCostTotal = wf.reduce((s,w)=>s+(w.otCost||0),0);   // G-P1 — itemised OT rupee cost
   const wfMax = Math.max(...wf.map(w=>w.base), 1);
   return (
     <Card icon="👷" title="Workforce Plan · Hire / Fire / OT" badge={res?`${wf.length} periods · live`:'4 quarters'} info={{ what:'Period workforce decisions: base heads, hire, fire, overtime — and the demand-vs-capacity gap each fills.', flows:'Labour capacity → production MILP.' }}
       right={res ? <Provenance kind="solved" asOf={agg.ranAt?agg.ranAt.toLocaleTimeString():undefined}/> : undefined}
       dev={{ comp:'WorkforceCard', props:'aggregate.periods (workforce, hires, fires, OT, demand)' }}>
-      <DataTable cols={['Period','Base Heads','Hire','Fire',otLabel,'Fills gap (u)']} align={['left','right','right','right','right','right']}
-        rows={wf.map(w=>({cells:[w.period, w.base, <span style={{color:w.hire?C.gn:C.tx3, fontWeight:700}}>{w.hire?`+${w.hire}`:'—'}</span>, <span style={{color:w.fire?C.dg:C.tx3, fontWeight:700}}>{w.fire?`-${w.fire}`:'—'}</span>, w.ot, w.gap==null?'—':<span style={{color:w.gap>0?C.dg:C.tx3, fontWeight:700}}>{w.gap>0?`+${w.gap}`:'0'}</span>]}))}/>
-      {res && <Reading formula="gap = demand − rate × (start-of-period heads)   ·   filled by hire + overtime that period"
-        soWhat="A positive gap is the capacity hole the period's hire + overtime exist to close — when the gap is 0 the base workforce already covers demand and any OT is buffering, not catching up."/>}
+      <DataTable cols={['Period','Base Heads','Hire','Fire',otLabel,'OT ₹','Fills gap (u)']} align={['left','right','right','right','right','right','right']}
+        rows={wf.map(w=>({cells:[w.period, w.base, <span style={{color:w.hire?C.gn:C.tx3, fontWeight:700}}>{w.hire?`+${w.hire}`:'—'}</span>, <span style={{color:w.fire?C.dg:C.tx3, fontWeight:700}}>{w.fire?`-${w.fire}`:'—'}</span>, w.ot, w.otCost==null?'—':<span style={{color:w.otCost>0?C.dg:C.tx3, fontWeight:w.otCost>0?700:400}}>{w.otCost>0?`₹${Math.round(w.otCost).toLocaleString('en-IN')}`:'—'}</span>, w.gap==null?'—':<span style={{color:w.gap>0?C.dg:C.tx3, fontWeight:700}}>{w.gap>0?`+${w.gap}`:'0'}</span>]}))}
+        foot={res?['TOTAL','','','','',`₹${Math.round(otCostTotal).toLocaleString('en-IN')}`,'']:undefined}/>
+      {res && <Reading formula="OT ₹ per period = ot_cost_per_unit · overtime_units   ·   gap = demand − rate × (start-of-period heads), filled by hire + overtime"
+        soWhat={`A positive gap is the capacity hole the period's hire + overtime exist to close. The plan spends ₹${Math.round(otCostTotal).toLocaleString('en-IN')} on overtime across the horizon — itemised per period so the OT premium is visible, not buried in the objective. When the gap is 0 the base workforce already covers demand and any OT is buffering.`}/>}
       <div style={{marginTop:12}}>
         <SubLabel>Headcount trajectory</SubLabel>
         <div style={{display:'flex', alignItems:'flex-end', gap:10, height:80}}>
@@ -407,7 +504,7 @@ function PlanDisagg({ agg }) {
   const horizon = (M.aggregate.months||[]).length;
   return (
     <Card icon="🔀" title="SKU Disaggregation" badge={res?'aggregate → SKU · solved':'aggregate → SKU · seed'} info={{ what:`Splits the solved aggregate family plan (${nFG} finished SKUs, ${horizon}-month horizon) back to individual SKUs by each SKU's planned share. Seed shares shown until solved.`, flows:'SKU-level plan → MPS & procurement.' }}
-      right={res ? <Provenance kind="solved" asOf={agg.ranAt?agg.ranAt.toLocaleTimeString():undefined}/> : undefined}
+      right={res ? <Provenance kind="solved" asOf={agg.ranAt?agg.ranAt.toLocaleTimeString():undefined}/> : <Provenance kind="seed"/>}
       dev={{ comp:'DisaggregateCard', props:'aggregate.sku_plans (total_planned share)', note:'derived from the solved aggregate plan; seed split until solved.' }}>
       <div style={{marginBottom:10, fontFamily:F.mono, fontSize:9.5, color:C.tx3}}>FAMILY: all finished goods ({nFG} SKUs) · HORIZON: {horizon} months · BASIS: {res?'solved per-SKU planned quantity':'annual-demand seed share (not yet solved)'}</div>
       <div style={{display:'flex', height:30, border:`2px solid ${C.line}`, marginBottom:14}}>
@@ -422,12 +519,15 @@ function PlanDisagg({ agg }) {
 }
 // S&OP Gap — relocated from Scenarios·Performance (app_v2). This is the
 // reconciliation OUTCOME of the S&OP stage, so it belongs at the end of Plan.
-function PlanGap() {
+function PlanGap({ onNav }) {
+  // PL-G1 — M.sop is a hardcoded SEED (data.jsx). It was rendered under a "derived" chip with a
+  // fabricated as-of timestamp (a live R2). Fenced as illustrative until the consensus reconcile is wired.
   return (
-    <Card icon="📋" title="S&OP Gap · Plan vs Target" badge="reconciliation" badgeTone="y"
-      info={{ what:'Where the committed consensus plan stands against the business target — volume, revenue, margin, inventory.', flows:'Gaps → next S&OP cycle re-plan & Profit-mix.' }}
-      right={<Provenance kind="derived" asOf={M.updated.split('·')[1].trim()}/>}
-      dev={{ comp:'SOPGapCard', props:'aggregatePlan.sopGap', note:'Relocated from Scenarios·Performance (app_v2).' }}>
+    <Card icon="📋" title="S&OP Gap · Plan vs Target" badge="illustrative" badgeTone="y"
+      info={{ what:'Where the committed consensus plan WOULD stand against the business target — volume, revenue, margin, inventory. The live consensus reconcile is not yet wired into this card; the figures below are illustrative seeds for layout.', flows:'Gaps → next S&OP cycle re-plan & Profit-mix.' }}
+      right={<Provenance kind="seed"/>}
+      dev={{ comp:'SOPGapCard', props:'M.sop (seed) — pending a wired consensus reconcile', note:'Relocated from Scenarios·Performance (app_v2). M.sop is seed, not a solve.' }}>
+      <SeedFence what="These gap figures are illustrative seeds for layout — NOT the output of a consensus reconcile. The S&OP reconcile (committed plan vs business target) runs in the Scenarios cockpit; run it to replace these with your numbers." onNav={onNav} go="scenarios" goLabel="reconcile in Scenarios →"/>
       <KpiRow cols={4}>
         <Blk label="Volume" value={`+${M.sop.volumeGap}%`} accent={C.gn}/>
         <Blk label="Revenue" value={`${M.sop.revGap}%`} accent={C.dg}/>
@@ -435,7 +535,7 @@ function PlanGap() {
         <Blk label="Inventory" value={`${M.sop.inventoryGap}%`} accent={C.dg}/>
       </KpiRow>
       <Reading formula="gap = committed plan − target, per dimension"
-        soWhat="Volume is +4.2% to target but revenue −1.8% — the plan wins units on lower-margin SKUs; tighten the mix in Profit-mix before committing."/>
+        soWhat="When wired, a positive volume gap with a negative revenue gap means the plan wins units on lower-margin SKUs — tighten the mix in Profit-mix before committing. (The figures above are illustrative seeds until the reconcile runs.)"/>
     </Card>
   );
 }

@@ -2,17 +2,19 @@
 // reference.jsx — Reference. Sub-tabs: Learning Lab · SAP Mode.
 // ════════════════════════════════════════════════════════════════════════
 function StageReference({ onNav }) {
-  const [sub, setSub] = useState('learn');
+  const [sub, setSub] = useState('map');
   const tabs = [
-    { id:'learn', n:'a', label:'Learning Lab', count:M.learnSections.length },
-    { id:'sap',   n:'b', label:'SAP Mode', count:M.sapTcodes.length },
-    { id:'api',   n:'c', label:'Open API' },
+    { id:'map',   n:'a', label:'Model Map', count:M.solvers.length },
+    { id:'learn', n:'b', label:'Learning Lab', count:M.learnSections.length },
+    { id:'sap',   n:'c', label:'SAP Mode', count:M.sapTcodes.length },
+    { id:'api',   n:'d', label:'Open API' },
   ];
   return (
     <div>
-      <StageHeader n="12" title="Reference" kicker="Learning Lab concept explainers · SAP T-code map · open solve-API substrate"/>
+      <StageHeader n="12" title="Reference" kicker="Live model map & cross-solver consistency · Learning Lab · SAP T-code map · open solve-API substrate"/>
       <SubTabNav tabs={tabs} active={sub} onChange={setSub}/>
       <div style={{padding:14}}>
+        {sub==='map'   && <ModelMap onNav={onNav}/>}
         {sub==='learn' && <RefLearn/>}
         {sub==='sap'   && <RefSAP onNav={onNav}/>}
         {sub==='api'   && <RefAPI/>}
@@ -84,6 +86,244 @@ function RefAPI() {
         </Card>
       )}
     </Grid>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// OBS-1 · Live model map  +  OBS-2 · cross-solver consistency
+//   (Observability spec, Part 6 · Tier-1)
+// The headline SolverNetwork fabric colours nodes by the SEED `status` field, so it
+// lies about which engines have actually run. ModelMap re-renders the SAME fabric from
+// LIVE solve freshness (the `solves`/`solveResults` slices), adds a node drill-down
+// (inputs → formula → API → last result) and surfaces the cross-solver identities the
+// per-tab smokes never check end-to-end. Every number is read from the cache or config —
+// nothing fabricated; honest "—" when a solve has not run.
+// ════════════════════════════════════════════════════════════════════════
+const _OBS_KEY = { forecast:'forecast', aggregate:'aggregate', procurement:'procurement',
+  production:'production', profitmix:'profitmix', transport:'transport', montecarlo:'montecarlo',
+  cvar:'cvar', capital:'capital', allocation:'transport', consolidate:'transport' };
+//  B-12 — allocation & consolidate are TRANSPORT sub-steps (edges transport→{allocation,
+//  consolidate}, go:logistics, both rendered off the single /api/solve/transport solve in
+//  Logistics). They were wrongly mapped to the inventory meio/meionet solvers across KEY/API/
+//  METHOD/obj — the map lied about two of its own nodes. Now keyed to the transport solve.
+// (disaggregate, reconcile, sequencing, lotsizing, capital_capacity have NO cross-stage
+//  cache key — they run local-only, so the map shows them faint/"untracked", honestly.)
+const _OBS_API = { forecast:'/api/forecast', aggregate:'/api/solve/aggregate', disaggregate:'/api/calc/disaggregate',
+  reconcile:'/api/solve/sop', profitmix:'/api/solve/profitmix', procurement:'/api/solve/procurement',
+  production:'/api/solve/production', sequencing:'/api/solve/sequence', lotsizing:'/api/solve/lotsizing',
+  transport:'/api/solve/transport', allocation:'/api/solve/transport', consolidate:'/api/solve/transport',
+  montecarlo:'/api/solve/montecarlo', cvar:'/api/solve/cvar', capital:'/api/solve/capital', capital_capacity:'/api/solve/capital-capacity' };
+const _OBS_METHOD = {
+  forecast:'Holt-Winters + RandomForest hybrid · Croston/SBA/TSB for the intermittent tail · MASE/MAPE out-of-sample backtest',
+  aggregate:'Hax–Meal / Holt-Modigliani-Muth-Simon level-vs-chase LP — InvBal in worker-time units',
+  disaggregate:'Hierarchical disaggregation, proportional to physical demand share',
+  reconcile:'Top-down ⇄ bottom-up consensus reconciliation',
+  profitmix:'True LP with duals — shadow price = ₹/unit of the binding resource; reduced cost = why a SKU is dropped',
+  procurement:'Multi-period MILP · SS = Heizer z·σ_LTD or Rockafellar–Uryasev CVaR · explodes per-FG bomForSku',
+  production:'Scheduling MILP · Theory-of-Constraints bottleneck · campaign min-run',
+  sequencing:'Changeover-min Hamiltonian path (ATSP) over the 6 SKUs',
+  lotsizing:'EOQ (Wilson) · Wagner-Whitin DP (optimal) · Silver-Meal · (s,S) Min-Max',
+  transport:'Transportation-problem LP (min-cost flow)',
+  allocation:'Transport LP allocation — least-cost DC→customer lane assignment (each lane picks its mode), from the /api/solve/transport solve',
+  consolidate:'LTL→FTL consolidation heuristic — merge shipments on a lane when FTL cost < ΣLTL within the SLA slack (same transport solve)',
+  montecarlo:'Simulation with lead-time lag, replayed on the committed production plan',
+  cvar:'Rockafellar–Uryasev CVaR LP · newsvendor critical ratio',
+  capital:'CAPM + Hamada re-levering βL=βU(1+(1−t)D/E) · blended hurdle · NPV + depreciation shield',
+  capital_capacity:'Endogenous-capacity capital plan — CapEx justified by the bottleneck shadow price',
+};
+function _obsCr(n){ const v=Math.abs(+n||0); return v>=1e7?`${(n/1e7).toFixed(2)} Cr`:v>=1e5?`${(n/1e5).toFixed(1)} L`:`${Math.round(n).toLocaleString('en-IN')}`; }
+function _obsObj(id, r){
+  if(!r) return null;
+  try{
+    switch(id){
+      case 'forecast':   return r.winner ? `winner ${r.winner.model||r.winner}` : (r.mape!=null?`MAPE ${r.mape}%`:'ran');
+      case 'aggregate':  return (r.strategy||'plan') + (r.total_cost!=null?` · ₹${_obsCr(r.total_cost)}`:'');
+      case 'production': { const u=r.gantt?r.gantt.reduce((a,e)=>a+(+e.quantity||0),0):null; return (r.status||'ran')+(u!=null?` · ${u.toLocaleString('en-IN')}u`:''); }
+      case 'procurement':return r.materials?`${r.materials.length} parts`:'ran';
+      case 'montecarlo': return r.avg_fill!=null?`fill ${(r.avg_fill*100).toFixed(0)}%`:'ran';
+      case 'profitmix':  return r.total_profit!=null?`₹${_obsCr(r.total_profit)}`:'ran';
+      case 'transport':  return r.total_cost!=null?`₹${_obsCr(r.total_cost)}`:'ran';
+      case 'capital':    return r.total_npv!=null?`NPV ₹${_obsCr(r.total_npv)}`:'ran';   // B-15 — capital.py returns total_npv (portfolio Σ NPVᵢ·xᵢ); r.npv was undefined → node fell to 'ran'. Exposed once B-3 lit the node.
+      case 'cvar':       return r.cvar95!=null?`CVaR ₹${_obsCr(r.cvar95)}`:'ran';
+      case 'allocation': return r.n_shipments!=null?`${r.n_shipments} lanes`:'ran';
+      case 'consolidate':return r.consolidation_saving!=null?`saved ₹${_obsCr(r.consolidation_saving)}`:'ran';
+      default: return 'ran';
+    }
+  }catch(e){ return 'ran'; }
+}
+
+// OBS-1 · the ONE freshness/obj builder, shared by the ModelMap AND the Console
+// fabric (closes B-2 — the Console SolverNetwork used to colour by the seed `status`
+// field, lying about what ran). id → 'fresh'|'stale'|'never'|'untracked' from the
+// live cross-stage cache, plus id → last real objective string. One source of truth.
+function solverFreshnessMaps(solves, results){
+  solves = solves||{}; results = results||{};
+  const fresh = {}, obj = {};
+  (M.solvers||[]).forEach(s=>{
+    const key = _OBS_KEY[s.id];
+    if(!key){ fresh[s.id]='untracked'; return; }
+    const sv = solves[key], rc = results[key];
+    fresh[s.id] = (sv&&sv.stale) ? 'stale' : ((sv&&sv.ranAt)||rc) ? 'fresh' : 'never';
+    obj[s.id] = _obsObj(s.id, rc&&rc.result);
+  });
+  return { fresh, obj };
+}
+
+function ModelMap({ onNav }){
+  const { state: solves }  = useStore(s=>s.solves||{});
+  const { state: results } = useStore(s=>s.solveResults||{});
+  const { state: demand }  = useStore(s=>s.demand||{});
+  const { config } = useConfig();
+  const [sel, setSel] = useState(null);
+
+  const { fresh, obj } = solverFreshnessMaps(solves, results);
+  const counts = { fresh:0, stale:0, never:0, untracked:0 };
+  M.solvers.forEach(s=>counts[fresh[s.id]]++);
+  const tracked = M.solvers.length - counts.untracked;
+
+  const swatch = (c,label,n)=> (
+    <span style={{display:'inline-flex', alignItems:'center', gap:5, fontFamily:F.mono, fontSize:9, color:C.tx2}}>
+      <span style={{width:11, height:11, background:c, border:`1px solid ${C.line}`}}/>{label}{n!=null?` · ${n}`:''}</span>
+  );
+
+  return (
+    <Grid cols={1}>
+      <Card icon="🗺" title="Live model map — the machine, coloured by what has actually run" span={2}
+        badge={`${counts.fresh}/${M.solvers.length} fresh`} badgeTone={counts.fresh?'g':'y'}
+        right={<Provenance kind="derived"/>}
+        info={{ what:'The 16 solvers in 5 family lanes, with the real /api/solve hand-offs as edges. Node colour is LIVE solve freshness from the cross-stage cache — not the seed status the Home/Console fabric shows. Click a node to trace its inputs → formula → API → last result.', flows:'The observability map: freshness, lineage and the last real output of every engine in one place.' }}
+        dev={{ comp:'ModelMap (OBS-1)', props:'useStore(solves, solveResults) → freshness; SolverNetwork(freshness, liveObj)', note:'Re-uses the SolverNetwork fabric with live colouring — no third drawing (P-H).' }}>
+        <div style={{border:`2px solid ${C.line}`, background:C.paper, padding:'8px 6px'}}>
+          <SolverNetwork freshness={fresh} liveObj={obj} sel={sel} onSelect={setSel} onNav={onNav}/>
+        </div>
+        <div style={{display:'flex', gap:16, flexWrap:'wrap', marginTop:9, alignItems:'center'}}>
+          {swatch(C.gn,'fresh',counts.fresh)}{swatch(C.a4,'stale',counts.stale)}{swatch(C.tx3,'never run',counts.never)}{swatch(C.line2,'untracked',counts.untracked)}
+        </div>
+        <Reading tone={C.tx2}
+          formula={`${tracked} of ${M.solvers.length} solvers persist to the cross-stage cache · ${counts.untracked} run local-only (untracked)`}
+          soWhat={counts.untracked>0 ? 'The untracked engines (disaggregate, reconcile, sequencing, lot-sizing, capital-capacity) run only inside their own tab — their outputs are not observable to a cross-solver check or the value ledger. Giving the consequential ones a solveKey would put them on this map.' : 'Every solver is observable.'}/>
+      </Card>
+
+      {sel ? <ModelNodeDetail sel={sel} results={results} solves={solves} fresh={fresh[sel]} onNav={onNav} onClose={()=>setSel(null)}/>
+           : <Card icon="👆" title="Trace a solver" badge="click a node" badgeTone="c"
+               info={{ what:'Pick any engine above to see exactly what feeds it and what it last produced.' }}>
+               <div style={{padding:'14px 12px', fontFamily:F.mono, fontSize:10.5, color:C.tx3, textAlign:'center', border:`2px dashed ${C.line2}`, background:C.bg3}}>
+                 Click a solver node to trace its inputs → formula → API → last real result.</div>
+             </Card>}
+
+      <ConsistencyPanel results={results} solves={solves} demand={demand} config={config} onNav={onNav}/>
+    </Grid>
+  );
+}
+
+function ModelNodeDetail({ sel, results, solves, fresh, onNav, onClose }){
+  const s = M.solvers.find(x=>x.id===sel); if(!s) return null;
+  const key = _OBS_KEY[sel];
+  const sv = key ? solves[key] : null;
+  const rc = key ? results[key] : null;
+  const r  = rc && rc.result;
+  const deps = (key && SOLVE_DEPS[key]) || null;
+  const provKind = !key ? 'seed' : (sv&&sv.stale) ? 'derived' : r ? 'solved' : 'seed';
+  const ranAt = (sv&&sv.ranAt) ? new Date(sv.ranAt).toLocaleString('en-IN') : (rc&&rc.ranAt? new Date(rc.ranAt).toLocaleString('en-IN'):null);
+  const live = _obsObj(sel, r);
+  return (
+    <Card icon="🔬" title={`${s.name} — lineage`} badge={fresh} badgeTone={fresh==='fresh'?'g':fresh==='stale'?'k':undefined}
+      right={<Provenance kind={provKind} asOf={provKind==='solved'?ranAt:undefined} stale={!!(sv&&sv.stale)}/>}
+      info={{ what:`How ${s.name} is wired: the inputs it depends on, the method it runs, the API it calls, and its last real output.` }}
+      dev={{ comp:'ModelNodeDetail (OBS-1)', props:`SOLVE_DEPS['${key||'—'}'], getSolveResult('${key||'—'}')` }}>
+      <KpiRow>
+        <Blk label="Family" value={s.fam} tone="c"/>
+        <Blk label="Engine" value={s.engine}/>
+        <Blk label="Freshness" value={fresh} accent={fresh==='fresh'?C.gn:fresh==='stale'?C.a4:C.tx3}/>
+        <Blk label="Last result" value={live||'not run'} accent={live?C.gn:C.tx3}/>
+      </KpiRow>
+      <SubLabel>Method / formula</SubLabel>
+      <div style={{fontFamily:F.body, fontSize:11.5, color:C.tx2, lineHeight:1.5, marginBottom:8}}>{_OBS_METHOD[sel]||'—'}</div>
+      <SubLabel>Inputs it depends on (SOLVE_DEPS — edit any of these and this solve goes stale)</SubLabel>
+      <div style={{display:'flex', gap:6, flexWrap:'wrap', margin:'4px 0 10px'}}>
+        {deps ? deps.map(d=><Tag key={d} c="w">{d}</Tag>)
+              : <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx3}}>{key?'no declared dependencies':'runs local-only — not in the cross-stage cache'}</span>}
+      </div>
+      <SubLabel>API</SubLabel>
+      <div style={{fontFamily:F.mono, fontSize:10, color:C.tx, marginBottom:10}}>{_OBS_API[sel]||'—'}{ranAt?`  ·  last ran ${ranAt}`:''}</div>
+      <div style={{display:'flex', gap:8}}>
+        <Btn kind="primary" sm onClick={()=>onNav&&onNav(s.go)}>open {s.name} tab →</Btn>
+        <Btn sm onClick={onClose}>close</Btn>
+      </div>
+    </Card>
+  );
+}
+
+function ConsistencyPanel({ results, solves, demand, config, onNav }){
+  const R = k => results[k] && results[k].result;
+  const pr=R('production'), mc=R('montecarlo'), lc=R('linecap'), pm=R('profitmix'), mn=R('meionet');
+  const finished = (M.products||[]).filter(p=>p.cat==='Finished');
+  const demTot = finished.reduce((a,p)=>{ const s=demand[p.sku]; return a+(s&&s.length?s.reduce((x,y)=>x+(+y||0),0):0); },0);
+  const prodUnits = pr&&pr.gantt ? pr.gantt.reduce((a,e)=>a+(+e.quantity||0),0) : null;
+  let hurdle=null, carry=null;
+  try{ if(typeof finBlendedHurdle==='function') hurdle=finBlendedHurdle(config).wacc; }catch(e){}
+  try{ if(typeof carryRate==='function') carry=carryRate(config)*100; }catch(e){}
+  const lcMax = lc&&lc.lines ? Math.max(0,...lc.lines.map(x=>+x.shadow_price||0)) : null;
+  const pmMax = pm&&pm.shadow_prices ? Math.max(0,...pm.shadow_prices.filter(x=>x.binding).map(x=>+x.shadow_price||0)) : null;
+  const prodAt = solves.production&&solves.production.ranAt;
+  const mcAt   = solves.montecarlo&&solves.montecarlo.ranAt;
+  const ratio = (demTot>0 && prodUnits!=null) ? prodUnits/demTot : null;
+
+  const checks = [
+    { id:'I-5', label:'Plan ⇄ Production ⇄ Demand units reconcile',
+      st: ratio==null?'na':(ratio>=0.7&&ratio<=1.4?'ok':'bad'),
+      detail: ratio==null ? 'run Demand + Production to compare' :
+        `committed demand ${Math.round(demTot).toLocaleString('en-IN')}u vs production build ${Math.round(prodUnits).toLocaleString('en-IN')}u (ratio ${ratio.toFixed(2)})` +
+        (ratio>=0.7&&ratio<=1.4?' — within inventory swing':' — ⚠ off; check the labor-weighted vs physical unit basis (P-C)'),
+      go: ratio==null?'production':null },
+    { id:'I-3', label:'Sourcing carry rate is anchored to the Finance hurdle',
+      st: hurdle==null?'na':'ok',
+      detail: hurdle==null ? 'finance helpers unavailable' :
+        `blended hurdle ${hurdle.toFixed(2)}%` + (carry!=null?` · carry rate ${carry.toFixed(2)}% (= hurdle + holding spread)`:'') + ' — carryRate() reads finBlendedHurdle() by construction (FIN-8)' },
+    { id:'#5', label:'Monte-Carlo ran on the COMMITTED production plan (not a fresh one)',
+      st: (!prodAt||!mcAt)?'na':(mcAt>=prodAt?'ok':'bad'),
+      detail: (!prodAt||!mcAt) ? 'run Production then Monte-Carlo to verify the replay' :
+        (mcAt>=prodAt ? 'MC ran after the committed schedule — it replays the same gantt' : '⚠ MC is older than the current schedule — re-run risk on the committed plan'),
+      go: (!prodAt||!mcAt)?'scenarios':null },
+    { id:'I-2', label:'Line-capacity bottleneck is priced (shadow price)',
+      st: lcMax==null?'na':(lcMax>0?'ok':'info'),
+      detail: lcMax==null ? 'run the line-capacity dual in Plan' :
+        (lcMax>0 ? `binding line dual ₹${lcMax.toFixed(0)}/unit` + (pmMax!=null?` · profit-mix dual ₹${pmMax.toFixed(0)}/unit`:' · profit-mix not in cache (run Console / give it a solveKey to cross-check)') :
+                   'all lines slack — no capacity binds at the current plan'),
+      go: lcMax==null?'plan':null },
+    { id:'I-6', label:'MEIO pooled safety stock < Σ decentralised (√N dividend)',
+      st: mn==null?'na':(mn.total_ss_value_pooled<mn.total_ss_value_decentralised?'ok':'bad'),
+      detail: mn==null ? 'run MEIO-network in Sourcing to check pooling' :
+        `pooled ₹${_obsCr(mn.total_ss_value_pooled)} < decentralised ₹${_obsCr(mn.total_ss_value_decentralised)} · capital freed ₹${_obsCr(mn.total_capital_freed)}`,
+      go: mn==null?'sourcing':null },
+  ];
+  const ST = { ok:{i:'✓',c:C.gn}, bad:{i:'✗',c:C.dg}, info:{i:'•',c:C.a4}, na:{i:'—',c:C.tx3} };
+  const okN = checks.filter(c=>c.st==='ok').length, badN = checks.filter(c=>c.st==='bad').length;
+
+  return (
+    <Card icon="🧮" title="Cross-solver consistency — do the engines agree?" span={2}
+      badge={badN?`${badN} mismatch`:`${okN} checks pass`} badgeTone={badN?'k':okN?'g':'y'}
+      right={<Provenance kind="derived"/>}
+      info={{ what:'The per-tab smokes each verify ONE solver in isolation. These checks assert that the SAME quantity agrees ACROSS solvers in the live cache — the end-to-end observability that was the biggest blind spot.', flows:'A red row means two engines disagree on a number that must match — fix before trusting the plan.' }}
+      dev={{ comp:'ConsistencyPanel (OBS-2)', props:'getSolveResult(aggregate, production, procurement, montecarlo, linecap, profitmix, meionet) + config', note:'Honest "—" when a solve has not run; the full 5-way demand conservation + dual chain need HARNESS-1.' }}>
+      <div style={{display:'flex', flexDirection:'column', gap:7}}>
+        {checks.map(c=>{ const m=ST[c.st];
+          return (
+            <div key={c.id} style={{display:'flex', alignItems:'flex-start', gap:10, padding:'8px 10px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${m.c}`, background:C.bg3}}>
+              <span style={{fontFamily:F.mono, fontWeight:800, fontSize:13, color:m.c, width:14, textAlign:'center'}}>{m.i}</span>
+              <div style={{flex:1}}>
+                <div style={{fontFamily:F.body, fontSize:11.5, fontWeight:700, color:C.tx}}>{c.label} <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3, fontWeight:600}}>· {c.id}</span></div>
+                <div style={{fontFamily:F.mono, fontSize:9.5, color:C.tx2, marginTop:2, lineHeight:1.45}}>{c.detail}</div>
+              </div>
+              {c.go && <button onClick={()=>onNav&&onNav(c.go)} style={{fontFamily:F.mono, fontSize:9, fontWeight:700, color:C.a2, background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', whiteSpace:'nowrap'}}>run →</button>}
+            </div>
+          );
+        })}
+      </div>
+      <Reading tone={C.tx2}
+        formula="live checks read the cross-stage cache · full 5-way demand conservation + profit-mix↔linecap↔finance dual chain = HARNESS-1 (end-to-end script)"
+        soWhat="These are the cross-solver identities from the observability spec §4.1, asserted on whatever is in the live cache. Run the full loop (Scenarios ▸ Loop) to light them all up."/>
+    </Card>
   );
 }
 
@@ -161,9 +401,10 @@ function RefSAP({ onNav }) {
     <Grid cols={2}>
       <Card icon="🏢" title="SAP Mode · Overview" badge="parallel world" badgeTone="k" info={{ what:'Maps this model to an SAP multi-plant reference.', flows:'Reference/T-code overlay unless multi-plant committed.' }} span={2}
         dev={{ comp:'SAPModeTab', props:'state (read-only map)', note:'Parallel multi-plant world — reference overlay.' }}>
+        <div style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3, marginBottom:8}}>Reference map of the SAP-equivalent areas — read-only labels, not switchable views.</div>
         <div style={{display:'flex', gap:10, flexWrap:'wrap'}}>
           {['Overview','Physical Network','Master Data','Planning Runs','ML Demand Sensing','Stochastic / CVaR Solver'].map((s,i)=>(
-            <div key={i} style={{border:`2px solid ${C.line}`, padding:'8px 12px', fontFamily:F.disp, fontSize:11, fontWeight:700, background: i===0?C.ink:C.paper, color:i===0?C.ac:C.tx}}>{s}</div>
+            <div key={i} style={{border:`2px solid ${C.line2}`, padding:'8px 12px', fontFamily:F.disp, fontSize:11, fontWeight:700, background:C.bg3, color:C.tx2}}>{s}</div>
           ))}
         </div>
       </Card>

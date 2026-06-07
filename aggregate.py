@@ -61,7 +61,9 @@ def solve_aggregate(data):
          'max_ot_pct'?,                    # overtime cap as fraction of regular cap (default 0.25)
          'min_workforce'?, 'max_workforce'?,
          'safety_stock'? (scalar or per-period list),
-         'ending_inventory_target'?,
+         'ending_inventory_target'?,       # explicit horizon-end floor (overrides end_cover_*)
+         'end_cover_service'?,             # G-P2: service level → service-driven ending floor
+         'end_cover_periods'?,            # G-P2: periods of demand-σ to cover at horizon end (default 1)
          'integer_workforce'?,             # round headcount to integers (MILP); default False
       }
     }
@@ -120,6 +122,33 @@ def solve_aggregate(data):
     end_target = params.get('ending_inventory_target', None)
     end_target = _num(end_target) if end_target not in (None, '') else None
     integer_wf = bool(params.get('integer_workforce', False))
+
+    # ── G-P2 · service-driven ending-inventory floor (end-cover) ──
+    # The plan otherwise runs stock to exactly zero at horizon end (nothing in the
+    # objective rewards carrying terminal cover). When a service level is supplied —
+    # and no explicit ending_inventory_target overrides it — require the horizon to
+    # END with enough cover to meet that service against demand variability:
+    #     I_T ≥ z(service) · σ(agg_demand) · √cover_periods
+    # σ is the period-to-period std of the LABOR-WEIGHTED aggregate demand the LP
+    # actually carries (agg_demand, built above) — so the floor is in the same
+    # capacity-equivalent units as I_t. No service param ⇒ no floor ⇒ the plan may
+    # legitimately end at zero (byte-identical to the prior model).
+    ending_floor_basis = None
+    end_cover_service = params.get('end_cover_service', None)
+    if end_target is None and end_cover_service not in (None, ''):
+        from statistics import NormalDist
+        sl = max(0.5, min(0.9999, _num(end_cover_service, 0.95)))
+        z = NormalDist().inv_cdf(sl)
+        cover_periods = max(1.0, _num(params.get('end_cover_periods', 1), 1))
+        n = len(agg_demand)
+        mean_d = (sum(agg_demand) / n) if n else 0.0
+        sigma = ((sum((d - mean_d) ** 2 for d in agg_demand) / n) ** 0.5) if n else 0.0
+        end_target = z * sigma * (cover_periods ** 0.5)
+        ending_floor_basis = {
+            'service_level': round(sl, 4), 'z': round(z, 4),
+            'sigma_agg_demand': round(sigma, 2), 'cover_periods': round(cover_periods, 2),
+            'mean_agg_demand': round(mean_d, 2),
+        }
 
     ss_param = params.get('safety_stock', 0)
     if isinstance(ss_param, (list, tuple)):
@@ -217,6 +246,9 @@ def solve_aggregate(data):
             'workforce': round(wf, 2),
             'hires': round(hi, 2),
             'fires': round(fi, 2),
+            # G-P1 — itemise the overtime rupee cost per period (= ot_cost_per_unit · O[t]).
+            # Already in the objective; surfaced so the UI shows OT ₹, not just OT units.
+            'overtime_cost': round(c_ot, 2),
             'period_cost': round(c_reg + c_ot + c_hold + c_back + c_hire + c_fire + c_wage, 2),
         })
 
@@ -321,6 +353,11 @@ def solve_aggregate(data):
         'final_workforce': round(wf_series[-1], 2) if wf_series else 0,
         'peak_inventory': round(max(inv_series), 1) if inv_series else 0,
         'total_backorder': round(sum(pr['backorder'] for pr in periods), 1),
+        # G-P2 — the horizon-end inventory floor actually applied (None = ran to zero
+        # allowed). ending_floor_basis is non-null only when it was service-derived.
+        'ending_floor': round(end_target, 2) if end_target is not None else None,
+        'ending_floor_basis': ending_floor_basis,
+        'ending_inventory': periods[-1]['inventory'] if periods else 0,
         'shadow_prices': shadow_prices,
         'sku_plans': sku_plans,
         'rate_per_worker': round(rate, 3),

@@ -51,8 +51,9 @@ const _capH = s => s ? s.charAt(0).toUpperCase()+s.slice(1) : s;
 // ── HOME · LIVE STATE-OF-PLAN BOARD ───────────────────────────────────────────
 // Restructured (R13): Home answers one question on load — "is my committed plan
 // current, and is anything on fire?". The KPI strip reads the cross-stage solve
-// cache (solveResults) with a freshness stamp; "—" until solved (never faked). One
-// primary action re-plans the whole model (runFullLoop). It absorbs the monitoring
+// cache (solveResults) with a freshness stamp; "—" until solved (never faked).
+// One primary action re-plans the 6-step spine via runFullLoop (LOOP_STEPS) — NOT all
+// 16 engines; the button + ⓘ name what it skips (R4 honesty). It absorbs the monitoring
 // surfaces that used to live in Scenarios — the D8 exception inbox and the D2 value
 // ledger (rendered from their global defs). The pre-flight readiness gate and the
 // per-stage freshness panel are now MERGED into one Solver-Lifecycle strip (Batch 4):
@@ -80,7 +81,7 @@ function StageHome({ onNav }) {
   const anySolve = !!(ag||pr||lc||mc);
   const staleN = Object.values(solves||{}).filter(v=>v&&v.stale).length;
   const lastRan = Object.values(sr).map(e=>e&&e.ranAt).filter(Boolean).sort().slice(-1)[0];
-  const freshLine = anySolve ? (staleN? `${staleN} SOLVE${staleN>1?'S':''} STALE — RE-PLAN TO REFRESH` : `PLAN FRESH · LAST SOLVED ${_agoH(lastRan).toUpperCase()}`) : 'NOT SOLVED YET — RE-PLAN THE WHOLE MODEL TO POPULATE';
+  const freshLine = anySolve ? (staleN? `${staleN} SOLVE${staleN>1?'S':''} STALE — RE-PLAN TO REFRESH` : `PLAN FRESH · LAST SOLVED ${_agoH(lastRan).toUpperCase()}`) : 'NOT SOLVED YET — RE-PLAN THE SPINE (6 SOLVES) TO POPULATE';
 
   const runLoop = async ()=>{ setRunning(true); setLog(null);
     try{ const fl = await runFullLoop({ planning, onStep:(l)=>setLog([...l]) }); setLog(fl); setDoneAt(new Date()); }
@@ -117,8 +118,11 @@ function StageHome({ onNav }) {
   return (
     <div>
       <StageHeader n="00" title="Command Center" kicker="Live state of the committed plan · what needs your attention · one re-plan action"
-        right={<div style={{display:'flex', gap:8}}>
-          <Btn kind="accent" onClick={runLoop} style={running?{opacity:.6}:undefined}>{running?`Re-planning… ${okN}/${stepN}`:'▶ Re-plan whole model'}</Btn>
+        right={<div style={{display:'flex', gap:8, alignItems:'center'}}>
+          <Btn kind="accent" onClick={runLoop} title="Runs the 6-step planning spine only — not all 16 engines. See ⓘ for what it skips." style={running?{opacity:.6}:undefined}>{running?`Re-planning… ${okN}/${stepN}`:'▶ Re-plan spine · 6 steps'}</Btn>
+          <SectionInfo
+            what="Runs the 6-step planning spine on one dataset: Demand forecast → Procurement (landed-cost MILP) → Aggregate S&OP → Production schedule → Capital (line-capacity) signal → Monte-Carlo risk. Of the 16 named engines, this refreshes 5 — Forecast, Procurement, Aggregate, Production, Monte Carlo — plus the line-capacity signal (not one of the 16)."
+            flows="Does NOT refresh the other 11 engines — Profit-mix, Disaggregate, Reconcile, Sequencing, Lot-sizing, Transport, Allocation, Consolidate, CVaR, Capital, Capital-capacity. They keep their last result; run them from Console or their own tab."/>
           <Btn kind="secondary" onClick={()=>onNav('console')}>⚡ Console</Btn>
         </div>}/>
 
@@ -189,7 +193,7 @@ function StageHome({ onNav }) {
             </div>
             <Reading tone={blockedN?C.dg:(staleN?C.a4:C.gn)}
               formula={`${readyN}/${lifecycle.length} have inputs · ${freshN} fresh · ${staleN} stale · ${blockedN} blocked`}
-              soWhat={(blockedN?`${blockedN} solver(s) blocked on missing inputs — enter them to unlock the run. `:'')+(staleN?`${staleN} solved stage(s) went stale after an edit — re-plan the whole model to realign every stage on one dataset.`:(freshN?'Every solved stage is fresh and off the same committed dataset — the plan is internally consistent.':'Nothing solved yet — re-plan the whole model to populate every stage from one dataset.'))}/>
+              soWhat={(blockedN?`${blockedN} solver(s) blocked on missing inputs — enter them to unlock the run. `:'')+(staleN?`${staleN} solved stage(s) went stale after an edit — re-plan the spine (6 solves) to realign the planning stages on one dataset.`:(freshN?'Every solved stage is fresh and off the same committed dataset — the plan is internally consistent.':'Nothing solved yet — re-plan the spine (6 solves) to populate the planning stages from one dataset.'))}/>
           </Card>
 
           {/* D2 · value ledger — the tool measuring its own ROI (moved from Scenarios) */}

@@ -94,7 +94,13 @@ def optimal_sequence(skus, matrix, default_min=30.0):
 def evaluate_line(data):
     """Endpoint wrapper. data = {skus:[...], changeover_matrix:{...}, default_min?,
     averaged_min?}. Returns the optimal sequence plus the averaged-approximation cost
-    for contrast (the saving the sequence-dependent model captures)."""
+    for contrast (the saving the sequence-dependent model captures).
+
+    UNITS CONTRACT: changeover_matrix and default_min are MINUTES, and every returned
+    *_min field is minutes too. Callers that author changeover in HOURS (the Production
+    UI) must ×60 at the boundary — the same convention production.py & store.subMatrix
+    already follow. So default_min=30 is a sane 30-MINUTE fallback for a missing pair,
+    NOT 30 hours."""
     skus = data.get('skus', []) or []
     matrix = data.get('changeover_matrix', {}) or {}
     default_min = float(data.get('default_min', 30) or 30)

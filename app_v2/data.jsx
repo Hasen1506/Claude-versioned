@@ -22,8 +22,10 @@ const M = {
     { id:'finance',    n:'09', name:'Finance',     band:'DECIDE',  sub:'Cash · capital · invest · FX' },
     { id:'console',    n:'10', name:'Console',     band:'DECIDE',  sub:'16 engines · run any solver' },
     { id:'scenarios',  n:'11', name:'Scenarios',   band:'DECIDE',  sub:'Risk · cost · what-if' },
-    // Reference demoted (app_v2): no longer a planning stage — reached via the
-    // masthead "Learn" button. Still registered in main.jsx so it renders when active.
+    // Ph3 (IA re-segment): Reference SURFACED in the rail under its own LEARN band
+    // (was masthead-"Learn"-only — undiscoverable; the ❓ Learn button still works as a
+    // shortcut). It is not a planning stage, so it sits below DECIDE in its own band.
+    { id:'reference',  n:'12', name:'Reference',   band:'LEARN',   sub:'Learning lab · SAP map · open API' },
   ],
 
   // (R13) M.pipeline removed — the ribbon (chrome.jsx) now derives its 6 stages
@@ -180,8 +182,17 @@ const M = {
     { sku:'TPA-9904', wk:[36,36,42,42,36,30,36,42], atp:[8,4,2,0,10,14,8,0] },
     { sku:'TPA-2188', wk:[18,18,24,24,18,12,18,24], atp:[4,2,0,0,6,10,4,0] },
   ],
-  changeover:[ // sequence-dependent setup matrix (hrs)
-    ['—',1.2,0.8,2.4],[1.0,'—',1.6,2.0],[0.9,1.4,'—',1.8],[2.2,1.9,1.7,'—'],
+  // sequence-dependent setup matrix (hrs). Ph2: generalized 4→6 SKUs. The row/col
+  // order is changeoverSkus (the canonical FG order) — consumers (Production sequence
+  // UI, store subMatrix) read that array, never an implicit "first 4".
+  changeoverSkus:['TPA-4471','TPA-3215','TPA-9904','TPA-2188','TPA-5540','TPA-7722'],
+  changeover:[ //        4471  3215  9904  2188  5540  7722
+    /* 4471 */ ['—', 1.2, 0.8, 2.4, 1.1, 1.5],
+    /* 3215 */ [1.0, '—', 1.6, 2.0, 1.3, 0.9],
+    /* 9904 */ [0.9, 1.4, '—', 1.8, 1.0, 1.7],
+    /* 2188 */ [2.2, 1.9, 1.7, '—', 1.6, 2.1],
+    /* 5540 */ [1.2, 1.0, 1.1, 1.5, '—', 1.3],
+    /* 7722 */ [1.4, 0.8, 1.6, 2.0, 1.2, '—'],
   ],
 
   // suppliers
@@ -254,6 +265,16 @@ const M = {
     { item:'TPA-3215', loc:'DC-BLR',    qty:620,  uom:'u' },
     { item:'TPA-9904', loc:'DC-PUN',    qty:180,  uom:'u' },
   ],
+  // Scheduled receipts (G-N1) — open / in-transit POs already RELEASED to suppliers.
+  // The MRP nets against these as exogenous RM arrivals (procurement.py T6 locked_pos,
+  // booked at releaseDate + lead time) so the buy plan doesn't re-order what's already
+  // inbound. {part, qty, releaseDate}; carried into the procurement payloads via
+  // scheduledReceiptsLocked() in store.jsx. Empty ⇒ pure greenfield buy (prior behaviour).
+  scheduledReceipts:[
+    // in-transit POs placed ~2-3 weeks ago, arriving at/near horizon start (release + lead):
+    { part:'RM-STL42', qty:4000, releaseDate:'2026-05-18', po:'PO-STL-0042', sup:'SUP-001' },
+    { part:'RM-BRG18', qty:2500, releaseDate:'2026-05-14', po:'PO-BRG-0019', sup:'SUP-007' },
+  ],
   tpl:[
     { code:'3PL-BLR', name:'BlueDart Surface', mode:'LTL', sla:'98.1%', rate:'₹22/kg', zones:'PAN-IN' },
     { code:'3PL-VRL', name:'VRL Logistics',    mode:'FTL', sla:'96.4%', rate:'₹14/km', zones:'South+West' },
@@ -264,15 +285,20 @@ const M = {
   // finance — P3 sub-tabs regrouped 7→5 by finance question (app_v2). EVM + CCC
   // pulled in from Scenarios; Buy-vs-Lease folded into Investments; CAC demoted
   // behind Advanced inside Cash & WC.
+  // Ph3 (IA re-segment): Finance LEADS WITH CAPITAL — the SOLVED tab (WACC, hurdle,
+  // NPV, depreciation shield) is the default landing, not the illustrative Cash & WC
+  // seed (which has no live ledger feed). Value (EVA, solved) follows; Cash & WC is
+  // demoted to third so a seed is never the first thing a CFO sees.
   financeSubtabs:[
-    { id:'cash',    n:'a', label:'Cash & WC',   count:6 },
-    { id:'capital', n:'b', label:'Capital',     count:6 },
-    { id:'value',   n:'c', label:'Value (EVA)', count:3 },
+    { id:'capital', n:'a', label:'Capital',     count:6 },
+    { id:'value',   n:'b', label:'Value (EVA)', count:3 },
+    { id:'cash',    n:'c', label:'Cash & WC',   count:6 },
     { id:'invest',  n:'d', label:'Investments', count:4 },
     { id:'assets',  n:'e', label:'Assets',      count:2 },
     { id:'fx',      n:'f', label:'FX & Hedging',count:3 },
   ],
-  npv:[
+  npv:[ // after-tax operating free cash flows (₹) for the program DCF; dcf = cf discounted at the hurdle.
+        // The Capital·NPV shield ADDS the depreciation tax saving (dep×t) on top — it does NOT re-tax these.
     { y:'Y0', cf:-22000000, dcf:-22000000 },
     { y:'Y1', cf:6800000,   dcf:6105000 },
     { y:'Y2', cf:8400000,   dcf:6772000 },
@@ -568,7 +594,9 @@ M.planningProfile = {
 };
 // derive which capabilities each profile answer switches OFF (true = gated off)
 M.profileGate = (p)=>({
-  profitmix:    p.capacity === 'ample',          // ample capacity → make everything, no mix
+  // G-PM1/G-SU2 — gate the mix optimiser when there's nothing to ration: ample capacity
+  // (make everything) OR a single finished SKU (a "mix" of one is trivial → capacity check).
+  profitmix:    p.capacity === 'ample' || (M.products||[]).filter(x=>x.cat==='Finished').length === 1,
   sequencing:   p.lines === '1',                 // single line → no run-order decision
   transport:    p.distribution === 'single',     // single-site → nothing to ship
   landed:       !p.imports,                       // domestic only → no landed cost / FX / incoterms

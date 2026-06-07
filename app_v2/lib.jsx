@@ -394,30 +394,76 @@ function useActiveItem(){
   const item = (window.M && M.itemById(itemStore.id)) || null;
   return { item, view:itemStore.view, setItem:id=>itemStore.set({id}), setView:v=>itemStore.set({view:v}) };
 }
-function ItemSelector(){
+function ItemSelector({ onNav }){
   const { item, view, setItem, setView } = useActiveItem();
   if(!item) return null;
   return (
-    <div style={{display:'flex', alignItems:'center', gap:12, padding:'8px 18px', borderBottom:`2px solid ${C.line}`, background:C.ink, color:C.paper, flexWrap:'wrap'}}>
-      <span style={{fontFamily:F.mono, fontSize:9, letterSpacing:'.14em', color:C.ac}}>PRODUCT ▸</span>
-      <span style={{position:'relative', display:'inline-flex', alignItems:'center'}}>
-        <select value={item.id} onChange={e=>setItem(e.target.value)} style={{
-          appearance:'none', border:`2px solid ${C.ac}`, background:C.paper, color:C.ink, cursor:'pointer',
-          fontFamily:F.disp, fontWeight:800, fontSize:13, padding:'5px 30px 5px 10px', letterSpacing:'.02em',
-        }}>
-          {M.items.map(it=> <option key={it.id} value={it.id}>{it.name} · {it.code}</option>)}
-        </select>
-        <span style={{position:'absolute', right:9, color:C.ink, fontSize:10, pointerEvents:'none'}}>▾</span>
-      </span>
-      <span style={{fontFamily:F.mono, fontSize:9, padding:'2px 6px', border:`1.5px solid ${C.ac}`, color:C.ac}}>{item.family}</span>
-      <div style={{marginLeft:'auto', display:'flex', alignItems:'center', gap:0, border:`2px solid ${C.ac}`}}>
-        {[['fg','Finished good'],['parts','Its parts']].map(([v,l])=>(
-          <button key={v} onClick={()=>setView(v)} style={{
-            fontFamily:F.mono, fontSize:9.5, fontWeight:700, letterSpacing:'.04em', padding:'4px 10px', border:'none', cursor:'pointer',
-            background: view===v?C.ac:'transparent', color: view===v?C.onAc:C.paper,
-          }}>{view===v?'● ':'○ '}{l}</button>
-        ))}
+    <div style={{borderBottom:`2px solid ${C.line}`, background:C.ink, color:C.paper}}>
+      <div style={{display:'flex', alignItems:'center', gap:12, padding:'8px 18px', flexWrap:'wrap'}}>
+        <span style={{fontFamily:F.mono, fontSize:9, letterSpacing:'.14em', color:C.ac}}>PRODUCT ▸</span>
+        <span style={{position:'relative', display:'inline-flex', alignItems:'center'}}>
+          <select value={item.id} onChange={e=>setItem(e.target.value)} style={{
+            appearance:'none', border:`2px solid ${C.ac}`, background:C.paper, color:C.ink, cursor:'pointer',
+            fontFamily:F.disp, fontWeight:800, fontSize:13, padding:'5px 30px 5px 10px', letterSpacing:'.02em',
+          }}>
+            {M.items.map(it=> <option key={it.id} value={it.id}>{it.name} · {it.code}</option>)}
+          </select>
+          <span style={{position:'absolute', right:9, color:C.ink, fontSize:10, pointerEvents:'none'}}>▾</span>
+        </span>
+        <span style={{fontFamily:F.mono, fontSize:9, padding:'2px 6px', border:`1.5px solid ${C.ac}`, color:C.ac}}>{item.family}</span>
+        <div style={{marginLeft:'auto', display:'flex', alignItems:'center', gap:0, border:`2px solid ${C.ac}`}}>
+          {[['fg','Finished good'],['parts','Its parts']].map(([v,l])=>(
+            <button key={v} onClick={()=>setView(v)} style={{
+              fontFamily:F.mono, fontSize:9.5, fontWeight:700, letterSpacing:'.04em', padding:'4px 10px', border:'none', cursor:'pointer',
+              background: view===v?C.ac:'transparent', color: view===v?C.onAc:C.paper,
+            }}>{view===v?'● ':'○ '}{l}</button>
+          ))}
+        </div>
       </div>
+      <PortfolioWorklist activeId={item.id} setItem={setItem} onNav={onNav}/>
+    </div>
+  );
+}
+// ───────────── PortfolioWorklist (Ph4 / P5) — persistent commit progress ──
+// A SKU is "committed" when the planner took an EXPLICIT commit-class action on it
+// (forecast-commit / override / sensing / lifecycle / NPI), recorded in the event log
+// — the SAME `isDemandCommitted` test Demand's Consensus uses (Demand D-1). It is NOT
+// "demand[sku] non-empty": merely viewing a SKU auto-runs the forecast and populates a
+// WORKING series, which is a proposal, not a commitment. The strip rolls every finished
+// SKU into "N/6 committed", points at the next uncommitted one, and jumps there (selects
+// it + opens Demand to review & commit). It reads live events, so committing a SKU climbs
+// the count in place — the worklist never resets or disappears (gate ⑪).
+function PortfolioWorklist({ activeId, setItem, onNav }){
+  const { state: events } = useStore(s=>s.events||[]);
+  const items = M.items || [];
+  if(items.length < 2) return null;
+  const isCommitted = (it)=> isDemandCommitted(it.code, events);
+  const done = items.filter(isCommitted);
+  const next = items.find(it=> !isCommitted(it));
+  const goNext = ()=>{ if(!next) return; setItem(next.id); if(onNav) onNav('demand'); };
+  const allDone = !next;
+  return (
+    <div style={{display:'flex', alignItems:'center', gap:10, padding:'5px 18px', borderTop:`1px solid ${C.line2}`, background:C.bg3, color:C.tx, flexWrap:'wrap'}}>
+      <span style={{fontFamily:F.mono, fontSize:8.5, letterSpacing:'.12em', color:C.tx3}}>PORTFOLIO ▸</span>
+      <span style={{fontFamily:F.disp, fontSize:11, fontWeight:800}}>{done.length}/{items.length} committed</span>
+      <div style={{display:'flex', gap:4, flexWrap:'wrap'}}>
+        {items.map(it=>{ const c = isCommitted(it); const on = it.id===activeId;
+          return (
+            <button key={it.id} onClick={()=>setItem(it.id)} title={`${it.code} — ${c?'committed (planner accepted/overrode the forecast)':'proposed — auto-forecast not yet committed'}${on?' · selected':''}`}
+              style={{fontFamily:F.mono, fontSize:8.5, fontWeight:700, padding:'1px 6px', cursor:'pointer',
+                border:`1.5px solid ${on?C.ac:c?C.gn:C.line2}`, background: c?C.gn:'transparent',
+                color: c?C.paper:C.tx3, letterSpacing:'.02em'}}>
+              {c?'●':'○'} {it.code}
+            </button>
+          );
+        })}
+      </div>
+      {allDone
+        ? <span style={{marginLeft:'auto', fontFamily:F.mono, fontSize:9, fontWeight:700, color:C.gn}}>✓ all {items.length} committed</span>
+        : <button onClick={goNext} style={{marginLeft:'auto', fontFamily:F.mono, fontSize:9, fontWeight:700, color:C.ac, background:'transparent',
+            border:`1.5px solid ${C.ac}`, padding:'2px 8px', cursor:'pointer', letterSpacing:'.02em'}}>
+            next: {next.code} →
+          </button>}
     </div>
   );
 }
@@ -433,14 +479,32 @@ function Reading({ formula, soWhat, tone }){
   );
 }
 
+// ScopeBadge (Ph4 / R5): every section can declare whether it edits ONE item or the
+// whole portfolio, so a card under the item selector can never be silently mis-scoped.
+// 'item' = scoped to the selected SKU; 'global'/'portfolio' = all SKUs / company-wide.
+// Pure presentation — the badge LABELS scope, it does not change it.
+function ScopeBadge({ scope }){
+  if(!scope) return null;
+  const item = scope==='item';
+  return (
+    <span title={item ? 'scoped to the selected item — switch items in the selector above' : 'company-wide / all SKUs — not scoped to the selected item'}
+      style={{fontFamily:F.mono, fontSize:8, fontWeight:700, letterSpacing:'.08em', padding:'1px 5px', flexShrink:0,
+        border:`1.5px solid ${item?C.ac:C.line}`, color:item?C.ac:C.tx3, background:item?'transparent':C.bg3, whiteSpace:'nowrap'}}>
+      {item ? '◧ THIS ITEM' : '▦ PORTFOLIO'}
+    </span>
+  );
+}
 // ───────────── StageSection — numbered band for single-scroll stages (handoff v2 Part 2) ──
-function StageSection({ step, title, sub, right, children }){
+function StageSection({ step, title, sub, right, scope, children }){
   return (
     <section style={{marginBottom:18}}>
       <div style={{display:'flex', alignItems:'center', gap:11, marginBottom:10}}>
         {step!=null && <span style={{fontFamily:F.disp, fontSize:13, fontWeight:900, color:C.onAc, background:C.ac, border:`2px solid ${C.line}`, width:26, height:26, display:'grid', placeItems:'center', flexShrink:0}}>{step}</span>}
         <div style={{minWidth:0}}>
-          <div style={{fontFamily:F.disp, fontSize:14, fontWeight:900, letterSpacing:'.03em', textTransform:'uppercase'}}>{title}</div>
+          <div style={{display:'flex', alignItems:'center', gap:7, flexWrap:'wrap'}}>
+            <span style={{fontFamily:F.disp, fontSize:14, fontWeight:900, letterSpacing:'.03em', textTransform:'uppercase'}}>{title}</span>
+            <ScopeBadge scope={scope}/>
+          </div>
           {sub && <div style={{fontFamily:F.mono, fontSize:9.5, color:C.tx3, marginTop:1}}>{sub}</div>}
         </div>
         <div style={{flex:1, height:2, background:C.line, marginLeft:4}}/>
@@ -464,10 +528,14 @@ function PrereqNote({ children, onNav, go, goLabel }){
 
 // ───────────── SolverNetwork — ONE graph, 16 engines in 5 family lanes (handoff v2 §1.3) ──
 // Rendered identically by Home and Console (delete the two divergent drawings).
-function SolverNetwork({ onNav, sel, onSelect, height }){
+function SolverNetwork({ onNav, sel, onSelect, height, freshness, liveObj }){
   const fams = M.solverFamilies;
   const accentMap = { a2:C.a2, a3:C.a3, a4:C.a4, gn:C.gn, ink:C.ink };
   const stCol = { done:C.gn, running:C.ac, queued:C.tx3, idle:C.tx3 };
+  // OBS-1: when a live `freshness` map is supplied (id→fresh|stale|never|untracked),
+  // colour the node strip from REAL solve state instead of the seed `status` field —
+  // the headline fabric otherwise lies about which engines have actually run.
+  const FRESH_COL = { fresh:C.gn, stale:C.a4, never:C.tx3, untracked:C.line2 };
   const colW = 156, nodeW = 132, nodeH = 44, gapY = 13, headY = 30, padX = 12;
   // group engines by family, compute positions
   const byFam = fams.map(f => M.solvers.filter(s=>s.fam===f.id));
@@ -510,12 +578,14 @@ function SolverNetwork({ onNav, sel, onSelect, height }){
       {M.solverEdges.map(([a,b])=>edge(a,b))}
       {/* nodes */}
       {M.solvers.map(s=>{ const p=pos[s.id]; if(!p) return null; const on = sel===s.id;
+        const stripColor = freshness ? (FRESH_COL[freshness[s.id]||'never']) : stCol[s.status];
+        const objText = freshness ? ((liveObj && liveObj[s.id]) || '—') : s.obj;   // live result or honest dash, never the seed obj
         return (
           <g key={s.id} style={{cursor:'pointer'}} onClick={()=>{ onSelect && onSelect(s.id); onNav && !onSelect && onNav(s.go); }}>
             <rect x={p.x} y={p.y} width={nodeW} height={nodeH} fill={on?C.ink:C.paper} stroke={on?C.ac:C.line} strokeWidth={on?3:2}/>
-            <rect x={p.x} y={p.y} width="5" height={nodeH} fill={stCol[s.status]}/>
+            <rect x={p.x} y={p.y} width="5" height={nodeH} fill={stripColor}/>
             <text x={p.x+13} y={p.y+18} fontFamily={F.disp} fontWeight="800" fontSize="11" fill={on?C.paper:C.tx}>{s.name}</text>
-            <text x={p.x+13} y={p.y+32} fontFamily={F.mono} fontSize="8" fill={on?C.ac:C.tx3}>{s.engine} · {s.obj}</text>
+            <text x={p.x+13} y={p.y+32} fontFamily={F.mono} fontSize="8" fill={on?C.ac:C.tx3}>{s.engine} · {objText}</text>
           </g>
         );
       })}
@@ -609,15 +679,17 @@ function PlanningSpine({ onNav }){
 
 // ───────────── Provenance — the BI trust atom (app_v2 trust layer) ──
 // Every figure can declare WHERE it came from, so no number on screen is
-// unattributable. Four kinds: input (you typed/imported it), derived
+// unattributable. Five kinds: input (you typed/imported it), derived
 // (computed from other fields), solved (an optimisation output), external
-// (an outside source — RBI FX, an uploaded forecast). `asOf` stamps when;
-// `stale` flags a solved/derived value whose inputs changed since.
+// (an outside source — RBI FX, an uploaded forecast), seed (an illustrative
+// default — NOT your data and NOT a solve, so it never reads green/solved).
+// `asOf` stamps when; `stale` flags a solved/derived value whose inputs changed.
 const _PROV = {
   input:    { i:'⌨', l:'INPUT',    c:C.a2, t:'entered by you or imported' },
   derived:  { i:'ƒ', l:'DERIVED',  c:C.a3, t:'computed from other fields' },
   solved:   { i:'⚙', l:'SOLVED',   c:C.gn, t:'output of an optimisation run' },
   external: { i:'↧', l:'EXTERNAL', c:C.a4, t:'imported from an outside source' },
+  seed:     { i:'◇', l:'SEED',     c:C.tx3, t:'illustrative seed default — not your data and not a solve' },
 };
 function Provenance({ kind='solved', asOf, run, stale, style }){
   const m = _PROV[kind] || _PROV.solved;
@@ -649,6 +721,116 @@ function StaleMark({ since, onNav, go }){
       <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, color:C.a4, letterSpacing:'.08em'}}>⚠ STALE</span>
       <span style={{fontFamily:F.body, fontSize:11, color:C.tx2, flex:1}}>Inputs changed{since?` ${since}`:''} since this was last solved — re-run to trust these numbers.</span>
       {go && <button onClick={()=>onNav&&onNav(go)} style={{fontFamily:F.mono, fontSize:9.5, fontWeight:700, color:C.a2, background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', whiteSpace:'nowrap'}}>re-solve →</button>}
+    </div>
+  );
+}
+
+// ───────────── SeedFence — loud "illustrative seed, NOT a live solve" band (R2 · gate ①) ──
+// The quiet Provenance·external·seed chip is right for ONE figure; a whole tab of demo
+// numbers (Finance·Cash, Buy-vs-Lease, FX VaR, Scenarios·Cost) needs a band a first-time
+// user cannot miss in <2 s — the §3.2 guardrail "a seed must never read as a solve."
+// States the numbers are illustrative and points at what to run for the real ones.
+function SeedFence({ children, what, onNav, go, goLabel }){
+  return (
+    <div style={{display:'flex', alignItems:'center', gap:10, padding:'9px 12px', border:`2px solid ${C.a4}`, borderLeft:`5px solid ${C.a4}`, background:'color-mix(in srgb,var(--a4) 9%,transparent)', marginBottom:12}}>
+      <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, color:C.a4, letterSpacing:'.08em', whiteSpace:'nowrap'}}>◇ ILLUSTRATIVE</span>
+      <span style={{fontFamily:F.body, fontSize:11.5, color:C.tx2, flex:1, lineHeight:1.4}}>{children || what || 'Seed figures for layout — not the output of a solve. Run the engine to replace them with your numbers.'}</span>
+      {go && <button onClick={()=>onNav&&onNav(go)} style={{fontFamily:F.mono, fontSize:9.5, fontWeight:700, color:C.a2, background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', whiteSpace:'nowrap'}}>{goLabel||'solve →'}</button>}
+    </div>
+  );
+}
+
+// ───────────── PreviewTag — honest marker for an intentionally inert control (R3 · gate ③) ──
+// The honest-affordance rule (P6): no live affordance unless wired. Where a control is
+// shown for shape but not yet wired, it renders `disabled` AND carries this tag so the
+// dead state is explained, never mysterious. kind: 'preview' (wiring pending),
+// 'readonly' (derived/solved elsewhere), 'redirect' (its real home is another tab).
+function PreviewTag({ kind='preview', where }){
+  const m = {
+    preview:  { l:'PREVIEW',         t:'shown for shape — not wired to a solve yet' },
+    readonly: { l:'READ-ONLY',       t:'derived/solved elsewhere — not editable here' },
+    redirect: { l:'EDIT ELSEWHERE',  t: where ? ('set this on '+where) : 'set this on its home tab' },
+  }[kind] || { l:'PREVIEW', t:'' };
+  return (
+    <span title={m.t} style={{
+      display:'inline-flex', alignItems:'center', gap:4, padding:'1px 5px', border:`1.5px dashed ${C.tx3}`,
+      background:C.bg3, fontFamily:F.mono, fontSize:8, fontWeight:700, letterSpacing:'.06em', color:C.tx3,
+      whiteSpace:'nowrap', cursor:'help',
+    }}>{m.l}{kind==='redirect'&&where?` · ${where}`:''}</span>
+  );
+}
+
+// ───────────── Lineage — the "⛓ lineage" hook (P1 anchor for R1) ──
+// The dependency chain exists in code (SOLVE_DEPS / markStale) but is invisible. This is
+// the UI hook for it: a dot beside a value's Provenance that opens "what feeds this / what
+// this feeds". Phase 1 ships the HOOK (callers pass what they know, or nothing → an honest
+// placeholder); Phase 2's parameter registry will resolve `param` against the real
+// dependency map so this popover and the stale-cascade tell the same story.
+function Lineage({ from, feeds, param, note }){
+  const [open, setOpen] = useState(false);
+  const has = (from && from.length) || (feeds && feeds.length);
+  return (
+    <span style={{position:'relative', display:'inline-block'}}>
+      <span onClick={()=>setOpen(o=>!o)} title="where this number comes from / goes" style={{
+        cursor:'pointer', width:14, height:14, display:'inline-grid', placeItems:'center',
+        border:`1.5px solid ${C.line2}`, borderRadius:'50%', fontFamily:F.mono, fontSize:9,
+        fontWeight:700, background: open?C.ac:C.bg3, color:C.tx2, lineHeight:1,
+      }}>⛓</span>
+      {open && (
+        <div style={{
+          position:'absolute', top:18, left:0, zIndex:45, width:236, background:C.paper,
+          border:`2px solid ${C.line}`, boxShadow:`5px 5px 0 ${C.ink}`, padding:'9px 11px',
+          fontFamily:F.body, fontSize:11, lineHeight:1.5, color:C.tx,
+        }}>
+          {has ? (
+            <>
+              {from && from.length>0 && <><div style={{fontFamily:F.mono, fontSize:8, letterSpacing:'.12em', color:C.tx3, marginBottom:3}}>FED BY</div><div style={{marginBottom:7, color:C.tx2}}>{from.join(' · ')}</div></>}
+              {feeds && feeds.length>0 && <><div style={{fontFamily:F.mono, fontSize:8, letterSpacing:'.12em', color:C.tx3, marginBottom:3}}>FEEDS</div><div style={{color:C.a2}}>{feeds.join(' · ')}</div></>}
+            </>
+          ) : (
+            <div style={{color:C.tx3, fontStyle:'italic'}}>{note || 'Full dependency map arrives in the governance pass (Phase 2): this number’s single home and every consumer will be listed here.'}</div>
+          )}
+        </div>
+      )}
+    </span>
+  );
+}
+
+// ───────────── ParamRegistry — the governed-parameter registry (P2 · governance) ──
+// The single inventory of every governed input: live value, provenance (seed vs your
+// override), the stale-cascade TOKEN it travels on (the SAME token SOLVE_DEPS uses, so
+// the registry and the cascade tell ONE story), what it feeds, and a jump to its editor.
+// Built ON the P1 contract — nothing here is faked: value + provenance are read LIVE from
+// state by the caller; an un-edited param reads 'seed', never a phantom solve. rows[] =
+// { group, param, value, seed, prov:'seed'|'override'|'derived'|'solved', token, feeds:[],
+//   from:[], editTab, editLabel }.
+function ParamRegistry({ rows, onNav }){
+  const groups = [];
+  (rows||[]).forEach(r=>{ let g=groups.find(x=>x.name===r.group); if(!g){ g={name:r.group, items:[]}; groups.push(g); } g.items.push(r); });
+  const provTone = { seed:'w', override:'b', derived:'v', solved:'g' };
+  const GTC = '1.5fr 0.9fr auto 1.2fr auto';
+  return (
+    <div style={{border:`2px solid ${C.line}`, background:C.paper}}>
+      <div style={{display:'grid', gridTemplateColumns:GTC, gap:8, fontFamily:F.mono, fontSize:8, letterSpacing:'.1em', color:C.tx3, background:C.bg3, borderBottom:`2px solid ${C.line}`, padding:'5px 11px'}}>
+        <span>PARAMETER · TOKEN</span><span>VALUE</span><span>PROVENANCE</span><span>FEEDS</span><span>EDIT</span>
+      </div>
+      {groups.map((g,gi)=>(
+        <div key={gi}>
+          <div style={{fontFamily:F.disp, fontSize:9.5, fontWeight:800, textTransform:'uppercase', letterSpacing:'.06em', color:C.tx2, background:C.bg2, padding:'4px 11px', borderBottom:`1px solid ${C.line2}`}}>{g.name}</div>
+          {g.items.map((r,ri)=>(
+            <div key={ri} style={{display:'grid', gridTemplateColumns:GTC, gap:8, alignItems:'center', padding:'7px 11px', borderBottom:`1px solid ${C.line2}`}}>
+              <span style={{fontFamily:F.body, fontSize:11.5, color:C.tx}}>{r.param}{r.token && <span style={{marginLeft:6, fontFamily:F.mono, fontSize:8, color:C.tx3}} title="stale-cascade token — the dependency key SOLVE_DEPS uses for this input">·{r.token}</span>}</span>
+              <span className="num" style={{fontFamily:F.disp, fontSize:12, fontWeight:700, color:C.tx}}>{r.value}</span>
+              <span style={{display:'flex', alignItems:'center', gap:5}}><Tag c={provTone[r.prov]||'w'}>{r.prov}</Tag>{r.prov==='override' && r.seed!=null && <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>seed {r.seed}</span>}</span>
+              <span style={{display:'flex', alignItems:'center', gap:5}}>
+                <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>{(r.feeds||[]).length} solve{(r.feeds||[]).length===1?'':'s'}</span>
+                {(r.feeds||[]).length>0 && <Lineage feeds={r.feeds} from={r.from}/>}
+              </span>
+              <span>{r.editTab && <button onClick={()=>onNav&&onNav(r.editTab)} style={{cursor:'pointer', border:`1.5px solid ${C.ac}`, background:'transparent', color:C.ac, fontFamily:F.mono, fontSize:8.5, fontWeight:700, padding:'2px 7px', whiteSpace:'nowrap'}}>{r.editLabel||'edit →'}</button>}</span>
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
@@ -982,6 +1164,7 @@ Object.assign(window, {
   useActiveItem, ItemSelector, Reading, StageSection, PrereqNote, SolverNetwork,
   useProfile, GateNote, MethodTag, SolverIO, PlanningSpine,
   Provenance, AsOf, StaleMark, SolverInput, StageContext,
+  SeedFence, PreviewTag, Lineage, ParamRegistry,
   ScopeBanner, ActivityLog, SolverExplain, OnboardingWizard,
   ModelIO, ReportExport,
 });

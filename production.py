@@ -381,16 +381,34 @@ def solve_production(data):
     # 40 hrs/wk regular per worker is the assumed baseline; OT vars (capped per-line) ride on top.
     if labor_cost_mode == 'hourly' and wf_hourly_headcount_cap > 0:
         org_reg_hrs_per_period = wf_hourly_headcount_cap * 40.0
+        # G-P4 — resolve the per-(SKU,line) cycle from EITHER the line's cycle_time_by_sku_min OR
+        # the product routing (the real payload uses routing), so the labor cap actually binds for
+        # routed products. Mirrors _route_cap's bottleneck = max op cycle on this line. Used ONLY
+        # here (cap>0), so the routing path stays byte-identical when no cap is set.
+        def _labor_cycle_min(l, k):
+            cm = _cycle_min_by_sku(l, k)
+            if cm:
+                return cm
+            line_id = lines[l].get('id')
+            cands = [float(op.get('cycleTimeMin', op.get('cycle_time_min', 0)) or 0)
+                     for op in (products[k].get('routing') or []) if op.get('line_id') == line_id]
+            cands = [c for c in cands if c > 0]
+            return max(cands) if cands else None
         for t in range(T):
             terms = []
             for k in range(n_prod):
                 for l in range(n_lines):
-                    cm = _cycle_min_by_sku(l, k)
+                    cm = _labor_cycle_min(l, k)
                     if cm is None or cm <= 0:
                         continue
                     terms.append((cm / 60.0) * x[k, l, t])
             if terms:
-                prob += pulp.lpSum(terms) <= org_reg_hrs_per_period, f"OrgLaborHrs_{t}"
+                # G-P4 — labor consumed ≤ regular labor budget (headcount × 40 h) PLUS overtime hours.
+                # OT relaxes the cap (mirrors the per-line LineCapHrs constraint), so a TIGHT headcount
+                # forces OT up to meet the hard demand rather than going straight to infeasible; with OT
+                # also capped (wf_ot_cap_hrs / per-line legal cap) it then binds. Default-off (cap=0).
+                prob += pulp.lpSum(terms) <= org_reg_hrs_per_period + pulp.lpSum(
+                    ot[l, t] for l in range(n_lines)), f"OrgLaborHrs_{t}"
 
     # R15 / Phase 3 · D-OT-envelope — org-wide weekly OT envelope.
     # Bound: Σ_l ot[l,t] ≤ wf_ot_cap_hrs for every period t. Stays in addition to per-line legal cap.

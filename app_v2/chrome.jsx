@@ -3,26 +3,35 @@
 // Themeable via data-theme on <html>. Renders active stage as children.
 // ──────────────────────────────────────────────────────────────────────
 
-// ── pipeline ribbon (P6): solver spine, doubles as nav ──
-// LIVE: the 6 stages map 1:1 onto the real LOOP_STEPS solve keys, so each dot and
-// value reflects the cross-stage solve cache (solveResults) + freshness (solves) —
-// done / stale / not-run. No hardcoded statuses or values; an unsolved stage reads
-// "—" and goes grey. Subscribes to the store so a re-plan animates the whole ribbon.
+// ── pipeline ribbon (P6 / Ph3 IA): a FRESHNESS STRIP, not a second nav ──
+// LIVE: the 6 dots map 1:1 onto the real LOOP_STEPS solve keys, so each dot and value
+// reflect the cross-stage solve cache (solveResults) + freshness (solves) — done /
+// stale / not-run. No hardcoded statuses or values; an unsolved stage reads "—" and
+// goes grey. Subscribes to the store so a re-plan animates the whole ribbon.
+//   Ph3 (R4 — one nav vocabulary): the strip is demoted to a STATUS bar whose jump
+//   targets use the RAIL's page vocabulary (`page` = the M.stages name of `go`), NOT a
+//   second taxonomy (the old DEMAND/PROCURE/PRODUCE/CAPITAL/RISK labels competed with
+//   the rail's Demand/Sourcing/Production/Plan/Scenarios). The solve PHASE/method is
+//   kept as a thin sub so the spine's meaning survives — e.g. two dots open Plan (S&OP
+//   aggregate + capital dual), which is honest: both solves surface on the Plan page.
 const _RIBBON_STAGES = [
-  { key:'forecast',    stage:'DEMAND',  sub:'forecast', go:'demand',
+  { key:'forecast',    phase:'forecast',     go:'demand',
     val:r=>`${(r.products||[]).length||'—'} SKUs` },
-  { key:'aggregate',   stage:'PLAN',    sub:'S&OP',     go:'plan',
+  { key:'aggregate',   phase:'S&OP',         go:'plan',
     val:r=>r.strategy?String(r.strategy):'solved' },
-  { key:'procurement', stage:'PROCURE', sub:'MILP',     go:'sourcing',
+  { key:'procurement', phase:'procure·MILP', go:'sourcing',
     val:r=>`${(r.materials||[]).length||0} parts` },
-  { key:'production',  stage:'PRODUCE', sub:'schedule', go:'production',
+  { key:'production',  phase:'schedule',     go:'production',
     val:r=>`${(r.gantt||[]).length||0} runs` },
-  { key:'linecap',     stage:'CAPITAL', sub:'₹ dual',   go:'plan',
+  { key:'linecap',     phase:'capital dual', go:'plan',
     val:r=>`${(r.lines||[]).filter(l=>l.binding).length} binding` },
-  { key:'montecarlo',  stage:'RISK',    sub:'CVaR',     go:'scenarios',
+  { key:'montecarlo',  phase:'risk·CVaR',    go:'scenarios',
     val:r=>r.avg_fill!=null?`${r.avg_fill}% fill`:'solved' },
 ];
-function PipelineRibbon({ onNav }) {
+// the page label every jump shows comes from the rail (M.stages), so the ribbon and the
+// rail can never drift to two names for the same destination.
+const _ribbonPage = (go)=>{ const s=(M.stages||[]).find(x=>x.id===go); return s?s.name:go; };
+function PipelineRibbon({ active, onNav }) {
   const { state:sr }     = useStore(s=>s.solveResults||{});
   const { state:solves } = useStore(s=>s.solves||{});
   const stColor = { done:C.gn, stale:C.a4, idle:C.tx3 };
@@ -31,8 +40,8 @@ function PipelineRibbon({ onNav }) {
   return (
     <div style={{display:'flex', alignItems:'stretch', borderBottom:`2px solid ${C.line}`, background:C.bg2}}>
       <div style={{display:'flex', flexDirection:'column', justifyContent:'center', gap:1, padding:'0 14px', borderRight:`2px solid ${C.line}`, background:C.ink, color:C.paper}}>
-        <span style={{fontFamily:F.disp, fontSize:10, fontWeight:800, letterSpacing:'.1em', whiteSpace:'nowrap'}}>ONE PIPELINE · {solvedN}/{_RIBBON_STAGES.length} SOLVED</span>
-        <span style={{fontFamily:F.mono, fontSize:7.5, color: staleN?C.a4:C.ac, letterSpacing:'.04em', whiteSpace:'nowrap'}}>{staleN?`${staleN} stale — re-plan from Home`:'live solve cache · click a stage'}</span>
+        <span style={{fontFamily:F.disp, fontSize:10, fontWeight:800, letterSpacing:'.1em', whiteSpace:'nowrap'}}>SOLVE FRESHNESS · {solvedN}/{_RIBBON_STAGES.length} FRESH</span>
+        <span style={{fontFamily:F.mono, fontSize:7.5, color: staleN?C.a4:C.ac, letterSpacing:'.04em', whiteSpace:'nowrap'}}>{staleN?`${staleN} stale — re-plan from Home`:'planning-spine status · jump to its page'}</span>
       </div>
       <div style={{display:'flex', flex:1, minWidth:0}}>
         {_RIBBON_STAGES.map((p,i)=>{
@@ -40,18 +49,20 @@ function PipelineRibbon({ onNav }) {
           const st     = solves[p.key] || {};
           const status = !res ? 'idle' : (st.stale ? 'stale' : 'done');
           const val    = res ? p.val(res) : '—';
+          const page   = _ribbonPage(p.go);
+          const onPage = active===p.go;
           return (
-            <button key={p.key} onClick={()=>onNav(p.go)} title={status==='stale'?'stale — inputs changed since last solve':status==='done'?'fresh':'not solved yet'} style={{
+            <button key={p.key} onClick={()=>onNav(p.go)} title={`${page} — ${status==='stale'?'stale (inputs changed since last solve)':status==='done'?'fresh':'not solved yet'} · click to open`} style={{
               flex:1, minWidth:0, border:'none', borderRight: i<_RIBBON_STAGES.length-1?`1px solid ${C.line2}`:'none',
-              background:'transparent', cursor:'pointer', padding:'7px 10px', display:'flex', alignItems:'center', gap:9, textAlign:'left',
+              background: onPage?C.bg3:'transparent', cursor:'pointer', padding:'7px 10px', display:'flex', alignItems:'center', gap:9, textAlign:'left',
             }}>
               <span style={{
                 width:9, height:9, flexShrink:0, background:stColor[status], border:`1.5px solid ${C.line}`,
               }}/>
               <span style={{minWidth:0}}>
                 <span style={{display:'flex', alignItems:'center', gap:6}}>
-                  <span style={{fontFamily:F.disp, fontSize:11, fontWeight:800, letterSpacing:'.03em'}}>{p.stage}</span>
-                  <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>{p.sub}</span>
+                  <span style={{fontFamily:F.disp, fontSize:11, fontWeight:800, letterSpacing:'.03em', textTransform:'uppercase'}}>{page}</span>
+                  <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>{p.phase}</span>
                 </span>
                 <span className="num" style={{fontFamily:F.mono, fontSize:10, color: status==='idle'?C.tx3:status==='stale'?C.a4:C.tx, fontWeight:600}}>{val}</span>
               </span>
@@ -154,7 +165,7 @@ function VersionMenu() {
                 <div style={{fontFamily:F.body, fontSize:11, color:C.tx2, lineHeight:1.35}}>{v.note}</div>
                 <div style={{display:'flex', alignItems:'center', gap:8}}>
                   <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>by {v.who}</span>
-                  {i>0 && <button style={{marginLeft:'auto', fontFamily:F.mono, fontSize:8.5, fontWeight:700, color:C.a2, background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline'}}>restore</button>}
+                  {i>0 && <span title="Version restore is not wired yet — the version trail is read-only for now." style={{marginLeft:'auto', fontFamily:F.mono, fontSize:8.5, fontWeight:700, color:C.tx3, cursor:'not-allowed'}}>restore (soon)</span>}
                 </div>
               </div>
             ))}
@@ -189,10 +200,10 @@ function Masthead({ theme, onTheme, onNav }) {
       <div style={{padding:'9px 16px', borderLeft:`2px solid ${C.line}`, display:'flex', alignItems:'center', gap:12}}>
         <ThemeSwitch theme={theme} onTheme={onTheme}/>
         <VersionMenu/>
-        <button onClick={()=>onNav&&onNav('reference')} title="Learning Lab & SAP reference" style={{
+        <button onClick={()=>onNav&&onNav('reference')} title="Reference — Learning Lab, SAP map & open API (also in the rail under LEARN)" style={{
           fontFamily:F.mono, fontSize:9.5, fontWeight:700, letterSpacing:'.04em', padding:'3px 8px',
           border:`1.5px solid ${C.line}`, background:C.paper, color:C.tx, cursor:'pointer',
-        }}>❓ Learn</button>
+        }}>❓ Reference</button>
         <span style={{fontFamily:F.mono, fontSize:10, fontWeight:700, display:'flex', alignItems:'center', gap:8}}>
           <span style={{border:`1.5px solid ${C.line}`, padding:'2px 6px'}}>⌘K</span>
           {M.updated.split('·')[1]}
@@ -221,7 +232,7 @@ function Chrome({ active, onNav, theme, onTheme, children }) {
   return (
     <div style={{width:'100vw', height:'100vh', display:'flex', flexDirection:'column', overflow:'hidden', background:C.bg, color:C.tx}}>
       <Masthead theme={theme} onTheme={onTheme} onNav={onNav}/>
-      <PipelineRibbon onNav={onNav}/>
+      <PipelineRibbon active={active} onNav={onNav}/>
       <div style={{flex:1, minHeight:0, display:'flex'}}>
         <NavRail active={active} onNav={onNav}/>
         <main style={{flex:1, minWidth:0, overflow:'auto', background:C.bg}}>{children}</main>

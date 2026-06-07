@@ -92,7 +92,7 @@ function StageDemand({ onNav }) {
     <div>
       <StageHeader n="04" title="Demand Planning" kicker="Pick the grain (week is the smooth default; day exposes the spikes) · run the model competition · read ABC/XYZ · override — all for the selected item"
         right={<div style={{display:'flex', alignItems:'center', gap:8}}>{grainToggle}<Btn kind="accent" onClick={()=>runForecast()}>{fc.solving?'⏳ Running…':'🤖 Run Forecast'}</Btn></div>}/>
-      <ItemSelector/>
+      <ItemSelector onNav={onNav}/>
       <StageContext item={item} asOf={fc.ranAt ? fc.ranAt.toLocaleString('en-IN') : null}/>
       <div style={{padding:18}}>
         <SolverExplain id="forecast"/>
@@ -105,11 +105,11 @@ function StageDemand({ onNav }) {
             <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Forecast engine: {s.msg}</div>);
           return null;
         })()}
-        <DemHistory item={item} grain={grain}/>
-        <DemImport item={item} grain={grain} onApplied={()=>runForecast()}/>
+        <DemHistory item={item} grain={grain} onNav={onNav}/>
+        <div id="demand-import"><DemImport item={item} grain={grain} onApplied={()=>runForecast()}/></div>
         <DemForecast item={item} fc={fc} grain={grain}/>
         <DemActuals item={item} fc={fc} grain={grain}/>
-        <DemModels onNav={onNav} fc={fc} item={item}/>
+        <div id="demand-leaderboard"><DemModels onNav={onNav} fc={fc} item={item}/></div>
         <DemSegment item={item} fc={fc}/>
         <DemEvents item={item} grain={grain}/>
         <DemCommit item={item} fc={fc}/>
@@ -119,16 +119,17 @@ function StageDemand({ onNav }) {
 }
 
 // ── ingestion modes (7.5) + history ENTRY grid (item × period) + low-data path ──
-function DemHistory({ item, grain }) {
+function DemHistory({ item, grain, onNav }) {
   const [mode, setMode] = useState('history');
   const { profile } = useProfile();
   const g = grain || 'daily';
+  const { imp } = useHistoryImport((item&&item.code)||'');  // D-4: is the series real (imported) or seed?
   const series = historyFor((item&&item.code)||'', g);  // W9 — reflects an imported series
   const vals = series.slice(-12);                       // last 12 buckets of the real series
   const gl = M.grainLabel(g);
   const ext = profile.externalForecast;
   return (
-    <StageSection step="1" title={`Data Ingestion · ${item?item.name:''} · by ${gl}`} sub="real shops import daily multi-SKU data — the grid below is an override tool, not the main path">
+    <StageSection step="1" scope="item" title={`Data Ingestion · ${item?item.name:''} · by ${gl}`} sub="real shops import daily multi-SKU data — the grid below is an override tool, not the main path">
       <Card icon="📥" title="How demand data gets in" badge={ext?'external forecast':'2 import targets'} badgeTone="y"
         info={{ what:'Two distinct import targets (history vs forecast) + a manual override grid.', flows:'History → model competition · Forecast → straight to Aggregate.' }}
         dev={{ comp:'IngestionPanel', props:'mode, dispatch(IMPORT)', state:'demand.source, demand.history[item][period]' }}>
@@ -159,46 +160,63 @@ function DemHistory({ item, grain }) {
         })()}
 
         {mode==='manual' && (
-        <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
-          <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10}}>
-            <thead><tr style={{background:C.ink}}>
-              <th style={{color:C.paper, textAlign:'left', padding:'6px 8px', fontSize:8.5}}>last 12 · {gl} →</th>
-              {vals.map((_,i)=><th key={i} style={{color:C.paper, textAlign:'center', padding:'6px 6px', fontSize:8.5}}>{gl.charAt(0).toUpperCase()}-{vals.length-1-i}</th>)}
-            </tr></thead>
-            <tbody>
-              <tr>
-                <td style={{padding:'5px 8px', fontWeight:700, background:C.bg3}}>{item?item.code:'—'}</td>
-                {vals.map((v,i)=>(
-                  <td key={i} style={{padding:'2px', textAlign:'center', borderLeft:`1px solid ${C.line2}`}}>
-                    <input defaultValue={v} className="num" style={{width:42, border:'none', background:'transparent', textAlign:'center', fontFamily:F.disp, fontWeight:600, fontSize:12, color:C.tx, outline:'none'}}/>
-                  </td>
-                ))}
-              </tr>
-            </tbody>
-          </table>
+        <div>
+          <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:6, fontFamily:F.mono, fontSize:8.5, color:C.tx3, lineHeight:1.45}}>
+            <PreviewTag kind="preview"/> <span>Manual cell editing isn’t wired yet — load real numbers via the <b>History</b> / <b>Forecast</b> import (above). These are the last 12 committed values, shown read-only.</span>
+          </div>
+          <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
+            <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10}}>
+              <thead><tr style={{background:C.ink}}>
+                <th style={{color:C.paper, textAlign:'left', padding:'6px 8px', fontSize:8.5}}>last 12 · {gl} →</th>
+                {vals.map((_,i)=><th key={i} style={{color:C.paper, textAlign:'center', padding:'6px 6px', fontSize:8.5}}>{gl.charAt(0).toUpperCase()}-{vals.length-1-i}</th>)}
+              </tr></thead>
+              <tbody>
+                <tr>
+                  <td style={{padding:'5px 8px', fontWeight:700, background:C.bg3}}>{item?item.code:'—'}</td>
+                  {vals.map((v,i)=>(
+                    <td key={i} className="num" style={{padding:'5px 2px', textAlign:'center', borderLeft:`1px solid ${C.line2}`, fontFamily:F.disp, fontWeight:600, fontSize:12, color:C.tx2}}>{v}</td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
         )}
-        {mode!=='manual' && (
-          <div style={{display:'flex', alignItems:'center', gap:12, padding:'16px', border:`2px dashed ${C.line2}`, background:C.paper}}>
-            <span style={{fontSize:22}}>{mode==='history'?'📄':'📈'}</span>
-            <div style={{flex:1, minWidth:0}}>
-              <div style={{fontFamily:F.disp, fontSize:12, fontWeight:800}}>Drop a {mode==='history'?'history':'forecast'} file (CSV / XLSX)</div>
-              <div style={{fontFamily:F.mono, fontSize:9, color:C.tx3, marginTop:2}}>columns: {M.ingestModes.find(m=>m.id===mode).schema}</div>
+        {/* D-3: the two import targets do OPPOSITE things, so each points at its real
+            wired path instead of an identical inert drop-zone. History → the live CSV
+            importer (step 1b). Forecast → the Setup profile flag that BYPASSES the
+            competition (it was never wired here — saying so is the honest fix). */}
+        {mode==='history' && (
+          <div style={{display:'flex', alignItems:'center', gap:12, padding:'14px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${C.a2}`, background:C.bg3}}>
+            <span style={{fontSize:20}}>📄</span>
+            <div style={{flex:1, minWidth:0, fontFamily:F.body, fontSize:11.5, color:C.tx2, lineHeight:1.45}}>
+              <b>Import real history in step 1b</b> — the wired CSV/TSV path (paste or upload a <span style={{fontFamily:F.mono, fontSize:9}}>{M.ingestModes.find(m=>m.id==='history').schema}</span> series). It feeds the live model competition. <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3}}>This card is the manual override grid — not the import target.</span>
             </div>
-            <Btn kind="primary" sm>⤓ Choose file</Btn>
+            <Btn kind="primary" sm onClick={()=>{ const el=document.getElementById('demand-import'); if(el) el.scrollIntoView({behavior:'smooth', block:'start'}); }}>↓ Go to import (1b)</Btn>
+          </div>
+        )}
+        {mode==='forecast' && (
+          <div style={{display:'flex', alignItems:'center', gap:12, padding:'14px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${C.a4}`, background:C.bg3}}>
+            <span style={{fontSize:20}}>📈</span>
+            <div style={{flex:1, minWidth:0, fontFamily:F.body, fontSize:11.5, color:C.tx2, lineHeight:1.45}}>
+              <b>A supplied forecast BYPASSES the model competition</b> — the leaderboard, FVA and triggers won’t run for this item. That bypass is governed in <b>Setup → Planning Profile (External Forecast)</b>, not here, so it stays an explicit, visible choice rather than a silent file drop.
+            </div>
+            {onNav && <Btn kind="secondary" sm onClick={()=>onNav('setup')}>→ Setup profile</Btn>}
           </div>
         )}
 
         {/* data-tier note — informational only; the model competition runs from the
             🤖 Run Forecast button (top right), NOT here. No fabricated results. */}
-        {!ext && mode!=='forecast' && (
-        <div style={{marginTop:10, display:'flex', alignItems:'center', gap:10, padding:'9px 12px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${C.a4}`, background:C.bg3}}>
-          <span style={{fontFamily:F.mono, fontSize:9, fontWeight:700, color:C.a4, letterSpacing:'.1em'}}>DATA TIER</span>
-          <span style={{fontFamily:F.body, fontSize:11.5, color:C.tx2, flex:1, lineHeight:1.4}}>
-            <b>{series.length} {gl}s</b> of history at the chosen grain (day is the finest — it exposes the spikes production plans around). The live competition fits classical, ARIMA, intermittent (Croston/SBA/TSB) and — at this depth — ML/DL models, then reports the real winner in step 3.
-          </span>
-        </div>
-        )}
+        {!ext && mode!=='forecast' && (()=>{ const deep = series.length >= 24; const seedHist = !(imp && imp.grain===g);
+          return (
+          <div style={{marginTop:10, display:'flex', alignItems:'center', gap:10, padding:'9px 12px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${C.a4}`, background:C.bg3}}>
+            <span style={{fontFamily:F.mono, fontSize:9, fontWeight:700, color:C.a4, letterSpacing:'.1em'}}>DATA TIER</span>
+            <span style={{fontFamily:F.body, fontSize:11.5, color:C.tx2, flex:1, lineHeight:1.4}}>
+              <b>{series.length} {gl}s</b> of {seedHist?<span title="illustrative seed history — import your own in step 1b so the leaderboard scores on YOUR data" style={{borderBottom:`1px dotted ${C.tx3}`}}>seed (illustrative)</span>:'imported'} history at the chosen grain. The competition always fits classical, ARIMA and intermittent (Croston/SBA/TSB) models{deep?' and — at this depth — ML/DL too':'; ML/DL stay gated until there is enough history (add more in step 1b to unlock them)'}, then reports the real winner in step 3.{seedHist?' On seed history the winner’s MAPE is illustrative, not earned on your demand.':''}
+            </span>
+            {seedHist && <Tag c="w">SEED</Tag>}
+          </div>);
+        })()}
         {ext && (
           <div style={{marginTop:10, padding:'9px 12px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${C.tx3}`, background:C.bg3, fontFamily:F.body, fontSize:11.5, color:C.tx2}}>
             <b>External forecast loaded.</b> Model competition is bypassed — you drop straight at Aggregate / Profit-mix. (Set in Setup → Planning Profile.)
@@ -264,6 +282,10 @@ function PerPeriodTable({ item, fcastArr, grain, prod }) {
   // uplift attribution (baseline vs the share the promo flag is driving).
   const pi = (prod && prod.forecast_pi) || null;
   const attr = (prod && prod.promo_attribution) || null;
+  // D-7: only ML models carry a promo regressor; if the winner is promo-blind an empty
+  // attribution means "can't see promos", NOT "promo has no effect".
+  const winnerKey = prod && (prod.winner || prod.recommendation);
+  const promoAware = new Set(['random_forest','gradient_boost','xgboost','mlp','hybrid','ensemble']);
   const attrByStep = {}; if(attr && attr.periods) attr.periods.forEach(r=>{ attrByStep[r.step] = r; });
   return (
     <div style={{marginTop:12}}>
@@ -299,7 +321,12 @@ function PerPeriodTable({ item, fcastArr, grain, prod }) {
           <b>DM-B promo attribution</b> ({attr.model}): of the forecast total, <b style={{color:C.gn}}>+{Math.round(attr.promo_uplift_total).toLocaleString('en-IN')} u</b> is the promo flag's causal uplift over the no-promo baseline (winner counterfactual).
         </div>
       )}
-      {pi && <div style={{marginTop:4, fontFamily:F.mono, fontSize:9, color:C.tx3}}>DM-A band = ±1.28·σ_resid·√step (P10/P90) — the cone of forecast uncertainty the safety-stock/CVaR cards consume.</div>}
+      {promoSet.size>0 && !(attr && attr.promo_uplift_total>0) && (
+        <div style={{marginTop:6, fontFamily:F.mono, fontSize:9.5, color:C.a4, lineHeight:1.45}}>
+          <b>Promo flagged, no uplift attributed.</b> {winnerKey && !promoAware.has(winnerKey) ? `The winning model (${FCAST_MODEL_LABEL[winnerKey]||winnerKey}) has no promotion driver — promo lift can’t be attributed. An ML model (RF / Gradient Boost / XGBoost) must win to model promo effect.` : 'On this history the promo effect the engine learned is ≈0 — honest, not a bug.'}
+        </div>
+      )}
+      {pi && <div style={{marginTop:4, fontFamily:F.mono, fontSize:9, color:C.tx3}}>DM-A band = ±1.2816·σ·√step (P10/P90), σ = out-of-sample holdout error (falls back to fitted residual only when history is too short for a holdout); √step widening assumes independent per-step errors — a deliberately conservative cone. Consumed by the safety-stock / CVaR cards.</div>}
     </div>
   );
 }
@@ -312,13 +339,26 @@ function DemForecast({ item, fc, grain }) {
   const winnerKey = prod && (prod.winner || prod.recommendation);
   const winLabel = winnerKey ? (FCAST_MODEL_LABEL[winnerKey] || winnerKey).toUpperCase() : (fc&&fc.solving?'RUNNING…':'NOT RUN');
   const fcastArr = winnerForecast(res);
+  // Demand D-2: surface the winner's QUALITY here (MAPE + in/out of control) so the
+  // planner sees how good the model is BEFORE overriding — not two sections down.
+  const win = prod && Array.isArray(prod.leaderboard) ? prod.leaderboard.find(m=>m.model===winnerKey) : null;
+  const winMape = win ? win.mape : null;
+  const ooc = win ? (!!win.out_of_control || (win.tracking_signal!=null && Math.abs(win.tracking_signal)>4)) : false;
+  const goLeaderboard = ()=>{ const el = document.getElementById('demand-leaderboard'); if(el) el.scrollIntoView({behavior:'smooth', block:'start'}); };
   return (
-    <StageSection step="2" title={`Forecast & Override · by ${gl}`} sub={`${fcastArr?fcastArr.length+' '+gl+'s ahead — ':''}winning model overlaid on history; the override writes back to committed demand`}>
+    <StageSection step="2" scope="item" title={`Forecast & Override · by ${gl}`} sub={`${fcastArr?fcastArr.length+' '+gl+'s ahead — ':''}winning model overlaid on history; the override writes back to committed demand`}>
       <Grid cols={3}>
         <Card icon="📊" title="History + Forecast" badge={winLabel} badgeTone="y" span={2}
-          right={res ? <Provenance kind="solved" asOf={fc.ranAt?fc.ranAt.toLocaleTimeString():undefined}/> : undefined}
+          right={res ? <Provenance kind="solved" asOf={fc.ranAt?fc.ranAt.toLocaleTimeString():undefined}/> : <Provenance kind="seed"/>}
           info={{ what:'History with the winning model\u2019s forecast overlaid.', flows:'Forecast → S&OP aggregate & profit mix.' }}
           dev={{ comp:'ForecastChart', props:'item, forecastResults' }}>
+          {win && (
+            <div style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap', marginBottom:8, padding:'6px 10px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${ooc?C.dg:C.gn}`, background:C.bg3}}>
+              <Tag c={ooc?'r':'g'}>{ooc?'OUT OF CONTROL':'IN CONTROL'}</Tag>
+              <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>winner <b>{FCAST_MODEL_LABEL[winnerKey]||winnerKey}</b>{winMape!=null?` · holdout MAPE ${winMape.toFixed(1)}%`:''}{ooc?' — review before you override':''}</span>
+              <button onClick={goLeaderboard} style={{marginLeft:'auto', border:`1.5px solid ${C.ac}`, background:'transparent', color:C.ac, cursor:'pointer', fontFamily:F.mono, fontSize:9, fontWeight:700, padding:'2px 8px'}}>why this model? ↓ leaderboard</button>
+            </div>
+          )}
           <ForecastChart forecast={fcastArr} history={M.historyAt((item&&item.code)||'', grain||'daily')} pi={prod && prod.forecast_pi}/>
           <PerPeriodTable item={item} fcastArr={fcastArr} grain={grain||'daily'} prod={prod}/>
           <Reading formula={fcastArr?`winner = ${winLabel} (lowest holdout MAPE)`:"the curve overlays only once the live engine returns a winner"} soWhat={fcastArr?"Forecast curve is the live engine winner over this item's history — the override beside it edits a period and writes back to committed demand.":"No forecast yet — the chart shows history only; nothing is drawn for the forecast line until the engine runs."}/>
@@ -416,7 +456,7 @@ function DemActuals({ item, fc, grain }) {
   const setAct = (i,v)=> setActs(a=>{ const n=a.slice(); n[i] = v===''?'':Number(v); return n; });
   const ssm = r && r.posterior && r.posterior.safety_stock_multiplier;
   return (
-    <StageSection step="3" title="Actuals & Demand Sensing" sub="record what actually happened — the engine pattern-matches it against the baseline and can supersede the committed forecast">
+    <StageSection step="3" scope="item" title="Actuals & Demand Sensing" sub="record what actually happened — the engine pattern-matches it against the baseline and can supersede the committed forecast">
       <Card icon="📡" title="Recent actuals → sensing" badge={base?`${gl} actuals`:'run forecast first'} badgeTone={base?'y':undefined}
         right={r ? <Provenance kind="solved" asOf={sense.ranAt?sense.ranAt.toLocaleTimeString():undefined}/> : undefined}
         info={{ what:'Latest actuals pattern-matched (promo/holiday/outage/trend-break) against the baseline to sense near-term demand.', flows:'Sensed → committed demand → Sourcing/Production (closed loop).' }}
@@ -431,7 +471,7 @@ function DemActuals({ item, fc, grain }) {
           <div style={{overflowX:'auto', border:`2px solid ${C.line}`, marginBottom:10}}>
             <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10}}>
               <thead><tr style={{background:C.ink}}>
-                {acts.map((_,i)=><th key={i} style={{color:C.paper, textAlign:'center', padding:'6px 6px', fontSize:8.5}}>{gl.charAt(0).toUpperCase()}-{acts.length-i}</th>)}
+                {acts.map((_,i)=><th key={i} style={{color:C.paper, textAlign:'center', padding:'6px 6px', fontSize:8.5}} title={`${acts.length-i} ${gl}${acts.length-i>1?'s':''} ago`}>{pastLabel(grain||'daily', acts.length-i)}</th>)}
               </tr></thead>
               <tbody><tr>
                 {acts.map((v,i)=>(
@@ -467,7 +507,15 @@ function DemActuals({ item, fc, grain }) {
 // (forecast → override → sensing → lifecycle), shown two linked ways: the
 // selected item's dossier + the company rollup across every finished SKU. The
 // event log supplies provenance (what last touched each series, and when).
-const COMMIT_SRC = { forecast:'Forecast', override:'Override', replan:'Demand sensing', lifecycle:'Lifecycle', actuals:'Actuals' };
+// label map for the "Set by" provenance. forecast_commit = the planner explicitly
+// accepted the statistical winner as consensus (Demand D-1); the bare auto-forecast
+// logs NO event, so it shows as "proposed" until a commit-class action lands here.
+const COMMIT_SRC = { forecast_commit:'Forecast (accepted)', override:'Override', replan:'Demand sensing', lifecycle:'Lifecycle', npi_likemodel:'NPI prior', actuals:'Actuals' };
+// OBS-3 honesty fix: a committed series is only `solved` when it came from a real
+// optimisation (forecast / demand-sense). An Override is the planner typing — that's
+// `input`; an NPI like-model is `derived`; imported Actuals are `external`. The chip
+// must reflect HOW it was committed, not unconditionally claim "solved".
+const COMMIT_PROV = { forecast_commit:'solved', replan:'solved', override:'input', npi_likemodel:'derived', lifecycle:'derived', actuals:'external' };
 function DemCommit({ item, fc }) {
   const { state: demand } = useStore(s=>s.demand||{});
   const { events } = useEvents();
@@ -482,32 +530,42 @@ function DemCommit({ item, fc }) {
   const firmFor = (code)=>{ const o=(M.orders||[]).filter(x=>x.sku===code && x.status==='firm');
     return o.length ? o.reduce((a,b)=>a+(b.qty||0),0) : null; };
   const myS = demand[sku]; const myTot = sumOf(sku); const myEv = lastFor(sku);
+  // Demand D-1: COMMITTED = an explicit planner commit event, not just a working series.
+  const committed = isDemandCommitted(sku, events);
+  const commitForecast = ()=>{ if(!sku || myTot==null) return;
+    logEvent('forecast_commit', sku, { total: Math.round(myTot), periods: myS?myS.length:0 }); };
   const grand = finished.reduce((a,p)=>a+(sumOf(p.sku)||0),0);
   const grandFirm = finished.reduce((a,p)=>a+(firmFor(p.sku)||0),0);
-  const committedCount = finished.filter(p=>sumOf(p.sku)!=null).length;
+  const committedCount = finished.filter(p=>isDemandCommitted(p.sku, events)).length;
   return (
-    <StageSection step="7" title="Committed Demand & Consensus" sub="the one number the plant plans to — the live series you built above, per item and rolled up across every SKU with forecast-driven (MTS) and firm-order (MTO) demand side by side">
+    <StageSection step="7" scope="item" title="Committed Demand & Consensus" sub="the one number the plant plans to — the live series you built above, per item and rolled up across every SKU with forecast-driven (MTS) and firm-order (MTO) demand side by side">
       <Grid cols={2}>
-        <Card icon="✅" title={`Committed · ${item?item.name:'—'}`} badge={myTot!=null?'committed':'not committed'} badgeTone={myTot!=null?'y':'k'}
-          right={myTot!=null ? <Provenance kind="solved" asOf={myEv?new Date(myEv.ts).toLocaleString('en-IN'):undefined}/> : <Provenance kind="derived"/>}
-          info={{ what:'The committed demand series the downstream solvers read for this item, with the action that last set it.', flows:'Committed → Sourcing / Production / Console.' }}
-          dev={{ comp:'DemCommit', props:'demand[sku], events', state:'appStore.demand[sku]' }}>
+        <Card icon={committed?'✅':(myTot!=null?'📝':'✅')} title={`Committed · ${item?item.name:'—'}`} badge={committed?'committed':(myTot!=null?'proposed':'not run')} badgeTone={committed?'y':(myTot!=null?'c':'k')}
+          right={committed ? <Provenance kind={(myEv&&COMMIT_PROV[myEv.type])||'solved'} asOf={myEv?new Date(myEv.ts).toLocaleString('en-IN'):undefined}/> : <Provenance kind="derived"/>}
+          info={{ what:'The committed demand series the downstream solvers read for this item. A bare auto-forecast is a PROPOSAL (working series) until you explicitly accept or override it; the action that committed it is shown as "Set by".', flows:'Committed → Sourcing / Production / Console.' }}
+          dev={{ comp:'DemCommit', props:'demand[sku], events → isDemandCommitted', state:'appStore.demand[sku] + events[] (forecast_commit)' }}>
           {myTot==null ? (
             <div style={{padding:'16px', fontFamily:F.mono, fontSize:10.5, color:C.tx3, textAlign:'center', border:`2px dashed ${C.line2}`, background:C.bg3}}>
-              No committed series yet — run the forecast (step 2). Until then the solvers fall back to the seed annual demand spread evenly.
+              No working series yet — run the forecast (step 2). Until then the solvers fall back to the seed annual demand spread evenly.
             </div>
           ) : (<>
             <div style={{display:'flex', gap:8, marginBottom:8}}>
-              <Blk label="Committed Σ" value={`${Math.round(myTot).toLocaleString('en-IN')} u`} sub={`${myS.length} periods`} accent={C.gn}/>
-              <Blk label="Set by" value={myEv?COMMIT_SRC[myEv.type]:'Forecast'} sub={myEv?new Date(myEv.ts).toLocaleDateString('en-IN'):'—'} tone="c"/>
+              <Blk label={committed?'Committed Σ':'Proposed Σ'} value={`${Math.round(myTot).toLocaleString('en-IN')} u`} sub={`${myS.length} periods`} accent={committed?C.gn:C.a4}/>
+              <Blk label="Set by" value={committed?(myEv?COMMIT_SRC[myEv.type]:'Forecast (accepted)'):'auto-forecast'} sub={committed&&myEv?new Date(myEv.ts).toLocaleDateString('en-IN'):'not committed'} tone="c"/>
               <Blk label="Per-period avg" value={Math.round(myTot/myS.length).toLocaleString('en-IN')} sub="u" accent={C.a4}/>
             </div>
             <svg viewBox="0 0 700 50" style={{width:'100%', height:50, display:'block', border:`2px solid ${C.line}`, background:C.paper}}>
               {(()=>{ const mx=Math.max(...myS,1); const n=myS.length;
                 return myS.map((v,i)=>{ const h=Math.max(1,(v/mx)*38); const w=Math.max(2,(680/n)-2);
-                  return <rect key={i} x={10+i*(680/n)} y={44-h} width={w} height={h} fill={C.ac}/>; }); })()}
+                  return <rect key={i} x={10+i*(680/n)} y={44-h} width={w} height={h} fill={committed?C.ac:C.a4}/>; }); })()}
             </svg>
-            <Reading soWhat="This is the live committed series — overrides, demand-sensing and lifecycle shaping all write here, and the event trail above records which one set the current numbers."/>
+            {!committed && (
+              <div style={{marginTop:10, display:'flex', alignItems:'center', gap:10, padding:'8px 11px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${C.a4}`, background:C.bg3}}>
+                <span style={{fontFamily:F.body, fontSize:11, color:C.tx2, flex:1, lineHeight:1.4}}><b>Proposed, not committed.</b> This is the live auto-forecast working series — review the leaderboard (step 4), then explicitly accept it as consensus (or override / shape it above, which also commits).</span>
+                <Btn kind="primary" sm onClick={commitForecast}>✓ Commit as consensus</Btn>
+              </div>
+            )}
+            <Reading soWhat={committed?"This is the committed series — overrides, demand-sensing, lifecycle shaping and an explicit accept all write/commit here, and the event trail records which one set the current numbers.":"Downstream solvers already plan against this working series, but it is a PROPOSAL until you commit it — so the portfolio worklist and consensus count it as not-yet-committed."}/>
           </>)}
         </Card>
         <Card icon="🏢" title="All-SKU Consensus" badge={`${committedCount}/${finished.length} committed`} badgeTone="y"
@@ -520,14 +578,14 @@ function DemCommit({ item, fc }) {
                 {['SKU','Item','Committed Σ (MTS)','Firm MTO','Set by'].map((h,i)=><th key={i} style={{color:C.paper, textAlign:i>1?'right':'left', padding:'5px 8px', fontSize:8.5}}>{h}</th>)}
               </tr></thead>
               <tbody>
-                {finished.map((p,i)=>{ const t=sumOf(p.sku); const fm=firmFor(p.sku); const e=lastFor(p.sku); const me=p.sku===sku;
+                {finished.map((p,i)=>{ const t=sumOf(p.sku); const fm=firmFor(p.sku); const e=lastFor(p.sku); const cm=isDemandCommitted(p.sku, events); const me=p.sku===sku;
                   return (
                   <tr key={p.sku} style={{background: me?C.ac: i%2?C.bg3:C.paper, borderTop:`1px solid ${C.line2}`}}>
                     <td style={{padding:'4px 8px', fontWeight:700, color:me?C.onAc:C.tx2}}>{p.sku}</td>
                     <td style={{padding:'4px 8px', color:me?C.onAc:C.tx2}}>{p.name}</td>
-                    <td className="num" style={{padding:'4px 8px', textAlign:'right', fontWeight:700, fontFamily:F.disp, fontSize:12, color: me?C.onAc:(t!=null?C.tx:C.tx3)}}>{t!=null?Math.round(t).toLocaleString('en-IN'):'—'}</td>
+                    <td className="num" style={{padding:'4px 8px', textAlign:'right', fontWeight:700, fontFamily:F.disp, fontSize:12, color: me?C.onAc:(t!=null?(cm?C.tx:C.a4):C.tx3)}}>{t!=null?Math.round(t).toLocaleString('en-IN'):'—'}</td>
                     <td className="num" style={{padding:'4px 8px', textAlign:'right', fontWeight:700, fontFamily:F.disp, fontSize:12, color: me?C.onAc:(fm!=null?C.a2:C.tx3)}}>{fm!=null?Math.round(fm).toLocaleString('en-IN'):'—'}</td>
-                    <td style={{padding:'4px 8px', textAlign:'right', fontSize:9, color:me?C.onAc:C.tx3}}>{t!=null?(e?COMMIT_SRC[e.type]:'Forecast'):'not run'}</td>
+                    <td style={{padding:'4px 8px', textAlign:'right', fontSize:9, color:me?C.onAc:(t==null?C.tx3:(cm?C.gn:C.a4))}}>{t==null?'not run':(cm?(e?COMMIT_SRC[e.type]:'accepted'):'proposed')}</td>
                   </tr>
                 );})}
                 <tr style={{background:C.ink}}>
@@ -539,8 +597,8 @@ function DemCommit({ item, fc }) {
               </tbody>
             </table>
           </div>
-          <Reading formula="MTS committed = Σ each forecast/override series · MTO firm = Σ firm orders in the order book (status='firm')"
-            soWhat={committedCount<finished.length ? `${finished.length-committedCount} SKU(s) have no committed series yet — run their forecast so the consensus reflects the whole portfolio. Firm MTO orders (₹-blue) are already contracted backlog independent of the forecast.` : 'Every finished SKU has a committed MTS number; the firm MTO column (₹-blue) is contracted backlog already on the books — together they are the full consensus demand the S&OP and capital plans consume.'}/>
+          <Reading formula="committed = a SKU the planner explicitly accepted/overrode (event-logged) · MTO firm = Σ firm orders (status='firm')"
+            soWhat={committedCount<finished.length ? `${finished.length-committedCount} SKU(s) are still PROPOSED (auto-forecast, amber) — open each and accept or override it so the consensus is a real human commitment, not a machine default. Firm MTO orders (₹-blue) are contracted backlog independent of the forecast.` : 'Every finished SKU has been explicitly committed by the planner; the firm MTO column (₹-blue) is contracted backlog already on the books — together they are the full consensus demand the S&OP and capital plans consume.'}/>
         </Card>
       </Grid>
     </StageSection>
@@ -579,12 +637,12 @@ function DemModels({ onNav, fc, item }) {
   const env = res && res.env;
   const envOff = env ? [!env.statsmodels&&'Holt-Winters/ARIMA', !env.sklearn&&'ML (RF/GBM/MLP)', !env.xgboost&&'XGBoost'].filter(Boolean) : [];
   if(gate.demandModels) return (
-    <StageSection step="4" title="Model Competition" sub="bypassed — you import a finished forecast">
+    <StageSection step="4" scope="item" title="Model Competition" sub="bypassed — you import a finished forecast">
       <GateNote onNav={onNav}>An <b>external forecast</b> is loaded, so the model competition is skipped — the imported numbers flow straight to Aggregate / Profit-mix.</GateNote>
     </StageSection>
   );
   return (
-    <StageSection step="4" title="Model Competition" sub="every model the live engine actually ran on YOUR history — MAPE, RMSE, MAE, fit status">
+    <StageSection step="4" scope="item" title="Model Competition" sub="every model the live engine actually ran on YOUR history — MAPE, RMSE, MAE, fit status">
       <Card icon="🏆" title="Forecast Leaderboard" badge={lb?`${lb.length} models · live`:(fc&&fc.solving?'running…':'idle')} badgeTone="k"
         info={{ what:'Ranked competition incl. intermittent (Croston/SBA/TSB), each scored on a held-back tail of your own history.', flows:'Winner → committed forecast.' }}
         right={lb ? <Provenance kind="solved" asOf={fc.ranAt?fc.ranAt.toLocaleTimeString():undefined}/> : undefined}
@@ -682,6 +740,12 @@ function DemHorizon({ prod, res }){
           <Blk label="Coherent total / horizon" value={`${Math.round(rec.total_horizon).toLocaleString('en-IN')} u`} tone="y"/>
         </KpiRow>
         <div style={{marginTop:4, fontFamily:F.mono, fontSize:9, color:C.tx3}}>{rec.note}</div>
+        {/* D-6: be honest about what this figure is in the per-SKU view. */}
+        {(rec.n_series||1) <= 1 && (
+          <div style={{marginTop:6, fontFamily:F.mono, fontSize:9, color:C.a4, lineHeight:1.45}}>
+            Single-SKU run — bottom-up reconciliation is meaningful across the <b>portfolio</b>, not one series. The committed <b>company total</b> lives in Consensus (step 7) and reflects your overrides; this figure is the winner’s raw bottom-up sum and does <b>not</b> re-incorporate manual overrides.
+          </div>
+        )}
       </div>}
     </Card>
   );
@@ -713,11 +777,11 @@ function TriggerMonitor({ winner, item }) {
       <div style={{padding:'16px', fontFamily:F.mono, fontSize:10.5, color:C.tx3, textAlign:'center', border:`2px dashed ${C.line2}`, background:C.bg3}}>Run the forecast — the monitor reads the winner’s live error metrics.</div>
     </Card>
   );
-  const target = (item && item.mape) || 15;                  // this SKU's accuracy target (%)
+  const target = (item && item.mape) || 15;                  // D-9: this SKU's SEED accuracy target (%), not a governed SLA
   const mape = winner.mape, bias = winner.bias, ts = winner.tracking_signal, ooc = winner.out_of_control;
   const checks = [
     { k:'MAPE vs target', v: mape!=null?`${mape.toFixed(1)}% / ${target}%`:'—', bad: mape!=null && mape > target + 5,
-      note:`accuracy ${mape!=null && mape>target+5?'breaches':'within'} the ${target}% target (+5pt tolerance)` },
+      note:`accuracy ${mape!=null && mape>target+5?'breaches':'within'} the ${target}% seed target (+5pt tol) — a seed default, not a governed SLA` },
     { k:'Bias (signed)', v: bias!=null?bias.toFixed(2):'—', bad: bias!=null && Math.abs(bias) > Math.max(1, target*0.3),
       note:`${bias!=null && bias>0?'over':'under'}-forecasting drift` },
     { k:'Tracking signal', v: ts!=null?ts.toFixed(2):'—', bad: (ts!=null && Math.abs(ts) > 4) || !!ooc,
@@ -785,6 +849,16 @@ function FVACard({ lb, winnerKey }) {
 
 function DemSegment({ item, fc }) {
   const cell=(n)=> n===0?C.bg3 : n===1?C.ac : C.ink;
+  // D-8: the 9-box reads STATIC seed abc/xyz letters. Surface the engine's LIVE
+  // intermittence classification for the selected item and flag where it disagrees,
+  // so the seed routing can't silently prescribe the wrong forecast family.
+  const prod = fc && fc.result && fc.result.products && fc.result.products[0];
+  const intc = prod && prod.intermittence;       // { label, adi, cv2 }
+  const liveWinner = prod && (prod.winner || prod.recommendation);
+  const selXyz = item && item.xyz;
+  const intToXyz = { smooth:'X', steady:'X', erratic:'Y', variable:'Y', intermittent:'Z', lumpy:'Z' };
+  const liveXyz = intc && intc.label ? intToXyz[String(intc.label).toLowerCase()] : null;
+  const disagree = !!(liveXyz && selXyz && liveXyz!==selXyz);
   // derive the 9-box counts from the actual finished products (was a static table).
   const abcxyz = ['A','B','C'].map(a=>{
     const r={abc:a, X:0, Y:0, Z:0};
@@ -792,11 +866,11 @@ function DemSegment({ item, fc }) {
     return r;
   });
   return (
-    <StageSection step="5" title="Segmentation & Lifecycle" sub="ABC = annual ₹-value Pareto · XYZ = demand CV · each cell prescribes a policy + model">
+    <StageSection step="5" scope="global" title="Segmentation & Lifecycle" sub="ABC = annual ₹-value Pareto · XYZ = demand CV · each cell prescribes a policy + model — across the whole portfolio">
       <Grid cols={2}>
-        <Card icon="🏷️" title="ABC / XYZ → method" badge="9-box"
-          info={{ what:'Value (ABC) × variability (XYZ) classification — and the planning method it routes to.', flows:'Segment → policy, forecast-model, and autopilot-vs-optimizer routing.' }}
-          dev={{ comp:'ABCXYZCard', props:'products, M.itemMethod' }}>
+        <Card icon="🏷️" title="ABC / XYZ → method" badge="9-box · seed class" badgeTone="w"
+          info={{ what:'Value (ABC) × variability (XYZ) classification — and the planning method it routes to. The 9-box letters are SEED attributes; the engine’s live intermittence read (below) is the ground truth for the selected item.', flows:'Segment → policy, forecast-model, and autopilot-vs-optimizer routing.' }}
+          dev={{ comp:'ABCXYZCard', props:'products (seed abc/xyz), M.itemMethod, fc.intermittence (live)' }}>
           <div style={{display:'grid', gridTemplateColumns:'40px 1fr 1fr 1fr', gap:4, marginTop:6}}>
             <div/>{['X · steady','Y · variable','Z · erratic'].map((h,i)=><div key={i} style={{fontFamily:F.mono, fontSize:9, color:C.tx3, textAlign:'center', textTransform:'uppercase'}}>{h}</div>)}
             {abcxyz.map((row,ri)=>(
@@ -808,8 +882,8 @@ function DemSegment({ item, fc }) {
               </React.Fragment>
             ))}
           </div>
-          <Reading formula="ABC = annual £-value Pareto · XYZ = σ/μ (demand CV)"
-            soWhat="AX → tight (s,S) + HW · CZ → lean, Croston, monthly review. Class drives both policy and model."/>
+          <Reading formula="ABC = annual ₹-value Pareto · XYZ = demand CV (σ/μ — how jumpy demand is: X steady ▸ Z erratic)"
+            soWhat="AX → tight (s,S) reorder rule + Holt-Winters · CZ → lean, Croston, monthly review. The SEED letters route policy + model; the engine’s live intermittence read (above) is the ground truth for the selected item."/>
           <div style={{marginTop:10}}>
             <SubLabel>Method routing per item (handoff §7.4)</SubLabel>
             <div style={{display:'flex', flexDirection:'column', gap:4}}>
@@ -823,6 +897,20 @@ function DemSegment({ item, fc }) {
             </div>
             <div style={{marginTop:6, fontFamily:F.mono, fontSize:8.5, color:C.tx3, lineHeight:1.5}}>autopilot = (s,S)/ROP/EOQ rule, no solver · optimized = LP/MILP optimizer (coupled capacity/MOQ/budget). Don’t drag a stable washer through the optimizer.</div>
           </div>
+          {/* D-8: live intermittence read for the SELECTED item, from the forecast engine. */}
+          {intc ? (
+            <div style={{marginTop:10, padding:'8px 11px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${disagree?C.dg:C.gn}`, background:C.bg3}}>
+              <div style={{fontFamily:F.mono, fontSize:9, color:C.tx2, lineHeight:1.5}}>
+                <b>Engine read · {item?item.code:'—'}:</b> <Tag c={disagree?'r':'g'}>{String(intc.label||'').toUpperCase()}</Tag>
+                {intc.adi!=null?` ADI ${(+intc.adi).toFixed(2)}`:''}{intc.cv2!=null?` · CV² ${(+intc.cv2).toFixed(2)}`:''}{liveWinner?` → winner ${FCAST_MODEL_LABEL[liveWinner]||liveWinner}`:''}
+              </div>
+              <div style={{marginTop:3, fontFamily:F.mono, fontSize:8.5, color:disagree?C.dg:C.tx3, lineHeight:1.45}}>
+                {disagree ? `⚠ Seed XYZ says ${selXyz}, but the engine classifies this item as ${intc.label} (≈ ${liveXyz}) on YOUR history — trust the live read for model routing; the seed letter is stale.` : 'Live classification agrees with the seed XYZ — the routed model family is sound for this item.'}
+              </div>
+            </div>
+          ) : (
+            <div style={{marginTop:10, fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>Run the forecast to replace the seed XYZ with the engine’s live intermittence classification for this item.</div>
+          )}
         </Card>
         <LifecycleCard item={item} fc={fc}/>
       </Grid>
@@ -906,10 +994,30 @@ function LifecycleCard({ item, fc }) {
 // regressor (forecast.py _build_features → 'promo' column). The lift that shows
 // up is REAL but proportional to the effect the engine learned from your history
 // — we say so, rather than painting a fixed +X% on the curve.
+// G-D4 — the ONE calendar anchor: the governed planning.startDate (Setup), so forecast /
+// promo / actuals dates can't drift from the clock the solvers plan to. Falls back to the
+// (synced) M.calendar.start then the literal seed.
+function calendarStart(){
+  const pl = (window.appStore && appStore.get().planning) || {};
+  return pl.startDate || (window.M && M.calendar && M.calendar.start) || '2026-06-01';
+}
 function futureLabel(grain, k){
-  const start = (window.M && M.calendar && M.calendar.start) || '2026-06-01';
-  const step = grain==='daily' ? 1 : grain==='weekly' ? 7 : 30;
-  const d = new Date(start + 'T00:00:00'); d.setDate(d.getDate() + k*step);
+  const start = calendarStart();
+  const d = new Date(start + 'T00:00:00');
+  // D-8: month-aware stepping for monthly grain (a 30-day step drifts off real
+  // calendar months over a 12-period horizon); daily/weekly stay day-based.
+  if(grain==='monthly') d.setMonth(d.getMonth() + k);
+  else d.setDate(d.getDate() + k*(grain==='weekly'?7:1));
+  return String(d.getDate()).padStart(2,'0') + ' ' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()] + " '" + String(d.getFullYear()).slice(2);
+}
+// G-D3 — past-period label (real date), the mirror of futureLabel: `ago` periods BEFORE the
+// governed calendar start. Replaces the inconsistent "W-6…W-1" offset labels on the actuals/
+// override grids so every grid speaks the same real-date vocabulary as the forecast table.
+function pastLabel(grain, ago){
+  const start = calendarStart();
+  const d = new Date(start + 'T00:00:00');
+  if(grain==='monthly') d.setMonth(d.getMonth() - ago);
+  else d.setDate(d.getDate() - ago*(grain==='weekly'?7:1));
   return String(d.getDate()).padStart(2,'0') + ' ' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()] + " '" + String(d.getFullYear()).slice(2);
 }
 function DemEvents({ item, grain }) {
@@ -934,7 +1042,7 @@ function DemEvents({ item, grain }) {
     setHolidays([...holidays, v].sort()); setHol(''); };
   const delHol = (v)=> setHolidays(holidays.filter(h=>h!==v));
   return (
-    <StageSection step="6" title="Promotions & Calendar" sub="governed forecast inputs — flag a planned promo period or a holiday; the engine re-runs and lifts/adjusts those periods by the effect it learned from your history">
+    <StageSection step="6" scope="item" title="Promotions & Calendar" sub="governed forecast inputs — flag a planned promo period or a holiday; the engine re-runs and lifts/adjusts those periods by the effect it learned from your history">
       <Grid cols={2}>
         <Card icon="🎯" title="Planned Promotions → forecast" badge={promos.length?`${promos.length} flagged`:'none set'} badgeTone={promos.length?'y':undefined}
           right={<Provenance kind="external" run={promos.length?'user':'seed'}/>}
@@ -1002,10 +1110,21 @@ function DemImport({ item, grain, onApplied }){
   const [text, setText] = useState('');
   const parsed = React.useMemo(()=> text.trim() ? parseHistoryCsv(text) : null, [text]);
   const series = parsed && !parsed.error ? bucketHistory(parsed.rows, parsed.hasDates, g) : [];
+  // Long-format multi-SKU detection (a unified sku,date,value dump). Takes precedence
+  // over the single-series read when it succeeds (needs ≥3 cols, so a plain date,value
+  // file never trips it).
+  const multi = React.useMemo(()=> text.trim() ? parseMultiSkuCsv(text) : null, [text]);
+  const isMulti = !!(multi && !multi.error && multi.order.length>=1);
   const applyCsv = ()=>{
     if(!sku || !series.length) return;
     setImp({ grain:g, series, importedAt:new Date().toISOString(), source:'csv' });
     logEvent('import', sku, { rows:series.length, grain:g, source:'csv' });
+    setText(''); onApplied && onApplied();
+  };
+  const applyMulti = ()=>{
+    if(!isMulti) return;
+    const written = importManyHistory(multi.bySku, g);
+    logEvent('import_multi', sku||null, { skus:written.length, grain:g, source:'csv-multi' });
     setText(''); onApplied && onApplied();
   };
   const clearImp = ()=>{ setImp(null); logEvent('import_clear', sku, {}); onApplied && onApplied(); };
@@ -1037,22 +1156,38 @@ function DemImport({ item, grain, onApplied }){
   };
 
   return (
-    <StageSection step="1b" title={`Import history & NPI · ${item?item.name:''}`} sub="upload your own history (real CSV ingestion) or — for a brand-new product — model it on an analog SKU; both feed the live model competition">
+    <StageSection step="1b" scope="item" title={`Import history & NPI · ${item?item.name:''}`} sub="import history for THIS product, or a unified multi-product (sku,date,value) file for the whole portfolio at once — or, for a brand-new product, model it on an analog SKU; all feed the live model competition">
       <div>
         {/* D-7 · CSV import — the common path, always visible */}
         <Card icon="⤓" title="Import history (CSV / TSV)" badge={imp?`imported · ${imp.series.length} ${gl}s`:'paste a series'} badgeTone={imp?'g':'k'}
           right={imp ? <Btn kind="secondary" sm onClick={clearImp}>Clear → seed</Btn> : null}
-          info={{ what:'Paste a date,value (or value-only) series. The parser detects the delimiter + a header row and buckets dated rows to the active grain; the forecast engine then competes models on it.', flows:'histImports[sku] → fcPayload.history → /api/forecast.' }}
-          dev={{ comp:'DemImport·csv', props:'parseHistoryCsv + bucketHistory', state:'histImports[sku]={grain,series}' }}>
+          info={{ what:'Two shapes, auto-detected. (1) ONE product: a date,value (or value-only) series → the SELECTED item. (2) MANY products: a unified long file with a sku,date,value column layout → grouped by SKU and written for EVERY product at once. Delimiter (comma/tab/semicolon) + header are auto-detected, quote-aware ("1,200" parses), dated rows bucket to the active grain. Caveat: an UNQUOTED grouped number on a value-only line is ambiguous — quote it or drop the comma.', flows:'one → histImports[sku] · many → histImports[each sku] → fcPayload.history → /api/forecast.' }}
+          dev={{ comp:'DemImport·csv', props:'parseHistoryCsv | parseMultiSkuCsv + bucketHistory', state:'histImports[sku]={grain,series} (one or many)' }}>
           {imp ? <>
             <div style={{fontFamily:F.mono, fontSize:10, color:C.tx2, marginBottom:6}}>Active import · <b>{imp.series.length}</b> {M.grainLabel(imp.grain)}s · {new Date(imp.importedAt).toLocaleString('en-IN')}{imp.grain!==g?<span style={{color:C.dg}}> · imported at {M.grainLabel(imp.grain)} grain — switch to that grain to forecast on it</span>:''}</div>
             {spark(imp.series.slice(-40), C.a2)}
             <Reading formula="histImports wins over the seed M.historyAt when its grain matches" soWhat={`The forecast above is now competing models on YOUR ${imp.series.length}-point series (re-run with 🤖). Clear to revert to the seed history.`}/>
           </> : <>
-            <textarea value={text} onChange={e=>setText(e.target.value)} rows={5} placeholder={"2025-01-01,120\n2025-02-01,138\n2025-03-01,151\n…  (or one value per line)"}
+            <textarea value={text} onChange={e=>setText(e.target.value)} rows={5} placeholder={"one product:  2025-01-01,120 …  (or one value per line)\nmany products:  sku,date,qty  —  TPA-3215,2025-01-01,120"}
               style={{width:'100%', boxSizing:'border-box', border:`2px solid ${C.line}`, padding:'7px 9px', fontFamily:F.mono, fontSize:10, color:C.tx, outline:'none', resize:'vertical'}}/>
-            {parsed && parsed.error && <div style={{fontFamily:F.mono, fontSize:10, color:C.dg, marginTop:6}}>⚠ {parsed.error}</div>}
-            {parsed && !parsed.error && <div style={{marginTop:8}}>
+            {isMulti ? (()=>{ const knownSet=new Set((M.products||[]).map(p=>p.sku)); const knownList=multi.order.filter(s=>knownSet.has(s));
+              return (
+              <div style={{marginTop:8}}>
+                <div style={{padding:'7px 10px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${C.a2}`, background:C.bg3, fontFamily:F.mono, fontSize:10, color:C.tx2, lineHeight:1.5}}>
+                  📦 <b>Multi-product {multi.layout==='wide'?'WIDE / pivot':'LONG / tidy'} file detected</b> — <b>{multi.order.length}</b> SKUs{multi.hasHeader?' · header row':''} · {multi.layout==='wide' ? `sku in col #${multi.skuCol+1} · ${multi.periods} period columns` : `sku #${multi.skuCol+1}, date #${multi.dateCol+1}, value #${multi.valCol+1} (extra columns ignored; same-period rows summed)`}. Writes history for EVERY detected product at once (portfolio), buckets each to {gl}, then re-runs the selected one.
+                </div>
+                <div style={{display:'flex', flexWrap:'wrap', gap:4, marginTop:6}}>
+                  {multi.order.map(s=>{ const k=knownSet.has(s); const n=multi.bySku[s].length;
+                    return <span key={s} title={`${n} rows`} style={{fontFamily:F.mono, fontSize:8.5, fontWeight:700, padding:'2px 7px', border:`1.5px solid ${k?C.gn:C.dg}`, background: k?'transparent':C.bg3, color:k?C.tx:C.dg}}>{k?'●':'⚠'} {s} · {n}</span>; })}
+                </div>
+                {multi.unknown.length>0 && <div style={{marginTop:5, fontFamily:F.mono, fontSize:9, color:C.dg}}>⚠ {multi.unknown.length} code(s) not in the product master — they will be skipped: {multi.unknown.join(', ')}</div>}
+                <div style={{display:'flex', gap:8, marginTop:8}}>
+                  <Btn kind="primary" sm onClick={applyMulti} disabled={!knownList.length} style={!knownList.length?{opacity:.45, cursor:'not-allowed'}:undefined}>Import {knownList.length} product{knownList.length===1?'':'s'} as history</Btn>
+                  <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3, alignSelf:'center'}}>writes histImports for each known SKU · re-runs the forecast</span>
+                </div>
+              </div>); })()
+            : parsed && parsed.error ? <div style={{fontFamily:F.mono, fontSize:10, color:C.dg, marginTop:6}}>⚠ {parsed.error}</div>
+            : parsed && !parsed.error ? <div style={{marginTop:8}}>
               <div style={{fontFamily:F.mono, fontSize:10, color:C.tx2, marginBottom:4}}>
                 {parsed.rows.length} rows parsed{parsed.hasDates?` · dated → bucketed to ${gl}`:' · value-only (file order)'} → <b>{series.length}</b> {gl} buckets
               </div>
@@ -1061,7 +1196,7 @@ function DemImport({ item, grain, onApplied }){
                 <Btn kind="primary" sm onClick={applyCsv}>Use as history</Btn>
                 <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3, alignSelf:'center'}}>writes histImports[{sku||'—'}] · re-runs the forecast</span>
               </div>
-            </div>}
+            </div> : null}
           </>}
         </Card>
 

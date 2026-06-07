@@ -60,6 +60,21 @@
   .animate-in{animation:ein .32s cubic-bezier(.2,.7,.2,1) both;}
   button{font-family:inherit;}
   input,select{font-family:inherit;}
+  /* ── A11Y (R10) ─────────────────────────────────────────────────────────
+     Phase-1 accessibility layer folded into the Field/Value contract. A visible
+     keyboard-focus ring on every focusable control (the brutalist inputs set inline
+     outline:none, so the input rule needs !important to win); plus reduced-motion.
+     A full type-scale / table-reflow pass is the deferred running-app audit (§6.4). */
+  button:focus-visible, a:focus-visible, [tabindex]:focus-visible, [role="button"]:focus-visible{
+    outline:2px solid var(--hl2); outline-offset:2px;
+  }
+  input:focus-visible, select:focus-visible, textarea:focus-visible{
+    outline:2px solid var(--hl2) !important; outline-offset:1px;
+  }
+  @media (prefers-reduced-motion: reduce){
+    .animate-in{animation:none;}
+    *{scroll-behavior:auto !important;}
+  }
 </style>
 </head>
 <body>

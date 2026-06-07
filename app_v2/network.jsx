@@ -11,7 +11,7 @@ function StageNetwork({ onNav }) {
       <StageHeader n="03" title="Network · Nodes, Flows & Contracts"
         kicker="Physical nodes · per-item inbound/outbound lanes · time-varying contracts · opening on-hand — defined AFTER products exist"
         right={<ModelIO label="Import model"/>}/>
-      <ItemSelector/>
+      <ItemSelector onNav={onNav}/>
       <div style={{padding:18}}>
         <NetFlows item={item} view={view}/>
         <NetNodes/>
@@ -50,7 +50,7 @@ function NetFlows({ item, view }) {
   const roleColor = { supplier:C.a2, plant:C.ink, wh:C.a3, dc:C.a4, customer:C.gn };
   const setLane=(id,patch)=>{ setNetwork({ lanes: network.lanes.map(l=> l.id===id?{...l,...patch}:l ) }); if(typeof logEvent==='function') logEvent('override','lane:'+id,{fields:Object.keys(patch),to:patch}); };
   return (
-    <StageSection step="A" title={`Flow · ${item?item.name:''}`} sub="inbound part lanes feed the plant · outbound FG lanes serve customers — each hop shows mode · ₹rate · lead time">
+    <StageSection step="A" scope="item" title={`Flow · ${item?item.name:''}`} sub="inbound part lanes feed the plant · outbound FG lanes serve customers — each hop shows mode · ₹rate · lead time">
       <Card icon="🧭" title={view==='parts'?'Inbound Chain · purchased parts':'Outbound Chain · finished good'} badge={view==='parts'?`${inbound.length} parts`:`${outbound.length} hops`} badgeTone="y"
         info={{ what:'Directed, per-item material flow: a node\u2019s capacity is consumed by specific items.', flows:'Lanes → transport LP & landed cost.' }}
         dev={{ comp:'NetworkFlowCard', props:'state.network.lanes, activeItem', state:'network.lanes[] {direction,item}' }}>
@@ -123,14 +123,11 @@ function NetNodes() {
     if(typeof logEvent==='function') logEvent('commit','node:'+id,{added:true}); };
   const delNode=(id)=>{ setNetwork({ nodes: network.nodes.filter(n=>n.id!==id) }); if(typeof logEvent==='function') logEvent('cancel','node:'+id,{removed:true}); };
   const tin={ border:`1.5px solid ${C.line2}`, background:C.paper, color:C.tx, fontFamily:F.disp, fontWeight:700, fontSize:11, padding:'3px 5px', outline:'none', boxSizing:'border-box' };
-  // (R13) storage utilisation now DERIVED — Σ(on-hand qty × volume) ÷ node cube,
-  // volume from the single store authority (skuVolM3). Was hardcoded 62/74/48%.
-  const vol = (typeof skuVolM3==='function') ? skuVolM3 : (()=>0);
-  const usedM3 = (nodeId)=> (network.onHand||[])
-    .filter(o=>o.loc===nodeId)
-    .reduce((s,o)=>s + (Number(o.qty)||0)*vol(o.item), 0);
+  // (R13→G-N3) storage utilisation is DERIVED — Σ(on-hand qty × volume) ÷ node cube,
+  // volume from the single store authority (skuVolM3), now split per storage class
+  // (nodeStorageUtil). Was hardcoded 62/74/48%.
   return (
-    <StageSection step="B" title="Nodes" sub="plants · warehouses · DCs · customers · suppliers — capacity is item-aware">
+    <StageSection step="B" scope="global" title="Nodes" sub="plants · warehouses · DCs · customers · suppliers — the shared network; the capacity column is an item-aware lens on the selected SKU">
       <Grid cols={2}>
         <Card icon="🏭" title="Node Master" badge={`${network.nodes.length} nodes · editable`} badgeTone="y"
           info={{ what:'Every physical node with geo and capacity (uom per node). Editable master data — add/rename/resize/remove.', flows:'Topology → lanes, transport solver, CoG.' }}
@@ -154,30 +151,94 @@ function NetNodes() {
           </div>
           <div style={{marginTop:8}}><Btn kind="primary" sm onClick={addNode}>+ Add node</Btn></div>
         </Card>
-        <Card icon="📦" title="Storage Utilization" badge="item-aware · derived" badgeTone="y"
-          right={<Provenance kind="derived" note="Σ vol·on-hand / cube"/>}
-          info={{ what:'Σ(item volume × on-hand) ÷ node capacity — computed from opening on-hand and the single volume master, not a lump or a seed.', flows:'Util → CoG, capacity gates.' }}
-          dev={{ comp:'NodeUtilCard', props:'network.onHand × skuVolM3 ÷ node.capacity', note:'R13 — real derivation; was hardcoded 62/74/48%.' }}>
+        <Card icon="📦" title="Storage Utilization" badge="per-class · derived" badgeTone="y"
+          right={<Provenance kind="derived" note="Σ vol·on-hand / class cube"/>}
+          info={{ what:'Σ(item volume × on-hand) ÷ node capacity, split BY STORAGE CLASS (ambient/cold/hazmat) — a cold SKU and an ambient SKU cannot share the same m³. Default: every item is ambient and the whole cube is ambient capacity (= the single-bar number).', flows:'Util → CoG, capacity gates.' }}
+          dev={{ comp:'NodeUtilCard', props:'network.onHand × skuVolM3 ÷ node.classCaps[cls]', note:'G-N3 — per-storage-class; was one lump cube (R13).' }}>
           <div style={{display:'flex', flexDirection:'column', gap:10, marginTop:2}}>
             {network.nodes.filter(n=>n.type==='wh'||n.type==='dc').map((n)=>{
-              const cap = Number(n.capacity)||0; const used = usedM3(n.id);
-              const pct = cap>0 ? used/cap*100 : 0;
+              const util = nodeStorageUtil(n);
+              const totalUsed = STORAGE_CLASSES.reduce((s,c)=>s+util[c].used,0);
+              const shown = STORAGE_CLASSES.filter(c=> c==='ambient' || util[c].cap>0 || util[c].used>0.0001);
+              const editClassCap=(cls,val)=>{
+                const cc = n.classCaps ? {...n.classCaps} : { ambient:Number(n.capacity)||0, cold:0, hazmat:0 };
+                cc[cls] = val===''?'':(Number(val)||0);
+                setNode(n.id, { classCaps:cc });
+              };
               return (
-                <div key={n.id}>
-                  <div style={{display:'flex', justifyContent:'space-between', fontFamily:F.mono, fontSize:10, marginBottom:3}}>
+                <div key={n.id} style={{border:`1px solid ${C.line2}`, padding:'6px 8px'}}>
+                  <div style={{display:'flex', justifyContent:'space-between', fontFamily:F.mono, fontSize:10, marginBottom:5}}>
                     <span style={{fontWeight:700}}>{n.id}</span>
-                    <span className="num" style={{color:C.tx2}}>{used.toFixed(2)} m³ · {pct<0.1&&pct>0?'<0.1':pct.toFixed(1)}% of {n.cap}</span>
+                    <span className="num" style={{color:C.tx3}}>{totalUsed.toFixed(2)} m³ stored · {n.classCaps?'per-class caps':'single cube'}</span>
                   </div>
-                  <MiniBar v={pct} max={100} color={pct>70?C.a4:C.ink} h={12}/>
+                  {shown.map(c=>{
+                    const u=util[c]; const noCap = !(u.cap>0);
+                    return (
+                      <div key={c} style={{marginBottom:4}}>
+                        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', fontFamily:F.mono, fontSize:9, marginBottom:2}}>
+                          <span style={{color:C.tx2}}>{STORAGE_CLASS_LABEL[c]}</span>
+                          <span style={{display:'flex', alignItems:'center', gap:5}}>
+                            <span className="num" style={{color: u.pct>90?C.dg:C.tx3}}>{u.used.toFixed(2)} / </span>
+                            <input className="num" value={u.cap===''?'':u.cap} onChange={e=>editClassCap(c,e.target.value)} title="class capacity (m³)"
+                              style={{ width:60, fontFamily:F.mono, fontSize:9, textAlign:'right', padding:'1px 3px', border:`1px solid ${C.line2}`, background:C.paper, color:C.tx }}/>
+                            <span style={{color:C.tx3}}>m³{noCap?'':` · ${u.pct<0.1&&u.pct>0?'<0.1':u.pct.toFixed(1)}%`}</span>
+                          </span>
+                        </div>
+                        {noCap
+                          ? (u.used>0.0001 ? <div style={{fontFamily:F.mono, fontSize:8, color:C.dg}}>⚠ {u.used.toFixed(2)} m³ stored but NO {c} capacity declared</div> : null)
+                          : <MiniBar v={u.pct} max={100} color={u.pct>90?C.dg:u.pct>70?C.a4:C.ink} h={9}/>}
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
           </div>
-          <Reading formula="util = Σ(volᵢ · onhandᵢ) / capacity_node"
-            soWhat="Computed from opening on-hand × the volume master: the DCs start nearly empty (a few m³ of a multi-thousand-m³ cube) — utilisation builds as production lands. The CoG study (Logistics) sizes the hub against full-flow volume, not opening stock."/>
+          <Reading formula="util_class = Σ(volᵢ · onhandᵢ | classᵢ = class) / classCap_node"
+            soWhat="Split by storage class: a cold-chain or hazmat SKU draws on its OWN node capacity, not the shared cube — so a node can be 30% full overall yet out of cold space. Assign classes below; default all-ambient = the prior single cube."/>
         </Card>
       </Grid>
+      <NetStorageClasses/>
     </StageSection>
+  );
+}
+// G-N3 — per-item STORAGE CLASS assignment (ambient/cold/hazmat). Scoped to the items
+// actually held in opening on-hand. Default ambient ⇒ node utilisation = the single-cube
+// number; flip a SKU to cold/hazmat and it draws on that class's node capacity instead.
+function NetStorageClasses(){
+  const { network } = useNetwork();
+  const { config, setConfig } = useConfig();
+  const cls = config.storageClass || {};
+  const items = Array.from(new Set((network.onHand||[]).map(o=>o.item)));
+  const nameOf = (it)=>{ const p=((window.M&&M.products)||[]).find(x=>x.sku===it); if(p) return p.name;
+    const b=((window.M&&M.bom)||[]).find(x=>x.part===it); return b?b.name:''; };
+  const setItemClass=(it,v)=> setConfig({ storageClass: { ...cls, [it]: v } });
+  return (
+    <Card icon="🌡" title="Storage class by item" badge="warehousing master" badgeTone="y"
+      info={{ what:'The storage class each held item needs — ambient, cold chain, or hazmat. Drives the per-class node utilisation above (a cold SKU consumes cold m³, not the shared cube).', flows:'Item class → per-class node utilisation.' }}
+      dev={{ comp:'NetStorageClasses', props:'config.storageClass{item:class}', state:'config.storageClass' }}>
+      <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
+        <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10.5}}>
+          <thead><tr style={{background:C.ink}}>{['Item','Name','Storage class'].map((h,i)=><th key={i} style={{color:C.paper, textAlign:'left', padding:'5px 9px', fontSize:8.5, textTransform:'uppercase'}}>{h}</th>)}</tr></thead>
+          <tbody>
+            {items.map((it,ri)=>(
+              <tr key={it} style={{borderTop:`1px solid ${C.line2}`, background:ri%2?C.bg3:C.paper}}>
+                <td style={{padding:'4px 9px', fontWeight:700}}>{it}</td>
+                <td style={{padding:'4px 9px', color:C.tx3}}>{nameOf(it)}</td>
+                <td style={{padding:'4px 9px'}}>
+                  <select value={cls[it]||'ambient'} onChange={e=>setItemClass(it,e.target.value)}
+                    style={{ fontFamily:F.mono, fontSize:10, padding:'2px 4px', border:`1px solid ${C.line}`, background:C.paper, color:C.tx, cursor:'pointer' }}>
+                    {STORAGE_CLASSES.map(c=><option key={c} value={c}>{STORAGE_CLASS_LABEL[c]}</option>)}
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <Reading formula="item → storage class → which node-class cube it consumes"
+        soWhat="Default is ambient for every item (so utilisation matches the single-cube view). Mark a SKU cold or hazmat and the per-class bars above re-attribute its volume to that class — exposing a node that's out of cold space even when the overall cube has room."/>
+    </Card>
   );
 }
 
@@ -189,7 +250,7 @@ function NetSuppliers() {
   const totSpend = sup.reduce((s,x)=>s+x.spend, 0);
   const wOtif    = totQty ? sup.reduce((s,x)=>s+x.otif*x.qty, 0)/totQty : 0; // qty-weighted
   return (
-    <StageSection step="C" title="Supplier Master" sub="moved here from Sourcing — BOM buy-terms reference these suppliers">
+    <StageSection step="C" scope="global" title="Supplier Master" sub="moved here from Sourcing — BOM buy-terms reference these suppliers">
       <Card icon="📋" title="Supplier Master" badge={`${sup.length} suppliers`}
         info={{ what:'Supplier directory: lead time, variability, incoterm, spend, risk.', flows:'Suppliers → BOM commercial terms & procurement MILP.' }}
         dev={{ comp:'SupplierMaster', props:'state.network.suppliers', state:'suppliers[]' }}>
@@ -205,7 +266,7 @@ function NetContracts() {
   const { network } = useNetwork();
   const tone = { spot:C.tx3, fixed:C.a2, volume:C.a3, 'take-or-pay':C.a4 };
   return (
-    <StageSection step="D" title="Contracts · Time-Varying Price" sub="spot vs fixed vs volume vs take-or-pay — prices that change mid-horizon bind to the period axis">
+    <StageSection step="D" scope="global" title="Contracts · Time-Varying Price" sub="spot vs fixed vs volume vs take-or-pay — prices that change mid-horizon bind to the period axis">
       <Card icon="📜" title="Contract Ledger" badge={`${network.contracts.length} contracts`}
         info={{ what:'Each contract stores rateByPeriod so a price step mid-horizon is modelled, not averaged.', flows:'Rates → landed cost & procurement MILP.' }}
         dev={{ comp:'ContractLedger', props:'state.network.contracts', state:'contracts[].rateByPeriod' }}>
@@ -257,7 +318,7 @@ function NetOnHand({ item }) {
     setNetwork({ onHand: next }); if(typeof logEvent==='function') logEvent('override','onhand:'+it+'@'+loc,{to:{qty:q}}); };
   const tin={ border:`1.5px solid ${C.line2}`, background:C.paper, color:C.tx, fontFamily:F.disp, fontWeight:700, fontSize:11, padding:'2px 4px', outline:'none', width:62, textAlign:'right', boxSizing:'border-box' };
   return (
-    <StageSection step="E" title="Opening On-Hand" sub="item × location — only meaningful now that both products AND nodes exist">
+    <StageSection step="E" scope="item" title="Opening On-Hand" sub="item × location — the selected SKU's opening stock at each node">
       <Card icon="📦" title="On-Hand Matrix" badge="opening stock"
         info={{ what:'Starting inventory per item per site at horizon start.', flows:'Initial stock → MRP & inventory projection.' }}
         dev={{ comp:'OnHandMatrix', props:'state.network.onHand', state:'network.onHand[item][loc]' }}>
@@ -285,7 +346,62 @@ function NetOnHand({ item }) {
         </div>
         <Reading soWhat="The highlighted row is the active item — its WH/DC stock seeds the MRP net-requirement on Sourcing."/>
       </Card>
+
+      <NetScheduledReceipts/>
     </StageSection>
+  );
+}
+
+// G-N1 — open / in-transit POs already released to suppliers. The procurement MILP
+// books each as an exogenous RM arrival (release + lead time) and re-optimises only the
+// residual gap, so a receipt NETS DOWN the planned buy. Editable; empty ⇒ greenfield buy.
+function NetScheduledReceipts(){
+  const { network, setNetwork } = useNetwork();
+  const M = window.M || {};
+  const rows = network.scheduledReceipts || [];
+  const partName = (id)=>{ const b=(M.bom||[]).find(x=>x.part===id); return b?b.name:id; };
+  const leadDays = (id)=>{ const b=(M.bom||[]).find(x=>x.part===id); return b?b.lt:0; };
+  const arrive = (rel,id)=>{ if(!rel) return '—'; const d=new Date(rel); if(isNaN(d.getTime())) return '—';
+    d.setDate(d.getDate()+leadDays(id)); return d.toISOString().slice(0,10); };
+  const setRow = (i,patch)=>{ const next = rows.map((r,j)=> j===i?{...r,...patch}:r); setNetwork({ scheduledReceipts: next });
+    if(typeof logEvent==='function') logEvent('override','sched-receipt:'+(rows[i]&&rows[i].part),{to:patch}); };
+  const del = (i)=>{ setNetwork({ scheduledReceipts: rows.filter((_,j)=>j!==i) }); };
+  const add = ()=>{ const firstPart=(M.bom&&M.bom[0]&&M.bom[0].part)||'RM-STL42';
+    setNetwork({ scheduledReceipts:[...rows, { part:firstPart, qty:0, releaseDate:'', po:'' }] }); };
+  const tin={ border:`1.5px solid ${C.line2}`, background:C.paper, color:C.tx, fontFamily:F.disp, fontWeight:700, fontSize:11, padding:'2px 4px', outline:'none', boxSizing:'border-box' };
+  return (
+    <Card icon="🚚" title="Scheduled Receipts" badge={`${rows.length} open PO${rows.length===1?'':'s'}`} badgeTone="g"
+      info={{ what:'Open / in-transit purchase orders already released to suppliers. The MRP nets against these — it books each as a raw-material arrival at release + lead time and only buys the residual gap, so it never re-orders what is already inbound.', flows:'Scheduled receipts → procurement MILP (locked_pos) → net buy ↓.' }}
+      dev={{ comp:'NetScheduledReceipts', props:'state.network.scheduledReceipts', state:'network.scheduledReceipts[]', note:'G-N1 — wired to procurement.py T6 locked_pos via scheduledReceiptsLocked() (store.jsx).' }}>
+      <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
+        <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10.5}}>
+          <thead><tr style={{background:C.ink}}>
+            {['Part','Qty','Release date','→ Arrives (rel + lead)','PO ref',''].map((h,i)=>
+              <th key={i} style={{color:C.paper, textAlign:i===1?'right':'left', padding:'6px 9px', fontSize:9, textTransform:'uppercase'}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {rows.length===0 && <tr><td colSpan={6} style={{padding:'8px 9px', color:C.tx3}}>No open POs — the buy plan is greenfield (orders everything from scratch).</td></tr>}
+            {rows.map((r,i)=>(
+              <tr key={i} style={{borderTop:`1px solid ${C.line2}`, background: i%2?C.bg3:C.paper}}>
+                <td style={{padding:'4px 9px'}}>
+                  <select value={r.part} onChange={e=>setRow(i,{part:e.target.value})} style={{...tin, width:150}}>
+                    {(M.bom||[]).map(b=><option key={b.part} value={b.part}>{b.part} · {b.name}</option>)}
+                  </select>
+                </td>
+                <td style={{textAlign:'right', padding:'4px 9px'}}><input className="num" value={r.qty} onChange={e=>setRow(i,{qty:Math.max(0,Number(e.target.value)||0)})} style={{...tin, width:72, textAlign:'right'}}/></td>
+                <td style={{padding:'4px 9px'}}><input type="date" value={r.releaseDate||''} onChange={e=>setRow(i,{releaseDate:e.target.value})} style={{...tin, width:130}}/></td>
+                <td style={{padding:'4px 9px', color:C.gn, fontWeight:700}}>{arrive(r.releaseDate, r.part)}</td>
+                <td style={{padding:'4px 9px', color:C.tx2}}><input value={r.po||''} onChange={e=>setRow(i,{po:e.target.value})} placeholder="PO ref" style={{...tin, width:110, fontWeight:600}}/></td>
+                <td style={{padding:'4px 9px', textAlign:'right'}}><button onClick={()=>del(i)} style={{border:`1px solid ${C.line2}`, background:'transparent', color:C.tx3, cursor:'pointer', fontSize:11, padding:'1px 7px'}}>✕</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{marginTop:8}}><Btn sm onClick={add}>+ Open PO</Btn></div>
+      <Reading formula="net req = gross demand − on-hand − scheduled receipts   ·   receipt arrives at release + part lead time"
+        soWhat="Each open PO lands in raw-material inventory at its arrival period and the procurement MILP buys only the residual — change a qty or release date and re-run Sourcing to see the planned buy move."/>
+    </Card>
   );
 }
 window.StageNetwork = StageNetwork;

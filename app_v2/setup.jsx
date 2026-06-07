@@ -14,6 +14,7 @@ function StageSetup({ onNav }) {
         <SetupTemplates onNav={onNav}/>
         <SetupProfile/>
         <SetupCalendar/>
+        <SetupRegistry onNav={onNav}/>
       </div>
     </div>
   );
@@ -220,7 +221,14 @@ function SetupCalendar() {
     state: config.plantState,                                            // selector now drives the gazette
     custom_holidays: customHolidays.map(h=>[h.month, h.day, h.name]),     // per-day add/remove
   }));
-  const recompute = async ()=>{ try{ const r=await cal.run(); setCalendar({ result:r, computedAt:new Date().toISOString() }); }catch(e){} };
+  // G-D4 — unify the calendar source: keep M.calendar.start in lock-step with the governed
+  // planning.startDate (the seed M.calendar.start was static and drifted). Every reader of
+  // M.calendar.start (forecast/promo/actuals labels, solver horizon_start_date) now tracks Setup.
+  const recompute = async ()=>{
+    try{ if(window.M){ M.calendar = { ...(M.calendar||{}), start: planning.startDate,
+        grain: planning.timeGrain, count: Number(planning.horizonLength)||52 }; } }catch(e){}
+    try{ const r=await cal.run(); setCalendar({ result:r, computedAt:new Date().toISOString() }); }catch(e){}
+  };
   // auto-compute once on load and whenever an input that changes the calendar moves —
   // so the card is never silently showing stale seed and the plant-state selector is live.
   React.useEffect(()=>{ recompute(); /* eslint-disable-next-line */ },
@@ -268,13 +276,16 @@ function SetupCalendar() {
                 fontSize:13, padding:'5px 8px', height:30, width:'100%', outline:'none'}}/>
             </Field>
             <Field label="Work Days / Wk"><NumInput value={planning.workDaysPerWeek} onChange={(v)=>setPlanning({workDaysPerWeek:v})}/></Field>
-            <Field label="Frozen / Slushy"><TextInput value={`${planning.frozenWeeks}w / ${planning.slushyWeeks}w`}/></Field>
+            <Field label="Net Hrs / Shift" hint="productive hours/shift after breaks — drives machine-hours (Production)"><NumInput value={planning.hrsPerShift} suffix="h" onChange={(v)=>setPlanning({hrsPerShift:v})}/></Field>
+            <Field label="Frozen Wks" hint="no-change fence"><NumInput value={planning.frozenWeeks} suffix="w" onChange={(v)=>setPlanning({frozenWeeks:v})}/></Field>
+            <Field label="Slushy Wks" hint="change-with-approval"><NumInput value={planning.slushyWeeks} suffix="w" onChange={(v)=>setPlanning({slushyWeeks:v})}/></Field>
+            <Field label="Schedule Fence" hint="MILP weeks — production/procurement/risk basis"><NumInput value={planning.productionScheduleWeeks} suffix="w" onChange={(v)=>setPlanning({productionScheduleWeeks:v})}/></Field>
           </div>
           <div style={{marginTop:12, padding:'9px 11px', background:C.ac, color:C.onAc, fontFamily:F.mono, fontSize:10, fontWeight:600, lineHeight:1.5}}>
             ◆ Planning {planning.horizonLength} {grain}ly buckets · {hr.start} → {hr.end} ({hr.days} days) · {config.currency} · {(config.serviceLevel*100).toFixed(0)}% service.
           </div>
           <div style={{marginTop:8, padding:'7px 10px', border:`2px dashed ${C.a2}`, fontFamily:F.mono, fontSize:9, color:C.tx2, lineHeight:1.5}}>
-            ⛓ MPS · Procurement · Contracts all render this same horizon — change the grain, count or start date here and the whole app re-buckets.
+            ⛓ HORIZON CONTRACT — this is the governing horizon; each solver runs its own declared basis off it: production · procurement · risk on the {planning.productionScheduleWeeks}w schedule fence ↑ · forecast on its grain (30d/13w/12mo) · S&OP aggregate monthly. Grain/count/start re-axis every solver; the schedule fence sizes the MILP.
           </div>
         </Card>
 
@@ -378,6 +389,52 @@ function SetupProfile() {
           <Reading formula="stage.visible = !profileGate[stage]" soWhat="Pure-MTO + ample capacity hides Profit-mix; one line hides Sequencing; single-site hides Transport."/>
         </Card>
       </Grid>
+    </StageSection>
+  );
+}
+// ── Parameter Governance (Ph2 · P2) — the registry, bound to LIVE state ──────
+// One ledger of every governed input: value + provenance read live, the SOLVE_DEPS
+// token it travels on, and exactly which solves re-flag on edit. Nothing faked.
+function SetupRegistry({ onNav }){
+  const { config } = useConfig();
+  const { planning } = usePlanning();
+  const num = (v,seed)=> (v==null||v==='') ? seed : Number(v);
+  const ov  = (v,seed)=> (v!=null && v!=='' && Number(v)!==Number(seed)) ? 'override' : 'seed';
+  const fxRows = (M.fxRates && M.fxRates.rows) || [];
+  const fxLive = config.fxRates || {};
+  const fxAt   = (r)=> (fxLive[r.ccy]!=null && fxLive[r.ccy]!=='') ? fxLive[r.ccy] : r.rate;
+  const fxOver = fxRows.some(r => Number(fxAt(r)) !== r.rate);
+  const fxVal  = fxRows.map(fxAt);
+  const INV  = ['Procurement','Policy','Rolling','MEIO','MEIO-net','CVaR'];
+  const PROD = ['Production','Aggregate','Line-capacity'];
+  const PLAN = INV.concat(PROD);
+  const budget = Number(config.procBudget)>0;
+  const pmOn   = Number(config.pmBudget)>0 || Number(config.pmWarehouse)>0;
+  const campOn = Number(config.prodCampaignMinRun)>0;
+  const rows = [
+    { group:'Inventory & service', param:'Service level (α)', value:`${(num(config.serviceLevel,0.95)*100).toFixed(0)}%`, seed:'95%', prov:ov(config.serviceLevel,0.95), token:'config', feeds:INV, editTab:'sourcing', editLabel:'Sourcing' },
+    { group:'Inventory & service', param:'Inventory holding spread', value:`${num(config.invHoldingSpread,12.8)}%/yr`, seed:'12.8%', prov:ov(config.invHoldingSpread,12.8), token:'config', feeds:INV.concat(['Capital']), editTab:'finance', editLabel:'Finance' },
+    { group:'Inventory & service', param:'Inventory carry rate', value:`${(typeof carryRateParts==='function'?carryRateParts(config).total:24)}%/yr`, seed:'≈24%', prov:'derived', token:'config → WACC', feeds:INV.concat(['Capital']), from:['WACC · Finance hurdle','Holding spread · above'], editTab:'finance', editLabel:'Finance' },
+    { group:'Inventory & service', param:'RM-spend budget / period', value: budget?`₹${Number(config.procBudget).toLocaleString('en-IN')}`:'unbounded', seed:'unbounded', prov: budget?'override':'seed', token:'config', feeds:['Procurement','Policy','Rolling'], editTab:'sourcing', editLabel:'Sourcing' },
+    { group:'FX · ₹ per unit', param:'USD / EUR / JPY', value:`${fxVal[0]} / ${fxVal[1]} / ${fxVal[2]}`, seed:'84.20 / 91.40 / 0.563', prov: fxOver?'override':'seed', token:'config', feeds:INV.concat(['Profit-mix']), editTab:'finance', editLabel:'Finance · FX' },
+    { group:'Tax & capital', param:'Corporate tax rate', value:`${num(config.taxRate,25.17)}%`, seed:'25.17%', prov:ov(config.taxRate,25.17), token:'config → WACC', feeds:['Capital'].concat(INV), editTab:'finance', editLabel:'Finance' },
+    { group:'Production schedule', param:'Line labor rate', value:`₹${num(config.prodLaborRate,120)}/hr`, seed:'₹120', prov:ov(config.prodLaborRate,120), token:'cfg.prod', feeds:PROD, editTab:'production', editLabel:'Production' },
+    { group:'Production schedule', param:'Shutdown threshold', value:`${num(config.prodShutdownPct,25)}% util`, seed:'25%', prov:ov(config.prodShutdownPct,25), token:'cfg.prod', feeds:PROD, editTab:'production', editLabel:'Production' },
+    { group:'Production schedule', param:'Campaign min-run', value: campOn?`${config.prodCampaignMinRun} u/run`:'off', seed:'off', prov: campOn?'override':'seed', token:'cfg.prod', feeds:PROD, editTab:'production', editLabel:'Production' },
+    { group:'Profit-mix caps', param:'Cash budget · warehouse', value:`${Number(config.pmBudget)>0?'₹'+Number(config.pmBudget).toLocaleString('en-IN'):'∞'} · ${Number(config.pmWarehouse)>0?config.pmWarehouse+'u':'∞'}`, seed:'∞ · ∞', prov: pmOn?'override':'seed', token:'cfg.profit', feeds:['Profit-mix'], editTab:'console', editLabel:'Console' },
+    { group:'Planning calendar', param:'Frozen / Slushy fence', value:`${planning.frozenWeeks}w / ${planning.slushyWeeks}w`, seed:'4w / 12w', prov:(Number(planning.frozenWeeks)!==4||Number(planning.slushyWeeks)!==12)?'override':'seed', token:'planning', feeds:PLAN, editTab:'setup', editLabel:'Calendar ↑' },
+    { group:'Planning calendar', param:'Horizon · grain', value:`${planning.horizonLength} ${planning.timeGrain}s`, seed:'52 weeks', prov:(Number(planning.horizonLength)!==52||planning.timeGrain!=='week')?'override':'seed', token:'planning', feeds:PLAN, editTab:'setup', editLabel:'Calendar ↑' },
+    { group:'Planning calendar', param:'Schedule fence (MILP)', value:`${num(planning.productionScheduleWeeks,13)}w`, seed:'13w', prov:ov(planning.productionScheduleWeeks,13), token:'planning', feeds:PROD, editTab:'setup', editLabel:'Calendar ↑' },
+  ];
+  return (
+    <StageSection step="4" title="Parameter Governance" sub="every governed input in one ledger — its live value, whether it’s still a seed or your override, the dependency token it travels on, and exactly what re-solves when you change it">
+      <Card icon="🗂️" title="Parameter Registry" badge={`${rows.length} governed`} badgeTone="y" span={3}
+        info={{ what:'The single inventory of governed inputs. PROVENANCE says whether a value is still the seed default or your override; TOKEN is the stale-cascade key SOLVE_DEPS uses; FEEDS lists the solves that consume the input. The Ph2 carve-outs cfg.prod / cfg.profit re-flag EXACTLY their FEEDS (a production-knob or profit-cap edit no longer drags FX/tax-only solves stale); the broad `config` token re-flags the whole inventory family conservatively (it stales at least its FEEDS — never fewer — plus shared consumers like profit-mix/capital, since those inputs fan through WACC/landed cost). Read live from state — no faked rows.', flows:'Registry → every governed solver input · provenance · lineage.' }}
+        dev={{ comp:'ParamRegistry', props:'config, planning → rows[]', state:'config.*, planning.*', note:'token column = SOLVE_DEPS dependency key; cfg.prod/cfg.profit are the Ph2 carve-outs.' }}>
+        <ParamRegistry rows={rows} onNav={onNav}/>
+        <Reading formula="provenance = (value ≠ seed) ? override : seed   ·   token = SOLVE_DEPS key   ·   feeds = solves that consume the input"
+          soWhat="The provenance contract, made inspectable: the TOKEN a param travels on is the same key the stale-cascade fires on. The cfg.prod / cfg.profit carve-outs re-flag exactly their FEEDS; the broad `config` token over-flags conservatively (≥ its FEEDS, never fewer) — over-staling is safe, under-staling is the bug it refuses. Click ⛓ for lineage, or jump to a param’s editor."/>
+      </Card>
     </StageSection>
   );
 }

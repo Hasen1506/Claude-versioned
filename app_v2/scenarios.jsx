@@ -533,7 +533,7 @@ function ScnLoop({ onNav }) {
       <Card icon="🔗" title="Run the whole loop — one dataset" span={1}
         badge={log?`${okCount}/${steps.length} solved`:'idle'} badgeTone={log? (okCount===steps.length?'g':'y') :'k'}
         right={<Btn kind="primary" sm onClick={run}>{running?'Running…':'▶ Run end-to-end loop'}</Btn>}
-        info={{ what:'Chains the planning solvers in dependency order on the same committed dataset: procurement → aggregate S&OP → production schedule → ₹ line-capacity dual → Monte-Carlo risk on the just-built schedule. Each step feeds the next.', flows:'One action re-plans the whole model (Kinaxis-style).' }}
+        info={{ what:'Chains the planning solvers in dependency order on the same committed dataset: procurement → aggregate S&OP → production schedule → ₹ line-capacity dual → Monte-Carlo risk on the just-built schedule. Each step feeds the next.', flows:'One action re-plans the planning spine (Kinaxis-style) — the other engines keep their last result.' }}
         dev={{ comp:'ScnLoop', props:'runFullLoop({planning})', note:'store.jsx — caches each result so downstream tabs read it.' }}>
         <Provenance kind={log?'solved':'derived'} asOf={doneAt?doneAt.toLocaleTimeString():'not yet run'} stale={!log} style={{marginBottom:10}}/>
         <div style={{display:'flex', flexDirection:'column', gap:6}}>
@@ -648,32 +648,52 @@ function Tornado() {
 }
 
 function ScnCost() {
-  const cw=M.costWaterfall;
+  // G-SC1 — both cards now read SOLVED / DERIVED rollups, not the M.* seed.
+  useStore(s=>s.solveResults||{});   // re-render when a solve caches
+  useConfig();                        // re-render when carry rate / cover changes
+  useMasterRev && useMasterRev();
+  const live = (typeof costWaterfallLive==='function') ? costWaterfallLive() : null;   // null until procurement cached
+  const tco  = (typeof tcoPerSku==='function') ? tcoPerSku() : [];
+  const cw = live ? [...live.cats, { k:'TOTAL', v:live.total, total:true }]
+                  : M.costWaterfall;
+  const mx = Math.max(...cw.map(d=>d.v), 1);
+  const sumCats = live ? live.cats.reduce((s,c)=>s+c.v,0) : null;   // == live.total by construction
+  const L = v=> v>=1e7 ? `₹${(v/1e7).toFixed(2)}Cr` : v>=1e5 ? `₹${(v/1e5).toFixed(1)}L` : `₹${Math.round(v).toLocaleString('en-IN')}`;
+  const n = cw.length, slot = 660/n, bw = Math.min(80, slot-12);
+  // prov-ok: the solved chip reflects the cached procurement + transport solves read via costWaterfallLive() (cross-stage cache, not a local useSolve); seed when uncached
+  const wfProv = live ? <Provenance kind="solved" note="procurement + transport"/> : <Provenance kind="external" run="seed"/>;
   return (
     <Grid cols={2}>
-      <Card icon="📊" title="Cost Waterfall" badge="illustrative" badgeTone="k" span={2}
-        right={<Provenance kind="external" run="seed"/>}
-        info={{ what:'Build-up of total cost by category (seed structure — wire to the solved cost roll-up to make it live).', flows:'Cost structure → savings hunt.' }}
-        dev={{ comp:'CostWaterfallCard', props:'M.costWaterfall' }}>
+      <Card icon="📊" title="Cost Waterfall" badge={live?'solved · live':'illustrative'} badgeTone={live?'g':'k'} span={2}
+        right={wfProv}
+        info={{ what:'Build-up of total cost by category. When procurement is solved this reads the live cost_breakdown (+ transport); Holding is the residual carrying cost, so the bars sum to the solved total.', flows:'Cost structure → savings hunt.' }}
+        dev={{ comp:'CostWaterfallCard', props:'costWaterfallLive() ?? M.costWaterfall' }}>
+        {!live && <SeedFence what="Illustrative cost structure for layout. Run procurement (Sourcing ⚡) — and optionally transport — and this becomes the solved category roll-up."/>}
         <svg viewBox="0 0 700 170" style={{width:'100%', height:170, display:'block'}}>
-          {(()=>{ let cum=0; const mx=12.64;
-            return cw.map((d,i)=>{ const x=30+i*112, h=d.v/mx*130;
-              const bar = d.total ? <rect x={x} y={150-h} width="80" height={h} fill={C.ink}/> : <rect x={x} y={150-(cum+d.v)/mx*130} width="80" height={d.v/mx*130} fill={C.ac}/>;
+          {(()=>{ let cum=0;
+            return cw.map((d,i)=>{ const x=20+i*slot, h=d.v/mx*120;
+              const bar = d.total ? <rect x={x} y={150-h} width={bw} height={h} fill={C.ink}/>
+                                  : <rect x={x} y={150-(cum+d.v)/mx*120} width={bw} height={d.v/mx*120} fill={C.ac}/>;
+              const yTop = d.total?150-h:150-(cum+d.v)/mx*120;
               const out=(<g key={i}>{bar}
-                <text x={x+40} y="163" fontFamily={F.mono} fontSize="9" fill={C.tx2} textAnchor="middle">{d.k}</text>
-                <text x={x+40} y={(d.total?150-h:150-(cum+d.v)/mx*130)-4} fontFamily={F.disp} fontSize="10" fontWeight="700" fill={C.tx} textAnchor="middle">₹{d.v}</text>
+                <text x={x+bw/2} y="163" fontFamily={F.mono} fontSize="8" fill={C.tx2} textAnchor="middle">{d.k}</text>
+                <text x={x+bw/2} y={yTop-4} fontFamily={F.disp} fontSize="8.5" fontWeight="700" fill={C.tx} textAnchor="middle">{live?L(d.v):`₹${d.v}`}</text>
               </g>);
               if(!d.total) cum+=d.v; return out;
             });
           })()}
         </svg>
+        {live && <Reading formula="Σ category bars = solved total   ·   Holding = total − (material+ordering+setup+conversion+overhead+milk-run+expiry)"
+          soWhat={`The ${live.cats.length} categories sum to ${L(sumCats)} = the solved total${live.hasTransport?' (incl. transport)':' (run transport to add the freight bar)'}. Holding is the carrying cost the MILP charged but didn't itemise — surfaced here as the residual.`}/>}
       </Card>
-      <Card icon="🏗️" title="TCO per SKU" badge="illustrative" badgeTone="k" span={2}
-        right={<Provenance kind="external" run="seed"/>}
-        info={{ what:'Unit + holding + ordering + quality + obsolescence (seed — wire to solved TCO).', flows:'TCO → true profitability.' }}
-        dev={{ comp:'TCOCard', props:'M.tco' }}>
+      <Card icon="🏗️" title="TCO per SKU" badge="derived" badgeTone="g" span={2}
+        right={<Provenance kind="derived" note="unit+hold+order+quality+obsol"/>}
+        info={{ what:'Total cost of ownership per unit: product cost + carrying (solved carry rate × cover) + amortised ordering (master S) + quality loss (measured yield) + obsolescence (salvage write-down when shelf < cover). TCO is the exact sum of the five.', flows:'TCO → true profitability.' }}
+        dev={{ comp:'TCOCard', props:'tcoPerSku()', note:'G-SC1 — derived from carryRate (WACC) · master S · measured yield, not M.tco seed.' }}>
         <DataTable cols={['SKU','Unit','Holding','Ordering','Quality','Obsol.','TCO/u']} align={['left','right','right','right','right','right','right']}
-          rows={M.tco.map(t=>({cells:[t.sku, `₹${t.unit}`, `₹${t.hold}`, `₹${t.order}`, `₹${t.quality}`, `₹${t.obsol}`, <span style={{fontWeight:700, color:C.dg}}>₹{t.tco}</span>]}))}/>
+          rows={tco.map(t=>({cells:[t.sku, `₹${t.unit.toLocaleString('en-IN')}`, `₹${t.hold.toLocaleString('en-IN')}`, `₹${t.order.toLocaleString('en-IN')}`, `₹${t.quality.toLocaleString('en-IN')}`, `₹${t.obsol.toLocaleString('en-IN')}`, <span style={{fontWeight:700, color:C.dg}}>₹{t.tco.toLocaleString('en-IN')}</span>]}))}/>
+        <Reading formula="TCO/u = unit + (carry × unit × cover) + (Σ master S ÷ annual demand) + unit·(1/yield − 1) + salvage write-down"
+          soWhat="Quality cost rises with a worse MEASURED yield, holding moves with the solved carry rate (WACC + spread), ordering uses the real per-PO S — so TCO reacts to the actual plan, not a frozen seed. Durable parts (shelf ≫ cover) carry ₹0 obsolescence, correctly."/>
       </Card>
     </Grid>
   );
@@ -720,7 +740,7 @@ function ScnExplore() {
 // W10 · S&OP COCKPIT — executive rollup of every cached solve on ONE model.
 // Reads the cross-stage solve cache (solveResults) — the SAME real outputs the
 // owning tabs show — into one board: committed demand → plan → schedule → line
-// capital → risk → pooling, with a single "re-plan the whole model" action and
+// capital → risk → pooling, with a single "re-plan the planning spine" action and
 // the live control-tower count. Honest "—" for any stage not yet solved.
 // ════════════════════════════════════════════════════════════════════════
 const _L = v => (v==null||isNaN(v)) ? '—' : '₹'+(v/1e5).toFixed(2)+'L';
@@ -817,6 +837,159 @@ const _KPI_ROWS = [
   { k:'cvar95',       label:'Risk CVaR95',      fmt:_L, better:'lo' },
   { k:'avgFill',      label:'Mean fill %',      fmt:v=>v==null?'—':v+'%', better:'hi' },
 ];
+// ════════════════════════════════════════════════════════════════════════
+// HARNESS-2 · DISRUPTION SUB-FLOW RUNNER — the BEHAVIORAL regression test
+// ────────────────────────────────────────────────────────────────────────
+// HARNESS-1 (tools/model_check.js) proves the app PARSES and its endpoints
+// EXIST — a static check. HARNESS-2 proves the app BEHAVES: that perturbing one
+// real planning lever moves the right KPI in the right DIRECTION through the
+// actual solve chain. It can only live in-app because it needs the byte-restored
+// runScenario re-solve loop (the same concurrent what-if the Scenarios tab runs),
+// not a node script. Each sub-flow: solve the live base once → clone it → perturb
+// ONE lever in the clone's input snapshot → runScenario (full loop; live restored
+// after) → assert the KPI direction vs the base → delete the clone — all QUIET, so
+// these throwaway runs never touch the audit log or the ValueLedger's ROI count.
+// Verdicts are HONEST: PASS (moved as expected) · FLAT (didn't move ≥½% — a wiring
+// smell) · FAIL (moved the WRONG way — a model bug) · ERR (threw / KPI absent).
+// Levers traced to their solver (2026-06-06):
+//   demand → getItemDemand → loop aggregate            ⇒ planCost = ag.total_cost
+//   dutyFreightPct + fxRates.USD → effLandedCost
+//                → partsWithSourcing → loop procurement ⇒ procCost = pc.total
+//   prodArch.lines[].cap → linecapPayload → loop linecap ⇒ lineShadowMax (B-5, 2026-06-06)
+const _SUBFLOWS = [
+  { id:'SF-1', name:'OEM ramp', lever:'4471+3215 demand ×1.4', kpi:'planCost', dir:'up',
+    why:'two A-class OEM programmes surge → more to build → aggregate plan cost rises',
+    xf:(inp)=>{ const dem={ ...(inp.demand||{}) };
+      ['TPA-4471','TPA-3215'].forEach(s=>{ const b=(dem[s]&&dem[s].length)?dem[s]:getItemDemand(s,52);
+        dem[s]=b.map(v=>Math.max(0,Math.round(v*1.4))); });
+      inp.demand=dem; return inp; } },
+  { id:'SF-5', name:'Demand collapse', lever:'all FG ×0.6', kpi:'planCost', dir:'down',
+    why:'downturn — every finished good ×0.6 → less to build → aggregate plan cost falls',
+    xf:(inp)=>{ const dem={ ...(inp.demand||{}) };
+      (M.products||[]).filter(p=>p.cat==='Finished').forEach(p=>{ const b=(dem[p.sku]&&dem[p.sku].length)?dem[p.sku]:getItemDemand(p.sku,52);
+        dem[p.sku]=b.map(v=>Math.max(0,Math.round(v*0.6))); });
+      inp.demand=dem; return inp; } },
+  { id:'SF-4', name:'Commodity spike', lever:'parts landed +20%', kpi:'procCost', dir:'up',
+    why:'duty+freight uplift compounds +20% on every part → higher landed cost → procurement spend rises',
+    xf:(inp)=>{ const src={ ...(inp.sourcing||{}) };
+      (M.bom||[]).forEach(b=>{ const cur=getSourcing(b.part,b); const oldPct=Number(cur.dutyFreightPct)||0;
+        const newPct=((1+oldPct/100)*1.2-1)*100;
+        src[b.part]={ ...(src[b.part]||{}), imported:cur.imported, dutyFreightPct:Math.round(newPct*10)/10 }; });
+      inp.sourcing=src; return inp; } },
+  { id:'SF-2', name:'FX shock', lever:'USD/₹ +₹5', kpi:'procCost', dir:'up',
+    why:'rupee weakens ₹5/$ → imported parts (RM-BRG18) re-price up in ₹ → procurement spend rises',
+    xf:(inp)=>{ const cfg={ ...(inp.config||{}) }; const fx={ ...(cfg.fxRates||{}) };
+      fx.USD=Math.round(((Number(fx.USD)||84.2)+5)*100)/100; cfg.fxRates=fx; inp.config=cfg; return inp; } },
+  { id:'SF-7', name:'Capacity loss', lever:'all lines cap ×0.1', kpi:'lineShadowMax', dir:'up',
+    why:"lines crippled (×0.1 registry cap) cross from slack into BINDING → the ₹ line-capacity dual rises off ₹0. At real TPAC volumes capacity is honestly slack (linecap returns ₹0), so the cut is deliberately deep — this confirms prodArch is now a LIVE, byte-restorable scenario lever reaching linecap (B-5), NOT that ₹0 was wrong. (Production is unaffected — it sizes capacity off OEE/hours, not this units field; only linecap reads cap.)",
+    xf:(inp)=>{ const pa=inp.prodArch||{};
+      const lines=(pa.lines||[]).map(l=>({ ...l, cap:Math.max(1, Math.round((Number(l.cap)||0)*0.1)) }));
+      inp.prodArch={ ...pa, lines }; return inp; } },
+];
+// Honest coverage gaps — sub-flows that CANNOT be byte-restored / asserted yet.
+const _BLOCKED_SF = [
+  { id:'SF-3', name:'Supplier aging',    why:'a finance-only effect (DSO / working capital) — no committed-plan loop KPI to assert on' },
+  { id:'SF-6', name:'Lead-time stretch', why:'couples demand + risk KPIs — exercised via Risk ▸ stress-to-failure instead' },
+];
+const _SF_TONE = { PASS:C.gn, FAIL:C.dg, ERR:C.dg, FLAT:C.hl };
+const _SF_EPS = 0.005;   // ½% — a move below this reads as FLAT (no real direction)
+function _sfVerdict(base, val, dir){
+  if(base==null || val==null) return { tag:'ERR', why:'a required KPI was null — the solve was absent' };
+  if(base===0) return val>0 ? { tag:(dir==='up'?'PASS':'FAIL'), why:'base was 0' } : { tag:'FLAT', why:'base was 0 and it stayed 0' };
+  const rel = (val-base)/Math.abs(base);
+  if(Math.abs(rel) < _SF_EPS) return { tag:'FLAT', why:'the lever did not move the KPI (within ½%) — check the wiring' };
+  return ((rel>0?'up':'down')===dir) ? { tag:'PASS', why:'' } : { tag:'FAIL', why:'moved the WRONG way — a model bug' };
+}
+function SubflowHarness(){
+  const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [msg, setMsg]   = useState(null);
+
+  const run = async ()=>{
+    setBusy(true); setMsg(null); setRows([]);
+    try{
+      // 1 · baseline — solve the LIVE inputs once (transparent; restored after). QUIET.
+      setStep('baseline');
+      const baseId = captureScenario('▸ harness baseline', '', true);
+      let bk;
+      try{ ({ kpis: bk } = await runScenario(baseId, { quiet:true })); }
+      finally{ deleteScenario(baseId, true); }
+      if(bk.planCost==null && bk.procCost==null){
+        setMsg('⚠ Baseline solve returned no plan/proc cost — is the server up? Run the Loop tab once, then retry.');
+        setBusy(false); setStep(null); return;
+      }
+      // 2 · each sub-flow — clone → perturb ONE lever → run → assert direction → delete. QUIET.
+      const out = [];
+      for(const sf of _SUBFLOWS){
+        setStep(sf.id);
+        let kpis=null, err=null;
+        const id = captureScenario('▸ '+sf.id+' '+sf.name, '', true);
+        try{ updateScenarioInputs(id, sf.xf); ({ kpis } = await runScenario(id, { quiet:true })); }
+        catch(e){ err = e.message||String(e); }
+        finally{ deleteScenario(id, true); }
+        const b = bk[sf.kpi], v = kpis ? kpis[sf.kpi] : null;
+        const verdict = err ? { tag:'ERR', why:err } : _sfVerdict(b, v, sf.dir);
+        out.push({ ...sf, base:b, val:v, verdict }); setRows([...out]);
+      }
+      const np = out.filter(r=>r.verdict.tag==='PASS').length;
+      // ONE honest audit line — NOT a scenario_* event, so the ValueLedger stays truthful.
+      try{ if(typeof logEvent==='function') logEvent('harness_run', null, { pass:np, total:out.length }); }catch(e){}
+      setMsg(`${np}/${out.length} sub-flows passed — live working set restored, base untouched.`);
+    }catch(e){ setMsg('⚠ '+(e.message||String(e))); }
+    finally{ setBusy(false); setStep(null); }
+  };
+
+  const npass  = rows.filter(r=>r.verdict.tag==='PASS').length;
+  const anyBad = rows.some(r=>['FAIL','ERR','FLAT'].includes(r.verdict.tag));
+
+  return (
+    <Card icon="🧪" title="Sub-flow harness — does the model BEHAVE?" span={2}
+      badge={rows.length?`${npass}/${rows.length} pass`:'HARNESS-2'} badgeTone={rows.length?(anyBad?'k':'y'):'k'}
+      info={{ what:"A behavioral regression test: each row perturbs ONE real lever and asserts the right KPI moves the right DIRECTION through the actual solve chain (not a parser). Runs are transparent — the live working set is byte-restored after each, and QUIET (no audit / ValueLedger pollution). HARNESS-1 checks the app parses; this checks it behaves.", flows:'Run → read PASS / FLAT / FAIL per disruption.' }}
+      dev={{ comp:'SubflowHarness (HARNESS-2)', props:'captureScenario(quiet) → updateScenarioInputs → runScenario(quiet) → assert → deleteScenario(quiet)', note:'DIRECTION §4B — 4 runnable sub-flows; 3 honest coverage gaps below.' }}
+      right={<Btn kind="primary" sm onClick={run}>{busy?(step?`Solving ${step}…`:'Solving…'):'▶ Run harness'}</Btn>}>
+      <div style={{overflowX:'auto'}}>
+        <table style={{borderCollapse:'collapse', width:'100%', fontSize:10.5}}>
+          <thead><tr>
+            {['Sub-flow','Lever','KPI','Expect','Base','Perturbed','Verdict'].map((h,i)=>(
+              <th key={i} style={{textAlign:i>3?'right':'left', padding:'5px 8px', fontFamily:F.mono, fontSize:9, color:C.tx3, borderBottom:`2px solid ${C.line}`}}>{h}</th>))}
+          </tr></thead>
+          <tbody>
+            {_SUBFLOWS.map(sf=>{ const r = rows.find(x=>x.id===sf.id);
+              const v = r?r.verdict:null; const fmt = (sf.kpi==='planCost'||sf.kpi==='procCost') ? _L : _N;
+              return (<tr key={sf.id} title={(v&&v.why)?v.why:sf.why}>
+                <td style={{padding:'4px 8px', fontFamily:F.body, fontWeight:700, fontSize:10.5}}>{sf.id} <span style={{color:C.tx2, fontWeight:400}}>{sf.name}</span></td>
+                <td style={{padding:'4px 8px', fontFamily:F.mono, fontSize:9.5, color:C.tx2}}>{sf.lever}</td>
+                <td style={{padding:'4px 8px', fontFamily:F.mono, fontSize:9.5, color:C.tx2}}>{sf.kpi}</td>
+                <td style={{padding:'4px 8px', fontFamily:F.mono, fontSize:11, color:C.tx2}}>{sf.dir==='up'?'↑':'↓'}</td>
+                <td style={{padding:'4px 8px', textAlign:'right', fontFamily:F.mono, fontSize:10}}>{r?fmt(r.base):'—'}</td>
+                <td style={{padding:'4px 8px', textAlign:'right', fontFamily:F.mono, fontSize:10}}>{r?fmt(r.val):'—'}</td>
+                <td style={{padding:'4px 8px', textAlign:'right', fontFamily:F.disp, fontSize:10, fontWeight:700, color: v?(_SF_TONE[v.tag]||C.tx):C.tx3}}>{v?v.tag:'—'}</td>
+              </tr>);
+            })}
+          </tbody>
+        </table>
+      </div>
+      {msg && <div style={{marginTop:8, fontFamily:F.mono, fontSize:10.5, color: msg[0]==='⚠'?C.dg:C.tx, lineHeight:1.5, border:`2px solid ${C.line}`, padding:'8px 10px', background:C.paper}}>{msg}</div>}
+
+      <div style={{marginTop:10}}><SubLabel>Honest coverage gaps — not runnable yet</SubLabel></div>
+      <div style={{display:'flex', flexDirection:'column', gap:4, marginTop:5}}>
+        {_BLOCKED_SF.map(b=>(
+          <div key={b.id} style={{display:'flex', gap:8, alignItems:'baseline', fontFamily:F.mono, fontSize:9.5, color:C.tx3}}>
+            <span style={{fontFamily:F.body, fontWeight:700, color:C.tx2, minWidth:118}}>{b.id} {b.name}</span>
+            <span style={{flex:1}}>{b.why}</span>
+          </div>))}
+      </div>
+
+      <Reading tone={anyBad?C.dg:(rows.length?C.gn:C.tx3)}
+        formula="per sub-flow: clone live → perturb one lever → run the full loop on the clone → assert the KPI direction vs base"
+        soWhat={rows.length
+          ? `${npass}/${rows.length} disruptions moved the right KPI the right way through a REAL re-solve. FLAT = the lever didn't reach the solver (a wiring smell); FAIL = it moved the wrong way (a model bug). The base never moved — every run was byte-restored.`
+          : "Run the harness to prove each disruption flows through the solver and moves the plan the way it should — the behavioral complement to HARNESS-1's static parse/endpoint check."}/>
+    </Card>
+  );
+}
 function ScnScenarios({ onNav }){
   const { planning } = usePlanning();
   const sc = useScenarios();
@@ -955,6 +1128,9 @@ function ScnScenarios({ onNav }){
           soWhat="A real re-solve, not a parser: the demand/cost/service change flows through the same payload builders the tabs use, so the delta is the plan's actual sensitivity to that shock."/>
       </Card>
 
+      {/* HARNESS-2 — behavioral sub-flow regression (does the model behave?) */}
+      <SubflowHarness/>
+
       {/* Event-sourced replay + version diff/merge (W11 · Platform L4 depth) */}
       <ScnVersions sc={sc}/>
 
@@ -1036,7 +1212,7 @@ function ModelSurface(){
       });
       if(typeof logEvent==='function') logEvent('model_import', null, { changed: diff.length, reSolve: !!reSolve });
       if(reSolve){ await runFullLoop({ planning }); }
-      setMsg(`✓ applied ${diff.length} change(s)${reSolve?' and re-solved the whole model':' — solves now stale, re-plan to refresh'}`);
+      setMsg(`✓ applied ${diff.length} change(s)${reSolve?' and re-solved the planning spine':' — solves now stale, re-plan to refresh'}`);
       setDiff(null);
     }catch(e){ setMsg('⚠ '+(e.message||String(e))); } finally{ setBusy(false); }
   };

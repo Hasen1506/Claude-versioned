@@ -7,20 +7,29 @@
 // Procurement MILP payload — the selected FG's demand series (the keystone the
 // Demand forecast wrote) exploded through the shared BOM. Period length converts
 // the parts' day-leads to periods. Capacity set comfortably above peak demand.
-// partsWithSourcing(pd) — the shared BOM mapped to solver parts, but each part's
-// `landed_cost` now set from its governed sourcing terms (S-1): quoted cost lifted
-// by the duty+inbound-freight %. The procurement/policy solvers PREFER landed_cost
-// over raw cost (procurement.py P6), so the MILP plans on the true cost-to-gate.
-// Domestic parts (dutyFreightPct=0) get landed_cost == cost — fully backward-compatible.
-function partsWithSourcing(pd){
+// partsWithSourcing(pd, sku) — the BOM mapped to solver parts for the SELECTED FG.
+// SR-1 (domain fix): qty_per is the SKU's OWN per-unit usage from M.skuBom (via
+// bomForSku), NOT the shared master qty. A part the FG does not consume gets qty_per 0
+// — so the procurement MILP buys NONE of it (no more "ordering bolts for a bearing").
+// We still iterate the full master in M.bom order so every downstream card's
+// proc.result.materials[pi] ↔ M.bom[pi] index alignment is preserved (MRP, Freight,
+// Exceptions, Postpone, policy table). No skuBom cohort ⇒ fall back to master qty (compatible).
+// `landed_cost` set from governed sourcing terms (S-1): quoted cost lifted by the
+// duty+inbound-freight % AND the live FX factor (SS-D); procurement/policy PREFER
+// landed_cost over raw cost (procurement.py P6), so the MILP plans on cost-to-gate.
+function partsWithSourcing(pd, sku){
   const base = bomParts(pd);
   const bom = (M.bom||[]);
+  const skuBill = (typeof bomForSku==='function' && sku) ? bomForSku(sku) : [];
+  const hasCohort = skuBill.length > 0;
+  const qtyByPart = {};
+  skuBill.forEach(ln=>{ qtyByPart[ln.part] = ln.qty; });   // bomForSku already applied per-SKU overrides
   return base.map((p,i)=>{
     const b = bom[i] || {};
     const src = getSourcing(b.part, b);
-    // supplier carried through so policy.py can group parts into joint-replenishment
-    // baskets (SS-B); landed_cost lifted by duty/freight % AND the live FX factor (SS-D).
-    return { ...p, landed_cost: effLandedCost(p.cost, src), supplier: b.sup };
+    const qty_per = hasCohort ? (qtyByPart[b.part] != null ? qtyByPart[b.part] : 0) : p.qty_per;
+    // supplier carried through so policy.py can group parts into joint-replenishment baskets (SS-B).
+    return { ...p, qty_per, landed_cost: effLandedCost(p.cost, src), supplier: b.sup };
   });
 }
 function procurementPayload(sku, planning, serviceLevel){
@@ -38,10 +47,13 @@ function procurementPayload(sku, planning, serviceLevel){
   // unbounded (params.get('budget', None)). A real cap forces deferral/splitting of POs.
   const _cfg = (typeof appStore!=='undefined') ? (appStore.get().config||{}) : {};
   const _budget = Number(_cfg.procBudget) || 0;
-  const params = { periods:12, time_grain:grain, service_level: serviceLevel, carry_rate: carry };
+  const params = { periods:12, time_grain:grain, service_level: serviceLevel, carry_rate: carry,
+    // G-N1 — open/in-transit POs (network.scheduledReceipts) net the buy (procurement.py T6).
+    horizon_start_date: planning.startDate,
+    locked_pos: (typeof scheduledReceiptsLocked==='function') ? scheduledReceiptsLocked() : [] };
   if(_budget > 0) params.budget = _budget;
   return { products:[{ name:sku, demand:dem, capacity:cap,
-    variable_cost:p.cost||1190, sell_price:p.price||1850, yield_pct:p.yield||0.97, parts:partsWithSourcing(pd) }],
+    variable_cost:p.cost||1190, sell_price:p.price||1850, yield_pct:(typeof skuYield==='function'?skuYield(p,0.97):(p.yield||0.97)), parts:partsWithSourcing(pd, sku) }],   // G-I1 measured ?? seed
     params };
 }
 // S-3 autopilot uses the SAME procurement-shaped payload (policy.py reads
@@ -51,7 +63,8 @@ function policyPayload(sku, planning, serviceLevel){
   const base = procurementPayload(sku, planning, serviceLevel);
   // SS-B — joint_major_cost = the shared per-PO cost amortised across a supplier's
   // basket (truck booking + admin + inbound inspection). Seed ₹2,500; the per-part
-  // ordering_cost (₹120) is the minor cost added per line on a joint order.
+  // ordering_cost is now the MASTER per-part S (M.bom[].S — 1200/900/140/60/80), the
+  // minor cost added per line on a joint order (G-S2 — was a hardcoded ₹120).
   // carry_rate now flows from procurementPayload (governed WACC + spread via carryRate());
   // keep an explicit fallback only if the base ever omits it.
   base.params = { ...base.params, carry_rate: base.params.carry_rate ?? ((typeof carryRate==='function') ? carryRate() : 0.24), joint_major_cost: 2500 };
@@ -82,7 +95,7 @@ function meioPayload(sku, serviceLevel, maxServiceDays){
   const cv = Math.max(Number(p.mape)||1, 1) / 100;        // forecast error % as demand CV proxy
   const muFg = (Number(p.demand)||0) / MEIO_DPY;          // FG units/day
   const sigFg = cv * muFg;
-  const yld = Number(p.yield) || 0.97;
+  const yld = (typeof skuYield==='function') ? skuYield(p, 0.97) : (Number(p.yield) || 0.97);   // G-I1 measured ?? seed
   const rolled = bom.reduce((s,b)=> s + b.qty * effLandedCost(b.cost, getSourcing(b.part,b)), 0);
   const stages = [];
   bom.forEach(b=>{
@@ -138,7 +151,7 @@ function meioNetworkPayload(serviceLevel, correlation, poolingFixedCost, opts){
     const fgs = cons.map(({p, qty})=>{
       const cv = Math.max(Number(p.mape)||1, 1) / 100;
       const muFg = (Number(p.demand)||0) / MEIO_DPY;          // FG units/day
-      return { name:p.sku, mu:muFg, sigma:cv*muFg, qty_per:qty, yield:Number(p.yield)||0.97 };
+      return { name:p.sku, mu:muFg, sigma:cv*muFg, qty_per:qty, yield:(typeof skuYield==='function'?skuYield(p,0.97):(Number(p.yield)||0.97)) };   // G-I1 measured ?? seed
     });
     const part = { id:b.part, name:b.name, unit_cost:landed, hold_pct:b.hold, lead_time:b.lt, fgs,
       echelons:[
@@ -164,7 +177,7 @@ function cvarPayload(sku, partId, overage, underage, beta){
   const bom = M.bom || [];
   const b = bom.find(x=>x.part===partId) || bom[0] || {};
   const cv = Math.max(Number(p.mape)||1, 1) / 100;
-  const yld = Number(p.yield) || 0.97;
+  const yld = (typeof skuYield==='function') ? skuYield(p, 0.97) : (Number(p.yield) || 0.97);   // G-I1 measured ?? seed
   const muDay = (Number(p.demand)||0) / MEIO_DPY * (Number(b.qty)||0) / Math.max(yld, 1e-6);
   const lt = Math.max(1, Number(b.lt)||1);
   const mean = muDay * lt;                         // lead-time demand (the newsvendor horizon)
@@ -172,10 +185,12 @@ function cvarPayload(sku, partId, overage, underage, beta){
   return { mean, std, holding_cost: Number(overage)||0, shortage_cost: Number(underage)||0,
     beta: Number(beta)||0.95, n_scenarios:300 };
 }
-// effective service level: the user's governed override, else the 0.95 default.
+// effective service level: the SINGLE canonical config.serviceLevel (Ph2 dedup —
+// the old config.serviceLevelOverride was folded into it by the load-time migration
+// in store.jsx, so Setup and Sourcing now edit one shared governed field).
 function effServiceLevel(config){
-  const o = config && config.serviceLevelOverride;
-  return (o!=null && o!=='') ? Number(o) : 0.95;
+  const sl = config && config.serviceLevel;
+  return (sl!=null && sl!=='') ? Number(sl) : 0.95;
 }
 function StageSourcing({ onNav }) {
   const { item, view } = useActiveItem();
@@ -189,53 +204,88 @@ function StageSourcing({ onNav }) {
   // StaleMark appears. W0·P3 — the service level is a GOVERNED input (SolverInput).
   const { stale, ranAt } = useStale('procurement');
   const runProc = ()=> proc.run().then(d=>{ markSolved('procurement'); return d; }).catch(()=>{});
+  // Ph3 (IA · P4 Run/Design): this stage was a ~14-section single scroll with the PO
+  // RELEASE PLAN buried at step 11 (gate ⑧ failed). Split into two sub-tabs (sub-tab rule
+  // for any page > ~6 sections, R6): RUN = the selected item's buy plan you read & release
+  // weekly (PO release promoted to step 2, top of the default tab); DESIGN = the parts-
+  // master governance + inventory science you tune quarterly. Steps renumber 1..n PER TAB
+  // (no scramble, gate ⑨).
+  const [sub, setSub] = useState('run');
+  const srcTabs = [
+    { id:'run',    n:'a', label:'Run', count:5 },
+    { id:'design', n:'b', label:'Design', count:10 },
+  ];
   return (
     <div>
-      <StageHeader n="07" title="Suppliers & Procurement" kicker="Per-part MRP · incoterm responsibility · landed cost · PO release — for the parts of the selected product"
+      <StageHeader n="07" title="Suppliers & Procurement" kicker="Run — the selected item's buy plan (PO release · MRP · freight · exceptions). Design — the portfolio-wide parts master & inventory science (incoterms · landed · policy · MEIO · pooling)."
         right={<Btn kind="accent" onClick={runProc}>{proc.solving?'⏳ Planning…':'⚡ Run procurement'}</Btn>}/>
-      <ItemSelector/>
+      <ItemSelector onNav={onNav}/>
       <StageContext item={item} asOf={ranAt ? ranAt.toLocaleString('en-IN') : null} stale={stale}/>
+      <SubTabNav tabs={srcTabs} active={sub} onChange={setSub}/>
       <div style={{padding:18}}>
-        <ScopeBanner kind="sourcing" name={`Parts of ${(item&&item.name)||sku}`} code={sku}
-          sub="edit landed-cost terms, freight lots & policy for this product's parts"
+        <ScopeBanner kind="sourcing" name={item?item.name:sku} code={sku}
+          sub={`procurement is solved for THIS item over the ${((typeof bomForSku==='function' && bomForSku(sku))||[]).length || M.bom.length} parts it actually consumes (from its own bill); the full parts master (cost · terms · landed-cost) is portfolio-wide — every section is scope-tagged`}
           right={onNav && <button onClick={()=>onNav('products')} style={{cursor:'pointer', border:`1.5px solid ${C.ac}`, background:'transparent', color:C.ac, fontFamily:F.mono, fontSize:9, fontWeight:700, padding:'3px 9px'}}>↗ Part costs & BOM in Products</button>}/>
         <SolverExplain id="procurement"/>
         {stale && <StaleMark since="(demand or cost inputs changed)" onNav={()=>runProc()} go="rerun"/>}
         {proc.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Procurement MILP: {proc.error}</div>}
-        <StageSection step="0" title="Solver Parameters" sub="governed inputs — a seed default until you override it; an override re-flags the plan to re-solve">
+        {sub==='run' && <>
+        <StageSection step="1" scope="global" title="Solver Parameters" sub="governed inputs — a seed default until you override it; an override re-flags the plan to re-solve">
           <Card icon="🎛️" title="Procurement MILP inputs" badge="governed" badgeTone="y"
-            info={{ what:'The service level sets the cycle-service target the MILP sizes safety stock to. The optional RM-spend budget caps purchasing cash per period (blank = unbounded). Seeded; override per run.', flows:'→ procurement MILP params.service_level, params.budget.' }}
-            dev={{ comp:'SolverInput', props:'config.serviceLevelOverride, config.procBudget', state:'config.serviceLevelOverride (seed 0.95), config.procBudget (blank=unbounded)' }}>
+            info={{ what:'The service level sets the cycle-service target the MILP sizes safety stock to — ONE shared governed field (the same α you set in Setup; editing it here or there moves both). The optional RM-spend budget caps purchasing cash per period (blank = unbounded). Seeded; override per run.', flows:'→ procurement MILP params.service_level, params.budget.' }}
+            dev={{ comp:'SolverInput', props:'config.serviceLevel, config.procBudget', state:'config.serviceLevel (seed 0.95, shared w/ Setup), config.procBudget (blank=unbounded)' }}>
             <Grid cols={3}>
-              <SolverInput label="Service level (α)" seed={0.95} value={config.serviceLevelOverride}
-                onChange={v=>setConfig({ serviceLevelOverride:v })} min={0.5} max={0.999}
-                hint="cycle-service target → safety stock"/>
+              <SolverInput label="Service level (α)" seed={0.95} value={config.serviceLevel}
+                onChange={v=>setConfig({ serviceLevel:v })} min={0.5} max={0.999}
+                hint="cycle-service target → safety stock · shared with Setup"/>
               <SolverInput label="RM-spend budget / period" seed={0} value={config.procBudget}
                 onChange={v=>setConfig({ procBudget:v })} min={0} prefix="₹"
                 hint="0 / blank = unbounded; a cap forces the MILP to defer or split purchases to stay within working capital"/>
             </Grid>
+            {/* G-I2 — ABC-differentiated service: the per-SKU (s,S)/(R,Q) policy uses class-A/B/C
+                targets (not one global α), so a class-A item earns a higher z than a long-tail C. */}
+            {(()=>{ const abc = config.abcService || { A:0.98, B:0.95, C:0.90 };
+              const setAbc = (k,v)=> setConfig({ abcService:{ ...abc, [k]: (v===''?'':Number(v)) } });
+              return (
+                <div style={{marginTop:11, paddingTop:10, borderTop:`1px solid ${C.line2}`}}>
+                  <div style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
+                    <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.08em', color:C.tx3}}>ABC-DIFFERENTIATED SERVICE (per-SKU policy)</span>
+                    {['A','B','C'].map(k=>(
+                      <Field key={k} label={`Class ${k}`} hint={`cycle-service target for class-${k} items → z`}>
+                        <NumInput value={abc[k]==null?'':abc[k]} w={84} step={0.01} min={0.5} max={0.999}
+                          onChange={v=>setAbc(k,v)}/>
+                      </Field>
+                    ))}
+                    <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3, alignSelf:'center'}}>α as a fraction (0.98 = 98%) · the per-SKU Inventory Policy (Products ▸ 4) re-derives z from the item's class</span>
+                  </div>
+                </div>
+              );
+            })()}
             <Reading formula={`safety stock = z(α) · σ_LTD   ·   Σ RM purchase[t] ≤ budget (when set)`}
-              soWhat={`The MILP is currently planning to α = ${sl} ${(config.serviceLevelOverride!=null && config.serviceLevelOverride!=='')?'(your override)':'(default)'}${(Number(config.procBudget)>0)?`, capped at ₹${Number(config.procBudget).toLocaleString('en-IN')}/period of RM spend — purchases that breach it are deferred or split`:', with no spend cap (enter a budget to enforce a working-capital limit)'}. Change either and re-run — the safety buffer and PO release schedule shift.`}/>
+              soWhat={`The MILP is currently planning to α = ${sl} ${(config.serviceLevel!=null && config.serviceLevel!=='' && Number(config.serviceLevel)!==0.95)?'(set in Setup or here)':'(default)'}${(Number(config.procBudget)>0)?`, capped at ₹${Number(config.procBudget).toLocaleString('en-IN')}/period of RM spend — purchases that breach it are deferred or split`:', with no spend cap (enter a budget to enforce a working-capital limit)'}. Change either and re-run — the safety buffer and PO release schedule shift.`}/>
           </Card>
         </StageSection>
-        <StageSection step="0b" title="External-Signal Drivers" sub="commodity / port-congestion / FX indices — planning signals (not IoT telemetry); hidden by default to keep the default view focused">
+        <SrcResults proc={proc}/>
+        <SrcMRP item={item} view={view} onNav={onNav} proc={proc}/>
+        <SrcFreight proc={proc}/>
+        <SrcExceptions proc={proc}/>
+        </>}
+        {sub==='design' && <>
+        <StageSection step="1" scope="global" title="External-Signal Drivers" sub="commodity / port-congestion / FX indices — planning signals (not IoT telemetry); hidden by default to keep the default view focused">
           <Advanced label="Show external-signal drivers · commodity / port / FX" count={3}>
             <SrcExternalSignals planning={planning} onRerun={runProc} bare/>
           </Advanced>
         </StageSection>
-        <SrcMRP item={item} view={view} onNav={onNav} proc={proc}/>
         <SrcIncoterms/>
         <SrcSourcingTerms/>
         <SrcLanded onNav={onNav}/>
-        <SrcFreight proc={proc}/>
         <SrcPolicy sku={sku} planning={planning} sl={sl}/>
         <SrcRolling sku={sku} planning={planning} sl={sl}/>
         <SrcMEIO sku={sku} sl={sl}/>
         <SrcMEIONet sl={sl}/>
         <SrcNewsvendor sku={sku}/>
         <SrcPostpone proc={proc}/>
-        <SrcResults proc={proc}/>
-        <SrcExceptions proc={proc}/>
+        </>}
       </div>
     </div>
   );
@@ -266,7 +316,7 @@ function SrcExternalSignals({ planning, onRerun, bare }){
   // bare = rendered inside an <Advanced> disclosure (no duplicate StageSection header)
   const Wrap = bare
     ? ({ children })=> <div>{children}</div>
-    : ({ children })=> <StageSection step="0b" title="External-Signal Drivers" sub="commodity / port-congestion / FX indices that drive the procurement & policy solvers — planning signals, not IoT telemetry">{children}</StageSection>;
+    : ({ children })=> <StageSection step="1" scope="global" title="External-Signal Drivers" sub="commodity / port-congestion / FX indices that drive the procurement & policy solvers — planning signals, not IoT telemetry">{children}</StageSection>;
   return (
     <Wrap>
       <Card icon="📡" title="External signals → solver inputs" badge={active?'driving':'neutral'} badgeTone={active?'g':'k'} span={2}
@@ -327,15 +377,15 @@ function SrcExternalSignals({ planning, onRerun, bare }){
 function SrcSourcingTerms(){
   const bom = M.bom || [];
   return (
-    <StageSection step="3" title="Sourcing Terms" sub="per-part import status, landed-cost uplift and inbound-truck lot — the governed inputs the supply MILP plans on">
+    <StageSection step="3" scope="global" title="Sourcing Terms" sub="per-part import status, landed-cost uplift and inbound-truck lot — the governed inputs the supply MILP plans on">
       <Card icon="🧾" title="Landed-cost & freight terms" badge="governed" badgeTone="y"
         info={{ what:'Imported parts carry a duty+inbound-freight uplift that turns quoted cost into landed cost; the MILP plans on landed cost. The truck lot sets the stepwise freight curve below.', flows:'→ procurement/policy parts[].landed_cost + freight steps.' }}
         dev={{ comp:'SrcSourcingTerms', props:'sourcing[part]', state:'sourcing[part] (seed sourcingDefault)' }}>
         <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
           <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10.5}}>
             <thead><tr style={{background:C.ink}}>
-              {['Part','Import?','Quoted ₹','Duty+freight %','Landed ₹','Units/truck','₹/truck','src'].map((h,i)=>(
-                <th key={i} style={{color:C.paper, textAlign:i<2?'left':'right', padding:'6px 9px', fontSize:9, textTransform:'uppercase'}}>{h}</th>
+              {['Part','Import?','Origin','HS code','Quoted ₹','Duty+freight %','Landed ₹','Units/truck','₹/truck','src'].map((h,i)=>(
+                <th key={i} style={{color:C.paper, textAlign:i<4?'left':'right', padding:'6px 9px', fontSize:9, textTransform:'uppercase'}}>{h}</th>
               ))}
             </tr></thead>
             <tbody>
@@ -343,14 +393,59 @@ function SrcSourcingTerms(){
             </tbody>
           </table>
         </div>
-        <Reading formula="landed = quoted × (1 + duty+freight%)   ·   the MILP prefers landed over quoted cost, so a part that lands +12% reshapes which supplier/lot wins"
-          soWhat="Flip a part to imported (or edit its %) and the procurement plan re-solves on the higher landed cost — long-lead imports get ordered in fewer, larger lots to amortise freight. Domestic parts (0%) are unchanged."/>
+        <Reading formula="landed = quoted × (1 + duty+freight%)   ·   the HS code grounds the duty (BCD by heading − FTA concession by origin)   ·   the MILP prefers landed over quoted cost"
+          soWhat="Flip a part to imported (or edit its %) and the procurement plan re-solves on the higher landed cost — long-lead imports get ordered in fewer, larger lots to amortise freight. The HS code shows the BCD the duty should track; the origin drives FTA concessions and the concentration check below."/>
+        <SrcConcentration/>
       </Card>
     </StageSection>
   );
 }
+// G-S3 — origin / supplier concentration cap (the procurement `extras` "concentration cap"
+// wired real): each origin country's & supplier's share of total RM landed spend, flagged
+// against the governed cap. A single-origin dependency is a resilience risk the plan should see.
+function SrcConcentration(){
+  const { config, setConfig } = useConfig();
+  useMasterRev();   // re-read when sourcing edits move origins
+  const con = (typeof originConcentration==='function') ? originConcentration(M.bom) : null;
+  if(!con) return null;
+  const capPct = Math.round(con.cap*100);
+  const fmtName = (k)=> (typeof COUNTRY_NAME!=='undefined' && COUNTRY_NAME[k]) || k;
+  const bar = (rows, nameFn)=> rows.slice(0,4).map((r,i)=>(
+    <div key={i} style={{display:'flex', alignItems:'center', gap:8, marginBottom:3}}>
+      <span style={{fontFamily:F.mono, fontSize:9.5, width:120, color:C.tx2}}>{nameFn(r.k)}</span>
+      <div style={{flex:1, height:12, background:C.bg3, border:`1px solid ${C.line2}`, position:'relative'}}>
+        <div style={{height:'100%', width:`${Math.min(100,r.pct*100)}%`, background: r.pct>con.cap?C.dg:C.ac}}/>
+        <div style={{position:'absolute', left:`${Math.min(100,con.cap*100)}%`, top:-2, bottom:-2, width:2, background:C.tx, opacity:.5}}/>
+      </div>
+      <span style={{fontFamily:F.disp, fontSize:10, fontWeight:700, width:42, textAlign:'right', color: r.pct>con.cap?C.dg:C.tx}}>{(r.pct*100).toFixed(0)}%</span>
+    </div>
+  ));
+  return (
+    <div style={{marginTop:12, border:`2px solid ${con.originBreaches.length||con.supplierBreaches.length?C.dg:C.line}`}}>
+      <div style={{background:C.bg3, padding:'5px 9px', display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+        <span style={{fontFamily:F.disp, fontWeight:800, fontSize:11}}>G-S3 · Origin / supplier concentration</span>
+        <label style={{fontFamily:F.mono, fontSize:9, color:C.tx3, display:'flex', alignItems:'center', gap:5}}>cap
+          <input type="number" value={Math.round((config.originConcentrationCap??0.6)*100)} step={5} min={10} max={100}
+            onChange={e=>setConfig({ originConcentrationCap: Math.max(0.1, Math.min(1, (Number(e.target.value)||60)/100)) })}
+            style={{ width:46, fontFamily:F.mono, fontSize:10, textAlign:'right', padding:'1px 4px', border:`1px solid ${C.line}`, background:C.paper, color:C.tx }}/>%
+        </label>
+      </div>
+      <div style={{padding:'9px 11px', display:'grid', gridTemplateColumns:'1fr 1fr', gap:18}}>
+        <div><div style={{fontFamily:F.mono, fontSize:8.5, fontWeight:700, color:C.tx3, marginBottom:5, letterSpacing:'.06em'}}>BY ORIGIN COUNTRY</div>{bar(con.origins, fmtName)}</div>
+        <div><div style={{fontFamily:F.mono, fontSize:8.5, fontWeight:700, color:C.tx3, marginBottom:5, letterSpacing:'.06em'}}>BY SUPPLIER</div>{bar(con.suppliers, (k)=>k)}</div>
+      </div>
+      <div style={{padding:'6px 11px', borderTop:`1px solid ${C.line2}`, fontFamily:F.mono, fontSize:9.5, color: con.originBreaches.length||con.supplierBreaches.length?C.dg:C.tx2}}>
+        {con.originBreaches.length||con.supplierBreaches.length
+          ? `⚠ Concentration risk: ${[...con.originBreaches.map(o=>`${fmtName(o.k)} ${(o.pct*100).toFixed(0)}% of RM spend`), ...con.supplierBreaches.map(s=>`${s.k} ${(s.pct*100).toFixed(0)}%`)].join(' · ')} exceeds the ${capPct}% cap — dual-source or diversify origin.`
+          : `✓ No single origin or supplier exceeds the ${capPct}% RM-spend cap.`}
+      </div>
+    </div>
+  );
+}
 function SrcTermRow({ b }){
   const { src, setSrc } = useSourcing(b.part, b);
+  const [open, setOpen] = useState(false);
+  const detailOn = !!(src.landedDetail && src.landedDetail.on);
   const landed = effLandedCost(b.cost, src);
   const up = (landed - b.cost);
   const cell = { padding:'4px 7px', borderTop:`1px solid ${C.line2}` };
@@ -360,23 +455,105 @@ function SrcTermRow({ b }){
       style={{ width:w||56, fontFamily:F.mono, fontSize:10.5, textAlign:'right', padding:'2px 4px', border:`1px solid ${C.line}`, background:C.paper, color:C.tx }}/>
   );
   return (
+    <React.Fragment>
     <tr style={{background: src.imported?C.bg3:C.paper}}>
       <td style={{...cell}}><span style={{fontWeight:700}}>{b.part}</span><div style={{fontSize:9, color:C.tx3, fontFamily:F.disp}}>{b.name}</div></td>
       <td style={{...cell}}>
-        <button onClick={()=>setSrc({ imported: !src.imported, dutyFreightPct: !src.imported ? (Number(src.dutyFreightPct)||12) : 0 })}
+        <button onClick={()=>setSrc({ imported: !src.imported, dutyFreightPct: !src.imported ? (Number(src.dutyFreightPct)||12) : 0, origin: !src.imported ? (src.origin==='IN'?'KR':src.origin) : 'IN', quoteCcy: !src.imported ? (src.quoteCcy==='INR'?'USD':src.quoteCcy) : 'INR' })}
           style={{ cursor:'pointer', border:`1.5px solid ${C.line}`, padding:'2px 7px', fontFamily:F.mono, fontSize:9, fontWeight:700,
             background: src.imported?C.ac:'transparent', color: src.imported?C.onAc:C.tx2 }}>
           {src.imported?'IMPORT':'DOMESTIC'}
         </button>
       </td>
+      <td style={{...cell}}>
+        <select value={src.origin||'IN'} onChange={e=>setSrc({ origin:e.target.value })}
+          style={{ fontFamily:F.mono, fontSize:10, padding:'2px 3px', border:`1px solid ${C.line}`, background:C.paper, color:C.tx }}>
+          {['IN','KR','JP','CN','DE','US'].map(o=><option key={o} value={o}>{o}</option>)}
+        </select>
+      </td>
+      <td style={{...cell}}>
+        <input value={src.hsCode||''} placeholder="—" onChange={e=>setSrc({ hsCode:e.target.value })}
+          style={{ width:64, fontFamily:F.mono, fontSize:10, padding:'2px 4px', border:`1px solid ${C.line}`, background:C.paper, color:C.tx }}/>
+        {(()=>{ const d=hsDuty(src); return d.dutyPct!=null ? <div style={{fontSize:7.5, color:C.a4, fontFamily:F.mono}}>BCD {d.bcd}%{d.concession>0?` −FTA${Math.round(d.concession*100)}%`:''} → {d.dutyPct}%</div> : null; })()}
+      </td>
       <td style={{...num, color:C.tx2}}>₹{b.cost.toLocaleString('en-IN')}</td>
-      <td style={{...num}}>{inp(src.dutyFreightPct, 'dutyFreightPct', 0.5, 52)}</td>
+      <td style={{...num}}>{detailOn
+        ? <span style={{fontSize:9, color:C.tx3, fontFamily:F.mono}} title="flat % is ignored while the detailed build-up is on">build-up ▸</span>
+        : inp(src.dutyFreightPct, 'dutyFreightPct', 0.5, 52)}</td>
       <td style={{...num, fontWeight:700, color: up>0?C.dg:C.tx}}>₹{landed.toLocaleString('en-IN')}{up>0?<span style={{fontSize:8.5, color:C.dg}}> +{((up/b.cost)*100).toFixed(1)}%</span>:''}
-        {src.imported && Math.abs(fxFactor(src)-1)>0.001 && <div style={{fontSize:8, color:C.a4, fontFamily:F.mono}}>FX ×{fxFactor(src).toFixed(3)}</div>}</td>
+        {detailOn && <div style={{fontSize:8, color:C.gn, fontFamily:F.mono, fontWeight:700}}>🛃 detailed</div>}
+        {!detailOn && src.imported && Math.abs(fxFactor(src)-1)>0.001 && <div style={{fontSize:8, color:C.a4, fontFamily:F.mono}}>FX ×{fxFactor(src).toFixed(3)}</div>}
+        {src.imported && <div><button onClick={()=>{ if(!detailOn) setSrc({ landedDetail: landedDetailSeed(b.cost, src) }); setOpen(!open); }}
+          style={{ marginTop:2, cursor:'pointer', border:`1px solid ${C.line}`, background:'transparent', color:C.a2, fontFamily:F.mono, fontSize:8, padding:'1px 5px' }}>
+          {open?'▾ hide':'🛃 build-up'}</button></div>}</td>
       <td style={{...num}}>{inp(src.unitsPerTruck, 'unitsPerTruck', 100, 64)}</td>
       <td style={{...num}}>{inp(src.costPerTruck, 'costPerTruck', 1000, 70)}</td>
       <td style={{...num}}><Tag c={src._prov==='user'?'g':'w'}>{src._prov==='user'?'user':'seed'}</Tag></td>
     </tr>
+    {open && src.imported && <SrcLandedDetailRow b={b} src={src} setSrc={setSrc}/>}
+    </React.Fragment>
+  );
+}
+// G-S1 — per-part DETAILED landed-cost build-up editor (the import-inputs card the
+// spec asks for). Replaces the coarse flat dutyFreightPct with FOB→plant-gate inputs
+// (FOB · ocean freight · insurance · CHA · inland), BCD grounded by the HS code, SWS
+// on BCD, IGST recoverable as ITC. The live rollup reads the SAME landedBuildup() the
+// MILP's effLandedCost() uses, so what you see is what the procurement/policy solves
+// plan on — and it reconciles to /api/calc/landed-cost (the assertion).
+function SrcLandedDetailRow({ b, src, setSrc }){
+  const d = src.landedDetail || {};
+  const bu = (typeof landedBuildup==='function') ? landedBuildup({ ...src, landedDetail:{ ...d, on:true } }) : null;
+  const set = (k)=>(e)=> setSrc({ landedDetail: { ...d, on:true, [k]: e.target.value===''?'':Number(e.target.value) } });
+  const di  = (val,k,step,w)=>(
+    <input type="number" value={val==null?'':val} step={step||1} onChange={set(k)}
+      style={{ width:w||64, fontFamily:F.mono, fontSize:10, textAlign:'right', padding:'2px 4px', border:`1px solid ${C.line}`, background:C.paper, color:C.tx }}/>
+  );
+  const row = (k,v,em,sub)=>(
+    <div style={{display:'flex', justifyContent:'space-between', padding:'3px 9px', borderTop:`1px solid ${C.line2}`,
+      background: em?C.ink:'transparent', color: em?C.ac:C.tx2, fontWeight: em?700:400}}>
+      <span style={{fontFamily:F.mono, fontSize:9.5, paddingLeft:sub?14:0, color: sub?C.tx3: em?C.ac:C.tx2}}>{sub&&'↳ '}{k}</span>
+      <span style={{fontFamily:F.disp, fontSize: em?13:11, fontWeight:700}}>₹{(Math.round(v*100)/100).toLocaleString('en-IN')}</span>
+    </div>
+  );
+  const fld = (lbl,node)=>(<label style={{display:'flex', flexDirection:'column', gap:2, fontFamily:F.mono, fontSize:8.5, color:C.tx3}}><span>{lbl}</span>{node}</label>);
+  return (
+    <tr><td colSpan={10} style={{ padding:0, background:C.bg2, borderTop:`2px solid ${C.ac}` }}>
+      <div style={{ padding:'10px 13px' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+          <span style={{fontFamily:F.disp, fontWeight:800, fontSize:11}}>🛃 Detailed landed-cost build-up — {b.name} <span style={{color:C.tx3, fontWeight:400}}>(per unit, {src.quoteCcy||'USD'})</span></span>
+          <button onClick={()=>setSrc({ landedDetail:{ ...d, on:false } })}
+            style={{ cursor:'pointer', border:`1px solid ${C.dg}`, background:'transparent', color:C.dg, fontFamily:F.mono, fontSize:9, padding:'2px 8px' }}>revert to flat %</button>
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'1.3fr 1fr', gap:18 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px 12px' }}>
+            {fld(`FOB / unit (${src.quoteCcy||'USD'})`, di(d.fobUnit,'fobUnit',1,80))}
+            {fld('Ocean freight / unit (₹)', di(d.freightPerUnit,'freightPerUnit',1,80))}
+            {fld('Insurance (% of FOB₹)', di(d.insurancePct,'insurancePct',0.1,64))}
+            {fld('SWS (% of BCD)', di(d.swsPct,'swsPct',1,64))}
+            {fld('Clearing / CHA / unit (₹)', di(d.chaPerUnit,'chaPerUnit',1,80))}
+            {fld('Inland to plant / unit (₹)', di(d.inlandPerUnit,'inlandPerUnit',1,80))}
+          </div>
+          <div style={{ border:`2px solid ${C.line}`, alignSelf:'start' }}>
+            {bu && <>
+              {row(`FOB × ₹${bu.rate}/${src.quoteCcy||'USD'}`, bu.fobInr)}
+              {row('+ Ocean freight', Number(d.freightPerUnit)||0)}
+              {row(`+ Insurance ${d.insurancePct||0}%`, bu.insurance, false, true)}
+              {row('= CIF (assessable)', bu.cif, true)}
+              {row(`+ BCD ${bu.bcdPct}% (HS ${(src.hsCode||'—')})`, bu.bcd)}
+              {row(`+ SWS ${bu.swsPct}%`, bu.sws, false, true)}
+              {row('+ Clearing / CHA', bu.cha)}
+              {row('+ Inland', bu.inland)}
+              {row('= NET LANDED / unit', bu.netLanded, true)}
+              <div style={{ padding:'3px 9px', borderTop:`1px solid ${C.line2}`, fontFamily:F.mono, fontSize:8.5, color:C.tx3 }}>
+                IGST {bu.igstPct}% = ₹{bu.igst.toLocaleString('en-IN')} recoverable as ITC (excluded from planning landed)
+              </div>
+            </>}
+          </div>
+        </div>
+        <Reading formula="net landed = FOB×FX + freight + insurance + BCD(HS−FTA) + SWS + CHA + inland   (IGST recoverable as ITC)"
+          soWhat={`This per-part build-up — not the flat ${src.dutyFreightPct||12}% — now drives ${b.name}'s landed cost in the procurement & policy MILPs. It reconciles to /api/calc/landed-cost (the Landed Cost card, step 4).`}/>
+      </div>
+    </td></tr>
   );
 }
 
@@ -421,7 +598,7 @@ function SrcFreight({ proc }){
     return { rows, indepTrucks, indepCost, consTrucks, consCost, saving: indepCost-consCost, anyOrder, sup:b.sup };
   })();
   return (
-    <StageSection step="5" title="Stepwise Inbound Freight" sub="freight is booked by the truck/container, not the unit — see the marginal-truck cliff on the selected part's planned order">
+    <StageSection step="4" scope="item" title="Stepwise Inbound Freight" sub="freight is booked by the truck/container, not the unit — see the marginal-truck cliff on the selected part's planned order">
       <Card icon="🚚" title="Truck-step freight" badge={mat?'on MILP order':'run procurement first'} badgeTone={mat?'g':'k'}
         right={mat ? <Provenance kind="derived" asOf={proc.ranAt}/> : undefined}
         info={{ what:'Freight per truckload step-function on the planned order quantity. Folded (as an average) into the part landed cost the MILP optimises.', flows:'Stepwise truck cost ← MILP order qty × governed truck lot.' }}
@@ -509,9 +686,9 @@ function SrcMRP({ item, view, onNav, proc }) {
   gross.forEach((g,i)=>{ oh = oh + (sched[i]||0) - g; onhand.push(oh); const n = oh<part.S? part.S-oh:0; net.push(n>0?part.S-Math.max(oh,0):0);
     const planned = n>0? Math.ceil((part.S-oh)/part.moq)*part.moq : 0; po.push(planned); if(planned) oh+=planned; });
   return (
-    <StageSection step="1" title="Per-Part MRP" sub={`set the selector to "its parts" — gross → net → planned PO on the period axis, with this part's supplier and inbound lane`}>
-      <Card icon="🧩" title="Parts of the selected product" badge={`${M.bom.length} parts`} badgeTone="y"
-        info={{ what:'Pick a part to explode its MRP, supplier, lane and landed cost.', flows:'Net requirements → procurement MILP.' }}
+    <StageSection step="3" scope="item" title="Per-Part MRP" sub={`set the selector to "its parts" — gross → net → planned PO on the period axis, with this part's supplier and inbound lane`}>
+      <Card icon="🧩" title="Parts master" badge={`${M.bom.length} parts · portfolio`} badgeTone="y"
+        info={{ what:'Pick a part to explode its MRP, supplier, lane and landed cost. These are ALL the parts the procurement MILP plans across the portfolio — net requirements aggregate demand over every FG that uses the part. (Which parts a given FG uses is its per-product bill, in Products.)', flows:'Net requirements → procurement MILP.' }}
         dev={{ comp:'MRPLens', props:'activeItem.parts, mrp', state:'sourcing.mrp[part][period]' }}>
         <div style={{display:'flex', gap:0, overflowX:'auto', border:`2px solid ${C.line}`, marginBottom:12}}>
           {M.bom.map((b,i)=>(
@@ -528,6 +705,7 @@ function SrcMRP({ item, view, onNav, proc }) {
           {backup.name && <Tag c="a">backup {backup.name} · LT {backup.lt}d</Tag>}
           {lane && <Tag c="b">{lane.from}→{lane.to} · {lane.mode}</Tag>}
         </div>
+        <SeedFence what="The grid below is a worked illustration — it teaches the gross → net → planned-PO mechanic on round demo numbers, NOT this part's real requirements. Your actual time-phased orders are the MILP releases shown beneath it (and in the PO Release Plan)."/>
         <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
           <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10.5}}>
             <thead><tr style={{background:C.ink}}>
@@ -569,7 +747,7 @@ function SrcMRP({ item, view, onNav, proc }) {
 function SrcIncoterms() {
   const who=v=> v==='S'?{l:'SELLER',c:C.ink,t:C.paper}:{l:'BUYER',c:C.ac,t:C.onAc};
   return (
-    <StageSection step="2" title="Incoterms" sub="who bears cost & risk at each step">
+    <StageSection step="2" scope="global" title="Incoterms" sub="who bears cost & risk at each step">
       <Card icon="🛃" title="Incoterm Responsibility Matrix" badge="merged + ref"
         info={{ what:'Who bears cost & risk at export, main carriage, import per Incoterm.', flows:'Incoterm → landed cost split & risk transfer.' }}
         dev={{ comp:'IncotermMatrix', props:'state.incoterms' }}>
@@ -624,16 +802,22 @@ function landedRows(res, inp){
 }
 function SrcLanded({ onNav }) {
   const { gate } = useProfile();
+  const { config } = useConfig();
   const i = LANDED_INPUTS;
+  // SR-5 — FX is the ONE governed rate (config.fxRates.USD, set where imported parts are
+  // quoted — the SAME source SrcExternalSignals reads), NOT a second frozen 84.20 that
+  // silently contradicts it. FOB · freight · duties stay a documented worked example
+  // until a per-import inputs card lands; the card is badged accordingly.
+  const fx = (config.fxRates && config.fxRates.USD!=null && config.fxRates.USD!=='') ? Number(config.fxRates.USD) : i.fx;
   const land = useSolve('/api/calc/landed-cost', ()=>({
-    foreign_value:i.fobUsd, exchange_rate:i.fx, freight:i.freight, insurance_pct:i.insurancePct,
+    foreign_value:i.fobUsd, exchange_rate:fx, freight:i.freight, insurance_pct:i.insurancePct,
     bcd_pct:i.bcdPct, sws_pct:i.swsPct, igst_pct:i.igstPct,
     cha_charges:i.cha, port_handling:0, local_transport:i.inland, gst_registered:true,
   }));
   const res = land.result;
   const fmt=n=> n.toLocaleString('en-IN');
   if(gate.landed) return (
-    <StageSection step="4" title="Landed Cost" sub="domestic-only — no import cost build-up needed">
+    <StageSection step="4" scope="global" title="Landed Cost" sub="domestic-only — no import cost build-up needed">
       <GateNote onNav={onNav}>Your profile has <b>no imports</b>, so landed cost, FX and incoterms don’t apply — all sourcing is domestic at quoted price.</GateNote>
     </StageSection>
   );
@@ -643,13 +827,14 @@ function SrcLanded({ onNav }) {
   const vsDom   = ((unit - i.domesticUnit) / i.domesticUnit) * 100;
   const itc     = res ? res.itc_recovery : 495000;
   return (
-    <StageSection step="4" title="Landed Cost" sub="full FOB → plant-gate build-up for an imported part">
+    <StageSection step="4" scope="global" title="Landed Cost" sub="full FOB → plant-gate build-up for an imported part">
       <Card icon="🛃" title="Landed Cost Rollup" badge={res?'solved':'worked example'} badgeTone={res?'g':undefined}
         right={res ? <Provenance kind="solved" asOf={land.ranAt}/> : <Btn kind="accent" sm onClick={()=>land.run().catch(()=>{})}>{land.solving?'⏳ Computing…':'🛃 Compute landed cost'}</Btn>}
         info={{ what:'Full import cost build-up from FOB to plant gate.', flows:'Landed cost → true unit cost & sourcing decision.' }}
         dev={{ comp:'LandedCostCard', props:'item, fx, duties' }}>
         {land.error && <div style={{margin:'0 0 10px', padding:'7px 11px', border:`2px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>landed-cost error: {land.error}</div>}
-        <div style={{fontFamily:F.disp, fontSize:13, fontWeight:700, marginBottom:8}}>{M.landedCost.item}</div>
+        <div style={{fontFamily:F.disp, fontSize:13, fontWeight:700, marginBottom:4}}>{M.landedCost.item}</div>
+        <div style={{fontFamily:F.mono, fontSize:9.5, color:C.tx3, marginBottom:8, lineHeight:1.5}}>FX <b style={{color:C.tx2}}>₹{fx}/USD</b> is the governed rate{onNav && <> (<button onClick={()=>onNav('sourcing')} style={{fontFamily:F.mono, fontSize:9.5, fontWeight:700, color:C.a2, background:'transparent', border:'none', cursor:'pointer', textDecoration:'underline', padding:0}}>set where imported parts are quoted</button>)</>}; FOB · freight · duties below are a worked example for an imported billet, not your specific part.</div>
         <div style={{border:`2px solid ${C.line}`}}>
           {rows.map((r,idx)=>(
             <div key={idx} style={{display:'flex', justifyContent:'space-between', padding:'7px 11px', borderTop:idx?`1px solid ${C.line2}`:'none',
@@ -686,20 +871,21 @@ function SrcResults({ proc }) {
     shortages = (fg.shortages||[]).map((q,t)=>({t,q})).filter(s=>s.q>0.5);
   }
   return (
-    <StageSection step="11" title="Release & Shortages" sub="time-phased PO releases and projected stockouts">
+    <StageSection step="2" scope="item" title="Release & Shortages" sub="time-phased PO releases and projected stockouts — the selected item's buy plan">
       <Grid cols={2}>
-        <Card icon="📦" title="PO Release Plan" badge={res?`${poRows.length} POs · solved`:'time-phased'} badgeTone={res?'g':undefined}
-          right={res ? <Provenance kind="solved" asOf={proc.ranAt}/> : undefined}
+        <Card icon="📦" title="PO Release Plan" badge={res?`${poRows.length} POs · solved`:'illustrative'} badgeTone={res?'g':undefined}
+          right={res ? <Provenance kind="solved" asOf={proc.ranAt}/> : <Provenance kind="seed"/>}
           info={{ what:'When to release each PO to land on time.', flows:'From procurement MILP; releases to ERP.' }}
           dev={{ comp:'PoReleasePlanCard', props:'solve.procurement.poPlan' }}>
+          {!res && <SeedFence what="Illustrative PO register for layout — demo rows, not your plan. Run procurement (⚡ above) for this item's committed, time-phased buy plan."/>}
           <DataTable dense cols={['PO','Part','Supplier','Qty','Release→Arrive','Value']} align={['left','left','left','right','left','right']}
             rows={res ? (poRows.length?poRows:[['—','no orders in horizon','—','—','—','—']])
                       : M.poRegister.map(p=>[p.po, p.part, p.sup, p.qty.toLocaleString('en-IN'), p.wk, `₹${(p.val/1000).toFixed(0)}K`])}/>
           {res && <Reading formula="release period = need period − lead time   ·   lot = ⌈net/MOQ⌉ × MOQ"
             soWhat={`The MILP placed ${poRows.length} POs to keep ${(res.products||[])[0]?.name||'the FG'} at 100% fill — long-lead parts release earliest.`}/>}
         </Card>
-        <Card icon="⚠" title="Shortage Forecast" badge={res?(shortages.length?`${shortages.length} risks`:'no shortage'):'2 risks'} badgeTone="k"
-          right={res ? <Provenance kind="solved" asOf={proc.ranAt}/> : undefined}
+        <Card icon="⚠" title="Shortage Forecast" badge={res?(shortages.length?`${shortages.length} risks`:'no shortage'):'illustrative'} badgeTone="k"
+          right={res ? <Provenance kind="solved" asOf={proc.ranAt}/> : <Provenance kind="seed"/>}
           info={{ what:'Projected stockouts before next receipt.', flows:'Shortages → expedite or safety adjust.' }}
           dev={{ comp:'ShortageForecastCard', props:'inventoryProjection' }}>
           {res ? (
@@ -717,19 +903,21 @@ function SrcResults({ proc }) {
               </div>
             ) : <div style={{padding:'10px 11px', border:`2px solid ${C.gn}`, background:C.bg3, fontFamily:F.mono, fontSize:11, color:C.gn}}>✓ No projected shortage — every period's demand is met from plan + safety stock.</div>
           ) : (
-            <div style={{display:'flex', flexDirection:'column', gap:8}}>
-              {[['RM-BRG18',M.pLabel(11),'−240 kg','POSCO LT slip',C.dg],['CN-SEAL9',M.pLabel(15),'−180 u','MOQ timing',C.a4]].map((r,i)=>(
-                <div key={i} style={{border:`2px solid ${C.line}`, padding:'8px 10px', borderLeft:`5px solid ${r[4]}`}}>
-                  <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-                    <span style={{fontFamily:F.disp, fontSize:13, fontWeight:800}}>{r[0]}</span>
-                    <Tag c="r">{r[2]} @ {r[1]}</Tag>
+            <>
+              <SeedFence what="Illustrative risks for layout — demo rows, not a solve. Run procurement (⚡ above) to project this item's real shortages from the MILP plan."/>
+              <div style={{display:'flex', flexDirection:'column', gap:8}}>
+                {[['RM-BRG18',M.pLabel(11),'−240 kg','POSCO LT slip',C.dg],['CN-SEAL9',M.pLabel(15),'−180 u','MOQ timing',C.a4]].map((r,i)=>(
+                  <div key={i} style={{border:`2px solid ${C.line}`, padding:'8px 10px', borderLeft:`5px solid ${r[4]}`}}>
+                    <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                      <span style={{fontFamily:F.disp, fontSize:13, fontWeight:800}}>{r[0]}</span>
+                      <Tag c="r">{r[2]} @ {r[1]}</Tag>
+                    </div>
+                    <div style={{fontFamily:F.mono, fontSize:10, color:C.tx3, marginTop:3}}>cause: {r[3]}</div>
                   </div>
-                  <div style={{fontFamily:F.mono, fontSize:10, color:C.tx3, marginTop:3}}>cause: {r[3]}</div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </>
           )}
-          {!res && <div style={{marginTop:10}}><Btn kind="danger" sm>⚡ Expedite both</Btn></div>}
         </Card>
       </Grid>
     </StageSection>
@@ -773,7 +961,7 @@ function SrcPolicy({ sku, planning, sl }){
   const lumpy  = res ? (res.policies||[]).filter(p=>!/periodic/i.test(p.recommended_policy)) : [];
   const fmt = n=> Math.round(n).toLocaleString('en-IN');
   return (
-    <StageSection step="6" title="Inventory Policy (autopilot)" sub="for steady movers — a standing (s,S)/(R,Q) reorder rule the planner runs between MILP re-solves; lumpy parts stay MILP-only">
+    <StageSection step="5" scope="item" title="Inventory Policy (autopilot)" sub="for steady movers — a standing (s,S)/(R,Q) reorder rule the planner runs between MILP re-solves; lumpy parts stay MILP-only">
       <Card icon="🔁" title="Reorder-policy autopilot" badge={res?`${steady.length} steady · solved`:'derive (s,S)/(R,Q)'} badgeTone={res?'g':undefined}
         right={res ? <Provenance kind="solved" asOf={pol.ranAt}/> : <Btn kind="accent" sm onClick={run}>{pol.solving?'⏳ Deriving…':'🔁 Derive policies'}</Btn>}
         info={{ what:'EOQ + safety stock → reorder point s and order-up-to S, on landed cost. Only steady parts get the autopilot; lumpy parts are planned by the MILP.', flows:'policy.py ← same parts[] (landed) as procurement.' }}
@@ -814,7 +1002,7 @@ function SrcPolicy({ sku, planning, sl }){
               <div style={{marginTop:10, border:`2px solid ${C.line}`, borderLeft:`5px solid ${C.a4}`, background:C.bg3, padding:'9px 11px'}}>
                 <div style={{fontFamily:F.disp, fontWeight:800, fontSize:11.5, color:C.tx, marginBottom:4}}>⚠ MILP-planned (no autopilot): {lumpy.map(p=>p.part).join(', ')}</div>
                 <div style={{fontFamily:F.mono, fontSize:9.5, color:C.tx3, lineHeight:1.6}}>
-                  These parts are lumpy (CV &gt; 0.5) — a fixed EOQ reorder rule would over- or under-buy. They stay on the time-phased MILP PO schedule (Release plan below), deliberately NOT given an EOQ.
+                  These parts are lumpy (CV &gt; 0.5) — a fixed EOQ reorder rule would over- or under-buy. They stay on the time-phased MILP PO schedule (the Release plan in the <b>Run</b> tab), deliberately NOT given an EOQ.
                 </div>
               </div>
             )}
@@ -879,7 +1067,7 @@ function SrcRolling({ sku, planning, sl }){
       style={{ width:54, fontFamily:F.mono, fontSize:11, textAlign:'right', padding:'3px 5px', border:`1px solid ${C.line}`, background:C.paper, color:C.tx }}/>
   );
   return (
-    <StageSection step="7" title="Rolling Re-plan & Nervousness" sub="re-solve the plan as the horizon advances and the forecast tail is revealed — how much does the near-term order churn?">
+    <StageSection step="6" scope="item" title="Rolling Re-plan & Nervousness" sub="re-solve the plan as the horizon advances and the forecast tail is revealed — how much does the near-term order churn?">
       <Card icon="🌀" title="Rolling-horizon stability" badge={res?verdict:'replay the plan'} badgeTone={res?(nervPct<5?'g':'k'):undefined}
         right={res ? <Provenance kind="solved" asOf={roll.ranAt}/> : undefined}
         info={{ what:'Replays the MILP over a sliding horizon, freezing the committed front, and sums the change in planned order qty across re-plans. Low ⇒ stable.', flows:'rolling.py ← procurement base × {waves, shift, frozen}.' }}
@@ -944,7 +1132,7 @@ function SrcMEIO({ sku, sl }){
   const buffers = res ? (res.decoupling_points||[]) : [];
   const roleTone = s=> s.is_decoupling_point ? (s.kind==='FG'?C.dg:C.ac) : C.tx3;
   return (
-    <StageSection step="8" title="Multi-Echelon SS Placement (MEIO)" sub="across RM → WIP → FG: where to hold ONE buffer — and which finished goods are make-to-order (no FG stock at all)">
+    <StageSection step="7" scope="item" title="Multi-Echelon SS Placement (MEIO)" sub="across RM → WIP → FG: where to hold ONE buffer — and which finished goods are make-to-order (no FG stock at all)">
       <Card icon="🎯" title="Decoupling-point placement" badge={res?(mto?'FG make-to-order':`${buffers.length} buffer node${buffers.length===1?'':'s'}`):'place the buffer'} badgeTone={res?(mto?'k':'g'):undefined}
         right={res ? <Provenance kind="solved" asOf={meio.ranAt}/> : undefined}
         info={{ what:'Guaranteed-service MEIO places safety stock at the cheapest decoupling point in the RM→WIP→FG chain, not z·σ at every node. A longer committed service time lets the FG go make-to-order (no finished buffer) and pushes the buffer upstream.', flows:'meio.py ← BOM echelon graph (landed RM cost, rolled WIP, full FG cost) × committed service.' }}
@@ -954,7 +1142,7 @@ function SrcMEIO({ sku, sl }){
             <input type="number" value={maxSvc} min={0} max={60} onChange={e=>setMaxSvc(Math.max(0, Math.min(60, Number(e.target.value)||0)))}
               style={{ width:64, fontFamily:F.mono, fontSize:11, textAlign:'right', padding:'3px 5px', border:`1px solid ${C.line}`, background:C.paper, color:C.tx }}/>
           </Field>
-          <Field label="Service level (α)" hint="from the solver-parameters card above"><div style={{fontFamily:F.mono, fontSize:13, fontWeight:700, paddingTop:3}}>{sl}</div></Field>
+          <Field label="Service level (α)" hint="the governed α (Run tab · Solver Parameters)"><div style={{fontFamily:F.mono, fontSize:13, fontWeight:700, paddingTop:3}}>{sl}</div></Field>
           <Field label=" " hint=" "><Btn kind="accent" sm onClick={run}>{meio.solving?'⏳ Placing…':'🎯 Place buffers'}</Btn></Field>
         </Grid>
         {stale && res && <div style={{margin:'8px 0'}}><StaleMark since="(sourcing or demand changed)" onNav={run} go="re-place"/></div>}
@@ -1035,7 +1223,7 @@ function SrcMEIONet({ sl }){
   const [fixed, setFixed] = useState('');       // pooling fixed cost ₹/yr (seed 0)
   const [pairwise, setPairwise] = useState(false);   // MN-C — per-pair ρ from XYZ co-movement
   const net = useSolve('/api/solve/meio-network',
-    ()=>meioNetworkPayload(sl, rho===''?0:rho, fixed===''?0:fixed, { pairwise }));
+    ()=>meioNetworkPayload(sl, rho===''?0:rho, fixed===''?0:fixed, { pairwise }), { solveKey:'meionet' });   // B-3 — was markSolved-only (cleared stale but never CACHED the result); the solveKey now persists it so OBS-2's pooling cross-check & the value ledger can read getSolveResult('meionet')
   const { stale } = useStale('meionet');
   const run = ()=> net.run().then(d=>{ markSolved('meionet'); return d; }).catch(()=>{});
   const res = net.result;
@@ -1043,7 +1231,7 @@ function SrcMEIONet({ sl }){
   const fmt = n=> Math.round(n).toLocaleString('en-IN');
   const shared = parts.filter(p=>p.poolable);
   return (
-    <StageSection step="8b" title="Network Risk Pooling (multi-product MEIO)" sub="pool a SHARED part's buffer across every finished SKU that uses it — the cross-tree capital single-tree MEIO leaves on the table">
+    <StageSection step="8" scope="global" title="Network Risk Pooling (multi-product MEIO)" sub="pool a SHARED part's buffer across every finished SKU that uses it — the cross-tree capital single-tree MEIO leaves on the table">
       <Card icon="🕸️" title="Pooled-buffer placement" badge={res?`${res.recommended_pool.length} part${res.recommended_pool.length===1?'':'s'} to pool`:'pool shared parts'} badgeTone={res?(res.recommended_pool.length?'g':'k'):undefined}
         right={res ? <Provenance kind="solved" asOf={net.ranAt}/> : undefined}
         info={{ what:'Statistical risk pooling: a part shared by N SKUs needs σ_pool=√(Σσ²+2ρΣσᵢσⱼ) ≤ Σσ of safety stock as ONE central buffer vs a buffer per tree. The gap is capital freed at the same service level.', flows:'meio_network.py ← shared BOM parts × per-SKU forecast variability (MAPE).' }}
@@ -1141,7 +1329,7 @@ function SrcNewsvendor({ sku }){
       style={{ width:74, fontFamily:F.mono, fontSize:11, textAlign:'right', padding:'3px 5px', border:`1px solid ${C.line}`, background:C.paper, color:C.tx }}/>
   );
   return (
-    <StageSection step="9" title="Costly-Item Newsvendor (h vs p) + CVaR" sub="for an expensive part — the single-period stock that balances holding vs stockout, and how much MORE a tail-robust (CVaR) plan would hold">
+    <StageSection step="9" scope="item" title="Costly-Item Newsvendor (h vs p) + CVaR" sub="for an expensive part — the single-period stock that balances holding vs stockout, and how much MORE a tail-robust (CVaR) plan would hold">
       <Card icon="⚖️" title="Newsvendor & CVaR-robust stocking" badge={res?(mto?'make-to-order regime':`CR ${(cr*100).toFixed(0)}%`):'balance h vs p'} badgeTone={res?(mto?'k':'g'):undefined}
         right={res ? <Provenance kind="solved" asOf={nv.ranAt}/> : undefined}
         info={{ what:'For the chosen part: the expected-value (critical-ratio) order-up-to AND the CVaR-β-robust one. The gap is the robustness premium — units held to cover the demand tail. Low critical ratio ⇒ holding dominates ⇒ make-to-order.', flows:'cvar.py (Rockafellar–Uryasev LP) ← part lead-time demand μ/σ × {overage h, underage p, β}.' }}
@@ -1232,7 +1420,7 @@ function SrcPostpone({ proc }){
     rows.sort((a,b)=> (a[5]===b[5]) ? 0 : (a[5]? -1 : 1)); // pinned first (the ones you must protect)
   }
   return (
-    <StageSection step="10" title="Postponable vs Pinned PO Releases" sub="which releases must land just-in-time (pinned) and which can slide later — the release-timing slack inside the committed plan">
+    <StageSection step="10" scope="item" title="Postponable vs Pinned PO Releases" sub="which releases must land just-in-time (pinned) and which can slide later — the release-timing slack inside the committed plan">
       <Card icon="⏳" title="Release-timing slack" badge={res?`${postponable} postponable · ${pinned} pinned`:'derive from plan'} badgeTone={res?'g':undefined}
         right={res ? <Provenance kind="derived" asOf={proc.ranAt}/> : undefined}
         info={{ what:'Per PO, how many periods its release could slide before the stock already on hand runs dry. 0 ⇒ pinned (JIT, protect it); ≥1 ⇒ postponable (defer the cash). Derived from the MILP’s own inventory trajectory — no extra solve.', flows:'← procurement materials[].{inventory, purchase_orders}.' }}
@@ -1295,7 +1483,7 @@ function SrcExceptions({ proc }){
   }
   const exLabel = { 'zero-cover':['r','zero-cover'], 'high-capital':['a','high-capital'], 'many-releases':['y','many-releases'] };
   return (
-    <StageSection step="12" title="MRP Exception Roll-up (at scale)" sub="not a giant grid — every part scored on the solve, only the exceptions surfaced; the pattern that scales to a 10+ part BOM">
+    <StageSection step="5" scope="item" title="MRP Exception Roll-up (at scale)" sub="not a giant grid — every part scored on the solve, only the exceptions surfaced; the pattern that scales to a 10+ part BOM">
       <Card icon="🚦" title="Exception-based MRP" badge={res?(flagged?`${flagged} need attention`:'all clear'):'roll up the plan'} badgeTone={res?(flagged?'k':'g'):undefined}
         right={res ? <Provenance kind="derived" asOf={proc.ranAt}/> : undefined}
         info={{ what:'Scores every part on zero-cover (JIT-fragile), capital concentration and reorder frequency, and surfaces only the flagged ones — the exception-first view that stays readable as the BOM grows. FG shortages shown as the top exception.', flows:'← procurement materials[] + products[0].shortages (derived flags).' }}

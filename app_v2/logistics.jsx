@@ -6,17 +6,18 @@
 // ════════════════════════════════════════════════════════════════════════
 function StageLogistics({ onNav }) {
   const { gate } = useProfile();
-  const tr = useSolve('/api/solve/transport', transportPayload);
+  const tr = useSolve('/api/solve/transport', transportPayload, { solveKey:'transport' });   // B-3 — same cache key as Console: a run on either tab persists the result to the map + value ledger
+  const runTr = ()=> tr.run().then(d=>{ markSolved('transport'); return d; }).catch(()=>{});   // B-3 — clear the stale flag so the model map colours it fresh
   return (
     <div>
-      <StageHeader n="08" title="Logistics · Transport Optimization" kicker="Allocation (DC→customer LP) · consolidation (LTL→FTL) · center-of-gravity — all network-flow visuals"
-        right={<Btn kind="accent" onClick={()=>tr.run().catch(()=>{})}>{tr.solving?'⏳ Routing…':'⚡ Solve Transport'}</Btn>}/>
+      <StageHeader n="08" title="Logistics · Transport Optimization" kicker="Allocation (per-lane mode LP) · consolidation (LTL→FTL) · center-of-gravity — all network-flow visuals"
+        right={<Btn kind="accent" onClick={runTr}>{tr.solving?'⏳ Routing…':'⚡ Solve Transport'}</Btn>}/>
       <div style={{padding:18}}>
         <SolverExplain id="transport"/>
         {gate.transport && <GateNote onNav={onNav}>Your profile is <b>single-site distribution</b> — there is nothing to ship between locations, so the transport solver is off. Switch to a network in Setup to enable it.</GateNote>}
         <PrereqNote onNav={onNav} go="network" goLabel="open Network →">Nodes, lanes and contracts are master data — defined once in <b>Network (03)</b>. This stage only shows the transport solver's output.</PrereqNote>
         {tr.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Transport solver: {tr.error}</div>}
-        <StageSection step="1" title="Allocation" sub="DC → customer assignment as a weighted flow map (LP)"><LogAllocation tr={tr}/></StageSection>
+        <StageSection step="1" title="Allocation" sub="per-lane transport-mode LP (cheapest mode meeting each lane's SLA) + DC→customer min-cost flow assignment (G-L1: which DC serves each customer, cost-optimised)"><LogAllocation tr={tr}/></StageSection>
         <StageSection step="2" title="Consolidation" sub="where merging LTL into FTL cuts cost"><LogConsolidation tr={tr}/></StageSection>
         <StageSection step="3" title="Center of Gravity" sub="weighted-distance optimal hub — config and result as one"><LogCoG/></StageSection>
       </div>
@@ -101,12 +102,47 @@ function LogAllocation({ tr }) {
   const totFreight = r ? r.total_cost : null;
   const avgCost = r && r.shipments.length ? r.total_cost / r.shipments.length : null;
   const onTime = r ? Math.round(1000 - r.shipments.filter(s=>s.recommended && s.recommended.transit_days > s.deadline_days).length/Math.max(r.shipments.length,1)*1000)/10 : null;
+  // G-L1 — the optimised DC→customer assignment from transport.py's min-cost flow LP (now
+  // fed origins/destinations/cost_matrix via transportPayload). Render the solver's chosen
+  // routes + the saving over an even demand-spread across the same DC→customer lanes.
+  const ra = r && r.allocation;
+  const allocRows = (ra && ra.allocation) || null;
+  const lpCost = ra && ra.total_cost;
+  let evenCost = null;
+  if(allocRows && allocRows.length){
+    const nodeById={}; (M.nodes||[]).forEach(n=>nodeById[n.id]=n);
+    const net = (typeof getNetwork==='function') ? getNetwork() : { lanes:M.lanes||[] };
+    const custLanes = (net.lanes||[]).filter(l=>l.direction==='outbound' && nodeById[l.to] && nodeById[l.to].type==='customer');
+    const fin = (M.products||[]).filter(p=>p.cat==='Finished');
+    const totalUnits = Math.max(1, Math.round(fin.reduce((s,p)=> s + getItemDemand(p.sku,12).reduce((a,b)=>a+b,0)/12, 0)));
+    const destIds = [...new Set(custLanes.map(l=>l.to))];
+    // even split: each customer's demand spread equally across the DCs that serve it
+    evenCost = 0;
+    destIds.forEach(d=>{ const serving = custLanes.filter(l=>l.to===d); const share = (totalUnits/destIds.length)/Math.max(serving.length,1);
+      serving.forEach(l=> evenCost += share * ((Number(l.rate)||1)*(Number(l.km)||1))); });
+    evenCost = Math.round(evenCost);
+  }
+  const allocSaving = (lpCost!=null && evenCost!=null) ? (evenCost - lpCost) : null;
   return (
     <Grid cols={2}>
-      <Card icon="🗺️" title="Allocation Flow Map" badge="weighted lanes" badgeTone="y" info={{ what:'DC→customer assignment drawn as a network flow (line weight = volume).', flows:'Allocation → carrier booking.' }}
-        dev={{ comp:'AllocationFlowCard', props:'solve.transport.allocation', note:'Network-flow visual — distinct from MC histogram.' }}>
+      <Card icon="🗺️" title="Allocation Flow Map" badge={allocRows?'min-cost LP':'weighted lanes'} badgeTone={allocRows?'g':'y'} info={{ what:'DC→customer assignment as a network flow. With the allocation LP solved, the routes are the COST-OPTIMISED min-cost flow (which DC serves each customer), not an even demand-spread.', flows:'Allocation → carrier booking.' }}
+        right={allocRows ? <Provenance kind="solved" asOf={tr.ranAt}/> : undefined}
+        dev={{ comp:'AllocationFlowCard', props:'solve.transport.allocation', note:'G-L1 — origins/destinations/cost_matrix now fed; transport.py min-cost flow LP runs.' }}>
         <IndiaMap marks={M.nodes.filter(n=>n.type!=='supplier')} flows={flows}/>
-        <div style={{marginTop:6, fontFamily:F.mono, fontSize:9, color:C.tx3}}>Line weight = shipped volume · deterministic LP, not a simulation.</div>
+        {allocRows ? (
+          <div style={{marginTop:8, border:`2px solid ${C.line}`}}>
+            <div style={{background:C.bg3, padding:'5px 9px', fontFamily:F.disp, fontWeight:800, fontSize:11}}>G-L1 · Optimised DC→customer assignment <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3, fontWeight:400}}>min-cost flow · rate×km</span></div>
+            <DataTable dense cols={['From (DC)','To (customer)','Units','Lane cost']} align={['left','left','right','right']}
+              rows={allocRows.map(a=>[a.from, a.to, Math.round(a.quantity).toLocaleString('en-IN'), `₹${Math.round(a.total_cost).toLocaleString('en-IN')}`])}/>
+            {allocSaving!=null && (
+              <div style={{padding:'7px 9px', fontFamily:F.mono, fontSize:10, color:allocSaving>0?C.gn:C.tx2, borderTop:`1px solid ${C.line2}`}}>
+                LP total ₹{Math.round(lpCost).toLocaleString('en-IN')} vs even-split ₹{evenCost.toLocaleString('en-IN')} — {allocSaving>0?`saves ₹${allocSaving.toLocaleString('en-IN')} by routing via the cheaper DC`:'even split was already optimal'}.
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{marginTop:6, fontFamily:F.mono, fontSize:9, color:C.tx3}}>Line weight = shipped volume · deterministic LP, not a simulation. <i>Run the solver to compute the min-cost DC→customer assignment.</i></div>
+        )}
       </Card>
       <Card icon="🚛" title="Allocation Matrix" badge="lane × mode" info={{ what:'How shipments split across modes per lane.', flows:'From transport LP.' }}
         dev={{ comp:'TransportAllocationCard', props:'solve.transport.allocation' }}>
@@ -137,7 +173,7 @@ function LogAllocation({ tr }) {
         </div>
         {r && <div style={{marginTop:8, fontFamily:F.mono, fontSize:10, color:C.tx2}}>Solver chose: {Object.entries(r.mode_summary).map(([m,v])=>`${v.count}× ${v.label}`).join(' · ')} over {r.n_shipments} outbound shipments.</div>}
         <LogSkuFlows/>
-        <Reading formula="min Σ (lane cost × volume)  s.t. demand met, capacity, SLA" soWhat={r?`Mode mix minimises freight at ₹${(totFreight/1e5).toFixed(2)}L for the outbound flow; weight tiers and deadlines drive each lane's pick.`:"Rail wins CHN→PUN on cost; Air only survives on BLR→GGN where the SLA forces speed."}/>
+        <Reading formula="mode choice: per lane min cost over modes s.t. transit ≤ deadline · total = Σ chosen-mode cost.  DC→customer allocation (G-L1): min-cost transportation LP — min Σ cost_matrix[i,j]·x[i,j] s.t. Σ_j x ≤ supply_i, Σ_i x ≥ demand_j" soWhat={r?`Mode mix minimises freight at ₹${(totFreight/1e5).toFixed(2)}L; and the DC→customer split is now the COST-OPTIMISED min-cost flow (the solver routes each customer via its cheapest DC subject to supply), not an even demand-spread — see the assignment table above.`:"Rail wins CHN→PUN on cost; Air only survives on BLR→GGN where the SLA forces speed. Run the solver to compute the optimised DC→customer assignment."}/>
       </Card>
     </Grid>
   );
@@ -250,7 +286,7 @@ function LogCoG() {
         <IndiaMap marks={M.nodes.filter(n=>n.type!=='supplier')} cog={cog}/>
       </Card>
       <Card icon="🎯" title="CoG Result" badge={cog.mock?'vs current':'derived'} badgeTone={cog.mock?undefined:'g'}
-        right={cog.mock ? undefined : <Provenance kind="derived" asOf={new Date()}/>}
+        right={cog.mock ? <Provenance kind="seed"/> : <Provenance kind="derived" asOf={new Date()}/>}
         info={{ what:'Recommended hub coordinates and savings.', flows:'Decision input for new DC.' }}
         dev={{ comp:'CoGResult', props:'cog (computed)' }}>
         <Blk label="Optimal Location" value={cog.label} tone="y"/>

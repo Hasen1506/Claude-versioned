@@ -39,23 +39,23 @@ function StageProduction({ onNav }) {
     <div>
       <StageHeader n="06" title="Production Architecture" kicker="Lines → stages → machines · OEE · bottleneck = min(stage) · cycle/line · MPS(day) · order promising"
         right={<Btn kind="accent" onClick={runProd}>{prod.solving?'⏳ Scheduling…':'⚡ Run schedule'}</Btn>}/>
-      <ItemSelector/>
+      <ItemSelector onNav={onNav}/>
       <SubTabNav tabs={tabs} active={sub} onChange={setSub}/>
       <div style={{padding:18}}>
         <SolverExplain id="production"/>
         {prod.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Production MILP: {prod.error}</div>}
-        {sub==='arch'   && <StageSection step="1" title="Architecture" sub="line → stage → machine tree · the slowest stage caps the line"><ProdArch prod={prod}/></StageSection>}
-        {sub==='cycle'  && <StageSection step="2" title={`Cycle & Line · ${p.name}`} sub="cycle time and line assignment are line properties (moved here from Products)"><ProdCycle p={p} prod={prod} config={config} setConfig={setConfig} onNav={onNav}/></StageSection>}
+        {sub==='arch'   && <StageSection step="1" scope="global" title="Architecture" sub="line → stage → machine tree · the slowest stage caps the line"><ProdArch prod={prod}/></StageSection>}
+        {sub==='cycle'  && <StageSection step="1" scope="item" title={`Cycle & Line · ${p.name}`} sub="cycle time and line assignment are line properties (moved here from Products)"><ProdCycle p={p} prod={prod} config={config} setConfig={setConfig} onNav={onNav}/></StageSection>}
         {sub==='sched'  && <>
-          <StageSection step="0" title="Solver Parameters" sub="governed inputs — seed defaults you may override; the rate prices overtime and shutdown savings">
+          <StageSection step="1" scope="global" title="Solver Parameters" sub="governed inputs — seed defaults you may override; the rate prices overtime and shutdown savings">
             <ProdParams config={config} setConfig={setConfig} prod={prod} ranAt={ranAt}/>
           </StageSection>
           {stale && <StaleMark since="(demand or cost inputs changed)" onNav={()=>runProd()} go="rerun"/>}
-          <StageSection step="3" title="Master Production Schedule" sub="time-phased quantities from the production MILP — weekly, with a calendar-aware day drill inside the frozen fence"><ProdMPS prod={prod} planning={planning} item={item} runProd={runProd}/></StageSection>
-          <StageSection step="4" title="Order Promising · ATP / CTP" sub="uncommitted supply = solved production − committed demand, carried period to period"><ProdATP prod={prod} planning={planning}/></StageSection>
-          <StageSection step="5" title="Capacity Loading & Shutdown" sub="per-line utilization, overtime and idle-week shutdown candidates from the solve"><ProdCapacity prod={prod} rateIsSeed={config.prodLaborRate==null||config.prodLaborRate===''} laborRate={laborRate}/></StageSection>
+          <StageSection step="2" scope="global" title="Master Production Schedule" sub="time-phased quantities from the production MILP across all SKUs — weekly, with a calendar-aware day drill inside the frozen fence (toggle to the selected SKU in the card)"><ProdMPS prod={prod} planning={planning} item={item} runProd={runProd}/></StageSection>
+          <StageSection step="3" scope="global" title="Order Promising · ATP / CTP" sub="uncommitted supply = solved production − committed demand, carried period to period"><ProdATP prod={prod} planning={planning}/></StageSection>
+          <StageSection step="4" scope="global" title="Capacity Loading & Shutdown" sub="per-line utilization, overtime and idle-week shutdown candidates from the solve"><ProdCapacity prod={prod} rateIsSeed={config.prodLaborRate==null||config.prodLaborRate===''} laborRate={laborRate}/></StageSection>
         </>}
-        {sub==='change' && <StageSection step="6" title="Sequence-Dependent Changeover" sub="the matrix, plus the solver's chosen run order and the minutes it saves"><ProdChange/></StageSection>}
+        {sub==='change' && <StageSection step="1" scope="global" title="Sequence-Dependent Changeover" sub="the matrix, plus the solver's chosen run order and the minutes it saves"><ProdChange/></StageSection>}
       </div>
     </div>
   );
@@ -87,7 +87,23 @@ function ProdParams({ config, setConfig, prod, ranAt }){
         <SolverInput label="Campaign min-run" seed={0} value={config.prodCampaignMinRun}
           onChange={v=>setConfig({ prodCampaignMinRun:v })} min={0} integer suffix="u/run"
           hint="PR-4 — min units per setup (0 = off)"/>
+        {/* G-P4 — optional labor envelope: headcount cap (× 40 h/wk regular budget) + weekly OT cap */}
+        <SolverInput label="Labor headcount cap" seed={0} value={config.prodLaborHeadcountCap}
+          onChange={v=>setConfig({ prodLaborHeadcountCap:v })} min={0} integer suffix="heads"
+          hint="G-P4 — 0 = unbounded (machine-constrained only); a tight cap forces overtime"/>
+        <SolverInput label="Weekly OT cap" seed={0} value={config.prodLaborOtCapHrs}
+          onChange={v=>setConfig({ prodLaborOtCapHrs:v })} min={0} suffix="hrs/wk"
+          hint="G-P4 — 0 = unbounded; with the headcount cap binding this is what tips it infeasible"/>
       </Grid>
+      {prod && prod.result && (Number(config.prodLaborHeadcountCap)>0 || Number(config.prodLaborOtCapHrs)>0) && (()=>{
+        const otHrs = (prod.result.products||[]).reduce((s,p)=>s+(Number(p.overtime_hours)||0),0);
+        return <div style={{marginTop:10, display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', fontFamily:F.mono, fontSize:10, color:C.tx2}}>
+          <span style={{fontWeight:700, color:C.tx3}}>LABOR ENVELOPE:</span>
+          {Number(config.prodLaborHeadcountCap)>0 && <><span>headcount <b style={{color:C.tx}}>{config.prodLaborHeadcountCap}</b> → <b style={{color:C.tx}}>{(Number(config.prodLaborHeadcountCap)*40).toLocaleString('en-IN')}</b> reg h/wk</span><span style={{color:C.line2}}>·</span></>}
+          <span>OT used <b style={{color:otHrs>0?C.dg:C.tx}}>{otHrs.toFixed(0)} h</b></span>
+          <Tag c={otHrs>0?'r':'g'}>{otHrs>0?'cap forced overtime':'within regular labor'}</Tag>
+        </div>;
+      })()}
       {prod && prod.result && prod.result.campaign && (()=>{ const cm = prod.result.campaign;
         return <div style={{marginTop:10, display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', fontFamily:F.mono, fontSize:10, color:C.tx2}}>
           <span style={{fontWeight:700, color:C.tx3}}>CAMPAIGN:</span>
@@ -134,9 +150,21 @@ function PCell({ value, onChange, w, step, suffix, text, align }){
 // decomposition for shops that only track cycle time.
 function ProdArch({ prod }) {
   useMasterRev();                                   // re-render on any line/stage edit
+  const { config } = useConfig();                   // G-P3 — governed hrsPerShift
+  const { planning } = usePlanning();               // G-P3 — workDaysPerWeek
   const [mode, setMode] = useState('detailed');     // 'detailed' = show OEE+workers, 'simple' = cycle-only
   const detailed = mode==='detailed';
   const lines = M.lines || [];
+  // G-P3 — available MACHINE-HOURS per week for a line = Σmachines × shifts × hrs/shift ×
+  // workDays × OEE. Makes machine-hours legible beside the u/mo capacity (the u/mo cap is
+  // the slowest STAGE; this is the line's nameplate machine-time after OEE losses).
+  const hrsPerShift = Number(config.hrsPerShift) || 8;
+  const workDays = Number(planning.workDaysPerWeek) || 6;
+  const lineMachineHrsWk = (line)=>{
+    const machines = (line.stages||[]).reduce((s,st)=>s+(Number(st.m)||0),0);
+    const shifts = line.shifts!=null ? Number(line.shifts) : 1;
+    return machines * shifts * hrsPerShift * workDays * (Number(line.oee)||1);
+  };
   // PR-C — line utilization now reads the SOLVED gantt (same basis as the Cycle tab's
   // Line-Load preview) when a schedule exists: monthly-equivalent volume on the line
   // = Σ(solved units) / horizon_weeks × 4.33, ÷ line cap. Falls back to the annual-demand
@@ -208,9 +236,13 @@ function ProdArch({ prod }) {
               </table>
               <button onClick={()=>addStage(line.id)} style={{marginTop:8, cursor:'pointer', border:`2px dashed ${C.line2}`, background:'transparent', color:C.tx2, fontFamily:F.mono, fontSize:9.5, fontWeight:700, padding:'4px 10px'}}>+ Add stage</button>
             </div>
-            <div style={{padding:'8px 11px', borderTop:`2px solid ${C.line}`, background:C.bg3, display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+            <div style={{padding:'8px 11px', borderTop:`2px solid ${C.line}`, background:C.bg3, display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:8}}>
               <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3}}>LINE CAPACITY = slowest stage{line.bottleneck&&line.bottleneck!=='—'?` (${line.bottleneck})`:''}</span>
-              <span className="num" style={{fontFamily:F.disp, fontSize:15, fontWeight:800, color:C.dg}}>{(line.cap||0).toLocaleString('en-IN')} u/mo</span>
+              <div style={{display:'flex', alignItems:'center', gap:14}}>
+                <span title={`${(line.stages||[]).reduce((s,st)=>s+(Number(st.m)||0),0)} machines × ${line.shifts!=null?line.shifts:1} shifts × ${hrsPerShift} h × ${workDays} days × OEE ${((line.oee||0)*100).toFixed(0)}%`}
+                  style={{fontFamily:F.mono, fontSize:9, color:C.tx2}}>machine-hrs/wk <b style={{fontFamily:F.disp, fontSize:13, color:C.tx}}>{Math.round(lineMachineHrsWk(line)).toLocaleString('en-IN')}</b></span>
+                <span className="num" style={{fontFamily:F.disp, fontSize:15, fontWeight:800, color:C.dg}}>{(line.cap||0).toLocaleString('en-IN')} u/mo</span>
+              </div>
             </div>
           </div>
         );})}
@@ -281,10 +313,10 @@ function ProdCycle({ p, prod, config, setConfig, onNav }) {
               onChange={v=>setRoute({ line:v })}/>
           </Field>
           {capMode==='oee'
-            ? <Field label="OEE"><NumInput value={(p.oee*100).toFixed(0)} suffix="%"/></Field>
-            : <Field label="Run hours / day"><NumInput value="20"/></Field>}
-          <Field label="Effective Rate"><NumInput value={capMode==='oee'?effRate:flatRate} suffix="u/hr" disabled/></Field>
-          <Field label="Batch Size · MOQ" span={2}><NumInput value={p.moq}/></Field>
+            ? <Field label="OEE" hint="read-only here"><NumInput value={(p.oee*100).toFixed(0)} suffix="%" disabled/></Field>
+            : <Field label="Run hours / day" hint="not wired yet — preview"><NumInput value="20" disabled/></Field>}
+          <Field label="Effective Rate" hint="derived"><NumInput value={capMode==='oee'?effRate:flatRate} suffix="u/hr" disabled/></Field>
+          <Field label="Batch Size · MOQ" span={2} hint="set on Products → Costs"><NumInput value={p.moq} disabled/></Field>
         </Grid>
         {capMode==='oee'
           ? <Reading formula={`theoretical ${flatRate} u/hr × OEE ${(p.oee*100).toFixed(0)}% = ${effRate} u/hr effective`}
@@ -517,23 +549,36 @@ function ProdCapacity({ prod, rateIsSeed, laborRate }){
 
 function ProdChange() {
   useMasterRev();                                    // re-render on matrix edits
-  const skus=['TPA-4471','TPA-3215','TPA-9904','TPA-2188'];
+  const { config } = useConfig();                    // governed labor rate prices a saved setup hour
+  const laborRate = _eff(config.prodLaborRate, 120);
+  const skus = M.changeoverSkus || [];               // canonical FG order (data.jsx) — no stale 4-SKU literal
+  const N = skus.length;
   // build the nested {from:{to:min}} matrix the sequence solver wants (skip '—' diagonal).
   const seq = useSolve('/api/solve/sequence', ()=>{
     const matrix={};
-    skus.forEach((a,ri)=>{ matrix[a]={}; skus.forEach((b,ci)=>{ const v=M.changeover[ri][ci]; if(typeof v==='number') matrix[a][b]=v; }); });
+    // UNITS CONTRACT: M.changeover is authored in HOURS, but /api/solve/sequence speaks
+    // MINUTES — every field is *_min, default_min=30, matching production.py & store.subMatrix.
+    // Convert ×60 at the boundary (a missing pair then falls back to 30 MIN, not 30 h).
+    skus.forEach((a,ri)=>{ matrix[a]={}; skus.forEach((b,ci)=>{ const v=M.changeover[ri][ci]; if(typeof v==='number') matrix[a][b]=v*60; }); });
     return { skus, changeover_matrix:matrix };
   });
   const sres = seq.result;
-  // client-side fallback (brute-force the fixed order) until the solver runs.
-  const order=[0,2,1,3];
   const seqCost=(s)=>{ let t=0; for(let i=0;i<s.length-1;i++){ const v=M.changeover[s[i]][s[i+1]]; if(typeof v==='number') t+=v; } return t; };
-  const alpha=seqCost([0,1,2,3]);
+  const alphaOrder = skus.map((_,i)=>i);
+  // client-side fallback until the solver runs: greedy nearest-neighbour tour (so the
+  // "optimized" comparison still beats alphabetical for N SKUs, not a fixed 4-permutation).
+  const greedy=()=>{ const seen=[0]; while(seen.length<N){ const last=seen[seen.length-1]; let best=-1,bv=Infinity;
+    for(let j=0;j<N;j++){ if(seen.indexOf(j)>=0) continue; const v=M.changeover[last][j]; if(typeof v==='number'&&v<bv){ bv=v; best=j; } }
+    if(best<0){ for(let j=0;j<N;j++){ if(seen.indexOf(j)<0){ best=j; break; } } } seen.push(best); } return seen; };
+  const order = greedy();
+  const alpha=seqCost(alphaOrder);
   // solved sequence (sku names) → index order for the chips; fall back to the fixed order.
   const solvedOrder = sres && Array.isArray(sres.sequence) ? sres.sequence.map(s=>skus.indexOf(s)).filter(i=>i>=0) : null;
   const chosenIdx = solvedOrder && solvedOrder.length===skus.length ? solvedOrder : order;
-  const opt = sres && sres.total_changeover_min!=null ? sres.total_changeover_min : seqCost(order);
-  const saved = sres && sres.sequence_saving_min!=null ? sres.sequence_saving_min : (alpha-opt);
+  // solver returns MINUTES (units contract) → ÷60 back to the HOURS the UI shows;
+  // the local fallbacks (seqCost/alpha) already sum M.changeover in hours.
+  const opt = sres && sres.total_changeover_min!=null ? sres.total_changeover_min/60 : seqCost(order);
+  const saved = sres && sres.sequence_saving_min!=null ? sres.sequence_saving_min/60 : (alpha-opt);
   return (
     <Grid cols={2}>
       <Card icon="🔀" title="Changeover Matrix" badge="editable · setup hrs" badgeTone="y" info={{ what:'Setup time (hrs) for each from→to SKU transition — editable master data. The diagonal is self-to-self (no changeover).', flows:'Matrix → sequencing (ATSP heuristic) & production setup.' }}
@@ -566,7 +611,7 @@ function ProdChange() {
         {seq.error && <div style={{marginBottom:8, fontFamily:F.mono, fontSize:9.5, color:C.dg}}>Sequencer: {seq.error}</div>}
         <SubLabel>Alphabetical</SubLabel>
         <div style={{display:'flex', alignItems:'center', gap:4, flexWrap:'wrap', marginBottom:10}}>
-          {[0,1,2,3].map((s,i)=><React.Fragment key={i}><span style={{fontFamily:F.mono, fontSize:10, fontWeight:700, padding:'4px 7px', border:`2px solid ${C.line2}`, background:C.bg3}}>{skus[s].slice(4)}</span>{i<3 && <span style={{color:C.tx3}}>→</span>}</React.Fragment>)}
+          {alphaOrder.map((s,i)=><React.Fragment key={i}><span style={{fontFamily:F.mono, fontSize:10, fontWeight:700, padding:'4px 7px', border:`2px solid ${C.line2}`, background:C.bg3}}>{skus[s].slice(4)}</span>{i<N-1 && <span style={{color:C.tx3}}>→</span>}</React.Fragment>)}
           <span className="num" style={{marginLeft:'auto', fontFamily:F.disp, fontWeight:800}}>{alpha.toFixed(1)} hrs</span>
         </div>
         <SubLabel>{sres?`Solver-optimized · ${sres.basis||'exact'}`:'Solver-optimized'}</SubLabel>
@@ -575,7 +620,7 @@ function ProdChange() {
           <span className="num" style={{marginLeft:'auto', fontFamily:F.disp, fontWeight:800}}>{opt.toFixed(1)} hrs</span>
         </div>
         <Reading formula={sres?`shortest Hamiltonian path over the changeover matrix (${sres.basis||'exact'}) vs averaged approximation`:"min Σ changeover(seqᵢ, seqᵢ₊₁) over all permutations"}
-          soWhat={`Re-ordering saves ${saved.toFixed(1)} setup hours per cycle — roughly ₹${Math.round(saved*4200).toLocaleString('en-IN')} at the setup rate.${sres?'':' Press ⚡ Sequence to solve it against the live engine.'}`}/>
+          soWhat={`Re-ordering saves ${saved.toFixed(1)} setup hours per cycle — roughly ₹${Math.round(saved*laborRate).toLocaleString('en-IN')} at the governed labor rate (₹${laborRate}/hr${config.prodLaborRate==null||config.prodLaborRate===''?' · seed':''}).${sres?'':' Press ⚡ Sequence to solve it against the live engine.'}`}/>
       </Card>
     </Grid>
   );
