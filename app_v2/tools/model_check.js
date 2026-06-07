@@ -144,6 +144,47 @@ function objRestCollision() {
     emitters.length ? `only ${emitters[0]} emits _excluded (sanctioned)` : 'no object-rest destructuring anywhere');
 }
 
+// ── 2d. panel == harness identity parity (G-RF1) ────────────────────────────
+// The Reference ▸ ConsistencyPanel DISPLAYS the cross-solver identities; HARNESS-1b
+// (golden_path.js) ASSERTS them with an exit code. If the two drift — an identity the
+// harness checks but the panel never surfaces (or vice-versa) — the operator's "do the
+// engines agree?" view silently under-reports. Enforce: the set of identity IDs the
+// panel renders == the set the harness asserts. Both are extracted from the REAL source
+// (the panel's checks[].id and the harness's `add('<ID> · …')` rows — the same ` · `
+// rule report() uses to count identityChecks), so neither can be a stale declaration.
+function identityParity() {
+  const MID = '·';
+  let gp, ref;
+  try { gp = fs.readFileSync(path.join(TOOLS, 'golden_path.js'), 'utf8'); }
+  catch (e) { add('panel == harness identities (G-RF1)', 'WARN', 'golden_path.js unreadable'); return; }
+  try { ref = fs.readFileSync(path.join(DIR, 'reference.jsx'), 'utf8'); }
+  catch (e) { add('panel == harness identities (G-RF1)', 'WARN', 'reference.jsx unreadable'); return; }
+
+  // harness: every add('<ID> · …') first-arg — the rows report() counts as identities.
+  const harness = new Set();
+  const reH = new RegExp("add\\('([^']+?) " + MID, 'g');
+  let m; while ((m = reH.exec(gp))) harness.add(m[1]);
+
+  // panel: the checks[].id values inside the ConsistencyPanel function body only.
+  const start = ref.indexOf('function ConsistencyPanel');
+  const after = start >= 0 ? ref.indexOf('\nfunction ', start + 1) : -1;
+  const body = start >= 0 ? ref.slice(start, after >= 0 ? after : ref.length) : '';
+  const panel = new Set();
+  const reP = /\bid:'([^']+)'/g;
+  while ((m = reP.exec(body))) panel.add(m[1]);
+
+  const onlyH = [...harness].filter(x => !panel.has(x)).sort();
+  const onlyP = [...panel].filter(x => !harness.has(x)).sort();
+  if (!harness.size) add('panel == harness identities (G-RF1)', 'WARN', 'no identity rows found in golden_path.js');
+  else if (onlyH.length || onlyP.length) add('panel == harness identities (G-RF1)', 'FAIL',
+    (onlyH.length ? `harness asserts but panel omits: ${onlyH.join(', ')}` : '') +
+    (onlyH.length && onlyP.length ? ' · ' : '') +
+    (onlyP.length ? `panel shows but harness never asserts: ${onlyP.join(', ')}` : '') +
+    ' — keep ConsistencyPanel checks[] in lock-step with golden_path identities');
+  else add('panel == harness identities (G-RF1)', 'PASS',
+    `${harness.size} identities surfaced in both: ${[...harness].sort().join(', ')}`);
+}
+
 // ── 3 & 4. server-dependent checks ──────────────────────────────────────────
 async function httpGet(url) {
   // node 18+ has global fetch
@@ -179,6 +220,7 @@ async function serverChecks() {
   provLint();
   dupGlobals();
   objRestCollision();
+  identityParity();
   await serverChecks();
 
   const w = Math.max(...results.map(r => r.step.length));

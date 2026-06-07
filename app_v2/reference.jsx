@@ -264,10 +264,37 @@ function ConsistencyPanel({ results, solves, demand, config, onNav }){
   try{ if(typeof finBlendedHurdle==='function') hurdle=finBlendedHurdle(config).wacc; }catch(e){}
   try{ if(typeof carryRate==='function') carry=carryRate(config)*100; }catch(e){}
   const lcMax = lc&&lc.lines ? Math.max(0,...lc.lines.map(x=>+x.shadow_price||0)) : null;
-  const pmMax = pm&&pm.shadow_prices ? Math.max(0,...pm.shadow_prices.filter(x=>x.binding).map(x=>+x.shadow_price||0)) : null;
+  const pmBinding = pm&&pm.shadow_prices ? pm.shadow_prices.filter(x=>x.binding) : null;
+  const pmMax  = pmBinding ? Math.max(0,...pmBinding.map(x=>+x.shadow_price||0)) : null;
+  const pmNames = pmBinding ? pmBinding.map(x=>x.constraint||x.resource||x.name).filter(Boolean).slice(0,4) : [];
   const prodAt = solves.production&&solves.production.ranAt;
   const mcAt   = solves.montecarlo&&solves.montecarlo.ranAt;
   const ratio = (demTot>0 && prodUnits!=null) ? prodUnits/demTot : null;
+
+  // B-13 — the S&OP (aggregate) plan must consume the COMMITTED demand series
+  // (getItemDemand — the same source procurement + production read), NOT the seed
+  // master reslice. Re-derive the REAL loop payload and compare each COMMITTED SKU's
+  // forecast to getItemDemand over the same period count — the exact check HARNESS-1b
+  // runs. Uncommitted SKUs legitimately fall back to the seed reslice, so they are
+  // scoped out (comparing them would false-flag the flat seed vs the seasonal reslice).
+  let b13st='na', b13detail='run Demand (or the Loop) to commit a demand series — then this asserts the S&OP plan consumes it, not the seed master';
+  try{
+    if(typeof _loopAggregatePayload==='function' && typeof getItemDemand==='function'){
+      const ap = _loopAggregatePayload(appStore.get().planning);
+      const per = (ap.params&&ap.params.periods)||6;
+      const committedSkus = (ap.products||[]).filter(p=>{ const s=demand[p.name]; return s&&s.length; });
+      if(committedSkus.length){
+        const mism = committedSkus.filter(p=>{
+          const c = getItemDemand(p.name, per).reduce((a,b)=>a+(+b||0),0);
+          const inPlan = (p.forecast||[]).reduce((a,b)=>a+(+b||0),0);
+          return Math.abs(c-inPlan)>1; });
+        b13st = mism.length?'bad':'ok';
+        b13detail = mism.length
+          ? `${mism.length} SKU(s) plan to the SEED, not committed demand: `+mism.map(p=>p.name).join(', ')
+          : `all ${committedSkus.length} committed SKU(s): S&OP forecast == getItemDemand over ${per} periods (not the seed reslice)`;
+      }
+    }
+  }catch(e){ b13st='na'; b13detail='aggregate payload not derivable: '+(e&&e.message||e); }
 
   const checks = [
     { id:'I-5', label:'Plan ⇄ Production ⇄ Demand units reconcile',
@@ -276,6 +303,8 @@ function ConsistencyPanel({ results, solves, demand, config, onNav }){
         `committed demand ${Math.round(demTot).toLocaleString('en-IN')}u vs production build ${Math.round(prodUnits).toLocaleString('en-IN')}u (ratio ${ratio.toFixed(2)})` +
         (ratio>=0.7&&ratio<=1.4?' — within inventory swing':' — ⚠ off; check the labor-weighted vs physical unit basis (P-C)'),
       go: ratio==null?'production':null },
+    { id:'B-13', label:'S&OP plan sources COMMITTED demand (not the seed master)',
+      st: b13st, detail: b13detail, go: b13st==='na'?'demand':null },
     { id:'I-3', label:'Sourcing carry rate is anchored to the Finance hurdle',
       st: hurdle==null?'na':'ok',
       detail: hurdle==null ? 'finance helpers unavailable' :
@@ -285,12 +314,13 @@ function ConsistencyPanel({ results, solves, demand, config, onNav }){
       detail: (!prodAt||!mcAt) ? 'run Production then Monte-Carlo to verify the replay' :
         (mcAt>=prodAt ? 'MC ran after the committed schedule — it replays the same gantt' : '⚠ MC is older than the current schedule — re-run risk on the committed plan'),
       go: (!prodAt||!mcAt)?'scenarios':null },
-    { id:'I-2', label:'Line-capacity bottleneck is priced (shadow price)',
-      st: lcMax==null?'na':(lcMax>0?'ok':'info'),
-      detail: lcMax==null ? 'run the line-capacity dual in Plan' :
-        (lcMax>0 ? `binding line dual ₹${lcMax.toFixed(0)}/unit` + (pmMax!=null?` · profit-mix dual ₹${pmMax.toFixed(0)}/unit`:' · profit-mix not in cache (run Console / give it a solveKey to cross-check)') :
-                   'all lines slack — no capacity binds at the current plan'),
-      go: lcMax==null?'plan':null },
+    { id:'I-2', label:'A capacity bottleneck is priced (profit-mix shadow price)',
+      st: pmMax==null?'na':(pmMax>0?'ok':'bad'),
+      detail: pmMax==null ? 'run profit-mix in Console to price the binding constraint' :
+        (pmMax>0 ? `profit-mix binding dual ₹${pmMax.toFixed(0)}/unit` + (pmNames.length?` binds [${pmNames.join(', ')}]`:'') +
+            (lcMax!=null ? ` · line-capacity dual ₹${lcMax.toFixed(0)}/unit (${lcMax>0?'binds':'all lines honestly slack, π=0 at this volume'})` : ' · line-capacity dual not in cache')
+          : 'profit-mix reports NO binding dual — the glass-box bottleneck claim would be empty (expected Shared Capacity to bind)'),
+      go: pmMax==null?'console':null },
     { id:'I-6', label:'MEIO pooled safety stock < Σ decentralised (√N dividend)',
       st: mn==null?'na':(mn.total_ss_value_pooled<mn.total_ss_value_decentralised?'ok':'bad'),
       detail: mn==null ? 'run MEIO-network in Sourcing to check pooling' :
@@ -305,7 +335,7 @@ function ConsistencyPanel({ results, solves, demand, config, onNav }){
       badge={badN?`${badN} mismatch`:`${okN} checks pass`} badgeTone={badN?'k':okN?'g':'y'}
       right={<Provenance kind="derived"/>}
       info={{ what:'The per-tab smokes each verify ONE solver in isolation. These checks assert that the SAME quantity agrees ACROSS solvers in the live cache — the end-to-end observability that was the biggest blind spot.', flows:'A red row means two engines disagree on a number that must match — fix before trusting the plan.' }}
-      dev={{ comp:'ConsistencyPanel (OBS-2)', props:'getSolveResult(aggregate, production, procurement, montecarlo, linecap, profitmix, meionet) + config', note:'Honest "—" when a solve has not run; the full 5-way demand conservation + dual chain need HARNESS-1.' }}>
+      dev={{ comp:'ConsistencyPanel (OBS-2)', props:'getSolveResult(aggregate, production, procurement, montecarlo, linecap, profitmix, meionet) + _loopAggregatePayload + config', note:'Surfaces ALL 6 cross-solver identities HARNESS-1b asserts (I-5, B-13, I-3, #5, I-2, I-6) — kept in lockstep with tools/golden_path.js by the model_check "panel == harness" gate (G-RF1). Honest "—" when a solve has not run.' }}>
       <div style={{display:'flex', flexDirection:'column', gap:7}}>
         {checks.map(c=>{ const m=ST[c.st];
           return (
@@ -321,8 +351,8 @@ function ConsistencyPanel({ results, solves, demand, config, onNav }){
         })}
       </div>
       <Reading tone={C.tx2}
-        formula="live checks read the cross-stage cache · full 5-way demand conservation + profit-mix↔linecap↔finance dual chain = HARNESS-1 (end-to-end script)"
-        soWhat="These are the cross-solver identities from the observability spec §4.1, asserted on whatever is in the live cache. Run the full loop (Scenarios ▸ Loop) to light them all up."/>
+        formula="the SAME 6 identities HARNESS-1b asserts end-to-end (I-5 · B-13 · I-3 · #5 · I-2 · I-6), read live from the cross-stage cache — the panel DISPLAYS them, the harness FAILS the build on a violation"
+        soWhat="These are the cross-solver identities from the observability spec §4.1, asserted on whatever is in the live cache. Run the full loop (Scenarios ▸ Loop) — and profit-mix in Console — to light them all up."/>
     </Card>
   );
 }
