@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Supply Chain Intelligence — 12-Step Deep Dive</title>
+<style>
+:root{--bg:#080E1C;--surf:#0F1829;--surf2:#162236;--bd:#1C3050;--txt:#DDE5F0;--mut:#6E8EB0;--faint:#243D5A;--sw:254px}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,sans-serif;line-height:1.6;display:flex}
+a{text-decoration:none;color:inherit}
+.sb{width:var(--sw);min-height:100vh;position:fixed;top:0;left:0;background:#060B14;border-right:1px solid var(--bd);display:flex;flex-direction:column;z-index:100;overflow-y:auto}
+.sb-brand{padding:22px 18px 18px;border-bottom:1px solid var(--bd)}
+.sb-eye{font-size:10px;font-family:Consolas,monospace;color:#22D3EE;letter-spacing:.12em;text-transform:uppercase;margin-bottom:5px}
+.sb-name{font-size:12.5px;font-weight:700;line-height:1.4}
+.sb-nav{flex:1;padding:10px 0;position:relative}
+.sb-nav::before{content:'';position:absolute;left:27px;top:20px;bottom:20px;width:1px;background:linear-gradient(to bottom,rgba(34,211,238,.55),rgba(96,165,250,.45),rgba(129,140,248,.45),rgba(248,113,113,.4),rgba(52,211,153,.4),rgba(251,146,60,.35),rgba(167,139,250,.35),rgba(74,222,128,.3),rgba(251,191,36,.35),rgba(103,232,249,.35),rgba(134,239,172,.3),rgba(249,168,212,.3))}
+.sn{display:flex;align-items:center;gap:10px;padding:5px 16px;cursor:pointer;transition:background .15s}
+.sn:hover{background:rgba(255,255,255,.025)}
+.sn.act{background:rgba(34,211,238,.05)}
+.sn.act .sn-n{border-color:#22D3EE;color:#22D3EE;background:rgba(34,211,238,.1)}
+.sn.act .sn-l{color:var(--txt)}
+.sn-n{width:22px;height:22px;border-radius:50%;border:1px solid var(--faint);background:var(--surf);font-family:Consolas,monospace;font-size:9px;color:var(--mut);display:flex;align-items:center;justify-content:center;flex-shrink:0;position:relative;z-index:1;transition:all .2s}
+.sn-l{font-size:11px;color:var(--mut);line-height:1.3;transition:color .2s}
+.main{margin-left:var(--sw);flex:1;max-width:1080px}
+.hero{padding:76px 52px 60px;border-bottom:1px solid var(--bd);background:radial-gradient(ellipse 70% 50% at 100% 0%,rgba(34,211,238,.05),transparent)}
+.hero-eye{font-family:Consolas,monospace;font-size:10.5px;color:#22D3EE;letter-spacing:.12em;text-transform:uppercase;margin-bottom:16px}
+.hero h1{font-size:40px;font-weight:800;letter-spacing:-.03em;line-height:1.1;margin-bottom:18px;max-width:640px}
+.hero h1 b{background:linear-gradient(120deg,#22D3EE,#818CF8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero-desc{font-size:15px;color:var(--mut);max-width:540px;line-height:1.75;margin-bottom:30px}
+.legend{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.leg-lbl{font-family:Consolas,monospace;font-size:10px;color:var(--mut);letter-spacing:.08em}
+.lgb{padding:3px 11px;border-radius:100px;font-size:11px;font-weight:600;border:1px solid}
+.lgb-g{border-color:#34D399;color:#34D399}.lgb-c{border-color:#60A5FA;color:#60A5FA}.lgb-d{border-color:#A78BFA;color:#A78BFA}.lgb-s{border-color:#FBBF24;color:#FBBF24}.lgb-str{border-color:#22D3EE;color:#22D3EE}
+.step{padding:58px 52px 42px;border-bottom:1px solid var(--bd)}
+.step-hdr{display:flex;align-items:flex-start;gap:14px;margin-bottom:30px}
+.s-chip{font-family:Consolas,monospace;font-size:10px;font-weight:700;padding:3px 9px;border-radius:4px;letter-spacing:.06em;flex-shrink:0;margin-top:5px;border:1px solid}
+.s-meta h2{font-size:27px;font-weight:700;letter-spacing:-.025em;line-height:1.15;margin-bottom:5px}
+.s-tag{font-size:13px;color:var(--mut);font-style:italic;max-width:600px;line-height:1.5}
+.step-grid{display:grid;grid-template-columns:1fr 330px;gap:30px;margin-bottom:26px;align-items:start}
+.cncpt h3{font-family:Consolas,monospace;font-size:9.5px;color:var(--mut);letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px}
+.cncpt p{font-size:14px;line-height:1.8;color:#BDCEe4;margin-bottom:14px}
+.cncpt p:last-child{margin-bottom:0}
+.cncpt strong{color:var(--txt)}
+.cncpt code{font-family:Consolas,monospace;font-size:12px;background:rgba(34,211,238,.08);color:#22D3EE;padding:1px 5px;border-radius:3px}
+.cncpt ul{margin:6px 0 14px;padding-left:0;list-style:none}
+.cncpt li{font-size:13.5px;color:#BDCEe4;line-height:1.7;padding:3px 0 3px 18px;position:relative}
+.cncpt li::before{content:'▸';position:absolute;left:0;color:#22D3EE;font-size:11px;top:5px}
+.illo{background:var(--surf);border:1px solid var(--bd);border-radius:12px;padding:16px;overflow:hidden}
+.illo svg{width:100%;height:auto;display:block}
+.illo-cap{font-size:10px;color:var(--mut);text-align:center;margin-top:9px;font-style:italic;line-height:1.5}
+.crd-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px}
+.crd{background:var(--surf);border:1px solid var(--bd);border-radius:12px;padding:16px}
+.crd-lbl{font-family:Consolas,monospace;font-size:9.5px;color:var(--mut);letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px}
+.crd-body{font-size:13px;color:#8AA8CC;line-height:1.65}
+.crd-body strong{color:var(--txt)}
+.apip{display:inline-block;font-family:Consolas,monospace;font-size:10.5px;background:rgba(34,211,238,.06);color:#22D3EE;border:1px solid rgba(34,211,238,.2);padding:1px 6px;border-radius:3px;margin-bottom:5px}
+.obs{background:rgba(167,139,250,.05);border:1px solid rgba(167,139,250,.18);border-radius:10px;padding:14px 18px;margin-bottom:18px;font-size:13px;color:#C4B5FD;line-height:1.7}
+.obs-t{font-family:Consolas,monospace;font-size:9.5px;color:#A78BFA;letter-spacing:.1em;text-transform:uppercase;margin-bottom:7px}
+.gap-blk{background:rgba(251,191,36,.03);border:1px solid rgba(251,191,36,.2);border-radius:12px;padding:20px;margin-bottom:18px}
+.gap-t{font-family:Consolas,monospace;font-size:9.5px;color:#FBBF24;letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:7px}
+.gap-t::before{content:'◎';font-size:11px}
+.gap-blk p{font-size:13px;color:#CBD5E1;line-height:1.75;margin-bottom:10px}
+.gap-blk p:last-child{margin-bottom:0}
+.chg{background:rgba(251,191,36,.05);border-left:3px solid #FBBF24;padding:10px 14px;border-radius:0 8px 8px 0;font-size:12.5px;color:#FDE68A;line-height:1.65;margin-top:10px}
+.chg strong{color:#FBBF24}
+.bm-row{display:flex;align-items:center;gap:12px;padding:14px 0;border-top:1px solid var(--bd);flex-wrap:wrap}
+.bm-pre{font-family:Consolas,monospace;font-size:9.5px;color:var(--mut);letter-spacing:.08em;text-transform:uppercase}
+.bm-chip{padding:4px 12px;border-radius:100px;font-size:11px;font-weight:700;letter-spacing:.04em;border:1.5px solid}
+.bm-good{border-color:#34D399;color:#34D399;background:rgba(52,211,153,.07)}
+.bm-comp{border-color:#60A5FA;color:#60A5FA;background:rgba(96,165,250,.07)}
+.bm-diff{border-color:#A78BFA;color:#A78BFA;background:rgba(167,139,250,.08)}
+.bm-sig{border-color:#FBBF24;color:#FBBF24;background:rgba(251,191,36,.07)}
+.bm-str{border-color:#22D3EE;color:#22D3EE;background:rgba(34,211,238,.07)}
+.bm-note{font-size:12px;color:var(--mut);flex:1;min-width:180px}
+.conn{display:flex;align-items:center;gap:12px;padding:0 52px;height:44px}
+.c-line{flex:1;height:1px;background:var(--bd)}
+.c-pill{font-family:Consolas,monospace;font-size:10px;color:#22D3EE;padding:4px 12px;border:1px solid rgba(34,211,238,.25);border-radius:100px;background:rgba(34,211,238,.04);white-space:nowrap}
+.chip-1{border-color:#22D3EE;color:#22D3EE;background:rgba(34,211,238,.07)}
+.chip-2{border-color:#60A5FA;color:#60A5FA;background:rgba(96,165,250,.07)}
+.chip-3{border-color:#818CF8;color:#818CF8;background:rgba(129,140,248,.07)}
+.chip-4{border-color:#F87171;color:#F87171;background:rgba(248,113,113,.07)}
+.chip-5{border-color:#34D399;color:#34D399;background:rgba(52,211,153,.07)}
+.chip-6{border-color:#FB923C;color:#FB923C;background:rgba(251,146,60,.07)}
+.chip-7{border-color:#A78BFA;color:#A78BFA;background:rgba(167,139,250,.07)}
+.chip-8{border-color:#4ADE80;color:#4ADE80;background:rgba(74,222,128,.07)}
+.chip-9{border-color:#FBBF24;color:#FBBF24;background:rgba(251,191,36,.07)}
+.chip-10{border-color:#67E8F9;color:#67E8F9;background:rgba(103,232,249,.07)}
+.chip-11{border-color:#86EFAC;color:#86EFAC;background:rgba(134,239,172,.07)}
+.chip-12{border-color:#F9A8D4;color:#F9A8D4;background:rgba(249,168,212,.07)}
+@keyframes pulse-s{0%,100%{opacity:1}50%{opacity:.4}}
+.stale{animation:pulse-s 2s ease-in-out infinite}
+@media(max-width:960px){.sb{display:none}.main{margin-left:0}.step-grid{grid-template-columns:1fr}.crd-row{grid-template-columns:1fr 1fr}.hero{padding:44px 24px 36px}.step{padding:44px 24px 34px}.conn{padding:0 24px}.hero h1{font-size:26px}}
+@media(max-width:580px){.crd-row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<nav class="sb">
+  <div class="sb-brand">
+    <div class="sb-eye">Supply Chain Intelligence</div>
+    <div class="sb-name">12-Step Planning<br>Framework</div>
+  </div>
+  <div class="sb-nav" id="sbNav">
+    <a class="sn act" href="#s1"><div class="sn-n">01</div><span class="sn-l">Setup · Parameters</span></a>
+    <a class="sn" href="#s2"><div class="sn-n">02</div><span class="sn-l">Demand · Forecast</span></a>
+    <a class="sn" href="#s3"><div class="sn-n">03</div><span class="sn-l">Plan · S&amp;OP</span></a>
+    <a class="sn" href="#s4"><div class="sn-n">04</div><span class="sn-l">Production · Schedule</span></a>
+    <a class="sn" href="#s5"><div class="sn-n">05</div><span class="sn-l">Profit Mix · LP</span></a>
+    <a class="sn" href="#s6"><div class="sn-n">06</div><span class="sn-l">Sourcing · BOM</span></a>
+    <a class="sn" href="#s7"><div class="sn-n">07</div><span class="sn-l">Inventory · MEIO</span></a>
+    <a class="sn" href="#s8"><div class="sn-n">08</div><span class="sn-l">Logistics · Transport</span></a>
+    <a class="sn" href="#s9"><div class="sn-n">09</div><span class="sn-l">Risk · Monte Carlo</span></a>
+    <a class="sn" href="#s10"><div class="sn-n">10</div><span class="sn-l">What-If · Cockpit</span></a>
+    <a class="sn" href="#s11"><div class="sn-n">11</div><span class="sn-l">Finance · EVA/WACC</span></a>
+    <a class="sn" href="#s12"><div class="sn-n">12</div><span class="sn-l">Close the Loop</span></a>
+  </div>
+</nav>
+<main class="main">
+<section class="hero">
+  <div class="hero-eye">Integrated Business Planning · Supply Chain Deep Reference</div>
+  <h1>The <b>12-Step</b> Supply Chain<br>Intelligence Framework</h1>
+  <p class="hero-desc">A conceptual deep-dive into every planning layer — from parameter governance to closed-loop EVA pruning. Each step explains the <em>why</em>, the flow to the next, what the solver is actually doing, and exactly what changes if you close a gap.</p>
+  <div class="legend"><span class="leg-lbl">Benchmarks →</span><span class="lgb lgb-g">GOOD</span><span class="lgb lgb-c">COMPETITIVE</span><span class="lgb lgb-str">STRONG</span><span class="lgb lgb-d">DIFFERENTIATED</span><span class="lgb lgb-s">SIGNATURE</span></div>
+</section>
+
+<!-- ══════════════════ STEP 1 ══════════════════ -->
+<section class="step" id="s1">
+  <div class="step-hdr"><div class="s-chip chip-1">STEP 01</div><div class="s-meta"><h2>Setup · Parameter Governance</h2><p class="s-tag">"Before any solver runs, every downstream decision needs to know what world it's operating in."</p></div></div>
+  <div class="step-grid">
+    <div class="cncpt">
+      <h3>Core Concept</h3>
+      <p>Imagine every team using a different interest rate, a different exchange rate, and a different service-level target. Each decision looks locally rational but the plans contradict each other. This is the default state of most supply chains — and what Step 1 prevents.</p>
+      <p>The REGISTRY is a <strong>single, versioned store</strong> for every economic assumption. But storing parameters centrally isn't enough — the real work is <strong>dependency lineage with cascade</strong>: when you edit <code>invHoldingSpread</code>, every solver that reads it must immediately flag as <strong>STALE</strong>, blocking old outputs until re-solved. Without cascade, the database looks like a single source of truth but silently feeds stale arithmetic to live decisions.</p>
+      <ul>
+        <li><code>taxRate 25.17%</code> — changes depreciation shield in Finance NPV (Step 11)</li>
+        <li><code>serviceLevel 0.95</code> — governs safety stock z-score in Sourcing (Step 6) and MEIO (Step 7)</li>
+        <li><code>invHoldingSpread 12.8%</code> — added to WACC to form carryRate used in procurement economics</li>
+        <li><code>fxRates {USD 84.20, EUR 91.40}</code> — converts landed cost for every multi-currency PO (Step 6)</li>
+        <li><code>6-day week · frozen/slushy horizon</code> — defines working-day buckets every time-phase anchors to</li>
+      </ul>
+    </div>
+    <div>
+      <div class="illo">
+        <svg viewBox="0 0 310 262" xmlns="http://www.w3.org/2000/svg">
+          <defs><marker id="am1" markerWidth="6" markerHeight="5" refX="5" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5Z" fill="#1C3050"/></marker><marker id="ams" markerWidth="6" markerHeight="5" refX="5" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5Z" fill="#FBBF24"/></marker></defs>
+          <rect x="91" y="100" width="128" height="52" rx="9" fill="rgba(34,211,238,0.07)" stroke="#22D3EE" stroke-width="1.5"/>
+          <text x="155" y="122" text-anchor="middle" font-family="Consolas,monospace" font-size="11" fill="#22D3EE" font-weight="bold">REGISTRY</text>
+          <text x="155" y="140" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#6E8EB0">Single Source · Token Lineage</text>
+          <circle cx="219" cy="100" r="5" fill="#22D3EE" opacity="0.7"/>
+          <text x="227" y="97" font-family="Consolas,monospace" font-size="7.5" fill="#22D3EE">← edit here</text>
+          <line x1="155" y1="100" x2="155" y2="55" stroke="#1C3050" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#am1)"/>
+          <rect x="112" y="30" width="86" height="26" rx="6" fill="#0F1829" stroke="#1C3050"/><text x="155" y="47" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#6E8EB0">FORECAST</text>
+          <line x1="219" y1="128" x2="262" y2="110" stroke="#1C3050" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#am1)"/>
+          <rect x="260" y="97" width="48" height="24" rx="5" fill="#0F1829" stroke="#1C3050"/><text x="284" y="113" text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#6E8EB0">PROD.</text>
+          <line x1="217" y1="146" x2="260" y2="166" stroke="#FBBF24" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#ams)" class="stale"/>
+          <rect x="258" y="156" width="50" height="24" rx="5" fill="rgba(251,191,36,0.07)" stroke="#FBBF24" stroke-width="1.5"/>
+          <text x="283" y="172" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#FBBF24">PROCURE</text>
+          <rect x="260" y="185" width="42" height="13" rx="3" fill="rgba(251,191,36,0.15)" stroke="rgba(251,191,36,0.5)" stroke-width="0.75"/><text x="281" y="195" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#FBBF24" font-weight="bold">STALE</text>
+          <line x1="155" y1="152" x2="155" y2="196" stroke="#1C3050" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#am1)"/>
+          <rect x="112" y="196" width="86" height="24" rx="5" fill="#0F1829" stroke="#1C3050"/><text x="155" y="212" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#6E8EB0">LOGISTICS</text>
+          <line x1="91" y1="144" x2="50" y2="164" stroke="#FBBF24" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#ams)" class="stale"/>
+          <rect x="2" y="154" width="52" height="24" rx="5" fill="rgba(251,191,36,0.07)" stroke="#FBBF24" stroke-width="1.5"/>
+          <text x="28" y="170" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#FBBF24">FINANCE</text>
+          <rect x="4" y="183" width="42" height="13" rx="3" fill="rgba(251,191,36,0.15)" stroke="rgba(251,191,36,0.5)" stroke-width="0.75"/><text x="25" y="193" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#FBBF24" font-weight="bold">STALE</text>
+          <line x1="91" y1="116" x2="50" y2="96" stroke="#1C3050" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#am1)"/>
+          <rect x="2" y="84" width="52" height="24" rx="5" fill="#0F1829" stroke="#1C3050"/><text x="28" y="100" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#6E8EB0">RISK</text>
+          <line x1="8" y1="242" x2="30" y2="242" stroke="#1C3050" stroke-width="1.5" stroke-dasharray="4,2"/><text x="34" y="246" font-family="Consolas,monospace" font-size="8" fill="#6E8EB0">up to date</text>
+          <line x1="110" y1="242" x2="132" y2="242" stroke="#FBBF24" stroke-width="1.5" stroke-dasharray="4,2"/><text x="136" y="246" font-family="Consolas,monospace" font-size="8" fill="#FBBF24">STALE — must re-solve</text>
+        </svg>
+        <div class="illo-cap">Editing WACC here cascades a STALE signal to PROCUREMENT and FINANCE, blocking any trust in their prior result until re-solved.</div>
+      </div>
+    </div>
+  </div>
+  <div class="crd-row">
+    <div class="crd"><div class="crd-lbl">Solver / API</div><div class="apip">/api/calc/calendar</div><div class="crd-body">Translates horizon length, freeze dates, and 6-day-week into actual <strong>working-day period buckets</strong>. Without consistent buckets, plans from different solvers cover different time spans and can't reconcile against each other.</div></div>
+    <div class="crd"><div class="crd-lbl">Key Output</div><div class="crd-body">A <strong>versioned, token-locked parameter set</strong>. When any downstream solver is queried, it checks whether its governing params changed since the last solve. If yes → mark STALE. If no → return result. This guarantee is what makes the rest of the framework trustworthy.</div></div>
+    <div class="crd"><div class="crd-lbl">Critical Check (SOLVE_DEPS)</div><div class="crd-body">After editing <code>serviceLevel</code> or <code>fxRates</code>, verify the STALE cascade fires to Procurement, MEIO, and Finance. <strong>If they silently return old results, the governance is cosmetic.</strong> Automate this assertion in CI.</div></div>
+  </div>
+  <div class="gap-blk"><div class="gap-t">No Capability Gap — Risk is Behavioural</div><p>The registry + token architecture already matches IBP/Kinaxis "planning master data." The real risk is <strong>discipline of use</strong>: if planners maintain local spreadsheets with override assumptions (local WACC 9% vs registry 11%), the cascade is bypassed silently.</p><div class="chg"><strong>If single-source discipline breaks:</strong> Procurement uses cheaper carry cost → buys more inventory → Finance sees higher capital base → EVA is worse than procurement expected. Plans are internally inconsistent even though each solver individually "passed" its own check.</div></div>
+  <div class="bm-row"><span class="bm-pre">Industry Benchmark</span><span class="bm-chip bm-good">GOOD</span><span class="bm-note">Matches SAP IBP / Kinaxis "planning master data." Registry + lineage + cascade = best-practice architecture.</span></div>
+</section>
+
+<div class="conn"><div class="c-line"></div><div class="c-pill">committed params (serviceLevel, carryRate, fxRates) → DEMAND ↓</div><div class="c-line"></div></div>
+
+<!-- ══════════════════ STEP 2 ══════════════════ -->
+<section class="step" id="s2">
+  <div class="step-hdr"><div class="s-chip chip-2">STEP 02</div><div class="s-meta"><h2>Demand · Forecasting &amp; Sensing</h2><p class="s-tag">"Every other step optimises around demand. If demand is wrong, everything downstream is systematically wrong."</p></div></div>
+  <div class="step-grid">
+    <div class="cncpt">
+      <h3>Core Concept</h3>
+      <p>Demand is never one thing. A product's sales contain a <strong>baseline trend</strong>, a <strong>seasonal pattern</strong>, a <strong>promotional pulse</strong>, a <strong>new-product ramp</strong>, and random noise. No single forecasting algorithm handles all components well. The job of this step is to <strong>pick the right model per SKU</strong> from a competition and produce a committed forecast the rest of the plan builds on.</p>
+      <p><strong>Holt-Winters</strong> exponential smoothing models trend and seasonality by weighting recent history more heavily — fast, transparent, robust for mature products. <strong>Random Forest</strong> treats demand as a supervised ML problem: promo flags, price, day-of-week, and calendar are features; it catches nonlinear relationships Holt-Winters can't. <strong>Croston's method</strong> is the specialist for intermittent demand — items that sell 0 units for 8 weeks, then 50, then 0. It separately models <em>when demand will occur</em> and <em>how much</em>.</p>
+      <p>The <strong>MASE/MAPE backtest</strong> decides the winner per SKU: hold back the last N periods, run all models, measure out-of-sample error, crown the lowest-error model. The output is a <strong>committed demand signal</strong> — an explicit event, not a background auto-update — because downstream solvers need a stable signal to optimise against. The prediction interval σ feeds directly into Step 9's risk simulations.</p>
+    </div>
+    <div>
+      <div class="illo">
+        <svg viewBox="0 0 310 234" xmlns="http://www.w3.org/2000/svg">
+          <line x1="28" y1="190" x2="302" y2="190" stroke="#1C3050" stroke-width="1.5"/>
+          <line x1="28" y1="18" x2="28" y2="190" stroke="#1C3050" stroke-width="1.5"/>
+          <text x="165" y="208" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#6E8EB0">Time (periods)</text>
+          <rect x="34" y="118" width="15" height="72" rx="2" fill="rgba(110,142,176,0.3)" stroke="rgba(110,142,176,0.5)" stroke-width="0.5"/>
+          <rect x="54" y="98" width="15" height="92" rx="2" fill="rgba(110,142,176,0.3)" stroke="rgba(110,142,176,0.5)" stroke-width="0.5"/>
+          <rect x="74" y="108" width="15" height="82" rx="2" fill="rgba(110,142,176,0.3)" stroke="rgba(110,142,176,0.5)" stroke-width="0.5"/>
+          <rect x="94" y="82" width="15" height="108" rx="2" fill="rgba(110,142,176,0.3)" stroke="rgba(110,142,176,0.5)" stroke-width="0.5"/>
+          <rect x="114" y="68" width="15" height="122" rx="2" fill="rgba(110,142,176,0.3)" stroke="rgba(110,142,176,0.5)" stroke-width="0.5"/>
+          <rect x="134" y="98" width="15" height="92" rx="2" fill="rgba(110,142,176,0.3)" stroke="rgba(110,142,176,0.5)" stroke-width="0.5"/>
+          <rect x="154" y="112" width="15" height="78" rx="2" fill="rgba(110,142,176,0.3)" stroke="rgba(110,142,176,0.5)" stroke-width="0.5"/>
+          <rect x="174" y="94" width="15" height="96" rx="2" fill="rgba(110,142,176,0.3)" stroke="rgba(110,142,176,0.5)" stroke-width="0.5"/>
+          <line x1="198" y1="18" x2="198" y2="190" stroke="#22D3EE" stroke-width="1.2" stroke-dasharray="6,3"/>
+          <text x="202" y="30" font-family="Consolas,monospace" font-size="8" fill="#22D3EE">COMMIT</text>
+          <text x="202" y="41" font-family="Consolas,monospace" font-size="8" fill="#22D3EE">D-1 fix</text>
+          <polygon points="198,88 214,80 234,76 254,78 274,82 294,78 294,114 274,117 254,115 234,111 214,116 198,120" fill="rgba(96,165,250,0.08)" stroke="none"/>
+          <polyline points="41,152 62,132 83,142 104,120 125,104 146,138 167,148 188,130 198,104 214,96 234,92 254,95 274,99 294,95" fill="none" stroke="#22D3EE" stroke-width="1.5" stroke-dasharray="3,2"/>
+          <polyline points="198,102 214,92 234,88 254,91 274,95 294,91" fill="none" stroke="#FB923C" stroke-width="1.5" stroke-dasharray="5,3"/>
+          <polyline points="198,103 214,93 234,89 254,92 274,96 294,92" fill="none" stroke="#60A5FA" stroke-width="2.5"/>
+          <circle cx="228" cy="183" r="3" fill="#A78BFA" opacity="0.7"/>
+          <circle cx="248" cy="188" r="2" fill="#A78BFA" opacity="0.5"/>
+          <circle cx="268" cy="184" r="3" fill="#A78BFA" opacity="0.7"/>
+          <circle cx="290" cy="189" r="2" fill="#A78BFA" opacity="0.4"/>
+          <text x="250" y="173" font-family="Consolas,monospace" font-size="7.5" fill="#A78BFA">Croston tail</text>
+          <line x1="28" y1="222" x2="46" y2="222" stroke="#22D3EE" stroke-width="1.5" stroke-dasharray="3,2"/><text x="50" y="226" font-family="Consolas,monospace" font-size="7.5" fill="#6E8EB0">Holt-Winters</text>
+          <line x1="116" y1="222" x2="134" y2="222" stroke="#FB923C" stroke-width="1.5" stroke-dasharray="5,3"/><text x="138" y="226" font-family="Consolas,monospace" font-size="7.5" fill="#6E8EB0">RF</text>
+          <line x1="156" y1="222" x2="174" y2="222" stroke="#60A5FA" stroke-width="2.5"/><text x="178" y="226" font-family="Consolas,monospace" font-size="7.5" fill="#60A5FA">Winner (MASE)</text>
+        </svg>
+        <div class="illo-cap">Three models compete per SKU. The MASE backtest on held-out periods crowns the winner. The PI band (shaded) becomes Step 9's uncertainty input.</div>
+      </div>
+    </div>
+  </div>
+  <div class="crd-row">
+    <div class="crd"><div class="crd-lbl">Solvers</div><div class="apip">/api/forecast</div><div class="apip">/api/demand/sense</div><div class="crd-body"><strong>Holt-Winters + RF hybrid</strong> for regular demand. <strong>Croston</strong> for intermittent SKUs. <code>demand/sense</code> auto-flags regime breaks — sudden demand-level shifts that historical patterns can't explain — so planners intervene rather than trusting a stale model.</div></div>
+    <div class="crd"><div class="crd-lbl">Key Output</div><div class="crd-body"><strong>Committed demand per SKU</strong> delivered as an explicit commit event, not a silent update. The PI band (σ = holdout error) encodes forecast uncertainty. Both the committed signal and σ flow to every downstream solver — committed mean drives the plan, σ drives safety stock and risk.</div></div>
+    <div class="crd"><div class="crd-lbl">Critical Check</div><div class="crd-body">Show winner model + out-of-sample MAPE in the UI. If winner MAPE &gt; 30%, a planner must review before committing. The <strong>D-1 fix rule</strong> — no silent re-commit after Day 1 of the frozen period — protects production from surprise mid-schedule demand changes.</div></div>
+  </div>
+  <div class="obs"><div class="obs-t">Observability Assert</div>After committing demand: (1) every downstream solver shows STALE, (2) PI band σ is visible in UI — not hidden, (3) demand sense flag fires within one period if new actuals fall outside 2σ of forecast.</div>
+  <div class="gap-blk"><div class="gap-t">Gap: No True Causal / ML-at-Scale</div><p>The hybrid (H-W + RF + Croston) is competitive for mid-market IBP. The gap is <strong>no causal ML at scale</strong>: o9 and Blue Yonder ingest external signals — Google Trends, POS scanner data, weather, macroeconomic indicators — into gradient-boosting or neural forecasting models that detect demand shifts days before they appear in your order history.</p><div class="chg"><strong>If you implemented causal ML at scale:</strong> SKUs with strong external predictors would see 10–25% lower MAPE. New product ramps would fit the S-curve faster. The biggest win: demand sensing would catch retailer de-stocking 2–4 weeks earlier, letting you throttle production before the inventory pile-up begins.</div></div>
+  <div class="bm-row"><span class="bm-pre">Industry Benchmark</span><span class="bm-chip bm-comp">COMPETITIVE</span><span class="bm-note">Hybrid + Croston + external-signal drivers is strong for the category. Gap: causal ML at the scale of o9 / Blue Yonder demand sensing networks.</span></div>
+</section>
+
+<div class="conn"><div class="c-line"></div><div class="c-pill">committed demand per SKU + PI σ → AGGREGATE PLANNING ↓</div><div class="c-line"></div></div>
+
+<!-- ══════════════════ STEP 3 ══════════════════ -->
+<section class="step" id="s3">
+  <div class="step-hdr"><div class="s-chip chip-3">STEP 03</div><div class="s-meta"><h2>Plan · Aggregate S&amp;OP</h2><p class="s-tag">"Should we level the workforce and hold buffer inventory, or chase demand with hiring cycles? This LP finds the cheapest hybrid."</p></div></div>
+  <div class="step-grid">
+    <div class="cncpt">
+      <h3>Core Concept</h3>
+      <p>Before scheduling a single production run, you must answer a strategic workforce question. Two pure strategies exist: <strong>Level production</strong> — keep the workforce constant, build inventory in slow periods and draw it down at peaks. The cost is inventory holding. <strong>Chase demand</strong> — hire when demand rises, fire or cut overtime when it falls, match production to demand exactly. The cost is labour volatility: hire/fire fees, training lag, and morale impact.</p>
+      <p>Neither extreme is cheapest in practice. The <strong>Hax–Meal LP</strong> finds the optimal hybrid by minimising total cost across the horizon: labour holding + inventory holding + hire/fire fees + overtime premium + backorder penalty. It outputs a period-by-period workforce size and production volume — the <em>aggregate plan</em>.</p>
+      <p>The critical nuance: this LP works in <strong>labour-weighted units</strong>, not physical units. A SKU taking 3 worker-hours counts 3× the capacity load of a 1-hour SKU. The reconciliation (physical 1,260 ≠ labour-weighted 1,124) is where errors silently enter. Every downstream step must know which basis it's using and convert correctly. The <code>allow_backorder</code> flag is a key lever — enabling it may flip infeasible peak periods to feasible by absorbing them as planned stockouts.</p>
+    </div>
+    <div>
+      <div class="illo">
+        <svg viewBox="0 0 310 252" xmlns="http://www.w3.org/2000/svg">
+          <text x="155" y="15" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#6E8EB0">Committed Demand Signal</text>
+          <polyline points="18,46 48,56 78,36 108,24 138,50 168,62 198,46 228,30 258,48 288,38 298,42" fill="none" stroke="#60A5FA" stroke-width="2"/>
+          <polygon points="18,46 48,56 78,36 108,24 138,50 168,62 198,46 228,30 258,48 288,38 298,42 298,68 18,68" fill="rgba(96,165,250,0.06)" stroke="none"/>
+          <line x1="8" y1="84" x2="302" y2="84" stroke="#1C3050" stroke-width="1" stroke-dasharray="3,3"/>
+          <text x="74" y="100" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#34D399" font-weight="bold">LEVEL Strategy</text>
+          <text x="74" y="112" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#6E8EB0">flat workforce · inventory buffer</text>
+          <rect x="16" y="120" width="20" height="38" rx="2" fill="rgba(52,211,153,0.18)" stroke="#34D399" stroke-width="1"/>
+          <rect x="40" y="120" width="20" height="38" rx="2" fill="rgba(52,211,153,0.18)" stroke="#34D399" stroke-width="1"/>
+          <rect x="64" y="120" width="20" height="38" rx="2" fill="rgba(52,211,153,0.18)" stroke="#34D399" stroke-width="1"/>
+          <rect x="88" y="120" width="20" height="38" rx="2" fill="rgba(52,211,153,0.18)" stroke="#34D399" stroke-width="1"/>
+          <rect x="112" y="120" width="20" height="38" rx="2" fill="rgba(52,211,153,0.18)" stroke="#34D399" stroke-width="1"/>
+          <polyline points="16,170 36,165 60,178 86,172 110,160 132,175" fill="none" stroke="#34D399" stroke-width="1.5" stroke-dasharray="3,2"/>
+          <text x="74" y="195" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#34D399">↑ buffer builds &amp; depletes</text>
+          <text x="230" y="100" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#FB923C" font-weight="bold">CHASE Strategy</text>
+          <text x="230" y="112" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#6E8EB0">follow demand · hire/fire cost</text>
+          <rect x="163" y="150" width="20" height="10" rx="2" fill="rgba(251,146,60,0.18)" stroke="#FB923C" stroke-width="1"/>
+          <rect x="187" y="138" width="20" height="22" rx="2" fill="rgba(251,146,60,0.18)" stroke="#FB923C" stroke-width="1"/>
+          <rect x="211" y="126" width="20" height="34" rx="2" fill="rgba(251,146,60,0.18)" stroke="#FB923C" stroke-width="1"/>
+          <rect x="235" y="140" width="20" height="20" rx="2" fill="rgba(251,146,60,0.18)" stroke="#FB923C" stroke-width="1"/>
+          <rect x="259" y="132" width="20" height="28" rx="2" fill="rgba(251,146,60,0.18)" stroke="#FB923C" stroke-width="1"/>
+          <text x="187" y="127" font-family="Consolas,monospace" font-size="7" fill="#FB923C">hire↑</text>
+          <text x="260" y="127" font-family="Consolas,monospace" font-size="7" fill="#FB923C">fire↓</text>
+          <rect x="90" y="214" width="130" height="24" rx="6" fill="rgba(129,140,248,0.07)" stroke="#818CF8" stroke-width="1"/>
+          <text x="155" y="230" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#818CF8">HAX–MEAL LP → Optimal Hybrid</text>
+        </svg>
+        <div class="illo-cap">The LP finds the cost-minimising blend — neither pure level nor pure chase — given actual hire/fire/OT/holding/backorder costs.</div>
+      </div>
+    </div>
+  </div>
+  <div class="crd-row">
+    <div class="crd"><div class="crd-lbl">Solver</div><div class="apip">/api/solve/aggregate</div><div class="crd-body">Hax–Meal <strong>level-vs-chase LP</strong>. Decision variables: workforce size, production volume, overtime hours, hire/fire count, inventory level, backorder volume per period. Objective: minimise total cost. Key lever: <code>allow_backorder</code> flips peak-period feasibility.</div></div>
+    <div class="crd"><div class="crd-lbl">Key Output</div><div class="crd-body"><strong>Period-by-period aggregate plan</strong> in labour-weighted units. Strategy label (level/chase/hybrid). Opening physical stock (1,260 units). This plan is the ceiling — production scheduling in Step 4 cannot authorise more than the aggregate plan allows per period.</div></div>
+    <div class="crd"><div class="crd-lbl">★ The Unit Check</div><div class="crd-body">UI shows physical 1,260 units. Solver uses labour-weighted 1,124. <strong>Assert: the disaggregate tier must reconcile back to physical demand, not labour-weighted demand.</strong> This unit-basis confusion is the most common reconciliation error in multi-level planning.</div></div>
+  </div>
+  <div class="obs"><div class="obs-t">Observability Assert</div>After S&amp;OP solve: physical opening stock in UI matches actuals reconciled from the network. Labour-weighted units are internally consistent across periods. Test <code>allow_backorder</code> toggle — disabling it must make some peak periods infeasible if the aggregate plan was previously relying on it.</div>
+  <div class="gap-blk"><div class="gap-t">Gap: Single Resource (Worker-Time Only)</div><p>The current LP optimises over one resource: <strong>worker-time</strong>. Real plants have multiple simultaneous constraints — machine hours on specific lines, tooling kits, energy tariff windows, certified operator availability. A single-resource LP finds a plan that's labour-feasible but may be machine-infeasible.</p><div class="chg"><strong>If you added multi-resource aggregate planning:</strong> the LP would include machine-hour constraints per asset class. A level strategy optimal for labour might be immediately infeasible because LINE-01 is over capacity in Q2. You'd find the binding resource at the aggregate level before wasting the production solver on an impossible schedule. Expected benefit: 3–8% reduction in aggregate-to-production re-planning cycles.</div></div>
+  <div class="bm-row"><span class="bm-pre">Industry Benchmark</span><span class="bm-chip bm-good">GOOD</span><span class="bm-note">SAP IBP aggregate planning is the textbook. Level-vs-chase LP with real hire/fire/backorder levers matches best practice. Gap: single-resource only.</span></div>
+</section>
+
+<div class="conn"><div class="c-line"></div><div class="c-pill">aggregate plan (workforce + volume by period) → PRODUCTION SCHEDULING ↓</div><div class="c-line"></div></div>
+
+<!-- ══════════════════ STEP 4 ══════════════════ -->
+<section class="step" id="s4">
+  <div class="step-hdr"><div class="s-chip chip-4">STEP 04</div><div class="s-meta"><h2>Production · Schedule &amp; Bottleneck</h2><p class="s-tag">"The aggregate plan says how much. The schedule says which machine, which sequence, and when — and exposes the single constraint governing everything else."</p></div></div>
+  <div class="step-grid">
+    <div class="cncpt">
+      <h3>Core Concept</h3>
+      <p>The aggregate plan hands down a volume target: "make 4,000 units of SKU-mix in Q1." Production scheduling converts this into a physical Gantt: LINE-01 runs SKU-A from Monday 6am to Tuesday 2pm, then a changeover to SKU-B, then LINE-02 runs SKU-C in parallel. This is where the <strong>Theory of Constraints (TOC)</strong> becomes central.</p>
+      <p>TOC's key insight: in any system, <strong>one resource limits total throughput</strong> — the bottleneck. Improving any non-bottleneck resource wastes money and doesn't move the output needle. Every management action should focus on: (1) identify the bottleneck, (2) exploit it — zero idle time, no quality defects that consume its capacity, (3) subordinate everything else to feeding it, (4) only then elevate it by buying more. In this system, LINE-01 is the bottleneck. Every idle minute on it is revenue permanently lost — the clock never rewinds.</p>
+      <p><strong>Changeover minimisation</strong> is equally critical. The 6×6 changeover matrix gives the time and cost to switch between every pair of SKUs. The Hamiltonian sequencing solver finds the SKU order that minimises the total changeover cost — a Travelling Salesman variant. The output <code>projected_inventory</code> is the moment-by-moment stock level as production builds and demand draws down. This is not just operational — it becomes the <strong>EVA capital base</strong> Finance charges carrying cost against in Step 11.</p>
+    </div>
+    <div>
+      <div class="illo">
+        <svg viewBox="0 0 310 218" xmlns="http://www.w3.org/2000/svg">
+          <rect x="0" y="18" width="30" height="30" rx="4" fill="rgba(248,113,113,0.1)" stroke="#F87171" stroke-width="1"/>
+          <text x="15" y="31" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#F87171">LINE</text>
+          <text x="15" y="42" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#F87171">01 ●</text>
+          <text x="15" y="70" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#6E8EB0">LINE</text>
+          <text x="15" y="80" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#6E8EB0">02</text>
+          <rect x="34" y="18" width="50" height="30" rx="3" fill="rgba(34,211,238,0.18)" stroke="#22D3EE" stroke-width="1"/>
+          <text x="59" y="36" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#22D3EE">SKU-A</text>
+          <rect x="87" y="18" width="7" height="30" rx="1" fill="rgba(248,113,113,0.2)" stroke="#F87171" stroke-width="0.5"/>
+          <text x="90" y="13" font-family="Consolas,monospace" font-size="7" fill="#F87171">c/o</text>
+          <rect x="97" y="18" width="44" height="30" rx="3" fill="rgba(96,165,250,0.18)" stroke="#60A5FA" stroke-width="1"/>
+          <text x="119" y="36" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#60A5FA">SKU-B</text>
+          <rect x="144" y="18" width="6" height="30" rx="1" fill="rgba(248,113,113,0.2)" stroke="#F87171" stroke-width="0.5"/>
+          <rect x="153" y="18" width="54" height="30" rx="3" fill="rgba(167,139,250,0.18)" stroke="#A78BFA" stroke-width="1"/>
+          <text x="180" y="36" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#A78BFA">SKU-C</text>
+          <rect x="210" y="18" width="6" height="30" rx="1" fill="rgba(248,113,113,0.2)" stroke="#F87171" stroke-width="0.5"/>
+          <rect x="219" y="18" width="60" height="30" rx="3" fill="rgba(52,211,153,0.18)" stroke="#34D399" stroke-width="1"/>
+          <text x="249" y="36" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#34D399">SKU-D</text>
+          <text x="140" y="57" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#F87171">▲ BOTTLENECK — every idle minute = lost throughput forever</text>
+          <rect x="34" y="62" width="66" height="26" rx="3" fill="rgba(251,146,60,0.15)" stroke="#FB923C" stroke-width="1"/>
+          <text x="67" y="78" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#FB923C">SKU-E</text>
+          <rect x="104" y="62" width="5" height="26" rx="1" fill="rgba(248,113,113,0.15)" stroke="#F87171" stroke-width="0.5"/>
+          <rect x="112" y="62" width="70" height="26" rx="3" fill="rgba(251,191,36,0.15)" stroke="#FBBF24" stroke-width="1"/>
+          <text x="147" y="78" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#FBBF24">SKU-F</text>
+          <rect x="186" y="62" width="5" height="26" rx="1" fill="rgba(248,113,113,0.15)" stroke="#F87171" stroke-width="0.5"/>
+          <rect x="194" y="62" width="85" height="26" rx="3" fill="rgba(74,222,128,0.15)" stroke="#4ADE80" stroke-width="1"/>
+          <text x="236" y="78" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#4ADE80">SKU-A repeat</text>
+          <line x1="34" y1="96" x2="285" y2="96" stroke="#1C3050" stroke-width="1"/>
+          <text x="34" y="106" font-family="Consolas,monospace" font-size="7.5" fill="#6E8EB0">Mon</text><text x="116" y="106" font-family="Consolas,monospace" font-size="7.5" fill="#6E8EB0">Tue</text><text x="198" y="106" font-family="Consolas,monospace" font-size="7.5" fill="#6E8EB0">Wed</text><text x="268" y="106" font-family="Consolas,monospace" font-size="7.5" fill="#6E8EB0">Thu</text>
+          <text x="8" y="126" font-family="Consolas,monospace" font-size="7.5" fill="#6E8EB0" transform="rotate(-90,8,148)">Proj.Inv</text>
+          <polyline points="34,138 78,132 128,148 158,142 198,134 240,149 280,142" fill="none" stroke="#34D399" stroke-width="1.5"/>
+          <polygon points="34,138 78,132 128,148 158,142 198,134 240,149 280,142 280,165 34,165" fill="rgba(52,211,153,0.05)" stroke="none"/>
+          <line x1="34" y1="158" x2="280" y2="158" stroke="#1C3050" stroke-width="1" stroke-dasharray="3,2"/>
+          <text x="284" y="162" font-family="Consolas,monospace" font-size="7" fill="#6E8EB0">SS</text>
+          <text x="34" y="192" font-family="Consolas,monospace" font-size="7.5" fill="#86EFAC">projected_inventory × unit cost = EVA capital base → Step 11</text>
+          <text x="34" y="204" font-family="Consolas,monospace" font-size="7.5" fill="#F87171">LINE-01 shadow price → Step 5 profit mix LP dual variable</text>
+        </svg>
+        <div class="illo-cap">LINE-01 is the bottleneck. Changeover gaps (orange slivers) are throughput permanently lost. projected_inventory feeds Finance's EVA capital base in Step 11.</div>
+      </div>
+    </div>
+  </div>
+  <div class="crd-row">
+    <div class="crd"><div class="crd-lbl">Solvers</div><div class="apip">/api/solve/production</div><div class="apip">/api/solve/sequence</div><div class="crd-body"><strong>MILP + TOC</strong> for the build schedule (which SKU on which line, when, respecting OEE and line capacities). <strong>Hamiltonian min-changeover</strong> for sequencing: finds the SKU order minimising total changeover cost across the 6×6 matrix.</div></div>
+    <div class="crd"><div class="crd-lbl">Key Output</div><div class="crd-body"><strong>Time-phased production Gantt + projected_inventory curve.</strong> The inventory array is not just operational — it becomes the <strong>EVA capital base Finance charges carrying cost against.</strong> Over-estimating changeover times inflates this array, adding phantom capital charges to every SKU's profitability calculation.</div></div>
+    <div class="crd"><div class="crd-lbl">Cross-Check</div><div class="crd-body"><code>projected_inventory × unit_cost</code> must equal Finance's working capital figure. <strong>If production and finance use different inventory arrays, EVA is wrong.</strong> Assert this identity at every plan update — it is the most important financial-operational reconciliation in the system.</div></div>
+  </div>
+  <div class="obs"><div class="obs-t">Observability Assert</div>After production solve: bottleneck utilisation &gt; 85% (otherwise the aggregate plan was too conservative). Confirm projected_inventory never falls below safety stock floor. Cross-check: Finance capital base = Σ(projected_inventory × unit_cost) per period — not approximate, exact.</div>
+  <div class="gap-blk"><div class="gap-t">Gap: No Finite-Capacity APS at Operation Level</div><p>The current solver schedules at the <em>line</em> level. Advanced Planning &amp; Scheduling (APS) in tools like SAP PP/DS schedules at the <em>operation</em> level — individual machine states, operator skill requirements, maintenance windows, setup crew availability. A line-level schedule can be theoretically feasible but operationally impossible if a certified operator isn't rostered.</p><div class="chg"><strong>If you implemented finite-capacity APS at operation level:</strong> infeasibilities surface before the schedule reaches the floor. Predictive maintenance windows are built in. Operator skill constraints are modelled. Expected throughput gain: 5–15% on the bottleneck line by finding hidden available time previously invisible at the line-level view.</div></div>
+  <div class="bm-row"><span class="bm-pre">Industry Benchmark</span><span class="bm-chip bm-good">GOOD</span><span class="bm-note">Kinaxis RapidResponse concurrent scheduling is the gold standard. MILP + TOC + campaign min-run is appropriate for MSME scale. Gap: no operation-level finite-capacity APS.</span></div>
+</section>
+
+<div class="conn"><div class="c-line"></div><div class="c-pill">bottleneck capacity + projected_inventory → PROFIT MIX (what to make under constraint) ↓</div><div class="c-line"></div></div>
+
+<!-- ══════════════════ STEP 5 ══════════════════ -->
+<section class="step" id="s5">
+  <div class="step-hdr"><div class="s-chip chip-5">STEP 05</div><div class="s-meta"><h2>Profit Mix · The Glass-Box LP</h2><p class="s-tag">"Given the bottleneck and demand ceilings, which SKU combination maximises contribution margin — and why? The dual variables tell the whole story."</p></div></div>
+  <div class="step-grid">
+    <div class="cncpt">
+      <h3>Core Concept</h3>
+      <p>Step 4 found the bottleneck: LINE-01 has a fixed number of machine-hours available. Step 5 asks: given that constraint, which mix of the 6 SKUs maximises total profit? This is the classic <strong>throughput accounting / product-mix LP</strong> — and it has a precise, auditable answer.</p>
+      <p>The feasible region is all SKU-volume combinations satisfying: (1) LINE-01 capacity constraint — total machine-hours used ≤ available, (2) demand ceiling per SKU — can't sell more than customers want, (3) non-negativity. The LP finds the vertex of this region that maximises total contribution margin (price minus variable cost, summed across all SKUs).</p>
+      <p>The real value is in the <strong>dual variables</strong>. The <strong>shadow price on LINE-01</strong>: if you had one more machine-hour, how much extra profit would you make? This is the exact economic value of capacity expansion — and it <em>must equal</em> what Finance uses in Step 11 to justify a CapEx. The <strong>reduced cost on TPA-7722</strong>: it's negative, meaning every unit you make of it destroys value at the margin by consuming LINE-01 time that could produce something more profitable. The <strong>crossover price</strong> shows what price TPA-7722 would need to re-earn its place. This "glass box" LP explanation is the product's core wedge — IBP and o9 hide the dual variables entirely.</p>
+    </div>
+    <div>
+      <div class="illo">
+        <svg viewBox="0 0 310 262" xmlns="http://www.w3.org/2000/svg">
+          <line x1="38" y1="218" x2="295" y2="218" stroke="#1C3050" stroke-width="1.5"/>
+          <line x1="38" y1="18" x2="38" y2="218" stroke="#1C3050" stroke-width="1.5"/>
+          <text x="165" y="236" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#6E8EB0">Units SKU-A →</text>
+          <text x="16" y="118" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#6E8EB0" transform="rotate(-90,16,118)">Units SKU-B →</text>
+          <polygon points="38,218 214,218 214,102 142,46 38,76" fill="rgba(52,211,153,0.07)" stroke="none"/>
+          <line x1="38" y1="56" x2="264" y2="218" stroke="#F87171" stroke-width="1.5"/>
+          <text x="250" y="213" font-family="Consolas,monospace" font-size="8" fill="#F87171">LINE-01 cap</text>
+          <line x1="214" y1="18" x2="214" y2="218" stroke="#60A5FA" stroke-width="1.5" stroke-dasharray="5,3"/>
+          <text x="218" y="34" font-family="Consolas,monospace" font-size="7.5" fill="#60A5FA">Demand ceil A</text>
+          <line x1="38" y1="76" x2="248" y2="76" stroke="#A78BFA" stroke-width="1.5" stroke-dasharray="5,3"/>
+          <text x="252" y="80" font-family="Consolas,monospace" font-size="7.5" fill="#A78BFA">Demand ceil B</text>
+          <line x1="38" y1="174" x2="172" y2="218" stroke="#34D399" stroke-width="1" stroke-dasharray="4,4" opacity="0.35"/>
+          <line x1="76" y1="144" x2="214" y2="188" stroke="#34D399" stroke-width="1" stroke-dasharray="4,4" opacity="0.6"/>
+          <line x1="114" y1="114" x2="254" y2="158" stroke="#34D399" stroke-width="1.5" stroke-dasharray="4,3" opacity="0.9"/>
+          <text x="258" y="154" font-family="Consolas,monospace" font-size="8" fill="#34D399">iso-profit</text>
+          <circle cx="142" cy="102" r="7" fill="rgba(34,211,238,0.2)" stroke="#22D3EE" stroke-width="2"/>
+          <circle cx="142" cy="102" r="3" fill="#22D3EE"/>
+          <text x="150" y="97" font-family="Consolas,monospace" font-size="9" fill="#22D3EE" font-weight="bold">★ OPTIMAL</text>
+          <circle cx="250" cy="172" r="5" fill="rgba(248,113,113,0.2)" stroke="#F87171" stroke-width="1.5"/>
+          <text x="258" y="176" font-family="Consolas,monospace" font-size="8" fill="#F87171">dropped SKU</text>
+          <text x="258" y="187" font-family="Consolas,monospace" font-size="7" fill="#6E8EB0">reduced cost &lt; 0</text>
+          <path d="M142,95 L122,64" stroke="#22D3EE" stroke-width="1" fill="none" stroke-dasharray="2,2"/>
+          <text x="38" y="58" font-family="Consolas,monospace" font-size="7.5" fill="#22D3EE">shadow price: ₹/hr LINE-01</text>
+          <text x="38" y="68" font-family="Consolas,monospace" font-size="7.5" fill="#22D3EE">= CapEx value in Step 11</text>
+          <text x="76" y="168" font-family="Consolas,monospace" font-size="8.5" fill="rgba(52,211,153,0.5)">FEASIBLE</text>
+          <text x="76" y="180" font-family="Consolas,monospace" font-size="8.5" fill="rgba(52,211,153,0.5)">REGION</text>
+        </svg>
+        <div class="illo-cap">The LP finds the optimal vertex. The shadow price on LINE-01 equals the financial value of capacity expansion — and must match Finance's CapEx model in Step 11.</div>
+      </div>
+    </div>
+  </div>
+  <div class="crd-row">
+    <div class="crd"><div class="crd-lbl">Solver</div><div class="apip">/api/solve/profitmix</div><div class="crd-body">True LP (not heuristic). Outputs: optimal mix, <strong>shadow prices</strong> (dual on each constraint), <strong>reduced costs</strong> (marginal cost of forcing a dropped variable in), crossover prices. "Prove It" re-solve lets planners verify by changing one coefficient and watching the optimal shift.</div></div>
+    <div class="crd"><div class="crd-lbl">DecisionExplainer</div><div class="crd-body"><strong>🔴 Bottleneck ₹/hour</strong> — shadow price on LINE-01. <strong>⬜ Dropped SKU</strong> — negative reduced cost means value-destruction at the margin. <strong>💡 Crossover price</strong> — price that changes the decision. <strong>🧪 Prove it</strong> — re-solve with one param changed to verify the explanation holds.</div></div>
+    <div class="crd"><div class="crd-lbl">★ Cross-Solver Identity</div><div class="crd-body">Shadow price on LINE-01 here <strong>must equal</strong> the linecap dual Finance uses in the capital-capacity solver (FV-C, Step 11). If they diverge, operations and finance are pricing capacity expansion differently. One side will approve investments the other thinks are wrong.</div></div>
+  </div>
+  <div class="obs"><div class="obs-t">THE Critical Cross-Solver Identity</div>Shadow price on LINE-01 in this LP = the linecap dual in Finance's capital-capacity solver (Step 11). Assert this equality after every combined plan + finance solve. If they diverge by more than rounding, a solver is using a stale input. This is the single most important number alignment in the entire application.</div>
+  <div class="gap-blk"><div class="gap-t">No Gap — This Is the Competitive Wedge</div><p>This step is <strong>DIFFERENTIATED</strong>. No mainstream planning tool exposes LP duals to planners at this level. SAP IBP and o9 show the optimal mix but hide the shadow prices, reduced costs, and sensitivity ranges — the "why" is a black box. The DecisionExplainer + Prove It mechanism is the product's conceptual moat.</p><div class="chg"><strong>Risk to watch — sensitivity range validity:</strong> LP sensitivity analysis assumes the optimal basis doesn't change within the reported range. For large coefficient changes, the basis changes and the shadow price is no longer valid. The UI should show the valid sensitivity range alongside each shadow price so planners don't extrapolate beyond its limits.</div></div>
+  <div class="bm-row"><span class="bm-pre">Industry Benchmark</span><span class="bm-chip bm-diff">DIFFERENTIATED</span><span class="bm-note">IBP/o9 hide the LP internals. Glass-box dual explanation with "Prove It" re-solve is the product's core wedge against enterprise planning tools.</span></div>
+</section>
+
+<div class="conn"><div class="c-line"></div><div class="c-pill">optimal mix + bottleneck shadow price → SOURCING (buy materials for what we'll make) ↓</div><div class="c-line"></div></div>
+
+<!-- ══════════════════ STEP 6 ══════════════════ -->
+<section class="step" id="s6">
+  <div class="step-hdr"><div class="s-chip chip-6">STEP 06</div><div class="s-meta"><h2>Sourcing · Procurement &amp; BOM</h2><p class="s-tag">"Now that you know what you'll make, buy the right materials at the right time — no earlier (capital cost), no later (stockout)."</p></div></div>
+  <div class="step-grid">
+    <div class="cncpt">
+      <h3>Core Concept</h3>
+      <p>Production planning says "make 800 units of SKU-A in week 4." Procurement works backwards: which raw materials does SKU-A require (<strong>BOM explosion</strong>), how long do they take to arrive (lead time), how much uncertainty exists in that lead time and in demand (<strong>safety stock</strong>), and what lot size is economical given ordering cost vs carrying cost (EOQ / MOQ).</p>
+      <p>The <strong>per-FG BOM</strong> is critical: not the master BOM (which may include inactive components or default routings), but the BOM for the specific planned production run, accounting for actual scrap rates and substitution rules. The BOM check (SR-1) asserts that the buy plan explodes <em>only</em> the components the selected FG uses — nothing more, nothing less. This matters every time you change the product mix, because components unique to a dropped SKU must fall out of the purchase plan automatically.</p>
+      <p>Safety stock sizing uses one of two methods per part: <strong>Heizer</strong> (SS = z × σ_LTD) is fast and transparent, assuming normally distributed lead-time demand. <strong>CVaR (Rockafellar–Uryasev)</strong> sizes the buffer to cover the worst 5% of demand scenarios — more conservative, appropriate for fat-tailed or lumpy demand. The governing parameter is <code>carryRate = WACC + spread</code>: higher carrying cost pushes the optimum toward less inventory and lower service, which is exactly why carryRate must cascade from Step 1 when WACC changes. If it doesn't, procurement is optimising against the wrong cost of money.</p>
+    </div>
+    <div>
+      <div class="illo">
+        <svg viewBox="0 0 310 262" xmlns="http://www.w3.org/2000/svg">
+          <rect x="105" y="8" width="100" height="26" rx="6" fill="rgba(251,146,60,0.1)" stroke="#FB923C" stroke-width="1.5"/>
+          <text x="155" y="25" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#FB923C" font-weight="bold">FG: TPA-7722</text>
+          <line x1="116" y1="34" x2="76" y2="66" stroke="#1C3050" stroke-width="1"/>
+          <line x1="155" y1="34" x2="155" y2="66" stroke="#1C3050" stroke-width="1"/>
+          <line x1="194" y1="34" x2="234" y2="66" stroke="#1C3050" stroke-width="1"/>
+          <rect x="38" y="66" width="76" height="22" rx="5" fill="rgba(96,165,250,0.1)" stroke="#60A5FA" stroke-width="1"/>
+          <text x="76" y="80" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#60A5FA">SUB-ASM-1</text>
+          <rect x="117" y="66" width="76" height="22" rx="5" fill="rgba(96,165,250,0.1)" stroke="#60A5FA" stroke-width="1"/>
+          <text x="155" y="80" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#60A5FA">SUB-ASM-2</text>
+          <rect x="196" y="66" width="76" height="22" rx="5" fill="rgba(96,165,250,0.1)" stroke="#60A5FA" stroke-width="1"/>
+          <text x="234" y="80" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#60A5FA">SUB-ASM-3</text>
+          <line x1="58" y1="88" x2="44" y2="112" stroke="#1C3050" stroke-width="1"/>
+          <line x1="96" y1="88" x2="108" y2="112" stroke="#1C3050" stroke-width="1"/>
+          <line x1="155" y1="88" x2="155" y2="112" stroke="#1C3050" stroke-width="1"/>
+          <line x1="214" y1="88" x2="202" y2="112" stroke="#1C3050" stroke-width="1"/>
+          <line x1="254" y1="88" x2="266" y2="112" stroke="#1C3050" stroke-width="1"/>
+          <rect x="14" y="112" width="60" height="20" rx="4" fill="rgba(167,139,250,0.08)" stroke="#A78BFA" stroke-width="1"/>
+          <text x="44" y="125" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#A78BFA">RM-A</text>
+          <rect x="78" y="112" width="60" height="20" rx="4" fill="rgba(167,139,250,0.08)" stroke="#A78BFA" stroke-width="1"/>
+          <text x="108" y="125" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#A78BFA">RM-B</text>
+          <rect x="125" y="112" width="60" height="20" rx="4" fill="rgba(167,139,250,0.08)" stroke="#A78BFA" stroke-width="1"/>
+          <text x="155" y="125" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#A78BFA">RM-C</text>
+          <rect x="172" y="112" width="60" height="20" rx="4" fill="rgba(167,139,250,0.08)" stroke="#A78BFA" stroke-width="1"/>
+          <text x="202" y="125" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#A78BFA">RM-D</text>
+          <rect x="240" y="112" width="60" height="20" rx="4" fill="rgba(167,139,250,0.08)" stroke="#A78BFA" stroke-width="1"/>
+          <text x="270" y="125" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#A78BFA">RM-E</text>
+          <text x="8" y="154" font-family="Consolas,monospace" font-size="8" fill="#6E8EB0">PO Timeline →</text>
+          <line x1="8" y1="158" x2="302" y2="158" stroke="#1C3050" stroke-width="1"/>
+          <rect x="16" y="162" width="84" height="11" rx="2" fill="rgba(167,139,250,0.2)" stroke="#A78BFA" stroke-width="0.75"/>
+          <text x="58" y="171" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#A78BFA">RM-A  LT: 3wk</text>
+          <rect x="64" y="177" width="64" height="11" rx="2" fill="rgba(167,139,250,0.15)" stroke="#A78BFA" stroke-width="0.75"/>
+          <text x="96" y="186" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#A78BFA">RM-B  LT: 2wk</text>
+          <rect x="136" y="162" width="104" height="11" rx="2" fill="rgba(96,165,250,0.15)" stroke="#60A5FA" stroke-width="0.75"/>
+          <text x="188" y="171" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#60A5FA">RM-C  LT: 4wk</text>
+          <rect x="16" y="202" width="10" height="20" rx="2" fill="rgba(34,211,238,0.28)" stroke="#22D3EE" stroke-width="1"/>
+          <rect x="64" y="202" width="10" height="14" rx="2" fill="rgba(34,211,238,0.2)" stroke="#22D3EE" stroke-width="1"/>
+          <rect x="136" y="202" width="10" height="24" rx="2" fill="rgba(34,211,238,0.3)" stroke="#22D3EE" stroke-width="1"/>
+          <text x="80" y="236" font-family="Consolas,monospace" font-size="7.5" fill="#22D3EE">Safety Stock buffers per RM (z·σ_LTD or CVaR95)</text>
+          <text x="155" y="250" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#FBBF24">carryRate = WACC (Step 1) + spread → governs SS economics</text>
+        </svg>
+        <div class="illo-cap">BOM explosion → per-component lead-time PO plan → SS sized by service level. carryRate must update whenever WACC changes in Step 1.</div>
+      </div>
+    </div>
+  </div>
+  <div class="crd-row">
+    <div class="crd"><div class="crd-lbl">Solvers</div><div class="apip">/api/solve/procurement</div><div class="apip">/rolling</div><div class="crd-body">MILP for time-phased PO plan minimising total cost: purchase + carrying + ordering. Rolling re-solve updates POs each period as actuals arrive. SS method: <strong>Heizer z·σ_LTD</strong> (normal distribution) or <strong>CVaR 95%</strong> (fat-tail robust), selected per part by <code>ss_source</code> flag.</div></div>
+    <div class="crd"><div class="crd-lbl">Key Output</div><div class="crd-body"><strong>Time-phased PO plan</strong> with order dates, quantities, supplier, and FX-converted landed cost. Reorder policy per part: <strong>(s, S)</strong> — order when stock hits s, fill up to S — or <strong>(R, Q)</strong> — every R periods order Q units. Policy selected based on demand pattern.</div></div>
+    <div class="crd"><div class="crd-lbl">★ BOM Check (SR-1)</div><div class="crd-body">Buy plan must explode <strong>only components the selected FG uses</strong>. Assert after every mix change: if SKU-A is removed from the production plan, its unique components must drop from the PO plan automatically. And carryRate must move when WACC moves — assert both conditions.</div></div>
+  </div>
+  <div class="obs"><div class="obs-t">Observability Assert (SR-1)</div>After production mix change: (1) PO plan drops components exclusive to removed SKUs, (2) PO plan gains components for added SKUs, (3) carryRate in this solver matches WACC from registry + spread. If carryRate is stale relative to the registry, the procurement solver is optimising against the wrong hurdle.</div>
+  <div class="gap-blk"><div class="gap-t">Gap: No Supplier Capacity / Allocation Optimisation</div><p>The current procurement solver treats each supplier as having <strong>unlimited capacity</strong>. In disruption scenarios — a supplier constrained across 12 customers — the solver doesn't model the allocation problem. It will cheerfully place an order the supplier cannot fulfil.</p><div class="chg"><strong>If you implemented multi-supplier allocation optimisation:</strong> the MILP would include supplier capacity constraints (max shippable qty per period). When a supplier signals constraint, the system automatically solves: split orders across backup suppliers, re-price landed cost in the objective, flag at-risk SKUs. Expected benefit: 15–30% reduction in stockouts during supply disruption events, with automatic contingency sourcing triggered by the solver rather than manual planner intervention.</div></div>
+  <div class="bm-row"><span class="bm-pre">Industry Benchmark</span><span class="bm-chip bm-good">GOOD</span><span class="bm-note">SAP MRP / o9 supply planning. MILP + CVaR-robust SS + FX-aware landed cost is strong. Gap: no supplier capacity / cross-network allocation optimisation.</span></div>
+</section>
+
+<div class="conn"><div class="c-line"></div><div class="c-pill">PO plan + safety stock values → MEIO (optimise where in the network to hold buffer) ↓</div><div class="c-line"></div></div>
+
+<!-- ══════════════════ STEP 7 ══════════════════ -->
+<section class="step" id="s7">
+  <div class="step-hdr"><div class="s-chip chip-7">STEP 07</div><div class="s-meta"><h2>Inventory · MEIO &amp; Pooling</h2><p class="s-tag">"The √N law: pool N independent buffers and you need only √N as much safety stock for the same service. Where you hold inventory is as important as how much."</p></div></div>
+  <div class="step-grid">
+    <div class="cncpt">
+      <h3>Core Concept</h3>
+      <p>Step 6 sized safety stock at a single echelon. Multi-Echelon Inventory Optimisation (MEIO) asks a deeper question: <strong>at which level of the supply chain should safety stock be held?</strong> Raw materials are cheap (low unit cost) but far from the customer — a stockout at the RM level takes weeks to recover. Finished goods are expensive but can reach the customer next day. Holding inventory upstream reduces capital cost but increases response time. This is a genuine tradeoff, and the right answer varies per part and per echelon.</p>
+      <p>The <strong>Graves–Willems Guaranteed Service Model (GSM)</strong> optimises this tradeoff: given the supply chain graph with lead times and holding costs at each node, it finds the <em>commitment lead times</em> each echelon promises to the next that minimise total safety stock cost while guaranteeing the service level. Echelons with short replenishment times don't need buffers; the buffer migrates to echelons where lead times are long or holding costs are low.</p>
+      <p>The <strong>Square-Root Pooling Law</strong> is the headline: if you pool N independent, identically distributed demand streams into one location, required safety stock grows only with √N, not N. Four DCs each holding independent safety stock can be consolidated (or virtually pooled) into one location holding √4 = 2× less. The "capital freed" number — Σ(decentralised SS) minus Σ(pooled SS) expressed in currency — is real working capital released without reducing service level.</p>
+    </div>
+    <div>
+      <div class="illo">
+        <svg viewBox="0 0 310 262" xmlns="http://www.w3.org/2000/svg">
+          <text x="72" y="14" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#6E8EB0">Decentralised</text>
+          <text x="228" y="14" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#A78BFA">Pooled (MEIO)</text>
+          <line x1="150" y1="10" x2="150" y2="254" stroke="#1C3050" stroke-width="1" stroke-dasharray="4,3"/>
+          <rect x="42" y="22" width="60" height="20" rx="4" fill="rgba(110,142,176,0.15)" stroke="#6E8EB0" stroke-width="1"/>
+          <text x="72" y="35" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#6E8EB0">Supplier</text>
+          <line x1="72" y1="42" x2="72" y2="58" stroke="#1C3050" stroke-width="1"/>
+          <rect x="42" y="58" width="60" height="18" rx="4" fill="rgba(167,139,250,0.1)" stroke="#A78BFA" stroke-width="1"/>
+          <text x="72" y="70" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#A78BFA">RM Whse</text>
+          <rect x="104" y="59" width="8" height="16" rx="1" fill="rgba(34,211,238,0.3)" stroke="#22D3EE" stroke-width="0.75"/>
+          <line x1="72" y1="76" x2="72" y2="92" stroke="#1C3050" stroke-width="1"/>
+          <rect x="42" y="92" width="60" height="18" rx="4" fill="rgba(167,139,250,0.1)" stroke="#A78BFA" stroke-width="1"/>
+          <text x="72" y="104" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#A78BFA">WIP</text>
+          <line x1="54" y1="110" x2="28" y2="134" stroke="#1C3050" stroke-width="1"/>
+          <line x1="72" y1="110" x2="72" y2="134" stroke="#1C3050" stroke-width="1"/>
+          <line x1="90" y1="110" x2="114" y2="134" stroke="#1C3050" stroke-width="1"/>
+          <rect x="8" y="134" width="42" height="18" rx="3" fill="rgba(96,165,250,0.1)" stroke="#60A5FA" stroke-width="1"/>
+          <text x="29" y="146" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#60A5FA">DC-1</text>
+          <rect x="10" y="155" width="10" height="18" rx="1" fill="rgba(34,211,238,0.3)" stroke="#22D3EE" stroke-width="0.75"/>
+          <rect x="51" y="134" width="42" height="18" rx="3" fill="rgba(96,165,250,0.1)" stroke="#60A5FA" stroke-width="1"/>
+          <text x="72" y="146" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#60A5FA">DC-2</text>
+          <rect x="53" y="155" width="10" height="22" rx="1" fill="rgba(34,211,238,0.3)" stroke="#22D3EE" stroke-width="0.75"/>
+          <rect x="93" y="134" width="42" height="18" rx="3" fill="rgba(96,165,250,0.1)" stroke="#60A5FA" stroke-width="1"/>
+          <text x="114" y="146" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#60A5FA">DC-3</text>
+          <rect x="96" y="155" width="10" height="15" rx="1" fill="rgba(34,211,238,0.3)" stroke="#22D3EE" stroke-width="0.75"/>
+          <text x="22" y="185" font-family="Consolas,monospace" font-size="7.5" fill="#22D3EE">SS₁+SS₂+SS₃</text>
+          <text x="72" y="198" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#22D3EE">= 3× individual SS</text>
+          <rect x="198" y="22" width="60" height="20" rx="4" fill="rgba(110,142,176,0.15)" stroke="#6E8EB0" stroke-width="1"/>
+          <text x="228" y="35" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#6E8EB0">Supplier</text>
+          <line x1="228" y1="42" x2="228" y2="58" stroke="#1C3050" stroke-width="1"/>
+          <rect x="198" y="58" width="60" height="18" rx="4" fill="rgba(167,139,250,0.1)" stroke="#A78BFA" stroke-width="1"/>
+          <text x="228" y="70" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#A78BFA">RM Whse</text>
+          <rect x="260" y="59" width="6" height="16" rx="1" fill="rgba(34,211,238,0.25)" stroke="#22D3EE" stroke-width="0.75"/>
+          <line x1="228" y1="76" x2="228" y2="92" stroke="#1C3050" stroke-width="1"/>
+          <rect x="198" y="92" width="60" height="18" rx="4" fill="rgba(167,139,250,0.1)" stroke="#A78BFA" stroke-width="1"/>
+          <text x="228" y="104" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#A78BFA">WIP</text>
+          <line x1="228" y1="110" x2="228" y2="134" stroke="#1C3050" stroke-width="1"/>
+          <rect x="192" y="134" width="72" height="22" rx="4" fill="rgba(167,139,250,0.1)" stroke="#A78BFA" stroke-width="1.5"/>
+          <text x="228" y="148" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#A78BFA">Pooled FG</text>
+          <rect x="266" y="134" width="6" height="13" rx="1" fill="rgba(34,211,238,0.22)" stroke="#22D3EE" stroke-width="0.75"/>
+          <text x="228" y="176" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#A78BFA">SS_pool = √N × SS₁</text>
+          <text x="228" y="190" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#34D399">≈ 0.58× total decentralised</text>
+          <rect x="162" y="212" width="140" height="30" rx="6" fill="rgba(52,211,153,0.07)" stroke="#34D399" stroke-width="1.5"/>
+          <text x="232" y="226" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#34D399" font-weight="bold">CAPITAL FREED</text>
+          <text x="232" y="238" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#34D399">₹ (SS_decentral − SS_pooled)</text>
+        </svg>
+        <div class="illo-cap">Pooling N demand streams reduces required safety stock to √N × individual. The freed capital is real working capital released without cutting service level.</div>
+      </div>
+    </div>
+  </div>
+  <div class="crd-row">
+    <div class="crd"><div class="crd-lbl">Solvers</div><div class="apip">/api/solve/meio</div><div class="apip">/api/solve/meio-network</div><div class="crd-body"><strong>Graves–Willems GSM</strong> optimises SS placement across echelons. Each echelon commits to a service time for the next; the optimiser finds the commitment times minimising total SS cost at guaranteed service. <strong>Square-root pooling</strong> quantifies capital savings from consolidating demand streams.</div></div>
+    <div class="crd"><div class="crd-lbl">Key Output</div><div class="crd-body"><strong>SS placement strategy</strong>: how much at RM vs WIP vs FG, and at which echelon. <strong>Capital freed</strong> = Σ(decentralised SS) − Σ(optimally pooled SS) in ₹. This freed capital reduces invested capital in the EVA calculation (Step 11) — a direct, auditable link.</div></div>
+    <div class="crd"><div class="crd-lbl">Critical Check</div><div class="crd-body">Assert: pooled SS &lt; Σ(decentralised SS) — if not, the pooling math is wrong. Show the ₹ delta as "capital freed" in the UI. <strong>Verify freed capital appears in Finance's EVA capital base as a reduction, not double-counted</strong> alongside the individual SS values from Step 6.</div></div>
+  </div>
+  <div class="obs"><div class="obs-t">Observability Assert</div>After MEIO solve: pooled SS total must be less than sum of decentralised SS. Show the √N savings factor explicitly (e.g., "pooling 4 DCs → 0.58× SS, ₹42L freed"). Assert: Finance EVA capital base = projected_inventory + pooled SS + net assets (not the individual pre-pooling SS values).</div>
+  <div class="gap-blk"><div class="gap-t">Gap: No Stochastic-Service / Guaranteed-Service Hybrid</div><p>The current GSM uses the <strong>guaranteed-service model</strong> — it assumes every echelon always delivers within its committed service time. The <strong>stochastic-service model</strong> is more realistic: it models the probability that a given echelon will be stocked out and sizes buffers to handle that uncertainty jointly across echelons.</p><div class="chg"><strong>If you implemented a stochastic-service hybrid:</strong> safety stock at each echelon would be sized to jointly account for both lead-time variance and the probability of upstream stockout cascades. Result: 8–15% more precise capital placement — less SS where the upstream is reliable, more where it's variable — without changing the headline service level. The tradeoff is computational complexity: stochastic-service MEIO is NP-hard for large networks and typically requires decomposition heuristics.</div></div>
+  <div class="bm-row"><span class="bm-pre">Industry Benchmark</span><span class="bm-chip bm-str">STRONG</span><span class="bm-note">o9 / Llamasoft MEIO is the crown jewel category. Real GSM + √N pooling is strong for this tier. Gap: no stochastic-service or guaranteed-service hybrid model.</span></div>
+</section>
+
+<div class="conn"><div class="c-line"></div><div class="c-pill">inventory placement + capital freed → LOGISTICS (move product to demand nodes) ↓</div><div class="c-line"></div></div>
+
+<!-- ══════════════════ STEP 8 ══════════════════ -->
+<section class="step" id="s8">
+  <div class="step-hdr"><div class="s-chip chip-8">STEP 08</div><div class="s-meta"><h2>Logistics · Transportation</h2><p class="s-tag">"Making the product and having it in the right place are two different problems. This step solves the second one."</p></div></div>
+  <div class="step-grid">
+    <div class="cncpt">
+      <h3>Core Concept</h3>
+      <p>The production plan says what will be made and when. Logistics answers: how does it flow from factory to distribution centres to customers, at what cost, and in what quantities? This is the classic <strong>transportation LP</strong> — one of the oldest and most well-understood problems in operations research.</p>
+      <p>The transportation LP minimises total shipping cost subject to two conservation constraints: <strong>supply constraints</strong> (no DC can receive more than the factory produces) and <strong>demand constraints</strong> (each customer zone receives exactly what it needs). The output is an allocation plan — which factory serves which DCs, which DCs serve which demand zones, and what volume flows on each lane. A key practical output is <strong>consolidation opportunities</strong>: small shipments from the same origin to nearby destinations can be grouped into full truckload moves, reducing per-unit freight cost significantly.</p>
+      <p>This step is explicitly the simplest layer in the framework — a <strong>single-echelon, single-mode, static transportation model</strong>. It assumes a truck is a truck, all lanes are available at any time, and there are no delivery time windows. A real logistics optimisation would model multi-leg routes (factory → cross-dock → DC → customer), multiple modes (truck vs rail vs air vs sea), time windows (delivery must arrive by Thursday 4pm), and carrier capacity constraints. The gap is acknowledged — this tab is marked "lighter" and flagged for future domain review.</p>
+    </div>
+    <div>
+      <div class="illo">
+        <svg viewBox="0 0 310 248" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="147,72 163,72 170,86 155,96 140,86" fill="rgba(74,222,128,0.12)" stroke="#4ADE80" stroke-width="1.5"/>
+          <text x="155" y="82" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#4ADE80">FACTORY</text>
+          <rect x="30" y="130" width="50" height="22" rx="5" fill="rgba(96,165,250,0.1)" stroke="#60A5FA" stroke-width="1.2"/>
+          <text x="55" y="144" text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#60A5FA">DC-1</text>
+          <rect x="130" y="140" width="50" height="22" rx="5" fill="rgba(96,165,250,0.1)" stroke="#60A5FA" stroke-width="1.2"/>
+          <text x="155" y="154" text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#60A5FA">DC-2</text>
+          <rect x="230" y="130" width="50" height="22" rx="5" fill="rgba(96,165,250,0.1)" stroke="#60A5FA" stroke-width="1.2"/>
+          <text x="255" y="144" text-anchor="middle" font-family="Consolas,monospace" font-size="8.5" fill="#60A5FA">DC-3</text>
+          <line x1="145" y1="90" x2="70" y2="130" stroke="#22D3EE" stroke-width="2.5" opacity="0.6"/>
+          <line x1="155" y1="96" x2="155" y2="140" stroke="#22D3EE" stroke-width="1.5" opacity="0.6"/>
+          <line x1="165" y1="90" x2="240" y2="130" stroke="#22D3EE" stroke-width="2" opacity="0.6"/>
+          <text x="96" y="118" font-family="Consolas,monospace" font-size="7" fill="#22D3EE">₹14/kg</text>
+          <text x="160" y="120" font-family="Consolas,monospace" font-size="7" fill="#22D3EE">₹9/kg</text>
+          <text x="204" y="118" font-family="Consolas,monospace" font-size="7" fill="#22D3EE">₹18/kg</text>
+          <circle cx="20" cy="192" r="8" fill="rgba(74,222,128,0.1)" stroke="#4ADE80" stroke-width="1"/>
+          <text x="20" y="196" text-anchor="middle" font-family="Consolas,monospace" font-size="6.5" fill="#4ADE80">C1</text>
+          <circle cx="50" cy="204" r="8" fill="rgba(74,222,128,0.1)" stroke="#4ADE80" stroke-width="1"/>
+          <text x="50" y="208" text-anchor="middle" font-family="Consolas,monospace" font-size="6.5" fill="#4ADE80">C2</text>
+          <circle cx="80" cy="196" r="8" fill="rgba(74,222,128,0.1)" stroke="#4ADE80" stroke-width="1"/>
+          <text x="80" y="200" text-anchor="middle" font-family="Consolas,monospace" font-size="6.5" fill="#4ADE80">C3</text>
+          <circle cx="130" cy="208" r="8" fill="rgba(74,222,128,0.1)" stroke="#4ADE80" stroke-width="1"/>
+          <text x="130" y="212" text-anchor="middle" font-family="Consolas,monospace" font-size="6.5" fill="#4ADE80">C4</text>
+          <circle cx="180" cy="208" r="8" fill="rgba(74,222,128,0.1)" stroke="#4ADE80" stroke-width="1"/>
+          <text x="180" y="212" text-anchor="middle" font-family="Consolas,monospace" font-size="6.5" fill="#4ADE80">C5</text>
+          <circle cx="240" cy="200" r="8" fill="rgba(74,222,128,0.1)" stroke="#4ADE80" stroke-width="1"/>
+          <text x="240" y="204" text-anchor="middle" font-family="Consolas,monospace" font-size="6.5" fill="#4ADE80">C6</text>
+          <circle cx="280" cy="192" r="8" fill="rgba(74,222,128,0.1)" stroke="#4ADE80" stroke-width="1"/>
+          <text x="280" y="196" text-anchor="middle" font-family="Consolas,monospace" font-size="6.5" fill="#4ADE80">C7</text>
+          <line x1="55" y1="152" x2="26" y2="184" stroke="#4ADE80" stroke-width="1.2" opacity="0.5"/>
+          <line x1="55" y1="152" x2="52" y2="196" stroke="#4ADE80" stroke-width="1.8" opacity="0.7"/>
+          <line x1="55" y1="152" x2="78" y2="188" stroke="#4ADE80" stroke-width="1" opacity="0.4"/>
+          <line x1="155" y1="162" x2="130" y2="200" stroke="#4ADE80" stroke-width="1.5" opacity="0.6"/>
+          <line x1="155" y1="162" x2="178" y2="200" stroke="#4ADE80" stroke-width="1.5" opacity="0.6"/>
+          <line x1="255" y1="152" x2="240" y2="192" stroke="#4ADE80" stroke-width="2" opacity="0.7"/>
+          <line x1="255" y1="152" x2="278" y2="184" stroke="#4ADE80" stroke-width="1.3" opacity="0.5"/>
+          <text x="155" y="238" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#6E8EB0">Lane flows must sum to committed demand from Step 2 (conservation)</text>
+        </svg>
+        <div class="illo-cap">Transport LP minimises total shipping cost. Line thickness indicates volume flow. Lane flows must sum to the committed demand from Step 2 — the conservation check.</div>
+      </div>
+    </div>
+  </div>
+  <div class="crd-row">
+    <div class="crd"><div class="crd-lbl">Solver</div><div class="apip">/api/solve/transport</div><div class="crd-body">Classic <strong>transportation LP</strong>: minimise Σ(cost_ij × flow_ij) subject to supply ≤ factory output per period, demand met at each node, non-negativity. Consolidation heuristic groups nearby small shipments into full-truckload equivalents to reduce per-unit freight cost.</div></div>
+    <div class="crd"><div class="crd-lbl">Key Output</div><div class="crd-body"><strong>Min-cost shipment plan</strong>: allocation of factory output to DCs to customer zones, per period. Lane flows and tonnage per lane. Consolidation opportunities flagged. The total logistics cost feeds into Finance's EVA cost structure (Step 11).</div></div>
+    <div class="crd"><div class="crd-lbl">Critical Check (Conservation)</div><div class="crd-body">Allocation flows must sum to committed demand from Step 2. If Σ(flows into customer zone i) ≠ demand_i, the transport plan is infeasible. <strong>Assert this conservation identity after every solve.</strong> A gap means either the factory produces too little or the DC network has insufficient capacity.</div></div>
+  </div>
+  <div class="obs"><div class="obs-t">Observability Assert</div>After transport solve: Σ(all lane inflows to each demand node) = committed demand for that node. Σ(all outflows from factory) ≤ production output. If either fails, the logistics plan is physically impossible and must be escalated before purchase orders are placed.</div>
+  <div class="gap-blk"><div class="gap-t">Gap: Single-Echelon, Single-Mode, No Time Windows</div><p>The current model is a basic transportation LP: one factory, point-to-point lanes, one mode (truck), no time windows. Real logistics networks involve <strong>multi-leg routing</strong> (factory → cross-dock → DC → customer), <strong>multi-mode</strong> (truck vs rail vs sea vs air with different cost, lead time, CO₂ profiles), and <strong>time windows</strong> (customer delivery slots, port cut-offs, loading time constraints).</p><div class="chg"><strong>If you implemented multi-leg / multi-mode / time-windowed routing:</strong> the solver would become a vehicle routing problem (VRP) with time windows — NP-hard in general, solved with branch-and-price or large neighbourhood search heuristics. Expected savings: 10–20% logistics cost reduction through mode shifting on appropriate lanes, and 5–10% through optimised routing vs. naive point-to-point. CO₂ optimisation becomes possible as a second objective alongside cost.</div></div>
+  <div class="bm-row"><span class="bm-pre">Industry Benchmark</span><span class="bm-chip bm-comp">BASIC</span><span class="bm-note">Blue Yonder Transportation is the benchmark. Single-echelon min-cost LP is correct but limited. Gap: no multi-leg / mode / time-windowed routing. Lighter tab — not yet domain-reviewed.</span></div>
+</section>
+
+<div class="conn"><div class="c-line"></div><div class="c-pill">committed production gantt cached → RISK (stress-test the real plan) ↓</div><div class="c-line"></div></div>
+
+<!-- ══════════════════ STEP 9 ══════════════════ -->
+<section class="step" id="s9">
+  <div class="step-hdr"><div class="s-chip chip-9">STEP 09</div><div class="s-meta"><h2>Risk · Monte Carlo &amp; Stress</h2><p class="s-tag">"The committed plan is a single point. Reality is a distribution. This step measures how good the plan is at the edges — where it survives, where it breaks."</p></div></div>
+  <div class="step-grid">
+    <div class="cncpt">
+      <h3>Core Concept</h3>
+      <p>Steps 1–8 produced a committed plan built around point estimates: the forecast mean, the expected lead time, the agreed production schedule. But the real world is probabilistic — demand will be higher or lower than forecast, supplier lead times will vary, equipment will occasionally fail. The committed plan represents exactly one scenario out of thousands of possible futures.</p>
+      <p><strong>Monte Carlo simulation</strong> generates 10,000 scenarios where demand is drawn from its historical distribution (parameterised by the PI band σ from Step 2), lead times vary around their historical mean and variance, and the production schedule executes with its current Gantt — <em>not a re-optimised plan</em>. This distinction is critical: the simulation runs against the <strong>committed production Gantt cached from Step 4</strong>, not a fresh optimisation under each scenario. The result is a stress test of the actual plan, not the best possible plan in each scenario. This is <strong>control-tower testing</strong>, not planning-as-optimism.</p>
+      <p><strong>CVaR95 (Conditional Value at Risk at 95%)</strong> is the tail risk metric: in the worst 5% of simulated scenarios, what is the average fill rate? A plan that achieves 97% average service but 60% fill in its worst 5% of scenarios is not a robust plan. The <strong>ResilienceStress</strong> function ramps a parameter one step at a time (demand +10%, +20%, +30%...) and re-runs the full MC at each level, producing a degradation curve: "this plan survives to +25% demand increase, but breaks — fill rate drops below 85% — at +35%."</p>
+    </div>
+    <div>
+      <div class="illo">
+        <svg viewBox="0 0 310 240" xmlns="http://www.w3.org/2000/svg">
+          <text x="155" y="14" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#6E8EB0">Fill Rate Distribution (10,000 MC runs)</text>
+          <line x1="28" y1="185" x2="295" y2="185" stroke="#1C3050" stroke-width="1.5"/>
+          <line x1="28" y1="20" x2="28" y2="185" stroke="#1C3050" stroke-width="1.5"/>
+          <text x="30" y="198" font-family="Consolas,monospace" font-size="8" fill="#6E8EB0">75%</text>
+          <text x="100" y="198" font-family="Consolas,monospace" font-size="8" fill="#6E8EB0">85%</text>
+          <text x="170" y="198" font-family="Consolas,monospace" font-size="8" fill="#6E8EB0">95%</text>
+          <text x="238" y="198" font-family="Consolas,monospace" font-size="8" fill="#6E8EB0">100%</text>
+          <text x="8" y="185" font-family="Consolas,monospace" font-size="7.5" fill="#6E8EB0" transform="rotate(-90,8,120)">Frequency</text>
+          <path d="M36,180 C45,178 55,170 65,155 C80,130 95,100 110,72 C125,48 135,35 155,30 C175,35 185,48 200,72 C215,100 230,130 245,155 C255,170 265,178 274,180 L274,185 L36,185 Z" fill="rgba(251,191,36,0.06)" stroke="none"/>
+          <path d="M36,180 C45,178 55,170 65,155 C80,130 95,100 110,72 C125,48 135,35 155,30 C175,35 185,48 200,72 C215,100 230,130 245,155 C255,170 265,178 274,180" fill="none" stroke="#FBBF24" stroke-width="2"/>
+          <line x1="175" y1="20" x2="175" y2="185" stroke="#34D399" stroke-width="1.5" stroke-dasharray="6,3"/>
+          <text x="179" y="30" font-family="Consolas,monospace" font-size="8" fill="#34D399">SL 95%</text>
+          <polygon points="175,185 210,185 274,185 274,165 255,155 245,155 245,185" fill="rgba(248,113,113,0.12)" stroke="none"/>
+          <path d="M245,155 C255,170 265,178 274,180" fill="none" stroke="#F87171" stroke-width="2"/>
+          <text x="248" y="145" font-family="Consolas,monospace" font-size="8" fill="#F87171">CVaR95</text>
+          <text x="248" y="156" font-family="Consolas,monospace" font-size="7.5" fill="#F87171">tail risk</text>
+          <line x1="140" y1="20" x2="140" y2="185" stroke="#22D3EE" stroke-width="1.5" stroke-dasharray="3,2"/>
+          <text x="106" y="30" font-family="Consolas,monospace" font-size="8" fill="#22D3EE">Committed</text>
+          <text x="108" y="40" font-family="Consolas,monospace" font-size="8" fill="#22D3EE">plan result</text>
+          <rect x="28" y="210" width="240" height="26" rx="5" fill="rgba(251,191,36,0.05)" stroke="rgba(251,191,36,0.2)" stroke-width="1"/>
+          <text x="148" y="221" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#FBBF24">ResilienceStress: survives +25% demand · breaks at +35%</text>
+          <text x="148" y="232" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#6E8EB0">MC replays the COMMITTED GANTT — not a fresh re-optimisation</text>
+        </svg>
+        <div class="illo-cap">The distribution shows fill-rate outcomes across 10,000 scenarios. CVaR95 is the average of the worst 5%. The committed plan line shows where reality anchors in the distribution.</div>
+      </div>
+    </div>
+  </div>
+  <div class="crd-row">
+    <div class="crd"><div class="crd-lbl">Solvers</div><div class="apip">/api/solve/montecarlo</div><div class="crd-body">Draws demand from PI band distribution (σ from Step 2) and lead time from historical variance. Runs 10,000 scenarios against the cached production Gantt. Outputs: fill-rate distribution, mean, P10/P50/P90, <strong>CVaR95 tail</strong>. ResilienceStress ramps one lever and re-runs per step.</div></div>
+    <div class="crd"><div class="crd-lbl">Key Output</div><div class="crd-body">Fill-rate distribution + CVaR95 tail metric. Degradation curve: "survives to X% demand increase, breaks at Y%." These directly answer the executive question: <em>"How confident are we in this plan under realistic uncertainty?"</em> — with numbers, not judgment.</div></div>
+    <div class="crd"><div class="crd-lbl">★ The Differentiating Design</div><div class="crd-body">MC runs against the <strong>same committed Gantt cached from Step 4</strong> — not a fresh plan. This means the stress test reveals real plan fragility, not theoretical optimism. If the committed plan breaks at +35% demand, that's actionable. A stress test against a re-optimised plan would show misleadingly good results.</div></div>
+  </div>
+  <div class="obs"><div class="obs-t">Observability Assert</div>After MC: verify the simulation inputs match the committed plan's Gantt — same SKU sequence, same changeover times, same inventory starting point. If MC uses a different plan than what's committed, the stress test is testing the wrong thing. Assert the cross-stage cache identity: MC_input.gantt == production_solver.committed_gantt.</div>
+  <div class="gap-blk"><div class="gap-t">Gap: None — Control-Tower Stress on the Real Plan is DIFFERENTIATED</div><p>Kinaxis and o9 offer scenario simulation, but they typically re-optimise under each scenario, showing "how good could we be" rather than "how fragile is the plan we've actually committed to." Stress-testing the committed Gantt without re-optimisation is the correct control-tower approach — and it is the differentiating design choice here.</p><div class="chg"><strong>Future enhancement — correlated scenarios:</strong> the current MC draws demand and lead times independently per SKU. In reality, demand shocks are often correlated (a macro slowdown hits multiple SKUs simultaneously) and supplier delays are correlated (port congestion affects all ocean lanes). Adding a correlation matrix to the MC inputs would produce more realistic tail scenarios — the current model likely underestimates CVaR in systemic risk events like a recession or a port strike.</div></div>
+  <div class="bm-row"><span class="bm-pre">Industry Benchmark</span><span class="bm-chip bm-diff">DIFFERENTIATED</span><span class="bm-note">Kinaxis/o9 scenario simulation re-optimises under each scenario. Stress-to-failure on the committed plan without re-solving is a control-tower differentiator.</span></div>
+</section>
+
+<div class="conn"><div class="c-line"></div><div class="c-pill">committed plan + risk profile → WHAT-IF (branch without disturbing live plan) ↓</div><div class="c-line"></div></div>
+
+<!-- ══════════════════ STEP 10 ══════════════════ -->
+<section class="step" id="s10">
+  <div class="step-hdr"><div class="s-chip chip-10">STEP 10</div><div class="s-meta"><h2>What-If · Concurrent Cockpit</h2><p class="s-tag">"Explore hypotheticals freely — demand spike, FX shock, supplier delay — without touching the live plan. The branch disappears cleanly; the live plan is byte-identical after."</p></div></div>
+  <div class="step-grid">
+    <div class="cncpt">
+      <h3>Core Concept</h3>
+      <p>A planner managing a live supply chain needs to answer hypotheticals every day: "What if our main supplier delays 2 weeks? What if we get a surprise +20% demand spike from a new contract? What if the USD/INR rate moves 5 points?" The challenge is exploring these questions without corrupting the live plan — the plan that production, procurement, and finance are currently executing against.</p>
+      <p>The what-if mechanism works in four steps: <strong>(1) Clone</strong> the current plan state — all solver inputs, all cached results, all committed values. <strong>(2) Perturb</strong> — change demand by +20%, or change an FX rate, or delay a supplier's lead time. <strong>(3) Re-solve</strong> only the affected solvers in the right dependency order: demand change → re-solve production → re-solve sourcing → re-solve finance. Unaffected solvers (logistics, if the demand change is small) can keep their current results. <strong>(4) Byte-restore</strong> the live working set after the branch — the live plan is returned to its original state, bit-for-bit identical.</p>
+      <p>The concurrency guarantee is the hardest part: the live working set must be untouched during the what-if computation. This is the supply chain analog of a <code>git branch</code> — you can make any changes on the branch, compare the results, and merge or discard them, without affecting <code>main</code>. Kinaxis RapidResponse does this server-side with true concurrent versioning — multiple planners can branch simultaneously. The current implementation approximates this client-side, which works for single-user analysis but doesn't scale to concurrent multi-planner branching.</p>
+    </div>
+    <div>
+      <div class="illo">
+        <svg viewBox="0 0 310 254" xmlns="http://www.w3.org/2000/svg">
+          <rect x="96" y="8" width="118" height="30" rx="6" fill="rgba(103,232,249,0.08)" stroke="#67E8F9" stroke-width="1.5"/>
+          <text x="155" y="22" text-anchor="middle" font-family="Consolas,monospace" font-size="9" fill="#67E8F9" font-weight="bold">LIVE BASE PLAN</text>
+          <text x="155" y="33" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#6E8EB0">committed · all solvers green</text>
+          <line x1="100" y1="38" x2="50" y2="84" stroke="#67E8F9" stroke-width="1.5"/>
+          <line x1="155" y1="38" x2="155" y2="84" stroke="#67E8F9" stroke-width="1.5"/>
+          <line x1="210" y1="38" x2="260" y2="84" stroke="#67E8F9" stroke-width="1.5"/>
+          <rect x="12" y="84" width="78" height="50" rx="6" fill="rgba(103,232,249,0.05)" stroke="#67E8F9" stroke-width="1" stroke-dasharray="4,2"/>
+          <text x="51" y="100" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#67E8F9">Branch A</text>
+          <text x="51" y="113" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#FBBF24">+20% demand</text>
+          <text x="51" y="126" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#6E8EB0">re-solve: prod</text>
+          <text x="51" y="135" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#6E8EB0">source, finance</text>
+          <rect x="116" y="84" width="78" height="50" rx="6" fill="rgba(103,232,249,0.05)" stroke="#67E8F9" stroke-width="1" stroke-dasharray="4,2"/>
+          <text x="155" y="100" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#67E8F9">Branch B</text>
+          <text x="155" y="113" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#FBBF24">FX shock +5%</text>
+          <text x="155" y="126" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#6E8EB0">re-solve: procure</text>
+          <text x="155" y="135" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#6E8EB0">finance</text>
+          <rect x="220" y="84" width="78" height="50" rx="6" fill="rgba(103,232,249,0.05)" stroke="#67E8F9" stroke-width="1" stroke-dasharray="4,2"/>
+          <text x="259" y="100" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#67E8F9">Branch C</text>
+          <text x="259" y="113" text-anchor="middle" font-family="Consolas,monospace" font-size="7.5" fill="#FBBF24">Supplier delay</text>
+          <text x="259" y="126" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#6E8EB0">re-solve: source</text>
+          <text x="259" y="135" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#6E8EB0">risk, finance</text>
+          <rect x="8" y="152" width="82" height="32" rx="4" fill="rgba(52,211,153,0.05)" stroke="#1C3050"/>
+          <text x="49" y="164" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#6E8EB0">Fill rate: 91.2%</text>
+          <text x="49" y="174" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#F87171">Cost: +₹18L</text>
+          <text x="49" y="184" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#F87171">EVA: −₹4.2L</text>
+          <rect x="116" y="152" width="78" height="32" rx="4" fill="rgba(52,211,153,0.05)" stroke="#1C3050"/>
+          <text x="155" y="164" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#6E8EB0">Fill rate: 95.0%</text>
+          <text x="155" y="174" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#F87171">Cost: +₹7L</text>
+          <text x="155" y="184" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#34D399">EVA: +₹1.1L</text>
+          <rect x="220" y="152" width="82" height="32" rx="4" fill="rgba(52,211,153,0.05)" stroke="#1C3050"/>
+          <text x="261" y="164" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#6E8EB0">Fill rate: 87.4%</text>
+          <text x="261" y="174" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#F87171">Cost: +₹11L</text>
+          <text x="261" y="184" text-anchor="middle" font-family="Consolas,monospace" font-size="7" fill="#F87171">EVA: −₹8.6L</text>
+          <path d="M51,198 Q51,215 155,222" stroke="#34D399" stroke-width="1.2" fill="none" stroke-dasharray="4,2"/>
+          <path d="M155,184 L155,222" stroke="#34D399" stroke-width="1.2" fill="none" stroke-dasharray="4,2"/>
+          <path d="M261,198 Q261,215 155,222" stroke="#34D399" stroke-width="1.2" fill="none" stroke-dasharray="4,2"/>
+          <rect x="96" y="222" width="118" height="22" rx="5" fill="rgba(52,211,153,0.08)" stroke="#34D399" stroke-width="1.2"/>
+          <text x="155" y="236" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#34D399">BYTE-RESTORE → Live plan unchanged</text>
+        </svg>
+        <div class="illo-cap">Three branches explore different shocks. KPIs show the delta vs base. After analysis, the byte-restore guarantee returns the live plan to its original state exactly.</div>
+      </div>
+    </div>
+  </div>
+  <div class="crd-row">
+    <div class="crd"><div class="crd-lbl">Mechanism</div><div class="apip">/api/whatif</div><div class="apip">runScenario</div><div class="crd-body">Transparent execution: <strong>save inputs + solves → apply branch perturbation → run only affected solvers → capture KPI delta → BYTE-RESTORE live working set.</strong> Each step is auditable. The scenario is saved with its full solver trace so it can be compared, shared, or merged.</div></div>
+    <div class="crd"><div class="crd-lbl">Key Output</div><div class="crd-body"><strong>KPI delta vs base plan</strong>: fill rate Δ, total cost Δ, EVA Δ, CVaR95 Δ per branch. Saved scenario record with full input + solve chain for audit. Branch can be discarded (byte-restore to live) or promoted as the new live plan if the planner decides to adopt the perturbation.</div></div>
+    <div class="crd"><div class="crd-lbl">Concurrency Guarantee</div><div class="crd-body">Live working set must be <strong>byte-identical after the branch</strong>. This is verified by checksumming the working set before and after. If checksums differ, the restore failed and the live plan is potentially corrupted. Assert this identity after every what-if execution.</div></div>
+  </div>
+  <div class="obs"><div class="obs-t">Observability Assert</div>Before what-if: checksum the live working set. After byte-restore: re-checksum. Assert equality. If they differ, the restore is incomplete — the live plan has been modified by the branch. This is the most critical operational guarantee in the what-if system.</div>
+  <div class="gap-blk"><div class="gap-t">Gap: Client-Side Only — Not Server-Side Concurrent at Scale</div><p>The current implementation approximates branching client-side: it works for <strong>single-user, sequential analysis</strong>. When two planners simultaneously create branches from the same live plan (one testing a demand shock while another tests a supplier delay), there is no server-side state management to prevent them from overwriting each other's branches or corrupting the live plan.</p><div class="chg"><strong>If you implemented true server-side concurrent planning (Kinaxis-style):</strong> the server maintains a version graph of plan states, like git. Each planner works on their own branch simultaneously. Branches can be compared, merged (if non-conflicting), or flagged for human resolution (if conflicting). This enables true collaborative planning where a Sales team branch and a Supply team branch can run in parallel and be reconciled in an S&amp;OP meeting. Required infrastructure: event-sourced state management with CRDT or OT conflict resolution. Non-trivial to build, but the payoff for multi-user deployments is significant.</div></div>
+  <div class="bm-row"><span class="bm-pre">Industry Benchmark</span><span class="bm-chip bm-comp">COMPETITIVE</span><span class="bm-note">Kinaxis concurrent planning is the benchmark. The concept is right and well-designed. Gap: server-side concurrent at scale for multi-user simultaneous branching.</span></div>
+</section>
+
+<div class="conn"><div class="c-line"></div><div class="c-pill">projected_inventory + pooled SS + shadow prices → FINANCE (does it clear the hurdle?) ↓</div><div class="c-line"></div></div>
