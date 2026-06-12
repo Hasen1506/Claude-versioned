@@ -37,12 +37,12 @@ const M = {
 
   // ── products / SKUs ──
   products:[
-    { sku:'TPA-4471', name:'Crankshaft Bearing',     cat:'Finished', demand:2840, mape:8.2,  sl:95, shelf:365, abc:'A', xyz:'X', price:1850, cost:1190, line:'LINE-01', cycle:4.2, oee:.84, yield:.97, moq:120 },
-    { sku:'TPA-3215', name:'Piston Ring Assembly',   cat:'Finished', demand:4120, mape:11.4, sl:95, shelf:730, abc:'A', xyz:'Y', price:980,  cost:612,  line:'LINE-02', cycle:3.1, oee:.81, yield:.96, moq:200 },
-    { sku:'TPA-9904', name:'Valve Seat Insert',      cat:'Finished', demand:1650, mape:6.8,  sl:98, shelf:365, abc:'A', xyz:'X', price:1420, cost:905,  line:'LINE-01', cycle:5.0, oee:.86, yield:.98, moq:80 },
-    { sku:'TPA-2188', name:'Connecting Rod',         cat:'Finished', demand:920,  mape:15.1, sl:90, shelf:545, abc:'B', xyz:'Y', price:2240, cost:1510, line:'LINE-03', cycle:6.4, oee:.78, yield:.95, moq:60 },
-    { sku:'TPA-5540', name:'Oil Pump Housing',       cat:'Finished', demand:640,  mape:18.7, sl:90, shelf:365, abc:'B', xyz:'Z', price:1680, cost:1140, line:'LINE-02', cycle:4.8, oee:.79, yield:.94, moq:50 },
-    { sku:'TPA-7722', name:'Timing Chain Tensioner', cat:'Finished', demand:380,  mape:22.3, sl:85, shelf:180, abc:'C', xyz:'Z', price:2980, cost:2050, line:'LINE-03', cycle:7.2, oee:.74, yield:.92, moq:40 },
+    { sku:'TPA-4471', name:'Crankshaft Bearing',     cat:'Finished', demand:2840, mape:8.2,  sl:95, shelf:365, abc:'A', xyz:'X', price:1850, cost:1190, coClass:'PRC', line:'LINE-01', cycle:4.2, oee:.84, yield:.97, rework:350, moq:120 },
+    { sku:'TPA-3215', name:'Piston Ring Assembly',   cat:'Finished', demand:4120, mape:11.4, sl:95, shelf:730, abc:'A', xyz:'Y', price:980,  cost:612, coClass:'STD',  line:'LINE-02', cycle:3.1, oee:.81, yield:.96, rework:180, moq:200 },
+    { sku:'TPA-9904', name:'Valve Seat Insert',      cat:'Finished', demand:1650, mape:6.8,  sl:98, shelf:365, abc:'A', xyz:'X', price:1420, cost:905, coClass:'PRC',  line:'LINE-01', cycle:5.0, oee:.86, yield:.98, rework:270, moq:80 },
+    { sku:'TPA-2188', name:'Connecting Rod',         cat:'Finished', demand:920,  mape:15.1, sl:90, shelf:545, abc:'B', xyz:'Y', price:2240, cost:1510, coClass:'HVY', line:'LINE-03', cycle:6.4, oee:.78, yield:.95, rework:450, moq:60 },
+    { sku:'TPA-5540', name:'Oil Pump Housing',       cat:'Finished', demand:640,  mape:18.7, sl:90, shelf:365, abc:'B', xyz:'Z', price:1680, cost:1140, coClass:'STD', line:'LINE-02', cycle:4.8, oee:.79, yield:.94, rework:340, moq:50 },
+    { sku:'TPA-7722', name:'Timing Chain Tensioner', cat:'Finished', demand:380,  mape:22.3, sl:85, shelf:180, abc:'C', xyz:'Z', price:2980, cost:2050, coClass:'HVY', line:'LINE-03', cycle:7.2, oee:.74, yield:.92, rework:620, moq:40 },
     { sku:'RM-STL42', name:'Chromoly Steel Bar 42mm',cat:'Raw',      demand:12400,mape:0,    sl:95, shelf:999, abc:'A', xyz:'X', price:142,  cost:142,  line:'—', cycle:0, oee:0, yield:1, moq:2000 },
     { sku:'RM-BRG18', name:'Bearing Alloy Billet',   cat:'Raw',      demand:8200, mape:0,    sl:95, shelf:999, abc:'A', xyz:'Y', price:228,  cost:228,  line:'—', cycle:0, oee:0, yield:1, moq:1500 },
   ],
@@ -194,16 +194,43 @@ const M = {
     /* 5540 */ [1.2, 1.0, 1.1, 1.5, '—', 1.3],
     /* 7722 */ [1.4, 0.8, 1.6, 2.0, 1.2, '—'],
   ],
+  // V2-6 — changeover CLASSES (hrs, class×class). The SKU×SKU matrix above is the
+  // typed truth for the 6 seed FGs; this table exists so a NEW product (addProduct)
+  // gets an honest class-derived row/col instead of silently falling to the solver's
+  // 30-min default (sequencing.py default_min). Each FG carries coClass (below);
+  // PRC = precision machined (LINE-01), STD = standard assembly (LINE-02),
+  // HVY = forge/heat-treat (LINE-03 — longest purge/re-fixture, see 2188's row).
+  changeoverClasses:{
+    order:['PRC','STD','HVY'],
+    hrs:[ //        PRC  STD  HVY
+      /* PRC */ [ 0.8, 1.2, 1.8 ],
+      /* STD */ [ 1.2, 1.0, 1.6 ],
+      /* HVY */ [ 2.0, 1.8, 1.6 ],
+    ],
+  },
 
-  // suppliers
+  // suppliers — capPerPeriod (V5-3): finite fulfilment capacity in ₹ landed spend per
+  // planning period. Seeds sized from the OBSERVED baseline plan (loop procurement at
+  // committed demand: SUP-012 peak ₹168k/p · SUP-031 peak ₹204k/p · steel/billet flow
+  // covered by receipts) at ≈2× peak, AND ≥ one MOQ lot of every part the supplier
+  // feeds (billet lot ₹383k, steel lot ₹284k — a cap below one lot bricks the lane).
+  // ◇seed, overridable in Sourcing ▸ Design ▸ Supplier capacity; constraint is OFF
+  // until its toggle arms it, so the legacy model stays byte-identical.
   suppliers:[
-    { code:'SUP-001', name:'Bharat Forge Ltd',    loc:'Pune, MH',       lt:14, ltCv:8,  incoterm:'FOR', qty:12400, spend:3124000, risk:'L', otif:96.2 },
-    { code:'SUP-007', name:'Mahindra Steel',       loc:'Mumbai, MH',     lt:18, ltCv:12, incoterm:'CIF', qty:8200,  spend:1872000, risk:'L', otif:94.8 },
-    { code:'SUP-012', name:'Sundaram Alloys',      loc:'Coimbatore, TN', lt:9,  ltCv:6,  incoterm:'EXW', qty:5600,  spend:1204000, risk:'L', otif:97.5 },
-    { code:'SUP-018', name:'Jindal Stainless',     loc:'Raigarh, CG',    lt:22, ltCv:18, incoterm:'FOB', qty:4200,  spend:945000,  risk:'M', otif:89.1 },
-    { code:'SUP-024', name:'POSCO Korea (backup)', loc:'Pohang, KR',     lt:42, ltCv:24, incoterm:'CIF', qty:2100,  spend:720000,  risk:'H', otif:82.4 },
-    { code:'SUP-031', name:'Kalyani Forge',        loc:'Pune, MH',       lt:16, ltCv:10, incoterm:'FOR', qty:3400,  spend:612000,  risk:'L', otif:93.7 },
+    { code:'SUP-001', name:'Bharat Forge Ltd',    loc:'Pune, MH',       lt:14, ltCv:8,  incoterm:'FOR', qty:12400, spend:3124000, risk:'L', otif:96.2, capPerPeriod:600000 },
+    { code:'SUP-007', name:'Mahindra Steel',       loc:'Mumbai, MH',     lt:18, ltCv:12, incoterm:'CIF', qty:8200,  spend:1872000, risk:'L', otif:94.8, capPerPeriod:800000 },
+    { code:'SUP-012', name:'Sundaram Alloys',      loc:'Coimbatore, TN', lt:9,  ltCv:6,  incoterm:'EXW', qty:5600,  spend:1204000, risk:'L', otif:97.5, capPerPeriod:350000 },
+    { code:'SUP-018', name:'Jindal Stainless',     loc:'Raigarh, CG',    lt:22, ltCv:18, incoterm:'FOB', qty:4200,  spend:945000,  risk:'M', otif:89.1, capPerPeriod:650000 },
+    { code:'SUP-024', name:'POSCO Korea (backup)', loc:'Pohang, KR',     lt:42, ltCv:24, incoterm:'CIF', qty:2100,  spend:720000,  risk:'H', otif:82.4, capPerPeriod:850000 },
+    { code:'SUP-031', name:'Kalyani Forge',        loc:'Pune, MH',       lt:16, ltCv:10, incoterm:'FOR', qty:3400,  spend:612000,  risk:'L', otif:93.7, capPerPeriod:400000 },
   ],
+  // V5-3 — qualified BACKUP supplier per part: the spot relief lane the procurement
+  // MILP may overflow to when the primary's capacity binds. Was a UI-only hardcode in
+  // SrcMRP; promoted to master data so the solver and the MRP lens read ONE map.
+  // (The old hardcode mapped CN-LUB02 → SUP-031 and CN-BLT04 → SUP-012 — each part's
+  // own PRIMARY. Harmless as display, meaningless as a relief lane: a capped supplier
+  // can't relieve itself. Re-pointed to real alternates: lube → POSCO, bolts → Kalyani.)
+  backupSuppliers:{ 'RM-STL42':'SUP-018', 'RM-BRG18':'SUP-024', 'CN-SEAL9':'SUP-031', 'CN-BLT04':'SUP-031', 'CN-LUB02':'SUP-024' },
   incoterms:[ // responsibility matrix: who bears cost/risk at each step
     { term:'EXW', export:'B', main:'B', import:'B', risk:'Seller→Buyer at works' },
     { term:'FOB', export:'S', main:'B', import:'B', risk:'Transfers at port rail' },
@@ -427,6 +454,24 @@ const M = {
     { id:'cost',      n:'d', label:'Cost', count:2 },
     { id:'explore',   n:'e', label:'Explore', count:2 },
   ],
+  // V3-15 (blueprint 3.3) — Guided mode's per-tab "do these 3 things" checklist.
+  // Seed COPY only (chrome content, no numbers): each item names a real action on
+  // that tab so a first-time user can finish the loop without reading docs.
+  guidedChecklist:{
+    home:       ['work the exception inbox — red first','check solve freshness on the ribbon','re-plan when anything reads stale'],
+    setup:      ['set service level α + shift hours','set the calendar & frozen/slushy fences','confirm tax + financing inputs'],
+    products:   ['pick your working item','check its BOM & part costs','set price & cost — margin drives every solve'],
+    network:    ['confirm nodes & lanes','set on-hand at each node','check lane cost / lead time'],
+    demand:     ['review forecast vs actuals (MAPE badge)','commit consensus demand — everything reads it','set sense-flags for shaky items'],
+    plan:       ['run the aggregate S&OP solve','read the feasibility thermometer','compare level vs chase'],
+    production: ['run the schedule MILP','read the bottleneck ribbon — idle minutes are lost','check changeover slivers'],
+    sourcing:   ['run procurement — read the PO release plan','clear projected shortages','tune policy / MEIO in Design'],
+    logistics:  ['run the transport LP','check booked mode vs SLA deadline','review per-lane landed cost'],
+    finance:    ['check blended hurdle & carry rate','find EVA value destroyers','price expansion vs the line shadow'],
+    console:    ['run profit mix — what is WORTH building','check it against the committed schedule','read binding constraints & duals'],
+    scenarios:  ['run Monte Carlo on the committed plan','read the fill tail vs target α','stress to failure · branch a what-if'],
+    reference:  ['skim the 12-step journey','use the SAP / API glossary','open a solver deep-dive'],
+  },
   // (R13) controlTower seed removed — Home's exception inbox derives live alerts
   // from real state (stale solves · breach triggers · MC tail) via liveAlerts().
   mcBuckets:[ {x:420,n:12},{x:430,n:28},{x:440,n:52},{x:450,n:88},{x:460,n:124},{x:470,n:162},{x:480,n:178},{x:490,n:148},{x:500,n:102},{x:510,n:58},{x:520,n:28},{x:530,n:14},{x:540,n:6} ],

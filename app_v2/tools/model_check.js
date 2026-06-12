@@ -144,6 +144,77 @@ function objRestCollision() {
     emitters.length ? `only ${emitters[0]} emits _excluded (sanctioned)` : 'no object-rest destructuring anywhere');
 }
 
+// ── 2c½. one-result-one-home (V2-7) ─────────────────────────────────────────
+// Blueprint Part 4 rule: a solver's result table renders ONCE, in the tab that
+// owns the decision; the Console shows a one-line KPI link (ResultHomeLink), not
+// a second copy. Pre-V2-7 this was the app's worst duplication (FIN-1 Buy-vs-Lease
+// rendered twice; profit-mix in Console AND fragments elsewhere). Mechanically:
+// every result component named Res[A-Z]* may be JSX-MOUNTED (<ResX …) at most once
+// across all jsx, and the moved trio's mounts must live in their declared homes —
+// profitmix → production.jsx · capital → finance.jsx (transport's home is the
+// pre-existing LogAllocation/LogConsolidation pair; ResTransport was deleted).
+const RESULT_HOMES = { ResProfit: 'production.jsx', ResCapital: 'finance.jsx' };
+function oneResultHome() {
+  const files = fs.readdirSync(DIR).filter(f => f.endsWith('.jsx'));
+  const mounts = {};   // comp → [file:line, …]
+  for (const f of files) {
+    const src = fs.readFileSync(path.join(DIR, f), 'utf8');
+    const re = /<(Res[A-Z]\w*)\b/g;
+    let m;
+    while ((m = re.exec(src))) {
+      const line = src.slice(0, m.index).split('\n').length;
+      (mounts[m[1]] = mounts[m[1]] || []).push(`${f}:${line}`);
+    }
+  }
+  const errs = [];
+  for (const [comp, at] of Object.entries(mounts)) {
+    if (at.length > 1) errs.push(`${comp} mounted ${at.length}× (${at.join(', ')}) — one home only`);
+  }
+  for (const [comp, home] of Object.entries(RESULT_HOMES)) {
+    const at = mounts[comp] || [];
+    if (!at.length) errs.push(`${comp} not mounted anywhere — its home is ${home}`);
+    else if (!at[0].startsWith(home)) errs.push(`${comp} mounted in ${at[0]} — its declared home is ${home}`);
+  }
+  if (errs.length) add('one-result-one-home (V2-7)', 'FAIL', errs.join(' · '));
+  else add('one-result-one-home (V2-7)', 'PASS',
+    `${Object.keys(mounts).length} Res* components each mounted once; profitmix→production, capital→finance, transport→logistics`);
+}
+
+// ── 2c¾. GovField token validity (V3-0) ─────────────────────────────────────
+// GovField's "used by" line is GENERATED from SOLVE_DEPS via solversUsing(token) —
+// the whole point is that it cannot lie. A mount whose token isn't a real SOLVE_DEPS
+// dependency (or with no token at all) would render the ⚠ NO CONSUMER state at
+// runtime; catch it statically here so it never ships. Tokens are extracted from the
+// REAL SOLVE_DEPS object in store.jsx, so a renamed token fails every stale mount.
+function govFieldTokens() {
+  const store = fs.readFileSync(path.join(DIR, 'store.jsx'), 'utf8');
+  const depsStart = store.indexOf('const SOLVE_DEPS = {');
+  const depsEnd = store.indexOf('\n};', depsStart);
+  const body = depsStart >= 0 ? store.slice(depsStart, depsEnd) : '';
+  const valid = new Set();
+  let m; const reT = /'([\w.]+)'/g;
+  while ((m = reT.exec(body))) valid.add(m[1]);
+  if (!valid.size) { add('GovField tokens ⊂ SOLVE_DEPS (V3-0)', 'FAIL', 'could not extract SOLVE_DEPS tokens from store.jsx'); return; }
+
+  const files = fs.readdirSync(DIR).filter(f => f.endsWith('.jsx'));
+  const errs = []; let count = 0;
+  for (const f of files) {
+    if (f === 'lib.jsx') continue;                       // the definition, not a mount
+    const src = fs.readFileSync(path.join(DIR, f), 'utf8');
+    const reG = /<GovField\b([\s\S]*?)\/>/g;
+    while ((m = reG.exec(src))) {
+      count++;
+      const line = src.slice(0, m.index).split('\n').length;
+      const tok = /\btoken="([^"]+)"/.exec(m[1]);
+      if (!tok) errs.push(`${f}:${line} GovField has no token= (used-by line would be empty)`);
+      else if (!valid.has(tok[1])) errs.push(`${f}:${line} token "${tok[1]}" is not a SOLVE_DEPS dependency`);
+    }
+  }
+  if (errs.length) add('GovField tokens ⊂ SOLVE_DEPS (V3-0)', 'FAIL', errs.join(' · '));
+  else add('GovField tokens ⊂ SOLVE_DEPS (V3-0)', 'PASS',
+    `${count} GovField mounts, every token resolves to ≥1 consumer in SOLVE_DEPS (${valid.size} valid tokens)`);
+}
+
 // ── 2d. panel == harness identity parity (G-RF1) ────────────────────────────
 // The Reference ▸ ConsistencyPanel DISPLAYS the cross-solver identities; HARNESS-1b
 // (golden_path.js) ASSERTS them with an exit code. If the two drift — an identity the
@@ -220,6 +291,8 @@ async function serverChecks() {
   provLint();
   dupGlobals();
   objRestCollision();
+  oneResultHome();
+  govFieldTokens();
   identityParity();
   await serverChecks();
 

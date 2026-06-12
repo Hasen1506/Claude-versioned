@@ -26,10 +26,15 @@
  *   · B-13 aggregate sources COMMITTED dem — _loopAggregatePayload.forecast == getItemDemand (NOT the seed master)
  *   · I-3  carry rate anchored to hurdle   — carryRate == finBlendedHurdle().wacc + holding spread (FIN-8)
  *   · #5   MC ran on the COMMITTED plan    — montecarlo ranAt ≥ production ranAt AND policy_simulated=='plan' (B-7)
- *   · I-2  bottleneck is priced            — profit-mix yields a binding capacity dual (pmMax>0);
- *                                            linecap dual is finite. NOT lcMax>0 — at real TPAC volumes the
- *                                            lines are HONESTLY slack (π=0); requiring lcMax>0 would falsely
- *                                            fail the baseline (the SF-7 lesson).
+ *   · I-2  bottleneck is priced            — profit-mix yields a binding dual (pmMax>0). NEW GOLDEN
+ *                                            (V2-1 2026-06-10, baseline-moving): capacity is the REAL
+ *                                            M.lines pool (hrs × OEE, horizon-scaled) — at TPAC volumes
+ *                                            the lines are HONESTLY slack, so the priced scarcity is the
+ *                                            DEMAND ceilings ("Max prod:" duals, ₹930/u = top unit margin).
+ *                                            The pre-V2-1 binding "Shared Capacity" was an artefact of the
+ *                                            circular demandHours×0.82 capacity. Cross-check: profit-mix
+ *                                            line utilization must AGREE with linecap's slack/bind verdict.
+ *                                            NOT lcMax>0 — requiring it would falsely fail (SF-7 lesson).
  *   · I-6  MEIO pooling dividend           — pooled SS value < Σ decentralised, capital_freed>0 (√N law)
  *
  * Like HARNESS-1, server/browser-dependent: WARN + exit 0 when the server is down or
@@ -129,6 +134,15 @@ async function drive(nRuns) {
     out.pmMax = pmB ? Math.max(0, ...pmB.map(x => +x.shadow_price || 0)) : null;
     out.pmBindingN = pmB ? pmB.length : null;
     out.pmBindingNames = pmB ? pmB.map(x => x.constraint).slice(0, 4) : null;
+    // V2-1 — line-pool internal consistency: which "Line hrs:" duals bind, and each
+    // line's solved utilization (a binding line dual MUST coincide with ~100% util).
+    out.pmLineBind = pm && pm.shadow_prices
+      ? pm.shadow_prices.filter(x => x.binding && /^Line hrs:/i.test(x.constraint))
+          .map(x => String(x.constraint).replace(/^Line hrs:\s*/i, '').trim())
+      : null;
+    out.pmUtil = pm && pm.line_allocation
+      ? pm.line_allocation.map(l => ({ name: l.line_name, u: +l.utilization_pct || 0 }))
+      : null;
 
     // I-6 — pooling dividend.
     if (mn) { out.pooled = mn.total_ss_value_pooled; out.decentralised = mn.total_ss_value_decentralised; out.freed = mn.total_capital_freed; }
@@ -251,15 +265,24 @@ async function drive(nRuns) {
       `MC ${ordered ? 'after' : 'BEFORE ✗'} the schedule · policy_simulated='${drv.mcPolicy}'` + (plan ? ' (replayed the committed gantt)' : " ✗ expected 'plan' — committed-plan replay did NOT engage (B-7 class)"));
   }
 
-  // ── I-2 — bottleneck is priced (honest: profit-mix binds; linecap may be slack) ─
+  // ── I-2 — bottleneck is priced (V2-1 golden: real line pool; demand may be the
+  // honest scarcity). FAILs if nothing is priced, or if a line dual disagrees with
+  // its own solved utilization (binding ⇔ ~100% — the internal-consistency lie test).
   if (drv.pmMax == null) add('I-2 · bottleneck is priced (dual)', 'WARN', 'profit-mix dual unavailable');
   else if (drv.pmMax > 0) {
+    const lb = new Set(drv.pmLineBind || []);
+    const utilBad = (drv.pmUtil || []).filter(l => lb.has(l.name) ? l.u < 99.5 : l.u > 100.5);
+    const utilMax = drv.pmUtil && drv.pmUtil.length ? Math.max(...drv.pmUtil.map(l => l.u)) : null;
     const lcNote = drv.lcMax == null ? 'linecap not run'
       : drv.lcMax > 0 ? `linecap dual ${inr(drv.lcMax)}/u (${drv.lcBindingN}/${drv.lcLinesN} lines bind) — both price capacity`
       : `linecap slack (0/${drv.lcLinesN} lines bind, π=0 — honestly not the constraint at this volume)`;
-    add('I-2 · bottleneck is priced (dual)', 'PASS', `profit-mix dual ${inr(drv.pmMax)}/u binds [${(drv.pmBindingNames || []).join(', ')}] · ${lcNote}`);
+    const utilNote = utilMax == null ? '' : ` · pm line util max ${utilMax.toFixed(0)}% ${lb.size ? `(${lb.size} line dual binds)` : '(lines slack — demand is the priced scarcity)'}`;
+    if (utilBad.length)
+      add('I-2 · bottleneck is priced (dual)', 'FAIL', `line dual ⇄ utilization disagree: ${utilBad.map(l => `${l.name} util ${l.u}% vs dual ${lb.has(l.name) ? 'BINDING' : 'slack'}`).join('; ')}`);
+    else
+      add('I-2 · bottleneck is priced (dual)', 'PASS', `profit-mix dual ${inr(drv.pmMax)}/u binds [${(drv.pmBindingNames || []).join(', ')}]${utilNote} · ${lcNote}`);
   } else
-    add('I-2 · bottleneck is priced (dual)', 'FAIL', `profit-mix reports NO binding dual (pmMax=0) — the glass-box bottleneck claim is empty; expected Shared Capacity to bind`);
+    add('I-2 · bottleneck is priced (dual)', 'FAIL', `profit-mix reports NO binding dual (pmMax=0) — the glass-box bottleneck claim is empty; with the V2-1 real line pool, EITHER a "Line hrs:" dual OR a "Max prod:" demand dual must price the scarcity`);
 
   // ── I-6 — MEIO pooling dividend (√N law) ────────────────────────────────────
   if (drv.pooled == null) add('I-6 · MEIO pooling dividend (√N)', 'WARN', 'meio-network not run');

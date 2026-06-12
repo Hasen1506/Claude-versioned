@@ -21,12 +21,11 @@ function JobBand({ n, title, sub, right }){
 
 function StageConsole({ onNav }) {
   const [sel, setSel] = useState('procurement');          // selected engine (graph ↔ results)
-  const [modes, setModes] = useState(()=>M.solverModes.filter(m=>m.sel).map(m=>m.id));
-  const [cons, setCons] = useState(()=>Object.fromEntries(M.constraints.map(c=>[c.id,c.on])));
   // B-2 — colour the fabric by LIVE solve freshness (cross-stage cache), not the seed
   // `status` field. Same one-source builder the Reference ▸ Model Map uses.
   const { state:_solves }  = useStore(s=>s.solves||{});
   const { state:_results } = useStore(s=>s.solveResults||{});
+  const { state:_events }  = useStore(s=>s.events||[]);   // V3-5 — tower inbox/ledger read the real event log
   const { fresh:_fresh, obj:_liveObj } = (typeof solverFreshnessMaps==='function') ? solverFreshnessMaps(_solves, _results) : {};
   const [allBusy, setAllBusy] = useState(false);   // header "run spine" → real runFullLoop
   const runSpine = async ()=>{ setAllBusy(true); try{ await runFullLoop({}); }finally{ setAllBusy(false); } };
@@ -39,7 +38,7 @@ function StageConsole({ onNav }) {
       <StageHeader n="10" title="Optimize & Solve Console" kicker="Two jobs, banded — ① orchestrate (pick & run a solver) and ② interpret (read its result + the glass-box explainer)"
         right={<Btn kind="accent" disabled={allBusy} onClick={runSpine} title="Runs the 6-step planning spine (forecast → procurement → aggregate → production → capital signal → Monte-Carlo risk) live on the committed dataset. Per-engine runs are in the Anatomy Lab (③) below.">{allBusy?'⏳ Solving spine…':'▶ Run spine · 6 of 16'}</Btn>}/>
 
-      <JobBand n="①" title="Orchestrate" sub="the planning spine · the one solver network · run control + status"/>
+      <JobBand n="①" title="Orchestrate" sub="control tower — run the spine · the one solver network · live engine status · exceptions / activity / identities"/>
 
       {/* PLANNING SPINE (handoff v2 §7.1) — the ordered solve chain, conditional on profile */}
       <div style={{padding:'14px 14px 0'}}>
@@ -62,59 +61,30 @@ function StageConsole({ onNav }) {
           </div>
         </Card>
 
-        {/* RUN CONSOLE */}
+        {/* CONTROL TOWER — V3-5: the inert Run-Profile picker (composed a profile nothing
+            consumed; its ▶ SOLVE was permanently disabled) and the SEED Solve-Status card
+            (selSolver.status/obj + the static M.shadow dual table — seed numbers wearing a
+            live face) are GONE. Their replacements read only live state: freshness for the
+            selected engine + the exception inbox / event ledger / identity links below. */}
         <div style={{display:'flex', flexDirection:'column', gap:14}}>
-          <Card icon="⚡" title="Run Profile" badge="mode + constraints · preview" info={{ what:'Composes a run profile — which solver modes and constraints a run would use. Live runs happen in the Anatomy Lab (③) per engine, or the full spine via ▶ Run spine at the top.', flows:'Profile → the live runs in ③ / the spine.' }}
-            dev={{ comp:'OptimizeTab', props:'state, dispatch(SOLVE_FINISHED)', state:'solve.mode, solve.constraints', note:'P1/R3 — picker only; SOLVE demoted to preview, real runs are runFullLoop (header) + AnatomyLab ③.' }}>
-            <SubLabel>Solver mode</SubLabel>
-            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:5}}>
-              {M.solverModes.map(m=>{ const on=modes.includes(m.id);
-                return (
-                  <button key={m.id} onClick={()=>setModes(s=> on?s.filter(x=>x!==m.id):[...s,m.id])} style={{
-                    textAlign:'left', padding:'6px 8px', border:`2px solid ${C.line}`, cursor:'pointer',
-                    background: on?C.ink:C.paper, color: on?C.ac:C.tx, fontFamily:F.disp, fontSize:10, fontWeight:700,
-                    display:'flex', alignItems:'center', gap:6,
-                  }}>
-                    <span style={{width:9, height:9, flexShrink:0, background: on?C.ac:'transparent', border:`1.5px solid ${on?C.ac:C.line2}`}}/>
-                    {m.label}
-                  </button>
-                );
-              })}
-            </div>
-            <div style={{marginTop:10}}><SubLabel>Constraints</SubLabel></div>
-            <div style={{display:'flex', flexWrap:'wrap', gap:5}}>
-              {M.constraints.map(c=>{ const on=cons[c.id];
-                return (
-                  <button key={c.id} onClick={()=>setCons(s=>({...s,[c.id]:!s[c.id]}))} style={{
-                    padding:'4px 8px', border:`2px solid ${C.line}`, cursor:'pointer', fontFamily:F.mono, fontSize:9.5, fontWeight:700,
-                    background: on?C.ac:C.paper, color: on?C.onAc:C.tx3, textTransform:'uppercase',
-                  }}>{on?'✓ ':'○ '}{c.label}</button>
-                );
-              })}
-            </div>
-            <div style={{marginTop:12, display:'flex', gap:8, alignItems:'center'}}>
-              <Btn kind="primary" disabled style={{flex:1, justifyContent:'center', opacity:.5, cursor:'not-allowed'}} title="This picker composes a run profile. Live runs: per-engine in the Anatomy Lab (③) below, full-spine via ▶ Run spine at the top.">▶ SOLVE ({modes.length})</Btn>
-              <PreviewTag kind="preview"/>
-              <Btn kind="secondary" onClick={()=>{ setModes(M.solverModes.filter(m=>m.sel).map(m=>m.id)); setCons(Object.fromEntries(M.constraints.map(c=>[c.id,c.on]))); }}>Reset</Btn>
-            </div>
-            <div style={{marginTop:8, fontFamily:F.mono, fontSize:8.5, color:C.tx3, lineHeight:1.45}}>
-              ⛓ This composes a run profile (modes + constraints). To <b>run</b>: a single engine live in the <b>Anatomy Lab ③</b> below, or the whole spine via <b>▶ Run spine</b> at the top.
-            </div>
-          </Card>
-
-          <Card icon="📡" title="Solve Status" badge={selSolver?selSolver.status:'idle'} badgeTone="k" info={{ what:'Objective, runtime and binding constraints of the last solve.', flows:'Status → pipeline ribbon.' }}
-            dev={{ comp:'SolveStatus', props:'solve.result' }}>
+          {(()=>{ const _k = (typeof _OBS_KEY!=='undefined' && _OBS_KEY[sel]) || sel;
+            const _sv = _solves && _solves[_k];
+            const _f = (_fresh && _fresh[sel]) || 'never';
+            return (
+          <Card icon="📡" title="Engine Status · live" badge={_f==='never'?'not run yet':_f} badgeTone={_f==='fresh'?'g':_f==='stale'?'w':'k'}
+            info={{ what:'The selected engine, read from the cross-stage solve cache: freshness, the cached objective of its LAST REAL solve, and when it ran. No seed numbers.', flows:'Freshness → re-run decisions; click the graph to switch engines.' }}
+            dev={{ comp:'EngineStatus (V3-5)', props:'solverFreshnessMaps(solves, solveResults)[sel] + solves[_OBS_KEY[sel]]', note:'replaces the seed Solve Status card (selSolver.status/obj + static M.shadow duals).' }}>
             <KpiRow cols={3}>
-              <Blk label="Status" value={selSolver?selSolver.status:'—'} tone={selSolver&&selSolver.status==='done'?'y':'c'}/>
-              <Blk label="Objective" value={selSolver?selSolver.obj:'—'}/>
-              <Blk label="Runtime" value={selSolver&&selSolver.t?`${selSolver.t}s`:'—'}/>
+              <Blk label="Freshness" value={_f==='never'?'not run':_f} tone={_f==='fresh'?'y':'c'}/>
+              <Blk label="Last objective" value={(_liveObj&&_liveObj[sel])||'—'} />
+              <Blk label="Last run" value={_sv&&_sv.ranAt?new Date(_sv.ranAt).toLocaleTimeString():'—'}/>
             </KpiRow>
-            <div style={{marginTop:10}}><SubLabel>Shadow prices · binding</SubLabel></div>
-            <DataTable dense cols={['Resource','Dual','Status']} align={['left','right','left']}
-              rows={M.shadow.filter(s=>s.binding).map(s=>[s.res, `₹${s.dual.toFixed(0)}`, <Tag c="k">BIND</Tag>])}/>
+            {_sv && _sv.stale && _sv.root &&
+              <div style={{marginTop:8, fontFamily:F.mono, fontSize:9.5, color:C.a4}}>stale because you edited <b>{_sv.root}</b> — re-run it (Anatomy Lab ③ or its home tab).</div>}
             <div style={{marginTop:10}}><SolverExplain id={sel}/></div>
             <SolverIO id={sel}/>
-          </Card>
+          </Card>); })()}
+          <TowerRow events={_events} solves={_solves} results={_results} onNav={onNav}/>
         </div>
       </div>
 
@@ -141,7 +111,7 @@ function StageConsole({ onNav }) {
             <span style={{marginLeft:'auto', alignSelf:'center', padding:'0 14px', fontFamily:F.mono, fontSize:9.5, color:C.tx3}}>{sections.length} result sections</span>
           </div>
           <div style={{padding:14}}>
-            <ConsoleResults solver={sel} sections={sections}/>
+            <ConsoleResults solver={sel} sections={sections} onNav={onNav}/>
           </div>
         </div>
       </div>
@@ -153,6 +123,54 @@ function StageConsole({ onNav }) {
         </span>}/>
       <div style={{padding:'14px 14px 18px'}}><SolverLab sel={sel} onNav={onNav}/></div>
     </div>
+  );
+}
+
+// ── V3-5 · TowerRow — the control tower's three cross-solver summary cards ──
+// Part-4 rule applied to the non-result surfaces too: the Console shows a LIVE
+// one-line summary + a link to the home surface — it never re-renders the full
+// card (that is how the FIN-1/ResProfit duplicate-render bug class is born).
+//   · Exceptions — exceptionInbox() COUNTS by severity + the top item; home =
+//     Scenarios ▸ Cockpit (the full ranked inbox).
+//   · Activity   — the last real events from the immutable audit log (events[]);
+//     home = Scenarios ▸ Cockpit (ValueLedger scores them into ₹).
+//   · Identities — how many engines are fresh/stale/never from the SAME
+//     solverFreshnessMaps the Model Map uses + a link to the full OBS-2
+//     ConsistencyPanel (NOT recomputed here — the panel is gate-pinned to the
+//     harness (G-RF1); a second computation could drift).
+function TowerRow({ events, solves, results, onNav }){
+  const items = (typeof exceptionInbox==='function') ? exceptionInbox(solves||{}, events||[], results||{}) : [];
+  const hi = items.filter(i=>i.sev==='H').length;
+  const top = items[0];
+  const recent = (events||[]).slice(-4).reverse();
+  const counts = { fresh:0, stale:0, never:0, untracked:0 };
+  if(typeof solverFreshnessMaps==='function'){ const { fresh } = solverFreshnessMaps(solves||{}, results||{});
+    (M.solvers||[]).forEach(s=>{ counts[fresh[s.id]] = (counts[fresh[s.id]]||0)+1; }); }
+  const link = (go, label)=> <button onClick={()=>onNav && onNav(go)} style={{border:'none', background:'transparent', cursor:'pointer', color:C.a2, fontFamily:F.mono, fontSize:9, fontWeight:700, textDecoration:'underline', padding:0}}>{label}</button>;
+  return (
+    <Card icon="🗼" title="Tower · exceptions / activity / identities" badge={items.length?`${items.length} open · ${hi} high`:'all clear'} badgeTone={hi?'w':'g'}
+      info={{ what:'Cross-solver summaries only the Console can show: the live exception inbox count, the latest audit-log activity, and engine freshness — each linking to its full home surface rather than re-rendering it.', flows:'inbox → Scenarios cockpit · activity → ValueLedger · identities → Reference Model Map (OBS-2 panel).' }}
+      dev={{ comp:'TowerRow (V3-5)', props:'exceptionInbox(solves,events,results) · events[] tail · solverFreshnessMaps counts', note:'summary+link only — one-result-one-home applied to non-result surfaces.' }}>
+      <div style={{display:'flex', flexDirection:'column', gap:8}}>
+        <div style={{display:'flex', alignItems:'center', gap:8, border:`2px solid ${hi?C.dg:C.line}`, padding:'6px 9px', background:hi?C.bg3:C.paper}}>
+          <Tag c={hi?'r':'g'}>{items.length?`${items.length} EXC`:'CLEAR'}</Tag>
+          <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx2, flex:1, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{top?top.msg:'no exceptions — fabric clean'}</span>
+          {link('scenarios','inbox →')}
+        </div>
+        <div style={{display:'flex', alignItems:'center', gap:8, border:`2px solid ${C.line}`, padding:'6px 9px'}}>
+          <Tag c="c">LOG</Tag>
+          <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx2, flex:1, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>
+            {recent.length?recent.map(e=>`${e.type}${e.target?` ${e.target}`:''}`).join(' · '):'no decisions logged yet'}
+          </span>
+          {link('scenarios','ledger →')}
+        </div>
+        <div style={{display:'flex', alignItems:'center', gap:8, border:`2px solid ${C.line}`, padding:'6px 9px'}}>
+          <Tag c={counts.stale?'w':'g'}>{counts.fresh}/{(M.solvers||[]).length} FRESH</Tag>
+          <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx2, flex:1}}>{counts.stale} stale · {counts.never} never run — 6 cross-solver identities live on the Model Map</span>
+          {link('reference','identities →')}
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -313,16 +331,44 @@ function SolverLab({ sel, onNav }){
   );
 }
 
+// V2-7 — one-result-one-home. A solver's result table renders ONCE, in the tab
+// that owns the decision; the Console shows this one-line KPI + freshness chip
+// linking there instead. Homes: profitmix → Production ▸ Profit-Mix · transport →
+// Logistics · capital → Finance ▸ Investment decisions. Enforced by model_check's
+// `one-result-one-home` rule (each Res* component JSX-mounted at most once, and
+// the moved trio never again in console.jsx).
+function ResultHomeLink({ solveKey, label, go, goLabel, kpi, onNav }){
+  const cached = (typeof getSolveResult==='function') ? getSolveResult(solveKey) : null;
+  const r = cached && cached.result;
+  const { stale, ranAt } = (typeof useStale==='function') ? useStale(solveKey) : { stale:false, ranAt:null };
+  const line = r ? kpi(r) : null;
+  return (
+    <Card icon="🏠" title={label} badge={r ? (stale?'cached · stale':'cached') : 'not run yet'} badgeTone={r ? (stale?'r':'g') : undefined}
+      info={{ what:`One-line KPI only — the full result, explainer and inputs live in ${goLabel} (one-result-one-home).`, flows:`Console → ${goLabel}.` }}
+      dev={{ comp:'ResultHomeLink', props:`getSolveResult('${solveKey}')`, note:'V2-7 — console is a control tower, not a second render of the decision.' }}>
+      {line
+        ? <div style={{fontFamily:F.mono, fontSize:11, fontWeight:700, color:C.tx, padding:'6px 9px', border:`2px solid ${C.line2}`, background:C.bg3}}>{line}{ranAt ? <span style={{fontWeight:400, color:C.tx3}}>  · ran {ranAt}</span> : null}</div>
+        : <div style={{fontFamily:F.mono, fontSize:10, color:C.tx3}}>No cached solve yet — run it from its home tab.</div>}
+      <div style={{marginTop:9}}>
+        <Btn kind="accent" sm onClick={()=>onNav && onNav(go)}>open {goLabel} →</Btn>
+      </div>
+    </Card>
+  );
+}
 // result sections — hero example fully built per group + section grid
-function ConsoleResults({ solver, sections }) {
+function ConsoleResults({ solver, sections, onNav }) {
+  const fmtL = n=>`₹${((+n||0)/1e5).toFixed(1)}L`;
   return (
     <div>
       {solver==='procurement'  && <ResProcure/>}
       {solver==='production'  && <ResProduce/>}
-      {solver==='profitmix'   && <ResProfit/>}
-      {solver==='transport'&& <ResTransport/>}
+      {solver==='profitmix'   && <ResultHomeLink onNav={onNav} solveKey="profitmix" label="Profit-Mix · lives in Production" go="production" goLabel="Production ▸ Profit-Mix"
+        kpi={r=>`max profit ${fmtL(r.total_profit)} · ${(r.products||[]).filter(p=>p.quantity>0.5).length}/${(r.products||[]).length} SKUs make`}/>}
+      {solver==='transport'&& <ResultHomeLink onNav={onNav} solveKey="transport" label="Transport · lives in Logistics" go="logistics" goLabel="Logistics"
+        kpi={r=>`min freight ${fmtL(r.total_cost)} · consolidation saves ${fmtL(r.consolidation_saving)}`}/>}
       {solver==='montecarlo'&& <ResRisk/>}
-      {solver==='capital'  && <ResCapital/>}
+      {solver==='capital'  && <ResultHomeLink onNav={onNav} solveKey="capital" label="Capital Budget · lives in Finance" go="finance" goLabel="Finance ▸ Investment decisions"
+        kpi={r=>`fund ${(r.selected||[]).length} proposals · CapEx ₹${((r.total_capex||0)/1e7).toFixed(2)}Cr · NPV ${fmtL(r.total_npv)}`}/>}
       {solver==='sop'      && <ResSOP/>}
     </div>
   );
@@ -337,7 +383,7 @@ function consoleProcurePayload(){
   const dem = getItemDemand(sku, 12);
   const _pl = (typeof appStore!=='undefined') ? (appStore.get().planning||{}) : {};
   return { products:[{ name:sku, demand:dem, capacity:Math.max(400, Math.ceil(Math.max(...dem)*1.5)),
-    variable_cost:p.cost||1190, sell_price:p.price||1850, yield_pct:(typeof skuYield==='function'?skuYield(p,0.97):(p.yield||0.97)), parts:bomParts(30) }],   // G-I1 measured ?? seed
+    variable_cost:(typeof effUnitCost==='function'?effUnitCost(p):(p.cost||1190)), sell_price:p.price||1850, yield_pct:(typeof skuYield==='function'?skuYield(p,0.97):(p.yield||0.97)), parts:bomParts(30) }],   // G-I1 measured ?? seed · V2-2 derived cost
     params:{ periods:12, time_grain:'monthly',
       // G-N1 — open/in-transit POs net the buy (procurement.py T6 locked_pos).
       horizon_start_date:_pl.startDate,
@@ -463,9 +509,17 @@ function ResProduce() {
   );
 }
 
-// Build the profit-mix payload from the finished-goods master; bind shared
-// capacity at ~82% of total demand-hours so the LP must ration scarce hours
-// (otherwise every SKU just runs to its ceiling and there's no decision).
+// Build the profit-mix payload from the finished-goods master. V2-1 (blueprint Q3):
+// capacity is now the REAL production architecture — profitmix.py's line pool
+// (lines[] with avail_hrs_per_week × OEE, per-SKU cycle minutes, routing-pinned
+// eligibility) built from M.lines — replacing `shared_capacity = demandHours×0.82`,
+// which was CIRCULAR (capacity scaled WITH demand; 0.82 was a magic OEE stand-in,
+// so "Shared Capacity" always bound at the same place no matter the factory).
+// BASIS: master `p.demand` is ANNUAL (MPS weekly ≈ demand/52 for every seeded SKU),
+// so planning_horizon_months:12 — the solver scales weekly line hours to the same
+// 12-month window the demand ceiling spans. With honest capacity the lines may be
+// SLACK at current volumes; then the binding duals are the demand ceilings ("the
+// market, not the factory, caps profit") — that is the truthful answer, not a bug.
 // CRITICAL wire (audit fix): committed FIRM MTO orders (the M.orders order book shown
 // in Products) are a production FLOOR the profit-mix MUST satisfy — profitmix.py reads
 // it as min_quantity (its else/mts branch: floor = min_quantity). Before this the LP
@@ -481,18 +535,40 @@ function profitmixPayload(){
   // shelf_life must be in WEEKS here (profitmix.py compares shelf_weeks→months vs the
   // horizon); p.shelf is in DAYS, so convert — passing raw days made the expiry penalty
   // never bite (365 "weeks" ≫ horizon). salvage_rate + yield_pct are real levers too.
-  const prods = fin.map(p=>({ name:p.sku, sell_price:p.price, variable_cost:p.cost,
-    max_demand:p.demand, cycle_time:p.cycle,
+  const prods = fin.map(p=>({ name:p.sku, sell_price:p.price,
+    variable_cost:(typeof effUnitCost==='function'?effUnitCost(p):p.cost),   // V2-2 — derived cost chain (≡ p.cost at seed)
+    max_demand:p.demand,
+    max_quantity:p.demand,                  // V2-1 — label the demand ceiling ("Max prod:") so a binding
+                                            // ceiling is PRICED in shadow_prices, not silently absorbed
+    mape_pct:Number(p.mape)||15,            // V2-1 — real per-SKU forecast error, not the solver's 15% default
+    cycle_time:(Number(p.cycle)||0)/60,     // HOURS — legacy fallback only; the LP optimises on per-line MINUTES below
     min_quantity:_firmOrderFloor(p.sku),    // firm MTO order book → production floor
     shelf_life:Math.max(1, Math.round((Number(p.shelf)||365)/7)),
     yield_pct:(typeof skuYield==='function'?skuYield(p,0.95):(p.yield||0.95)), salvage_rate:Number(p.salvage)||0.8 }));   // G-I1 measured ?? seed
-  const demandHours = prods.reduce((s,p)=>s+p.max_demand*p.cycle_time, 0);
+  // V2-1 — real line pool: same effective-routing rule as productionPayload
+  // (governed config.prodRouting override → master p.line / p.cycle). Weekly hours
+  // = workDays × hrsPerShift × shifts; profitmix.py derates by OEE and scales to the horizon.
+  const _store = (typeof appStore!=='undefined') ? appStore.get() : {};
+  const _cfg = _store.config||{};
+  const _route = _cfg.prodRouting||{};
+  const _pl = _store.planning||{};
+  const _wdays = Math.max(1, Number(_pl.workDaysPerWeek)||6);
+  const _hps = Math.max(1, Number(_pl.hrsPerShift)||8);     // governed (Setup ▸ Net Hrs/Shift)
+  const _eff = p=>{ const ov=_route[p.sku]||{};
+    return { line: ov.line||p.line,
+             cyc: (ov.cycle!=null && ov.cycle!=='') ? Number(ov.cycle) : p.cycle }; };
+  const lines = (M.lines||[]).map(l=>{
+    const eligible_skus=[], cycle_time_by_sku_min={};
+    fin.forEach((p,k)=>{ const e=_eff(p);
+      if(e.line===l.id){ eligible_skus.push(k); cycle_time_by_sku_min[k]=Number(e.cyc)||0; } });
+    return { id:l.id, name:l.name, oee:Number(l.oee)||1,
+             avail_hrs_per_week:_wdays*_hps*(Number(l.shifts)||1),
+             eligible_skus, cycle_time_by_sku_min };
+  });
   // optional ₹ working-capital budget (Σ variable_cost·q) and warehouse storage slots (Σ q)
   // — profitmix.py treats 0 as UNBOUNDED, so the seed-0 default leaves the mix unconstrained.
-  const _cfg = (typeof appStore!=='undefined') ? (appStore.get().config||{}) : {};
-  const constraints = { shared_capacity:Math.round(demandHours*0.82),
-    budget: Number(_cfg.pmBudget)||0, warehouse: Number(_cfg.pmWarehouse)||0 };
-  return { products:prods, constraints };
+  const constraints = { budget: Number(_cfg.pmBudget)||0, warehouse: Number(_cfg.pmWarehouse)||0 };
+  return { products:prods, lines, constraints, planning_horizon_months:12 };
 }
 // ── D1 · GLASS-BOX DECISION EXPLAINER ────────────────────────────────────────
 // The wedge: incumbents are black boxes. We read the REAL optimiser duals — the
@@ -671,10 +747,19 @@ function DecisionExplainer({ r }){
   // D1+ · build a sandboxed test spec for a perturbable bottleneck (else null → no test offered)
   function specFor(c){
     const b0=profitmixPayload();
-    if(c.kind==='capacity' && b0.constraints && b0.constraints.shared_capacity>0){
-      const cap=b0.constraints.shared_capacity, dU=Math.max(1,Math.round(cap*0.05));
-      return { predicted:c.sp*dU, predLabel:`test +${dU.toLocaleString('en-IN')} ${c.unit}s · estimate ≈ ${_diMoney(c.sp*dU)}`,
-        build:()=>({ payload:{...b0, constraints:{...b0.constraints, shared_capacity:cap+dU}}, baseProfit:r.total_profit }) };
+    if(c.kind==='capacity' && b0.lines && b0.lines.length){
+      // V2-1 — capacity is the per-line hours pool now: bump the NAMED binding line's
+      // weekly hours +5% (fall back to all lines if the name doesn't match). The dual is
+      // per machine-HOUR over the horizon, so ΔRHS = 0.05 × avail × weeks × OEE.
+      const nm=String(c.cname||'').replace(/^Line hrs:\s*/i,'').trim();
+      const hit=b0.lines.some(l=>l.name===nm);
+      const m=Number(b0.planning_horizon_months)||0;
+      const weeks=Math.max(1, m>0 ? Math.round(30*m/7) : 4.33);   // mirrors profitmix.py's weeks formula
+      const dH=b0.lines.filter(l=>!hit||l.name===nm)
+        .reduce((s,l)=>s + l.avail_hrs_per_week*0.05*weeks*(Number(l.oee)||1), 0);
+      if(dH<=0) return null;
+      return { predicted:c.sp*dH, predLabel:`test +${Math.round(dH).toLocaleString('en-IN')} machine-hours on ${hit?nm:'all lines'} · estimate ≈ ${_diMoney(c.sp*dH)}`,
+        build:()=>({ payload:{...b0, lines:b0.lines.map(l=>(!hit||l.name===nm)?{...l, avail_hrs_per_week:l.avail_hrs_per_week*1.05}:l)}, baseProfit:r.total_profit }) };
     }
     if(c.kind==='demand'){
       const prod=(b0.products||[]).find(p=>p.name===c.who); if(!prod) return null;
@@ -832,7 +917,7 @@ function explainCvar(r){
 // surface as DecisionExplainer, reused across the four solvers (G-C1).
 function GlassBoxExplainer({ icon, title, rows, note, badge, badgeTone, prov }){
   if(!rows || !rows.length) return null;
-  // prov-ok: pure translator — rows = explain*() of a parent solve (ResTransport/ResCapital/ResRisk useSolve · LinePressureTable linecap); no figures invented here
+  // prov-ok: pure translator — rows = explain*() of a parent solve (Logistics transport/ResCapital/ResRisk useSolve · LinePressureTable linecap); no figures invented here
   const provChip = <Provenance kind="solved" note={prov||'solver output'}/>;
   return (
     <Card icon={icon||'🔍'} title={title||'Why this result? — plain-English explainer'} badge={badge||`${rows.length} insight${rows.length===1?'':'s'}`} badgeTone={badgeTone||'y'} span={2}
@@ -949,47 +1034,10 @@ function ResProfit() {
   );
 }
 
-function ResTransport() {
-  const tr = useSolve('/api/solve/transport', transportPayload, { solveKey:'transport' });   // B-3 — persist to the cross-stage cache (OBS-1 map + value ledger); shares the key with Logistics
-  const r = tr.result;
-  const runTr = ()=> tr.run().then(d=>{ markSolved('transport'); return d; }).catch(()=>{});   // B-3 — clear the stale flag so the model map colours it fresh
-  const cons = r && (r.consolidation||[]).filter(c=>c.recommend_consolidate);
-  return (
-    <Grid cols={2}>
-      <Card icon="🚛" title="Transport Results" badge={r?`₹${(r.total_cost/1e5).toFixed(1)}L · solved`:'₹24.8 L'} badgeTone={r?'g':undefined}
-        right={r ? <Provenance kind="solved" asOf={tr.ranAt}/> : <Btn kind="accent" sm onClick={runTr}>{tr.solving?'⏳ Routing…':'🚛 Optimize freight'}</Btn>}
-        info={{ what:'Optimal mode/lane allocation.', flows:'Bookings → 3PL.' }}
-        dev={{ comp:'TransportResults', props:'solve.transport' }}>
-        {tr.error && <div style={{margin:'0 0 10px', padding:'7px 11px', border:`2px solid ${C.dg}`, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>transport error: {tr.error}</div>}
-        <DataTable dense cols={['Lane','Mode','Weight','Cost']} align={['left','left','right','right']}
-          rows={r ? r.shipments.map(s=>[s.name, s.recommended?s.recommended.label:'—', `${(s.weight_kg/1000).toFixed(1)} t`,
-                 s.recommended?`₹${(s.recommended.total_cost/1000).toFixed(0)}K`:'—'])
-               : [['CHN→BLR','FTL','42 t','₹4.8L'],['CHN→PUN','Rail','68 t','₹6.2L'],['PUN→GGN','LTL','24 t','₹8.4L'],['BLR→GGN','Air','6 t','₹5.4L']]}/>
-      </Card>
-      <Card icon="📦" title="Consolidation Plan" badge={r?(cons.length?`${cons.length} lanes`:'none'):'LTL→FTL'}
-        right={r ? <Provenance kind="solved" asOf={tr.ranAt}/> : undefined}
-        info={{ what:'Where consolidating shipments cuts cost.', flows:'Plan → carrier booking.' }}
-        dev={{ comp:'ConsolidationCard', props:'solve.transport.consol' }}>
-        {r ? (
-          <>
-            <Blk label="Consolidation saving" value={`₹ ${(r.consolidation_saving/1e5).toFixed(2)} L`} tone="y"/>
-            <div style={{marginTop:8, fontFamily:F.mono, fontSize:10, color:C.tx2, lineHeight:1.5}}>
-              {cons.length ? cons.map((c,i)=><div key={i}>{c.lane}: {c.n_shipments}×{c.individual_mode} → {c.consolidated_mode} · saves ₹{(c.saving/1000).toFixed(0)}K ({c.utilization_pct}% util)</div>)
-                           : 'No lane clears a full-truckload consolidation at current volumes.'}
-            </div>
-          </>
-        ) : (
-          <>
-            <Blk label="Consolidation saving" value="₹ 3.2 L/yr" tone="y"/>
-            <div style={{marginTop:8, fontFamily:F.mono, fontSize:10, color:C.tx2, lineHeight:1.5}}>Merge 3 weekly LTL CHN→PUN into 1 FTL — 22% unit cost cut, +0.5d transit.</div>
-          </>
-        )}
-      </Card>
-      {r && <GlassBoxExplainer icon="🚛" title="Why these routes? — plain-English" rows={explainTransport(r)} prov="transport solve"
-        note="Every mode/lane and saving above is the freight optimiser's own pick — this only says it in words."/>}
-    </Grid>
-  );
-}
+// V2-7 — ResTransport deleted (one-result-one-home): its lane/mode + consolidation
+// tables were a second render of the SAME transport solve that Logistics (LogAllocation/
+// LogConsolidation) already owns, and its GlassBoxExplainer moved to Logistics step 2.
+// The Console transport entry is now a ResultHomeLink KPI chip.
 
 // Build the Monte-Carlo payload from finished goods: spread annual demand over
 // 12 monthly periods, use each SKU's MAPE as the demand CV and price/cost as the

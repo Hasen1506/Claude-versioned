@@ -47,6 +47,150 @@ def _lookup_transit(origin, dest, mode_type):
     if 'rail' in mode_type: return 5
     return 3
 
+# ── V5-4 · MULTI-MODE SPLIT ──────────────────────────────────────────────────
+# The per-shipment pick above is all-or-nothing: one mode carries the whole load.
+# Two binds where that is wrong:
+#   · CAPACITY — a shipment heavier than every mode's max_kg gets rec=None and
+#     silently contributes ₹0 to the plan (an unserveable lane reported as free);
+#     even below that, the cheap bulk mode may cap out while a mixed plan
+#     (n full loads + a remainder leg) is cheaper than the one mode that fits.
+#   · DEADLINE — a demand spike forces the ENTIRE shipment to air when only the
+#     consumption bridge (days until the cheap slow mode lands) needs to fly.
+# Gated by params.mode_split (default OFF ⇒ output byte-identical to baseline).
+
+def _mode_family(mn):
+    return 'air' if 'air' in mn else ('sea' if 'sea' in mn else ('rail' if 'rail' in mn else 'road'))
+
+def _split_families(orig, dest, is_imp):
+    # Lane sanity for SPLIT legs only: when the lane is in the transit DB, split
+    # across the families that physically serve it (+air, always bookable);
+    # otherwise an import lane splits across sea/air, a domestic one road/rail/air.
+    # (The single-mode ranking keeps its pre-existing deadline-only filter —
+    # V5-4 does not change baseline picks.)
+    db = TRANSIT_DB.get((orig, dest)) or TRANSIT_DB.get((dest, orig))
+    if db:
+        return tuple(set(db.keys()) | {'air'})
+    return ('sea', 'air') if is_imp else ('road', 'rail', 'air')
+
+def _split_leg(mn, mode, leg_kg, leg_vol, leg_val, orig, dest, is_imp, cust_d):
+    """Price ONE leg with the same formula the single-mode ranking uses
+    (chargeable weight + reliability surcharge) so split-vs-single compares
+    apples to apples."""
+    transit = _lookup_transit(orig, dest, mn)
+    total_t = transit + (cust_d if is_imp else 0)
+    vol_wt = leg_vol * 167 if 'air' in mn else leg_vol * 333
+    chg = max(leg_kg, vol_wt)
+    base = chg * mode['cost_per_kg']
+    rel = (1 - mode['reliability']) * leg_val * 0.01
+    return {'mode': mn, 'label': mode['label'], 'weight_kg': round(leg_kg, 1),
+            'base_cost': round(base, 2), 'transit_days': transit, 'total_days': total_t,
+            'cost': base + rel}
+
+def _capacity_split(wt, vol, val, deadline, urgency, orig, dest, is_imp, cust_d, modes):
+    """Capacity-bind split: bin-pack full loads of a bulk mode that can't take the
+    shipment whole, remainder on the cheapest mode it fits. Returns the cheapest
+    multi-leg plan or None."""
+    fam = _split_families(orig, dest, is_imp)
+    best = None
+    for mn, mode in modes.items():
+        if _mode_family(mn) not in fam:
+            continue
+        cap = mode['max_kg']
+        if wt <= cap:                       # this mode could take it whole — no bind here
+            continue
+        transit = _lookup_transit(orig, dest, mn)
+        if transit + (cust_d if is_imp else 0) > deadline and urgency != 'critical':
+            continue
+        n_full = int(wt // cap)
+        rem = wt - n_full * cap
+        legs = [_split_leg(mn, mode, cap, vol * cap / wt, val * cap / wt,
+                           orig, dest, is_imp, cust_d) for _ in range(n_full)]
+        if rem > 1e-6:
+            rem_opts = []
+            for rn, rm in modes.items():
+                if _mode_family(rn) not in fam:
+                    continue
+                if rem < rm['min_kg'] or rem > rm['max_kg']:
+                    continue
+                rt = _lookup_transit(orig, dest, rn)
+                if rt + (cust_d if is_imp else 0) > deadline and urgency != 'critical':
+                    continue
+                rem_opts.append(_split_leg(rn, rm, rem, vol * rem / wt, val * rem / wt,
+                                           orig, dest, is_imp, cust_d))
+            if not rem_opts:
+                continue                    # remainder unplaceable alongside this bulk pick
+            legs.append(min(rem_opts, key=lambda o: o['cost']))
+        total = sum(l['cost'] for l in legs)
+        if best is None or total < best['cost']:
+            best = {'cost': total, 'legs': legs, 'reason': 'capacity'}
+    return best
+
+def _deadline_split(wt, vol, val, opts, modes, dos, daily_use, val_per_kg, risk,
+                    buffer_pct, orig, dest, is_imp, cust_d):
+    """Deadline/stockout split: fly only the consumption BRIDGE (slow-lane transit
+    minus days-of-stock, plus a safety buffer) on the fast lane; the bulk rides the
+    cheap slow lane. Cost carries any residual stockout exposure the bridge can't
+    cover, priced with the same risk factor as the single-mode ranking."""
+    if not opts or daily_use <= 0:
+        return None
+    fam = _split_families(orig, dest, is_imp)
+    cands = [o for o in opts if _mode_family(o['mode']) in fam]
+    if not cands:
+        return None
+    slow = min(cands, key=lambda o: o['base_cost'])
+    if slow['total_days'] <= dos:
+        return None                          # cheap lane lands before stockout — no bind
+    fasts = [o for o in cands if o['total_days'] <= dos and o['mode'] != slow['mode']]
+    if not fasts:
+        return None                          # nothing arrives before the stockout
+    fast = min(fasts, key=lambda o: o['base_cost'])
+    fm, sm = modes[fast['mode']], modes[slow['mode']]
+    need_kg = (slow['total_days'] - dos) * daily_use * (1 + buffer_pct / 100.0)
+    bridge = max(fm['min_kg'], min(need_kg, fm['max_kg'], wt))
+    rem = wt - bridge
+    if rem <= 0 or rem < sm['min_kg'] or rem > sm['max_kg']:
+        return None                          # remainder doesn't ride the slow lane whole
+    legs = [_split_leg(fast['mode'], fm, bridge, vol * bridge / wt, val * bridge / wt,
+                       orig, dest, is_imp, cust_d),
+            _split_leg(slow['mode'], sm, rem, vol * rem / wt, val * rem / wt,
+                       orig, dest, is_imp, cust_d)]
+    covered = bridge / daily_use             # days the bridge actually buys (un-buffered)
+    residual_gap = max(0.0, (slow['total_days'] - dos) - covered)
+    resid = residual_gap * daily_use * val_per_kg * risk
+    return {'cost': sum(l['cost'] for l in legs) + resid, 'legs': legs, 'reason': 'deadline',
+            'bridge_kg': round(bridge, 1), 'residual_stockout_cost': round(resid, 2)}
+
+def _split_public(split, rec):
+    """Wire format for a recommended split: legs grouped per mode (n identical full
+    loads collapse to one row with loads=n), plus the saving vs the single-mode pick
+    (None when no single mode could serve the shipment at all)."""
+    if not split:
+        return None
+    groups = {}
+    for l in split['legs']:
+        g = groups.setdefault(l['mode'], {'mode': l['mode'], 'label': l['label'], 'loads': 0,
+                                          'weight_kg': 0.0, 'base_cost': 0.0,
+                                          'transit_days': l['transit_days'],
+                                          'total_days': l['total_days']})
+        g['loads'] += 1
+        g['weight_kg'] += l['weight_kg']
+        g['base_cost'] += l['base_cost']
+    legs = sorted(groups.values(), key=lambda g: -g['weight_kg'])
+    for g in legs:
+        g['weight_kg'] = round(g['weight_kg'], 1)
+        g['base_cost'] = round(g['base_cost'], 2)
+    single = rec['total_cost'] if rec else None
+    total = round(split['cost'], 2)
+    out = {'reason': split['reason'], 'legs': legs, 'total_cost': total,
+           'single_cost': single,
+           'saving': round(single - total, 2) if single is not None else None,
+           'recommended': True}
+    for k in ('bridge_kg', 'residual_stockout_cost'):
+        if k in split:
+            out[k] = split[k]
+    return out
+
+
 def consolidate_shipments(shipments, modes, params=None):
     """GAP-9 — consolidation across shipments sharing a lane.
 
@@ -124,6 +268,10 @@ def solve_transport(data):
     # instead of the old split where ranking used a 0.3 haircut and the decision used full lost
     # revenue — the same event priced two ways. Tunable via params.stockout_risk_factor.
     stockout_risk_factor = float(params.get('stockout_risk_factor', 0.3) or 0.3)
+    # V5-4 — multi-mode split (capacity / deadline binds). OFF by default ⇒ the
+    # whole block below is skipped and the output is byte-identical to baseline.
+    split_enabled = bool(params.get('mode_split'))
+    split_buffer_pct = float(params.get('split_bridge_buffer_pct', 15) or 15)
     modes = {k:{**v} for k,v in MODE_SPECS.items()}
     for mn, ov in params.get('mode_overrides', {}).items():
         if mn in modes: modes[mn].update(ov)
@@ -202,18 +350,49 @@ def solve_transport(data):
             else:
                 spike_alert = {'severity':'info','message':f"Spike noted but stock ({dos:.0f}d) covers sea transit ({sea_t}d). Keep sea.",'decision':'KEEP MODE'}
 
-        ship_cost = rec['total_cost'] if rec else 0
+        # ─── V5-4 · MODE SPLIT (capacity / deadline binds) ───
+        chosen_split = None
+        if split_enabled:
+            cap_split = _capacity_split(wt, vol, val, deadline, urgency, orig, dest,
+                                        is_imp, cust_d, modes)
+            if cap_split and (rec is None or cap_split['cost'] < rec['total_cost'] - 1e-9):
+                chosen_split = cap_split
+            if spike and daily_use > 0:
+                dl_split = _deadline_split(wt, vol, val, opts, modes, dos, daily_use,
+                                           val / max(wt, 1), stockout_risk_factor,
+                                           split_buffer_pct, orig, dest, is_imp, cust_d)
+                # rec may already be the full-air spike override here — its total_cost
+                # carries that mode's own stockout penalty, so this is apples-to-apples.
+                if dl_split and (chosen_split is None or dl_split['cost'] < chosen_split['cost']) \
+                        and (rec is None or dl_split['cost'] < rec['total_cost'] - 1e-9):
+                    chosen_split = dl_split
+                    if spike_alert:
+                        spike_alert['decision'] = 'SPLIT FAST+SLOW'
+                        spike_alert['split_cost'] = round(dl_split['cost'], 2)
+                        if spike_alerts and spike_alerts[-1].get('shipment') == name:
+                            spike_alerts[-1].update({'decision': 'SPLIT FAST+SLOW',
+                                                     'split_cost': round(dl_split['cost'], 2)})
+
+        ship_cost = chosen_split['cost'] if chosen_split else (rec['total_cost'] if rec else 0)
         total_cost += ship_cost; total_weight += wt
-        if rec:
+        if chosen_split:
+            for l in chosen_split['legs']:
+                mn = l['mode']
+                if mn not in mode_summary: mode_summary[mn] = {'label':l['label'],'count':0,'cost':0,'weight':0}
+                mode_summary[mn]['count'] += 1; mode_summary[mn]['cost'] += l['cost']; mode_summary[mn]['weight'] += l['weight_kg']
+        elif rec:
             mn = rec['mode']
             if mn not in mode_summary: mode_summary[mn] = {'label':rec['label'],'count':0,'cost':0,'weight':0}
             mode_summary[mn]['count'] += 1; mode_summary[mn]['cost'] += ship_cost; mode_summary[mn]['weight'] += wt
 
         tracking = list(TRACKING.items())[:4] if is_imp else [('CONCOR',TRACKING['concor']),('LDB',TRACKING['ldb'])]
-        results.append({'name':name,'origin':orig,'destination':dest,'weight_kg':wt,'volume_cbm':vol,'value':val,
+        entry = {'name':name,'origin':orig,'destination':dest,'weight_kg':wt,'volume_cbm':vol,'value':val,
             'deadline_days':deadline,'urgency':urgency,'is_import':is_imp,'days_of_stock':dos if daily_use>0 else None,
             'recommended':rec,'cheapest':cheapest,'fastest':fastest,'all_options':opts[:6],'spike_alert':spike_alert,
-            'tracking':[{'name':n,'url':u} for n,u in tracking]})
+            'tracking':[{'name':n,'url':u} for n,u in tracking]}
+        if split_enabled:
+            entry['split'] = _split_public(chosen_split, rec)
+        results.append(entry)
 
     # Allocation LP
     alloc = None
@@ -253,6 +432,13 @@ def solve_transport(data):
         'n_shipments':len(results),'shipments':results,'mode_summary':mode_summary,'spike_alerts':spike_alerts,
         'allocation':alloc,'consolidation':consolidation,'consolidation_saving':consolidation_saving,
         'tracking_portals':TRACKING,'solve_time':round(time.time()-t0,2)}
+    if split_enabled:
+        # V5-4 — only present when the toggle is ON (off ⇒ byte-identical baseline).
+        _splits = [s['split'] for s in results if s.get('split')]
+        out['mode_split_active'] = True
+        out['n_splits'] = len(_splits)
+        out['split_saving'] = round(sum((sp['saving'] or 0) for sp in _splits
+                                        if sp.get('saving') is not None and sp['saving'] > 0), 2)
     if alloc and alloc.get('status') and alloc['status'] != 'Optimal':
         out_status = alloc['status']
         out['error'] = alloc.get('error', f"Allocation {alloc['status']}.")

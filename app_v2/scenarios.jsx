@@ -24,6 +24,10 @@ function StageScenarios({ onNav }) {
     <div>
       <StageHeader n="11" title="Scenario & Risk Lab" kicker="Branch · compare on solved KPIs · what-if re-solve · Monte Carlo + resilience stress · end-to-end loop"
         right={<ReportExport/>}/>
+      {/* V3-14 — ① DECIDE strip (Part 3.2): solve-gated, from the CACHED Monte-Carlo only */}
+      <div style={{padding:'8px 18px', borderBottom:'2px solid '+C.line, background:C.paper}}>
+        <ScenariosDecideStrip/>
+      </div>
       <SubTabNav tabs={tabs} active={sub} onChange={setSub}/>
       <div style={{padding:14}}>
         {sub==='scenarios' && <ScnScenarios onNav={onNav}/>}
@@ -105,11 +109,36 @@ function exceptionInbox(solves, events, sr){
     if(bind>0 && shadowMax>0) out.push({ sev:'M', cat:'VALUE',
       msg:`${bind} line${bind>1?'s':''} binding — relieving capacity is worth ₹${Math.round(shadowMax)}/unit, no expansion decision logged`, go:'production', t:'open' });
   }
+  // V2-3 PROFITABILITY GATE — the aggregate LP meets demand at min COST (margin is not in
+  // its objective), so it will happily schedule a value-destroying SKU; the profit-mix LP is
+  // where that SKU gets dropped, but nothing forces S&OP to consult it. This gate is the
+  // forcing function: cross the COMMITTED production schedule (what we will build) against
+  // the cached profit-mix solve (what is worth building) and raise an exception on conflict.
+  const pm = sr && sr.profitmix ? sr.profitmix.result : null;
+  const pr2 = sr && sr.production ? sr.production.result : null;
+  if(pm && Array.isArray(pm.products) && pr2 && Array.isArray(pr2.gantt)){
+    const built = {};                       // sku → committed units across the schedule
+    pr2.gantt.forEach(g=>{ built[g.product] = (built[g.product]||0) + (+g.quantity||0); });
+    pm.products.forEach(p=>{
+      const planned = built[p.name] || 0;
+      if(planned < 0.5) return;             // schedule doesn't build it — no conflict
+      if((+p.quantity||0) < 0.01){
+        const rc = (pm.reduced_costs||[]).find(r=>r.variable===p.name);
+        out.push({ sev:'H', cat:'PROFIT',
+          msg:`Profitability gate: the schedule builds ${Math.round(planned)}u of ${p.name} but the profit-mix LP DROPS it${rc&&rc.reduced_cost?` (margin must rise ₹${Math.abs(Math.round(rc.reduced_cost))}/u to enter the mix)`:''} — demand is a promise, not an obligation`,
+          go:'console', t:'open' });
+      } else if((+p.margin_per_unit||0) < 0){
+        out.push({ sev:'H', cat:'PROFIT',
+          msg:`Profitability gate: ${p.name} is built (${Math.round(planned)}u scheduled) at a NEGATIVE margin of ₹${Math.abs(p.margin_per_unit)}/u — a demand floor forces a value-destroying build`,
+          go:'console', t:'open' });
+      }
+    });
+  }
   const rank = { H:0, M:1, L:2 };
   out.sort((a,b)=>(rank[a.sev]??3)-(rank[b.sev]??3));
   return out;
 }
-const _EXC_CAT = { STALE:{c:'y', icon:'♻'}, SENSED:{c:'k', icon:'📡'}, RISK:{c:'k', icon:'🎲'}, VALUE:{c:'g', icon:'₹'}, OTHER:{c:'w', icon:'•'} };
+const _EXC_CAT = { STALE:{c:'y', icon:'♻'}, SENSED:{c:'k', icon:'📡'}, RISK:{c:'k', icon:'🎲'}, VALUE:{c:'g', icon:'₹'}, PROFIT:{c:'k', icon:'⛔'}, OTHER:{c:'w', icon:'•'} };
 function ExceptionCockpit({ onNav }){
   const { state:solves } = useStore(s=>s.solves||{});
   const { state:sr }     = useStore(s=>s.solveResults||{});
@@ -146,9 +175,9 @@ function ExceptionCockpit({ onNav }){
             })}
           </div>
           <Reading tone={hi?C.dg:C.a4}
-            formula={`${items.length} open · ${byCat.STALE||0} stale · ${byCat.SENSED||0} sensed · ${byCat.RISK||0} risk · ${byCat.VALUE||0} value`}
+            formula={`${items.length} open · ${byCat.STALE||0} stale · ${byCat.SENSED||0} sensed · ${byCat.RISK||0} risk · ${byCat.VALUE||0} value · ${byCat.PROFIT||0} profit`}
             soWhat={hi
-              ? `${hi} high-severity exception(s) need action now — a forecast is out of control or the committed plan misses its service target. Work the red items first.`
+              ? `${hi} high-severity exception(s) need action now — a forecast is out of control, the committed plan misses its service target, or the schedule builds a SKU the profit-mix LP rejects. Work the red items first.`
               : 'Open exceptions are advisory — stale solves to refresh and ₹ a solve found but no decision has banked. Nothing is breaching, but there is value on the table.'}/>
         </React.Fragment>
       ) : (
@@ -175,7 +204,8 @@ function cvarPlanPayload(beta){
     const s = getItemDemand(p.sku, 12);
     s.forEach((v,i)=>{ monthly[i]+=v; });
     const u = s.reduce((a,b)=>a+b,0);
-    wUnits += u; wCost += u*(p.cost||0); wMargin += u*Math.max(0,(p.price||0)-(p.cost||0));
+    const _uc=(typeof effUnitCost==='function'?effUnitCost(p):(p.cost||0));   // V2-2 derived cost
+    wUnits += u; wCost += u*_uc; wMargin += u*Math.max(0,(p.price||0)-_uc);
   });
   const mean = monthly.reduce((a,b)=>a+b,0)/12;
   const variance = monthly.reduce((a,b)=>a+(b-mean)*(b-mean),0)/12;
@@ -196,8 +226,9 @@ function cvarSkuPayload(p, beta){
   const mean = s.reduce((a,b)=>a+b,0)/12;
   const variance = s.reduce((a,b)=>a+(b-mean)*(b-mean),0)/12;
   const std = Math.sqrt(variance);
-  const holding = Math.max(1, (Number(p.cost)||0) * 0.24/12);          // its own monthly holding ₹/u
-  const margin = Math.max(1, (Number(p.price)||0) - (Number(p.cost)||0)); // its own lost margin
+  const _c = (typeof effUnitCost==='function'?effUnitCost(p):(Number(p.cost)||0));   // V2-2 derived cost
+  const holding = Math.max(1, _c * 0.24/12);          // its own monthly holding ₹/u
+  const margin = Math.max(1, (Number(p.price)||0) - _c); // its own lost margin
   return { mean:Math.round(mean), std:Math.max(1,Math.round(std)),
     holding_cost:Math.round(holding), shortage_cost:Math.round(margin),
     beta:Number(beta)||0.95, n_scenarios:300, _holding:Math.round(holding) };
@@ -340,9 +371,10 @@ function ScnRisk({ onNav }) {
   const [nRuns, setNRuns] = useState('');
   const [beta, setBeta] = useState('');
   const [lt, setLt] = useState('');             // RK-D — production lead-time lag (weeks), plan mode
+  const [skuRho, setSkuRho] = useState('');     // V4-7 — cross-SKU demand co-movement (0 = independent legacy)
   const mc = useSolve('/api/solve/montecarlo', ()=>montecarloPayload(planning,
     { serviceLevel:config.serviceLevel, corr:(corr===''?undefined:corr), nRuns:(nRuns===''?undefined:nRuns),
-      prodLeadTime:(lt===''?undefined:lt) }), { solveKey:'montecarlo' });   // LP-C hydrate from loop cache
+      prodLeadTime:(lt===''?undefined:lt), demandRho:(skuRho===''?undefined:skuRho) }), { solveKey:'montecarlo' });   // LP-C hydrate from loop cache
   const cvB = beta===''?0.95:Number(beta);
   const r = mc.result;
   // RK-B — per-SKU CVaR solved and rolled up (replaces the single blended newsvendor).
@@ -385,6 +417,7 @@ function ScnRisk({ onNav }) {
         dev={{ comp:'ScnRisk·MC', props:'montecarloPayload(planning)', note:'/api/solve/montecarlo — policy=plan when a production solve is cached.' }}>
         <div style={{display:'flex', gap:10, flexWrap:'wrap', alignItems:'flex-end', marginBottom:10}}>
           <SolverInput label="Demand↔cost ρ" seed={0.4} value={corr} onChange={setCorr} min={-0.95} max={0.95} w={92} hint="shock correlation"/>
+          <SolverInput label="Cross-SKU ρ" seed={0.5} value={skuRho} onChange={setSkuRho} min={0} max={0.95} w={92} hint="V4-7 — XYZ co-movement; 0 = independent"/>
           <SolverInput label="MC runs" seed={500} value={nRuns} onChange={setNRuns} min={100} max={5000} integer w={92}/>
           <SolverInput label="Prod lead-time wk" seed={1} value={lt} onChange={setLt} min={0} max={8} w={104} hint="RK-D — plan-mode build→land lag"/>
           <div style={{flex:1}}/>
@@ -399,6 +432,12 @@ function ScnRisk({ onNav }) {
             <Blk label="CVaR 95" value={`₹${(r.cvar95/1e5).toFixed(2)}L`} accent={C.dg}/>
             <Blk label="Fragility" value={`${r.fragility}×`} sub="VaR/mean"/>
           </KpiRow>
+          {/* V4-7 — systemic-demand mode echo: tails now include cross-SKU co-movement */}
+          <div data-vis="v4-mccorr" style={{marginTop:8, fontFamily:F.mono, fontSize:9.5, color:C.tx3, padding:'6px 9px', border:`1px solid ${C.line2}`, background:C.bg3}}>
+            {r.demand_correlation && r.demand_correlation.active
+              ? <>SYSTEMIC DEMAND RISK ON — {r.demand_correlation.n_skus} SKUs co-move (XYZ heuristic, mean ρ̄ {r.demand_correlation.mean_offdiag_rho}{r.demand_correlation.psd_clipped?' · matrix eigen-repaired to PSD':''}); the cost tail above includes recession/festival weeks hitting every SKU TOGETHER. Set Cross-SKU ρ = 0 to see the (optimistic) independent-draws tail.</>
+              : <>Cross-SKU ρ = 0 — every SKU draws independently, so portfolio bad weeks √N-diversify away. Real demand co-moves (recessions, seasons): raise Cross-SKU ρ to price the systemic tail.</>}
+          </div>
           <svg viewBox="0 0 700 150" style={{width:'100%', height:150, display:'block', marginTop:10}}>
             {hist && hist.counts.map((n,i)=>{ const w=700/hist.counts.length, h=n/hmax*120;
               const tail = hist.bins[i] >= r.var95;
@@ -415,6 +454,8 @@ function ScnRisk({ onNav }) {
             <Blk label="Worst-case fill" value={`${r.min_fill}%`} tone="y"/>
             <Blk label="Policy simulated" value={r.policy_simulated==='plan'?'committed plan':'base-stock'} tone={r.policy_simulated==='plan'?'g':'k'}/>
           </KpiRow>
+          {/* V3-14 · VIS-9 — the service-risk picture from the solver's own fill histogram */}
+          <Vis9FillDist r={r} target={Math.round((Number(config.serviceLevel)||0.95)*100)}/>
           <Reading tone={r.policy_simulated==='plan'?C.gn:C.a4}
             formula={`CVaR95 = E[cost | cost ≥ VaR95] = ₹${(r.cvar95/1e5).toFixed(2)}L over the worst 5% of ${r.n_runs} runs`}
             soWhat={r.policy_simulated==='plan'
@@ -476,7 +517,7 @@ function ScnRisk({ onNav }) {
           const T = Math.max(4, Math.min(planning.horizonLength||13,13));
           const totUnits = fin.reduce((s,p)=>s+getItemDemand(p.sku,T).reduce((a,b)=>a+b,0),0);
           const lostU = Math.round(totUnits*(100-r.avg_fill)/100);
-          const avgMargin = fin.length? fin.reduce((s,p)=>s+Math.max(0,(p.price||0)-(p.cost||0)),0)/fin.length:0;
+          const avgMargin = fin.length? fin.reduce((s,p)=>s+Math.max(0,(p.price||0)-(typeof effUnitCost==='function'?effUnitCost(p):(p.cost||0))),0)/fin.length:0;   // V2-2
           const lostMargin = lostU*avgMargin;
           return <><KpiRow cols={2}>
             <Blk label="Units lost (mean)" value={`${lostU.toLocaleString('en-IN')} u`} accent={C.dg}/>
@@ -859,16 +900,16 @@ const _KPI_ROWS = [
 const _SUBFLOWS = [
   { id:'SF-1', name:'OEM ramp', lever:'4471+3215 demand ×1.4', kpi:'planCost', dir:'up',
     why:'two A-class OEM programmes surge → more to build → aggregate plan cost rises',
-    xf:(inp)=>{ const dem={ ...(inp.demand||{}) };
+    xf:(inp)=>{ const dem={ ...(inp.demand||{}) }; const pins={ ...(inp.demandPinned||{}) };
       ['TPA-4471','TPA-3215'].forEach(s=>{ const b=(dem[s]&&dem[s].length)?dem[s]:getItemDemand(s,52);
-        dem[s]=b.map(v=>Math.max(0,Math.round(v*1.4))); });
-      inp.demand=dem; return inp; } },
+        dem[s]=b.map(v=>Math.max(0,Math.round(v*1.4))); pins[s]=true; });   // V5-2b pin — else loop re-forecast undoes the lever
+      inp.demand=dem; inp.demandPinned=pins; return inp; } },
   { id:'SF-5', name:'Demand collapse', lever:'all FG ×0.6', kpi:'planCost', dir:'down',
     why:'downturn — every finished good ×0.6 → less to build → aggregate plan cost falls',
-    xf:(inp)=>{ const dem={ ...(inp.demand||{}) };
+    xf:(inp)=>{ const dem={ ...(inp.demand||{}) }; const pins={ ...(inp.demandPinned||{}) };
       (M.products||[]).filter(p=>p.cat==='Finished').forEach(p=>{ const b=(dem[p.sku]&&dem[p.sku].length)?dem[p.sku]:getItemDemand(p.sku,52);
-        dem[p.sku]=b.map(v=>Math.max(0,Math.round(v*0.6))); });
-      inp.demand=dem; return inp; } },
+        dem[p.sku]=b.map(v=>Math.max(0,Math.round(v*0.6))); pins[p.sku]=true; });   // V5-2b pin
+      inp.demand=dem; inp.demandPinned=pins; return inp; } },
   { id:'SF-4', name:'Commodity spike', lever:'parts landed +20%', kpi:'procCost', dir:'up',
     why:'duty+freight uplift compounds +20% on every part → higher landed cost → procurement spend rises',
     xf:(inp)=>{ const src={ ...(inp.sourcing||{}) };
@@ -996,6 +1037,8 @@ function ScnScenarios({ onNav }){
   const order = sc.order||[]; const list = sc.list||{};
   const [busy, setBusy]   = useState(null);     // scenario id currently running
   const [name, setName]   = useState('');
+  const [allBusy, setAllBusy] = useState(false);   // V5-2 — server fan-out in flight
+  const [srvMeta, setSrvMeta] = useState(null);    // V5-2 — last fan-out timing/meta
   // what-if levers
   const [demPct, setDemPct] = useState('');
   const [costPct, setCostPct] = useState('');
@@ -1007,6 +1050,12 @@ function ScnScenarios({ onNav }){
   const doRun = async (id)=>{ setBusy(id);
     try{ await runScenario(id); } catch(e){ /* surfaced via row */ } finally{ setBusy(null); } };
   const doCapture = ()=>{ const id = captureScenario(name||undefined); setName(''); };
+  // V5-2 — score EVERY branch in one server-side concurrent fan-out (3 batched
+  // phases, ThreadPool on the backend) instead of N sequential full-loop runs.
+  const doRunAll = async ()=>{ setAllBusy(true); setSrvMeta(null);
+    try{ setSrvMeta(await runScenariosServer(order)); }
+    catch(e){ setSrvMeta({ error: e.message||String(e) }); }
+    finally{ setAllBusy(false); } };
 
   // What-If bot — clone the live base, perturb the governed levers in its input
   // snapshot, run the affected solvers (the loop), surface the KPI delta.
@@ -1022,12 +1071,13 @@ function ScnScenarios({ onNav }){
       const id = captureScenario(label);
       updateScenarioInputs(id, (inputs)=>{
         // demand %: seed each FG series from live committed demand, then scale.
-        if(dp){ const dem = { ...(inputs.demand||{}) };
+        if(dp){ const dem = { ...(inputs.demand||{}) }; const pins = { ...(inputs.demandPinned||{}) };
           (M.products||[]).filter(p=>p.cat==='Finished').forEach(p=>{
             const base = (dem[p.sku] && dem[p.sku].length) ? dem[p.sku] : getItemDemand(p.sku, 52);
             dem[p.sku] = base.map(v=>Math.max(0, Math.round(v*(1+dp/100))));
+            pins[p.sku] = true;   // V5-2b — without the pin, the loop's re-forecast silently undid this lever
           });
-          inputs.demand = dem; }
+          inputs.demand = dem; inputs.demandPinned = pins; }
         // material cost %: lift every part's landed multiplier (dutyFreightPct) so the
         // procurement MILP + the MC cost shocks both plan on the higher landed cost.
         if(cp){ const src = { ...(inputs.sourcing||{}) };
@@ -1060,9 +1110,10 @@ function ScnScenarios({ onNav }){
         right={<div style={{display:'flex', gap:6, alignItems:'center'}}>
           <input value={name} onChange={e=>setName(e.target.value)} placeholder="name…" style={{border:`2px solid ${C.line}`, padding:'4px 7px', fontFamily:F.mono, fontSize:10, width:120, outline:'none'}}/>
           <Btn kind="secondary" sm onClick={doCapture}>+ Capture live</Btn>
+          {order.length>0 && <Btn kind="primary" sm onClick={()=>{ if(!allBusy) doRunAll(); }}>{allBusy?'… fanning out':'⚡ Run all (server)'}</Btn>}
         </div>}
-        info={{ what:'Each branch is a snapshot of the input model. "Run" scores it through the full loop transparently — live is restored after, so branches are compared on REAL solved numbers without disturbing each other (Kinaxis-style concurrent planning). "Apply" switches the working set to a branch; "Merge" promotes it.', flows:'Branch → run → compare → merge.' }}
-        dev={{ comp:'ScnScenarios', props:'useScenarios() · runScenario/branch/merge', note:'W10/W11 — store.jsx §4½ scenario engine.' }}>
+        info={{ what:'Each branch is a snapshot of the input model. "Run" scores it through the full loop transparently — live is restored after, so branches are compared on REAL solved numbers without disturbing each other (Kinaxis-style concurrent planning). "⚡ Run all" scores EVERY branch in one server-side concurrent fan-out (a thread pool solves the branches in parallel — CBC runs as subprocesses). "Apply" switches the working set to a branch; "Merge" promotes it.', flows:'Branch → run (or ⚡ run all) → compare → merge.' }}
+        dev={{ comp:'ScnScenarios', props:'useScenarios() · runScenario/runScenariosServer/branch/merge', note:'W10/W11 — store.jsx §4½ scenario engine · V5-2 /api/solve/branches fan-out.' }}>
         {order.length===0 ? <div style={{fontFamily:F.mono, fontSize:11, color:C.tx3, padding:'10px 0'}}>
           No branches yet. <b>Capture live</b> to pin the current inputs as a base, then branch + edit a tab (or use the What-If bot below) to create alternatives, and Run each to compare.
         </div> : (
@@ -1106,6 +1157,17 @@ function ScnScenarios({ onNav }){
             </div>);
           })}
         </div>}
+        {srvMeta && (()=>{ // V5-2 — honest fan-out telemetry: what ran where, how concurrent, what failed
+          if(srvMeta.error) return <div data-vis="v5-branches" style={{marginTop:8, border:`2px solid ${C.dg}`, padding:'7px 10px', fontFamily:F.mono, fontSize:9.5, color:C.dg}}>⚠ SERVER FAN-OUT failed — {srvMeta.error}</div>;
+          const n = Object.keys(srvMeta.scenarios||{}).length;
+          const fails = Object.values(srvMeta.scenarios||{}).reduce((a,s)=>a+(s.log||[]).filter(x=>!x.ok).length,0);
+          return <div data-vis="v5-branches" style={{marginTop:8, border:`2px solid ${C.line}`, borderLeft:`5px solid ${fails?C.hl:C.gn}`, padding:'7px 10px', fontFamily:F.mono, fontSize:9.5, color:C.tx2, lineHeight:1.7}}>
+            <b style={{color:C.tx}}>SERVER FAN-OUT</b> — {n} branch{n===1?'':'es'} × {LOOP_STEPS.length} steps = {n*LOOP_STEPS.length} solves in 3 batched phases (forecast → procurement∥aggregate∥production → linecap∥MC) ·
+            wall <b style={{color:C.tx}}>{(srvMeta.wallMs/1000).toFixed(1)}s</b> vs {(srvMeta.solverMs/1000).toFixed(1)}s solver time on the pool{srvMeta.speedup!=null?<> · <b style={{color:C.gn}}>{srvMeta.speedup}× concurrent</b></>:null}
+            <span style={{color:C.tx3}}> · phases {(srvMeta.phases||[]).map((m,i)=>m?`${i+1}:${m.jobs}j ${(m.wall_ms/1000).toFixed(1)}s`:'').join(' · ')}</span>
+            {fails>0 ? <span style={{color:C.hl}}> · ⚠ {fails} step{fails===1?'':'s'} failed (isolated per branch — that branch's KPI row shows what's missing)</span>
+                     : <span style={{color:C.gn}}> · all steps OK</span>}
+          </div>; })()}
         {order.length>0 && <Reading tone={C.gn}
           formula="each column = the full loop solved on that branch's inputs; green = better than base on that KPI (cost ↓ / fill ↑)"
           soWhat="Branches are scored concurrently — running one restores live afterward, so the base column never moves while you explore. Merge promotes a winner to the working set (logged to the audit trail)."/>}
@@ -1207,7 +1269,7 @@ function ModelSurface(){
       diff.forEach(r=>{
         if(r.slice==='demand'){ const series=getItemDemand(r.field,12); const lt=series.reduce((a,b)=>a+b,0); const tgt=Number(r.imp)||0;
           const scaled = lt>0 ? series.map(v=>v*tgt/lt) : Array(series.length).fill(tgt/series.length);
-          setItemDemand(r.field, scaled); }
+          setItemDemand(r.field, scaled, 'planner'); }   // V5-2b — pins, else the reSolve loop's re-forecast undoes the import
         else if(r.slice==='config'){ const num=Number(r.imp); setConfig({ [r.field]: (r.imp!==''&&isFinite(num))?num:r.imp }); }
       });
       if(typeof logEvent==='function') logEvent('model_import', null, { changed: diff.length, reSolve: !!reSolve });
@@ -1333,6 +1395,88 @@ function ScnVersions({ sc }){
         </div>
       </Grid>
     </Card>
+  );
+}
+
+// ── V3-14 · ① DECIDE strip (blueprint 3.2) — "does the committed plan survive ──
+// its shocks — and at what tail cost?" Solve-gated (Sourcing pattern): every
+// number is read from the CACHED montecarlo solve; before one exists the strip
+// honestly prompts instead of faking. Stale flag rides solves.montecarlo (its
+// SOLVE_DEPS: demand·procurement·production·sourcing·productCosts·bom).
+function ScenariosDecideStrip(){
+  const { state:sr } = useStore(s=>s.solveResults||{});
+  const { state:solves } = useStore(s=>s.solves||{});
+  const { config } = useConfig();
+  const r = sr && sr.montecarlo ? sr.montecarlo.result : null;
+  const target = Math.round((Number(config.serviceLevel)||0.95)*100);
+  if(!r) return (
+    <span data-vis="scenarios-decide" style={{fontFamily:F.mono, fontSize:10, color:C.tx3}}>
+      ① DOES THE COMMITTED PLAN SURVIVE ITS SHOCKS — AND AT WHAT TAIL COST? — run <b style={{color:C.tx}}>🎲 Monte Carlo</b> (Risk tab) or the Loop to light this up
+    </span>
+  );
+  const stale = !!(solves && solves.montecarlo && solves.montecarlo.stale);
+  const plan = r.policy_simulated==='plan';
+  return (
+    <div data-vis="scenarios-decide" style={{display:'flex', alignItems:'center', gap:14, flexWrap:'wrap'}}>
+      <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.08em', color:C.tx3}}>① DOES THE COMMITTED PLAN SURVIVE ITS SHOCKS?</span>
+      <Tag c={plan?'g':'k'}>{plan?'committed plan':'base-stock proxy'}</Tag>
+      <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>mean fill <b className="num" style={{fontFamily:F.disp, color:r.avg_fill<target?C.dg:C.tx}}>{r.avg_fill}%</b> vs α {target}%</span>
+      <span style={{color:C.line2}}>·</span>
+      <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>CVaR95 <b className="num" style={{fontFamily:F.disp, color:C.tx}}>₹{(r.cvar95/1e5).toFixed(2)}L</b></span>
+      <span style={{color:C.line2}}>·</span>
+      <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>fragility <b className="num" style={{fontFamily:F.disp, color:C.tx}}>{r.fragility}×</b></span>
+      {stale && <Tag c="y">→ STALE — inputs changed, re-run</Tag>}
+      <Provenance kind="solved" style={{padding:'0 4px', fontSize:7.5}}/>
+    </div>
+  );
+}
+
+// ── V3-14 · VIS-9 — fill-rate distribution (blueprint 3.4 #9) ──────────────
+// The solver's OWN fill histogram drawn as the service-risk picture: bars from
+// fill_histogram, the worst-5% tail (≤ fill_p5) shaded red with its CVaR₅
+// marker, the service target α as the dashed gate, and the mean fill as the
+// ▼ committed-plan marker — green when policy_simulated='plan' (the schedule
+// that will EXECUTE), amber when the run fell back to a base-stock proxy.
+// Pure renderer of solver fields — cannot exist before a real MC run.
+function Vis9FillDist({ r, target }){
+  const fh = r && r.fill_histogram;
+  if(!fh || !fh.counts || !fh.counts.length) return null;
+  const b0 = Number(fh.bins[0]);
+  const span = Math.max(0.1, 100 - b0);
+  const X = v => Math.max(0, Math.min(700, (v-b0)/span*700));
+  const hmax = Math.max(1, ...fh.counts);
+  const plan = r.policy_simulated==='plan';
+  const w = 700/fh.counts.length;
+  return (
+    <div data-vis="vis9" style={{marginTop:12, border:`2px solid ${C.line}`, borderLeft:`5px solid ${plan?C.gn:C.a4}`, padding:'10px 12px', background:C.paper}}>
+      <div style={{display:'flex', alignItems:'baseline', gap:10, flexWrap:'wrap'}}>
+        <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.08em', color:C.tx3}}>VIS-9 · FILL-RATE DISTRIBUTION — {r.n_runs} RUNS</span>
+        <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx2}}>worst-5% tail averages <b style={{color:C.dg}}>{r.fill_cvar5}%</b> fill (CVaR₅) · floor {r.min_fill}%</span>
+        <span style={{flex:1}}/>
+        <Tag c={plan?'g':'k'}>{plan?'▼ committed plan':'▼ base-stock proxy'}</Tag>
+      </div>
+      <svg viewBox="0 0 700 120" style={{width:'100%', height:120, display:'block', marginTop:8}}>
+        {r.fill_p5!=null && <rect x="0" y="0" width={X(r.fill_p5)} height="104" fill={C.dg} opacity="0.07"/>}
+        {fh.counts.map((n,i)=>{
+          const h = n/hmax*92;
+          const mid = (Number(fh.bins[i])+Number(fh.bins[i+1]))/2;
+          const tail = r.fill_p5!=null && mid <= r.fill_p5;
+          return <rect key={i} x={i*w+1} y={104-h} width={w-2} height={Math.max(n>0?2:0, h)} fill={tail?C.dg:C.ac}/>;
+        })}
+        <line x1={X(target)} y1="0" x2={X(target)} y2="104" stroke={C.a4} strokeWidth="1.5" strokeDasharray="4 3"/>
+        {r.fill_cvar5!=null && <line x1={X(r.fill_cvar5)} y1="0" x2={X(r.fill_cvar5)} y2="104" stroke={C.dg} strokeWidth="1.5"/>}
+        <path d={`M ${X(r.avg_fill)-6} 0 L ${X(r.avg_fill)+6} 0 L ${X(r.avg_fill)} 10 Z`} fill={plan?C.gn:C.a4}/>
+        <line x1={X(r.avg_fill)} y1="10" x2={X(r.avg_fill)} y2="104" stroke={plan?C.gn:C.a4} strokeWidth="1.5"/>
+        <line x1="0" y1="104" x2="700" y2="104" stroke={C.line} strokeWidth="1"/>
+      </svg>
+      <div style={{display:'flex', gap:14, fontFamily:F.mono, fontSize:9, color:C.tx3, marginTop:3, flexWrap:'wrap'}}>
+        <span style={{color:plan?C.gn:C.a4}}>▼ mean fill {r.avg_fill}%</span>
+        <span style={{color:C.a4}}>┄ target α {target}%</span>
+        <span style={{color:C.dg}}>│ CVaR₅ {r.fill_cvar5}% · ◼ worst-5% tail (≤ {r.fill_p5}%)</span>
+        <span style={{flex:1}}/>
+        <span>x: {b0.toFixed(0)}% → 100% fill</span>
+      </div>
+    </div>
   );
 }
 

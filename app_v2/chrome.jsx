@@ -34,6 +34,24 @@ const _ribbonPage = (go)=>{ const s=(M.stages||[]).find(x=>x.id===go); return s?
 function PipelineRibbon({ active, onNav }) {
   const { state:sr }     = useStore(s=>s.solveResults||{});
   const { state:solves } = useStore(s=>s.solves||{});
+  // VIS-10 (blueprint 3.4 #10) — the cascade made KINETIC: markStale broadcasts the
+  // real staleness wave (es-cascade: root + visit order); each affected chip pulses
+  // in that sequence, 180ms apart, so a governed edit visibly travels the spine.
+  const [pulse, setPulse] = useState({});
+  const pulseT = useRef([]);
+  useEffect(()=>{
+    const onCascade = (e)=>{
+      pulseT.current.forEach(clearTimeout); pulseT.current = [];
+      setPulse({});
+      const keys = ((e.detail&&e.detail.order)||[]).filter(k=>_RIBBON_STAGES.some(s=>s.key===k));
+      keys.forEach((k,i)=>{
+        pulseT.current.push(setTimeout(()=>setPulse(p=>({ ...p, [k]:true })), 120 + i*180));
+        pulseT.current.push(setTimeout(()=>setPulse(p=>{ const n={...p}; delete n[k]; return n; }), 120 + i*180 + 650));
+      });
+    };
+    window.addEventListener('es-cascade', onCascade);
+    return ()=>{ window.removeEventListener('es-cascade', onCascade); pulseT.current.forEach(clearTimeout); };
+  }, []);
   const stColor = { done:C.gn, stale:C.a4, idle:C.tx3 };
   const solvedN = _RIBBON_STAGES.filter(s=>sr[s.key]).length;
   const staleN  = _RIBBON_STAGES.filter(s=>(solves[s.key]||{}).stale).length;
@@ -51,13 +69,17 @@ function PipelineRibbon({ active, onNav }) {
           const val    = res ? p.val(res) : '—';
           const page   = _ribbonPage(p.go);
           const onPage = active===p.go;
+          const pulsing = !!pulse[p.key];   // VIS-10 — this chip is mid-wave
           return (
-            <button key={p.key} onClick={()=>onNav(p.go)} title={`${page} — ${status==='stale'?'stale (inputs changed since last solve)':status==='done'?'fresh':'not solved yet'} · click to open`} style={{
+            <button key={p.key} data-cascade-pulse={pulsing?p.key:undefined} onClick={()=>onNav(p.go)} title={`${page} — ${status==='stale'?'stale (inputs changed since last solve)':status==='done'?'fresh':'not solved yet'} · click to open`} style={{
               flex:1, minWidth:0, border:'none', borderRight: i<_RIBBON_STAGES.length-1?`1px solid ${C.line2}`:'none',
-              background: onPage?C.bg3:'transparent', cursor:'pointer', padding:'7px 10px', display:'flex', alignItems:'center', gap:9, textAlign:'left',
+              background: pulsing?'color-mix(in srgb,var(--a4) 18%,transparent)':onPage?C.bg3:'transparent',
+              boxShadow: pulsing?`inset 0 0 0 2px ${C.a4}`:'none', transition:'background .25s ease, box-shadow .25s ease',
+              cursor:'pointer', padding:'7px 10px', display:'flex', alignItems:'center', gap:9, textAlign:'left',
             }}>
               <span style={{
-                width:9, height:9, flexShrink:0, background:stColor[status], border:`1.5px solid ${C.line}`,
+                width:9, height:9, flexShrink:0, background: pulsing?C.a4:stColor[status], border:`1.5px solid ${C.line}`,
+                transform: pulsing?'scale(1.5)':'none', transition:'transform .25s ease, background .25s ease',
               }}/>
               <span style={{minWidth:0}}>
                 <span style={{display:'flex', alignItems:'center', gap:6}}>
@@ -116,6 +138,46 @@ function NavRail({ active, onNav }) {
         <div style={{fontFamily:F.disp, fontSize:11, fontWeight:800, marginTop:2}}>v4 · SPINE</div>
       </div>
     </nav>
+  );
+}
+
+// ── Guided/Expert switch (V3-15 · blueprint 3.3) — ONE disclosure law ──
+function UiModeSwitch(){
+  const m = useUiMode();
+  const opts=[['guided','▸ GUIDED'],['expert','EXPERT']];
+  return (
+    <div data-uimode={m} title="GUIDED shows only the inputs this tab's primary solve reads (+ a do-these checklist); folded fields stay one click away. EXPERT shows everything." style={{display:'flex', border:`2px solid ${C.line}`}}>
+      {opts.map(([id,lbl],i)=>(
+        <button key={id} onClick={()=>setUiMode(id)} style={{
+          fontFamily:F.mono, fontSize:9, fontWeight:700, letterSpacing:'.08em', padding:'4px 8px',
+          border:'none', borderRight: i<1?`1px solid ${C.line}`:'none', cursor:'pointer',
+          background: m===id?C.ink:C.paper, color: m===id?C.ac:C.tx,
+        }}>{lbl}</button>
+      ))}
+    </div>
+  );
+}
+
+// ── Guided "do these 3 things" mini-checklist (V3-15 · blueprint 3.3) ──
+// Pure chrome: content from M.guidedChecklist (seed copy, per stage), shown only
+// in Guided mode. Dismiss is per-stage per-session (no model state touched).
+function GuidedChecklist({ stage }){
+  const m = useUiMode();
+  const [hidden, setHidden] = useState({});
+  const items = (M.guidedChecklist||{})[stage];
+  if(m!=='guided' || !items || hidden[stage]) return null;
+  return (
+    <div data-guided-checklist={stage} style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap',
+      padding:'6px 18px', borderBottom:`2px solid ${C.line}`, background:C.ink, color:C.paper}}>
+      <span style={{fontFamily:F.mono, fontSize:8.5, fontWeight:800, letterSpacing:'.12em', color:C.ac}}>GUIDED · DO THESE</span>
+      {items.map((it,i)=>(
+        <span key={i} style={{display:'inline-flex', alignItems:'center', gap:6, fontFamily:F.mono, fontSize:9.5}}>
+          <span style={{width:14, height:14, display:'grid', placeItems:'center', background:C.ac, color:C.onAc, fontFamily:F.disp, fontWeight:900, fontSize:9}}>{i+1}</span>
+          {it}
+        </span>
+      ))}
+      <button onClick={()=>setHidden(h=>({ ...h, [stage]:true }))} style={{marginLeft:'auto', border:'none', background:'transparent', color:C.paper, opacity:.55, cursor:'pointer', fontFamily:F.mono, fontSize:10}}>✕</button>
+    </div>
   );
 }
 
@@ -198,6 +260,7 @@ function Masthead({ theme, onTheme, onNav }) {
         </span>
       </div>
       <div style={{padding:'9px 16px', borderLeft:`2px solid ${C.line}`, display:'flex', alignItems:'center', gap:12}}>
+        <UiModeSwitch/>
         <ThemeSwitch theme={theme} onTheme={onTheme}/>
         <VersionMenu/>
         <button onClick={()=>onNav&&onNav('reference')} title="Reference — Learning Lab, SAP map & open API (also in the rail under LEARN)" style={{
@@ -235,7 +298,10 @@ function Chrome({ active, onNav, theme, onTheme, children }) {
       <PipelineRibbon active={active} onNav={onNav}/>
       <div style={{flex:1, minHeight:0, display:'flex'}}>
         <NavRail active={active} onNav={onNav}/>
-        <main style={{flex:1, minWidth:0, overflow:'auto', background:C.bg}}>{children}</main>
+        <main style={{flex:1, minWidth:0, overflow:'auto', background:C.bg, display:'flex', flexDirection:'column'}}>
+          <GuidedChecklist stage={active}/>
+          <div style={{flex:1}}>{children}</div>
+        </main>
       </div>
       <Footer/>
     </div>

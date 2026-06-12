@@ -897,6 +897,169 @@ function SolverInput({ label, hint, value, seed, onChange, min, max, required,
   );
 }
 
+// ───────────── Guided/Expert mode (V3-15 · blueprint 3.3) ─────────────────
+// ONE persisted chrome toggle, ONE disclosure law. Guided folds every GovField
+// whose used-by line does NOT include the tab's primary solve (and every
+// derived/solved face) into a small click-to-reveal pill; Expert shows all.
+// Default resolves ONCE at first read and is then persisted: a fresh visitor
+// (not yet onboarded) starts Guided; a returning/preset session starts Expert —
+// so every existing probe/harness (which presets es_onboarded) sees today's UI.
+function uiMode(){
+  let m = localStorage.getItem('es_ui_mode');
+  if(m!=='guided' && m!=='expert'){
+    m = localStorage.getItem('es_onboarded') ? 'expert' : 'guided';
+    localStorage.setItem('es_ui_mode', m);
+  }
+  return m;
+}
+function setUiMode(m){ localStorage.setItem('es_ui_mode', m); window.dispatchEvent(new Event('es-ui-mode')); }
+function useUiMode(){
+  const [m, setM] = useState(uiMode());
+  useEffect(()=>{ const f=()=>setM(uiMode()); window.addEventListener('es-ui-mode', f); return ()=>window.removeEventListener('es-ui-mode', f); }, []);
+  return m;
+}
+// The tab's primary solve(s), in SOLVE_DEPS vocabulary — what Guided keeps on
+// screen. Master-data tabs (setup/products/network/demand) honestly have NO
+// primary (they feed everything), so Guided folds nothing there.
+const GUIDED_PRIMARY = {
+  plan:       ['aggregate','linecap'],
+  production: ['production','linecap'],
+  sourcing:   ['procurement','policy','rolling','meio','meionet'],
+  logistics:  ['transport'],
+  finance:    ['capital'],
+  scenarios:  ['montecarlo','cvar'],
+  console:    ['profitmix'],
+};
+function guidedPrimaryFor(stage){ return GUIDED_PRIMARY[stage] || null; }
+
+// ───────────── GovField — THE governed input (V3-0 · blueprint Part 3.1) ──
+// One component for every number a solver consumes, five faces — built FROM the
+// existing language (SolverInput's validation core, the _PROV badge set, C/F
+// tokens): V3 is consolidation, not a restyle.
+//   1 value + UNIT      — the unit is rendered, never implied (kills the Q11 class)
+//   2 source badge      — ◇seed · ⌨input · ƒderived · ⚙solved (derived/solved = read-only)
+//   3 used-by line      — GENERATED from SOLVE_DEPS via solversUsing(token); an empty
+//                         line renders a loud ⚠ NO CONSUMER (the mechanical answer to
+//                         "do we need this input?") — it cannot lie and cannot be typed
+//   4 ⓘ why             — one sentence of meaning + the formula it enters
+//   5 stale ripple      — editing pulses the used-by chips (the cascade made visible);
+//                         the real markStale still fires in the caller's setX, as ever
+// `seed` = the canonical default; value===seed (or unset) reads as ◇seed, like the
+// Setup registry's ov() compare. Clearing the field reverts to the seed.
+function GovField({ label, value, seed, onChange, prefix, suffix, token, why, formula,
+                    min, max, integer, required, w, span, prov, hint }){
+  const hasVal   = value!==undefined && value!==null && value!=='';
+  const seedHas  = seed!==undefined && seed!==null && seed!=='';
+  const readOnly = prov==='derived' || prov==='solved';
+  const face = readOnly ? prov
+    : (hasVal && (!seedHas || Number(value)!==Number(seed))) ? 'input'
+    : seedHas ? 'seed' : 'input';
+  const effVal = hasVal ? value : (seedHas ? seed : '');
+  const [buf, setBuf] = useState(effVal===''?'':String(effVal));
+  useEffect(()=>{ setBuf(effVal===''?'':String(effVal)); }, [value, seed]);
+  const used = (token && typeof solversUsing==='function') ? solversUsing(token) : [];
+  const [openWhy, setOpenWhy] = useState(false);
+  const [ripple, setRipple] = useState(false);
+  const ripT = useRef(null);
+  useEffect(()=>()=>{ if(ripT.current) clearTimeout(ripT.current); }, []);
+  // V3-15 Guided fold (blueprint 3.3) — Guided shows only the seed/typed fields the
+  // tab's primary solve reads; everything else (and every derived/solved face) folds
+  // into a click-to-reveal pill. Fields with NO consumer stay loud in both modes.
+  const mode = useUiMode();
+  const [reveal, setReveal] = useState(false);
+  const _primary = guidedPrimaryFor(localStorage.getItem('es_stage')||'');
+  const _foldSecondary = !readOnly && _primary && used.length>0 && !used.some(u=>_primary.includes(u));
+  if(mode==='guided' && !reveal && (readOnly || _foldSecondary)){
+    return (
+      <span data-govfield-folded={token||''} onClick={()=>setReveal(true)}
+        title={readOnly
+          ? 'Computed from your inputs — not editable. Click to show; switch to EXPERT for everything.'
+          : `Folded in Guided — this tab's primary solve doesn't read it (used by ${used.join(', ')}). Click to show; switch to EXPERT for everything.`}
+        style={{alignSelf:'end', display:'inline-flex', alignItems:'center', gap:5, height:24, padding:'0 8px',
+          border:`1.5px dashed ${C.line2}`, background:C.bg3, cursor:'pointer', fontFamily:F.mono,
+          fontSize:8.5, color:C.tx3, gridColumn: span?`span ${span}`:'auto', whiteSpace:'nowrap'}}>
+        {readOnly?'ƒ':'◇'} {label} <b style={{fontSize:10}}>+</b>
+      </span>
+    );
+  }
+  const eff = Number(buf);
+  let err = null;
+  if(required && buf==='')                          err = 'required';
+  else if(buf!=='' && Number.isNaN(eff))            err = 'not a number';
+  else if(buf!=='' && !Number.isNaN(eff)){
+    if(min!=null && eff<min)                        err = `min ${min}`;
+    else if(max!=null && eff>max)                   err = `max ${max}`;
+    else if(integer && !Number.isInteger(eff))      err = 'whole number';
+  }
+  const onIn = (e)=>{
+    const v = e.target.value; setBuf(v);
+    const n = Number(v);
+    onChange(v==='' ? '' : (Number.isNaN(n) ? v : n));
+    setRipple(true);
+    if(ripT.current) clearTimeout(ripT.current);
+    ripT.current = setTimeout(()=>setRipple(false), 900);
+  };
+  return (
+    <label style={{display:'flex', flexDirection:'column', gap:4, gridColumn: span?`span ${span}`:'auto', minWidth:0, position:'relative'}}>
+      <span style={{display:'flex', alignItems:'center', gap:6, flexWrap:'wrap'}}>
+        <span style={{fontFamily:F.mono, fontSize:9, letterSpacing:'.08em', color:C.tx3, textTransform:'uppercase'}}>{label}</span>
+        <Provenance kind={face} style={{padding:'0 4px', fontSize:7.5}}/>
+        {(why||formula) && (
+          <span onClick={()=>setOpenWhy(o=>!o)} title="why this input exists" style={{
+            cursor:'pointer', width:13, height:13, display:'inline-grid', placeItems:'center',
+            border:`1.5px solid ${C.line2}`, borderRadius:'50%', fontFamily:F.mono, fontSize:8.5,
+            fontWeight:700, background: openWhy?C.ac:C.bg3, color: openWhy?C.paper:C.tx2, lineHeight:1,
+          }}>i</span>
+        )}
+      </span>
+      {openWhy && (
+        <div style={{position:'absolute', top:16, left:0, zIndex:45, width:248, background:C.paper,
+          border:`2px solid ${C.line}`, boxShadow:`5px 5px 0 ${C.ink}`, padding:'9px 11px',
+          fontFamily:F.body, fontSize:11, lineHeight:1.5, color:C.tx}}>
+          {why && <div style={{marginBottom: formula?6:0}}>{why}</div>}
+          {formula && <div style={{fontFamily:F.mono, fontSize:9.5, color:C.a2}}>{formula}</div>}
+        </div>
+      )}
+      {readOnly ? (
+        <span title={prov==='solved'?'a solver wrote this — not editable':'computed from other fields — not editable'}
+          style={{display:'inline-flex', alignItems:'center', gap:6, height:30, border:`2px solid ${C.line2}`, background:C.bg3, padding:'0 8px', width:w||'auto'}}>
+          {prefix && <span style={{fontFamily:F.mono, fontSize:11, color:C.tx3}}>{prefix}</span>}
+          <span className="num" style={{fontFamily:F.disp, fontWeight:700, fontSize:13, color:C.tx}}>{effVal===''?'—':effVal}</span>
+          {suffix && <span style={{fontFamily:F.mono, fontSize:10, color:C.tx3}}>{suffix}</span>}
+        </span>
+      ) : (
+        <span style={{display:'inline-flex', alignItems:'center', border:`2px solid ${err?C.dg:(face==='seed'?C.line2:C.line)}`, background: face==='seed'?C.bg3:C.paper, height:30, width:w||'auto'}}>
+          {prefix && <span style={{padding:'0 0 0 8px', fontFamily:F.mono, fontSize:11, color:C.tx3}}>{prefix}</span>}
+          <input value={buf} onChange={onIn} className="num" style={{
+            border:'none', background:'transparent', color: face==='seed'?C.tx2:C.tx, fontFamily:F.disp, fontWeight:600,
+            fontSize:13, padding:'0 8px', width:'100%', minWidth:0, outline:'none', fontStyle: face==='seed'?'italic':'normal',
+          }}/>
+          {suffix && <span style={{padding:'0 8px 0 0', fontFamily:F.mono, fontSize:10, color:C.tx3, whiteSpace:'nowrap'}}>{suffix}</span>}
+        </span>
+      )}
+      {err
+        ? <span style={{fontFamily:F.mono, fontSize:8.5, color:C.dg, fontWeight:700}}>⚠ {err}</span>
+        : (hint && <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>{hint}</span>)}
+      {used.length>0 ? (
+        <span data-govfield-usedby={token} style={{display:'flex', alignItems:'center', gap:4, flexWrap:'wrap'}}>
+          <span style={{fontFamily:F.mono, fontSize:8, letterSpacing:'.08em', color:C.tx3}}>USED BY</span>
+          {used.map(s=>(
+            <span key={s} style={{fontFamily:F.mono, fontSize:8, fontWeight:700, padding:'0 4px',
+              border:`1.5px solid ${ripple?C.a4:C.line2}`, color: ripple?C.a4:C.tx2,
+              background: ripple?'color-mix(in srgb,var(--a4) 12%,transparent)':C.bg3,
+              transition:'all .25s ease'}}>{s}</span>
+          ))}
+          {ripple && <span style={{fontFamily:F.mono, fontSize:8, fontWeight:800, color:C.a4}}>→ STALE</span>}
+        </span>
+      ) : (
+        <span style={{fontFamily:F.mono, fontSize:8, fontWeight:800, color:C.dg}}
+          title="no solver consumes this token — a GovField with an empty used-by line must be removed or wired (Part 3.1)">
+          ⚠ NO CONSUMER{token?` — SOLVE_DEPS has no '${token}'`:' — no token given'}</span>
+      )}
+    </label>
+  );
+}
+
 // ───────────── StageContext — the "what am I looking at" strip (W0 · P5) ──
 // One consistent orientation band under a stage's StageHeader: which item ·
 // which horizon/grain · as-of when. Fixes the entry-point ambiguity CRITIQUE_R2
@@ -1163,7 +1326,7 @@ Object.assign(window, {
   MiniBar, Spark, Ring, Grid, SubLabel,
   useActiveItem, ItemSelector, Reading, StageSection, PrereqNote, SolverNetwork,
   useProfile, GateNote, MethodTag, SolverIO, PlanningSpine,
-  Provenance, AsOf, StaleMark, SolverInput, StageContext,
+  Provenance, AsOf, StaleMark, SolverInput, GovField, StageContext,
   SeedFence, PreviewTag, Lineage, ParamRegistry,
   ScopeBanner, ActivityLog, SolverExplain, OnboardingWizard,
   ModelIO, ReportExport,

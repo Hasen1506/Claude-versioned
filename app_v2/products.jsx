@@ -12,6 +12,10 @@ function StageProducts({ onNav }) {
       <StageHeader n="02" title="Products" kicker="Step 1 — tell us what you make. Then its bill of materials, costs, and the inventory policy we derive."
         right={<ModelIO/>}/>
       <ItemSelector onNav={onNav}/>
+      {/* ① DECIDE strip (Part 3.2) — derived live from master + the V2-2 cost truth; no solve, nothing faked */}
+      <div style={{padding:'8px 18px', borderBottom:`2px solid ${C.line}`, background:C.paper}}>
+        <ProductsDecideStrip/>
+      </div>
       <div style={{padding:18}}>
         <ScopeBanner kind="product" name={p.name} code={p.sku}
           sub="yield, BOM, costs & policy are for THIS product — the ▦ Catalog and ▦ Make-to-Order cards are portfolio-wide (each section is scope-tagged below)"/>
@@ -120,26 +124,51 @@ function ProdYieldExpiry({ p }){
     <StageSection step="1a" scope="item" title={`Yield & expiry · ${p.name}`} sub="the real solver levers — what fraction comes out good, and what happens to stock that ages out">
       <Card icon="⚗️" title="Yield-loss & expiry parameters" badge="drives the solvers" badgeTone="y"
         right={<Provenance kind="input"/>}
-        info={{ what:'Yield = good units per unit started (grosses up material + capacity everywhere). Shelf-life gates expiry write-offs; salvage = fraction of make-cost recovered when expired/excess stock is scrapped.', flows:'→ procurement effective_qty=qty·(1+scrap)/yield · profit-mix & Monte-Carlo expiry write-off.' }}
-        dev={{ comp:'ProdYieldExpiry', props:'editProductAttr(sku,…)', state:'M.products[sku].{yield,shelf,salvage}' }}>
-        <Grid cols={3} gap={10}>
-          <Field label="Yield % (good units / started)">
-            <NumInput value={Math.round((Number(p.yield)||0.95)*1000)/10} suffix="%"
-              onChange={(v)=>editProductAttr(p.sku, { yield: Math.min(1, Math.max(0.01, Number(v)/100)) })}/>
-          </Field>
-          <Field label="Shelf-life (days)">
-            <NumInput value={p.shelf} suffix="d"
-              onChange={(v)=>editProductAttr(p.sku, { shelf: Math.max(1, Number(v)||1) })}/>
-          </Field>
-          <Field label="Salvage % of make-cost">
-            <NumInput value={Math.round((Number(p.salvage)||0.8)*100)} suffix="%"
-              onChange={(v)=>editProductAttr(p.sku, { salvage: Math.min(1, Math.max(0, Number(v)/100)) })}/>
-          </Field>
+        info={{ what:'Yield = good units per unit started (grosses up material + capacity everywhere). Rework ₹/failed unit prices the failure stream in the schedule objective (V4-6). Shelf-life gates expiry write-offs; salvage = fraction of make-cost recovered when expired/excess stock is scrapped.', flows:'→ procurement effective_qty=qty·(1+scrap)/yield · production rework adder · profit-mix & Monte-Carlo expiry write-off.' }}
+        dev={{ comp:'GovField', props:'editProductAttr(sku,…) (token productCosts — product master feeds 13 solvers)', state:'M.products[sku].{yield,rework,shelf,salvage}' }}>
+        <Grid cols={4} gap={10}>
+          <GovField label="Yield % (good units / started)" token="productCosts" suffix="%"
+            seed={Math.round((Number(seedMaster('product',p.sku,'yield'))||0.95)*1000)/10}
+            value={Math.round((Number(p.yield)||0.95)*1000)/10}
+            min={0.1} max={100}
+            onChange={(v)=>editProductAttr(p.sku, { yield: Math.min(1, Math.max(0.01, Number(v)/100)) })}
+            why="Fraction of started units that come out good — grosses up material AND capacity in every solve. UI shows PERCENT; solvers consume the FRACTION (UNITS.md: yield_pct is a fraction despite the suffix). Logged floor confirmations override this typed seed (G-I1)."
+            formula="effective qty = qty × (1+scrap) ÷ yield · capacity used = units ÷ yield"/>
+          <GovField label="Rework ₹ / failed unit" token="productCosts" suffix="₹" integer min={0}
+            seed={Number(seedMaster('product',p.sku,'rework'))||0}
+            value={Math.round(Number(p.rework)||0)}
+            onChange={(v)=>editProductAttr(p.sku, { rework: Math.max(0, Number(v)||0) })}
+            why="V4-6 (Q24): started × (1 − yield) units fail; each eats a rework loop (strip, re-machine, re-inspect). Big orgs model rework as alternate routings — at our data depth it is honestly simplified to a COST ADDER in the schedule objective. ₹0 = failure stream unpriced."
+            formula="rework cost = started × (1 − yield) × ₹/failed → production objective + cost panel"/>
+          <GovField label="Shelf-life (days)" token="productCosts" suffix="d" integer min={1}
+            seed={seedMaster('product',p.sku,'shelf')}
+            value={p.shelf}
+            onChange={(v)=>editProductAttr(p.sku, { shelf: Math.max(1, Number(v)||1) })}
+            why="Days before stock ages out. Expiry only bites when shelf < the planning horizon — then profit-mix and Monte-Carlo charge the write-off."
+            formula="expiry active when shelf_weeks < horizon_weeks · write-off = (1 − salvage) × make-cost"/>
+          <GovField label="Salvage % of make-cost" token="productCosts" suffix="%" min={0} max={100}
+            seed={Math.round((Number(seedMaster('product',p.sku,'salvage'))||0.8)*100)}
+            value={Math.round((Number(p.salvage)||0.8)*100)}
+            onChange={(v)=>editProductAttr(p.sku, { salvage: Math.min(1, Math.max(0, Number(v)/100)) })}
+            why="Fraction of make-cost recovered when expired/excess stock is scrapped. Inert while shelf-life ≥ horizon (stated below) — honest: it only prices actual expiry. UI percent; solver consumes the fraction."
+            formula="write-off per expired unit = (1 − salvage) × unit cost"/>
         </Grid>
         <Reading formula={`shelf ${shelfWk} wk vs horizon ${T} wk → expiry ${expires?'ACTIVE':'inactive'}`}
           soWhat={expires
             ? `This SKU's stock ages out inside the plan, so salvage % is a live lever: lower salvage raises the write-off the optimiser pays on excess/expired units. Re-run Profit-mix / Monte-Carlo to see it move.`
             : `Shelf-life ≥ horizon, so nothing expires within the plan — salvage % is inert for this SKU at the current horizon (honest: it only bites if you shorten shelf-life below ${T} weeks or lengthen the horizon). Yield still drives every solve.`}/>
+        {/* V4-6 (Q24) — the yield METHOD doc: why two knobs + a cost adder, and where the
+            third knob (per-stage routing yield) deliberately is NOT built. */}
+        <div data-vis="v4-yielddoc" style={{marginTop:11, padding:'9px 12px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${C.a2}`, background:C.bg3, fontFamily:F.body, fontSize:11.5, color:C.tx2, lineHeight:1.55}}>
+          <span style={{fontFamily:F.mono, fontSize:9, fontWeight:700, color:C.a2, letterSpacing:'.1em', marginRight:8}}>HOW YIELD IS MODELLED</span>
+          Big orgs use three quality knobs. We carry the two with data behind them: <b>component scrap %</b> on
+          each BOM line (order extra material: qty ÷ (1 − scrap), in Sourcing) and <b>FG yield</b> here — ONE number
+          that stands for the COMPOUNDED yield of every routing operation, replaced by the measured Σgood ÷ Σstarted
+          the moment you log batches below (G-I1). The third knob, <b>rework loops</b>, is priced as the ₹/failed-unit
+          adder above (the standard simplification of an alternate-routing rework model). Per-STAGE routing yield is
+          deliberately NOT built until stages have real measured data — splitting one honest number into five guessed
+          ones would only manufacture false precision (blueprint Q24).
+        </div>
       </Card>
       <YieldConfirmations p={p}/>
     </StageSection>
@@ -232,10 +261,12 @@ function ProdBOM({ p }) {
           <SubLabel right={<span style={{fontFamily:F.mono, fontSize:9, color:C.tx3}}>per-part · shared · distinct from product yield</span>}>Conversion scrap (material lost)</SubLabel>
           <div style={{display:'flex', flexWrap:'wrap', gap:10}}>
             {parts.map(b=>(
-              <Field key={b.part} label={`${b.part} scrap %`}>
-                <NumInput value={Math.round((Number(b.scrap)||0.01)*1000)/10} suffix="%" w={92}
-                  onChange={(v)=>editPartAttr(b.part, { scrap: Math.min(0.5, Math.max(0, Number(v)/100)) })}/>
-              </Field>
+              <GovField key={b.part} label={`${b.part} scrap %`} token="bom" suffix="%" w={120} min={0} max={50}
+                seed={Math.round((Number(seedMaster('part',b.part,'scrap'))||0.01)*1000)/10}
+                value={Math.round((Number(b.scrap)||0.01)*1000)/10}
+                onChange={(v)=>editPartAttr(b.part, { scrap: Math.min(0.5, Math.max(0, Number(v)/100)) })}
+                why="Fraction of THIS part's material lost in conversion (chips, offcuts) — shared part-master, distinct from product yield. UI percent; solver consumes the fraction."
+                formula="effective material = qty × (1 + scrap) ÷ yield (procurement.py)"/>
             ))}
           </div>
           <Reading formula="effective material = qty · (1 + scrap) / yield  (procurement.py)"
@@ -252,26 +283,37 @@ function ProdCosts({ p }) {
   // Setup + labour are editable + persisted; "conversion & overhead" is the residual
   // that reconciles the rollup to the item's standard cost at seed, then floats as you edit.
   const lot = p.moq || 100;
-  const bomMaterial = bomForSku(p.sku).reduce((s,b)=>s + b.qty*b.cost, 0);   // Ph2 · R7 — THIS FG's material, not the shared bill
   const seedLabour = Math.round(p.cost*0.18);
   const { costs, setCosts } = useProductCosts(p.sku, { setupCost:4200, laborPerUnit:seedLabour });
-  const setupAmort = (Number(costs.setupCost)||0) / lot;
-  const seedSetupAmort = 4200 / lot;
-  // fixed conversion/overhead the BOM doesn't capture (machine time, energy, QA, margin to std cost)
-  const conversion = Math.max(0, p.cost - bomMaterial - seedLabour - seedSetupAmort);
-  const labour = Number(costs.laborPerUnit)||0;
-  const total = bomMaterial + labour + setupAmort + conversion;
+  // V2-2 — render the SHARED breakdown (store.unitCostBreakdown), the exact cost every
+  // solver prices via effUnitCost. The conversion residual is anchored at the SEED
+  // inputs (so a part-cost/labour/qty edit MOVES the total instead of being silently
+  // absorbed by the residual — the old local math had that bug).
+  const bk = unitCostBreakdown(p.sku) || { material:0, labour:0, setupAmort:0, conversion:0, total:Number(p.cost)||0, typed:Number(p.cost)||0, overridden:false };
+  const bomMaterial = bk.material, labour = bk.labour, setupAmort = bk.setupAmort,
+        conversion = bk.conversion, total = bk.total;
   const cm = Math.round((1 - total/p.price)*100);
   return (
     <StageSection step="3" scope="item" title="Costs" sub="setup + labour, the unit-cost rollup, and contribution margin">
       <Grid cols={3}>
         <Card icon="💵" title="Fixed & Setup Costs" badge="per run"
           info={{ what:'Setup cost + labour/unit (double-count guard against BOM).', flows:'Setup → production MILP changeover; labour → unit cost.' }}
-          dev={{ comp:'CostEditor', props:'useProductCosts(sku)', state:'productCosts[sku].{setupCost,laborPerUnit}' }}>
+          dev={{ comp:'GovField', props:'useProductCosts(sku) + editProductAttr (token productCosts)', state:'productCosts[sku].{setupCost,laborPerUnit} · M.products[sku].moq' }}>
           <Grid cols={2} gap={8}>
-            <Field label="Setup Cost / Run"><NumInput value={costs.setupCost} prefix="₹" onChange={(v)=>setCosts({setupCost:v})}/></Field>
-            <Field label="Labour / Unit"><NumInput value={costs.laborPerUnit} prefix="₹" onChange={(v)=>setCosts({laborPerUnit:v})}/></Field>
-            <Field label="Lot size (MOQ)" hint="setup is amortized over this run size"><NumInput value={p.moq||100} suffix="u" onChange={(v)=>editProductAttr(p.sku,{moq:Math.max(1,Number(v)||1)})}/></Field>
+            <GovField label="Setup Cost / Run" token="productCosts" prefix="₹" min={0}
+              seed={4200} value={costs.setupCost} onChange={(v)=>setCosts({setupCost:v})}
+              why="Fixed ₹ per production run of this SKU — amortized over the lot into the V2-2 unit-cost rollup every solver prices."
+              formula="setup amortized = setupCost ÷ lot (MOQ) → unit cost"/>
+            <GovField label="Labour / Unit" token="productCosts" prefix="₹" min={0}
+              seed={seedLabour} value={costs.laborPerUnit} onChange={(v)=>setCosts({laborPerUnit:v})}
+              why="Direct labour per finished unit, excluding labour already inside BOM component costs (double-count guard). Seeded at 18% of the typed standard cost until you enter the real figure."
+              formula="unit cost = BOM material + labour + setup/lot + conversion residual"/>
+            <GovField label="Lot size (MOQ)" token="productCosts" suffix="u" integer min={1}
+              hint="setup is amortized over this run size"
+              seed={seedMaster('product',p.sku,'moq')} value={p.moq||100}
+              onChange={(v)=>editProductAttr(p.sku,{moq:Math.max(1,Number(v)||1)})}
+              why="Minimum/standard run size — the denominator that spreads the setup cost into the per-unit rollup; also the EOQ floor in the (s,S) policy engine."
+              formula="setup amortized = setupCost ÷ MOQ · EOQ = max(√(2DS/h), MOQ)"/>
           </Grid>
           <div style={{marginTop:8, fontFamily:F.mono, fontSize:9, color:C.tx3}}>setup amortized over lot of {lot.toLocaleString('en-IN')} u → ₹{setupAmort.toFixed(2)}/u</div>
           <div style={{marginTop:10, padding:'8px 10px', border:`2px dashed ${C.a4}`, fontFamily:F.mono, fontSize:9.5, color:C.tx2, lineHeight:1.5}}>
@@ -279,7 +321,7 @@ function ProdCosts({ p }) {
           </div>
         </Card>
         <Card icon="🧮" title="Unit Cost Rollup" badge="DERIVED" badgeTone="y" right={<Provenance kind="derived"/>}
-          info={{ what:'BOM material (computed) + labour + setup amortized + conversion = unit cost.', flows:'Cost → profit mix LP, TCO.' }}
+          info={{ what:'BOM material (computed) + labour + setup amortized + conversion = unit cost. THE one cost definition (store.effUnitCost).', flows:'Cost → profit-mix LP, Monte-Carlo, CVaR, linecap lost-margin, capital WC, TCO, EVA — all price this same number (V2-2).' }}
           dev={{ comp:'CostRollup', props:'derived: Σ bom.qty·cost + labour + setupAmort + conversion' }}>
           <div style={{display:'flex', flexDirection:'column', gap:6}}>
             {[['Material (BOM)', bomMaterial, C.ink],['Labour', labour, C.a2],['Setup (amort.)', setupAmort, C.a4],['Conversion & OH', conversion, C.tx3]].map(([k,v,c],i)=>(
@@ -291,6 +333,11 @@ function ProdCosts({ p }) {
             ))}
           </div>
           <div style={{marginTop:10}}><Blk label="Total Unit Cost" value={`₹${Math.round(total)}`} tone="y"/></div>
+          <div style={{marginTop:6, fontFamily:F.mono, fontSize:9, color:bk.overridden?C.a2:C.tx3}}>
+            {bk.overridden
+              ? `⚠ diverged from typed std cost ₹${bk.typed} (Δ ₹${Math.round(total-bk.typed)}) — every solver now prices ₹${Math.round(total)}`
+              : `≡ typed std cost ₹${bk.typed} (seed-reconciled) — this derived cost is what every solver prices (V2-2)`}
+          </div>
           <Reading formula="unit cost = Σ(part.qty·part.cost) + labour + setup/lot + conversion"
             soWhat={`Material ₹${Math.round(bomMaterial)} is summed live from ${p.name}’s ${bomForSku(p.sku).length}-part bill — edit a part cost or this FG’s qty-per and this rollup (and the margin) move with it.`}/>
         </Card>
@@ -376,4 +423,29 @@ function ProdMTO() {
     </StageSection>
   );
 }
+// ── V3-8 · ① DECIDE strip (blueprint 3.2) — the tab's question + the KPIs that ──
+// answer it, DERIVED live from the master + the V2-2 cost truth (effUnitCost):
+// nothing here needs a solve and nothing is faked — these are the same numbers
+// the catalog and rollup cards show, condensed to one line.
+function ProductsDecideStrip(){
+  useMasterRev();
+  const fin = M.products.filter(p=>p.cat==='Finished');
+  const cost = p => (typeof effUnitCost==='function' ? effUnitCost(p) : p.cost);
+  const rev = fin.reduce((s,p)=>s+p.price*p.demand,0);
+  const contrib = fin.reduce((s,p)=>s+(p.price-cost(p))*p.demand,0);
+  const cm = rev>0 ? contrib/rev*100 : 0;
+  const firm = (M.orders||[]).filter(o=>o.status==='firm').reduce((s,o)=>s+(Number(o.qty)||0),0);
+  return (
+    <div data-vis="products-decide" style={{display:'flex', alignItems:'center', gap:14, flexWrap:'wrap'}}>
+      <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.08em', color:C.tx3}}>① WHAT DO YOU MAKE — AND WHAT DOES A UNIT REALLY COST?</span>
+      <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}><b className="num" style={{fontFamily:F.disp, color:C.tx}}>{fin.length}</b> finished goods</span>
+      <span style={{color:C.line2}}>·</span>
+      <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>blended CM <b className="num" style={{fontFamily:F.disp, color:C.tx}}>{cm.toFixed(0)}%</b> at the derived unit cost</span>
+      <span style={{color:C.line2}}>·</span>
+      <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>firm-MTO floor <b className="num" style={{fontFamily:F.disp, color:C.tx}}>{firm.toLocaleString('en-IN')}u</b></span>
+      <Provenance kind="derived" style={{padding:'0 4px', fontSize:7.5}}/>
+    </div>
+  );
+}
+
 window.StageProducts = StageProducts;

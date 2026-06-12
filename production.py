@@ -114,6 +114,24 @@ def solve_production(data):
         except (TypeError, ValueError):
             return None
 
+    def _machine_cycle_min(l, k):
+        """Effective minutes of line-l wall-clock per unit of product k — line cycle map
+        first, else routing bottleneck (max ct/parallelism over this line's ops; stations
+        pipeline within the line, so the slowest op governs — matches _route_cap's
+        min-throughput exactly). V4-3: lets LineCapHrs bind for ROUTED products too, so
+        per-line OT is genuinely purchasable instead of throughput dying at the Link cap."""
+        cm = _cycle_min_by_sku(l, k)
+        if cm:
+            return cm
+        line_id = lines[l].get('id', f'line{l}')
+        best = 0.0
+        for op in (products[k].get('routing') or []):
+            if op.get('line_id') == line_id or op.get('lineId') == line_id:
+                ct = float(op.get('cycleTimeMin', op.get('cycle_time_min', 0)) or 0)
+                par = max(float(op.get('parallelism', 1) or 1), 1.0)
+                best = max(best, ct / par)
+        return best if best > 0 else None
+
     def _route_cap(k, l):
         """Return (units_per_period, eligible_bool, route_yield)."""
         prod = products[k]
@@ -121,11 +139,16 @@ def solve_production(data):
         line_id = lines[l].get('id', f'line{l}')
         hrs_per_period = params.get('hrs_per_period', 40)  # weekly hrs available
         line_oee = _line_oee(l, prod)
+        # Unit CEILING for the Link big-M must include legal OT headroom — actual hours
+        # are governed by LineCapHrs (≤ avail·oee + ot); capping units at regular-hours
+        # throughput made OT unable to raise output (infeasible instead of paying OT).
+        # OT hours enter LineCapHrs raw (no OEE), so the headroom adds raw here too.
+        hrs_ceiling = hrs_per_period * line_oee + line_max_ot_per_period(lines[l])
         if not route:
             # No routing — try frontend-resolved per-(SKU, line) cycle next, else fall back to line capacity.
             ct_min = _cycle_min_by_sku(l, k)
             if ct_min is not None:
-                units = (hrs_per_period * 60 * line_oee) / ct_min
+                units = (hrs_ceiling * 60) / ct_min
                 return int(units), True, prod.get('yield_pct', 0.95)
             return lines[l].get('capacity', 50), True, prod.get('yield_pct', 0.95)
         # Ops assigned to this line
@@ -135,7 +158,7 @@ def solve_production(data):
             return 0, False, 0
         # Bottleneck op on this line — lowest throughput. OEE comes from the line, not the product,
         # so a stage retrofit on Line 2 doesn't get inherited by Line 1.
-        min_per_period = hrs_per_period * 60 * line_oee
+        min_per_period = hrs_ceiling * 60
         throughputs = []
         y_mult = 1.0
         for op in ops_on_line:
@@ -210,6 +233,25 @@ def solve_production(data):
         for t in range(T):
             ot[l, t] = pulp.LpVariable(f'ot_{l}_{t}', 0, max_ot)
 
+    # ── V4-3 · OT purchase mode (explicit toggle, default = legacy) ──
+    # 'per_hour': OT is a continuous purchase — pay exactly the hours used (legacy).
+    # 'per_shift': OT comes in INDIVISIBLE shift blocks (hrs_per_shift each — the real
+    # plant rule: you call a crew in for a whole shift, not for 37 minutes): integer
+    # blocks ots[l,t] gate the usable hours (ot ≤ shift_len·ots) and the WHOLE block
+    # is paid whether fully used or not. Lumpy OT ⇒ a small overflow now costs a full
+    # shift, so the schedule prefers rebalancing across weeks/lines instead.
+    ot_mode = str(params.get('ot_mode') or 'per_hour').lower()
+    if ot_mode not in ('per_hour', 'per_shift'):
+        ot_mode = 'per_hour'
+    ots = {}
+    shift_len = max(1.0, float(hrs_per_shift) or 8.0)
+    if ot_mode == 'per_shift':
+        for l in range(n_lines):
+            max_blocks = int(line_max_ot_per_period(lines[l]) / shift_len + 0.999)
+            for t in range(T):
+                ots[l, t] = pulp.LpVariable(f'ots_{l}_{t}', 0, max_blocks, cat='Integer')
+                prob += ot[l, t] <= shift_len * ots[l, t], f'OtShiftBlock_{l}_{t}'
+
     # Objective: minimize setup + overtime + makespan
     obj = []
     for k in range(n_prod):
@@ -238,10 +280,43 @@ def solve_production(data):
             obj.append(co_cost_line * switch[l, t])
 
     # T4-04 — OT cost per line: workers × hrs × hourlyRate × otMult.
+    # V4-3 — per_shift mode charges the WHOLE block (ot_per_hr × shift_len × blocks),
+    # not the hours used: an 8-hr shift is an indivisible purchase.
     for l in range(n_lines):
         ot_per_hr = line_ot_cost_per_hr(lines[l])
         for t in range(T):
-            obj.append(ot_per_hr * ot[l, t])
+            if ot_mode == 'per_shift':
+                obj.append(ot_per_hr * shift_len * ots[l, t])
+            else:
+                obj.append(ot_per_hr * ot[l, t])
+
+    # V4-6 (Q24) — rework cost adder. x[k,l,t] counts units STARTED; only fy of them
+    # come out good (Demand_k uses Σx·fy ≥ req). The failure stream — x·(1−fy) — is
+    # not free in a real plant: each failed unit eats a rework loop (strip, re-machine,
+    # re-inspect). Big orgs model rework as alternate routings; the honest simplification
+    # at our data depth is a COST ADDER ₹/unit-failed (blueprint Q24). fy here mirrors
+    # the Demand constraint exactly (routing-cascaded when a routing exists, else
+    # yield_pct) so the priced failure stream and the quantity gross-up agree.
+    # Default rework_cost_per_unit 0 ⇒ objective byte-identical. When set, gross
+    # production gains a marginal cost — overbuild stops being free.
+    def _fg_yield(k):
+        fy = products[k].get('yield_pct', 0.95)
+        rt = products[k].get('routing') or []
+        if rt:
+            fr = 1.0
+            for op in rt:
+                fr *= op.get('yieldPct', op.get('yield_pct', 100)) / 100.0
+            fy = fr if fr > 0 else fy
+        return fy
+
+    rework_rate = {}                       # k → ₹ per unit STARTED (= ₹/fail × fail share)
+    for k in range(n_prod):
+        rw = float(products[k].get('rework_cost_per_unit', 0) or 0)
+        rework_rate[k] = rw * max(0.0, 1.0 - _fg_yield(k))
+        if rework_rate[k] > 0:
+            for l in range(n_lines):
+                for t in range(T):
+                    obj.append(rework_rate[k] * x[k, l, t])
 
     # Makespan penalty (encourage finishing early)
     for k in range(n_prod):
@@ -341,11 +416,14 @@ def solve_production(data):
         total_cap = cap * shifts
         line_oee = _line_oee(l, products[0]) if n_prod else 1.0
         avail_hrs = hrs_per_period * line_oee
-        has_cycle = any(_cycle_min_by_sku(l, k) for k in range(n_prod))
+        # V4-3: resolve cycles from the line map OR the routing (was map-only, which left
+        # routed lines with NO shared-hours constraint — products only saw their own Link
+        # caps and per-line OT could never be bought).
+        has_cycle = any(_machine_cycle_min(l, k) for k in range(n_prod))
         for t in range(T):
             if has_cycle:
                 prob += pulp.lpSum(
-                    ((_cycle_min_by_sku(l, k) or 0) / 60.0) * x[k, l, t] for k in range(n_prod)
+                    ((_machine_cycle_min(l, k) or 0) / 60.0) * x[k, l, t] for k in range(n_prod)
                 ) <= avail_hrs + ot[l, t], f"LineCapHrs_{l}_{t}"
             else:
                 # Legacy flat-unit fallback (no cycle data): OT extends in units via shift conversion.
@@ -378,9 +456,11 @@ def solve_production(data):
 
     # R14.1 / Phase 3 · D6 — per-period org-wide labor-hours cap when 'hourly' mode is active and
     # workforce.hourly_headcount_cap > 0. Bounds Σ_l Σ_k cycle_hrs(k,l) × x[k,l,t] for each period t.
-    # 40 hrs/wk regular per worker is the assumed baseline; OT vars (capped per-line) ride on top.
+    # Regular hrs/worker/week come from the GOVERNED plant calendar (params.labor_week_hrs =
+    # workDaysPerWeek × hrsPerShift, sent by the payload); 40 is only the no-param fallback.
+    # OT vars (capped per-line) ride on top.
     if labor_cost_mode == 'hourly' and wf_hourly_headcount_cap > 0:
-        org_reg_hrs_per_period = wf_hourly_headcount_cap * 40.0
+        org_reg_hrs_per_period = wf_hourly_headcount_cap * float(params.get('labor_week_hrs', 40) or 40)
         # G-P4 — resolve the per-(SKU,line) cycle from EITHER the line's cycle_time_by_sku_min OR
         # the product routing (the real payload uses routing), so the labor cap actually binds for
         # routed products. Mirrors _route_cap's bottleneck = max op cycle on this line. Used ONLY
@@ -470,6 +550,11 @@ def solve_production(data):
                     prod_periods.append(t)
 
         comp = int(pulp.value(completion[k]) or 0)
+        # V4-6 — surface the priced failure stream: started × (1−fy) units fail and
+        # cost rework_rate[k] (₹/fail × fail share, already folded) per unit started.
+        fy_k = _fg_yield(k)
+        rw_units = prod_total * max(0.0, 1.0 - fy_k)
+        rw_cost = rework_rate[k] * prod_total
         product_results.append({
             'name': products[k].get('name', f'P{k}'),
             'required': products[k].get('required_qty', 100),
@@ -477,6 +562,8 @@ def solve_production(data):
             'completion_period': comp,
             'active_periods': len(prod_periods),
             'utilization': round(len(prod_periods) / max(T, 1) * 100, 1),
+            'rework_units': round(rw_units, 1),
+            'rework_cost': round(rw_cost, 2),
         })
 
     # Line utilization
@@ -490,8 +577,13 @@ def solve_production(data):
         cap = lines[l].get('capacity', 50)
         ot_hrs = sum(pulp.value(ot[l, t]) or 0 for t in range(T))
         # T4-04 — solver-emitted OT cost breakdown so the capacity-loading panel can show real cash impact.
+        # V4-3 — per_shift mode: cost = blocks × shift_len × rate (paid whole), and the
+        # paid-but-unused hours are surfaced so the lumpiness is visible, not hidden.
         ot_per_hr = line_ot_cost_per_hr(lines[l])
-        ot_cost_total = round(ot_per_hr * ot_hrs, 2)
+        ot_blocks = (sum(int(round(pulp.value(ots[l, t]) or 0)) for t in range(T))
+                     if ot_mode == 'per_shift' else None)
+        ot_cost_total = (round(ot_per_hr * shift_len * ot_blocks, 2) if ot_mode == 'per_shift'
+                         else round(ot_per_hr * ot_hrs, 2))
         max_ot_period = line_max_ot_per_period(lines[l])
         line_results.append({
             'name': lines[l].get('name', f'L{l}'),
@@ -499,6 +591,8 @@ def solve_production(data):
             'utilization': round(active / max(T, 1) * 100, 1),
             'total_produced': total_produced,
             'overtime_hours': round(ot_hrs, 1),
+            'overtime_shifts': ot_blocks,                  # V4-3 — None in per_hour mode
+            'overtime_hours_paid': (round(ot_blocks * shift_len, 1) if ot_blocks is not None else None),
             'overtime_cost': ot_cost_total,
             'overtime_cost_per_hr': round(ot_per_hr, 2),
             'max_ot_hrs_per_period': round(max_ot_period, 1),
@@ -640,6 +734,11 @@ def solve_production(data):
         'salaried_fixed_cost': round(salaried_fixed_cost, 2),
         # R15 / Phase 3 · D-OT-envelope — echo the active org OT cap so the UI can confirm it bound.
         'org_ot_cap_hrs': round(wf_ot_cap_hrs, 2),
+        # V4-3 — which OT purchase rule priced this schedule ('per_shift' = indivisible blocks)
+        'ot_mode': ot_mode,
+        # V4-6 (Q24) — total priced failure stream (Σ_k rework_rate × started); 0 when no
+        # product carries rework_cost_per_unit (objective byte-identical to pre-V4-6).
+        'rework_cost': round(sum(p['rework_cost'] for p in product_results), 2),
         # R15 / Phase 3 · D3 — low-util shutdown candidates (post-solve heuristic).
         'shutdown_recommendations': shutdown_recommendations,
         'shutdown_threshold_pct': round(shutdown_threshold_pct, 1),
@@ -649,3 +748,122 @@ def solve_production(data):
         'gantt': gantt,
         'periods': T,
     }
+
+
+# ─── V4-5 · Capable-to-promise (CTP) quote ──────────────────────────────────
+def solve_ctp(data):
+    """Answer "can I promise qty Q of SKU S by week W?" with the REAL MILP, not a
+    heuristic: test-fit the quote into the live payload and re-solve.
+
+    Payload = a standard solve_production payload PLUS
+      quote: { product: <name>, qty: float, due_period: int (0-based),
+               search_weeks?: int (default 6 — how far past the due week to look) }
+
+    Mechanism (the standard CTP ladder):
+      1. ATP first — if the baseline schedule's projected available balance
+         (cum production·yield − cum demand) already covers the qty at the due
+         week, the promise is FREE (covered_by_atp, no displacement).
+      2. Else CAPABLE-to-promise: clone the payload, add the qty to the product's
+         required_qty AND its demand_by_period at the candidate week (time-phased
+         is forced — a date promise is meaningless without the demand curve), and
+         re-solve at due, due+1, … until Optimal. The first feasible week is the
+         EARLIEST PROMISE; the schedule/cost diff vs baseline is WHAT IT DISPLACES
+         (other SKUs' moved units, OT hours bought, ₹ cost-to-promise).
+
+    Advisory by construction: nothing here mutates the committed schedule — the
+    caller decides whether to accept the promise and re-commit.
+    """
+    import copy as _copy
+    quote = (data or {}).get('quote') or {}
+    qname = quote.get('product')
+    qty = float(quote.get('qty') or 0)
+    due = int(quote.get('due_period') or 0)
+    search = max(1, int(quote.get('search_weeks') or 6))
+    if not qname or qty <= 0:
+        return {'status': 'BadQuote', 'error': 'quote needs product + qty > 0'}
+
+    base_payload = {k: v for k, v in data.items() if k != 'quote'}
+    base_payload = _copy.deepcopy(base_payload)
+    base_payload.setdefault('params', {})['time_phased'] = True
+    prods = base_payload.get('products') or []
+    target = next((p for p in prods if p.get('name') == qname), None)
+    if target is None:
+        return {'status': 'BadQuote', 'error': f'unknown product {qname!r}'}
+    T = int(base_payload['params'].get('periods') or 6)
+    due = max(0, min(due, T - 1))
+    # a date promise needs the demand curve — derive a flat zero curve only when
+    # the caller sent none at all (then the quote is the only dated demand).
+    for p in prods:
+        dbp = list(p.get('demand_by_period') or [])
+        dbp = (dbp + [0.0] * T)[:T]
+        p['demand_by_period'] = dbp
+
+    baseline = solve_production(_copy.deepcopy(base_payload))
+    if baseline.get('status') != 'Optimal':
+        return {'status': 'BaseInfeasible', 'baseline_status': baseline.get('status')}
+
+    # ── step 1 · ATP — does uncommitted supply already cover it? ──
+    fy = 1.0
+    for pr in baseline.get('products', []):
+        if pr.get('name') == qname and pr.get('yield_pct'):
+            fy = float(pr['yield_pct']) or 1.0
+    made = [0.0] * T
+    for g in baseline.get('gantt', []) or []:
+        if g.get('product') == qname and 0 <= int(g.get('period', -1)) < T:
+            made[int(g['period'])] += float(g.get('quantity') or 0)
+    dem = (target.get('demand_by_period') or [0.0] * T)
+    # LOOK-AHEAD ATP, not naive cumulative: a time-phased schedule PRE-BUILDS for
+    # later weeks, so stock on hand at the due week may already be spoken for.
+    # Promisable = min over every horizon point ≥ due of the projected balance —
+    # only what NO later commitment ever consumes (the classic ATP reservation).
+    # V5-1 — the balance opens at the SKU's netted-in opening inventory (the FG
+    # ledger the payload nets with), or the ATP would under-promise by exactly
+    # the stock already in the warehouse.
+    bal, balances = float(target.get('opening_inventory') or 0), []
+    for t in range(T):
+        bal += made[t] * fy - float(dem[t] or 0)
+        balances.append(bal)
+    atp_at_due = min(balances[due:]) if balances[due:] else 0.0
+    if atp_at_due >= qty - 1e-6:
+        return {'status': 'Optimal', 'quote': {'product': qname, 'qty': qty, 'due_period': due},
+                'covered_by_atp': True, 'earliest_period': due, 'promised': True,
+                'atp_at_due': round(atp_at_due, 1),
+                'baseline_cost': baseline.get('total_cost'), 'quoted_cost': baseline.get('total_cost'),
+                'cost_to_promise': 0.0, 'ot_hours_added': 0.0, 'displaced': [], 'tried': []}
+
+    # ── step 2 · CTP — test-fit at due, due+1, … (first Optimal = earliest promise) ──
+    def _ot_hours(r):
+        return sum(float(l.get('overtime_hours') or 0) for l in r.get('lines', []) or [])
+
+    tried = []
+    for w in range(due, min(due + search, T)):
+        mod = _copy.deepcopy(base_payload)
+        mp = next(p for p in mod['products'] if p.get('name') == qname)
+        mp['required_qty'] = float(mp.get('required_qty') or 0) + qty
+        mp['demand_by_period'][w] = float(mp['demand_by_period'][w] or 0) + qty
+        r = solve_production(mod)
+        tried.append({'period': w, 'status': r.get('status')})
+        if r.get('status') == 'Optimal':
+            # displacement = the schedule diff vs baseline (excluding the quoted SKU's own build)
+            grid = {}
+            for g in baseline.get('gantt', []) or []:
+                grid[(g['product'], int(g['period']))] = grid.get((g['product'], int(g['period'])), 0.0) - float(g.get('quantity') or 0)
+            for g in r.get('gantt', []) or []:
+                grid[(g['product'], int(g['period']))] = grid.get((g['product'], int(g['period'])), 0.0) + float(g.get('quantity') or 0)
+            displaced = [{'product': k[0], 'period': k[1], 'delta': round(v, 1)}
+                         for k, v in sorted(grid.items()) if abs(v) > 0.5 and k[0] != qname]
+            return {'status': 'Optimal', 'quote': {'product': qname, 'qty': qty, 'due_period': due},
+                    'covered_by_atp': False, 'earliest_period': w, 'promised': w == due,
+                    'atp_at_due': round(atp_at_due, 1),
+                    'baseline_cost': baseline.get('total_cost'), 'quoted_cost': r.get('total_cost'),
+                    # clamped at 0 — a few ₹ of negative drift is CBC MIP-gap noise, not a
+                    # real "cheaper with more demand" (impossible in this min-cost model)
+                    'cost_to_promise': max(0.0, round(float(r.get('total_cost') or 0) - float(baseline.get('total_cost') or 0), 1)),
+                    'ot_hours_added': round(_ot_hours(r) - _ot_hours(baseline), 1),
+                    'displaced': displaced, 'tried': tried}
+
+    return {'status': 'NoPromise', 'quote': {'product': qname, 'qty': qty, 'due_period': due},
+            'covered_by_atp': False, 'earliest_period': None, 'promised': False,
+            'atp_at_due': round(atp_at_due, 1),
+            'baseline_cost': baseline.get('total_cost'),
+            'searched_through': min(due + search, T) - 1, 'tried': tried}

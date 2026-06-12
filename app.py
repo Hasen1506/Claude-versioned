@@ -15,11 +15,12 @@ import os
 import json
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
 from solvers.procurement import solve_procurement
-from solvers.production import solve_production
+from solvers.production import solve_production, solve_ctp
 from solvers.profitmix import solve_profitmix
 from solvers.transport import solve_transport
 from solvers.capital import solve_capital_budget
@@ -369,6 +370,15 @@ def api_solve_production():
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 
+# ─── V4-5 · Capable-to-promise quote — test-fit an order into the live schedule ───
+@app.route('/api/solve/ctp', methods=['POST'])
+def api_solve_ctp():
+    try:
+        return jsonify(solve_ctp(request.json))
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
 # ─── R15 / Phase 3 · D4 — Production Sensitivity (CapEx Expansion Suggester) ───
 # Takes a base production payload + a list of scenarios. Each scenario is a perturbation:
 #   {line_idx, type:'shift'|'machine'|'worker', delta, capex}
@@ -711,6 +721,67 @@ def api_solve_linecap():
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 
+# ─── V5-2 · Server-side concurrent branching — ONE fan-out for many what-ifs ───
+# The scenario engine scores branches strictly sequentially on the client (each
+# branch = 6 chained HTTP solves around an apply/restore of the live store). This
+# endpoint takes a BATCH of independent solve jobs and fans them out across a
+# thread pool — CBC solves are SUBPROCESSES, so branches genuinely run in
+# parallel (no GIL contention on the MILP time). Chaining stays client-side: the
+# payload builders are the client's single source of truth, so the client batches
+# by dependency phase (forecast → procurement∥aggregate∥production →
+# linecap∥montecarlo) and this endpoint never re-derives a payload.
+# Job: {id, solver: <key below>, payload}; per-job failure NEVER fails the batch
+# (ok:false + error on that entry — error isolation is the contract).
+BRANCH_SOLVERS = {
+    'forecast':    run_forecast,
+    'procurement': solve_procurement,
+    'aggregate':   solve_aggregate,
+    'production':  solve_production,
+    'linecap':     solve_linecap,
+    # same n_runs handling as the dedicated /api/solve/montecarlo route
+    'montecarlo':  lambda d: run_montecarlo(d, n_runs=int(d.get('n_runs', 500) or 500)),
+}
+
+
+@app.route('/api/solve/branches', methods=['POST'])
+def api_solve_branches():
+    try:
+        data = request.json or {}
+        jobs = data.get('jobs')
+        if not isinstance(jobs, list) or not jobs:
+            return jsonify({'error': 'jobs: non-empty list required'}), 400
+        if len(jobs) > 48:
+            return jsonify({'error': f'jobs: max 48 per fan-out (got {len(jobs)})'}), 400
+        params = data.get('params') or {}
+        max_workers = max(1, min(8, int(params.get('max_workers') or 4)))
+
+        def _run(job):
+            jid, sname = job.get('id'), job.get('solver')
+            t0 = time.time()
+            try:
+                solver = BRANCH_SOLVERS.get(sname)
+                if solver is None:
+                    raise ValueError(f'unknown solver: {sname!r} (have {sorted(BRANCH_SOLVERS)})')
+                result = solver(job.get('payload') or {})
+                return {'id': jid, 'solver': sname, 'ok': True,
+                        'ms': int((time.time() - t0) * 1000), 'result': result}
+            except Exception as e:
+                return {'id': jid, 'solver': sname, 'ok': False,
+                        'ms': int((time.time() - t0) * 1000), 'error': str(e)}
+
+        t0 = time.time()
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            results = list(pool.map(_run, jobs))   # job order preserved
+        wall_ms = int((time.time() - t0) * 1000)
+        solver_ms = sum(r['ms'] for r in results)
+        return jsonify({'results': results,
+                        'meta': {'jobs': len(jobs), 'max_workers': max_workers,
+                                 'wall_ms': wall_ms, 'solver_ms_sum': solver_ms,
+                                 'speedup': round(solver_ms / wall_ms, 2) if wall_ms > 0 else None}})
+    except Exception as e:
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
 # ─── Closed-loop S&OP pipeline (GAP-2) ───
 @app.route('/api/solve/sop', methods=['POST'])
 def api_solve_sop():
@@ -931,6 +1002,7 @@ def api_calendar():
 _SOLVER_DOCS = {
     '/api/solve/procurement':         'Multi-period material buy plan (MOQ, lead time, holding) — PuLP/CBC MILP.',
     '/api/solve/production':          'Lot-sized production schedule (setup vs holding, campaign min-run).',
+    '/api/solve/ctp':                 'Capable-to-promise quote — test-fits an order into the live schedule (earliest week + what it displaces).',
     '/api/solve/profitmix':           'Profit-max product mix under shared capacity — returns shadow prices + crossover.',
     '/api/solve/transport':           'Outbound lane flow / mode selection (cost vs tonnage).',
     '/api/solve/capital':             'Capital-budget project selection under a CapEx ceiling.',

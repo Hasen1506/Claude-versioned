@@ -20,6 +20,9 @@ Features (engineered when ML/DL/Hybrid):
 - Day-of-week, month, quarter
 - Promotion flag (from promo_periods passed in payload)
 - Holiday flag (from holidays list passed in payload)
+- V4-4: free-form exogenous regressor columns (price, footfall, …) from products[].exog
+  {name: [values aligned with history]}, future values via exog_future or last-known
+  carry-forward — ML/hybrid only; classical models can't consume them (inherent)
 
 Graceful degradation: every model is wrapped in a try/except — if its dependency
 is unavailable the model is skipped (with a note in the leaderboard) instead of
@@ -228,16 +231,22 @@ def _lag_offsets(grain, season=None):
     return (1, 3, season if season and season > 3 else 12)  # monthly default
 
 
-def _build_features(history, dates, promo_periods, holidays_set, lags=(1, 7, 30)):
+def _build_features(history, dates, promo_periods, holidays_set, lags=(1, 7, 30), exog=None):
     """Build a DataFrame-like 2D feature matrix for ML/DL models.
 
     Returns (X, y, feature_names). X[i] corresponds to forecasting y[i] using
     only information available before period i. `lags` are grain-aware (see _lag_offsets).
+
+    V4-4 — `exog` is an ordered list of (name, values) numeric columns aligned with
+    `history` (price, footfall, any free-form regressor): each rides in as one raw
+    feature so the tree/NN models can learn level shifts (Q16 price dynamics).
+    Classical models never see these — that's inherent, the leaderboard routes.
     """
     n = len(history)
     promo_periods = promo_periods or []
     holidays_set = holidays_set or set()
     promo_set = set(promo_periods)  # period indices that are promo
+    exog = exog or []
     l0, l1, l2 = lags
 
     feats = []
@@ -261,21 +270,27 @@ def _build_features(history, dates, promo_periods, holidays_set, lags=(1, 7, 30)
             row.extend([0, 1, 0, 0])
         # Promo flag
         row.append(1 if t in promo_set else 0)
+        # V4-4 — exogenous regressors (value at t, last-known when the column is short)
+        for _nm, vals in exog:
+            row.append(float(vals[t]) if t < len(vals) else (float(vals[-1]) if vals else 0.0))
         feats.append(row)
 
     X = np.asarray(feats, dtype=float)
     y = np.asarray(history, dtype=float)
     l0, l1, l2 = lags
-    names = [f'lag{l0}', f'lag{l1}', f'lag{l2}', 'roll3', 'roll7', 'dow', 'month', 'quarter', 'holiday', 'promo']
+    names = [f'lag{l0}', f'lag{l1}', f'lag{l2}', 'roll3', 'roll7', 'dow', 'month', 'quarter', 'holiday', 'promo'] + [nm for nm, _ in exog]
     return X, y, names
 
 
-def _future_features(history, future_dates, promo_periods, holidays_set, h_periods, lags=(1, 7, 30)):
+def _future_features(history, future_dates, promo_periods, holidays_set, h_periods, lags=(1, 7, 30), exog_future=None):
     """Build feature matrix for h future periods. Uses last-known history values
     as lags for the first horizon step and propagates predictions forward.
-    `lags` must match the ones _build_features used for training (grain-aware)."""
+    `lags` must match the ones _build_features used for training (grain-aware).
+    V4-4 — `exog_future` = ordered (name, values) columns giving each regressor's
+    value for THESE h periods (column order must match _build_features' `exog`)."""
     promo_set = set(promo_periods or [])
     holidays_set = holidays_set or set()
+    exog_future = exog_future or []
     n = len(history)
     l0, l1, l2 = lags
     rows = []
@@ -297,6 +312,8 @@ def _future_features(history, future_dates, promo_periods, holidays_set, h_perio
         else:
             row.extend([0, 1, 0, 0])
         row.append(1 if t in promo_set else 0)
+        for _nm, vals in exog_future:
+            row.append(float(vals[h]) if h < len(vals) else (float(vals[-1]) if vals else 0.0))
         rows.append(row)
         # Propagate prediction back into "extended" via caller after each step.
     return np.asarray(rows, dtype=float), extended
@@ -357,10 +374,15 @@ def _arima(history, h_periods):
     return forecast, fitted
 
 
-def _ml_regressor(model_cls, history, h_periods, dates, future_dates, promo, holidays_set, lags=(1, 7, 30), **kwargs):
+def _exog_step(exog_future, h):
+    """V4-4 — slice one horizon step out of (name, values) exog columns, keeping order."""
+    return [(nm, [vals[h] if h < len(vals) else (vals[-1] if vals else 0.0)]) for nm, vals in (exog_future or [])]
+
+
+def _ml_regressor(model_cls, history, h_periods, dates, future_dates, promo, holidays_set, lags=(1, 7, 30), exog=None, exog_future=None, **kwargs):
     if not HAS_SKLEARN:
         raise ImportError('scikit-learn not available')
-    X, y, _ = _build_features(history, dates, promo, holidays_set, lags=lags)
+    X, y, _ = _build_features(history, dates, promo, holidays_set, lags=lags, exog=exog)
     if len(history) < 10:
         raise ValueError('ML needs ≥10 observations')
     # Skip first row (lag-1 has no predecessor)
@@ -372,29 +394,30 @@ def _ml_regressor(model_cls, history, h_periods, dates, future_dates, promo, hol
     extended = list(history)
     forecast = []
     for h in range(h_periods):
-        Xf, _ = _future_features(extended, future_dates[h:h + 1], promo, holidays_set, 1, lags=lags)
+        Xf, _ = _future_features(extended, future_dates[h:h + 1], promo, holidays_set, 1, lags=lags, exog_future=_exog_step(exog_future, h))
         yhat = float(model.predict(Xf)[0])
         forecast.append(yhat)
         extended.append(yhat)
     return forecast, fitted
 
 
-def _xgboost(history, h_periods, dates, future_dates, promo, holidays_set, lags=(1, 7, 30)):
+def _xgboost(history, h_periods, dates, future_dates, promo, holidays_set, lags=(1, 7, 30), exog=None, exog_future=None):
     if not HAS_XGBOOST:
         raise ImportError('xgboost not available')
     return _ml_regressor(
         XGBRegressor, history, h_periods, dates, future_dates, promo, holidays_set, lags=lags,
+        exog=exog, exog_future=exog_future,
         n_estimators=120, max_depth=4, learning_rate=0.1, verbosity=0
     )
 
 
-def _hybrid(history, h_periods, season, dates, future_dates, promo, holidays_set, lags=(1, 7, 30)):
+def _hybrid(history, h_periods, season, dates, future_dates, promo, holidays_set, lags=(1, 7, 30), exog=None, exog_future=None):
     """Holt-Winters baseline + RandomForest residual correction."""
     if not (HAS_STATSMODELS and HAS_SKLEARN):
         raise ImportError('hybrid needs both statsmodels and sklearn')
     hw_forecast, hw_fit = _holt_winters(history, h_periods, season)
     residuals = np.asarray(history, dtype=float) - np.asarray(hw_fit[:len(history)])
-    X, _, _ = _build_features(history, dates, promo, holidays_set, lags=lags)
+    X, _, _ = _build_features(history, dates, promo, holidays_set, lags=lags, exog=exog)
     if len(history) < 10:
         raise ValueError('Hybrid needs ≥10 observations')
     rf = RandomForestRegressor(n_estimators=80, max_depth=5, random_state=0)
@@ -403,7 +426,7 @@ def _hybrid(history, h_periods, season, dates, future_dates, promo, holidays_set
     extended = list(history)
     forecast = []
     for h in range(h_periods):
-        Xf, _ = _future_features(extended, future_dates[h:h + 1], promo, holidays_set, 1, lags=lags)
+        Xf, _ = _future_features(extended, future_dates[h:h + 1], promo, holidays_set, 1, lags=lags, exog_future=_exog_step(exog_future, h))
         residual_pred = float(rf.predict(Xf)[0])
         yhat = hw_forecast[h] + residual_pred
         forecast.append(yhat)
@@ -411,7 +434,7 @@ def _hybrid(history, h_periods, season, dates, future_dates, promo, holidays_set
     return forecast, fitted
 
 
-def _forecast_full(model_name, history, h, hist_dates, future_dates, promo, holidays_set, season, lags):
+def _forecast_full(model_name, history, h, hist_dates, future_dates, promo, holidays_set, season, lags, exog=None, exog_future=None):
     """Re-run ONE model for its h-step forecast only (no holdout split). Mirrors the
     `full_fcst` branch of run_forecast exactly, so a counterfactual run can never
     diverge from the headline forecast. Used by DM-B (promo uplift attribution):
@@ -425,15 +448,15 @@ def _forecast_full(model_name, history, h, hist_dates, future_dates, promo, holi
     elif model_name == 'arima':
         f, _ = _arima(history, h)
     elif model_name == 'random_forest':
-        f, _ = _ml_regressor(RandomForestRegressor, history, h, hist_dates, future_dates, promo, holidays_set, lags=lags, n_estimators=100, max_depth=6, random_state=0)
+        f, _ = _ml_regressor(RandomForestRegressor, history, h, hist_dates, future_dates, promo, holidays_set, lags=lags, exog=exog, exog_future=exog_future, n_estimators=100, max_depth=6, random_state=0)
     elif model_name == 'gradient_boost':
-        f, _ = _ml_regressor(GradientBoostingRegressor, history, h, hist_dates, future_dates, promo, holidays_set, lags=lags, n_estimators=100, max_depth=3, learning_rate=0.1, random_state=0)
+        f, _ = _ml_regressor(GradientBoostingRegressor, history, h, hist_dates, future_dates, promo, holidays_set, lags=lags, exog=exog, exog_future=exog_future, n_estimators=100, max_depth=3, learning_rate=0.1, random_state=0)
     elif model_name == 'xgboost':
-        f, _ = _xgboost(history, h, hist_dates, future_dates, promo, holidays_set, lags=lags)
+        f, _ = _xgboost(history, h, hist_dates, future_dates, promo, holidays_set, lags=lags, exog=exog, exog_future=exog_future)
     elif model_name == 'mlp':
-        f, _ = _ml_regressor(MLPRegressor, history, h, hist_dates, future_dates, promo, holidays_set, lags=lags, hidden_layer_sizes=(32, 16), max_iter=500, random_state=0)
+        f, _ = _ml_regressor(MLPRegressor, history, h, hist_dates, future_dates, promo, holidays_set, lags=lags, exog=exog, exog_future=exog_future, hidden_layer_sizes=(32, 16), max_iter=500, random_state=0)
     elif model_name == 'hybrid':
-        f, _ = _hybrid(history, h, season, hist_dates, future_dates, promo, holidays_set, lags=lags)
+        f, _ = _hybrid(history, h, season, hist_dates, future_dates, promo, holidays_set, lags=lags, exog=exog, exog_future=exog_future)
     elif model_name == 'croston':
         f, _ = _croston(history, h)
     elif model_name == 'sba':
@@ -452,6 +475,8 @@ def run_forecast(payload):
     Payload schema:
       products: [{ name, history: [...] , history_freq?: 'monthly' | 'weekly' | 'daily',
                    promo_periods?: [int...], # period indices that are promotional
+                   exog?: {name: [floats aligned with history]},   # V4-4 — price/free-form regressors (ML features)
+                   exog_future?: {name: [h floats]},               # planned future values (default: carry last known)
                  }, ...]
       params:
         h_periods: int                 # forecast horizon length
@@ -523,6 +548,40 @@ def run_forecast(payload):
         train_dates = hist_dates[:len(train)]
         test_dates = hist_dates[len(train):n_hist]
 
+        # ── V4-4 — exogenous regressor columns (price, footfall, any numeric driver) ──
+        # prod.exog = {name: [values aligned with history]} → ordered (name, values)
+        # columns the ML/hybrid feature builders ride as raw features (Q16: a price
+        # level-shift becomes learnable). Holdout TEST windows use the ACTUAL
+        # historical values (they're history — an honest backtest, no peeking at the
+        # target). Future values come from prod.exog_future[name] (e.g. a planned
+        # price change) or carry the last known value forward. Classical models never
+        # see these — inherent, the leaderboard routes such SKUs to ML.
+        exog_cols = []
+        for nm in sorted((prod.get('exog') or {}).keys()):
+            vals = prod['exog'][nm]
+            if not isinstance(vals, (list, tuple)) or not vals:
+                continue
+            try:
+                v = [float(x if x is not None else 0) for x in vals][:n_hist]
+            except (TypeError, ValueError):
+                continue
+            v += [v[-1]] * (n_hist - len(v))         # short column → pad with last known
+            exog_cols.append((str(nm), v))
+        exog_train = [(nm, v[:len(train)]) for nm, v in exog_cols]
+        exog_test = [(nm, v[len(train):n_hist]) for nm, v in exog_cols]
+        exog_fut = []
+        for nm, v in exog_cols:
+            fut = (prod.get('exog_future') or {}).get(nm)
+            if isinstance(fut, (list, tuple)) and fut:
+                try:
+                    f = [float(x if x is not None else 0) for x in fut][:h]
+                except (TypeError, ValueError):
+                    f = []
+                f = f + [f[-1] if f else v[-1]] * (h - len(f))
+            else:
+                f = [v[-1]] * h                       # no stated future → carry last known
+            exog_fut.append((nm, f))
+
         leaderboard = []
         preds = {}          # W9·D-5 — per-model {test, full} predictions, for the ensemble + accuracy-by-horizon
         recommendations = {
@@ -545,20 +604,20 @@ def run_forecast(payload):
                     test_pred, train_fit = _arima(train, len(test))
                     full_fcst, full_fit = _arima(history, h)
                 elif model_name == 'random_forest':
-                    test_pred, train_fit = _ml_regressor(RandomForestRegressor, train, len(test), train_dates, test_dates, promo_periods, holidays_set, lags=lags, n_estimators=100, max_depth=6, random_state=0)
-                    full_fcst, full_fit = _ml_regressor(RandomForestRegressor, history, h, hist_dates, future_dates, promo_periods, holidays_set, lags=lags, n_estimators=100, max_depth=6, random_state=0)
+                    test_pred, train_fit = _ml_regressor(RandomForestRegressor, train, len(test), train_dates, test_dates, promo_periods, holidays_set, lags=lags, exog=exog_train, exog_future=exog_test, n_estimators=100, max_depth=6, random_state=0)
+                    full_fcst, full_fit = _ml_regressor(RandomForestRegressor, history, h, hist_dates, future_dates, promo_periods, holidays_set, lags=lags, exog=exog_cols, exog_future=exog_fut, n_estimators=100, max_depth=6, random_state=0)
                 elif model_name == 'gradient_boost':
-                    test_pred, train_fit = _ml_regressor(GradientBoostingRegressor, train, len(test), train_dates, test_dates, promo_periods, holidays_set, lags=lags, n_estimators=100, max_depth=3, learning_rate=0.1, random_state=0)
-                    full_fcst, full_fit = _ml_regressor(GradientBoostingRegressor, history, h, hist_dates, future_dates, promo_periods, holidays_set, lags=lags, n_estimators=100, max_depth=3, learning_rate=0.1, random_state=0)
+                    test_pred, train_fit = _ml_regressor(GradientBoostingRegressor, train, len(test), train_dates, test_dates, promo_periods, holidays_set, lags=lags, exog=exog_train, exog_future=exog_test, n_estimators=100, max_depth=3, learning_rate=0.1, random_state=0)
+                    full_fcst, full_fit = _ml_regressor(GradientBoostingRegressor, history, h, hist_dates, future_dates, promo_periods, holidays_set, lags=lags, exog=exog_cols, exog_future=exog_fut, n_estimators=100, max_depth=3, learning_rate=0.1, random_state=0)
                 elif model_name == 'xgboost':
-                    test_pred, train_fit = _xgboost(train, len(test), train_dates, test_dates, promo_periods, holidays_set, lags=lags)
-                    full_fcst, full_fit = _xgboost(history, h, hist_dates, future_dates, promo_periods, holidays_set, lags=lags)
+                    test_pred, train_fit = _xgboost(train, len(test), train_dates, test_dates, promo_periods, holidays_set, lags=lags, exog=exog_train, exog_future=exog_test)
+                    full_fcst, full_fit = _xgboost(history, h, hist_dates, future_dates, promo_periods, holidays_set, lags=lags, exog=exog_cols, exog_future=exog_fut)
                 elif model_name == 'mlp':
-                    test_pred, train_fit = _ml_regressor(MLPRegressor, train, len(test), train_dates, test_dates, promo_periods, holidays_set, lags=lags, hidden_layer_sizes=(32, 16), max_iter=500, random_state=0)
-                    full_fcst, full_fit = _ml_regressor(MLPRegressor, history, h, hist_dates, future_dates, promo_periods, holidays_set, lags=lags, hidden_layer_sizes=(32, 16), max_iter=500, random_state=0)
+                    test_pred, train_fit = _ml_regressor(MLPRegressor, train, len(test), train_dates, test_dates, promo_periods, holidays_set, lags=lags, exog=exog_train, exog_future=exog_test, hidden_layer_sizes=(32, 16), max_iter=500, random_state=0)
+                    full_fcst, full_fit = _ml_regressor(MLPRegressor, history, h, hist_dates, future_dates, promo_periods, holidays_set, lags=lags, exog=exog_cols, exog_future=exog_fut, hidden_layer_sizes=(32, 16), max_iter=500, random_state=0)
                 elif model_name == 'hybrid':
-                    test_pred, train_fit = _hybrid(train, len(test), season, train_dates, test_dates, promo_periods, holidays_set, lags=lags)
-                    full_fcst, full_fit = _hybrid(history, h, season, hist_dates, future_dates, promo_periods, holidays_set, lags=lags)
+                    test_pred, train_fit = _hybrid(train, len(test), season, train_dates, test_dates, promo_periods, holidays_set, lags=lags, exog=exog_train, exog_future=exog_test)
+                    full_fcst, full_fit = _hybrid(history, h, season, hist_dates, future_dates, promo_periods, holidays_set, lags=lags, exog=exog_cols, exog_future=exog_fut)
                 elif model_name == 'croston':
                     test_pred, train_fit = _croston(train, len(test))
                     full_fcst, full_fit = _croston(history, h)
@@ -712,7 +771,7 @@ def run_forecast(payload):
         future_promos = [p - n_hist for p in promo_periods if p >= n_hist]
         if winner and future_promos and wrow and wrow.get('forecast'):
             try:
-                baseline = _forecast_full(winner, history, h, hist_dates, future_dates, [], holidays_set, season, lags)
+                baseline = _forecast_full(winner, history, h, hist_dates, future_dates, [], holidays_set, season, lags, exog=exog_cols, exog_future=exog_fut)
                 if baseline:
                     fc = wrow['forecast']
                     rows = []
@@ -742,6 +801,8 @@ def run_forecast(payload):
             'accuracy_by_horizon': accuracy_by_horizon,      # W9
             'forecast_pi': forecast_pi,                      # DM-A — per-period P10/P90 band
             'promo_attribution': promo_attribution,          # DM-B — baseline vs promo uplift
+            # V4-4 — which exogenous regressors rode into the ML feature matrix (None = none supplied)
+            'exog_features': [nm for nm, _ in exog_cols] or None,
 
             # GAP-7 — demand-pattern classification (Syntetos–Boylan).
             'intermittence': {'adi': round(adi, 2) if math.isfinite(adi) else None,

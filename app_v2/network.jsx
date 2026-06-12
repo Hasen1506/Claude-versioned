@@ -12,6 +12,10 @@ function StageNetwork({ onNav }) {
         kicker="Physical nodes · per-item inbound/outbound lanes · time-varying contracts · opening on-hand — defined AFTER products exist"
         right={<ModelIO label="Import model"/>}/>
       <ItemSelector onNav={onNav}/>
+      {/* ① DECIDE strip (Part 3.2) — derived live from the network master; no solve, nothing faked */}
+      <div style={{padding:'8px 18px', borderBottom:`2px solid ${C.line}`, background:C.paper}}>
+        <NetworkDecideStrip/>
+      </div>
       <div style={{padding:18}}>
         <NetFlows item={item} view={view}/>
         <NetNodes/>
@@ -345,10 +349,48 @@ function NetOnHand({ item }) {
           </table>
         </div>
         <Reading soWhat="The highlighted row is the active item — its WH/DC stock seeds the MRP net-requirement on Sourcing."/>
+        {/* V5-1 — the netting POLICY made explicit: WHICH solver consumes each row, and the
+            DRP discipline for downstream stock. Scope toggle is governed (cfg.prod). */}
+        <NetNettingPolicy/>
       </Card>
 
       <NetScheduledReceipts/>
     </StageSection>
+  );
+}
+
+// V5-1 — multi-site netting policy strip: the on-hand TRANSACTION layer is now
+// consumed by the solvers, and this states exactly where each row nets (no silent
+// assumptions). The FG scope toggle writes config.netFgScope (token cfg.prod →
+// production + aggregate go stale when flipped).
+function NetNettingPolicy(){
+  const { config, setConfig } = useConfig();
+  const scope = config.netFgScope || 'plant_wh';
+  const opts = [
+    { id:'plant_wh', label:'Plant + WH (DRP)', hint:'DC stock serves its region, not the plant build' },
+    { id:'all',      label:'Whole network',    hint:'every location nets the master schedule' },
+    { id:'off',      label:'Off (gross)',      hint:'schedule ignores FG stock' },
+  ];
+  return (
+    <div data-vis="v5-net" style={{marginTop:11, padding:'9px 12px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${C.a3}`, background:C.bg3}}>
+      <div style={{fontFamily:F.mono, fontSize:9, fontWeight:700, color:C.a3, letterSpacing:'.1em', marginBottom:5}}>WHERE EACH ROW NETS (V5-1 — the ledger is consumed, not decorative)</div>
+      <div style={{fontFamily:F.body, fontSize:11.5, color:C.tx2, lineHeight:1.55}}>
+        <b>RM at plant/WH</b> → opens the procurement MILP's material balance (no more fabricated
+        avg-demand cover). <b>FG at plant/WH</b> → nets the master schedule's required_qty and serves
+        the earliest weeks via opening inventory. <b>FG at a DC</b> → positioned stock serving its
+        region (DRP): netted by S&amp;OP network-wide, but NOT against the plant build unless you widen
+        the scope. <b>Aggregate S&amp;OP</b> always nets the whole network (planOpeningInv).
+      </div>
+      <div style={{display:'flex', gap:6, alignItems:'center', marginTop:8}}>
+        <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3}}>SCHEDULE NETTING SCOPE</span>
+        {opts.map(o=>(
+          <button key={o.id} title={o.hint} onClick={()=>setConfig({ netFgScope:o.id })}
+            style={{fontFamily:F.mono, fontSize:9.5, fontWeight:700, padding:'4px 9px', cursor:'pointer',
+              border:`2px solid ${scope===o.id?C.ac:C.line}`, background:scope===o.id?C.ac:C.paper,
+              color:scope===o.id?C.paper:C.tx2}}>{o.label}</button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -404,4 +446,34 @@ function NetScheduledReceipts(){
     </Card>
   );
 }
+// ── V3-9 · ① DECIDE strip (blueprint 3.2) — the tab's question + KPIs, DERIVED ──
+// live from the network master (no solver runs on this tab; every numeric here
+// rides a structured per-row grid — lanes, nodes, on-hand, receipts — which is
+// the honest editor for row-shaped master data, so there are deliberately ZERO
+// scalar GovFields on this tab): topology size, the tightest storage class, and
+// the inbound already on the water.
+function NetworkDecideStrip(){
+  const { network } = useNetwork();
+  const nodes = network.nodes || [], lanes = network.lanes || [];
+  let worst = null;   // tightest storage class across wh/dc nodes (derived, same math as the util card)
+  nodes.filter(n=>n.type==='wh'||n.type==='dc').forEach(n=>{
+    const u = nodeStorageUtil(n);
+    STORAGE_CLASSES.forEach(c=>{ if(u[c].cap>0 && (!worst || u[c].pct>worst.pct)) worst = { node:n.id, cls:c, pct:u[c].pct }; });
+  });
+  const recQty = (network.scheduledReceipts||[]).reduce((s,r)=>s+(Number(r.qty)||0),0);
+  return (
+    <div data-vis="network-decide" style={{display:'flex', alignItems:'center', gap:14, flexWrap:'wrap'}}>
+      <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.08em', color:C.tx3}}>① WHERE DOES MATERIAL FLOW — AND CAN THE NODES HOLD IT?</span>
+      <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}><b className="num" style={{fontFamily:F.disp, color:C.tx}}>{nodes.length}</b> nodes · <b className="num" style={{fontFamily:F.disp, color:C.tx}}>{lanes.length}</b> lanes</span>
+      <span style={{color:C.line2}}>·</span>
+      <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>tightest store {worst
+        ? <><b className="num" style={{fontFamily:F.disp, color:worst.pct>90?C.dg:C.tx}}>{worst.pct.toFixed(0)}%</b> ({worst.node} · {worst.cls})</>
+        : <b style={{color:C.tx3}}>no class caps set</b>}</span>
+      <span style={{color:C.line2}}>·</span>
+      <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>inbound on open POs <b className="num" style={{fontFamily:F.disp, color:C.tx}}>{recQty.toLocaleString('en-IN')}u</b></span>
+      <Provenance kind="derived" style={{padding:'0 4px', fontSize:7.5}}/>
+    </div>
+  );
+}
+
 window.StageNetwork = StageNetwork;

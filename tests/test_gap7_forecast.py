@@ -60,7 +60,12 @@ def test_run_forecast_ranks_intermittent_by_mase_and_picks_intermittent_model():
     op = r['products'][0]
     assert op['intermittence']['is_intermittent'] is True
     assert op['intermittence']['ranked_by'] == 'mase'
-    assert op['winner'] in ('croston', 'sba', 'tsb')
+    # honest contract (V1-3 fix 2026-06-10): the WINNER is whoever earns the lowest
+    # finite MASE — any model may win (here ARIMA legitimately beat Croston). The
+    # field steered to the intermittent family is the RECOMMENDATION, not the winner.
+    ok = [row for row in op['leaderboard'] if row['status'] == 'ok' and row.get('mase') is not None]
+    assert op['winner'] == min(ok, key=lambda r: r['mase'])['model']
+    assert op['recommended_model'] in ('croston', 'sba', 'tsb')
     # every ok row now carries the new metrics
     ok = [row for row in op['leaderboard'] if row['status'] == 'ok']
     assert ok and all('bias' in row and 'tracking_signal' in row for row in ok)

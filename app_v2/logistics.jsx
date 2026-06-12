@@ -15,13 +15,173 @@ function StageLogistics({ onNav }) {
       <div style={{padding:18}}>
         <SolverExplain id="transport"/>
         {gate.transport && <GateNote onNav={onNav}>Your profile is <b>single-site distribution</b> — there is nothing to ship between locations, so the transport solver is off. Switch to a network in Setup to enable it.</GateNote>}
-        <PrereqNote onNav={onNav} go="network" goLabel="open Network →">Nodes, lanes and contracts are master data — defined once in <b>Network (03)</b>. This stage only shows the transport solver's output.</PrereqNote>
+        <PrereqNote onNav={onNav} go="network" goLabel="open Network →">Topology (nodes, lanes, contracts) is master data — defined once in <b>Network (03)</b>. The COST levers the transport LP prices are steered right here (step 0).</PrereqNote>
         {tr.error && <div style={{margin:'0 0 12px', padding:'8px 12px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>Transport solver: {tr.error}</div>}
+        {/* V3-4 — the tab's FIRST steering inputs: lane rates + the SLA deadline as
+            GovFields (this tab had ZERO editable inputs; the LP could not be steered). */}
+        <StageSection step="0" title="Steering inputs · lane economics" sub="the cost levers the transport LP prices — outbound lane rates (₹/km) and the delivery SLA; every value is the TPAC seed until you override it"><LogSteering/></StageSection>
         <StageSection step="1" title="Allocation" sub="per-lane transport-mode LP (cheapest mode meeting each lane's SLA) + DC→customer min-cost flow assignment (G-L1: which DC serves each customer, cost-optimised)"><LogAllocation tr={tr}/></StageSection>
-        <StageSection step="2" title="Consolidation" sub="where merging LTL into FTL cuts cost"><LogConsolidation tr={tr}/></StageSection>
+        <LgModeSplit tr={tr}/>
+        <StageSection step="2" title="Consolidation" sub="where merging LTL into FTL cuts cost"><LogConsolidation tr={tr}/>
+          {/* V2-7 — the plain-English transport glass-box moved here from the Console's
+              (now deleted) duplicate ResTransport card: one-result-one-home. */}
+          {tr.result && <div style={{marginTop:12}}><GlassBoxExplainer icon="🚛" title="Why these routes? — plain-English" rows={explainTransport(tr.result)} prov="transport solve"
+            note="Every mode/lane and saving above is the freight optimiser's own pick — this only says it in words."/></div>}</StageSection>
         <StageSection step="3" title="Center of Gravity" sub="weighted-distance optimal hub — config and result as one"><LogCoG/></StageSection>
       </div>
     </div>
+  );
+}
+
+// ── V3-4 · LogSteering — the Logistics tab's first steering inputs ──────────
+// The blueprint's Part-5 finding: logistics had ZERO editable inputs (0/2) —
+// lane costs were master-data-only, so the transport LP could not be steered
+// from the tab that reads its answer. This card converts the COST levers to
+// GovFields: each outbound lane's rate (the ₹/km the mode LP and the G-L1
+// allocation cost_matrix both price) writes the governed network slice (lanes
+// stay master TOPOLOGY in Network 03 — from/to/km/mode are not duplicated
+// here), and the delivery SLA (config.slaDeadlineDays, seed 7) is the deadline
+// every lane's mode choice must meet. Both ride real SOLVE_DEPS tokens, so the
+// used-by chips and the stale cascade are live, not decorative.
+// Structured by WHICH MODEL TERM each lever feeds (not "governed vs not"): every
+// outbound leg is priced by exactly ONE lever, in exactly one group below —
+//   A · SERVICE POLICY — the SLA deadline, a CONSTRAINT on every lane's mode choice.
+//   B · MODE TARIFFS (₹/kg) — what prices the mode-booked legs (PLANT→WH, WH→DC):
+//       transport.py's MODE_SPECS cost_per_kg, governed via params.mode_overrides.
+//       (Their lane `rate` is not a model input — the tariff is the real lever.)
+//   C · FINAL-LEG LANE RATES (₹/km) — the DC→customer legs, priced per-lane at
+//       rate × km in the G-L1 allocation LP's cost_matrix.
+// Topology (from/to/km/mode) stays master data in Network 03.
+const _MODE_TARIFFS = [   // seeds = transport.py MODE_SPECS cost_per_kg (the modes TPAC's outbound legs can book)
+  { id:'road_ftl',     label:'Road FTL',  seed:1.8 },
+  { id:'road_ltl',     label:'Road LTL',  seed:3.5 },
+  { id:'rail',         label:'Rail',      seed:1.2 },
+  { id:'air_standard', label:'Air Std',   seed:15.0 },
+];
+function LogSteering(){
+  const { network, setNetwork } = useNetwork();
+  const { config, setConfig } = useConfig();
+  const outbound = (network.lanes||[]).filter(l=>l.direction==='outbound');
+  const nodeById = {}; ((window.M&&M.nodes)||[]).forEach(n=>{ nodeById[n.id]=n; });
+  const custLanes = outbound.filter(l=> (nodeById[l.to]||{}).type==='customer');
+  const modeLegs  = outbound.filter(l=> (nodeById[l.to]||{}).type!=='customer');
+  const seedRate = (id)=>{ const s=((window.M&&M.lanes)||[]).find(x=>x.id===id); return s?Number(s.rate):undefined; };
+  const setLaneRate = (id, v)=> setNetwork({ lanes: network.lanes.map(l=> l.id===id?{...l, rate:v}:l) });
+  const tariffs = config.modeTariffs || {};
+  const setTariff = (id, v)=> setConfig({ modeTariffs: { ...tariffs, [id]: v } });
+  const group = (k, title, sub)=> (
+    <div style={{display:'flex', alignItems:'baseline', gap:8, margin:'12px 0 6px'}}>
+      <span style={{fontFamily:F.disp, fontWeight:900, fontSize:12, color:C.ac}}>{k}</span>
+      <span style={{fontFamily:F.disp, fontWeight:800, fontSize:11, letterSpacing:'.05em', textTransform:'uppercase'}}>{title}</span>
+      <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>{sub}</span>
+    </div>
+  );
+  return (
+    <Card icon="🎛️" title="Transport cost levers" badge={`${1+_MODE_TARIFFS.length+custLanes.length} governed levers · 3 terms`} badgeTone="y"
+      info={{ what:'The transport model’s cost levers, grouped by the model term each one feeds: the SLA constrains every mode choice; mode tariffs (₹/kg) price the mode-booked legs; per-lane rates (₹/km) price the final DC→customer legs in the allocation LP. Every outbound leg is priced by exactly one lever here. Topology stays in Network 03.', flows:'SLA → deadline_days · tariffs → params.mode_overrides[mode].cost_per_kg · DC→customer rate × km → allocation cost_matrix.' }}
+      dev={{ comp:'LogSteering', props:'config.slaDeadlineDays · config.modeTariffs · network.lanes[].rate (customer lanes)', state:'setConfig → markStale(config) · setNetwork → markStale(network)' }}>
+      {group('A','Service policy','constrains every lane’s mode choice')}
+      <Grid cols={3} gap={10}>
+        <GovField label="Delivery SLA" token="config" suffix="d" seed={7}
+          value={config.slaDeadlineDays} min={1} max={60} integer
+          why="The deadline every outbound lane must meet — the mode LP only considers modes whose transit time fits inside it (a tight SLA forces Air; a loose one lets Rail win on cost)."
+          formula="mode choice: min cost s.t. transit_days ≤ SLA"
+          onChange={(v)=>setConfig({slaDeadlineDays:v})}/>
+      </Grid>
+      {group('B','Mode tariffs · ₹/kg',`price the mode-booked legs: ${modeLegs.map(l=>`${l.from}→${l.to}`).join(' · ')||'—'}`)}
+      <Grid cols={4} gap={10}>
+        {_MODE_TARIFFS.map(m=>(
+          <GovField key={m.id} label={m.label} token="config" prefix="₹" suffix="/kg" seed={m.seed}
+            value={tariffs[m.id]!=null?tariffs[m.id]:m.seed} min={0.1} max={100}
+            why={`What ${m.label} charges per kilogram — the mode model prices any leg booked on it at weight × this tariff, then picks the cheapest mode that fits the SLA and the load.`}
+            formula={`leg cost = weight_kg × tariff · override → mode_overrides.${m.id}`}
+            onChange={(v)=>setTariff(m.id, v)}/>
+        ))}
+      </Grid>
+      {group('C','Final-leg lane rates · ₹/km','price the DC→customer legs in the allocation LP')}
+      <Grid cols={3} gap={10}>
+        {custLanes.map(l=>(
+          <GovField key={l.id} label={`${l.from}→${l.to} · ${l.mode}`} token="network" prefix="₹" suffix="/km" seed={seedRate(l.id)}
+            value={l.rate} min={0.5} max={500}
+            why={`What this final-leg ${l.mode} lane costs per km (${l.km} km) — the allocation LP prices serving this customer from ${l.from} at rate × km; raise it and the LP reroutes via the cheaper DC.`}
+            formula={`cost_matrix[${l.from}→${l.to}] = rate × ${l.km} km`}
+            hint={`${l.km} km · lead ${l.lt}d`}
+            onChange={(v)=>setLaneRate(l.id, v)}/>
+        ))}
+      </Grid>
+      <Reading formula="A: transit ≤ SLA · B: leg cost = weight × tariff(mode) · C: cost_matrix = rate × km"
+        soWhat="One lever per leg, in the group where the model actually consumes it: mode-booked legs answer to their mode's tariff, the final customer leg to its lane rate, and the SLA decides which modes are even admissible. Edit any of them and the chips pulse the solves that just went stale."/>
+    </Card>
+  );
+}
+
+// ── V5-4 · LgModeSplit — multi-mode split on capacity/deadline binds ─────────
+// The per-lane pick above is all-or-nothing: one mode carries the whole lane. Two
+// binds make that wrong: a lane heavier than every mode's max load used to come
+// back rec=None and silently price the lane at ₹0; and a demand spike forced the
+// ENTIRE shipment to air when only the consumption bridge needs to fly. Armed,
+// transport.py may split a lane across modes (full bulk loads + remainder leg, or
+// fast bridge + slow bulk) and reports each split with its saving vs the single
+// pick. Toggle OFF ⇒ payload and solver output byte-identical to baseline.
+function LgModeSplit({ tr }){
+  const { config, setConfig } = useConfig();
+  const on = !!config.modeSplitEnabled;
+  const res = tr && tr.result;
+  const active = !!(res && res.mode_split_active);
+  const splits = active ? (res.shipments||[]).filter(s=>s.split) : [];
+  const rescued = splits.filter(s=>s.split.single_cost==null);
+  return (
+    <StageSection step="1b" title="Multi-mode split" sub="one lane, several modes: when a lane outweighs every single mode (capacity bind) or a spike would force everything to air (deadline bind), the optimiser splits the load instead of failing or over-paying">
+      <Card icon="🔀" title="Mode split on binds" span={2} badge={on?'armed — splits allowed':'off — one mode per lane'} badgeTone={on?'y':'k'}
+        right={<Btn kind={on?'primary':'secondary'} sm onClick={()=>setConfig({ modeSplitEnabled: !on })}>{on?'⏻ disarm split':'⏻ arm mode split'}</Btn>}
+        info={{ what:'All-or-nothing mode picks fail two ways: a lane heavier than every mode\'s max load is reported as UNSERVEABLE (and silently priced ₹0), and a demand spike flies the whole shipment when only the bridge quantity — slow-lane transit minus days-of-stock — needs air. Armed, the optimiser may split a lane across modes: n full bulk loads + a remainder leg, or a fast bridge + slow bulk, and only when the split beats the best single mode.', flows:'config.modeSplitEnabled → params.mode_split · buffer → split_bridge_buffer_pct → transport.py split plans → shipments[].split + split_saving.' }}
+        dev={{ comp:'LgModeSplit', props:'config.modeSplitEnabled · config.splitBridgeBufferPct', note:'V5-4 — _capacity_split (bin-pack full loads + remainder) · _deadline_split (air bridge = (slow_t − DoS) × burn × (1+buffer)).' }}>
+        <Grid cols={3} gap={10}>
+          <GovField label="Bridge buffer" token="config" suffix="%" min={0} max={100} seed={15}
+            value={config.splitBridgeBufferPct==null?'':config.splitBridgeBufferPct}
+            onChange={v=>setConfig({ splitBridgeBufferPct: v })}
+            hint="safety on the fast-lane bridge qty"
+            why="The deadline split flies exactly the consumption gap (slow-lane days minus days-of-stock × daily burn) — this buffer over-sizes that bridge so a late vessel or a hot week doesn't reopen the stockout it just closed."
+            formula="bridge_kg = (slow_days − DoS) × burn × (1 + buffer%)"/>
+        </Grid>
+        {on && (
+          <div data-vis="v5-modesplit" style={{marginTop:10, border:`2px solid ${C.line}`, borderLeft:`5px solid ${splits.length?C.hl:C.gn}`, background:C.paper, padding:'9px 12px'}}>
+            {!res ? (
+              <span style={{fontFamily:F.mono, fontSize:10, color:C.tx3}}>armed — run transport to see split decisions</span>
+            ) : !active ? (
+              <span style={{fontFamily:F.mono, fontSize:10, color:C.tx3}}>armed after the last solve — re-run transport to allow splits</span>
+            ) : (<>
+              <div style={{fontFamily:F.mono, fontSize:9.5, fontWeight:800, letterSpacing:'.06em', color:C.tx2, marginBottom:6}}>
+                MODE SPLITS — {splits.length?`${splits.length} lane(s) split`:'no binds: single-mode picks already optimal'}
+                {res.split_saving>0?` · ₹${Math.round(res.split_saving).toLocaleString('en-IN')} saved vs single-mode`:''}
+                {rescued.length?` · ${rescued.length} lane(s) rescued from UNSERVEABLE`:''}
+              </div>
+              {splits.length>0 && (
+                <div style={{display:'flex', flexDirection:'column', gap:8}}>
+                  {splits.map(s=>(
+                    <div key={s.name} style={{border:`1.5px solid ${C.line2}`, padding:'5px 8px'}}>
+                      <div style={{fontFamily:F.mono, fontSize:9.5, fontWeight:800}}>
+                        {s.name} · {s.split.reason==='capacity'?'CAPACITY bind':'DEADLINE bind'}
+                        {s.split.single_cost==null
+                          ? <span style={{color:C.hl}}> · no single mode fits {s.weight_kg.toLocaleString('en-IN')} kg — split is the only plan</span>
+                          : <span style={{color:C.gn}}> · saves ₹{Math.round(s.split.saving).toLocaleString('en-IN')} vs {s.recommended?s.recommended.label:'single mode'}</span>}
+                      </div>
+                      <div style={{fontFamily:F.mono, fontSize:9, color:C.tx2, marginTop:2}}>
+                        {s.split.legs.map(l=>`${l.label}${l.loads>1?` ×${l.loads}`:''} — ${Math.round(l.weight_kg).toLocaleString('en-IN')} kg · ₹${Math.round(l.base_cost).toLocaleString('en-IN')} · ${l.total_days}d`).join('  +  ')}
+                      </div>
+                      {s.split.reason==='deadline' && s.split.bridge_kg!=null && (
+                        <div style={{fontFamily:F.mono, fontSize:9, color:C.tx2}}>
+                          bridge {Math.round(s.split.bridge_kg).toLocaleString('en-IN')} kg flies (lands before day {Math.round(s.days_of_stock)}); the rest rides the cheap lane{s.split.residual_stockout_cost>0?` · residual exposure ₹${Math.round(s.split.residual_stockout_cost).toLocaleString('en-IN')}`:''}
+                        </div>)}
+                    </div>
+                  ))}
+                </div>)}
+              <Reading formula="split chosen only when Σ leg costs (+ residual stockout) < best single-mode total"
+                soWhat={splits.length?'A bind is live — the split is the honest plan: the lane ships whole (or the bridge lands before the stockout) at the least cost that respects every mode\'s physical limits.':'No lane currently outweighs its modes and no spike forces a bridge — the toggle is a live guardrail; it will split first under surge or branch what-ifs.'}/>
+            </>)}
+          </div>)}
+      </Card>
+    </StageSection>
   );
 }
 

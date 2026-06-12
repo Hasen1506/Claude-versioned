@@ -112,6 +112,44 @@ def solve_aggregate(data):
     hold_cost = _num(params.get('holding_cost_per_unit', 0))
     allow_back = bool(params.get('allow_backorder', True))
     back_cost = _num(params.get('backorder_cost_per_unit', 0))
+    # ── V4-1 · profit-aware objective (an explicit toggle, never a silent swap) ──
+    # 'min_cost' (default): meet demand at min cost — byte-identical to the legacy model.
+    # 'max_profit': demand becomes a PROMISE, not an obligation — a lost-sales variable
+    # L_t may shed demand at the price of revenue_per_unit (the ₹ a served unit SELLS
+    # for; the LP already charges reg/OT/holding for building it, so revenue — not net
+    # margin — is the correct coefficient). min(cost + revenue·L) ≡ max(revenue·served
+    # − cost) = max contribution. The plan declines demand whose marginal cost (e.g.
+    # the OT premium) exceeds what the unit sells for — the Q8 trap, priced.
+    objective_mode = str(params.get('objective_mode') or 'min_cost').lower()
+    if objective_mode not in ('min_cost', 'max_profit'):
+        objective_mode = 'min_cost'
+    revenue = _num(params.get('revenue_per_unit', 0))
+    if objective_mode == 'max_profit' and revenue <= 0:
+        return {'status': 'Invalid',
+                'error': 'max_profit objective needs revenue_per_unit > 0 '
+                         '(otherwise every sale is free to lose)',
+                'solve_time': round(time.time() - t0, 2)}
+    # ── Q10 rider · σ-aware backorder weighting (default 0 ⇒ byte-identical) ──
+    # A backorder against volatile demand is riskier (more likely to walk): scale the
+    # backorder ₹ by the demand-weighted forecast CV the caller derives from REAL
+    # per-SKU holdout error. back_eff = back × (1 + weight × cv).
+    sigma_w = max(0.0, _num(params.get('backorder_sigma_weight', 0)))
+    demand_cv = max(0.0, _num(params.get('demand_cv', 0)))
+    back_cost_eff = back_cost * (1.0 + sigma_w * demand_cv)
+    # ── V4-2 · multi-resource (machine-hour) feasibility — optional-on ──
+    # The legacy model is SINGLE-resource (worker-time): a plan could be labour-
+    # feasible but machine-infeasible. Each resource row is a machine class
+    # (typically a line): hours_per_agg_unit = machine hours one aggregate unit
+    # consumes on it (demand-mix weighted by the caller), capacity_hours = its
+    # hours available per period (× OEE). Adds (P_t+O_t)·h_c ≤ H_c per period —
+    # a second, independent ceiling beside labour. No resources ⇒ byte-identical.
+    resources = []
+    for r in (data.get('resources') or params.get('resources') or []):
+        h = _num(r.get('hours_per_agg_unit', 0))
+        cap_h = _num(r.get('capacity_hours', 0))
+        if h > 0 and cap_h > 0:
+            resources.append({'name': str(r.get('name') or f'RES-{len(resources)+1}'),
+                              'hours_per_agg_unit': h, 'capacity_hours': cap_h})
     hire_cost = _num(params.get('hire_cost', 0))
     fire_cost = _num(params.get('fire_cost', 0))
     wage = _num(params.get('wage_per_worker', 0))
@@ -177,10 +215,15 @@ def solve_aggregate(data):
         for t in range(T):
             B[t].upBound = 0
 
+    # V4-1 — lost-sales variables exist only in profit mode (L_t ≤ that period's demand)
+    L = {t: pulp.LpVariable(f'L_{t}', 0, agg_demand[t]) for t in range(T)} \
+        if objective_mode == 'max_profit' else None
+
     # ── Objective ──
     prob += pulp.lpSum(
-        reg_cost * P[t] + ot_cost * O[t] + hold_cost * I[t] + back_cost * B[t]
+        reg_cost * P[t] + ot_cost * O[t] + hold_cost * I[t] + back_cost_eff * B[t]
         + hire_cost * H[t] + fire_cost * F[t] + wage * W[t]
+        + (revenue * L[t] if L is not None else 0)
         for t in range(T)
     ), 'Total_Cost'
 
@@ -192,7 +235,10 @@ def solve_aggregate(data):
         prev_w = init_wf if t == 0 else W[t - 1]
 
         # Inventory balance: net stock position carried + made − demanded
-        prob += (I[t] - B[t]) == (prev_i - prev_b) + P[t] + O[t] - agg_demand[t], f'InvBal_{t}'
+        # (V4-1: in profit mode a lost sale L_t leaves the system — demand shed at
+        #  the price of its contribution, never silently)
+        prob += (I[t] - B[t]) == (prev_i - prev_b) + P[t] + O[t] - agg_demand[t] \
+            + (L[t] if L is not None else 0), f'InvBal_{t}'
         # Workforce balance
         prob += W[t] == prev_w + H[t] - F[t], f'WfBal_{t}'
         # Regular capacity tied to workforce
@@ -201,6 +247,11 @@ def solve_aggregate(data):
         cap_rows[f'Regular capacity P{t+1}'] = rc
         # Overtime capacity
         prob += O[t] <= max_ot_pct * rate * W[t], f'OtCap_{t}'
+        # V4-2 — machine-hour ceiling per resource class (independent of labour)
+        for ci, rsc in enumerate(resources):
+            mc = f'MachCap_{ci}_{t}'
+            prob += (P[t] + O[t]) * rsc['hours_per_agg_unit'] <= rsc['capacity_hours'], mc
+            cap_rows[f"Machine {rsc['name']} P{t+1}"] = mc
         # Safety stock floor
         if safety[t] > 0:
             prob += I[t] >= safety[t], f'SafetyStock_{t}'
@@ -223,14 +274,17 @@ def solve_aggregate(data):
 
     periods = []
     cost_reg = cost_ot = cost_hold = cost_back = cost_hire = cost_fire = cost_wage = 0.0
+    lost_total = 0.0
     for t in range(T):
         p_reg, p_ot = v(P[t]), v(O[t])
         inv, bk = v(I[t]), v(B[t])
         wf, hi, fi = v(W[t]), v(H[t]), v(F[t])
+        lost = v(L[t]) if L is not None else 0.0
+        lost_total += lost
         c_reg = reg_cost * p_reg
         c_ot = ot_cost * p_ot
         c_hold = hold_cost * inv
-        c_back = back_cost * bk
+        c_back = back_cost_eff * bk     # σ-weighted ₹ — matches the objective (weight 0 ⇒ legacy)
         c_hire = hire_cost * hi
         c_fire = fire_cost * fi
         c_wage = wage * wf
@@ -243,6 +297,7 @@ def solve_aggregate(data):
             'overtime_production': round(p_ot, 1),
             'inventory': round(inv, 1),
             'backorder': round(bk, 1),
+            'lost': round(lost, 1),     # V4-1 — demand shed at its contribution price (0 in min_cost)
             'workforce': round(wf, 2),
             'hires': round(hi, 2),
             'fires': round(fi, 2),
@@ -253,6 +308,19 @@ def solve_aggregate(data):
         })
 
     total_cost = pulp.value(prob.objective)
+    # V4-1 — in profit mode the objective value includes the lost-margin penalty;
+    # report the REAL operating cost (Σ components) and the profit identity instead.
+    profit_block = None
+    if objective_mode == 'max_profit':
+        total_cost = cost_reg + cost_ot + cost_hold + cost_back + cost_hire + cost_fire + cost_wage
+        served = sum(agg_demand) - lost_total
+        profit_block = {
+            'revenue_per_unit': round(revenue, 2),
+            'lost_units': round(lost_total, 1),
+            'lost_revenue': round(revenue * lost_total, 2),
+            'total_revenue': round(revenue * served, 2),
+            'profit': round(revenue * served - total_cost, 2),
+        }
 
     # ── Strategy classification: level vs chase ──
     # A "level" plan holds workforce ~flat and absorbs demand swings with inventory;
@@ -361,5 +429,23 @@ def solve_aggregate(data):
         'shadow_prices': shadow_prices,
         'sku_plans': sku_plans,
         'rate_per_worker': round(rate, 3),
+        # V4-2 — machine-class loading from the SOLVED plan (None = single-resource legacy)
+        'resources': ([{'name': rsc['name'],
+                        'hours_per_agg_unit': round(rsc['hours_per_agg_unit'], 4),
+                        'capacity_hours': round(rsc['capacity_hours'], 1),
+                        'util_by_period': [round((pr['regular_production'] + pr['overtime_production'])
+                                                 * rsc['hours_per_agg_unit'] / rsc['capacity_hours'] * 100, 1)
+                                           for pr in periods],
+                        'peak_util': round(max(((pr['regular_production'] + pr['overtime_production'])
+                                                * rsc['hours_per_agg_unit'] / rsc['capacity_hours'] * 100)
+                                               for pr in periods), 1) if periods else 0.0}
+                       for rsc in resources] if resources else None),
+        # V4-1 — which objective produced this plan (an explicit toggle, never silent)
+        'objective_mode': objective_mode,
+        'profit': profit_block,            # non-null only in max_profit mode
+        # Q10 rider — the σ-weighted backorder ₹ actually charged (weight 0 ⇒ legacy)
+        'backorder_weighting': ({'sigma_weight': round(sigma_w, 3), 'demand_cv': round(demand_cv, 4),
+                                 'backorder_cost_effective': round(back_cost_eff, 2)}
+                                if sigma_w > 0 else None),
         'solve_time': round(solve_time, 3),
     }

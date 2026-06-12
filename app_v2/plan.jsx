@@ -8,10 +8,63 @@
 const PLAN_PARAMS = {
   init_workforce: 42, rate_per_worker: 30,        // ≈1,260 u/mo regular capacity
   reg_cost_per_unit: 820, ot_cost_per_unit: 1230, // ₹/u (OT = 1.5×)
-  holding_cost_per_unit: 45, backorder_cost_per_unit: 1500,
+  holding_cost_per_unit: 45,   // last-resort only — live default is aggHoldingParam (V2-4: carryRate × blended unit cost / mo)
+  backorder_cost_per_unit: 1500,
   hire_cost: 18000, fire_cost: 25000, wage_per_worker: 22000,
   max_ot_pct: 0.25, min_workforce: 30, max_workforce: 60, allow_backorder: true,
+  backorder_sigma_weight: 0,   // V4-1/Q10 rider — 0 = legacy (σ-blind backorder ₹)
+  machine_resources: false,    // V4-2 — off = single-resource (worker-time) legacy
 };
+// ── V4-2 · machine-hour resource rows per LINE (optional-on) ─────────────────
+// hours one WEIGHTED aggregate unit consumes on line ℓ = Σ_{sku→ℓ}(cyc/60)·demand
+// ÷ Σ lw·demand — same effective routing rule the production schedule uses
+// (governed config.prodRouting override → master p.line/p.cycle); capacity =
+// monthly machine hours × OEE. Catches plans that are labour-feasible but
+// machine-infeasible (the Q1 gap).
+function aggMachineResources(config, planning){
+  const fg = (M.products||[]).filter(p=>p.cat==='Finished');
+  const lw = (typeof aggLaborWeights==='function') ? aggLaborWeights(fg) : {};
+  const route = (config||{}).prodRouting || {};
+  const TW = fg.reduce((s,p)=> s + (lw[p.sku]!=null?lw[p.sku]:1)*(p.demand||0), 0) || 1;
+  const wd  = Math.max(1, Number(planning && planning.workDaysPerWeek)||6);
+  const hps = Math.max(1, Number(planning && planning.hrsPerShift)||8);
+  return (M.lines||[]).map(l=>{
+    let hrs = 0;
+    fg.forEach(p=>{
+      const ov = route[p.sku]||{};
+      if((ov.line || p.line) !== l.id) return;
+      const cyc = (ov.cycle!=null && ov.cycle!=='') ? Number(ov.cycle) : (Number(p.cycle)||0);
+      hrs += (cyc/60)*(p.demand||0);
+    });
+    return { name:l.id,
+      hours_per_agg_unit: Math.round((hrs/TW)*10000)/10000,
+      capacity_hours: Math.round(wd*hps*(Number(l.shifts)||1)*4.33*(Number(l.oee)||1)*10)/10 };
+  }).filter(r=>r.hours_per_agg_unit>0);
+}
+// ── V4-1 · profit-aware objective inputs (derived from REAL master data) ─────
+// REVENUE per LABOR-WEIGHTED aggregate unit: Σ price·demand ÷ Σ lw·demand — the ₹
+// a served aggregate unit SELLS for, in the plan's worker-time yardstick. This is
+// the lost-sales price in max-profit mode: the LP already charges reg/OT/holding
+// for building, so revenue (not net margin — that would double-charge production
+// cost) is the coefficient that makes min(cost + rev·L) ≡ max contribution.
+function aggRevenuePerUnit(config){
+  const fg = (M.products||[]).filter(p=>p.cat==='Finished');
+  const lw = (typeof aggLaborWeights==='function') ? aggLaborWeights(fg) : {};
+  let m=0, wq=0;
+  fg.forEach(p=>{
+    m  += (Number(p.price)||0) * (p.demand||0);
+    wq += (lw[p.sku]!=null ? lw[p.sku] : 1) * (p.demand||0);
+  });
+  return wq>0 ? Math.round(m/wq) : 0;
+}
+// Q10 rider — demand-weighted forecast CV from REAL per-SKU error (p.mape), the σ
+// the backorder weighting scales by (back_eff = back × (1 + w·cv)).
+function aggDemandCv(){
+  const fg = (M.products||[]).filter(p=>p.cat==='Finished');
+  let s=0, d=0;
+  fg.forEach(p=>{ s += ((Number(p.mape)||15)/100)*(p.demand||0); d += (p.demand||0); });
+  return d>0 ? Math.round((s/d)*10000)/10000 : 0;
+}
 // aggregate result → the {m,dem,cap,prod,inv} row shape the CapacityChart/table use.
 function aggMonths(res){
   if(!res || !res.periods) return null;
@@ -44,6 +97,7 @@ function lineRegistryCapacity(){
 
 function StagePlan({ onNav }) {
   const { config, setConfig } = useConfig();
+  const { planning } = (typeof usePlanning==='function') ? usePlanning() : { planning:{} };   // V4-2 — machine-hour calendar
   // family monthly demand (mock 6-month profile) split per finished SKU by annual share,
   // so the solver can disaggregate it back — sku_plans feeds the Disaggregation card.
   const rate = planParam(config, 'rate_per_worker') || 1;
@@ -66,6 +120,8 @@ function StagePlan({ onNav }) {
         forecast: months.map(mo=> Math.max(0, Math.round(mo.dem * (p.demand||0)/totAnnual))),
         labor_hours_per_unit: lw[p.sku] != null ? lw[p.sku] : 1,
       })),
+      // V4-2 — optional machine-hour ceilings beside labour (off = legacy single-resource)
+      ...(planBool(config,'machine_resources') ? { resources: aggMachineResources(config, planning) } : {}),
       params: {
         periods: months.length,
         init_workforce: planParam(config,'init_workforce'),
@@ -73,7 +129,8 @@ function StagePlan({ onNav }) {
         rate_per_worker: rate,
         reg_cost_per_unit: planParam(config,'reg_cost_per_unit'),
         ot_cost_per_unit: planParam(config,'ot_cost_per_unit'),
-        holding_cost_per_unit: planParam(config,'holding_cost_per_unit'),
+        // V2-4 — typed override wins, else carryRate × blended unit cost / mo (NOT the ₹45 placeholder)
+        holding_cost_per_unit: (typeof aggHoldingParam==='function') ? aggHoldingParam(config) : planParam(config,'holding_cost_per_unit'),
         backorder_cost_per_unit: planParam(config,'backorder_cost_per_unit'),
         hire_cost: planParam(config,'hire_cost'),
         fire_cost: planParam(config,'fire_cost'),
@@ -82,6 +139,14 @@ function StagePlan({ onNav }) {
         min_workforce: planParam(config,'min_workforce'),
         max_workforce: wfCeiling,                 // PL-1 — line-registry ceiling
         allow_backorder: planBool(config,'allow_backorder'),   // PL-G8 — governed demand-shorting lever
+        // V4-1 — explicit objective toggle: min cost (meet demand) | max profit (demand is
+        // a promise — lost sales priced at the blended contribution, never silently).
+        objective_mode: (config.planParams||{}).objective_mode || 'min_cost',
+        revenue_per_unit: ((config.planParams||{}).revenue_per_unit!=null && (config.planParams||{}).revenue_per_unit!=='')
+          ? Number((config.planParams||{}).revenue_per_unit) : aggRevenuePerUnit(config),
+        // Q10 rider — σ-aware backorder ₹ (weight 0 = legacy); cv derived from real p.mape
+        backorder_sigma_weight: planParam(config,'backorder_sigma_weight'),
+        demand_cv: aggDemandCv(),
         // G-P2 — service-driven horizon-end cover (no-op when config.planEndCoverEnabled is off).
         ...(typeof aggEndCoverParams==='function' ? aggEndCoverParams(config) : {}),
       },
@@ -106,6 +171,10 @@ function StagePlan({ onNav }) {
         <span style={{fontFamily:F.body, fontSize:11.5, color:C.tx2, lineHeight:1.4}}>
           This is <b>ONE pooled aggregate plan across your whole finished portfolio</b> — {nFin} SKUs{famN>1?<> spanning <b>{famN} families</b></>:null}, <b>not</b> a separate plan per family. Every finished SKU's committed demand is pooled by <b>worker-time</b> into one capacity &amp; workforce plan; per-SKU numbers are recovered in <b>step 4 · Disaggregation</b>.
         </span>
+      </div>
+      {/* ① DECIDE strip (Part 3.2) — VIS-1: the feasibility thermometer, from the SOLVED plan only */}
+      <div style={{padding:'8px 18px', borderBottom:`2px solid ${C.line}`, background:C.paper}}>
+        <Vis1Thermometer res={agg && agg.result} config={config}/>
       </div>
       <div style={{padding:18}}>
         <SolverExplain id="aggregate"/>
@@ -145,30 +214,54 @@ function PlanParamsCard({ config, setConfig, lineCap, rate, wfCeiling, agg, ranA
     <Card icon="🎛️" title="Aggregate-plan cost & capacity inputs" badge="governed" badgeTone="y"
       right={agg && agg.result ? <Provenance kind="solved" asOf={ranAt?ranAt.toLocaleTimeString():undefined}/> : null}
       info={{ what:'Per-unit production/holding/backorder costs, hire/fire/wage costs, and the workforce + overtime + backorder levers the Hax–Meal aggregate LP minimizes. Every field here is a seed you may override per run — including the demand-shorting levers (allow-backorder + backorder cost) that decide level-vs-chase.', flows:'→ /api/solve/aggregate params.' }}
-      dev={{ comp:'SolverInput', props:'config.planParams', state:'config.planParams.{rate_per_worker,reg_cost_per_unit,backorder_cost_per_unit,init_workforce,min_workforce,max_ot_pct,allow_backorder,…}' }}>
+      dev={{ comp:'GovField', props:'config.planParams (token cfg.plan — aggregate-only)', state:'config.planParams.{rate_per_worker,reg_cost_per_unit,backorder_cost_per_unit,init_workforce,min_workforce,max_ot_pct,allow_backorder,…}' }}>
       <Grid cols={4}>
-        <SolverInput label="Rate / worker" seed={PLAN_PARAMS.rate_per_worker} value={pp.rate_per_worker} onChange={v=>set('rate_per_worker',v)} min={1} suffix="u/mo"/>
-        <SolverInput label="Regular cost" seed={PLAN_PARAMS.reg_cost_per_unit} value={pp.reg_cost_per_unit} onChange={v=>set('reg_cost_per_unit',v)} min={0} prefix="₹"/>
-        <SolverInput label="Overtime cost" seed={PLAN_PARAMS.ot_cost_per_unit} value={pp.ot_cost_per_unit} onChange={v=>set('ot_cost_per_unit',v)} min={0} prefix="₹"/>
-        <SolverInput label="Holding cost" seed={PLAN_PARAMS.holding_cost_per_unit} value={pp.holding_cost_per_unit} onChange={v=>set('holding_cost_per_unit',v)} min={0} prefix="₹"/>
-        <SolverInput label="Backorder cost" seed={PLAN_PARAMS.backorder_cost_per_unit} value={pp.backorder_cost_per_unit} onChange={v=>set('backorder_cost_per_unit',v)} min={0} prefix="₹" hint="penalty per unit of demand shorted — the lever that pushes the plan toward meeting demand vs carrying the backlog"/>
-        <SolverInput label="Hire cost" seed={PLAN_PARAMS.hire_cost} value={pp.hire_cost} onChange={v=>set('hire_cost',v)} min={0} prefix="₹"/>
-        <SolverInput label="Fire cost" seed={PLAN_PARAMS.fire_cost} value={pp.fire_cost} onChange={v=>set('fire_cost',v)} min={0} prefix="₹"/>
-        <SolverInput label="Wage / worker" seed={PLAN_PARAMS.wage_per_worker} value={pp.wage_per_worker} onChange={v=>set('wage_per_worker',v)} min={0} prefix="₹"/>
-        <SolverInput label="Initial workforce" seed={PLAN_PARAMS.init_workforce} value={pp.init_workforce} onChange={v=>set('init_workforce',v)} min={1} suffix="heads" hint="crew on the books at period 0 (the starting point hire/fire moves from)"/>
-        <SolverInput label="Min workforce" seed={PLAN_PARAMS.min_workforce} value={pp.min_workforce} onChange={v=>set('min_workforce',v)} min={0} suffix="heads" hint="floor the plan can fire down to"/>
-        <SolverInput label="Opening FG inventory" seed={_net.weighted} value={pp.init_inventory} onChange={v=>set('init_inventory',v)} min={0} suffix="u" hint={`auto-reconciled from your Network FG on-hand: ${_net.phys.toLocaleString('en-IN')} u physical → ${_net.weighted.toLocaleString('en-IN')} labor-weighted u (the plan's worker-time yardstick — same stock, NOT a cut). Leave blank to stay linked to Network; type a value only to pin a different opening stock.`}/>
+        <GovField label="Rate / worker" token="cfg.plan" seed={PLAN_PARAMS.rate_per_worker} value={pp.rate_per_worker} onChange={v=>set('rate_per_worker',v)} min={1} suffix="u/mo"
+          why="How many units one worker produces per month at regular time — the conversion between heads and capacity. It also scales the workforce ceiling (line cap ÷ rate)."
+          formula="regular capacity_t = rate × workforce_t   ·   max workforce = Σ line cap ÷ rate"/>
+        <GovField label="Regular cost" token="cfg.plan" seed={PLAN_PARAMS.reg_cost_per_unit} value={pp.reg_cost_per_unit} onChange={v=>set('reg_cost_per_unit',v)} min={0} prefix="₹" suffix="/u"
+          why="Variable cost of one unit built on regular time — the baseline every other lever (OT, holding, backorder) is traded against."
+          formula="min Σ reg_cost·P_t + ot_cost·OT_t + holding·I_t + …"/>
+        <GovField label="Overtime cost" token="cfg.plan" seed={PLAN_PARAMS.ot_cost_per_unit} value={pp.ot_cost_per_unit} onChange={v=>set('ot_cost_per_unit',v)} min={0} prefix="₹" suffix="/u"
+          why="Cost of one unit built on overtime (the OT premium). The plan buys OT only when it beats hiring or building ahead."
+          formula="OT premium = ot_cost − reg_cost, paid per OT unit"/>
+        <GovField label="Holding cost" token="cfg.plan" seed={(typeof aggHoldingPerUnit==='function')?aggHoldingPerUnit(config):PLAN_PARAMS.holding_cost_per_unit} value={pp.holding_cost_per_unit} onChange={v=>set('holding_cost_per_unit',v)} min={0} prefix="₹" suffix="/u/mo"
+          why="₹/unit/month of FROZEN MONEY — derived as carry rate (WACC + holding spread, the same charge procurement & inventory policy use) × blended unit cost ÷ 12, so build-ahead and procurement price stock identically (V2-4). Type a value to override."
+          formula="seed = carryRate(config) × blended effUnitCost ÷ 12"/>
+        <GovField label="Backorder cost" token="cfg.plan" seed={PLAN_PARAMS.backorder_cost_per_unit} value={pp.backorder_cost_per_unit} onChange={v=>set('backorder_cost_per_unit',v)} min={0} prefix="₹" suffix="/u"
+          why="Penalty per unit of demand shorted — the lever that pushes the plan toward meeting demand vs carrying the backlog."
+          formula="objective charges backorder_cost × B_t each period a unit stays short"/>
+        <GovField label="Hire cost" token="cfg.plan" seed={PLAN_PARAMS.hire_cost} value={pp.hire_cost} onChange={v=>set('hire_cost',v)} min={0} prefix="₹" suffix="/head"
+          why="One-time cost of adding a worker (recruiting + training + ramp). High hire+fire costs push the plan toward LEVEL."
+          formula="objective charges hire_cost × H_t per head added"/>
+        <GovField label="Fire cost" token="cfg.plan" seed={PLAN_PARAMS.fire_cost} value={pp.fire_cost} onChange={v=>set('fire_cost',v)} min={0} prefix="₹" suffix="/head"
+          why="One-time cost of releasing a worker (severance + notice). The other half of the churn penalty that decides level-vs-chase."
+          formula="objective charges fire_cost × F_t per head released"/>
+        <GovField label="Wage / worker" token="cfg.plan" seed={PLAN_PARAMS.wage_per_worker} value={pp.wage_per_worker} onChange={v=>set('wage_per_worker',v)} min={0} prefix="₹" suffix="/mo"
+          why="Monthly salary per head — what carrying a steady crew costs even in slack months. Traded against hire/fire churn."
+          formula="objective charges wage × W_t every period"/>
+        <GovField label="Initial workforce" token="cfg.plan" seed={PLAN_PARAMS.init_workforce} value={pp.init_workforce} onChange={v=>set('init_workforce',v)} min={1} integer suffix="heads"
+          why="Crew on the books at period 0 — the starting point hire/fire moves from."
+          formula="W_0 = init_workforce; W_t = W_{t-1} + H_t − F_t"/>
+        <GovField label="Min workforce" token="cfg.plan" seed={PLAN_PARAMS.min_workforce} value={pp.min_workforce} onChange={v=>set('min_workforce',v)} min={0} integer suffix="heads"
+          why="Floor the plan can fire down to — your core crew."
+          formula="W_t ≥ min_workforce ∀t"/>
+        <GovField label="Opening FG inventory" token="cfg.plan" seed={_net.weighted} value={pp.init_inventory} onChange={v=>set('init_inventory',v)} min={0} suffix="u"
+          why={`Auto-reconciled from your Network FG on-hand: ${_net.phys.toLocaleString('en-IN')} u physical → ${_net.weighted.toLocaleString('en-IN')} labor-weighted u (the plan's worker-time yardstick — same stock, NOT a cut). Leave blank to stay linked to Network; type a value only to pin a different opening stock.`}
+          formula="I_0 = Σ DC on-hand × labor weight (clear field ⇒ stays linked to Network)"/>
       </Grid>
       <div style={{display:'flex', alignItems:'center', gap:22, marginTop:11, flexWrap:'wrap'}}>
         <label style={{display:'flex', alignItems:'center', gap:7, fontFamily:F.mono, fontSize:10.5, color:C.tx2, cursor:'pointer'}}>
           <input type="checkbox" checked={allowBO} onChange={e=>set('allow_backorder', e.target.checked)}/>
           Allow backorder <span style={{color:C.tx3}}>— off ⇒ demand MUST be met every period (no shorting; forces hire / OT / prebuild)</span>
         </label>
-        <div style={{display:'flex', alignItems:'center', gap:7, fontFamily:F.mono, fontSize:10.5, color:C.tx2}}>
-          Max overtime
-          <NumInput value={Math.round(planParam(config,'max_ot_pct')*100)} suffix="%" w={76}
-            onChange={v=> set('max_ot_pct', v===''?'' : Math.max(0, Math.min(1, Number(v)/100)))}/>
-          <span style={{color:C.tx3}}>of regular capacity</span>
+        <div style={{width:200}}>
+          <GovField label="Max overtime" token="cfg.plan" seed={Math.round(PLAN_PARAMS.max_ot_pct*100)}
+            value={pp.max_ot_pct==null||pp.max_ot_pct===''?'':Math.round(Number(pp.max_ot_pct)*100)}
+            onChange={v=> set('max_ot_pct', v===''?'' : Math.max(0, Math.min(1, Number(v)/100)))}
+            min={0} max={100} suffix="% of reg cap"
+            why="Ceiling on overtime as a share of that period's regular capacity — the UI takes a percent; the solver consumes the FRACTION (UNITS.md: max_ot_pct is a fraction despite the suffix)."
+            formula="OT_t ≤ max_ot_pct × rate × W_t"/>
         </div>
       </div>
       {/* G-P2 — service-driven horizon-end cover. OFF by default ⇒ the plan ends at zero;
@@ -180,11 +273,13 @@ function PlanParamsCard({ config, setConfig, lineCap, rate, wfCeiling, agg, ranA
             onChange={e=>setConfig({ planEndCoverEnabled: e.target.checked })}/>
           Service-driven end-cover <span style={{color:C.tx3}}>— floor horizon-end inventory at z({Math.round((Number(config.serviceLevel)||0.95)*100)}%)·σ(demand) so the plan doesn't run terminal stock to zero</span>
         </label>
-        {config.planEndCoverEnabled && <div style={{display:'flex', alignItems:'center', gap:7, fontFamily:F.mono, fontSize:10.5, color:C.tx2}}>
-          Cover
-          <NumInput value={config.planEndCoverPeriods==null?1:config.planEndCoverPeriods} suffix="periods" w={92}
-            onChange={v=> setConfig({ planEndCoverPeriods: v===''?1 : Math.max(1, Number(v)) })}/>
-          <span style={{color:C.tx3}}>of demand-σ</span>
+        {config.planEndCoverEnabled && <div style={{width:200}}>
+          <GovField label="End cover" token="cfg.plan" seed={1} integer min={1}
+            value={config.planEndCoverPeriods==null?'':config.planEndCoverPeriods}
+            onChange={v=> setConfig({ planEndCoverPeriods: v===''?'' : Math.max(1, Number(v)) })}
+            suffix="periods of σ"
+            why="How many periods of demand uncertainty the horizon-end inventory floor covers — the √τ in the safety-stock floor."
+            formula="I_T ≥ z(serviceLevel) · σ(agg demand) · √cover"/>
         </div>}
         {config.planEndCoverEnabled && agg && agg.result && agg.result.ending_floor!=null && (()=>{
           const b = agg.result.ending_floor_basis||{}; const endInv = agg.result.ending_inventory;
@@ -196,6 +291,67 @@ function PlanParamsCard({ config, setConfig, lineCap, rate, wfCeiling, agg, ranA
           </span>;
         })()}
       </div>
+      {/* V4-1 — the objective itself is governed: min cost (meet demand, legacy default)
+          vs max profit (demand is a PROMISE — lost sales priced at contribution). An
+          explicit toggle, never a silent swap; + the Q10 σ-aware backorder rider. */}
+      <div data-vis="v4-objective" style={{display:'flex', alignItems:'flex-end', gap:12, marginTop:11, flexWrap:'wrap'}}>
+        <span style={{fontFamily:F.mono, fontSize:9, letterSpacing:'.08em', color:C.tx3, paddingBottom:8}}>OBJECTIVE</span>
+        {[['min_cost','min cost · meet demand'],['max_profit','max profit · demand is a promise']].map(([id,lbl])=>{
+          const cur = pp.objective_mode || 'min_cost';
+          return <button key={id} onClick={()=>set('objective_mode', id)} style={{
+            border:`2px solid ${cur===id?C.ink:C.line}`, background:cur===id?C.ink:C.paper, color:cur===id?C.ac:C.tx,
+            fontFamily:F.disp, fontSize:10.5, fontWeight:700, padding:'6px 10px', cursor:'pointer', marginBottom:2}}>{lbl}</button>;
+        })}
+        {(pp.objective_mode||'min_cost')==='max_profit' && <div style={{width:190}}>
+          <GovField label="Revenue / unit" token="cfg.plan" seed={aggRevenuePerUnit(config)}
+            value={pp.revenue_per_unit} onChange={v=>set('revenue_per_unit',v)} min={1} prefix="₹" suffix="/u"
+            hint="lost-sales price — seed = blended sell price"
+            why="What a served aggregate unit SELLS for (demand-weighted blended price per labor-weighted unit). The LP already charges regular/OT/holding for building — so pricing a lost sale at REVENUE (not net margin, which would double-charge production cost) is what makes the toggle a true profit maximiser: it declines demand whose marginal cost exceeds its price."
+            formula="min Σ costs + revenue × L_t  ≡  max Σ revenue × served − costs (= contribution)"/>
+        </div>}
+        <div style={{width:190}}>
+          <GovField label="σ-backorder weight" token="cfg.plan" seed={PLAN_PARAMS.backorder_sigma_weight}
+            value={pp.backorder_sigma_weight} onChange={v=>set('backorder_sigma_weight',v)} min={0} max={10}
+            hint={`Q10 — 0 = off · demand CV ${aggDemandCv()} from real per-SKU MAPE`}
+            why="A backorder against VOLATILE demand is riskier (the customer is likelier to walk). This scales the backorder ₹ by the portfolio's demand-weighted forecast CV — derived from each SKU's real holdout MAPE, not typed."
+            formula={`back_eff = backorder ₹ × (1 + w × ${aggDemandCv()})`}/>
+        </div>
+      </div>
+      {/* V4-2 — optional machine-hour feasibility beside labour (single-resource gap, Q1) */}
+      <div style={{display:'flex', alignItems:'center', gap:18, marginTop:11, flexWrap:'wrap'}}>
+        <label style={{display:'flex', alignItems:'center', gap:7, fontFamily:F.mono, fontSize:10.5, color:C.tx2, cursor:'pointer'}}>
+          <input type="checkbox" checked={planBool(config,'machine_resources')} onChange={e=>set('machine_resources', e.target.checked)}/>
+          Machine-hour feasibility <span style={{color:C.tx3}}>— adds each line's machine-hour ceiling (cycle-time × mix ≤ hrs × OEE) beside labour, so a labour-feasible plan can't promise machine-infeasible volume</span>
+        </label>
+      </div>
+      {agg && agg.result && agg.result.resources && (
+        <div data-vis="v4-resources" style={{display:'flex', gap:10, marginTop:8, flexWrap:'wrap'}}>
+          {agg.result.resources.map(r=>{
+            const hot = r.peak_util >= 99.9;
+            return (
+              <div key={r.name} style={{display:'flex', alignItems:'center', gap:8, border:`2px solid ${C.line}`, borderLeft:`5px solid ${hot?C.dg:r.peak_util>=85?C.a4:C.gn}`, padding:'5px 10px'}}>
+                <span style={{fontFamily:F.disp, fontSize:10.5, fontWeight:800}}>{r.name}</span>
+                <span style={{width:70, height:7, background:C.bg3, border:`1px solid ${C.line2}`, position:'relative'}}>
+                  <span style={{position:'absolute', left:0, top:0, bottom:0, width:`${Math.min(100, r.peak_util)}%`, background:hot?C.dg:r.peak_util>=85?C.a4:C.gn}}/>
+                </span>
+                <span className="num" style={{fontFamily:F.mono, fontSize:9.5, fontWeight:700, color:hot?C.dg:C.tx2}}>{r.peak_util}% pk</span>
+                {hot && <Tag c="r">machine-bound</Tag>}
+              </div>
+            );
+          })}
+          <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3, alignSelf:'center'}}>machine-class peak load from the SOLVED plan — a binding line is priced in the duals</span>
+        </div>
+      )}
+      {agg && agg.result && agg.result.objective_mode==='max_profit' && agg.result.profit && (
+        <div data-vis="v4-profit" style={{marginTop:10}}>
+          <KpiRow cols={4}>
+            <Blk label="Profit (revenue − cost)" value={`₹${(agg.result.profit.profit/1e5).toFixed(2)}L`} tone={agg.result.profit.profit>=0?'g':'k'} accent={agg.result.profit.profit>=0?C.gn:C.dg}/>
+            <Blk label="Demand declined" value={`${Math.round(agg.result.profit.lost_units).toLocaleString('en-IN')} u`} accent={agg.result.profit.lost_units>0?C.a4:undefined} sub="not worth its marginal cost"/>
+            <Blk label="Revenue foregone" value={`₹${(agg.result.profit.lost_revenue/1e5).toFixed(2)}L`} tone="y"/>
+            <Blk label="Revenue earned" value={`₹${(agg.result.profit.total_revenue/1e5).toFixed(2)}L`}/>
+          </KpiRow>
+        </div>
+      )}
       <Reading formula={`line-registry ceiling = Σ line cap = ${lineCap.toLocaleString('en-IN')} u/mo  ⇒  max workforce = ${lineCap.toLocaleString('en-IN')} ÷ ${rate} = ${wfCeiling} heads`}
         soWhat={`The plan is bounded to the SAME ${(M.lines||[]).length}-line capacity the production schedule respects (${(M.lines||[]).map(l=>l.cap.toLocaleString('en-IN')).join(' + ')} u/mo) — it can never promise more than the floor can physically build. Override the rate to re-scale the ceiling.`}/>
       {_net.phys>0 && <div style={{marginTop:10, padding:'9px 11px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${hasOpenOverride?C.a4:C.gn}`, background:C.bg3, fontFamily:F.mono, fontSize:10, lineHeight:1.55, color:C.tx2}}>
@@ -236,6 +392,86 @@ function PlanLaborContent(){
       <Reading formula="worker-min/unit = machine cycle × hands-on %   ·   family weight = worker-min ÷ demand-weighted-average (so the average SKU = 1.00×)"
         soWhat="Set the automated SKUs to a low hands-on % — they then weigh LESS than their long machine cycle implies, because a worker only loads/unloads them. The weights are normalised so the average stays 1.00× (your rate/worker number is untouched); only the labor MIX shifts. Leave everything at 100% to treat every station as fully manual. Worked example: a 6.0-min cycle at 30% hands-on = 1.8 worker-min/unit, while a fully-manual 3.0-min cycle = 3.0 worker-min/unit — so the 'slower' automated part actually consumes LESS of your crew than the faster manual one. That reversal is the whole point: a people-bound plan must weight by hands-on time, not machine time."/>
     </Card>
+  );
+}
+
+// VIS-1 (blueprint 3.4 #1) — the feasibility thermometer, in the ① DECIDE strip.
+// One bar pair per period: demand vs DEPLOYABLE capacity (regular rate×W_t plus the
+// governed OT headroom) — the literal answer to "do I have enough resources",
+// previously buried in the step-2 table. Fed ONLY by the solved aggregate plan
+// (no faking): unsolved ⇒ an honest prompt, never seed bars. A period over 100%
+// is not automatically infeasible — build-ahead/backorder covers it — so the
+// over-bar annotates WHICH lever the solve actually used.
+function Vis1Thermometer({ res, config }){
+  if(!res || !res.periods || !res.periods.length){
+    return <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx3}}>① Do I have enough resources? — solve the aggregate plan to light this up</span>;
+  }
+  const rate = res.rate_per_worker || planParam(config,'rate_per_worker') || 1;
+  const otX  = planParam(config,'max_ot_pct') || 0;
+  const rows = res.periods.map(p=>{
+    const cap = rate * (p.workforce||0) * (1+otX);
+    const fill = cap ? (p.demand||0)/cap : 0;
+    return { m:'P'+p.period, dem:Math.round(p.demand||0), cap:Math.round(cap), fill,
+             bo:Math.round(p.backorder||0), inv:Math.round(p.inventory||0) };
+  });
+  const worst = rows.reduce((a,b)=> b.fill>a.fill?b:a, rows[0]);
+  const tone = worst.fill>1 ? C.dg : (worst.fill>0.85 ? C.a4 : C.gn);
+  return (
+    <div data-vis="vis1" style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
+      <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.1em', color:C.tx2, whiteSpace:'nowrap'}}>① ENOUGH RESOURCES?</span>
+      {rows.map((r,i)=>(
+        <div key={i} title={`${r.m}: demand ${r.dem.toLocaleString('en-IN')} u vs deployable ${r.cap.toLocaleString('en-IN')} u (incl. ${Math.round(otX*100)}% OT) = ${(r.fill*100).toFixed(0)}%${r.fill>1?(r.bo>0?' — partly BACKORDERED':' — covered by BUILD-AHEAD stock'):''}`}
+          style={{display:'flex', flexDirection:'column', alignItems:'center', gap:2}}>
+          <div style={{width:16, height:34, border:`2px solid ${C.line}`, background:C.paper, position:'relative', overflow:'hidden'}}>
+            <div style={{position:'absolute', bottom:0, left:0, right:0, height:`${Math.min(100, r.fill*100)}%`,
+              background: r.fill>1?C.dg:(r.fill>0.85?C.a4:C.gn)}}/>
+            {r.fill>1 && <div style={{position:'absolute', top:0, left:0, right:0, textAlign:'center', fontFamily:F.mono, fontSize:7, fontWeight:800, color:C.paper, background:C.dg}}>{r.bo>0?'BO':'PB'}</div>}
+          </div>
+          <span style={{fontFamily:F.mono, fontSize:7.5, color:C.tx3}}>{r.m}</span>
+        </div>
+      ))}
+      <span style={{fontFamily:F.mono, fontSize:9, color:tone, fontWeight:700}}>
+        peak {(worst.fill*100).toFixed(0)}% ({worst.m})
+        {worst.fill>1 ? (worst.bo>0?' — shorted: backorder in plan':' — feasible via build-ahead') : ' — feasible'}
+      </span>
+      <span style={{fontFamily:F.mono, fontSize:8, color:C.tx3}}>bar = demand ÷ (rate×heads, +{Math.round(otX*100)}% OT) · PB = prebuild covers · BO = backordered</span>
+    </div>
+  );
+}
+
+// VIS-3 (blueprint 3.4 #3) — the level-vs-chase strip: the 12-steps Step-3 picture
+// from the REAL aggregate solution. Workforce-as-capacity LINE vs demand LINE vs
+// inventory AREA — a flat crew line under a swinging demand line with a breathing
+// inventory area IS the level strategy; the crew line tracking demand is chase.
+function Vis3LevelChase({ res }){
+  if(!res || !res.periods || !res.periods.length) return null;
+  const rate = res.rate_per_worker || 1;
+  const A = res.periods.map(p=>({ m:'P'+p.period, dem:p.demand||0, wcap:rate*(p.workforce||0),
+                                  inv:Math.max(0,(p.inventory||0)-(p.backorder||0)), bo:p.backorder||0 }));
+  const W=720, H=170, pad=30;
+  const mx = Math.max(...A.map(r=>Math.max(r.dem, r.wcap, r.inv)))*1.12 || 1;
+  const bw = (W-pad-8)/A.length;
+  const x = i => pad + bw*i + bw/2;
+  const y = v => H-24-(v/mx)*(H-44);
+  const invPath = `M ${x(0)},${y(0)} ` + A.map((r,i)=>`L ${x(i)},${y(r.inv)}`).join(' ') + ` L ${x(A.length-1)},${y(0)} Z`;
+  return (
+    <div data-vis="vis3" style={{marginTop:12}}>
+      <SubLabel>Level-vs-chase strip — crew line vs demand line vs inventory area</SubLabel>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%', height:H, display:'block'}}>
+        {[0,1,2,3].map(i=>(<line key={i} x1={pad} x2={W-8} y1={20+i*((H-44)/3)} y2={20+i*((H-44)/3)} stroke={C.line2} strokeWidth=".8"/>))}
+        <path d={invPath} fill={C.gn} opacity="0.22"/>
+        <polyline points={A.map((r,i)=>`${x(i)},${y(r.inv)}`).join(' ')} fill="none" stroke={C.gn} strokeWidth="1.5"/>
+        <polyline points={A.map((r,i)=>`${x(i)},${y(r.dem)}`).join(' ')} fill="none" stroke={C.ink} strokeWidth="2.5"/>
+        <polyline points={A.map((r,i)=>`${x(i)},${y(r.wcap)}`).join(' ')} fill="none" stroke={C.ac} strokeWidth="2.5" strokeDasharray="6 3"/>
+        {A.map((r,i)=>(<g key={i}>
+          {r.bo>0 && <circle cx={x(i)} cy={y(0)} r="3.5" fill={C.dg}/>}
+          <text x={x(i)} y={H-8} fontFamily={F.mono} fontSize="9" fill={C.tx2} textAnchor="middle">{r.m}</text>
+        </g>))}
+        <text x={pad+2} y="13" fontFamily={F.mono} fontSize="9" fill={C.tx3}>— demand   --- crew capacity (rate×heads)   ▨ inventory area   ● backorder period</text>
+      </svg>
+      <Reading formula="crew capacity_t = rate × workforce_t (the dashes) · inventory area = what a flat crew banks in slack months and spends at the peak"
+        soWhat="Read the SHAPE: a flat dashed crew line under a swinging demand line, with the green area breathing — that IS level production (the crew never chases; stock absorbs seasonality). If the dashed line tracks the solid one instead, the plan is chasing with hire/fire. The strategy verdict above is this picture, classified."/>
+    </div>
   );
 }
 
@@ -294,6 +530,7 @@ function PlanStrategy({ agg }) {
           </div>
         </div>
         <div style={{marginTop:12}}><CapacityChart data={months}/></div>
+        {res && <Vis3LevelChase res={res}/>}
         {res && (()=>{
           // PL-G4 — "did I need S&OP?" — bound to the live CV branch (mirrors aggregate.py:245-256).
           const wfcv=res.workforce_cv||0, icv=res.inventory_cv||0;
@@ -369,7 +606,7 @@ function linecapPayload(res){
   const skus = ((res && res.sku_plans) || []).map(sp=>{
     const prod = M.products.find(p=>p.sku===sp.name) || {};
     return { name:sp.name, line:prod.line, demand:Math.round((sp.total_planned||0)/T),
-             lost_margin_per_unit:Math.max(0, (prod.price||0)-(prod.cost||0)) };
+             lost_margin_per_unit:Math.max(0, (prod.price||0)-(typeof effUnitCost==='function'?effUnitCost(prod):(prod.cost||0))) };   // V2-2 derived cost
   });
   return { lines, skus, params:{} };
 }

@@ -72,6 +72,16 @@ def solve_procurement(data):
     labor_hours_max = float(params.get('labor_hours_max', 0) or 0)
     co2_max_per_period = float(params.get('co2_max_per_period', 0) or 0)
     supplier_concentration_max_pct = float(params.get('supplier_concentration_max_pct', 0) or 0)
+    # V5-3 — finite supplier capacity. params.supplier_capacity = {supplier_code: ₹ landed
+    # spend per period}. ₹ is the deliberate common unit: a supplier's parts mix UoMs
+    # (kg/pcs/L), so a unit cap is dimensionally wrong; spend is what a supplier's
+    # throughput honestly bounds across its whole basket. Empty/absent ⇒ no constraint
+    # (byte-identical baseline). Parts may carry a `backup` {supplier, premium_pct,
+    # lead_time} — a spot relief valve the MILP may buy through (at a premium, on the
+    # backup's lead time) when the primary's capacity binds. Backup spend counts against
+    # the BACKUP supplier's own cap when it has one.
+    supplier_caps = {str(k): float(v) for k, v in (params.get('supplier_capacity') or {}).items()
+                     if v is not None and float(v) > 0}
     fx_exposure_max_pct = float(params.get('fx_exposure_max_pct', 0) or 0)
     abc_service_a_min_pct = float(params.get('abc_service_a_min_pct', 0) or 0)
     budget_deflate = bool(params.get('budget_deflate', False))
@@ -354,6 +364,9 @@ def solve_procurement(data):
     r = {}   # RM orders
     o = {}   # RM order binary
     rm_inv = {}  # RM inventory
+    r_bk = {}    # V5-3 — backup-supplier spot buys (declared only when caps active + part has a backup)
+    o_bk = {}    # V5-3 — backup order binary (the spot lane keeps the part's lot discipline)
+    bk_active = set()  # gidx with backup buys in the model
     # R12 / D1 — Per-part lead-time band sub-vars, keyed by [gidx][t]. Populated in the
     # part-loop below only when the part declares a lead_time_band with small_max > 0.
     # When unpopulated for a gidx, the receipt cascade falls back to scalar lt.
@@ -409,6 +422,18 @@ def solve_procurement(data):
                 r[gidx, t] = pulp.LpVariable(f'r_{gidx}_{t}', 0, cat='Integer')
                 o[gidx, t] = pulp.LpVariable(f'o_{gidx}_{t}', cat='Binary')
                 rm_inv[gidx, t] = pulp.LpVariable(f'rminv_{gidx}_{t}', 0)
+            # V5-3 — backup spot-buy lane: only modeled when supplier caps are active
+            # (it exists to relieve a binding primary) and this part names a backup.
+            # The lane keeps the part's MOQ + ordering admin (same physical part, same
+            # pack/lot discipline — observed: a no-MOQ lane became an MOQ-EVASION
+            # loophole the solver preferred over a slack primary). The premium is the
+            # only economic differentiator, so it's used iff the primary truly binds.
+            _bk = part.get('backup') or None
+            if supplier_caps and _bk and not is_vmi:
+                bk_active.add(gidx)
+                for t in range(T):
+                    r_bk[gidx, t] = pulp.LpVariable(f'rbk_{gidx}_{t}', 0, cat='Integer')
+                    o_bk[gidx, t] = pulp.LpVariable(f'obk_{gidx}_{t}', cat='Binary')
             # R12 / D1 — Per-part band sub-vars. Indexed off the same gidx so they share the same
             # supplier/part identity; only declared when lead_time_band is configured for this part.
             # ltband_a / ltband_b are stored on a side dict keyed by gidx so the receipt cascade
@@ -439,6 +464,10 @@ def solve_procurement(data):
                 'rm_cap': 999999 if is_vmi else part.get('rm_capacity', 9999),
                 'ord_cost': 0 if is_vmi else part.get('ordering_cost', 50),
                 'rm_shelf': part.get('rm_shelf', T),
+                # V5-1 — carry the LEDGER opening stock through (this rebuilt dict used
+                # to DROP the key, so payload init_inventory was silently ignored and
+                # the fabricated avg×(lt+1) default below always won). None = legacy.
+                'init_inventory': part.get('init_inventory'),
                 'product_k': k,
                 'part_i': i,
                 'scrap': part.get('scrap_factor', 0),
@@ -466,6 +495,10 @@ def solve_procurement(data):
                 'supplier_name': part.get('supplier_name', '') or '',
                 'supplier_state': part.get('supplier_state', '') or '',
                 'supplier_country': part.get('supplier_country', 'IN') or 'IN',
+                # V5-3 — supplier identity for the capacity pool (code preferred over display name)
+                # and the optional backup lane {supplier, premium_pct, lead_time}.
+                'supplier': str(part.get('supplier') or part.get('supplier_name') or ''),
+                'backup': (part.get('backup') or None) if not is_vmi else None,
                 # GAP-4 — HMM regime signal threaded through for regime-aware sourcing.
                 'regime_high_vol': bool(part.get('regime_high_vol', False)),
                 'regime_persistence': float(part.get('regime_persistence', 0) or 0),
@@ -716,6 +749,16 @@ def solve_procurement(data):
             # RM holding (use base cost as proxy for holding valuation)
             rm_hold = base_cost * (part['hold_pct'] / 100) / periods_per_year
             obj.append(rm_hold * rm_inv[gidx, t])
+            # V5-3 — backup lane: landed cost × (1 + premium). The premium prices the
+            # spot relationship (admin, no contract terms, expedite) so the solver only
+            # reaches for it when the primary's capacity genuinely binds.
+            if gidx in bk_active:
+                _bkp = part.get('backup') or {}
+                bk_unit_cost = base_cost * (1 + float(_bkp.get('premium_pct', 0) or 0) / 100.0)
+                obj.append(bk_unit_cost * r_bk[gidx, t])
+                obj.append(part['ord_cost'] * o_bk[gidx, t])      # same ordering admin as the primary
+                prob += r_bk[gidx, t] >= part['moq'] * o_bk[gidx, t], f"BkMOQ_{gidx}_{t}"
+                prob += r_bk[gidx, t] <= part['max_order'] * o_bk[gidx, t], f"BkMaxOrd_{gidx}_{t}"
 
             # ─── R10 + R11 / Bucket 2 (B3/B4/B5) — mode-aware transport cost ───
             # When the BOM row has transport_contract_id wired to a known contract,
@@ -1212,10 +1255,13 @@ def solve_procurement(data):
         if y_act is not None and y_act > fy and y_act > 0:
             yield_carry_frac = 1.0 - (fy / y_act)
         effective_qty = qty_per * (1 + scrap) / max(fy, 0.01)
-        # Default init RM: enough for lead_time periods of avg demand
+        # Default init RM: enough for lead_time periods of avg demand — a SMOOTHING
+        # ASSUMPTION used only when the payload sends no ledger qty. V5-1: an explicit
+        # init_inventory (the network.onHand transaction layer, 0 included) always wins.
         avg_demand_per_t = sum(demand[:T]) / T if T > 0 else 10
         default_init_rm = max(0, round(avg_demand_per_t * effective_qty * (lt + 1)))
-        init_rm = part.get('init_inventory', default_init_rm)
+        init_rm = part.get('init_inventory')
+        init_rm = default_init_rm if init_rm is None else max(0.0, float(init_rm))
 
         # R12 / D1 — Determine per-band lead times for this part (or fall back to scalar).
         _ltb = part.get('lead_time_band') or None
@@ -1242,6 +1288,14 @@ def solve_procurement(data):
                 # RM arrives lt periods after ordering (scalar fallback)
                 arrive_t = t - lt
                 arrived = r[gidx, arrive_t] if arrive_t >= 0 else 0
+
+            # V5-3 — backup spot buys arrive on the BACKUP's lead time (often longer:
+            # POSCO sea freight vs a domestic mill), additive to the primary lane.
+            if gidx in bk_active:
+                bk_lt = int(float((part.get('backup') or {}).get('lead_time', lt) or lt))
+                bk_arrive_t = t - bk_lt
+                if bk_arrive_t >= 0:
+                    arrived = arrived + r_bk[gidx, bk_arrive_t]
 
             # T6 — Scheduled receipts: already-released POs that arrive at this period.
             # Treated as exogenous inventory bumps; solver re-optimises around them.
@@ -1311,6 +1365,28 @@ def solve_procurement(data):
             if ta > 0:
                 anchor_t = max(0, T_committed - 1)
                 prob += rm_inv[gidx, anchor_t] >= ta, f"TermAnchor_{gidx}"
+
+    # ─── V5-3 — per-supplier per-period capacity allocation ───
+    # Σ landed spend the supplier is asked to fulfil in a period ≤ its capacity:
+    # primary buys from its parts + backup spot buys ROUTED TO it from other parts'
+    # relief lanes. With several parts sharing one constrained supplier the MILP now
+    # ALLOCATES that capacity across the basket (cheapest-to-shift part defers /
+    # pre-buys / overflows to its backup) instead of pretending supply is infinite.
+    # Holiday-aware like every other capacity (period_factor). VMI parts are exempt
+    # (their supply is contractually replenished, modeled as ∞ within RM cap).
+    if supplier_caps:
+        for sup_code, sup_cap in supplier_caps.items():
+            primary_g = [g for g, pt in enumerate(all_parts) if pt['supplier'] == sup_code and not pt['vmi']]
+            backup_g = [g for g in bk_active
+                        if str((all_parts[g]['backup'] or {}).get('supplier') or '') == sup_code]
+            if not primary_g and not backup_g:
+                continue
+            for t in range(T):
+                terms = [all_parts[g]['cost'] * r[g, t] for g in primary_g]
+                terms += [all_parts[g]['cost']
+                          * (1 + float((all_parts[g]['backup'] or {}).get('premium_pct', 0) or 0) / 100.0)
+                          * r_bk[g, t] for g in backup_g]
+                prob += pulp.lpSum(terms) <= sup_cap * period_factor(t), f"SupCap_{sup_code}_{t}"
 
     # P7 / #2 — aggregate RM warehouse cap (area or volume mode). Footprint is per-PACK
     # (one drum = one slot), so we divide rm_inv (in recipe-uom) by purchase_pack to get
@@ -1626,6 +1702,9 @@ def solve_procurement(data):
         orders = [int(pulp.value(r[gidx, t]) or 0) for t in range(T_out)]
         rm_levels = [round(pulp.value(rm_inv[gidx, t]) or 0, 1) for t in range(T_out)]
         order_flags = [int(pulp.value(o[gidx, t]) or 0) for t in range(T_out)]
+        # V5-3 — realized backup spot buys (zeros when the lane wasn't modeled)
+        bk_orders = [int(pulp.value(r_bk[gidx, t]) or 0) for t in range(T_out)] if gidx in bk_active \
+            else [0] * T_out
 
         # Build PO list — T5-01/06/09 metadata: supplier_name, payment_term_days, landed_cost,
         # vmi flag. UI's PoReleasePlanCard reads these directly.
@@ -1719,6 +1798,14 @@ def solve_procurement(data):
             'supplier_name': part['supplier_name'],
             'supplier_state': part['supplier_state'],
             'supplier_country': part['supplier_country'],
+            # V5-3 — supplier-capacity allocation: backup spot buys (qty/period, the
+            # backup supplier code, and the premium spend). All-zero when no caps.
+            'supplier': part['supplier'],
+            'backup_orders': bk_orders,
+            'backup_supplier': str((part['backup'] or {}).get('supplier') or '') if gidx in bk_active else '',
+            'backup_spend': round(sum(bk_orders) * part['cost']
+                                  * (1 + float((part['backup'] or {}).get('premium_pct', 0) or 0) / 100.0), 2)
+                            if gidx in bk_active else 0,
             'payment_term_days': part['pay_term_days'],
             'vmi': part['vmi'],
             'vmi_target_stock_days': part['vmi_target_stock_days'],
@@ -1734,6 +1821,44 @@ def solve_procurement(data):
             ),
         })
 
+    # ─── V5-3 — supplier-capacity allocation table (only when caps were active) ───
+    # Per supplier: the realized landed spend it was asked to fulfil per period
+    # (primary + backup buys routed to it), peak utilisation vs cap, which periods
+    # bind, and how much spend OVERFLOWED from its basket to backup lanes.
+    supplier_allocation = []
+    if supplier_caps:
+        for sup_code, sup_cap in supplier_caps.items():
+            primary_g = [g for g, pt in enumerate(all_parts) if pt['supplier'] == sup_code and not pt['vmi']]
+            backup_g = [g for g in bk_active
+                        if str((all_parts[g]['backup'] or {}).get('supplier') or '') == sup_code]
+            spend_t = []
+            for t in range(T_out):
+                s = sum((pulp.value(r[g, t]) or 0) * all_parts[g]['cost'] for g in primary_g)
+                s += sum((pulp.value(r_bk[g, t]) or 0) * all_parts[g]['cost']
+                         * (1 + float((all_parts[g]['backup'] or {}).get('premium_pct', 0) or 0) / 100.0)
+                         for g in backup_g)
+                spend_t.append(round(s, 2))
+            eff_caps = [sup_cap * period_factor(t) for t in range(T_out)]
+            util = [(spend_t[t] / eff_caps[t] * 100.0) if eff_caps[t] > 0 else 0.0 for t in range(T_out)]
+            overflow = round(sum(
+                (pulp.value(r_bk[g, t]) or 0) * all_parts[g]['cost']
+                * (1 + float((all_parts[g]['backup'] or {}).get('premium_pct', 0) or 0) / 100.0)
+                for g in bk_active if all_parts[g]['supplier'] == sup_code for t in range(T_out)), 2)
+            supplier_allocation.append({
+                'supplier': sup_code,
+                'cap_per_period': sup_cap,
+                'spend': spend_t,
+                'peak_util_pct': round(max(util), 1) if util else 0.0,
+                # ≥95% of the effective cap counts as binding: buys are INTEGER MOQ
+                # lots, so a genuinely ceiling-limited period rarely lands on the cap
+                # to the rupee — 2 lots under a 2.05-lot cap IS the constraint biting.
+                'binding_periods': [t for t in range(T_out) if spend_t[t] >= 0.95 * eff_caps[t] and eff_caps[t] > 0],
+                'parts': [all_parts[g]['name'] for g in primary_g],
+                'overflow_spend': overflow,   # spend pushed OFF this supplier to backups
+                'backup_inflow_spend': round(sum(spend_t) - sum(
+                    (pulp.value(r[g, t]) or 0) * all_parts[g]['cost'] for g in primary_g for t in range(T_out)), 2),
+            })
+
     # Cost breakdown
     cost_breakdown = {
         'total': round(total_cost, 2),
@@ -1741,6 +1866,13 @@ def solve_procurement(data):
             sum(int(pulp.value(r[g, t]) or 0) * all_parts[g]['cost']
                 for t in range(T))
             for g in range(len(all_parts))
+        ), 2),
+        # V5-3 — premium spot spend through backup lanes (0 when caps off; kept as its
+        # own line so the premium is visible instead of hiding inside material_purchase).
+        'backup_purchase': round(sum(
+            (pulp.value(r_bk[g, t]) or 0) * all_parts[g]['cost']
+            * (1 + float((all_parts[g]['backup'] or {}).get('premium_pct', 0) or 0) / 100.0)
+            for g in bk_active for t in range(T)
         ), 2),
         'ordering_admin': round(sum(
             sum(int(pulp.value(o[g, t]) or 0) * all_parts[g]['ord_cost']
@@ -1888,6 +2020,10 @@ def solve_procurement(data):
         'cost_breakdown': cost_breakdown,
         'products': product_results,
         'materials': material_results,
+        # V5-3 — per-supplier capacity allocation (empty list when no caps were sent,
+        # so legacy payloads see no behavioural or shape change that matters).
+        'supplier_allocation': supplier_allocation,
+        'supplier_capacity_active': bool(supplier_caps),
         'meio': meio_summary,
         # (Systemic) Spoilage transparency: total + per-product units written off past shelf_life.
         'expiry_units_total': total_expiry_units,

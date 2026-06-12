@@ -12,13 +12,23 @@ function StageFinance({ onNav }) {
     <div>
       <StageHeader n="09" title="Finance & Costs" kicker="Cash & working capital · capital structure · investment decisions · assets · FX hedging"
         right={<ReportExport/>}/>
+      {/* ① DECIDE strip (Part 3.2) — honestly ƒderived: the same finBlendedHurdle /
+          carryRateParts / finEva every card charges, no second formula to drift */}
+      <div style={{padding:'8px 18px', borderBottom:`2px solid ${C.line}`, background:C.paper}}>
+        <FinanceDecideStrip/>
+      </div>
       <SubTabNav tabs={tabs} active={sub} onChange={setSub}/>
       <div style={{padding:14}}>
         {sub==='capital' && <SolverExplain id="capital"/>}
         {sub==='cash'    && <FinCash/>}
         {sub==='capital' && <FinCapital/>}
         {sub==='value'   && <FinValue/>}
-        {sub==='invest'  && <FinInvest/>}
+        {sub==='invest'  && <><FinInvest/>
+          {/* V2-7 — one-result-one-home: the capital-budget knapsack (capital.py, fund/defer
+              under the CapEx budget) renders HERE with the lease-vs-buy and capacity-stress
+              investment decisions it belongs beside. Console keeps a KPI link only.
+              (FinInvest's capital-CAPACITY card is a DIFFERENT solver — capital_capacity.py.) */}
+          <div style={{marginTop:14}}><ResCapital/></div></>}
         {sub==='assets'  && <FinAssets/>}
         {sub==='fx'      && <FinFX/>}
       </div>
@@ -193,7 +203,7 @@ function finOpsCapital(){
       const arr = pi.ending_inventory || [];
       const avg = arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0;
       const p = (M.products||[]).find(x=>x.sku===pi.name) || {};
-      const cap = avg * (Number(p.cost)||0);
+      const cap = avg * (typeof effUnitCost==='function'?effUnitCost(p):(Number(p.cost)||0));   // V2-2 derived cost
       invBySku[pi.name] = cap; invTotal += cap;
     });
   }
@@ -215,9 +225,10 @@ function finEva(config){
   const ops = finOpsCapital();                                   // FV-A — solved capital base
   const fixedBase = (ops.solvedInv||ops.solvedSS) ? ops.fixedNet : M.assets.reduce((s,a)=>s+a.cost,0);
   const revTot  = fg.reduce((s,p)=>s+p.price*p.demand,0) || 1;
-  const cogsTot = fg.reduce((s,p)=>s+p.cost*p.demand,0) || 1;
+  const _uc = p => (typeof effUnitCost==='function'?effUnitCost(p):(Number(p.cost)||0));   // V2-2 — one cost truth
+  const cogsTot = fg.reduce((s,p)=>s+_uc(p)*p.demand,0) || 1;
   const rows = fg.map(p=>{
-    const rev=p.price*p.demand, cogs=p.cost*p.demand, contrib=(p.price-p.cost)*p.demand;
+    const rev=p.price*p.demand, cogs=_uc(p)*p.demand, contrib=(p.price-_uc(p))*p.demand;
     const nopat=contrib*(1-tax);
     // FV-A — per-SKU capital = solved FG inventory (or turns proxy) + COGS-share of pooled
     // SS capital + revenue-share of net-block fixed assets.
@@ -301,8 +312,12 @@ function FinCapital() {
             {equity.map((r,i)=>(
               <div key={i} style={{display:'flex', gap:8, alignItems:'flex-end', marginBottom:6}}>
                 <div style={{flex:1.6, fontFamily:F.mono, fontSize:10, fontWeight:700, paddingBottom:7}}>{r.name}</div>
-                <SolverInput label="₹ amount" seed={FIN_EQUITY[i].amount} value={(config.finEquity||{})[i]?.amount} onChange={v=>setEq(i,'amount',v)} min={0}/>
-                <SolverInput label="cost" seed={FIN_EQUITY[i].cost} value={(config.finEquity||{})[i]?.cost} onChange={v=>setEq(i,'cost',v)} min={0} suffix="%"/>
+                <GovField label="₹ amount" token="config" w={120} seed={FIN_EQUITY[i].amount} value={(config.finEquity||{})[i]?.amount==null?'':(config.finEquity||{})[i].amount} onChange={v=>setEq(i,'amount',v)} min={0} prefix="₹"
+                  why={`Capital contributed by ${r.name} — its ₹ weight in the blend sets how much its opportunity cost moves the hurdle every NPV/EVA gate charges.`}
+                  formula="hurdle = wE·Ke* + wD·Kd*(1−t), w from ₹ amounts"/>
+                <GovField label="cost" token="config" w={84} seed={FIN_EQUITY[i].cost} value={(config.finEquity||{})[i]?.cost==null?'':(config.finEquity||{})[i].cost} onChange={v=>setEq(i,'cost',v)} min={0} suffix="%"
+                  why={`The opportunity cost of ${r.name} — what this rupee earns elsewhere; the blend (not a textbook Ke) is the owner's real hurdle.`}
+                  formula="Ke* = Σ amountᵢ·costᵢ / Σ amountᵢ"/>
               </div>
             ))}
           </div>
@@ -311,8 +326,12 @@ function FinCapital() {
             {debt.map((r,i)=>(
               <div key={i} style={{display:'flex', gap:8, alignItems:'flex-end', marginBottom:6}}>
                 <div style={{flex:1.6, fontFamily:F.mono, fontSize:10, fontWeight:700, paddingBottom:7}}>{r.name}</div>
-                <SolverInput label="₹ amount" seed={FIN_DEBT[i].amount} value={(config.finDebt||{})[i]?.amount} onChange={v=>setDb(i,'amount',v)} min={0}/>
-                <SolverInput label="rate" seed={FIN_DEBT[i].rate} value={(config.finDebt||{})[i]?.rate} onChange={v=>setDb(i,'rate',v)} min={0} suffix="%"/>
+                <GovField label="₹ amount" token="config" w={120} seed={FIN_DEBT[i].amount} value={(config.finDebt||{})[i]?.amount==null?'':(config.finDebt||{})[i].amount} onChange={v=>setDb(i,'amount',v)} min={0} prefix="₹"
+                  why={`Principal drawn from ${r.name} — its ₹ weight (tax-shielded) in the blended hurdle.`}
+                  formula="Kd* = Σ amountᵢ·rateᵢ / Σ amountᵢ · (1−t)"/>
+                <GovField label="rate" token="config" w={84} seed={FIN_DEBT[i].rate} value={(config.finDebt||{})[i]?.rate==null?'':(config.finDebt||{})[i].rate} onChange={v=>setDb(i,'rate',v)} min={0} suffix="%"
+                  why={`Pre-tax interest rate on ${r.name}; the debt shield (1−t) applies in the blend.`}
+                  formula="after-tax Kd = rate × (1 − tax)"/>
               </div>
             ))}
             <Field label="Tax rate (debt shield)"><NumInput value={tax} suffix="%" disabled/></Field>
@@ -401,7 +420,9 @@ function FinCapital() {
             {['SLM','WDV'].map(m=>(
               <button key={m} onClick={()=>setConfig({ finDepMethod:m })} style={{fontFamily:F.mono, fontSize:9, fontWeight:700, padding:'3px 9px', border:`2px solid ${C.line}`, cursor:'pointer', background:depMethod===m?C.ink:C.paper, color:depMethod===m?C.paper:C.tx}}>{m}</button>
             ))}
-            {depMethod==='WDV' && <SolverInput label="WDV rate" seed={0.25} value={config.finWdvRate} onChange={v=>setConfig({finWdvRate:v})} min={0.05} max={0.6} w={84} suffix="/yr"/>}
+            {depMethod==='WDV' && <GovField label="WDV rate" token="config" seed={0.25} value={config.finWdvRate==null?'':config.finWdvRate} onChange={v=>setConfig({finWdvRate:v})} min={0.05} max={0.6} w={84} suffix="/yr"
+              why="Declining-balance rate of the WDV (India block-of-assets) depreciation — a higher rate front-loads the tax shield, worth more in PV, lifting the after-tax NPV."
+              formula="depₜ = book value × rate (declining) → shield depₜ·t"/>}
             <span style={{fontWeight:400, fontFamily:F.mono, fontSize:9, color:C.tx3}}>{depMethod==='WDV'?`Y1 dep ₹${(depArr[0]/1e5).toFixed(1)}L → front-loaded`:`dep ₹${(annualDep/1e5).toFixed(1)}L/yr flat`} × {tax}%</span>
           </div>}
         </div>
@@ -615,7 +636,7 @@ function FinInvest() {
   const lineUPH = {};      // units/hr per line — converts the ₹/unit capacity dual → ₹/hr
   (M.lines||[]).forEach(l=>{
     const sk = M.products.filter(p=>p.cat==='Finished'&&p.line===l.id);
-    const contribYr = sk.reduce((s,p)=>s+(p.price-p.cost)*p.demand,0);
+    const contribYr = sk.reduce((s,p)=>s+(p.price-(typeof effUnitCost==='function'?effUnitCost(p):p.cost))*p.demand,0);   // V2-2 derived cost
     const hrsYr = sk.reduce((s,p)=>s+(p.demand*p.cycle/60),0);
     const unitsYr = sk.reduce((s,p)=>s+(p.demand||0),0);
     lineMph[l.id] = hrsYr ? contribYr/hrsYr : 0;
@@ -659,11 +680,19 @@ function FinInvest() {
         {cap.error && <div style={{marginBottom:8, padding:'6px 9px', border:`2px solid ${C.dg}`, fontFamily:F.mono, fontSize:10, color:C.dg}}>capital error: {cap.error}</div>}
         <Grid cols={4}>
           {(M.lines||[]).map(l=>(
-            <SolverInput key={l.id} label={`${l.id} CapEx`} seed={seedCapex[l.id]} value={(config.finCapex||{})[l.id]} onChange={v=>setCapex(l.id,v)} min={0} prefix="₹"/>
+            <GovField key={l.id} label={`${l.id} CapEx`} token="config" seed={seedCapex[l.id]||10000000} value={(config.finCapex||{})[l.id]==null?'':(config.finCapex||{})[l.id]} onChange={v=>setCapex(l.id,v)} min={0} prefix="₹"
+              why={`What expanding ${l.id} by one shift costs — the capital-capacity MILP weighs this against the throughput cash the added hours unlock.`}
+              formula="option CF = hrs × margin/hr × util − opex; fund if NPV>0 within budget"/>
           ))}
-          <SolverInput label="Budget / yr" seed={25000000} value={config.finCapexBudget} onChange={v=>setConfig({finCapexBudget:v})} min={0} prefix="₹"/>
-          <SolverInput label="Added hrs/yr (1 shift)" seed={2400} value={config.finAddedHrs} onChange={v=>setConfig({finAddedHrs:v})} min={0}/>
-          <SolverInput label="Line shadow ₹/hr (from Plan PL-A)" seed={0} value={config.finLineShadow} onChange={v=>setConfig({finLineShadow:v})} min={0} suffix="₹/hr" hint="overrides derived margin/hr if a line binds"/>
+          <GovField label="Budget / yr" token="config" seed={25000000} value={config.finCapexBudget==null?'':config.finCapexBudget} onChange={v=>setConfig({finCapexBudget:v})} min={0} prefix="₹"
+            why="The per-period CapEx envelope the knapsack must respect — a tighter budget defers or drops positive-NPV expansions."
+            formula="Σ capex[t] ≤ budget (rollover on)"/>
+          <GovField label="Added hrs/yr (1 shift)" token="config" seed={2400} value={config.finAddedHrs==null?'':config.finAddedHrs} onChange={v=>setConfig({finAddedHrs:v})} min={0}
+            why="Machine-hours one expansion adds per year (≈1 shift) — the quantity each option's cash flow is derived from."
+            formula="annual CF = added hrs × margin/hr × utilization − opex"/>
+          <GovField label="Line shadow ₹/hr (from Plan PL-A)" token="config" seed={0} value={config.finLineShadow==null?'':config.finLineShadow} onChange={v=>setConfig({finLineShadow:v})} min={0} suffix="₹/hr" hint="overrides derived margin/hr if a line binds"
+            why="The binding line's dual from Plan's line-capacity LP — the true marginal worth of one more hour. Seed 0 = honest: slack lines earn nothing from expansion."
+            formula="margin/hr := max(derived CM/hr, shadow ₹/hr)"/>
         </Grid>
         <div style={{marginTop:6, fontFamily:F.mono, fontSize:9, color:C.tx3}}>{mphSolved?'Solved margin/hr (binding-line dual · PL-A)':'Derived margin/hr per line'}: {(M.lines||[]).map(l=>`${l.id} ₹${effMph(l.id).toLocaleString('en-IN')}${mphSolved&&lcByLine[l.id]&&lcByLine[l.id].binding?'⚡':''}`).join(' · ')}{mphSolved?' · slack lines value expansion at ₹0':' — run Plan · Line-capacity (PL-A) to value on the solved dual'}</div>
         {cr && (cr.schedule.length ? <div style={{marginTop:10}}>
@@ -785,11 +814,16 @@ function FinBVL() {
       dev={{ comp:'BuyVsLeaseCard', props:'config.bvl → /api/calc/npv ×2 (buy, lease) at finBlendedHurdle', state:'config.bvl{price,life,maint,lease,salvage}', note:'FIN-1: was a hardcoded card rendered twice; now one real two-leg NPV solve. Worked-example asset (editable); math is live.' }}>
       {(buy.error||lse.error) && <div style={{marginBottom:8, padding:'6px 9px', border:`2px solid ${C.dg}`, fontFamily:F.mono, fontSize:10, color:C.dg}}>solve error: {buy.error||lse.error}</div>}
       <div style={{display:'flex', gap:10, flexWrap:'wrap', alignItems:'flex-end', marginBottom:12}}>
-        <SolverInput label="Buy upfront" seed={8400000} value={bvl.price} onChange={v=>set('price',v)} min={0} prefix="₹"/>
-        <SolverInput label="Useful life" seed={5} value={bvl.life} onChange={v=>set('life',v)} min={1} max={20} suffix="yr"/>
-        <SolverInput label="Maint/yr (buy)" seed={600000} value={bvl.maint} onChange={v=>set('maint',v)} min={0} prefix="₹"/>
-        <SolverInput label="Lease/yr" seed={2000000} value={bvl.lease} onChange={v=>set('lease',v)} min={0} prefix="₹"/>
-        <SolverInput label="Salvage (buy)" seed={2500000} value={bvl.salvage} onChange={v=>set('salvage',v)} min={0} prefix="₹"/>
+        <GovField label="Buy upfront" token="config" w={110} seed={8400000} value={bvl.price==null?'':bvl.price} onChange={v=>set('price',v)} min={0} prefix="₹"
+          why="The asset's purchase price — the capital the BUY leg ties up at t0 (and the base of its depreciation shield)." formula="buy CF₀ = −price; depₜ = (price−salvage)/life"/>
+        <GovField label="Useful life" token="config" w={84} seed={5} value={bvl.life==null?'':bvl.life} onChange={v=>set('life',v)} min={1} max={20} integer suffix="yr"
+          why="Years both legs run — sets the depreciation schedule and how many rentals the LEASE leg pays." formula="PV over t = 1..life at the blended hurdle"/>
+        <GovField label="Maint/yr (buy)" token="config" w={110} seed={600000} value={bvl.maint==null?'':bvl.maint} onChange={v=>set('maint',v)} min={0} prefix="₹"
+          why="Annual upkeep the owner (not the lessor) carries — tax-deductible, so it costs maint·(1−t) after tax." formula="buy CFₜ = −maint(1−t) + dep·t"/>
+        <GovField label="Lease/yr" token="config" w={110} seed={2000000} value={bvl.lease==null?'':bvl.lease} onChange={v=>set('lease',v)} min={0} prefix="₹"
+          why="The annual rental — fully deductible, so the LEASE leg costs rental·(1−t) a year with no upfront capital." formula="lease CFₜ = −rental(1−t)"/>
+        <GovField label="Salvage (buy)" token="config" w={110} seed={2500000} value={bvl.salvage==null?'':bvl.salvage} onChange={v=>set('salvage',v)} min={0} prefix="₹"
+          why="Residual the owner recovers at end of life — ignoring it biases the call toward leasing." formula="buy CF_life += salvage"/>
         <Field label="Hurdle"><NumInput value={(hurdle*100).toFixed(2)} suffix="%" disabled/></Field>
       </div>
       <Grid cols={2}>
@@ -885,4 +919,33 @@ function FinFX() {
     </Grid>
   );
 }
+// ════════════════════════════════════════════════════════════════════════
+// V3-13 · ① DECIDE strip (Part 3.2) — "what does capital cost — and is the plan
+// earning it?" All three KPIs are honestly ƒDERIVED from the SAME hook-free helpers
+// every Finance card charges (finBlendedHurdle · carryRateParts · finEva) — one
+// formula, two renders, nothing recomputed differently here. The EVA chip carries
+// finEva's own capital-basis honesty (solved inventory vs turns proxy).
+// ════════════════════════════════════════════════════════════════════════
+function FinanceDecideStrip(){
+  const { config } = useConfig();
+  const bh = finBlendedHurdle(config);
+  const cp = carryRateParts(config);
+  const eva = finEva(config);
+  const destroyers = eva.rows.filter(r=>r.destroyer);
+  const evaL = eva.tot.eva/1e5;
+  return (
+    <div data-vis="finance-decide" style={{display:'flex', alignItems:'center', gap:14, flexWrap:'wrap'}}>
+      <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.08em', color:C.tx3}}>① WHAT DOES CAPITAL COST — AND IS THE PLAN EARNING IT?</span>
+      <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>blended hurdle <b className="num" style={{fontFamily:F.disp, color:C.tx}}>{bh.wacc}%</b></span>
+      <span style={{color:C.line2}}>·</span>
+      <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>carry rate <b className="num" style={{fontFamily:F.disp, color:C.tx}}>{cp.total}%/yr</b></span>
+      <span style={{color:C.line2}}>·</span>
+      <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>EVA <b className="num" style={{fontFamily:F.disp, color: eva.tot.eva>=0?C.tx:C.dg}}>{evaL>=0?'+':'−'}₹{Math.abs(evaL).toFixed(1)}L</b>/yr</span>
+      {destroyers.length>0 && <Tag c="r">{destroyers.length} value destroyer{destroyers.length===1?'':'s'}</Tag>}
+      <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>capital basis: {eva.capitalBasis}</span>
+      <Provenance kind="derived" style={{padding:'0 4px', fontSize:7.5}}/>
+    </div>
+  );
+}
+
 window.StageFinance = StageFinance;

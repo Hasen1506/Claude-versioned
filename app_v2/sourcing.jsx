@@ -24,12 +24,24 @@ function partsWithSourcing(pd, sku){
   const hasCohort = skuBill.length > 0;
   const qtyByPart = {};
   skuBill.forEach(ln=>{ qtyByPart[ln.part] = ln.qty; });   // bomForSku already applied per-SKU overrides
+  // V5-3 — when supplier capacity is armed, each part also names its qualified
+  // BACKUP lane (M.backupSuppliers master) so the MILP can overflow a binding
+  // primary: backup premium % is governed (config.supBackupPremiumPct, seed 12),
+  // lead time is the backup supplier's own lt converted to planning periods.
+  const _cfg = (typeof appStore!=='undefined') ? (appStore.get().config||{}) : {};
+  const scOn = !!_cfg.supCapEnabled;
+  const bkMap = M.backupSuppliers || {};
+  const bkPrem = (_cfg.supBackupPremiumPct!=null && _cfg.supBackupPremiumPct!=='') ? Number(_cfg.supBackupPremiumPct) : 12;
   return base.map((p,i)=>{
     const b = bom[i] || {};
     const src = getSourcing(b.part, b);
     const qty_per = hasCohort ? (qtyByPart[b.part] != null ? qtyByPart[b.part] : 0) : p.qty_per;
+    let bkSup = (scOn && bkMap[b.part]) ? (M.suppliers||[]).find(s=>s.code===bkMap[b.part]) : null;
+    if(bkSup && bkSup.code === b.sup) bkSup = null;   // a primary can't be its own relief lane
     // supplier carried through so policy.py can group parts into joint-replenishment baskets (SS-B).
-    return { ...p, qty_per, landed_cost: effLandedCost(p.cost, src), supplier: b.sup };
+    return { ...p, qty_per, landed_cost: effLandedCost(p.cost, src), supplier: b.sup,
+      ...(bkSup ? { backup:{ supplier: bkSup.code, premium_pct: bkPrem,
+                            lead_time: Math.max(1, Math.round((Number(bkSup.lt)||14) / (pd||30))) } } : {}) };
   });
 }
 function procurementPayload(sku, planning, serviceLevel){
@@ -52,6 +64,9 @@ function procurementPayload(sku, planning, serviceLevel){
     horizon_start_date: planning.startDate,
     locked_pos: (typeof scheduledReceiptsLocked==='function') ? scheduledReceiptsLocked() : [] };
   if(_budget > 0) params.budget = _budget;
+  // V5-3 — finite supplier capacity (₹/period); omitted while the toggle is off.
+  const _supCap = (typeof supplierCapacityParams==='function') ? supplierCapacityParams(_cfg) : null;
+  if(_supCap) params.supplier_capacity = _supCap;
   return { products:[{ name:sku, demand:dem, capacity:cap,
     variable_cost:p.cost||1190, sell_price:p.price||1850, yield_pct:(typeof skuYield==='function'?skuYield(p,0.97):(p.yield||0.97)), parts:partsWithSourcing(pd, sku) }],   // G-I1 measured ?? seed
     params };
@@ -131,19 +146,13 @@ function meioNetworkPayload(serviceLevel, correlation, poolingFixedCost, opts){
   const fin = (M.products||[]).filter(p=>p.cat==='Finished');
   const skuBom = M.skuBom || {};
   const rhoBase = Number(correlation)||0;
-  const xyzRank = { X:0, Y:1, Z:2 };
   // which finished SKUs consume a given part, with each one's own qty_per (MN-A).
   const consumers = (partId)=>{ const out=[];
     fin.forEach(p=>{ const ln=(skuBom[p.sku]||[]).find(x=>x.part===partId); if(ln) out.push({ p, qty:Number(ln.qty)||0 }); });
     return out; };
-  // pairwise ρ matrix from XYZ class distance: same class co-moves at ρ; one apart ρ/2;
-  // two apart independent. A documented co-movement heuristic (no fabricated covariance).
-  const corrMatrix = (skus)=>{ const n=skus.length, m=[];
-    for(let i=0;i<n;i++){ m[i]=[]; for(let j=0;j<n;j++){
-      if(i===j){ m[i][j]=1; continue; }
-      const d=Math.abs((xyzRank[skus[i].xyz]??1)-(xyzRank[skus[j].xyz]??1));
-      m[i][j] = d===0?rhoBase : d===1?rhoBase/2 : 0; } }
-    return m; };
+  // pairwise ρ matrix from XYZ class distance — V4-7 consolidated to the ONE shared
+  // heuristic (store.xyzCorrMatrix); Monte-Carlo's systemic-demand mode uses the same.
+  const corrMatrix = (skus)=> xyzCorrMatrix(skus, rhoBase);
   const parts = bom.map(b=>{
     const src = getSourcing(b.part, b);
     const cons = consumers(b.part);
@@ -221,6 +230,10 @@ function StageSourcing({ onNav }) {
         right={<Btn kind="accent" onClick={runProc}>{proc.solving?'⏳ Planning…':'⚡ Run procurement'}</Btn>}/>
       <ItemSelector onNav={onNav}/>
       <StageContext item={item} asOf={ranAt ? ranAt.toLocaleString('en-IN') : null} stale={stale}/>
+      {/* ① DECIDE strip (Part 3.2) — from the SOLVED procurement plan only */}
+      <div style={{padding:'8px 18px', borderBottom:`2px solid ${C.line}`, background:C.paper}}>
+        <SourcingDecideStrip proc={proc}/>
+      </div>
       <SubTabNav tabs={srcTabs} active={sub} onChange={setSub}/>
       <div style={{padding:18}}>
         <ScopeBanner kind="sourcing" name={item?item.name:sku} code={sku}
@@ -233,14 +246,18 @@ function StageSourcing({ onNav }) {
         <StageSection step="1" scope="global" title="Solver Parameters" sub="governed inputs — a seed default until you override it; an override re-flags the plan to re-solve">
           <Card icon="🎛️" title="Procurement MILP inputs" badge="governed" badgeTone="y"
             info={{ what:'The service level sets the cycle-service target the MILP sizes safety stock to — ONE shared governed field (the same α you set in Setup; editing it here or there moves both). The optional RM-spend budget caps purchasing cash per period (blank = unbounded). Seeded; override per run.', flows:'→ procurement MILP params.service_level, params.budget.' }}
-            dev={{ comp:'SolverInput', props:'config.serviceLevel, config.procBudget', state:'config.serviceLevel (seed 0.95, shared w/ Setup), config.procBudget (blank=unbounded)' }}>
+            dev={{ comp:'GovField', props:'config.serviceLevel, config.procBudget (token config — broad ON PURPOSE: under-staling is the bug we refuse)', state:'config.serviceLevel (seed 0.95, shared w/ Setup), config.procBudget (blank=unbounded)' }}>
             <Grid cols={3}>
-              <SolverInput label="Service level (α)" seed={0.95} value={config.serviceLevel}
+              <GovField label="Service level (α)" token="config" seed={0.95} value={config.serviceLevel}
                 onChange={v=>setConfig({ serviceLevel:v })} min={0.5} max={0.999}
-                hint="cycle-service target → safety stock · shared with Setup"/>
-              <SolverInput label="RM-spend budget / period" seed={0} value={config.procBudget}
+                hint="cycle-service target → safety stock · shared with Setup"
+                why="The cycle-service target the MILP sizes safety stock to — ONE shared governed field: Setup shows the same α as a percent; editing either moves both."
+                formula="safety stock = z(α) × σ_LTD"/>
+              <GovField label="RM-spend budget / period" token="config" seed={0} value={config.procBudget}
                 onChange={v=>setConfig({ procBudget:v })} min={0} prefix="₹"
-                hint="0 / blank = unbounded; a cap forces the MILP to defer or split purchases to stay within working capital"/>
+                hint="0 / blank = unbounded"
+                why="Optional working-capital cap on purchasing cash per period — a binding cap forces the MILP to defer or split purchases."
+                formula="Σ RM purchase[t] ≤ budget (each period, when set)"/>
             </Grid>
             {/* G-I2 — ABC-differentiated service: the per-SKU (s,S)/(R,Q) policy uses class-A/B/C
                 targets (not one global α), so a class-A item earns a higher z than a long-tail C. */}
@@ -251,10 +268,12 @@ function StageSourcing({ onNav }) {
                   <div style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
                     <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.08em', color:C.tx3}}>ABC-DIFFERENTIATED SERVICE (per-SKU policy)</span>
                     {['A','B','C'].map(k=>(
-                      <Field key={k} label={`Class ${k}`} hint={`cycle-service target for class-${k} items → z`}>
-                        <NumInput value={abc[k]==null?'':abc[k]} w={84} step={0.01} min={0.5} max={0.999}
-                          onChange={v=>setAbc(k,v)}/>
-                      </Field>
+                      <GovField key={k} label={`Class ${k}`} token="config" w={110} min={0.5} max={0.999}
+                        seed={{A:0.98,B:0.95,C:0.90}[k]} value={abc[k]==null?'':abc[k]}
+                        onChange={v=>setAbc(k,v)}
+                        hint={`class-${k} target → z`}
+                        why={`Cycle-service target for class-${k} items (G-I2) — a class-A item earns a tighter fill than a long-tail C; the per-SKU (s,S)/(R,Q) policy re-derives z from the item's class.`}
+                        formula="z = Φ⁻¹(α_class) → SS = z·σ_LTD"/>
                     ))}
                     <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3, alignSelf:'center'}}>α as a fraction (0.98 = 98%) · the per-SKU Inventory Policy (Products ▸ 4) re-derives z from the item's class</span>
                   </div>
@@ -267,6 +286,10 @@ function StageSourcing({ onNav }) {
         </StageSection>
         <SrcResults proc={proc}/>
         <SrcMRP item={item} view={view} onNav={onNav} proc={proc}/>
+        {/* V3-11 · VIS-7 — the Step-6 picture: this FG's bill as a tree with lead-time bars + SS buffers */}
+        <StageSection step="3b" scope="item" title="BOM explosion · lead-time ladder" sub="this FG's parts with their lead-time bars and derived safety buffers — the longest bar is the critical path of a greenfield build">
+          <Vis7BomTree sku={sku} planning={planning} sl={sl}/>
+        </StageSection>
         <SrcFreight proc={proc}/>
         <SrcExceptions proc={proc}/>
         </>}
@@ -278,6 +301,7 @@ function StageSourcing({ onNav }) {
         </StageSection>
         <SrcIncoterms/>
         <SrcSourcingTerms/>
+        <SrcSupplierCapacity proc={proc}/>
         <SrcLanded onNav={onNav}/>
         <SrcPolicy sku={sku} planning={planning} sl={sl}/>
         <SrcRolling sku={sku} planning={planning} sl={sl}/>
@@ -440,6 +464,78 @@ function SrcConcentration(){
           : `✓ No single origin or supplier exceeds the ${capPct}% RM-spend cap.`}
       </div>
     </div>
+  );
+}
+// ════════════════════════════════════════════════════════════════════════
+// V5-3 · SUPPLIER CAPACITY — finite ₹/period fulfilment capacity per supplier;
+// the procurement MILP ALLOCATES that capacity across the supplier's part basket
+// and may overflow to a part's qualified backup lane (M.backupSuppliers) at a
+// governed premium on the backup's own lead time. OFF by default (toggle) so the
+// legacy model is byte-identical; arming it re-flags the procurement family stale.
+// ════════════════════════════════════════════════════════════════════════
+function SrcSupplierCapacity({ proc }){
+  const { config, setConfig } = useConfig();
+  const on = !!config.supCapEnabled;
+  const caps = config.supplierCaps || {};
+  const setCap = (code, v)=> setConfig({ supplierCaps: { ...caps, [code]: v } });
+  const res = proc && proc.result;
+  const alloc = (res && res.supplier_capacity_active && res.supplier_allocation) || [];
+  const bkRows = (res && res.materials || []).filter(m=>(m.backup_orders||[]).some(x=>x>0));
+  const binding = alloc.filter(a=>(a.binding_periods||[]).length>0);
+  const overflowTot = alloc.reduce((s,a)=>s+(a.overflow_spend||0),0);
+  return (
+    <StageSection step="2b" scope="global" title="Supplier capacity — allocation" sub="suppliers are not infinite: arm a ₹/period fulfilment cap per supplier and the buy plan allocates the basket across it — overflow goes to the qualified backup lane at a premium">
+      <Card icon="🏭" title="Finite supplier capacity" span={2} badge={on?'armed — caps bind the MILP':'off — supply modeled as ∞'} badgeTone={on?'y':'k'}
+        right={<Btn kind={on?'primary':'secondary'} sm onClick={()=>setConfig({ supCapEnabled: !on })}>{on?'⏻ disarm caps':'⏻ arm supplier caps'}</Btn>}
+        info={{ what:'Each supplier carries a finite fulfilment capacity in ₹ landed spend per period (₹ because a basket mixes kg/pcs/L — spend is the one common unit a supplier honestly bounds). When armed, the procurement MILP must ALLOCATE a constrained supplier across every part it feeds — deferring, pre-buying, or overflowing to the part\'s qualified backup supplier at the governed premium on the backup\'s own lead time.', flows:'caps → params.supplier_capacity · backup map → parts[].backup → procurement MILP → supplier_allocation + backup POs.' }}
+        dev={{ comp:'SrcSupplierCapacity', props:'config.supCapEnabled · config.supplierCaps · config.supBackupPremiumPct', note:'V5-3 — SupCap_{sup}_{t}: Σ landed spend ≤ cap × period_factor(t); r_bk relief vars per backed part.' }}>
+        <Grid cols={3} gap={8}>
+          {(M.suppliers||[]).map(s=>(
+            <GovField key={s.code} label={`${s.code} · ${s.name.split(' ')[0]}`} token="config" prefix="₹" min={0}
+              seed={s.capPerPeriod} value={caps[s.code]==null?'':caps[s.code]}
+              onChange={v=>setCap(s.code, v)}
+              hint={`₹/period · ≈2× avg monthly draw at seed`}
+              why={`Finite fulfilment capacity for ${s.name} — the ₹ landed spend it can serve per period across ALL its parts. Binding ⇒ the MILP re-times the basket or overflows to backups.`}
+              formula="Σ parts of supplier: landed × buy[t] ≤ cap × period_factor(t)"/>
+          ))}
+          <GovField label="Backup premium" token="config" min={0} max={100} suffix="%"
+            seed={12} value={config.supBackupPremiumPct==null?'':config.supBackupPremiumPct}
+            onChange={v=>setConfig({ supBackupPremiumPct: v })}
+            hint="spot uplift on the backup lane"
+            why="The price uplift a qualified backup charges for uncontracted spot volume (admin + expedite priced in) — the MILP only pays it when the primary's capacity genuinely binds."
+            formula="backup unit cost = landed × (1 + premium%)"/>
+        </Grid>
+        {on && (
+          <div data-vis="v5-supcap" style={{marginTop:10, border:`2px solid ${C.line}`, borderLeft:`5px solid ${binding.length?C.hl:C.gn}`, background:C.paper, padding:'9px 12px'}}>
+            {!res ? (
+              <span style={{fontFamily:F.mono, fontSize:10, color:C.tx3}}>armed — run procurement to see the allocation</span>
+            ) : !res.supplier_capacity_active ? (
+              <span style={{fontFamily:F.mono, fontSize:10, color:C.tx3}}>armed after the last solve — re-run procurement to apply the caps</span>
+            ) : (<>
+              <div style={{fontFamily:F.mono, fontSize:9.5, fontWeight:800, letterSpacing:'.06em', color:C.tx2, marginBottom:6}}>
+                SUPPLIER ALLOCATION — {alloc.length} capped supplier(s) · {binding.length?`${binding.length} BINDING`:'none binding'}{overflowTot>0?` · ₹${Math.round(overflowTot).toLocaleString('en-IN')} overflowed to backup lanes`:''}
+              </div>
+              <div style={{display:'flex', flexWrap:'wrap', gap:10}}>
+                {alloc.map(a=>(
+                  <div key={a.supplier} style={{minWidth:150, border:`1.5px solid ${(a.binding_periods||[]).length?C.hl:C.line2}`, padding:'5px 8px'}}>
+                    <div style={{fontFamily:F.mono, fontSize:9.5, fontWeight:800}}>{a.supplier}</div>
+                    <div style={{fontFamily:F.mono, fontSize:9, color:C.tx2}}>peak {a.peak_util_pct}% of ₹{Math.round(a.cap_per_period).toLocaleString('en-IN')}/p</div>
+                    <div style={{fontFamily:F.mono, fontSize:9, color:(a.binding_periods||[]).length?C.hl:C.gn}}>
+                      {(a.binding_periods||[]).length?`binds ${a.binding_periods.length} period(s)`:'slack'}{a.overflow_spend>0?` · ₹${Math.round(a.overflow_spend).toLocaleString('en-IN')} → backup`:''}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {bkRows.length>0 && (
+                <div style={{marginTop:6, fontFamily:F.mono, fontSize:9, color:C.tx2}}>
+                  backup buys: {bkRows.map(m=>`${m.name} via ${m.backup_supplier||'backup'} ${(m.backup_orders||[]).reduce((a,b)=>a+b,0)}u (₹${Math.round(m.backup_spend||0).toLocaleString('en-IN')})`).join(' · ')}
+                </div>)}
+              <Reading formula="SupCap: Σ landed×buy[t] (+ backup inflow) ≤ cap × period_factor(t) — per supplier, per period"
+                soWhat={binding.length?'A supplier is at its ceiling — the plan already re-times the basket and prices the backup premium; raise the cap, qualify a second source, or accept the premium.':'All capped suppliers have slack at this demand — the caps are live guardrails and will bind first under surge or branch what-ifs.'}/>
+            </>)}
+          </div>)}
+      </Card>
+    </StageSection>
   );
 }
 function SrcTermRow({ b }){
@@ -676,8 +772,9 @@ function SrcMRP({ item, view, onNav, proc }) {
   const mat = proc && proc.result && (proc.result.materials||[])[pi];
   const lane = M.lanes.find(l=>l.item===part.part);
   const sup = M.suppliers.find(s=>s.code===part.sup) || {};
-  const backupMap = { 'RM-STL42':'SUP-018', 'RM-BRG18':'SUP-024', 'CN-SEAL9':'SUP-031', 'CN-BLT04':'SUP-012', 'CN-LUB02':'SUP-031' };
-  const backup = M.suppliers.find(s=>s.code===backupMap[part.part]) || {};
+  // V5-3 — backup lane comes from the master map (M.backupSuppliers), the SAME map
+  // the procurement MILP overflows to when supplier capacity binds (was a UI hardcode).
+  const backup = M.suppliers.find(s=>s.code===(M.backupSuppliers||{})[part.part]) || {};
   const wk = M.periods.slice(0,8);
   // synthesize MRP rows for the part
   const gross = [0,0,1200,0,900,0,1100,0];
@@ -945,10 +1042,13 @@ function CarryRateControl(){
       <div style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>
         = WACC <b style={{color:C.tx}}>{cp.wacc}%</b> <span style={{color:C.tx3}}>(from Finance · blended hurdle)</span> + holding spread
       </div>
-      <Field label="Holding spread (storage·insurance·obsolescence)" hint="cost above the WACC of keeping a unit a year">
-        <NumInput value={config.invHoldingSpread==null?12.8:config.invHoldingSpread} suffix="%/yr" w={92}
-          onChange={v=>setConfig({ invHoldingSpread: v===''?12.8:Number(v) })}/>
-      </Field>
+      {/* V3-12 — the ONE token-riding inventory knob in the science section: governed, ◇seed 12.8 */}
+      <GovField label="Holding spread (storage·insurance·obsolescence)" token="config" w={150}
+        seed={12.8} value={config.invHoldingSpread==null?'':config.invHoldingSpread} suffix="%/yr" min={0} max={60}
+        onChange={v=>setConfig({ invHoldingSpread: v })}
+        hint="cost above the WACC of keeping a unit a year"
+        why="The non-financing cost of keeping a unit a year — storage, insurance, obsolescence, shrink. Added to the Finance blended WACC it composes the carry rate h that every inventory solve (EOQ, safety stock, MEIO, pooling) prices holding at."
+        formula="h = WACC + spread → EOQ = √(2·D·K/h) · holding ₹/yr = h × unit value"/>
     </div>
   );
 }
@@ -1260,6 +1360,8 @@ function SrcMEIONet({ sl }){
               <Blk label="Parts to pool" value={`${res.recommended_pool.length}`} sub={`of ${shared.length} shared`} tone="y"/>
               <Blk label="Service level" value={`${(res.service_level*100).toFixed(1)}%`} sub={`z = ${res.z} · ρ = ${res.correlation}`} tone="k"/>
             </div>
+            {/* V3-12 · VIS-8 — the Step-7 √N pooling picture, drawn from THIS solve's rows */}
+            <Vis8Pooling res={res}/>
             <div style={{overflowX:'auto', border:`2px solid ${C.line}`}}>
               <table style={{borderCollapse:'collapse', width:'100%', fontFamily:F.mono, fontSize:10.5}}>
                 <thead><tr style={{background:C.ink}}>
@@ -1538,4 +1640,143 @@ function SrcExceptions({ proc }){
     </StageSection>
   );
 }
+// ── V3-11 · ① DECIDE strip (blueprint 3.2) — "what do I buy, and when?" from ──
+// the SOLVED procurement plan only: PO count, RM spend (Σ of the same PO rows
+// the release plan lists — no separate total that could drift), shortage verdict.
+function SourcingDecideStrip({ proc }){
+  const res = proc && proc.result;
+  if(!res) return (
+    <span style={{fontFamily:F.mono, fontSize:10, color:C.tx3}}>
+      ① What do I buy — and when must each PO go out? — press <b style={{color:C.tx}}>⚡ Run procurement</b> to light this up
+    </span>
+  );
+  let pos = 0, spend = 0;
+  (res.materials||[]).forEach(m=>(m.purchase_orders||[]).forEach(po=>{ pos++; spend += Number(po.cost)||0; }));
+  const fg = (res.products||[])[0] || {};
+  const shorts = (fg.shortages||[]).filter(q=>q>0.5).length;
+  return (
+    <div data-vis="sourcing-decide" style={{display:'flex', alignItems:'center', gap:14, flexWrap:'wrap'}}>
+      <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.08em', color:C.tx3}}>① WHAT DO I BUY — AND WHEN?</span>
+      <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}><b className="num" style={{fontFamily:F.disp, color:C.tx}}>{pos}</b> POs</span>
+      <span style={{color:C.line2}}>·</span>
+      <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>RM spend <b className="num" style={{fontFamily:F.disp, color:C.tx}}>₹{Math.round(spend).toLocaleString('en-IN')}</b></span>
+      <span style={{color:C.line2}}>·</span>
+      <Tag c={shorts?'r':'g'}>{shorts ? `${shorts} projected shortage period${shorts>1?'s':''}` : 'no projected shortage'}</Tag>
+    </div>
+  );
+}
+
+// ── V3-11 · VIS-7 — BOM explosion tree (blueprint 3.4 #7, the Step-6 picture) ──
+// This FG's REAL bill (bomForSku) drawn as a tree: one bar per part, width = its
+// lead time against the longest lead (the critical path that gates a greenfield
+// build); the safety-stock buffer overlays from a REAL (s,S)/(R,Q) policy solve
+// on demand (button) — until then the SS column honestly prompts instead of
+// faking. The TPAC bill is flat (FG → parts, no sub-assemblies) and the tree
+// says so rather than inventing a level.
+function Vis7BomTree({ sku, planning, sl }){
+  useMasterRev();
+  const parts = ((typeof bomForSku==='function' ? bomForSku(sku) : []) || []).slice().sort((a,b)=>(Number(b.lt)||0)-(Number(a.lt)||0));
+  const pol = useSolve('/api/solve/policy', ()=>policyPayload(sku, planning, sl));
+  // policy.py keys each row by the payload part NAME (bomParts sends M.bom[].name, the
+  // descriptive name — same contract scheduledReceiptsLocked translates for), so index
+  // by name; bomForSku rows carry both code (b.part) and name (b.name).
+  const ssBy = {}; (((pol.result||{}).policies)||[]).forEach(q=>{ ssBy[q.part] = q; });
+  const ssFor = (b)=> ssBy[b.name] || ssBy[b.part];
+  const havePol = !!(pol.result && pol.result.policies);
+  const maxLt = Math.max(1, ...parts.map(b=>Number(b.lt)||0));
+  const crit = parts[0];
+  if(!parts.length) return (
+    <Card icon="🌳" title="BOM explosion · lead-time ladder" badge="VIS-7">
+      <div style={{padding:'14px', textAlign:'center', fontFamily:F.mono, fontSize:10, color:C.tx3, border:`2px dashed ${C.line2}`}}>no bill defined for {sku}</div>
+    </Card>
+  );
+  return (
+    <Card icon="🌳" title={`BOM explosion · ${sku}`} badge={`critical path ${crit.lt}d (${crit.part})`} badgeTone="y"
+      right={havePol
+        ? <Provenance kind="solved" asOf={pol.ranAt?pol.ranAt.toLocaleTimeString():undefined}/>
+        : <Btn kind="primary" sm onClick={()=>pol.run().catch(()=>{})}>{pol.solving?'⏳ …':'⚙ Derive SS buffers'}</Btn>}
+      info={{ what:'The FG’s real bill as a lead-time ladder: bar = part lead time vs the longest lead (critical path); SS column = the real (s,S) policy solve’s safety stock per part. The TPAC bill is FLAT (FG → parts, no sub-assemblies) — the tree shows what exists, it does not invent a level.', flows:'reads bomForSku + /api/solve/policy — writes nothing.' }}
+      dev={{ comp:'Vis7BomTree', props:'bomForSku(sku), policyPayload → /api/solve/policy', note:'V3-11 · VIS-7 — Step-6 picture' }}>
+      {pol.error && <div style={{marginBottom:8, fontFamily:F.mono, fontSize:9.5, color:C.dg}}>policy engine: {pol.error}</div>}
+      <div data-vis="vis7" style={{display:'flex', flexDirection:'column', gap:5}}>
+        <div style={{fontFamily:F.disp, fontSize:12, fontWeight:800, padding:'4px 0'}}>{sku} <span style={{fontFamily:F.mono, fontSize:8.5, fontWeight:400, color:C.tx3}}>finished good · flat bill, {parts.length} parts</span></div>
+        {parts.map(b=>{
+          const q = ssFor(b);
+          const isCrit = b.part===crit.part;
+          return (
+            <div key={b.part} style={{display:'grid', gridTemplateColumns:'150px 1fr 170px', gap:10, alignItems:'center'}}>
+              <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx2, whiteSpace:'nowrap'}}>└─ <b style={{color:isCrit?C.dg:C.tx}}>{b.part}</b> · {b.qty}/u</span>
+              <div style={{display:'flex', alignItems:'center', gap:6}}>
+                <div style={{flex:1, height:13, background:C.bg3, border:`1px solid ${C.line2}`, position:'relative'}}>
+                  <div style={{width:`${(Number(b.lt)||0)/maxLt*100}%`, height:'100%', background:isCrit?C.dg:C.ink, opacity:.8}}/>
+                </div>
+                <span className="num" style={{fontFamily:F.mono, fontSize:9, width:34, textAlign:'right', color:isCrit?C.dg:C.tx2}}>{b.lt}d</span>
+              </div>
+              <span style={{fontFamily:F.mono, fontSize:9, color:C.tx3, textAlign:'right'}}>
+                {q ? <>SS <b className="num" style={{color:C.tx}}>{q.safety_stock}</b> · s <b className="num" style={{color:C.tx}}>{q.reorder_point_s}</b></> : (havePol ? '—' : 'derive ⚙ for SS')}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <Reading formula="bar = part lead ÷ max lead · critical path = the longest-lead part · SS = z(α)·σ_LTD per part (real policy solve)"
+        soWhat={`A greenfield build of ${sku} is gated by ${crit.part} at ${crit.lt} days — every other part's lead hides inside it. ${havePol?'The SS buffers shown are what decouple you from that lead between orders.':'Press ⚙ to size the safety buffers with the real policy engine (nothing here is typed).'}`}/>
+    </Card>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// V3-12 · VIS-8 — THE √N POOLING PICTURE (blueprint 3.4 #8, the Step-7 picture).
+// Decentralised vs pooled side-by-side, per shared part: two bars on one ₹ scale —
+// SS capital held as one-buffer-per-SKU-tree vs ONE central pooled buffer — and the
+// gap labelled as capital freed. Draws ONLY this card's live meio-network result
+// (the same rows the table below prints; the solver's own ss_value_decentralised /
+// ss_value_pooled / total_capital_freed — nothing recomputed, nothing typed).
+// Renders inside SrcMEIONet's result branch, so it cannot exist before a real solve.
+// ════════════════════════════════════════════════════════════════════════
+function Vis8Pooling({ res }){
+  const fmt = n=> Math.round(n).toLocaleString('en-IN');
+  const pool = (res.parts||[]).filter(p=>p.poolable);
+  if (!pool.length) return null;
+  const maxV = Math.max(...pool.map(p=>Number(p.ss_value_decentralised)||0), 1);
+  const totDec = Number(res.total_ss_value_decentralised)||0;
+  const totPool = Number(res.total_ss_value_pooled)||0;
+  const freed = Number(res.total_capital_freed)||0;
+  const bar = (v, color, label)=>(
+    <div style={{display:'flex', alignItems:'center', gap:6}}>
+      <div style={{flex:1, height:13, background:C.bg3, border:`1px solid ${C.line2}`, position:'relative'}}>
+        <div style={{position:'absolute', inset:0, width:`${Math.min(100,(v/maxV)*100)}%`, background:color}}/>
+      </div>
+      <span className="num" style={{fontFamily:F.mono, fontSize:9, width:78, textAlign:'right', color:C.tx2}}>₹{fmt(v)}</span>
+      <span style={{fontFamily:F.mono, fontSize:8, width:62, color:C.tx3}}>{label}</span>
+    </div>
+  );
+  return (
+    <div data-vis="vis8" style={{margin:'0 0 12px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${C.gn}`, background:C.paper, padding:'10px 12px'}}>
+      <div style={{display:'flex', alignItems:'baseline', gap:10, flexWrap:'wrap', marginBottom:8}}>
+        <span style={{fontFamily:F.disp, fontWeight:900, fontSize:11.5, letterSpacing:'.03em'}}>√N POOLING — SEPARATE vs ONE BUFFER</span>
+        <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx2}}>₹{fmt(totDec)} decentralised → ₹{fmt(totPool)} pooled</span>
+        <Tag c={freed>0?'g':'k'}>capital freed ₹{fmt(freed)}</Tag>
+        <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3, marginLeft:'auto'}}>same α = {(res.service_level*100).toFixed(0)}% · ρ = {res.correlation}</span>
+      </div>
+      <div style={{display:'grid', gridTemplateColumns:'88px 1fr', rowGap:7, columnGap:10}}>
+        {pool.map((p,i)=>(
+          <React.Fragment key={i}>
+            <div style={{fontFamily:F.mono, fontSize:9.5, fontWeight:700, paddingTop:1}}>{p.name}<div style={{fontWeight:400, fontSize:8, color:C.tx3}}>{p.n_skus} SKUs share it</div></div>
+            <div style={{display:'grid', rowGap:2}}>
+              {bar(Number(p.ss_value_decentralised)||0, C.tx3, `${p.n_skus} buffers`)}
+              {bar(Number(p.ss_value_pooled)||0, C.gn, 'pooled')}
+            </div>
+          </React.Fragment>
+        ))}
+      </div>
+      <div style={{fontFamily:F.mono, fontSize:9, color:C.tx3, marginTop:8, lineHeight:1.6}}>
+        The second bar is shorter by the square-root law — σ_pool = √(Σσ² + 2ρΣσᵢσⱼ) ≤ Σσ — so ONE central buffer
+        holds the same {(res.service_level*100).toFixed(0)}% service with ₹{fmt(freed)} less capital tied up. Every number above is the
+        solver's own row (table below); the verdict column there says which parts clear the pooling fixed cost.
+      </div>
+    </div>
+  );
+}
+
 window.StageSourcing = StageSourcing;

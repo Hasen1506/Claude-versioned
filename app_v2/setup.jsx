@@ -43,9 +43,17 @@ function SetupIdentity({ onNav }) {
             <Field label="Plant State"><Select value={config.plantState}
               onChange={(v)=>setConfig({plantState:v})}
               options={[{value:'TN',label:'Tamil Nadu'},{value:'MH',label:'Maharashtra'},{value:'GJ',label:'Gujarat'},{value:'KA',label:'Karnataka'}]}/></Field>
-            <Field label="Effective Tax"><NumInput value={config.taxRate} suffix="%" onChange={(v)=>setConfig({taxRate:v})}/></Field>
-            <Field label="Service Level"><NumInput value={(config.serviceLevel*100).toFixed(1)} suffix="% z=1.645"
-              onChange={(v)=>setConfig({serviceLevel:(Number(v)||0)/100})}/></Field>
+            <GovField label="Effective Tax" token="config" suffix="%" seed={25.17}
+              value={config.taxRate} min={0} max={60}
+              why="Corporate tax rate — shields depreciation in NPV, scales WACC, and nets every after-tax cash flow."
+              formula="WACC = wE·kE + wD·kD·(1−t) · NPV shield = +dep×t"
+              onChange={(v)=>setConfig({taxRate:v})}/>
+            {/* V3-0 pilot: first GovField conversion — same store write, five honest faces */}
+            <GovField label="Service Level" token="config" suffix="%" seed={95}
+              value={+(config.serviceLevel*100).toFixed(1)} min={50} max={99.9}
+              why="Target probability of NOT stocking out per cycle — sets the z safety factor every inventory solver buffers with."
+              formula="SS = z(α) × σ_d × √LT   (α 95% → z 1.645)"
+              onChange={(v)=>setConfig({serviceLevel:(Number(v)||0)/100})}/>
           </div>
           <div style={{marginTop:12, display:'flex', alignItems:'center', gap:14}}>
             <Field label="GST Registered"><div style={{display:'flex', border:`2px solid ${C.line}`, width:120}}>
@@ -269,17 +277,44 @@ function SetupCalendar() {
             </div>
           </Field>
           <div style={{marginTop:10, display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}}>
-            <Field label="Horizon"><NumInput value={planning.horizonLength} suffix={grain+'s'} onChange={(v)=>setPlanning({horizonLength:v})}/></Field>
+            <GovField label="Horizon" token="planning" suffix={grain+'s'} seed={52}
+              value={planning.horizonLength} min={1} max={156} integer
+              why="How many buckets the whole model plans across — the single period axis every forecast, MPS and solver renders against."
+              formula={`horizon = ${grain}s × N · schedule fence = min(horizon, fence)`}
+              onChange={(v)=>setPlanning({horizonLength:v})}/>
             <Field label="Start Date" hint="pick a date — drives every period axis">
               <input type="date" value={planning.startDate} onChange={(e)=>setPlanning({startDate:e.target.value})} style={{
                 border:`2px solid ${C.line}`, background:C.paper, color:C.tx, fontFamily:F.disp, fontWeight:600,
                 fontSize:13, padding:'5px 8px', height:30, width:'100%', outline:'none'}}/>
             </Field>
-            <Field label="Work Days / Wk"><NumInput value={planning.workDaysPerWeek} onChange={(v)=>setPlanning({workDaysPerWeek:v})}/></Field>
-            <Field label="Net Hrs / Shift" hint="productive hours/shift after breaks — drives machine-hours (Production)"><NumInput value={planning.hrsPerShift} suffix="h" onChange={(v)=>setPlanning({hrsPerShift:v})}/></Field>
-            <Field label="Frozen Wks" hint="no-change fence"><NumInput value={planning.frozenWeeks} suffix="w" onChange={(v)=>setPlanning({frozenWeeks:v})}/></Field>
-            <Field label="Slushy Wks" hint="change-with-approval"><NumInput value={planning.slushyWeeks} suffix="w" onChange={(v)=>setPlanning({slushyWeeks:v})}/></Field>
-            <Field label="Schedule Fence" hint="MILP weeks — production/procurement/risk basis"><NumInput value={planning.productionScheduleWeeks} suffix="w" onChange={(v)=>setPlanning({productionScheduleWeeks:v})}/></Field>
+            <GovField label="Work Days / Wk" token="planning" suffix="d" seed={6}
+              value={planning.workDaysPerWeek} min={1} max={7} integer
+              why="Working days per week — scales available machine-hours and the regular labor budget every capacity check runs on."
+              formula="line hrs/period = shifts × hrsPerShift × workDays × OEE"
+              onChange={(v)=>setPlanning({workDaysPerWeek:v})}/>
+            {/* V3-0 pilot: GovField #2 — planning-token field */}
+            <GovField label="Net Hrs / Shift" token="planning" suffix="h" seed={8}
+              value={planning.hrsPerShift} min={1} max={12}
+              hint="productive hours/shift after breaks"
+              why="Productive hours per shift after breaks — the clock every capacity calculation runs on."
+              formula="line hrs/period = shifts × hrsPerShift × workDays"
+              onChange={(v)=>setPlanning({hrsPerShift:v})}/>
+            <GovField label="Frozen Wks" token="planning" suffix="w" seed={4}
+              value={planning.frozenWeeks} min={0} max={26} integer hint="no-change fence"
+              why="Weeks where the plan may NOT change — protects execution from re-plan nervousness."
+              formula="weeks 1..frozen locked · frozen..slushy = approval-only"
+              onChange={(v)=>setPlanning({frozenWeeks:v})}/>
+            <GovField label="Slushy Wks" token="planning" suffix="w" seed={12}
+              value={planning.slushyWeeks} min={0} max={52} integer hint="change-with-approval"
+              why="Weeks where plan changes need approval — the buffer between the frozen fence and free re-planning."
+              formula="weeks frozen..slushy = approval-only · beyond = free"
+              onChange={(v)=>setPlanning({slushyWeeks:v})}/>
+            <GovField label="Schedule Fence" token="planning" suffix="w" seed={13}
+              value={planning.productionScheduleWeeks} min={1} max={52} integer
+              hint="MILP weeks — production/procurement/risk basis"
+              why="How many weeks the detailed MILP schedule covers — the shared basis production, procurement and risk all solve on."
+              formula="fence = min(horizon, scheduleWeeks) — sizes the MILP"
+              onChange={(v)=>setPlanning({productionScheduleWeeks:v})}/>
           </div>
           <div style={{marginTop:12, padding:'9px 11px', background:C.ac, color:C.onAc, fontFamily:F.mono, fontSize:10, fontWeight:600, lineHeight:1.5}}>
             ◆ Planning {planning.horizonLength} {grain}ly buckets · {hr.start} → {hr.end} ({hr.days} days) · {config.currency} · {(config.serviceLevel*100).toFixed(0)}% service.

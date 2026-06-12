@@ -61,6 +61,45 @@ def run_montecarlo(data, n_runs=500):
     chol_a = rho
     chol_b = math.sqrt(max(0.0, 1.0 - rho * rho))
 
+    # V4-7 — CROSS-SKU demand correlation (systemic-risk tails, 12-steps Step-9).
+    # Independent per-SKU draws understate portfolio risk: when a recession (or a
+    # festival season) hits, every SKU swings TOGETHER, so the plant's worst weeks
+    # are far worse than √N-diversified noise suggests. Opt-in via
+    # params.demand_corr_matrix (n×n over the products order — the UI builds it
+    # from XYZ co-movement, the same MN-C heuristic the pooling solver uses).
+    # Mechanism: pre-draw eps ~ N(0, I_(n×T)) per run and form Z = L·eps where
+    # L = chol(R); each SKU's MARGINAL stays exactly N(0,1) (per-SKU stats
+    # unchanged) — only the JOINT moves. Absent matrix ⇒ the legacy per-product
+    # draw sequence runs untouched (byte-identical to pre-V4-7).
+    corr_m = params.get('demand_corr_matrix')
+    L_dd, corr_meta = None, {'active': False}
+    n_prod_m = len(products)
+    if corr_m and n_prod_m > 1:
+        R = np.array(corr_m, dtype=float)
+        if R.shape == (n_prod_m, n_prod_m):
+            R = (R + R.T) / 2.0
+            np.fill_diagonal(R, 1.0)
+            R = np.clip(R, -0.99, 0.99)
+            np.fill_diagonal(R, 1.0)
+            clipped = False
+            try:
+                L_dd = np.linalg.cholesky(R)
+            except np.linalg.LinAlgError:
+                # heuristic matrices need not be PSD — eigen-clip to the nearest
+                # valid correlation matrix instead of crashing the simulation
+                w, V = np.linalg.eigh(R)
+                R2 = V @ np.diag(np.clip(w, 1e-8, None)) @ V.T
+                d = np.sqrt(np.diag(R2))
+                R2 = R2 / np.outer(d, d)
+                np.fill_diagonal(R2, 1.0)
+                L_dd = np.linalg.cholesky(R2 + 1e-10 * np.eye(n_prod_m))
+                clipped = True
+            off = R[~np.eye(n_prod_m, dtype=bool)]
+            corr_meta = {'active': True, 'n_skus': n_prod_m,
+                         'mean_offdiag_rho': round(float(np.mean(off)), 3),
+                         'max_offdiag_rho': round(float(np.max(off)), 3),
+                         'psd_clipped': clipped}
+
     # GAP-1 (move 1) — simulate the ACTUAL plan, not a re-derived policy.
     # Historically the inner loop recomputed a base-stock target every period
     # (`target = d + ss − on_hand`), so the risk numbers described a base-stock
@@ -84,6 +123,10 @@ def run_montecarlo(data, n_runs=500):
         total_demand = 0
         total_served = 0
 
+        # V4-7 — one correlated demand z-score block per run: Z[k] is SKU k's
+        # period series; rows co-move per R. None ⇒ legacy independent draws.
+        z_block = (L_dd @ rng.standard_normal((n_prod_m, T))) if L_dd is not None else None
+
         for k, prod in enumerate(products):
             base_demand = np.array(prod.get('demand', [0] * T)[:T], dtype=float)
             mape_pct = prod.get('mape_pct', 15) / 100
@@ -95,7 +138,9 @@ def run_montecarlo(data, n_runs=500):
             fy = prod.get('yield_pct', 0.95)
 
             # T8-10 — Correlated noise pair per period: (z_d, z_c) ~ N(0, [[1,ρ],[ρ,1]]).
-            eps_d = rng.standard_normal(T)
+            # V4-7 — in cross-SKU mode the demand z comes from the correlated block
+            # (marginal still N(0,1)); the demand↔cost coupling below is unchanged.
+            eps_d = z_block[k] if z_block is not None else rng.standard_normal(T)
             eps_c = rng.standard_normal(T)
             z_d = eps_d                       # demand z-score
             z_c = chol_a * eps_d + chol_b * eps_c  # cost z-score, correlated with demand
@@ -245,6 +290,11 @@ def run_montecarlo(data, n_runs=500):
     avg_cost = float(np.mean(costs))
     fragility = round(var95 / max(avg_cost, 1), 2)
 
+    # VIS-9 — service risk is a LEFT tail: the 5th-percentile fill and the mean
+    # fill conditional on being in that worst-5% tail (CVaR of fill).
+    fill_p5 = float(np.percentile(fills, 5))
+    fill_cvar5 = float(np.mean(fills[fills <= fill_p5])) if np.any(fills <= fill_p5) else fill_p5
+
     return {
         'n_runs': n_runs,
         'policy_simulated': policy,  # GAP-1 — 'plan' = the committed MILP schedule; 'base_stock' = re-derived policy
@@ -261,6 +311,10 @@ def run_montecarlo(data, n_runs=500):
         'fragility': fragility,
         'avg_fill': round(float(np.mean(fills)), 1),
         'min_fill': round(float(np.min(fills)), 1),
+        'fill_p5': round(fill_p5, 1),          # VIS-9 — worst-5% fill threshold (left-tail VaR)
+        'fill_cvar5': round(fill_cvar5, 1),    # VIS-9 — mean fill INSIDE that worst-5% tail
+        # V4-7 — cross-SKU systemic-demand mode echo (active/mean ρ/PSD repair flag)
+        'demand_correlation': corr_meta,
         'histogram': {
             'bins': [round(float(b), 0) for b in np.linspace(costs.min(), costs.max(), 21)],
             'counts': np.histogram(costs, bins=20)[0].tolist(),

@@ -92,7 +92,7 @@ const _STATE_SEED = {
     // the supply base is flagged as a resilience risk). Drives originConcentration() flags.
     originConcentrationCap:0.6,
     // G-P4 — production labor envelope (0 = unbounded ⇒ machine-constrained only, default).
-    // headcount × 40 h/wk = regular labor budget; OT (capped) rides on top. A tight headcount
+    // headcount × governed work-week (workDays × hrsPerShift) = regular labor budget; OT (capped) rides on top. A tight headcount
     // forces overtime to meet the hard demand, then infeasible if OT is also capped.
     prodLaborHeadcountCap:0, prodLaborOtCapHrs:0,
     // G-P2 — service-driven horizon-end cover for the aggregate S&OP plan. OFF by default
@@ -357,7 +357,17 @@ function getItemDemand(sku, T){
   else {
     const p = (M.products || []).find(x=>x.sku===sku);
     const annual = p ? p.demand : 1200;
-    const seed = Array(T).fill(Math.round(annual / T));
+    // V2-13a — the seed is a RATE, not annual/T. T buckets span the planning horizon
+    // (same convention as firmOrderDemand), so each bucket gets annual × its own length
+    // in days ÷ the 364-day (52-week) planning year. At the default 52-week horizon
+    // periodDays = 364/T ⇒ exactly annual/T (byte-identical baseline); at any other
+    // horizonLength the per-bucket demand no longer inflates/deflates with how far you
+    // look (observed: 52→30 wk used to inflate weekly required_qty +42%).
+    const pl = appStore.get().planning || {};
+    const grainDays = pl.timeGrain==='week'?7 : pl.timeGrain==='day'?1 : 30;
+    const horizonDays = Math.max(1, Number(pl.horizonLength) || 52) * grainDays;
+    const periodDays = Math.max(1, horizonDays / T);
+    const seed = Array(T).fill(Math.round(annual * periodDays / 364));
     const firm = firmOrderDemand(sku, T);          // contracted MTO book (or null)
     series = firm ? seed.map((v,i)=>Math.max(v, firm[i])) : seed;
   }
@@ -365,12 +375,36 @@ function getItemDemand(sku, T){
   for(let i=0;i<T;i++) out.push(Math.max(0, Math.round(series[i % series.length] || 0)));
   return out;
 }
-function setItemDemand(sku, series){
+// source (V5-2b — the demand-pin fix): who is writing decides whether the write
+// survives a re-forecast. 'planner' = an explicit planner-authored number
+// (override / sensing replan / lifecycle / NPI prior / CSV surface edit) → PINS
+// the SKU so model writes can't silently clobber it; 'model' = the planner
+// explicitly returned to the model winner → UNPINS; 'loop' = an automatic model
+// write (full-loop LP-A re-forecast, on-mount auto-forecast, server fan-out
+// patch) → SKIPPED while the SKU is pinned (the planner's number is the truth);
+// undefined = plain write, pin untouched. Before this, runFullLoop's phase-1
+// re-forecast overwrote committed-demand levers (branch demand edits, EVA
+// prunes, CSV imports, even tab overrides on revisit) before downstream
+// payloads ever read them — a silent no-op what-if.
+function setItemDemand(sku, series, source){
   if(!sku || !Array.isArray(series) || !series.length) return;
+  const pins = { ...(appStore.get().demandPinned || {}) };
+  if(source==='loop' && pins[sku]) return;   // pinned: the planner's number survives the loop
+  if(source==='planner') pins[sku] = true;
+  else if(source==='model') delete pins[sku];
   const slice = { ...(appStore.get().demand || {}) };
   slice[sku] = series.map(v=>Math.max(0, Math.round(v||0)));
-  appStore.set({ demand:slice });
+  // replace, not set: set() re-merges the old slice, resurrecting a pin the
+  // 'model' source just deleted. Both slices are full copies, so replace is safe.
+  appStore.replace({ demand:slice, demandPinned:pins });
   markStale('demand');   // every downstream solver now plans to stale demand
+}
+function isDemandPinned(sku){ return !!(appStore.get().demandPinned || {})[sku]; }
+function pinDemand(sku, on){
+  if(!sku) return;
+  const pins = { ...(appStore.get().demandPinned || {}) };
+  if(on===false) delete pins[sku]; else pins[sku] = true;
+  appStore.replace({ demandPinned:pins });   // set() would re-merge the deleted key back
 }
 function getFinishedDemand(T){
   const M = window.M || {};
@@ -470,12 +504,27 @@ function historyFor(sku, grain){
   const M = window.M || {};
   return (typeof M.historyAt === 'function') ? M.historyAt(sku, grain) : [];
 }
-// parseHistoryCsv(text): tolerant CSV/TSV → {rows:[{date?,val}], hasDates, error}.
+// V4-4 — exogFor(sku, grain): the regressor columns riding the SAME import historyFor
+// honors (price, footfall, …) → forecast payload products[].exog. null when the import
+// has none or its grain doesn't match (exog must stay aligned 1:1 with the series).
+function exogFor(sku, grain){
+  const imp = getHistoryImport(sku);
+  if(imp && imp.grain === grain && imp.exog && Array.isArray(imp.series) && imp.series.length){
+    const names = Object.keys(imp.exog).filter(nm=>Array.isArray(imp.exog[nm]) && imp.exog[nm].length);
+    if(names.length){ const o={}; names.forEach(nm=>{ o[nm]=imp.exog[nm].slice(); }); return o; }
+  }
+  return null;
+}
+// parseHistoryCsv(text): tolerant CSV/TSV → {rows:[{date?,val,exog?}], hasDates, exogNames, error}.
 // Detects a delimiter, skips a header row, and reads the LAST numeric column as the
 // value (a leading parseable date column is captured for bucketing). Real ingestion,
 // not a mock — the planner pastes their own series.
+// V4-4 — a NAMED header with ≥3 columns (date,qty,price[,footfall…]) unlocks
+// exogenous regressors: the quantity column (qty/value/demand/sales/units) is the
+// series, every OTHER named column rides along as rows[].exog[name] → ML features
+// (Q16 price dynamics). Headerless / ≤2-column files keep the legacy read exactly.
 function parseHistoryCsv(text){
-  const out = { rows:[], hasDates:false, error:null };
+  const out = { rows:[], hasDates:false, exogNames:[], error:null };
   const lines = String(text||'').split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length);
   if(!lines.length){ out.error = 'empty input'; return out; }
   const delim = lines[0].indexOf('\t')>=0 ? '\t' : lines[0].indexOf(';')>=0 ? ';' : ',';
@@ -490,8 +539,32 @@ function parseHistoryCsv(text){
       if(ch==='"'){ if(q && ln[i+1]==='"'){ cur+='"'; i++; } else q=!q; }
       else if(ch===delim && !q){ c.push(cur); cur=''; } else cur+=ch; }
     c.push(cur); return c.map(x=>x.trim()); };
+  // V4-4 column-mode detection: first line is a pure-text header naming ≥3 columns
+  // AND a recognizable quantity column → named-column read with exog capture.
+  const hdr = _split(lines[0]);
+  let dateIdx=-1, valIdx=-1, exogIdx=null;
+  if(hdr.length>=3 && hdr.every(c=>_num(c)==null && _date(c)==null)){
+    const low = hdr.map(c=>c.toLowerCase());
+    valIdx  = low.findIndex(h=>/qty|quantit|unit|demand|sold|volume|sales|value|val\b/.test(h));
+    dateIdx = low.findIndex(h=>/date|period|month|week|day|time/.test(h));
+    if(valIdx>=0){
+      exogIdx = hdr.map((c,i)=>({name:c,i})).filter(o=>o.i!==valIdx && o.i!==dateIdx);
+      out.exogNames = exogIdx.map(o=>o.name);
+    } else { dateIdx=-1; }
+  }
   lines.forEach((ln, i)=>{
     const cells = _split(ln);
+    if(exogIdx){
+      if(i===0) return;                                     // the header itself
+      const d = dateIdx>=0 ? _date(cells[dateIdx]) : null;
+      const val = _num(cells[valIdx]);
+      if(val==null) return;
+      const exog = {};
+      exogIdx.forEach(o=>{ const v=_num(cells[o.i]); if(v!=null) exog[o.name]=v; });
+      if(d) out.hasDates = true;
+      out.rows.push({ date:d, val, exog });
+      return;
+    }
     const d = cells.length>1 ? _date(cells[0]) : null;
     // dated row: column 0 is a real date ⇒ the value is the REST of the line, so an
     // UNQUOTED thousands-grouped value (2024-01-01,1,200) survives the comma-strip in
@@ -520,6 +593,36 @@ function bucketHistory(rows, hasDates, grain){
   const buckets = new Map();
   rows.slice().sort((a,b)=>a.date-b.date).forEach(r=>{ const k=key(r.date); buckets.set(k, (buckets.get(k)||0)+r.val); });
   return Array.from(buckets.values()).map(v=>Math.max(0, Math.round(v)));
+}
+// V4-4 — bucketExog(rows, hasDates, grain, names): the exog companion to bucketHistory,
+// SAME bucket keys/order, but a regressor is a LEVEL (price), not a flow — buckets take
+// the MEAN, never the sum. Returns {name:[...]} aligned 1:1 with bucketHistory's series.
+function bucketExog(rows, hasDates, grain, names){
+  if(!names || !names.length) return null;
+  const pick = (rs)=>{ const o={}; names.forEach(nm=>{
+    const vs = rs.map(r=>r.exog && r.exog[nm]).filter(v=>v!=null);
+    o[nm] = vs.length ? vs.reduce((s,v)=>s+v,0)/vs.length : null; }); return o; };
+  let per;
+  if(!hasDates){ per = rows.map(r=>pick([r])); }
+  else {
+    const key = (d)=>{
+      if(grain==='monthly') return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0');
+      if(grain==='weekly'){ const t=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()));
+        const day=(t.getUTCDay()+6)%7; t.setUTCDate(t.getUTCDate()-day);
+        return t.getUTCFullYear()+'-W'+String(Math.ceil(((t-new Date(Date.UTC(t.getUTCFullYear(),0,1)))/86400000+1)/7)).padStart(2,'0'); }
+      return d.toISOString().slice(0,10);
+    };
+    const buckets = new Map();
+    rows.slice().sort((a,b)=>a.date-b.date).forEach(r=>{ const k=key(r.date);
+      if(!buckets.has(k)) buckets.set(k, []); buckets.get(k).push(r); });
+    per = Array.from(buckets.values()).map(pick);
+  }
+  const out = {};
+  names.forEach(nm=>{
+    let last = null;
+    out[nm] = per.map(o=>{ if(o[nm]!=null) last=o[nm]; return last!=null ? Math.round(last*100)/100 : 0; });
+  });
+  return out;
 }
 
 // ── Multi-SKU ingestion (Demand · per-tab pass) — LONG and WIDE ───────────────
@@ -799,6 +902,22 @@ function commodityFactor(){ const p = Number(signals().commodityIndexPct) || 0; 
 // planning grain; a sub-period delay honestly doesn't shift a monthly MILP bucket).
 function portDelayPeriods(periodDays){ const d = Number(signals().portDelayDays) || 0; return d>0 ? Math.round(d/(periodDays||30)) : 0; }
 
+// V5-3 — per-supplier ₹/period fulfilment capacity for the procurement MILP.
+// Returns null while the governance toggle is OFF (constraint absent ⇒ byte-identical
+// baseline). Cap per supplier: override config.supplierCaps[code] ?? the supplier
+// master's ◇seed capPerPeriod. ₹ landed spend is the deliberate common unit — a
+// supplier's basket mixes UoMs, spend is what its throughput honestly bounds.
+function supplierCapacityParams(cfg){
+  cfg = cfg || (typeof appStore!=='undefined' ? (appStore.get().config||{}) : {});
+  if(!cfg.supCapEnabled) return null;
+  const over = cfg.supplierCaps || {};
+  const out = {};
+  (((window.M)||{}).suppliers||[]).forEach(s=>{
+    const v = (over[s.code]!=null && over[s.code]!=='') ? Number(over[s.code]) : (Number(s.capPerPeriod)||0);
+    if(v>0) out[s.code]=v;
+  });
+  return Object.keys(out).length ? out : null;
+}
 // bomParts(periodDays): map mock `M.bom` rows → the procurement solver's part
 // schema (one shared illustrative BOM — documented limitation). Reused by Sourcing
 // + Console. Lead time on `M.bom` is in DAYS; the solver counts in PERIODS, so we
@@ -812,6 +931,11 @@ function bomParts(periodDays){
   return (M.bom || []).map(b=>({
     name:b.name, cost:Math.round(b.cost * cf * 100)/100, qty_per:b.qty,
     lead_time:Math.max(1, Math.round(b.lt / pd) + portP),
+    // V5-1 — REAL plant/WH ledger opening stock (network.onHand, the transaction
+    // layer). A part with NO ledger row is NOT TRACKED (≠ zero): the key is omitted
+    // so procurement.py keeps its documented avg×(lt+1) fallback — a hard 0 for an
+    // untracked part starves t=0 consumption and goes honestly Infeasible.
+    ...((r => r.rows.length ? { init_inventory: r.qty } : {})(onHandFor(b.part, ['plant','wh']))),
     moq:b.moq, hold_pct:b.hold, ordering_cost:(Number(b.S)||120), scrap_factor:(Number(b.scrap)||0.01), rm_shelf:b.shelf,
     // size order/storage caps off the MOQ so a single MOQ lot is always orderable
     // and storable (defaults of 9999 go infeasible against a 10 000-unit bolt MOQ).
@@ -842,6 +966,73 @@ function bomForSku(sku){
     return { part:ln.part, name:m.name, qty, qtySeed, qtyOver:(qty!==qtySeed),
              cost:m.cost, lt:m.lt, moq:m.moq, S:m.S, hold:m.hold, shelf:m.shelf, sup:m.sup, scrap:(Number(m.scrap)||0.01) };
   });
+}
+// ── V2-2 · COST PROVENANCE CHAIN — the ONE unit-cost definition every solver prices ──
+// unitCostBreakdown(sku): material (Σ this FG's bomForSku qty·cost — live, includes
+// per-SKU qty overrides) + labour/unit + setup amortised over the MOQ lot + a
+// conversion & overhead RESIDUAL. The residual is anchored at the SEED inputs
+// (typed std cost − seed material − seed labour − seed setup), so at seed
+// total ≡ p.cost exactly (byte-identical baseline) and the typed master cost is
+// honestly labelled what it is — a standard cost the rollup reconciles to. Edit a
+// part cost, a qty-per, labour or setup and EVERY consumer (profit-mix, MC, CVaR,
+// linecap lost-margin, capital WC, TCO, EVA) moves together — one cost truth, not
+// a typed number in products and a different landed build-up in sourcing.
+// Mirrors ProdCosts (products.jsx), which renders this same breakdown.
+// NOTE: commodity/FX *signals* (D6) deliberately do NOT enter this cost — the LP
+// prices current costs; signal-adjusted margin is a sensitivity view (blueprint Q7).
+let _seedPartCostMap = null;   // captured ONCE at first breakdown call (pre-edit by construction)
+function _seedPartCost(part){
+  if(!_seedPartCostMap){
+    _seedPartCostMap = {};
+    (((window.M)||{}).bom||[]).forEach(b=>{ _seedPartCostMap[b.part] = Number(b.cost)||0; });
+  }
+  return _seedPartCostMap[part] || 0;
+}
+// V3-8 — boot-time seed snapshot for product/part MASTER attributes, so GovField can
+// tell ◇seed (untouched TPAC sample value) from ⌨input (user-edited master data)
+// without polluting M. Same one-time lazy capture discipline as _seedPartCost above
+// (first call happens at first render, pre-edit by construction).
+let _seedMasterMap = null;
+function seedMaster(kind, id, field){
+  if(!_seedMasterMap){
+    _seedMasterMap = { product:{}, part:{} };
+    (((window.M)||{}).products||[]).forEach(p=>{ _seedMasterMap.product[p.sku] = { yield:p.yield, shelf:p.shelf, salvage:p.salvage, moq:p.moq, rework:p.rework }; });
+    (((window.M)||{}).bom||[]).forEach(b=>{ _seedMasterMap.part[b.part] = { scrap:b.scrap, cost:b.cost, lt:b.lt }; });
+  }
+  const m = (_seedMasterMap[kind]||{})[id];
+  return m ? m[field] : undefined;
+}
+function unitCostBreakdown(sku){
+  const M = window.M || {};
+  const p = (M.products||[]).find(x=>x.sku===sku);
+  if(!p) return null;
+  const lot = Math.max(1, Number(p.moq)||100);
+  const material = bomForSku(sku).reduce((s,b)=>s + (Number(b.qty)||0)*(Number(b.cost)||0), 0);
+  const pc = (appStore.get().productCosts||{})[sku] || {};
+  const seedLabour = Math.round((Number(p.cost)||0)*0.18);
+  const labour = (pc.laborPerUnit!=null && pc.laborPerUnit!=='') ? Number(pc.laborPerUnit) : seedLabour;
+  const setupCost = (pc.setupCost!=null && pc.setupCost!=='') ? Number(pc.setupCost) : 4200;
+  const setupAmort = setupCost / lot;
+  // seed-anchored residual: machine time, energy, QA — what the BOM doesn't itemise.
+  // Anchored to a ONE-TIME SNAPSHOT of the seed part costs (_seedPartCost) — NOT the
+  // live master, otherwise a part-cost edit raises material and lowers the residual
+  // equally and the total never moves (observed: the first probe's +₹50 part edit
+  // moved NOTHING — exactly that bug).
+  const seedMaterial = ((M.skuBom||{})[sku]||[]).reduce((s,ln)=>
+    s + (Number(ln.qty)||0)*_seedPartCost(ln.part), 0);
+  const conversion = Math.max(0, (Number(p.cost)||0) - seedMaterial - seedLabour - 4200/lot);
+  const total = material + labour + setupAmort + conversion;
+  return { material, labour, setupAmort, conversion, total,
+           typed:Number(p.cost)||0,
+           overridden: Math.abs(total - (Number(p.cost)||0)) > 0.005 };
+}
+// effUnitCost(p|sku): the derived unit cost (≡ typed p.cost at seed). The single
+// accessor solver payloads call for variable_cost / margin / working-capital ₹.
+function effUnitCost(p){
+  const sku = (typeof p==='string') ? p : (p && p.sku);
+  const b = unitCostBreakdown(sku);
+  if(b) return b.total;
+  return (p && Number(p.cost)) || 0;
 }
 // editPartQty(sku, part, val): per-SKU qty override (R7). '' clears → back to the
 // skuBom seed. Flags the procurement family stale ('bom' is a SOLVE_DEPS token) and
@@ -955,7 +1146,7 @@ function tcoPerSku(){
   const fin = ((window.M&&M.products)||[]).filter(p=>p.cat==='Finished');
   const r2 = x=>Math.round(x*100)/100;
   return fin.map(p=>{
-    const unit = Number(p.cost)||0;
+    const unit = effUnitCost(p);                       // V2-2 — derived cost chain, ≡ p.cost at seed
     const annual = (typeof getItemDemand==='function') ? getItemDemand(p.sku,12).reduce((a,b)=>a+(+b||0),0) : (Number(p.demand)||0);
     const yld = (typeof skuYield==='function') ? skuYield(p,0.97) : (Number(p.yield)||0.97);
     const bom = (typeof bomForSku==='function') ? (bomForSku(p.sku)||[]) : [];
@@ -974,6 +1165,10 @@ function tcoPerSku(){
 function transportPayload(){
   const M = window.M || {};
   const net = getNetwork();
+  // V3-4 — governed SLA: the delivery deadline the per-lane mode LP must meet was a
+  // bare 7; now a Logistics steering GovField (config.slaDeadlineDays, seed 7 days),
+  // and transport gained the config dep so editing it re-flags the solve.
+  const _slaDays = Math.max(1, Number((appStore.get().config||{}).slaDeadlineDays)||7);
   const outbound = (net.lanes||[]).filter(l=>l.direction==='outbound');
   const fin = (M.products||[]).filter(p=>p.cat==='Finished');
   // LG-2 — per-SKU monthly flow, its own weight, and value (not a flat avg price).
@@ -989,7 +1184,7 @@ function transportPayload(){
     name:`${l.from}→${l.to}`, origin:l.from, destination:l.to,
     weight_kg:Math.max(30, Math.round(totalWeight / nLanes)),
     volume_cbm:Math.max(0.1, +((totalMonthly / nLanes) * 0.004).toFixed(1)),
-    value:Math.round(totalValue / nLanes), deadline_days:7,
+    value:Math.round(totalValue / nLanes), deadline_days:_slaDays,
   }));
   // G-L1 — feed transport.py's embedded DC→customer min-cost transportation LP (origins/
   // destinations/cost_matrix). The last outbound echelon (DC→customer lanes) is the real
@@ -1013,12 +1208,26 @@ function transportPayload(){
       cost_matrix:  originIds.map(oi=> destIds.map(dj=> laneCost[oi+'>'+dj] != null ? laneCost[oi+'>'+dj] : BIGM)),
     };
   }
+  // V3-4 — governed MODE TARIFFS: transport.py prices every mode-booked leg from
+  // MODE_SPECS cost_per_kg and accepts params.mode_overrides — the Logistics
+  // steering card writes config.modeTariffs {mode: ₹/kg}, the proper lever for the
+  // PLANT→WH / WH→DC legs (their lane `rate` is NOT a model input; the final
+  // DC→customer legs are priced separately via cost_matrix = rate × km above).
+  const _mt = (appStore.get().config||{}).modeTariffs || {};
+  const mode_overrides = {};
+  Object.keys(_mt).forEach(k=>{ const v=Number(_mt[k]); if(v>0) mode_overrides[k] = { cost_per_kg: v }; });
   // sku_flows surfaced so the Logistics tab can show the per-SKU outbound breakdown.
   // (NOTE: transport.py's stockout_risk_factor weights an air-vs-sea tradeoff, but it only
   // bites when a shipment carries demand-sensing fields — current_stock/daily_consumption/
   // demand_spike. Outbound FG lanes don't carry those, so we DON'T pretend to drive it here;
   // it lives in the Anatomy-Lab extras until per-lane spike sensing is wired.)
-  return { shipments, ...allocFields, params:{ sku_flows: skuFlows.map(f=>({ sku:f.sku, monthly_units:Math.round(f.monthly),
+  // V5-4 — multi-mode SPLIT: when armed, transport.py may split a lane across modes on a
+  // capacity/deadline bind (toggle OFF ⇒ params and solver output byte-identical to baseline).
+  const _cfgSplit = appStore.get().config||{};
+  const _split = _cfgSplit.modeSplitEnabled
+    ? { mode_split: true, split_bridge_buffer_pct: Math.max(0, Number(_cfgSplit.splitBridgeBufferPct) || 15) }
+    : {};
+  return { shipments, ...allocFields, params:{ mode_overrides, ..._split, sku_flows: skuFlows.map(f=>({ sku:f.sku, monthly_units:Math.round(f.monthly),
     weight_kg_per_unit:f.weightKg, monthly_weight_kg:Math.round(f.monthly*f.weightKg) })) } };
 }
 
@@ -1028,8 +1237,30 @@ function transportPayload(){
 // horizon first (then slicing) keeps weekly demand at annual/52 — getItemDemand
 // alone would spread the whole year across just T periods and inflate it ~4×.
 function finishedWeeklyDemand(sku, planning, T){
-  const full = Math.max(T||1, Number(planning && planning.horizonLength) || 52);
-  return getItemDemand(sku, full).slice(0, T);
+  // V2-13b — the schedule basis is WEEKS whatever the planning grain, so resample to
+  // weekly buckets instead of treating horizonLength as a week count (at day grain the
+  // old code handed the MILP daily buckets against 48 weekly hours — wrong clock).
+  const tg = (planning && planning.timeGrain) || 'week';
+  const stored = (appStore.get().demand || {})[sku];
+  if(tg === 'day' && stored && stored.length){
+    // committed DAILY series → sum 7 daily buckets per week (conserves volume)
+    const out = [];
+    for(let w=0; w<T; w++){ let s=0;
+      for(let d=0; d<7; d++) s += Number(stored[(w*7+d) % stored.length]) || 0;
+      out.push(Math.max(0, Math.round(s))); }
+    return out;
+  }
+  if(tg === 'month' && stored && stored.length){
+    // committed MONTHLY series → spread each month across its ~4.33 weeks
+    const out = [];
+    for(let w=0; w<T; w++) out.push(Math.max(0, Math.round(
+      (Number(stored[Math.floor(w/4.33) % stored.length]) || 0) / 4.33)));
+    return out;
+  }
+  const grainDays = tg==='week'?7 : tg==='day'?1 : 30;
+  const horizonDays = Math.max(1, Number(planning && planning.horizonLength) || 52) * grainDays;
+  const fullWeeks = Math.max(T||1, Math.ceil(horizonDays / 7));
+  return getItemDemand(sku, fullWeeks).slice(0, T);
 }
 // productionScheduleHorizon: the MILP fence (weeks) for production / procurement /
 // linecap / montecarlo. A schedule is a fence (frozen+slushy detail), not the full
@@ -1041,7 +1272,13 @@ function finishedWeeklyDemand(sku, planning, T){
 // GOLDEN_JOURNEY_SPEC.md — each solver runs its own basis off horizonLength+grain.
 function productionScheduleHorizon(planning){
   const fence = Math.max(1, Number(planning && planning.productionScheduleWeeks) || 13);
-  return Math.max(4, Math.min(Number(planning && planning.horizonLength) || fence, fence));
+  // V2-13b — horizonLength is in GRAIN units; convert to weeks before clamping against
+  // the (weekly) fence. The old code read "50 days" as 50 weeks → fence-clamped to 13
+  // weekly periods while demand came in daily buckets.
+  const tg = (planning && planning.timeGrain) || 'week';
+  const grainDays = tg==='week'?7 : tg==='day'?1 : 30;
+  const horizonWeeks = Math.ceil(((Number(planning && planning.horizonLength) || fence*7/grainDays) * grainDays) / 7);
+  return Math.max(4, Math.min(horizonWeeks, fence));
 }
 // productionPayload(planning, opts) → the production MILP input. opts.laborRate
 // (₹/hr, governed seed→override) prices overtime + idle-week shutdowns;
@@ -1054,7 +1291,7 @@ function productionPayload(planning, opts){
   opts = opts || {};
   const T = productionScheduleHorizon(planning);
   const wdays = Math.max(1, Number(planning.workDaysPerWeek) || 6);
-  const hrsPerShift = 8;
+  const hrsPerShift = Math.max(1, Number(planning.hrsPerShift) || 8);   // governed (Setup ▸ Net Hrs/Shift) — was a dead literal 8
   const hrsPerPeriod = wdays * hrsPerShift;                 // weekly available hrs/line
   const rate = Number(opts.laborRate) || 0;
   const timePhased = !!opts.timePhased;                      // PR-A — opt-in MPS that tracks the curve
@@ -1072,10 +1309,19 @@ function productionPayload(planning, opts){
   const products = fin.map(p=>{
     const dem = finishedWeeklyDemand(p.sku, planning, T);
     const e = eff(p);
+    // V5-1 — FG on-hand the plant can ship nets the schedule (transaction layer):
+    // required_qty drops by the scoped ledger qty; opening_inventory lets the
+    // time-phased InvBal serve the EARLIEST weeks from stock (same total, right timing).
+    const oh = fgScheduleOnHand(p.sku);
     const prod = {
       name: p.sku,
-      required_qty: dem.reduce((a,b)=>a+b, 0),
-      oee: p.oee, yield_pct: e.yld, setup_cost: 50,
+      required_qty: Math.max(0, dem.reduce((a,b)=>a+b, 0) - oh.qty),
+      opening_inventory: oh.qty,
+      oee: p.oee, yield_pct: e.yld,
+      setup_cost: (opts.setupCost!=null && opts.setupCost!=='') ? Number(opts.setupCost) : 50,  // governed (config.prodSetupCost)
+      // V4-6 (Q24) — ₹ per FAILED unit (rework loop simplified to a cost adder).
+      // Product-master seed, GovField-overridable in Products ▸ Yield & expiry.
+      rework_cost_per_unit: Number(p.rework) || 0,
       routing: [{ line_id: e.line, cycleTimeMin: e.cyc, parallelism: 1,
                   yieldPct: e.yld * 100 }],
     };
@@ -1100,7 +1346,7 @@ function productionPayload(planning, opts){
     const bn = (l.stages || []).find(s=>s.bottleneck) || (l.stages || [])[0] || {};
     const lineSkus = coSkus.filter(s => skuLine[s] === l.id);   // PR-D — only this line's SKUs
     const ln = { id: l.id, name: l.name,
-      capacity: Math.round((l.cap || 0) / 4.33),             // u/mo → u/week
+      capacity: Math.round((l.cap || 0) / 4.33),             // u/mo → u/week. V2-11: production.py only reads this in its legacy no-cycle fallback — with routing present (always, here) C5 binds machine-hours × OEE instead; the REAL consumer of l.cap is linecap (SF-7)
       oee: l.oee, changeover_matrix: subMatrix(lineSkus), changeover_mins: 30,
       workers_per_shift: bn.w || bn.m || 1, shifts_per_day: Number(l.shifts) || 1 };
     if(rate > 0) ln.hourly_rate = rate;                       // priced OT + shutdown
@@ -1113,11 +1359,19 @@ function productionPayload(planning, opts){
     workforce: { hourly_headcount_cap: Number(opts.laborHeadcountCap) || 0,
                  ot_cap_hrs: Number(opts.laborOtCapHrs) || 0 },
     params: { periods: T, hrs_per_period: hrsPerPeriod, hours_per_shift: hrsPerShift,
+      labor_week_hrs: hrsPerPeriod,        // a head's regular week = the governed plant calendar (G-P4 labor budget), not a hardcoded 40
+
       horizon_start_date: planning.startDate,
       time_phased: timePhased,                                // PR-A
       holding_cost_per_unit: Number(opts.holdingCost) || 0,   // PR-A — penalizes early build
       campaign_min_run: Number(opts.campaignMinRun) || 0,     // PR-4 — campaign min-run lever
-      shutdown_threshold_pct: Number(opts.shutdownPct) || 25, rehire_notice_hrs: 80 } };
+      shutdown_threshold_pct: Number(opts.shutdownPct) || 25,
+      // V3 open-end closed — was the last TODO-GOV literal (80 = 2wk × 40hr notice);
+      // now governed via config.prodRehireNoticeHrs like every other scheduler knob.
+      rehire_notice_hrs: (opts.rehireNoticeHrs!=null && opts.rehireNoticeHrs!=='') ? Number(opts.rehireNoticeHrs) : 80,
+      // V4-3 — OT purchase grain: 'per_hour' pays hours used (legacy); 'per_shift' buys
+      // indivisible crew-call blocks (hours_per_shift each), whole block charged.
+      ot_mode: opts.otMode === 'per_shift' ? 'per_shift' : 'per_hour' } };
 }
 
 // ── Monte Carlo on the COMMITTED plan (W6 · R-1) ───────────────────────────
@@ -1136,11 +1390,28 @@ function productionPlanBySku(prodResult, T){
   });
   return out;
 }
+// V4-7 / MN-C — ONE pairwise-ρ heuristic for cross-SKU demand co-movement, shared by
+// the MEIO pooling payload and the Monte-Carlo systemic-risk mode: same XYZ class
+// co-moves at ρ, one class apart at ρ/2, two apart independent. A documented
+// co-movement heuristic over the REAL XYZ classification — no fabricated covariance.
+function xyzCorrMatrix(skus, rhoBase){
+  const xyzRank = { X:0, Y:1, Z:2 };
+  const rho = Number(rhoBase)||0;
+  const n = skus.length, m = [];
+  for(let i=0;i<n;i++){ m[i]=[]; for(let j=0;j<n;j++){
+    if(i===j){ m[i][j]=1; continue; }
+    const d = Math.abs((xyzRank[skus[i].xyz]??1)-(xyzRank[skus[j].xyz]??1));
+    m[i][j] = d===0?rho : d===1?rho/2 : 0; } }
+  return m;
+}
+
 // montecarloPayload(planning, opts): the /api/solve/montecarlo input. Each finished
 // SKU carries its committed demand curve, its landed-cost BOM (so material-cost
 // shocks hit the real costed bill), and — when a production solve is cached — its
 // committed build plan (R-1: simulate the plan of record, not a textbook policy).
 // opts.corr (demand↔cost correlation), opts.serviceLevel, opts.nRuns are governed.
+// V4-7 — opts.demandRho (default 0.5) builds the cross-SKU demand_corr_matrix from
+// XYZ co-movement (xyzCorrMatrix); 0 = off → legacy independent per-SKU draws.
 function montecarloPayload(planning, opts){
   const M = window.M || {};
   opts = opts || {};
@@ -1180,8 +1451,10 @@ function montecarloPayload(planning, opts){
       demand: dem,
       mape_pct: Number(p.mape) || 12,
       capacity: Math.round((dem.reduce((a,b)=>a+b,0)/Math.max(T,1)) * 3),  // generous per-period cap
-      setup_cost: 50,
-      variable_cost: Number(p.cost) || 0,
+      // same governed ₹/lot the production MILP prices — the risk sim must cost the
+      // SAME plant, not a parallel hardcoded one
+      setup_cost: Number((appStore.get().config||{}).prodSetupCost) || 50,
+      variable_cost: effUnitCost(p),                   // V2-2 — derived cost chain, ≡ p.cost at seed
       sell_price: Number(p.price) || 0,
       shelf_life: Math.max(1, Math.round((Number(p.shelf)||365)/7)),       // days → weeks
       yield_pct: skuYield(p, 0.95),                                        // G-I1 measured ?? seed
@@ -1204,6 +1477,10 @@ function montecarloPayload(planning, opts){
       corr_demand_cost: (opts.corr != null ? Number(opts.corr) : 0.4),
       policy: opts.policy || 'auto',
       prod_lead_time: ltMean, prod_lead_time_cv: ltCv,
+      // V4-7 — cross-SKU systemic demand risk: XYZ co-movement matrix over the SAME
+      // fin order as products[]. demandRho 0 ⇒ key omitted ⇒ legacy independence.
+      ...((()=>{ const rdd = (opts.demandRho != null ? Number(opts.demandRho) : 0.5);
+        return (rdd > 0 && fin.length > 1) ? { demand_corr_matrix: xyzCorrMatrix(fin, rdd) } : {}; })()),
       plan_committed: anyPlan } };
 }
 
@@ -1229,7 +1506,7 @@ function _loopProcurementPayload(planning){
   const fin = (M.products||[]).filter(p=>p.cat==='Finished');
   const products = fin.map(p=>{ const dem = getItemDemand(p.sku,12);
     return { name:p.sku, demand:dem, capacity:Math.max(400, Math.ceil(Math.max(...dem)*1.5)),
-      variable_cost:p.cost, sell_price:p.price, yield_pct:skuYield(p,0.97), parts }; });   // G-I1 measured ?? seed
+      variable_cost:effUnitCost(p), sell_price:p.price, yield_pct:skuYield(p,0.97), parts }; });   // G-I1 measured ?? seed · V2-2 derived cost
   const _cfg = appStore.get().config || {};
   return { products, params:{ periods:12, time_grain:grain,
     service_level:_cfg.serviceLevel || 0.95,
@@ -1237,7 +1514,10 @@ function _loopProcurementPayload(planning){
     carry_rate:(typeof carryRate==='function') ? carryRate(_cfg) : 0.24,
     // G-N1 — open/in-transit POs net the buy; needs horizon_start_date for the date math.
     horizon_start_date: planning.startDate,
-    locked_pos: scheduledReceiptsLocked() } };
+    locked_pos: scheduledReceiptsLocked(),
+    // V5-3 — finite supplier capacity (₹ landed spend / period); key omitted while
+    // the governance toggle is off so the legacy model is byte-identical.
+    ...((sc => sc ? { supplier_capacity: sc } : {})(supplierCapacityParams(_cfg))) } };
 }
 // Per-SKU hands-on LABOR fraction — the share of the machine cycle a WORKER is actually
 // occupied (the rest is automated, unattended machine time). 1.0 = fully manual (worker
@@ -1270,6 +1550,30 @@ function aggLaborWeights(fg){
   items.forEach(i=>{ w[i.sku] = (wbar>0 && i.hrs>0) ? Math.round((i.hrs/wbar)*1000)/1000 : 1.0; });
   return w;
 }
+// V2-4 — aggregate holding cost ₹/unit/PERIOD derived from the SAME frozen-money price
+// procurement & policy already charge: carryRate (governed WACC + holding spread, annual
+// fraction) × the demand-weighted blended unit cost (effUnitCost — the V2-2 one cost truth)
+// ÷ 12 (aggregate periods are MONTHS, the M.aggregate.months envelope). Before this the
+// aggregate seed was a free-standing ₹45 placeholder with no link to carryRate — so S&OP
+// build-ahead and procurement priced frozen money DIFFERENTLY (the Q9 inconsistency).
+// Blended cost is the right basis because aggregate units are demand-weighted
+// mean-normalised labor units: one aggregate unit ≈ one average physical unit.
+function aggHoldingPerUnit(cfg){
+  cfg = cfg || (appStore.get().config || {});
+  const fg = (((window.M)||{}).products||[]).filter(p=>p.cat==='Finished');
+  const dTot = fg.reduce((s,p)=>s+(Number(p.demand)||0),0);
+  const blended = dTot>0
+    ? fg.reduce((s,p)=>s+(Number(p.demand)||0)*effUnitCost(p),0)/dTot
+    : fg.reduce((s,p)=>s+effUnitCost(p),0)/Math.max(1,fg.length);
+  const cr = (typeof carryRate==='function') ? carryRate(cfg) : 0.24;
+  return Math.max(1, Math.round(cr * blended / 12));
+}
+// Effective aggregate holding param: a typed planParams override WINS; else the derived
+// carry-anchored default above (NOT the old placeholder seed).
+function aggHoldingParam(cfg){
+  const v = (((cfg||{}).planParams)||{}).holding_cost_per_unit;
+  return (v!=null && v!=='') ? Number(v) : aggHoldingPerUnit(cfg);
+}
 // Network FG on-hand → aggregate opening inventory, expressed in the LABOR-WEIGHTED
 // units aggregate.py's inventory balance actually carries (agg_demand is Σ qty·weight,
 // so a raw physical sum would be subtly wrong whenever the on-hand MIX skews labor-heavy
@@ -1277,6 +1581,32 @@ function aggLaborWeights(fg){
 // knows what Network holds, so it auto-reconciles rather than asking the user to retype.
 // Returns the physical sum (the headline "what you hold") AND the labor-weighted
 // equivalent (the worker-time yardstick the solver consumes) — both, transparently.
+// ── V5-1 · multi-site TRANSACTION layer ─────────────────────────────────────
+// ONE resolver for "how much of this item is on hand, and WHERE" — every solver
+// nets through here instead of fabricating defaults. rows carry the node TYPE so
+// each consumer can scope to the locations it can actually use.
+function onHandFor(item, locTypes){
+  const net = (typeof getNetwork==='function') ? getNetwork() : {};
+  const nodes = Object.fromEntries((net.nodes||[]).map(n=>[n.id, n]));
+  const rows = (net.onHand||[]).filter(o=>o && o.item===item)
+    .map(o=>({ item:o.item, loc:o.loc, qty:Number(o.qty)||0, uom:o.uom||'u', type:(nodes[o.loc]||{}).type||'plant' }));
+  const scoped = locTypes ? rows.filter(r=>locTypes.includes(r.type)) : rows;
+  return { rows, qty: scoped.reduce((s,r)=>s+r.qty, 0) };
+}
+// FG netting scope for the MASTER SCHEDULE (config.netFgScope):
+//   'plant_wh' (default) — stock the plant can ship NOW (plant + attached WH) nets the
+//      schedule; DC stock is POSITIONED downstream serving its region (DRP discipline:
+//      without a per-location demand split, netting DC stock against the plant build
+//      would double-count it), stated in the Network tab note.
+//   'all' — whole-network netting (matches the aggregate S&OP view) · 'off' — gross.
+function fgScheduleOnHand(sku, config){
+  const cfg = config || (appStore.get().config||{});
+  const scope = cfg.netFgScope || 'plant_wh';
+  if(scope==='off') return { qty:0, rows:[], scope };
+  const r = onHandFor(sku, scope==='all' ? null : ['plant','wh']);
+  return { qty:r.qty, rows:r.rows, scope };
+}
+
 function networkOpeningInv(){
   const M = window.M || {};
   const fg = (M.products||[]).filter(p=>p.cat==='Finished');
@@ -1326,7 +1656,11 @@ function _loopAggregatePayload(planning){
   const totAnnual = fg.reduce((s,p)=>s+(p.demand||0),0) || 1;
   const wfCeiling = Math.max((pget('min_workforce',5)||5)+1, Math.round(lineCap/rate));
   const lw = aggLaborWeights(fg);
-  return { products: fg.map(p=>({ name:p.sku,
+  return {
+    // V4-2 — same optional machine-hour ceilings as the Plan tab (one params truth)
+    ...((cfg.planParams||{}).machine_resources===true && typeof aggMachineResources==='function'
+      ? { resources: aggMachineResources(cfg, planning) } : {}),
+    products: fg.map(p=>({ name:p.sku,
       // B-13 — consume the COMMITTED demand series (getItemDemand — the SAME source
       // procurement + production read) whenever a planner has edited/committed it, so a
       // demand change actually moves the S&OP plan. The Model Map's "forecast ← committed
@@ -1340,12 +1674,28 @@ function _loopAggregatePayload(planning){
       labor_hours_per_unit: lw[p.sku] != null ? lw[p.sku] : 1 })),
     params:{ periods, init_workforce:pget('init_workforce',35),
       init_inventory: planOpeningInv(cfg),                          // auto-reconciled from Network FG on-hand (labor-weighted), override wins
-      rate_per_worker:rate, reg_cost_per_unit:pget('reg_cost_per_unit',120),
-      ot_cost_per_unit:pget('ot_cost_per_unit',180), holding_cost_per_unit:pget('holding_cost_per_unit',24),
-      backorder_cost_per_unit:pget('backorder_cost_per_unit',300), hire_cost:pget('hire_cost',8000),
-      fire_cost:pget('fire_cost',12000), wage_per_worker:pget('wage_per_worker',22000),
+      // last-resort fallbacks (planParam absent) now MATCH plan.jsx's PLAN_PARAMS seeds —
+      // the old 120/180/24/300/8000/12000 literals silently disagreed with the live seeds.
+      rate_per_worker:rate, reg_cost_per_unit:pget('reg_cost_per_unit',820),
+      ot_cost_per_unit:pget('ot_cost_per_unit',1230),
+      holding_cost_per_unit:aggHoldingParam(cfg),                   // V2-4 — carryRate × blended unit cost / mo (typed override wins)
+      backorder_cost_per_unit:pget('backorder_cost_per_unit',1500), hire_cost:pget('hire_cost',18000),
+      fire_cost:pget('fire_cost',25000), wage_per_worker:pget('wage_per_worker',22000),
       max_ot_pct:pget('max_ot_pct',0.2), min_workforce:pget('min_workforce',5),
       max_workforce:wfCeiling, allow_backorder:pget('allow_backorder',1),
+      // V4-1 — same explicit objective toggle as the Plan tab (one params truth):
+      // string mode + REVENUE per labor-weighted unit (override ?? blended sell price —
+      // the LP charges its own production costs, so revenue is the lost-sales price),
+      // and the Q10 σ rider (weight 0 = legacy) with cv from real per-SKU MAPE.
+      objective_mode:(cfg.planParams||{}).objective_mode || 'min_cost',
+      revenue_per_unit:(()=>{ const ov=(cfg.planParams||{}).revenue_per_unit;
+        if(ov!=null && ov!=='') return Number(ov);
+        let m=0, wq=0; fg.forEach(p=>{ m += (Number(p.price)||0)*(p.demand||0);
+          wq += (lw[p.sku]!=null?lw[p.sku]:1)*(p.demand||0); });
+        return wq>0?Math.round(m/wq):0; })(),
+      backorder_sigma_weight:pget('backorder_sigma_weight',0),
+      demand_cv:(()=>{ let s=0,d=0; fg.forEach(p=>{ s+=((Number(p.mape)||15)/100)*(p.demand||0); d+=(p.demand||0); });
+        return d>0?Math.round(s/d*10000)/10000:0; })(),
       ...aggEndCoverParams(cfg) } };   // G-P2 — service-driven end-cover (no-op when OFF)
 }
 function _loopLinecapPayload(prevAgg){
@@ -1357,7 +1707,7 @@ function _loopLinecapPayload(prevAgg){
   const lines = (M.lines||[]).map(l=>({ id:l.id, name:l.name, cap:Number(l.cap)||0 }));
   const skus = (M.products||[]).filter(p=>p.cat==='Finished').map(p=>({
     name:p.sku, line:p.line, demand:Math.round(getItemDemand(p.sku,12).reduce((a,b)=>a+b,0)/12),
-    lost_margin_per_unit:Math.max(0,(p.price||0)-(p.cost||0)) }));
+    lost_margin_per_unit:Math.max(0,(p.price||0)-effUnitCost(p)) }));   // V2-2 derived cost
   return { lines, skus, params:{} };
 }
 // LP-A — forecast-first loop step 0. Re-run the demand model competition on each
@@ -1373,7 +1723,8 @@ function _loopForecastPayload(planning){
     const hist = historyFor(p.sku, grain);   // W9 — honor an imported / like-modeled history
     const di = getDemandInputs(p.sku);
     const promo_periods = (di.promos||[]).map(x=> hist.length + (x.fidx|0)).filter(x=>x>=0);
-    return { name:p.sku, history:hist, promo_periods };
+    const exog = exogFor(p.sku, grain);      // V4-4 — imported regressor columns ride along
+    return { name:p.sku, history:hist, promo_periods, ...(exog?{exog}:{}) };
   });
   return { products, params:{
     h_periods: (typeof M.horizonFor==='function') ? M.horizonFor(grain) : 12,
@@ -1392,11 +1743,14 @@ function productionOptsFromConfig(config){
   return {
     laborRate:   eff(config.prodLaborRate, 120),
     shutdownPct: eff(config.prodShutdownPct, 25),
+    rehireNoticeHrs: eff(config.prodRehireNoticeHrs, 80),  // shutdown rehire notice (hrs) — ex TODO-GOV
+    otMode: config.prodOtMode === 'per_shift' ? 'per_shift' : 'per_hour',  // V4-3 — OT purchase grain
+    setupCost:   eff(config.prodSetupCost, 50),          // ₹/lot — was a hardcoded 50 in two payloads
     timePhased:  !!config.prodTimePhased,
     holdingCost: eff(config.prodHoldingCost, 2),
     campaignMinRun: eff(config.prodCampaignMinRun, 0),   // PR-4
     routing:     config.prodRouting || {},
-    // G-P4 — optional labor envelope: org-wide headcount cap (× 40 h/wk = regular labor
+    // G-P4 — optional labor envelope: org-wide headcount cap (× governed work-week = regular labor
     // budget) and a weekly OT-hours cap. 0 = unbounded ⇒ schedule is machine-constrained
     // only (byte-identical default). A tight headcount forces OT (then infeasible if OT capped).
     laborHeadcountCap: eff(config.prodLaborHeadcountCap, 0),
@@ -1408,7 +1762,7 @@ const LOOP_STEPS = [
     endpoint:'/api/forecast', build:(pl)=>_loopForecastPayload(pl),
     after:(r)=>{ (r.products||[]).forEach(op=>{ const lb=op.leaderboard||[];
       const w = lb.find(l=>l.model===(op.winner||op.recommendation)) || lb.find(l=>l.status==='ok'&&l.forecast) || lb[0];
-      if(w && w.forecast && w.forecast.length) setItemDemand(op.name, w.forecast); }); },
+      if(w && w.forecast && w.forecast.length) setItemDemand(op.name, w.forecast, 'loop'); }); },   // V5-2b — respects planner pins
     summary:(r)=>`${(r.products||[]).length} SKUs re-forecast${r.reconciliation?' · reconciled':''}` },
   { key:'procurement', label:'Procurement — landed-cost MILP',
     endpoint:'/api/solve/procurement', build:(pl)=>_loopProcurementPayload(pl),
@@ -1466,7 +1820,7 @@ async function runFullLoop(cfg){
 //   Every op is logged to the immutable event trail (§4b) — the audit/version
 //   history. Evidence: W10 (scenario branching/compare), W11 (concurrent what-if).
 // ════════════════════════════════════════════════════════════════════════
-const _SCN_INPUT_KEYS = ['demand','config','planning','sourcing','network','demandInputs','productCosts','holidays'];
+const _SCN_INPUT_KEYS = ['demand','demandPinned','config','planning','sourcing','network','demandInputs','productCosts','holidays'];   // V5-2b — pins travel with the branch
 function _snapshotSlices(keys){
   const s = appStore.get(); const out = {};
   for(const k of keys) out[k] = JSON.parse(JSON.stringify(s[k] !== undefined ? s[k] : (k==='holidays'?[]:{})));
@@ -1483,13 +1837,17 @@ function _restoreSlices(snap){ if(snap) appStore.replace(JSON.parse(JSON.stringi
 function _snapshotProdArch(){
   const M = window.M || {};
   return { lines:      JSON.parse(JSON.stringify(M.lines || [])),
-           changeover: JSON.parse(JSON.stringify(M.changeover || [])) };
+           changeover: JSON.parse(JSON.stringify(M.changeover || [])),
+           // V2-6 — the matrix can now GROW (addProduct extends it), so the sku
+           // order must travel with it or a restore would misalign rows.
+           changeoverSkus: JSON.parse(JSON.stringify(M.changeoverSkus || [])) };
 }
 function _restoreProdArch(pa){
   if(!pa) return;
   const M = window.M || (window.M = {});
   if(pa.lines)      M.lines      = JSON.parse(JSON.stringify(pa.lines));
   if(pa.changeover) M.changeover = JSON.parse(JSON.stringify(pa.changeover));
+  if(pa.changeoverSkus) M.changeoverSkus = JSON.parse(JSON.stringify(pa.changeoverSkus));
   bumpMaster();   // notify useMasterRev consumers; does NOT mark solves stale
 }
 // _applyEnvelope(env): restore a full scenario envelope — the appStore input
@@ -1615,6 +1973,103 @@ async function runScenario(id, opts){
     _applyEnvelope(restore);   // live + its solve cache + prodArch master are exactly as before — true isolation
   }
 }
+// ── V5-2 · server-side concurrent branching ─────────────────────────────────
+// runScenariosServer(ids, opts): score MANY branches through the SAME full loop
+// in THREE server fan-outs instead of 6×N sequential client solves. The loop's
+// only true dependencies are: forecast rewrites committed demand (so every
+// downstream payload must see it), linecap consumes the aggregate result, and
+// montecarlo consumes the production result — everything else is independent:
+//   phase 1: forecast (every branch)              — N jobs, one server pool
+//   phase 2: procurement ∥ aggregate ∥ production — 3N jobs, one pool
+//   phase 3: linecap ∥ montecarlo                 — 2N jobs, one pool
+// Payloads are still built CLIENT-side with each branch's envelope applied (the
+// SAME builders the tabs and runFullLoop use — one truth, the server never
+// re-derives a payload), and live is byte-restored after every build window.
+// KPI capture mirrors runScenario exactly: apply, cache the branch's results,
+// _captureKpis(), restore. Per-step failures stay isolated per branch (honest
+// ok:false rows in its loopLog); other branches and steps are unaffected.
+async function runScenariosServer(ids, opts){
+  opts = opts || {};
+  const sc0 = getScenarios();
+  const scns = (ids||[]).map(id=>(sc0.list||{})[id]).filter(Boolean);
+  if(!scns.length) throw new Error('no scenarios to run');
+  const restore = _snapshotForRun();
+  const t0 = Date.now();
+  // run fn with a branch's inputs (+ its re-forecast demand patch) applied — ALWAYS restore.
+  // setItemDemand/cacheSolve only touch slices inside the restore envelope, so this is
+  // exactly as transparent as runScenario (no audit-event or staleness leakage).
+  const withEnv = (scn, patch, fn)=>{
+    try{
+      _applyEnvelope(scn.inputs);
+      if(patch) Object.keys(patch).forEach(sku=>setItemDemand(sku, patch[sku], 'loop'));   // V5-2b — a pinned branch lever survives
+      return fn(appStore.get().planning);
+    } finally { _applyEnvelope(restore); }
+  };
+  const post = (jobs)=> apiPost('/api/solve/branches', { jobs, params:{ max_workers: opts.maxWorkers || 4 } });
+  const byId = {}; scns.forEach(s=>{ byId[s.id] = { res:{}, err:{}, ms:{}, patch:null }; });
+  const fold = (resp)=> ((resp&&resp.results)||[]).forEach(e=>{
+    const cut = String(e.id).lastIndexOf('|');
+    const b = byId[String(e.id).slice(0,cut)]; if(!b) return;
+    const step = String(e.id).slice(cut+1);
+    b.ms[step] = e.ms||0;
+    if(e.ok) b.res[step] = e.result; else b.err[step] = e.error || 'failed';
+  });
+  const meta = [];
+  // phase 1 — re-forecast every branch (LP-A: the loop closes the demand half)
+  const r1 = await post(scns.map(s=>({ id:s.id+'|forecast', solver:'forecast',
+    payload: withEnv(s, null, pl=>_loopForecastPayload(pl)) })));
+  meta.push(r1.meta); fold(r1);
+  // each branch's winning series → a demand PATCH applied before its downstream
+  // builds — the same write LOOP_STEPS[forecast].after does, but branch-scoped.
+  scns.forEach(s=>{
+    const fr = byId[s.id].res.forecast; if(!fr) return;
+    const patch = {};
+    (fr.products||[]).forEach(op=>{ const lb = op.leaderboard||[];
+      const w = lb.find(l=>l.model===(op.winner||op.recommendation)) || lb.find(l=>l.status==='ok'&&l.forecast) || lb[0];
+      if(w && w.forecast && w.forecast.length) patch[op.name] = w.forecast; });
+    byId[s.id].patch = patch;
+  });
+  // phase 2 — the three INDEPENDENT mid-loop solves, all branches in one pool
+  const j2 = [];
+  scns.forEach(s=> withEnv(s, byId[s.id].patch, pl=>{
+    j2.push({ id:s.id+'|procurement', solver:'procurement', payload:_loopProcurementPayload(pl) });
+    j2.push({ id:s.id+'|aggregate',   solver:'aggregate',   payload:_loopAggregatePayload(pl) });
+    j2.push({ id:s.id+'|production',  solver:'production',  payload:productionPayload(pl, productionOptsFromConfig()) });
+  }));
+  const r2 = await post(j2); meta.push(r2.meta); fold(r2);
+  // phase 3 — the two consumers of phase-2 results (absent upstream ⇒ the same
+  // fallbacks the sequential loop uses: linecap's committed-demand build, MC
+  // without a pinned schedule)
+  const j3 = [];
+  scns.forEach(s=> withEnv(s, byId[s.id].patch, pl=>{
+    j3.push({ id:s.id+'|linecap', solver:'linecap', payload:_loopLinecapPayload(byId[s.id].res.aggregate) });
+    j3.push({ id:s.id+'|montecarlo', solver:'montecarlo',
+      payload: montecarloPayload(pl, { prodResult: byId[s.id].res.production }) });
+  }));
+  const r3 = await post(j3); meta.push(r3.meta); fold(r3);
+  // assemble — a runScenario-compatible per-step log + KPIs, written back per branch
+  const out = {};
+  scns.forEach(s=>{
+    const b = byId[s.id];
+    const log = LOOP_STEPS.map(st=>({ key:st.key, label:st.label,
+      ok: !!b.res[st.key], ms: b.ms[st.key]||0,
+      summary: b.res[st.key] ? st.summary(b.res[st.key]) : '',
+      error: b.err[st.key]||null }));
+    const kpis = withEnv(s, b.patch, ()=>{
+      LOOP_STEPS.forEach(st=>{ if(b.res[st.key]) cacheSolve(st.key, b.res[st.key]); });
+      return _captureKpis();
+    });
+    const sc2 = getScenarios();
+    if((sc2.list||{})[s.id]) _putScenarios({ ...sc2, list:{ ...sc2.list,
+      [s.id]: { ...sc2.list[s.id], kpis, ranAt:new Date().toISOString(), loopLog:log } } });
+    if(!opts.quiet) logEvent('scenario_run', s.id, { ok:log.filter(x=>x.ok).length, of:log.length, server:true });
+    out[s.id] = { log, kpis };
+  });
+  const wallMs = Date.now() - t0;
+  const solverMs = meta.reduce((a,m)=>a+((m&&m.solver_ms_sum)||0),0);
+  return { scenarios: out, wallMs, solverMs, phases: meta,
+           speedup: wallMs>0 ? Math.round(solverMs/wallMs*100)/100 : null };
+}
 // applyScenario(id): DELIBERATELY switch the live working set to this branch's
 // inputs (the editable surface every tab reads), mark it active, and flag all
 // solves stale so the tabs re-solve against it. This is the non-transparent path.
@@ -1646,8 +2101,12 @@ function scenarioPruneSkus(skus, name, note){
                              note || 'EVA-driven — drop ROIC<hurdle SKUs and re-solve the portfolio');
   updateScenarioInputs(id, (inp)=>{
     const dem = { ...(inp.demand || {}) };
-    skus.forEach(s=>{ if(dem[s]) dem[s] = dem[s].map(()=>0); });
-    inp.demand = dem; return inp;
+    const pins = { ...(inp.demandPinned || {}) };
+    // V5-2b — pin the zeroed SKUs so the loop's phase-1 re-forecast can't resurrect
+    // them mid-run (it used to: the prune branch silently re-planned WITH the
+    // destroyers, so its KPIs never reflected the prune at all).
+    skus.forEach(s=>{ dem[s] = (dem[s] && dem[s].length ? dem[s] : Array(12).fill(0)).map(()=>0); pins[s] = true; });
+    inp.demand = dem; inp.demandPinned = pins; return inp;
   });
   logEvent('scenario_eva_prune', id, { skus });
   return id;
@@ -1763,9 +2222,20 @@ const CONFIG_TOKEN = {
   prodLaborRate:'cfg.prod', prodShutdownPct:'cfg.prod', prodTimePhased:'cfg.prod',
   prodHoldingCost:'cfg.prod', prodCampaignMinRun:'cfg.prod', prodRouting:'cfg.prod',
   prodLaborHeadcountCap:'cfg.prod', prodLaborOtCapHrs:'cfg.prod',   // G-P4
-  planEndCoverEnabled:'cfg.prod', planEndCoverPeriods:'cfg.prod',   // G-P2 (aggregate dep)
+  prodSetupCost:'cfg.prod',                                         // ₹/lot (was hardcoded 50)
+  prodRehireNoticeHrs:'cfg.prod',                                   // shutdown rehire notice (ex TODO-GOV)
+  prodOtMode:'cfg.prod',                                            // V4-3 OT purchase grain (per_hour | per_shift)
+  netFgScope:'cfg.prod',                                            // V5-1 FG-ledger netting scope (plant_wh | all | off)
   skuLaborFrac:'cfg.prod',
   pmBudget:'cfg.profit', pmWarehouse:'cfg.profit',
+  // cfg.plan → aggregate ONLY (V3-6). config.planParams + the end-cover pair are read
+  // by exactly two builders — plan.jsx's StagePlan payload and _loopAggregatePayload —
+  // both /api/solve/aggregate. On the broad 'config' token a planParams edit falsely
+  // staled the whole inventory family AND GovField's used-by chips would have claimed
+  // 9 consumers; planEndCover* previously sat on cfg.prod, falsely staling production
+  // + linecap (neither reads it).
+  planParams:'cfg.plan',
+  planEndCoverEnabled:'cfg.plan', planEndCoverPeriods:'cfg.plan',   // G-P2 (aggregate-only dep)
 };
 function configTokens(patch){
   const toks = new Set();
@@ -1779,14 +2249,21 @@ const SOLVE_DEPS = {
   meio:        ['demand','productCosts','planning','bom','config','sourcing'],            // multi-echelon SS placement (RM→WIP→FG)
   meionet:     ['demand','productCosts','planning','bom','config','sourcing'],            // W8 — multi-product risk pooling on shared parts
   cvar:        ['demand','productCosts','planning','bom','config','sourcing'],            // costly-item newsvendor (h vs p) + CVaR robust stock
-  production:  ['demand','planning','productCosts','prodArch','cfg.prod'],   // prodArch = editable lines/stages/changeover; cfg.prod = scheduler knobs
-  aggregate:   ['demand','planning','productCosts','prodArch','cfg.prod'],   // S&OP (worker-time weighting reads cfg.prod skuLaborFrac)
-  linecap:     ['demand','planning','productCosts','prodArch','cfg.prod'],   // PL-A — line-capacity shadow price (₹/unit)
-  profitmix:   ['demand','productCosts','config','cfg.profit'],              // cfg.profit = pmBudget / pmWarehouse caps
-  transport:   ['demand','network'],
+  production:  ['demand','planning','productCosts','prodArch','cfg.prod','network'],   // prodArch = editable lines/stages/changeover; cfg.prod = scheduler knobs; network since V5-1 (FG ledger nets the schedule)
+  aggregate:   ['demand','planning','productCosts','prodArch','cfg.prod','cfg.plan','config','bom','network'],   // S&OP (cfg.plan = planParams + end-cover, aggregate-only; cfg.prod skuLaborFrac weighting; V2-4 holding = carryRate(config) × effUnitCost(bom); network since V5-1 — planOpeningInv reads the FG ledger)
+  linecap:     ['demand','planning','productCosts','prodArch','cfg.prod','bom'],   // PL-A — line-capacity shadow price (₹/unit); bom since V2-2 (lost margin = price − effUnitCost)
+  profitmix:   ['demand','productCosts','config','cfg.profit','planning','prodArch','bom'],  // cfg.profit = pmBudget/pmWarehouse; planning+prodArch since V2-1 (real line pool); bom since V2-2 (effUnitCost reads the BOM rollup)
+  transport:   ['demand','network','config'],   // V3-4 — config.slaDeadlineDays steers the per-lane mode LP's deadline
   capital:     ['demand','productCosts','config'],
-  montecarlo:  ['demand','procurement','production','sourcing'],   // risk runs on the committed plan (R-1)
+  montecarlo:  ['demand','procurement','production','sourcing','productCosts','bom'],   // risk runs on the committed plan (R-1); productCosts+bom since V2-2 (variable_cost = effUnitCost)
 };
+
+// solversUsing(token) — V3-0: the GovField "used by" line, GENERATED from SOLVE_DEPS
+// so it cannot lie (blueprint Part 3.1 face 3). Direct dependents only — the ripple
+// a user feels first; transitive consumers surface via the stale cascade itself.
+function solversUsing(token){
+  return Object.entries(SOLVE_DEPS).filter(([,deps]) => deps.includes(token)).map(([s]) => s);
+}
 
 // markStale(key): flag every solve that depends — directly or transitively — on
 // `key`. Used both when a SOURCE changes (key='demand') and when a SOLVE re-runs
@@ -1801,17 +2278,27 @@ function markStale(key){
   // say "stale because you edited X" instead of a generic "inputs changed". The root
   // is the original markStale argument, carried unchanged through the cascade.
   const root = key;
+  // VIS-10 — record the walk ORDER (the dependency wave as it actually happened)
+  // so the chrome can animate the cascade; only NEWLY-staled solves enter.
+  const order = [];
   const visit = (k)=>{
     for(const [solve, deps] of Object.entries(SOLVE_DEPS)){
       if(deps.includes(k) && !(cur[solve] && cur[solve].stale)){
         cur[solve] = { ...(cur[solve]||{}), stale:true, staleSrc: root, staleAt: ts };
         touched = true;
+        order.push(solve);
         visit(solve);   // cascade to this solve's own consumers
       }
     }
   };
   visit(key);
-  if(touched) appStore.set({ solves: cur });
+  if(touched){
+    appStore.set({ solves: cur });
+    // VIS-10 cascade ripple (blueprint 3.4 #10): broadcast the real staleness wave
+    // (root + visit order) — PipelineRibbon pulses the affected solver chips in
+    // this sequence. Fire-and-forget chrome concern; the model state is already set.
+    try{ window.dispatchEvent(new CustomEvent('es-cascade', { detail:{ root, order } })); }catch(e){}
+  }
 }
 
 // markSolved(solveKey, result?): a solver just produced a fresh result — clear its
@@ -1898,6 +2385,23 @@ function editPartAttr(part, patch){
   Object.assign(b, patch); bumpMaster(); try{ markStale('bom'); }catch(e){}
   logEvent('override', part, { fields:Object.keys(patch), to:patch });
 }
+// V2-6 — class-derived changeover hours. M.changeover (SKU×SKU) is the TYPED truth
+// for pairs the user has authored; this derives an honest hours value for any pair
+// from the class×class table (M.changeoverClasses, data.jsx) via each product's
+// coClass. Products without a coClass read as STD. Returns null only if the class
+// table itself is absent (legacy dataset) — callers then leave the pair unset.
+function classChangeoverHrs(aSku, bSku){
+  const M = window.M || {};
+  const cc = M.changeoverClasses;
+  if(!cc || !Array.isArray(cc.order) || !Array.isArray(cc.hrs)) return null;
+  const cls = (sku)=>{
+    const p = (M.products||[]).find(x=>x.sku===sku);
+    const i = cc.order.indexOf((p && p.coClass) || 'STD');
+    return i >= 0 ? i : cc.order.indexOf('STD');
+  };
+  const v = (cc.hrs[cls(aSku)] || [])[cls(bSku)];
+  return (typeof v === 'number') ? v : null;
+}
 function addProduct(seed){
   const M = window.M || {};
   const fin = (M.products||[]).filter(p=>p.cat==='Finished');
@@ -1910,6 +2414,18 @@ function addProduct(seed){
   const np = { ...base, sku, name:(seed&&seed.name)||`New Product ${n}`, demand:0, ...seed, cat:'Finished' };
   M.products.push(np);
   if(Array.isArray(M.items)) M.items.push({ id:sku, code:sku, name:np.name, kind:'FG', uom:'unit', family:'General' });
+  // V2-6 — extend the changeover matrix for the new SKU with class-derived hours.
+  // Without this the SKU has no row/col → subMatrix skips every pair it touches →
+  // the scheduler silently uses the 30-min default for a product that may need a
+  // 2-hour heat-treat purge. Row = newSku→existing, col = existing→newSku, '—' diag.
+  if(Array.isArray(M.changeoverSkus) && Array.isArray(M.changeover) && classChangeoverHrs(sku, sku) != null){
+    const newRow = M.changeoverSkus.map(s => classChangeoverHrs(sku, s));
+    M.changeover.forEach((row, ri)=>{ row.push(classChangeoverHrs(M.changeoverSkus[ri], sku)); });
+    newRow.push('—');
+    M.changeover.push(newRow);
+    M.changeoverSkus.push(sku);
+    try{ markStale('prodArch'); }catch(e){}
+  }
   bumpMaster(); try{ markStale('productCosts'); }catch(e){}
   logEvent('commit', sku, { added:true });
   return np;
@@ -2028,7 +2544,7 @@ async function reportPdf(extra){
   const M = window.M || {}; const s = appStore.get();
   const sr = s.solveResults || {};
   const products = (M.products||[]).filter(p=>p.cat==='Finished').map(p=>({
-    name:p.name, sku:p.sku, sell_price:p.price, variable_cost:p.cost,
+    name:p.name, sku:p.sku, sell_price:p.price, variable_cost:effUnitCost(p),   // V2-2 derived cost
     shelf_life:Math.round((Number(p.shelf)||365)/7), yield_pct:p.yield||0.95,
     capacity:p.demand, bom:(M.bom||[]).map(b=>({ name:b.name, qty_per:b.qty, cost:b.cost, lead_time:b.lt, moq:b.moq })) }));
   const payload = { config:s.config||{}, products,
@@ -2046,26 +2562,28 @@ async function reportPdf(extra){
 
 Object.assign(window, {
   apiPost, apiGet, useSolve,
-  bumpMaster, useMasterRev, editProductAttr, editPartAttr, addProduct,
+  bumpMaster, useMasterRev, editProductAttr, editPartAttr, addProduct, classChangeoverHrs,
   editLine, editStage, addStage, delStage, addLine, delLine, setChangeover,
   exportModelJson, importModelJson, downloadText, reportPdf,
   appStore, useStore, useConfig, usePlanning, useCalendar, useProductCosts,
   getNetwork, useNetwork, msmeTier, networkOpeningInv, planOpeningInv, serviceLevelForSku,
-  getItemDemand, setItemDemand, getFinishedDemand, bomParts, bomForSku, editPartQty, transportPayload,
+  getItemDemand, setItemDemand, isDemandPinned, pinDemand, getFinishedDemand, bomParts, bomForSku, editPartQty, transportPayload, supplierCapacityParams,
+  unitCostBreakdown, effUnitCost,                                  // V2-2 — the one cost truth
+  aggHoldingPerUnit, aggHoldingParam,                              // V2-4 — carry-anchored aggregate holding
   productionPayload, finishedWeeklyDemand, aggEndCoverParams,
   getDemandInputs, useDemandInputs, useHolidays,
-  getHistoryImport, setHistoryImport, useHistoryImport, historyFor, parseHistoryCsv, bucketHistory,
+  getHistoryImport, setHistoryImport, useHistoryImport, historyFor, exogFor, parseHistoryCsv, bucketHistory, bucketExog,
   getYieldConfirmations, measuredYield, skuYield, logYieldConfirmation, clearYieldConfirmations, useYieldConfirmations,
   sourcingDefault, getSourcing, useSourcing, effLandedCost, fxFactor, freightSteps, skuWeightKg, skuVolM3,
   landedRate, landedBuildup, landedDetailSeed,
   STORAGE_CLASSES, STORAGE_CLASS_LABEL, storageClassFor, nodeClassCap, nodeStorageUtil,
-  costWaterfallLive, tcoPerSku,
+  costWaterfallLive, tcoPerSku, seedMaster,
   hsDuty, originConcentration, COUNTRY_NAME,
   signals, commodityFactor, portDelayPeriods,
-  SOLVE_DEPS, markStale, markSolved, useStale, logEvent, getEvents, useEvents,
+  SOLVE_DEPS, solversUsing, markStale, markSolved, useStale, logEvent, getEvents, useEvents,
   cacheSolve, getSolveResult, useSolveResult,
-  montecarloPayload, productionPlanBySku, runFullLoop, LOOP_STEPS, productionOptsFromConfig,
+  montecarloPayload, xyzCorrMatrix, onHandFor, fgScheduleOnHand, productionPlanBySku, runFullLoop, LOOP_STEPS, productionOptsFromConfig,
   getScenarios, useScenarios, captureScenario, branchScenario, updateScenarioInputs,
-  deleteScenario, runScenario, applyScenario, mergeScenario, _captureKpis,
+  deleteScenario, runScenario, runScenariosServer, applyScenario, mergeScenario, _captureKpis,
   scenarioPruneSkus, scenarioDiff, mergeScenarioFields, replayLog,
 });

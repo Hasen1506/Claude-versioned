@@ -14,6 +14,51 @@ const FCAST_MODEL_LABEL = {
   ensemble:'Ensemble (top-N blend)',   // W9·D-5
 };
 const FCAST_INT = new Set(['croston','sba','tsb']);
+// ── V3-2 · forecastability + winner-MAPE review gate ──────────────────────
+// forecastability = can THIS history be trusted to any model? Read from the real
+// series at the active grain (CoV = σ/μ, zero-share as the intermittence proxy,
+// depth) + the engine's live intermittence classification when a run exists.
+// It FEEDS the review gate: a 35% MAPE on a HARD SKU is expected; on an EASY one
+// it's a red flag. The gate (12-steps Step-2) bites at commit time, below.
+const REVIEW_MAPE = 30;   // % — winner worse than this needs an explicit planner review
+function forecastability(series, intc){
+  const s = (series||[]).map(v=>Number(v)||0);
+  const n = s.length;
+  if(!n) return null;
+  const mu = s.reduce((a,b)=>a+b,0)/n;
+  const sd = Math.sqrt(s.reduce((a,b)=>a+(b-mu)*(b-mu),0)/n);
+  const cov = mu>0 ? sd/mu : null;
+  const zeroShare = s.filter(v=>v===0).length/n;
+  const intLabel = intc && intc.label ? String(intc.label).toLowerCase() : null;
+  const intermittent = intLabel ? (intLabel==='intermittent'||intLabel==='lumpy') : zeroShare>0.3;
+  const reasons = []; let hard = 0;
+  if(cov==null || cov>0.9){ hard+=2; reasons.push(`CoV ${cov!=null?cov.toFixed(2):'∞'} — highly volatile`); }
+  else if(cov>0.5){ hard+=1; reasons.push(`CoV ${cov.toFixed(2)} — variable`); }
+  else reasons.push(`CoV ${cov.toFixed(2)} — steady`);
+  if(intermittent){ hard+=2; reasons.push(intLabel?`engine reads ${intLabel}`:`${Math.round(zeroShare*100)}% zero periods`); }
+  if(n<12){ hard+=2; reasons.push(`${n} periods — thin history`); }
+  else if(n<24){ hard+=1; reasons.push(`${n} periods — moderate depth`); }
+  else reasons.push(`${n} periods — deep history`);
+  return { label: hard>=3?'HARD':hard>=1?'MODERATE':'EASY', cov, zeroShare, depth:n, intermittent, reasons };
+}
+// pure, so both branches are testable: gated=false (winner inside 30%) lets the
+// one-click commit through; gated=true swaps it for an explicit reviewed-commit.
+function mapeReviewGate(winMape, fab){
+  if(winMape==null) return null;
+  if(winMape <= REVIEW_MAPE) return { gated:false, winMape };
+  const issues = fab ? fab.reasons.filter(r=>!/steady|deep history/.test(r)) : [];
+  return { gated:true, winMape,
+    expected: !!(fab && fab.label!=='EASY'),
+    why: !fab ? 'no history read for this item'
+      : fab.label==='EASY'
+        ? `this SKU reads EASY to forecast (${fab.reasons.join(' · ')}) — a ${winMape.toFixed(0)}% winner is a red flag: check the history for breaks/bad data before trusting any model`
+        : `consistent with a ${fab.label}-to-forecast SKU (${issues.join(' · ')}) — review the leaderboard, then commit knowingly` };
+}
+function ForecastabilityBadge({ fab }){
+  if(!fab) return null;
+  const tone = fab.label==='EASY'?'g':fab.label==='MODERATE'?'y':'r';
+  return <span title={fab.reasons.join(' · ')} style={{cursor:'help'}}><Tag c={tone}>{fab.label} TO FORECAST</Tag></span>;
+}
 // Batch 4 (🟥) — distinguish a cold-start "warming up" (too little data yet) from a
 // genuine engine failure. A thin-history error is EXPECTED on a new SKU, so we show
 // it as amber guidance ("add more history, re-run"), not a red FAILED banner. Only a
@@ -49,8 +94,9 @@ function fcPayload(item, grain, di, holidays){
   const hist = historyFor(sku, grain);   // W9 D-7 — imported / like-modeled history wins over the seed
   const promos = (di && di.promos) || [];
   const promo_periods = promos.map(p=> hist.length + (p.fidx|0)).filter(x=>x>=0);
+  const exog = exogFor(sku, grain);   // V4-4 — imported price/regressor columns → ML features
   return {
-    products:[{ name: sku || 'ITEM', history: hist, promo_periods }],
+    products:[{ name: sku || 'ITEM', history: hist, promo_periods, ...(exog?{exog}:{}) }],
     params:{ h_periods: M.horizonFor(grain), time_grain: grain, season_length: M.seasonFor(grain),
       horizon_start_date: (window.M && M.calendar && M.calendar.start) || undefined,
       holidays: (holidays && holidays.length) ? holidays : undefined },
@@ -74,7 +120,7 @@ function StageDemand({ onNav }) {
   const runForecast = (g)=>{ const gg = g || grain;
     return fc.run(fcPayload(item, gg, di, holidays)).then(res=>{
       const f = winnerForecast(res);
-      if(f && f.length && item && item.code) setItemDemand(item.code, f);
+      if(f && f.length && item && item.code) setItemDemand(item.code, f, 'loop');   // V5-2b — viewing a SKU must not clobber a planner override
     }).catch(()=>{});
   };
   // Run the REAL engine on mount and whenever the item, grain, OR the governed
@@ -94,6 +140,10 @@ function StageDemand({ onNav }) {
         right={<div style={{display:'flex', alignItems:'center', gap:8}}>{grainToggle}<Btn kind="accent" onClick={()=>runForecast()}>{fc.solving?'⏳ Running…':'🤖 Run Forecast'}</Btn></div>}/>
       <ItemSelector onNav={onNav}/>
       <StageContext item={item} asOf={fc.ranAt ? fc.ranAt.toLocaleString('en-IN') : null}/>
+      {/* ① DECIDE strip (Part 3.2) — from the LIVE forecast solve only; honest prompt before it runs */}
+      <div style={{padding:'8px 18px', borderBottom:`2px solid ${C.line}`, background:C.paper}}>
+        <DemandDecideStrip item={item} fc={fc} grain={grain}/>
+      </div>
       <div style={{padding:18}}>
         <SolverExplain id="forecast"/>
         {(()=>{ const s=fcStatus(fc);
@@ -107,12 +157,14 @@ function StageDemand({ onNav }) {
         })()}
         <DemHistory item={item} grain={grain} onNav={onNav}/>
         <div id="demand-import"><DemImport item={item} grain={grain} onApplied={()=>runForecast()}/></div>
-        <DemForecast item={item} fc={fc} grain={grain}/>
-        <DemActuals item={item} fc={fc} grain={grain}/>
+        <div id="demand-forecast"><DemForecast item={item} fc={fc} grain={grain}/></div>
+        <div id="demand-actuals"><DemActuals item={item} fc={fc} grain={grain}/></div>
         <div id="demand-leaderboard"><DemModels onNav={onNav} fc={fc} item={item}/></div>
         <DemSegment item={item} fc={fc}/>
         <DemEvents item={item} grain={grain}/>
-        <DemCommit item={item} fc={fc}/>
+        {/* V3-10 · VIS-2 — the structural-events workflow card (blueprint 3.4 #2) */}
+        <Vis2StructuralEvents item={item} onNav={onNav}/>
+        <DemCommit item={item} fc={fc} grain={grain}/>
       </div>
     </div>
   );
@@ -345,6 +397,14 @@ function DemForecast({ item, fc, grain }) {
   const winMape = win ? win.mape : null;
   const ooc = win ? (!!win.out_of_control || (win.tracking_signal!=null && Math.abs(win.tracking_signal)>4)) : false;
   const goLeaderboard = ()=>{ const el = document.getElementById('demand-leaderboard'); if(el) el.scrollIntoView({behavior:'smooth', block:'start'}); };
+  // V3-2 — surface the leaderboard's verdict where the winner is announced: how
+  // contested the win was (runner-up margin, field size) + can this SKU be
+  // forecast at all (badge) + the review gate's state, all from the live run.
+  const lbRank = prod && Array.isArray(prod.leaderboard)
+    ? [...prod.leaderboard].filter(m=>m && m.model && m.mape!=null).sort((a,b)=>a.mape-b.mape) : null;
+  const runner = lbRank && lbRank.length>1 ? lbRank[1] : null;
+  const fab = forecastability(historyFor((item&&item.code)||'', grain||'daily'), prod && prod.intermittence);
+  const mGate = mapeReviewGate(winMape, fab);
   return (
     <StageSection step="2" scope="item" title={`Forecast & Override · by ${gl}`} sub={`${fcastArr?fcastArr.length+' '+gl+'s ahead — ':''}winning model overlaid on history; the override writes back to committed demand`}>
       <Grid cols={3}>
@@ -355,8 +415,16 @@ function DemForecast({ item, fc, grain }) {
           {win && (
             <div style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap', marginBottom:8, padding:'6px 10px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${ooc?C.dg:C.gn}`, background:C.bg3}}>
               <Tag c={ooc?'r':'g'}>{ooc?'OUT OF CONTROL':'IN CONTROL'}</Tag>
-              <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>winner <b>{FCAST_MODEL_LABEL[winnerKey]||winnerKey}</b>{winMape!=null?` · holdout MAPE ${winMape.toFixed(1)}%`:''}{ooc?' — review before you override':''}</span>
+              <ForecastabilityBadge fab={fab}/>
+              <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>winner <b>{FCAST_MODEL_LABEL[winnerKey]||winnerKey}</b>{winMape!=null?` · holdout MAPE ${winMape.toFixed(1)}%`:''}{runner && winMape!=null?` · beat ${FCAST_MODEL_LABEL[runner.model]||runner.model} by ${(runner.mape-winMape).toFixed(1)} pts of ${lbRank.length} models`:''}{ooc?' — review before you override':''}</span>
+              {prod && prod.exog_features && prod.exog_features.length>0 && <Tag c="b" title="V4-4 — imported regressor columns riding in the ML feature matrix (classical models can't consume them — the leaderboard routes)">+ {prod.exog_features.join(' · ')}</Tag>}
               <button onClick={goLeaderboard} style={{marginLeft:'auto', border:`1.5px solid ${C.ac}`, background:'transparent', color:C.ac, cursor:'pointer', fontFamily:F.mono, fontSize:9, fontWeight:700, padding:'2px 8px'}}>why this model? ↓ leaderboard</button>
+            </div>
+          )}
+          {mGate && mGate.gated && (
+            <div style={{display:'flex', alignItems:'flex-start', gap:8, marginBottom:8, padding:'6px 10px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3}}>
+              <Tag c="r">REVIEW GATE</Tag>
+              <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx2, lineHeight:1.5, flex:1}}>winner MAPE <b>{mGate.winMape.toFixed(1)}%</b> &gt; {REVIEW_MAPE}% — {mGate.why}. The one-click consensus commit (step 7) is gated until you commit it as reviewed.</span>
             </div>
           )}
           <ForecastChart forecast={fcastArr} history={M.historyAt((item&&item.code)||'', grain||'daily')} pi={prod && prod.forecast_pi}/>
@@ -383,7 +451,7 @@ function OverrideCard({ item, fcastArr }) {
   const apply = ()=>{
     if(!base || ov==null || !item || !item.code) return;
     const next = base.slice(); next[i] = ov;
-    setItemDemand(item.code, next);
+    setItemDemand(item.code, next, 'planner');   // V5-2b — pins: survives re-forecast
     logEvent('override', item.code, { period:i+1, from:Math.round(base[i]||0), to:ov, reason: reason||null });
     setSavedAt(new Date());
   };
@@ -410,6 +478,11 @@ function OverrideCard({ item, fcastArr }) {
         </div>
         <div style={{marginTop:8}}><Field label="Reason"><TextInput value={reason} onChange={setReason}/></Field></div>
         <div style={{marginTop:8, fontFamily:F.mono, fontSize:8.5, color: savedAt?C.gn:C.tx3}}>{savedAt?`✓ written to committed demand · ${savedAt.toLocaleTimeString()}`:'not yet applied'}</div>
+        {item && item.code && isDemandPinned(item.code) && (
+          <div data-vis="demand-pin" style={{marginTop:8, display:'flex', justifyContent:'space-between', alignItems:'center', border:`2px solid ${C.hl}`, padding:'5px 9px', background:C.bg3}}>
+            <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx2}}>📌 pinned — auto/loop re-forecasts won't overwrite this planner number</span>
+            <Btn kind="ghost" sm onClick={()=>{ pinDemand(item.code, false); setSavedAt(null); }}>unpin → model</Btn>
+          </div>)}
         <div style={{marginTop:8}}><Btn kind="primary" sm onClick={apply}>Apply override → demand</Btn></div>
       </>)}
     </Card>
@@ -451,7 +524,7 @@ function DemActuals({ item, fc, grain }) {
     return ()=>clearTimeout(h);
   }, [actSig, !!(base && base.length)]); // eslint-disable-line
   const commit = ()=>{ if(!blended || !blended.length || !sku) return;
-    setItemDemand(sku, blended);                          // → markStale('demand') cascades downstream
+    setItemDemand(sku, blended, 'planner');               // → markStale('demand') cascades downstream · V5-2b pins
     logEvent('replan', sku, { source:'demand-sensing', pattern: r.primary_pattern }); };
   const setAct = (i,v)=> setActs(a=>{ const n=a.slice(); n[i] = v===''?'':Number(v); return n; });
   const ssm = r && r.posterior && r.posterior.safety_stock_multiplier;
@@ -516,10 +589,19 @@ const COMMIT_SRC = { forecast_commit:'Forecast (accepted)', override:'Override',
 // `input`; an NPI like-model is `derived`; imported Actuals are `external`. The chip
 // must reflect HOW it was committed, not unconditionally claim "solved".
 const COMMIT_PROV = { forecast_commit:'solved', replan:'solved', override:'input', npi_likemodel:'derived', lifecycle:'derived', actuals:'external' };
-function DemCommit({ item, fc }) {
+function DemCommit({ item, fc, grain }) {
   const { state: demand } = useStore(s=>s.demand||{});
   const { events } = useEvents();
   const sku = (item && item.code) || '';
+  // V3-2 — the winner-MAPE review gate ENFORCED at the commit (12-steps Step-2):
+  // a winner worse than 30% MAPE can't be one-click-accepted as consensus; the
+  // planner must commit it AS REVIEWED (logged). Override/lifecycle/sensing paths
+  // stay ungated — those ARE the planner exercising judgement on the numbers.
+  const gProd = fc && fc.result && fc.result.products && fc.result.products[0];
+  const gKey = gProd && (gProd.winner || gProd.recommendation);
+  const gWin = gProd && Array.isArray(gProd.leaderboard) ? gProd.leaderboard.find(m=>m.model===gKey) : null;
+  const gFab = forecastability(historyFor(sku, grain||'daily'), gProd && gProd.intermittence);
+  const gate = mapeReviewGate(gWin ? gWin.mape : null, gFab);
   const finished = (M.products||[]).filter(p=>p.cat==='Finished');
   const lastFor = (code)=>{ for(let i=events.length-1;i>=0;i--){ const e=events[i];
     if(e.target===code && COMMIT_SRC[e.type]) return e; } return null; };
@@ -532,8 +614,15 @@ function DemCommit({ item, fc }) {
   const myS = demand[sku]; const myTot = sumOf(sku); const myEv = lastFor(sku);
   // Demand D-1: COMMITTED = an explicit planner commit event, not just a working series.
   const committed = isDemandCommitted(sku, events);
+  // V5-2b — accepting the model forecast is the explicit "return to the model"
+  // action: it UNPINS the SKU so loop/auto re-forecasts may refresh it again.
   const commitForecast = ()=>{ if(!sku || myTot==null) return;
+    pinDemand(sku, false);
     logEvent('forecast_commit', sku, { total: Math.round(myTot), periods: myS?myS.length:0 }); };
+  const commitReviewed = ()=>{ if(!sku || myTot==null || !gate || !gate.gated) return;
+    pinDemand(sku, false);
+    logEvent('mape_review', sku, { winner_mape: +gate.winMape.toFixed(1), threshold: REVIEW_MAPE, forecastability: gFab?gFab.label:null });
+    logEvent('forecast_commit', sku, { total: Math.round(myTot), periods: myS?myS.length:0, reviewed:true }); };
   const grand = finished.reduce((a,p)=>a+(sumOf(p.sku)||0),0);
   const grandFirm = finished.reduce((a,p)=>a+(firmFor(p.sku)||0),0);
   const committedCount = finished.filter(p=>isDemandCommitted(p.sku, events)).length;
@@ -559,12 +648,21 @@ function DemCommit({ item, fc }) {
                 return myS.map((v,i)=>{ const h=Math.max(1,(v/mx)*38); const w=Math.max(2,(680/n)-2);
                   return <rect key={i} x={10+i*(680/n)} y={44-h} width={w} height={h} fill={committed?C.ac:C.a4}/>; }); })()}
             </svg>
-            {!committed && (
+            {!committed && (gate && gate.gated ? (
+              <div style={{marginTop:10, padding:'8px 11px', border:`2px solid ${C.dg}`, borderLeft:`5px solid ${C.dg}`, background:C.bg3}}>
+                <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:6}}>
+                  <Tag c="r">REVIEW GATE</Tag><ForecastabilityBadge fab={gFab}/>
+                  <span style={{fontFamily:F.mono, fontSize:9.5, fontWeight:700, color:C.dg}}>winner MAPE {gate.winMape.toFixed(1)}% &gt; {REVIEW_MAPE}%</span>
+                </div>
+                <div style={{fontFamily:F.body, fontSize:11, color:C.tx2, lineHeight:1.45, marginBottom:8}}>{gate.why}. The one-click accept is blocked — committing logs that you reviewed it.</div>
+                <Btn kind="danger" sm onClick={commitReviewed}>⚠ Reviewed — commit anyway</Btn>
+              </div>
+            ) : (
               <div style={{marginTop:10, display:'flex', alignItems:'center', gap:10, padding:'8px 11px', border:`2px solid ${C.line}`, borderLeft:`5px solid ${C.a4}`, background:C.bg3}}>
                 <span style={{fontFamily:F.body, fontSize:11, color:C.tx2, flex:1, lineHeight:1.4}}><b>Proposed, not committed.</b> This is the live auto-forecast working series — review the leaderboard (step 4), then explicitly accept it as consensus (or override / shape it above, which also commits).</span>
                 <Btn kind="primary" sm onClick={commitForecast}>✓ Commit as consensus</Btn>
               </div>
-            )}
+            ))}
             <Reading soWhat={committed?"This is the committed series — overrides, demand-sensing, lifecycle shaping and an explicit accept all write/commit here, and the event trail records which one set the current numbers.":"Downstream solvers already plan against this working series, but it is a PROPOSAL until you commit it — so the portfolio worklist and consensus count it as not-yet-committed."}/>
           </>)}
         </Card>
@@ -942,7 +1040,7 @@ function LifecycleCard({ item, fc }) {
   const setPhase = (key)=>{ setDI({ lifecycle:key }); setSavedAt(null); };
   const apply = ()=>{ if(!base || !base.length || !sku) return;
     const shaped = base.map(v=>Math.max(0, Math.round((v||0)*sel.v)));
-    setItemDemand(sku, shaped);                       // → markStale('demand') cascades
+    setItemDemand(sku, shaped, 'planner');            // → markStale('demand') cascades · V5-2b pins
     logEvent('lifecycle', sku, { phase: sel.ph, multiplier: sel.v, baseTot:Math.round(baseTot), shapedTot });
     setSavedAt(new Date());
   };
@@ -1110,6 +1208,9 @@ function DemImport({ item, grain, onApplied }){
   const [text, setText] = useState('');
   const parsed = React.useMemo(()=> text.trim() ? parseHistoryCsv(text) : null, [text]);
   const series = parsed && !parsed.error ? bucketHistory(parsed.rows, parsed.hasDates, g) : [];
+  // V4-4 — named regressor columns (price, footfall…) bucketed alongside the series (bucket MEAN)
+  const exogCols = parsed && !parsed.error && parsed.exogNames && parsed.exogNames.length
+    ? bucketExog(parsed.rows, parsed.hasDates, g, parsed.exogNames) : null;
   // Long-format multi-SKU detection (a unified sku,date,value dump). Takes precedence
   // over the single-series read when it succeeds (needs ≥3 cols, so a plain date,value
   // file never trips it).
@@ -1117,8 +1218,8 @@ function DemImport({ item, grain, onApplied }){
   const isMulti = !!(multi && !multi.error && multi.order.length>=1);
   const applyCsv = ()=>{
     if(!sku || !series.length) return;
-    setImp({ grain:g, series, importedAt:new Date().toISOString(), source:'csv' });
-    logEvent('import', sku, { rows:series.length, grain:g, source:'csv' });
+    setImp({ grain:g, series, ...(exogCols?{exog:exogCols}:{}), importedAt:new Date().toISOString(), source:'csv' });
+    logEvent('import', sku, { rows:series.length, grain:g, source:'csv', ...(exogCols?{exog:Object.keys(exogCols)}:{}) });
     setText(''); onApplied && onApplied();
   };
   const applyMulti = ()=>{
@@ -1143,7 +1244,7 @@ function DemImport({ item, grain, onApplied }){
   }, [ref, scale, ramp, g, refHist.length]);
   const applyNpi = ()=>{
     if(!sku || !npiSeries.length) return;
-    setItemDemand(sku, npiSeries);
+    setItemDemand(sku, npiSeries, 'planner');   // V5-2b — an NPI prior must survive a re-forecast on weak history
     logEvent('npi_likemodel', sku, { analog:ref, scalePct:Number(scale)||0, rampPeriods:Number(ramp)||0 });
     onApplied && onApplied();
   };
@@ -1164,11 +1265,11 @@ function DemImport({ item, grain, onApplied }){
           info={{ what:'Two shapes, auto-detected. (1) ONE product: a date,value (or value-only) series → the SELECTED item. (2) MANY products: a unified long file with a sku,date,value column layout → grouped by SKU and written for EVERY product at once. Delimiter (comma/tab/semicolon) + header are auto-detected, quote-aware ("1,200" parses), dated rows bucket to the active grain. Caveat: an UNQUOTED grouped number on a value-only line is ambiguous — quote it or drop the comma.', flows:'one → histImports[sku] · many → histImports[each sku] → fcPayload.history → /api/forecast.' }}
           dev={{ comp:'DemImport·csv', props:'parseHistoryCsv | parseMultiSkuCsv + bucketHistory', state:'histImports[sku]={grain,series} (one or many)' }}>
           {imp ? <>
-            <div style={{fontFamily:F.mono, fontSize:10, color:C.tx2, marginBottom:6}}>Active import · <b>{imp.series.length}</b> {M.grainLabel(imp.grain)}s · {new Date(imp.importedAt).toLocaleString('en-IN')}{imp.grain!==g?<span style={{color:C.dg}}> · imported at {M.grainLabel(imp.grain)} grain — switch to that grain to forecast on it</span>:''}</div>
+            <div style={{fontFamily:F.mono, fontSize:10, color:C.tx2, marginBottom:6}}>Active import · <b>{imp.series.length}</b> {M.grainLabel(imp.grain)}s · {new Date(imp.importedAt).toLocaleString('en-IN')}{imp.exog?<span style={{color:C.a2}}> · + regressors {Object.keys(imp.exog).join(', ')} (riding into the ML feature matrix)</span>:''}{imp.grain!==g?<span style={{color:C.dg}}> · imported at {M.grainLabel(imp.grain)} grain — switch to that grain to forecast on it</span>:''}</div>
             {spark(imp.series.slice(-40), C.a2)}
             <Reading formula="histImports wins over the seed M.historyAt when its grain matches" soWhat={`The forecast above is now competing models on YOUR ${imp.series.length}-point series (re-run with 🤖). Clear to revert to the seed history.`}/>
           </> : <>
-            <textarea value={text} onChange={e=>setText(e.target.value)} rows={5} placeholder={"one product:  2025-01-01,120 …  (or one value per line)\nmany products:  sku,date,qty  —  TPA-3215,2025-01-01,120"}
+            <textarea value={text} onChange={e=>setText(e.target.value)} rows={5} placeholder={"one product:  2025-01-01,120 …  (or one value per line)\nmany products:  sku,date,qty  —  TPA-3215,2025-01-01,120\nwith drivers:  date,qty,price header — extra named columns (price, footfall…) become ML features"}
               style={{width:'100%', boxSizing:'border-box', border:`2px solid ${C.line}`, padding:'7px 9px', fontFamily:F.mono, fontSize:10, color:C.tx, outline:'none', resize:'vertical'}}/>
             {isMulti ? (()=>{ const knownSet=new Set((M.products||[]).map(p=>p.sku)); const knownList=multi.order.filter(s=>knownSet.has(s));
               return (
@@ -1190,6 +1291,7 @@ function DemImport({ item, grain, onApplied }){
             : parsed && !parsed.error ? <div style={{marginTop:8}}>
               <div style={{fontFamily:F.mono, fontSize:10, color:C.tx2, marginBottom:4}}>
                 {parsed.rows.length} rows parsed{parsed.hasDates?` · dated → bucketed to ${gl}`:' · value-only (file order)'} → <b>{series.length}</b> {gl} buckets
+                {exogCols && <span style={{color:C.a2}}> · regressors detected: <b>{Object.keys(exogCols).join(', ')}</b> → ML features (Q16 — a price level-shift becomes learnable)</span>}
               </div>
               {spark(series.slice(-40), C.ac)}
               <div style={{display:'flex', gap:8, marginTop:8}}>
@@ -1230,6 +1332,74 @@ function DemImport({ item, grain, onApplied }){
         </Advanced>
         </div>
       </div>
+    </StageSection>
+  );
+}
+
+// ── V3-10 · ① DECIDE strip (blueprint 3.2) — "what will sell, and do you trust ──
+// the number?" Reads ONLY the live /api/forecast solve for the selected item:
+// winner model + its holdout MAPE, the forecastability read of the item's real
+// history, and the V3-2 review-gate verdict. Unsolved ⇒ honest prompt.
+function DemandDecideStrip({ item, fc, grain }){
+  const sku = (item && item.code) || '';
+  const p = fc && fc.result && fc.result.products && fc.result.products[0];
+  if(!p || !Array.isArray(p.leaderboard) || !p.leaderboard.length) return (
+    <span style={{fontFamily:F.mono, fontSize:10, color:C.tx3}}>
+      ① What will sell — and do you trust the number? — <b style={{color:C.tx}}>🤖 Run Forecast</b> to light this up
+    </span>
+  );
+  const wKey = p.winner || p.recommendation;
+  const win = p.leaderboard.find(m=>m.model===wKey) || p.leaderboard[0];
+  const fab = forecastability(historyFor(sku, grain), p.intermittency);
+  const gate = mapeReviewGate(win ? win.mape : null, fab);
+  return (
+    <div data-vis="demand-decide" style={{display:'flex', alignItems:'center', gap:14, flexWrap:'wrap'}}>
+      <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.08em', color:C.tx3}}>① WHAT WILL SELL — AND DO YOU TRUST THE NUMBER?</span>
+      <span style={{fontFamily:F.mono, fontSize:10, color:C.tx2}}>winner <b style={{fontFamily:F.disp, color:C.tx}}>{(typeof FCAST_MODEL_LABEL!=='undefined' && FCAST_MODEL_LABEL[wKey])||wKey}</b>{win && win.mape!=null && <> · holdout MAPE <b className="num" style={{fontFamily:F.disp, color:C.tx}}>{win.mape.toFixed(1)}%</b></>}</span>
+      <span style={{color:C.line2}}>·</span>
+      <ForecastabilityBadge fab={fab}/>
+      {gate && (gate.gated
+        ? <Tag c="r">REVIEW GATED — MAPE &gt; {REVIEW_MAPE}%</Tag>
+        : <Tag c="g">commit open</Tag>)}
+    </div>
+  );
+}
+
+// ── V3-10 · VIS-2 — structural-events card (blueprint 3.4 #2, Q17–18) ─────────
+// "A competitor launched / the market changed" is not one lever — it is FOUR,
+// and each maps to a REAL model term that already exists in this app. This card
+// packages them as the workflow (V3-4 discipline: structure BY MODEL TERM, one
+// lever per term — never a disclaimer). It computes nothing and writes nothing;
+// every row links to the live tool that does.
+function Vis2StructuralEvents({ item, onNav }){
+  const sku = (item && item.code) || '';
+  const { di } = useDemandInputs(sku);
+  const promoN = ((di && di.promos) || []).length;
+  const go = (id)=>{ const el=document.getElementById(id); if(el) el.scrollIntoView({behavior:'smooth', block:'start'}); };
+  const rows = [
+    { ev:'You (or a competitor) launch a product', lever:'NPI like-modeling — pick an analog SKU, scale %, adoption ramp', term:'history ← analog × scale × ramp (becomes the committed prior)', act:()=>go('demand-import'), btn:'↑ step 1b · import / NPI' },
+    { ev:'You KNOW something the model cannot (deal signed, regulation)', lever:'consensus override on a specific period, with a written reason', term:'committed[t] ← override qty (event-logged; solvers replan to it)', act:()=>go('demand-forecast'), btn:'↑ step 4 · override' },
+    { ev:'The market shifted under you (actuals drifting from forecast)', lever:'log actuals — the breach flagger auto-stales demand past the trip wire', term:'auto_trigger → markStale(demand) → every consumer replans', act:()=>go('demand-actuals'), btn:'↑ step 5 · actuals' },
+    { ev:'Two plausible futures (price war vs status quo)', lever:'branch a scenario, perturb demand, re-solve the whole loop, compare KPIs', term:'scenario branch → runScenario (transparent re-solve, byte-restore)', act:()=>onNav && onNav('scenarios'), btn:'→ Scenarios · branch' },
+  ];
+  return (
+    <StageSection step="6b" scope="item" title="Structural events — when the market moves, which lever?" sub="four real levers, one per model term — this card only points; each tool is live where it lands">
+      <Card icon="🌊" title="Competitor launched / market changed — the workflow" badge="VIS-2 · guide" badgeTone="c"
+        info={{ what:'The four structural-change levers and the exact model term each one moves. Packaging only — nothing here computes or writes; the linked tools do.', flows:'guide — NPI import · period override · actuals breach · scenario branch.' }}
+        dev={{ comp:'Vis2StructuralEvents', props:'links to DemImport / OverrideCard / DemActuals / scenarios', note:'V3-10 · VIS-2 — BY MODEL TERM (V3-4 discipline)' }}>
+        <div data-vis="vis2" style={{display:'flex', flexDirection:'column', gap:8}}>
+          {rows.map((r,i)=>(
+            <div key={i} style={{display:'grid', gridTemplateColumns:'1.2fr 1.4fr 1.3fr auto', gap:10, alignItems:'center', padding:'8px 10px', border:`1.5px solid ${C.line2}`, background:i%2?C.bg3:C.paper}}>
+              <span style={{fontFamily:F.body, fontSize:11, color:C.tx, lineHeight:1.4}}>{r.ev}</span>
+              <span style={{fontFamily:F.mono, fontSize:9.5, color:C.tx2, lineHeight:1.5}}>{r.lever}</span>
+              <span style={{fontFamily:F.mono, fontSize:9, color:C.a2, lineHeight:1.5}}>{r.term}</span>
+              <button onClick={r.act} style={{border:`1.5px solid ${C.ac}`, background:'transparent', color:C.ac, cursor:'pointer', fontFamily:F.mono, fontSize:9, fontWeight:700, padding:'3px 9px', whiteSpace:'nowrap'}}>{r.btn}</button>
+            </div>
+          ))}
+        </div>
+        <Reading formula="event type → lever → model term (promo_periods · committed[t] · auto_trigger · scenario branch)"
+          soWhat={`Promotions are a fifth, lighter lever — ${promoN ? `${promoN} flagged for ${sku} (already feeding promo_periods in the live forecast payload)` : `none flagged for ${sku} yet (step 6 above feeds promo_periods directly into the forecast payload)`}. The four rows are for changes a promo flag can't express: new products, known facts, drift, and forked futures.`}/>
+      </Card>
     </StageSection>
   );
 }

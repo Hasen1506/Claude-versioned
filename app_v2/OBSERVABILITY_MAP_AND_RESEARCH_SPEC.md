@@ -111,7 +111,7 @@ The product's pitch is that all six are **one connected model with a glass box**
 
 | # | Solver (API) | Page(s) | Named method / formula | Key inputs (← param) | Emits / who consumes |
 |---|---|---|---|---|---|
-| 1 | **Forecast** `/api/forecast`, `/api/demand/sense` | Demand | Holt-Winters + RandomForest **hybrid**; **Croston/SBA/TSB** for intermittent; MASE/MAPE **backtest** on out-of-sample holdout | history (CSV/seed), season, promo, holidays | committed demand → Plan, Profit-mix, Sourcing |
+| 1 | **Forecast** `/api/forecast`, `/api/demand/sense` | Demand | **11-model leaderboard** (naive · Holt-Winters · ARIMA · RandomForest · GradientBoost · XGBoost · MLP · HW+RF hybrid · **Croston/SBA/TSB** for intermittent), each scored MAPE/RMSE/MAE on an out-of-sample holdout, MASE-ranked per-SKU winner (V1-1 doc fix 2026-06-10 — was understated as "HW+RF") | history (CSV/seed), season, promo, holidays | committed demand → Plan, Profit-mix, Sourcing |
 | 2 | **Aggregate** `/api/solve/aggregate` | Plan | **Hax–Meal / Holt–Modigliani–Muth–Simon** aggregate planning; level-vs-chase LP; InvBal in **labor-weighted units** | demand, `planParams` (init_inventory, init_workforce, hire/fire/OT, allow_backorder), worker-weights | aggregate plan → Disaggregate, Production |
 | 3 | **Disaggregate** `/api/calc/disaggregate` | Plan | Hierarchical disaggregation (proportional to physical demand share) | aggregate plan, per-SKU shares | SKU-level plan |
 | 4 | **Reconcile** `/api/solve/sop` | Plan | top-down ⇄ bottom-up consensus reconciliation (`run_sop_pipeline`, reconcile.py) | family vs SKU forecasts | consensus number |
@@ -206,8 +206,9 @@ STEP 1 · SETUP — set the knobs once.
 STEP 2 · DEMAND — how much will sell?
   Page: Demand
   Inputs ⇄ params: history (seed or CSV import), season, promo, NPI like-model for the ramp
-  Solver/API: Forecast /api/forecast  — Holt-Winters+RF hybrid, Croston for the intermittent tail,
-              MASE/MAPE backtest picks the winner; /api/demand/sense auto-flags regime breaks
+  Solver/API: Forecast /api/forecast  — 11-model leaderboard (naive/HW/ARIMA/RF/GB/XGB/MLP/hybrid
+              + Croston/SBA/TSB for the intermittent tail), MASE/MAPE holdout backtest picks the
+              per-SKU winner; /api/demand/sense auto-flags regime breaks
   Output: committed demand per SKU (EXPLICIT commit event — not silent auto-commit, post D-1 fix)
   Observability: winner model + out-of-sample MAPE shown; PI band σ = holdout error.
   Industry Q: o9/Blue Yonder demand sensing uses external signals + ML. We have hybrid+Croston+
@@ -350,7 +351,7 @@ Each sub-flow is *already* runnable via the existing what-if/stress/prune machin
 
 | Capability | TPAC app today | Market leader | Verdict | Best-practice to add |
 |---|---|---|---|---|
-| Demand forecasting | HW+RF hybrid, Croston/SBA/TSB, MASE backtest, ext-signal drivers | o9/BY demand sensing | **Competitive** | causal ML, hierarchical reconciliation at scale |
+| Demand forecasting | 11-model leaderboard (classical+ML+intermittent), MASE backtest, ext-signal drivers | o9/BY demand sensing | **Competitive** | causal ML, hierarchical reconciliation at scale |
 | Aggregate S&OP | Hax–Meal level/chase LP, worker-time | IBP | **Good** | multi-resource (not just labor), seasonal pre-build polish |
 | Production scheduling | MILP + TOC bottleneck + campaign + sequencing | KX concurrent / BY APS | **Good (MSME)** | finite-capacity op-level APS, setup matrices per work-center |
 | Inventory / MEIO | Graves–Willems GSM + √N pooling + echelon placement + CVaR SS | o9 / Llamasoft | **Strong** | guaranteed-vs-stochastic hybrid, multi-echelon across the supplier network |
