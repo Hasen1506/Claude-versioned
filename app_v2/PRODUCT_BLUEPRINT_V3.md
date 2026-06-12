@@ -919,7 +919,32 @@ V4-1 profit-aware aggregate objective toggle · V4-2 multi-resource aggregate (m
 class) · V4-3 OT per-shift mode · V4-4 price/exog forecast columns · V4-5 ATP/CTP order-promise ·
 V4-6 rework cost adder + yield doc · V4-7 correlated MC.
 
-**PHASE-II ✅ BUILT 2026-06-12 — `app_v2/solver_expert_guide.html` (goal phase ii, user-expanded).**
+**PHASE-II-R ✅ REBUILT 2026-06-12 — `app_v2/mastery_guide.html` (user rejected the first guide's design; full rewrite).**
+User verdict on solver_expert_guide.html: poorly designed, "based off V1–V5" framing wrong — wanted the WHOLE app
+in exact user-flow order with visuals/interactivity, per-section mastery + built/missing/wrong + step-by-step
+worked problems with all inputs. Delivered as `mastery_guide.html` (~162 KB, self-contained, light "engineering
+paper" style — deliberately opposite of the dark first guide and matched to the app's 2px-ink aesthetic):
+clickable 12-stage flow map mirroring M.stages (DEFINE/PLAN/DECIDE/LEARN) · Foundations section (LP geometry
+with a live SVG widget, duality rules, B&B, exact-vs-heuristic, 4-step solve-reading discipline) · one section
+per stage (01 Setup … 12 Reference) each with SIX TABS: CONCEPT (mastery track) / FLOW & INPUTS (every field,
+units) / SOLVER (obj·vars·constraints as written, + FULL PAYLOAD CONTRACT details block — every key the engine
+reads, verified by grep: aggregate, production, procurement 50+, transport, capital, cvar, montecarlo, profitmix,
+meio, linecap) / OUTPUTS (named VIS-1..10 + data-vis ids) / VERDICT (built✓/missing✗/wrong⚠ with audit grades) /
+WALKTHROUGH (numbered TPAC-seed steps) · 7 interactive widgets (LP vertex-snap SVG · forecast-family regimes
+incl. <18-refusal · level-vs-chase pricing · shadow-price bind/slack flip · WW-vs-POQ with irregular-spike
+demand — periodic mask gifted POQ a fake tie, fixed · bridge-split with the observed 12-day/1,380 kg case ·
+critical fractile) · 7 hand-checkable DONE PROBLEMs (2-month aggregate hybrid ₹303,500 beats chase/level ·
+1-week CLSP 264 starts/₹792 rework/1-minute-over infeasibility · 3-period WW DP ₹1,000 · deadline split
+₹64,000→₹32,167 · capital NPV −₹9.8 L with ₹752/hr break-even dual · 5-scenario CVaR=₹400=LP obj · 3-point
+holdout MAPE championing) · Honest Ledger (explanation-coverage audit table A…C, problem-class coverage,
+benchmark stack CBC/HiGHS/CP-SAT/Gurobi/Hexaly + where-CBC-falls-short-for-us + marketing decoder, 5 ranked
+structural debts). VERIFIED OBSERVED: HTML parser balanced/0 dangling anchors; Chromium probe 12/12 (boot
+structure, all 7 widgets exercised through regime flips, tab-strip pane switching, flow-map scroll, contracts/
+done-problems/benchmarks render, details expand, 0 pageerrors); screenshots eyeballed (hero, demand, plan-solver
+pane — first blank shot was a smooth-scroll race, re-shot with scrollBehavior:auto). Gate 4/4 after. Server
+restarted (codespace wipe) → PID in /tmp/appserver.pid. solver_expert_guide.html kept on disk, superseded.
+
+**PHASE-II ✅ BUILT 2026-06-12 — `app_v2/solver_expert_guide.html` (goal phase ii, user-expanded). [SUPERSEDED by PHASE-II-R above]**
 One standalone HTML (~84 KB, no deps, served live at /solver_expert_guide.html) delivering all 8
 user-specified items: §1 expert-track solver concepts (variables/objective/constraints with
 profitmix as the textbook; LP geometry → VIS-6; duality/shadow prices incl. the MIP-duals-are-

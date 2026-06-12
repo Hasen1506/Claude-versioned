@@ -1,0 +1,1818 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Whole App, End to End — flow · concepts · solvers · honesty</title>
+<style>
+  :root{
+    --paper:#f6f3ec; --card:#fffdf7; --ink:#16130f; --tx2:#4a443b; --tx3:#8a8275;
+    --line:#16130f; --line2:#d8d2c4;
+    --ind:#4338ca; --indbg:#eef0ff; --amb:#b45309; --ambbg:#fef3e2;
+    --grn:#15803d; --grnbg:#e8f5ec; --red:#b91c1c; --redbg:#fdeaea;
+    --disp:"Iowan Old Style","Palatino Linotype",Georgia,serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box} html{scroll-behavior:smooth; scroll-padding-top:84px}
+  body{margin:0; background:var(--paper); color:var(--ink); font:15px/1.62 var(--disp)}
+  ::selection{background:var(--ind); color:#fff}
+
+  /* ── sticky stage rail (mirrors the app's 00–12 nav) ── */
+  nav.rail{position:sticky; top:0; z-index:50; background:var(--ink); padding:8px 14px;
+    display:flex; gap:6px; overflow-x:auto; align-items:center}
+  nav.rail .band{font:700 9px/1 var(--mono); letter-spacing:.14em; color:#9a9183; padding:0 4px; white-space:nowrap}
+  nav.rail a{flex:0 0 auto; text-decoration:none; font:700 10.5px/1 var(--mono); color:#cfc8ba;
+    border:1px solid #3a352c; padding:7px 9px; white-space:nowrap; background:#211d17}
+  nav.rail a:hover{color:#fff; border-color:#fff}
+  nav.rail a.on{background:var(--ind); border-color:var(--ind); color:#fff}
+  nav.rail a .n{color:#7d7567; margin-right:5px}
+
+  .wrap{max-width:1040px; margin:0 auto; padding:0 26px 120px}
+
+  /* ── hero ── */
+  header.hero{padding:54px 0 30px; border-bottom:3px solid var(--ink)}
+  .kick{font:700 11px/1 var(--mono); letter-spacing:.22em; color:var(--amb)}
+  h1{font:900 44px/1.08 var(--disp); margin:14px 0 12px; letter-spacing:-.01em}
+  .sub{font-size:17.5px; color:var(--tx2); max-width:74ch}
+  .hero .meta{display:flex; gap:16px; flex-wrap:wrap; margin-top:18px; font:700 10.5px/1 var(--mono); color:var(--tx3)}
+  .hero .meta b{color:var(--ink)}
+
+  /* ── shared blocks ── */
+  h2{font:900 28px/1.15 var(--disp); margin:0 0 6px}
+  h3{font:800 18px/1.25 var(--disp); margin:26px 0 8px}
+  h4{font:800 14.5px/1.3 var(--disp); margin:18px 0 6px}
+  p{margin:9px 0; max-width:78ch}
+  a{color:var(--ind)}
+  code,.k{font:600 12.5px/1.5 var(--mono); background:#edeadf; padding:1px 5px; border:1px solid var(--line2)}
+  .card{background:var(--card); border:2px solid var(--ink); box-shadow:5px 5px 0 #d9d3c5; padding:18px 20px; margin:16px 0}
+  .math{font:600 13px/1.8 var(--mono); background:var(--card); border:2px solid var(--ink);
+    border-left:7px solid var(--ind); padding:13px 16px; margin:13px 0; overflow-x:auto; white-space:pre}
+  .note{border:2px solid var(--ink); border-left:7px solid var(--amb); background:var(--ambbg); padding:11px 15px; margin:13px 0}
+  .note.g{border-left-color:var(--grn); background:var(--grnbg)}
+  .note.r{border-left-color:var(--red); background:var(--redbg)}
+  .note.i{border-left-color:var(--ind); background:var(--indbg)}
+  .note .t{font:700 10px/1 var(--mono); letter-spacing:.16em; display:block; margin-bottom:5px}
+
+  table{border-collapse:collapse; width:100%; margin:13px 0; background:var(--card); font-size:13.5px}
+  th{font:700 10px/1.3 var(--mono); letter-spacing:.1em; text-align:left; background:var(--ink); color:#f1ece1; padding:8px 10px}
+  td{border:1px solid var(--line2); border-left:none; border-right:none; padding:8px 10px; vertical-align:top}
+  tr:nth-child(even) td{background:#faf7ef}
+  table{border:2px solid var(--ink)}
+  td .m{font:600 11.5px/1.5 var(--mono)}
+
+  .b{display:inline-block; font:700 9.5px/1 var(--mono); letter-spacing:.08em; padding:3px 7px; border:1.5px solid; white-space:nowrap}
+  .b.ok{color:var(--grn); border-color:var(--grn); background:var(--grnbg)}
+  .b.no{color:var(--red); border-color:var(--red); background:var(--redbg)}
+  .b.part{color:var(--amb); border-color:var(--amb); background:var(--ambbg)}
+  .b.info{color:var(--ind); border-color:var(--ind); background:var(--indbg)}
+  .b.seed{color:var(--tx2); border-color:var(--tx3); background:#efece2}
+
+  /* ── stage sections ── */
+  section.stage{padding-top:46px}
+  .stagehead{display:flex; align-items:baseline; gap:14px; border-bottom:3px solid var(--ink); padding-bottom:10px}
+  .stagehead .num{font:900 38px/1 var(--mono); color:var(--line2); -webkit-text-stroke:1.5px var(--ink)}
+  .stagehead .bandtag{margin-left:auto; font:700 10px/1 var(--mono); letter-spacing:.18em; color:#fff; background:var(--ink); padding:5px 9px}
+  .stagehead .sub2{font:600 11px/1.4 var(--mono); color:var(--tx3); width:100%; padding-top:4px}
+
+  /* tab strip inside every stage */
+  .tabs{display:flex; flex-wrap:wrap; gap:0; border:2px solid var(--ink); margin:18px 0 0; background:var(--card)}
+  .tabs button{flex:1 1 auto; font:700 10.5px/1 var(--mono); letter-spacing:.07em; padding:11px 8px;
+    background:var(--card); color:var(--tx3); border:none; border-right:2px solid var(--ink); cursor:pointer}
+  .tabs button:last-child{border-right:none}
+  .tabs button:hover{color:var(--ink)}
+  .tabs button.on{background:var(--ink); color:#fff}
+  .panes{border:2px solid var(--ink); border-top:none; background:var(--card); padding:16px 20px 22px}
+  .pane{display:none} .pane.on{display:block}
+
+  /* widgets */
+  .widget{border:2.5px solid var(--ind); background:var(--indbg); box-shadow:5px 5px 0 #c9cdf2; padding:15px 18px; margin:16px 0}
+  .widget .wt{font:700 9.5px/1 var(--mono); letter-spacing:.18em; color:#fff; background:var(--ind); padding:4px 8px; display:inline-block; margin-bottom:9px}
+  .widget label{font:700 11px/1.4 var(--mono); color:var(--tx2); display:block; margin-top:8px}
+  .widget input[type=range]{width:100%; accent-color:var(--ind)}
+  .widget .out{font:700 13px/1.6 var(--mono); background:var(--card); border:2px solid var(--ink); padding:10px 13px; margin-top:10px}
+  .bar{height:16px; background:#dcd6c8; border:1.5px solid var(--ink); position:relative; margin:4px 0}
+  .bar i{position:absolute; inset:0 auto 0 0; background:var(--ind)}
+  .bar.amb i{background:var(--amb)} .bar.grn i{background:var(--grn)} .bar.red i{background:var(--red)}
+  .bar span{position:absolute; right:6px; top:-1px; font:700 10px/16px var(--mono)}
+
+  /* walkthrough steps */
+  .step{display:flex; gap:14px; border:2px solid var(--ink); background:var(--card); padding:13px 16px; margin:10px 0}
+  .step .sn{flex:0 0 34px; height:34px; border:2px solid var(--ink); background:var(--amb); color:#fff;
+    font:900 16px/30px var(--mono); text-align:center}
+  .step .sb{flex:1} .step .sb b{font-family:var(--disp)}
+  .step .where{font:700 10px/1 var(--mono); color:var(--ind); letter-spacing:.06em}
+  .io{font:600 12px/1.7 var(--mono); background:#1d1913; color:#e8e1d2; padding:11px 14px; border:2px solid var(--ink); margin:8px 0; overflow-x:auto; white-space:pre}
+  .io .c{color:#8f8676} .io .y{color:#eab308} .io .g{color:#4ade80} .io .r{color:#f87171} .io .bl{color:#93c5fd}
+
+  /* verdict grid */
+  .verdict{display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:12px; margin:14px 0}
+  .vcol{border:2px solid var(--ink); background:var(--card); padding:12px 14px}
+  .vcol .vh{font:700 10px/1 var(--mono); letter-spacing:.16em; padding:5px 8px; display:inline-block; color:#fff; margin-bottom:8px}
+  .vcol ul{margin:0; padding-left:18px} .vcol li{margin:6px 0; font-size:13.5px}
+  .vcol.built .vh{background:var(--grn)} .vcol.miss .vh{background:var(--red)} .vcol.wrong .vh{background:var(--amb)}
+
+  /* flow map */
+  .flowmap{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin:20px 0}
+  .fnode{border:2px solid var(--ink); background:var(--card); box-shadow:4px 4px 0 #d9d3c5; padding:10px 12px; cursor:pointer; transition:transform .08s}
+  .fnode:hover{transform:translate(-2px,-2px); box-shadow:6px 6px 0 var(--ind)}
+  .fnode .fn{font:900 17px/1 var(--mono); color:var(--tx3)} .fnode .ft{font:800 14px/1.2 var(--disp); margin:4px 0 2px}
+  .fnode .fs{font:600 9.5px/1.4 var(--mono); color:var(--tx3)}
+  .fnode .fb{font:700 8.5px/1 var(--mono); letter-spacing:.12em; color:#fff; background:var(--ind); padding:2.5px 6px; display:inline-block; margin-top:6px}
+  .fnode[data-band="DEFINE"] .fb{background:var(--amb)} .fnode[data-band="PLAN"] .fb{background:var(--ind)}
+  .fnode[data-band="DECIDE"] .fb{background:var(--grn)} .fnode[data-band="LEARN"] .fb{background:var(--tx3)}
+
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:16px} @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  details{border:2px solid var(--ink); background:var(--card); margin:10px 0}
+  summary{cursor:pointer; font:700 12px/1.4 var(--mono); padding:10px 14px; background:#efece2}
+  summary:hover{background:#e7e2d2} details>div{padding:4px 16px 14px}
+  .legend{display:flex; gap:10px; flex-wrap:wrap; margin:10px 0}
+  footer{margin-top:70px; border-top:3px solid var(--ink); padding-top:18px; font:600 11px/1.8 var(--mono); color:var(--tx3)}
+  svg text{font-family:var(--mono)}
+</style>
+</head>
+<body>
+
+<nav class="rail" id="rail">
+  <span class="band">MAP</span>
+  <a href="#s-read"><span class="n">·</span>How to read</a>
+  <a href="#s-found"><span class="n">·</span>Foundations</a>
+  <span class="band">DEFINE</span>
+  <a href="#s-setup"><span class="n">01</span>Setup</a>
+  <a href="#s-products"><span class="n">02</span>Products</a>
+  <a href="#s-network"><span class="n">03</span>Network</a>
+  <span class="band">PLAN</span>
+  <a href="#s-demand"><span class="n">04</span>Demand</a>
+  <a href="#s-plan"><span class="n">05</span>Plan</a>
+  <a href="#s-production"><span class="n">06</span>Production</a>
+  <a href="#s-sourcing"><span class="n">07</span>Sourcing</a>
+  <a href="#s-logistics"><span class="n">08</span>Logistics</a>
+  <span class="band">DECIDE</span>
+  <a href="#s-finance"><span class="n">09</span>Finance</a>
+  <a href="#s-console"><span class="n">10</span>Console</a>
+  <a href="#s-scenarios"><span class="n">11</span>Scenarios</a>
+  <span class="band">LEARN</span>
+  <a href="#s-reference"><span class="n">12</span>Reference</a>
+  <a href="#s-ledger"><span class="n">!</span>Honest ledger</a>
+</nav>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="kick">FIELD MANUAL · THE ENTIRE APPLICATION · EXACT USER FLOW</div>
+  <h1>The Whole App, End to End</h1>
+  <p class="sub">One stage at a time, in the exact order a planner walks the rail: what the
+  domain concept is and <b>how to master it</b> · every input the screen actually asks for ·
+  the solver underneath — objective, decision variables, constraints, in real math ·
+  what comes out and which visualizer draws it · an honest verdict (built / missing / wrongly done) ·
+  and a step-by-step worked example on the Tata Precision Auto Components seed dataset.</p>
+  <div class="meta">
+    <span>DATASET <b>TPAC — Tata Precision Auto Components Pvt. Ltd.</b> <span class="b seed">◇ every prefilled number is a seed, overridable</span></span>
+    <span>ENGINES <b>41 live API endpoints · 10 exact MILP/LP programs · 14 analytic engines</b></span>
+    <span>EVERY SECTION <b>CONCEPT → INPUTS → SOLVER → OUTPUTS → VERDICT → WALKTHROUGH</b></span>
+  </div>
+</header>
+
+<!-- ════════════════════════ HOW TO READ / THE MAP ════════════════════════ -->
+<section class="stage" id="s-read">
+  <div class="stagehead"><span class="num">00</span><h2>The map — how the app flows, and how this guide mirrors it</h2></div>
+
+  <p>The app's left rail is a <b>dependency-ordered spine</b>: you <b>DEFINE</b> the physical world
+  (who you are, what you make, where things sit), you <b>PLAN</b> against it (demand → capacity → schedule
+  → materials → movement), and you <b>DECIDE</b> with money and risk on top. Each stage's outputs are the
+  next stage's inputs — that is the whole design. Click any node to jump to its deep section.</p>
+
+  <div class="flowmap" id="flowmap">
+    <div class="fnode" data-band="DEFINE" data-go="s-setup"><div class="fn">01</div><div class="ft">Setup</div><div class="fs">identity · MSME tier · calendar · profile gates</div><span class="fb">DEFINE</span></div>
+    <div class="fnode" data-band="DEFINE" data-go="s-products"><div class="fn">02</div><div class="ft">Products</div><div class="fs">catalog · BOM · costs · yield/expiry</div><span class="fb">DEFINE</span></div>
+    <div class="fnode" data-band="DEFINE" data-go="s-network"><div class="fn">03</div><div class="ft">Network</div><div class="fs">nodes · lanes · contracts · on-hand ledger</div><span class="fb">DEFINE</span></div>
+    <div class="fnode" data-band="PLAN" data-go="s-demand"><div class="fn">04</div><div class="ft">Demand</div><div class="fs">history · 8-model forecast · ABC/XYZ · pins</div><span class="fb">PLAN</span></div>
+    <div class="fnode" data-band="PLAN" data-go="s-plan"><div class="fn">05</div><div class="ft">Plan</div><div class="fs">S&amp;OP aggregate · level-vs-chase · shadow prices</div><span class="fb">PLAN</span></div>
+    <div class="fnode" data-band="PLAN" data-go="s-production"><div class="fn">06</div><div class="ft">Production</div><div class="fs">lines · MPS · sequencing · ATP/CTP</div><span class="fb">PLAN</span></div>
+    <div class="fnode" data-band="PLAN" data-go="s-sourcing"><div class="fn">07</div><div class="ft">Sourcing</div><div class="fs">MRP · procurement MILP · lot-sizing · MEIO</div><span class="fb">PLAN</span></div>
+    <div class="fnode" data-band="PLAN" data-go="s-logistics"><div class="fn">08</div><div class="ft">Logistics</div><div class="fs">transport LP · allocation · mode split</div><span class="fb">PLAN</span></div>
+    <div class="fnode" data-band="DECIDE" data-go="s-finance"><div class="fn">09</div><div class="ft">Finance</div><div class="fs">cash · capital MILP · covenant · landed cost</div><span class="fb">DECIDE</span></div>
+    <div class="fnode" data-band="DECIDE" data-go="s-console"><div class="fn">10</div><div class="ft">Console</div><div class="fs">16 engines · planning spine · branches</div><span class="fb">DECIDE</span></div>
+    <div class="fnode" data-band="DECIDE" data-go="s-scenarios"><div class="fn">11</div><div class="ft">Scenarios</div><div class="fs">Monte Carlo · CVaR · resilience · what-if</div><span class="fb">DECIDE</span></div>
+    <div class="fnode" data-band="LEARN" data-go="s-reference"><div class="fn">12</div><div class="ft">Reference</div><div class="fs">learning lab · SAP map · open API</div><span class="fb">LEARN</span></div>
+  </div>
+
+  <h3>The first 90 seconds — exactly what a new user experiences</h3>
+  <div class="step"><div class="sn">1</div><div class="sb"><span class="where">FIRST LOAD · ONBOARDING WIZARD (modal)</span><br>
+    Six plain-words questions right-size the workspace: <b>How do you fulfil orders?</b> (MTS / both / MTO / ATO) ·
+    <b>Capacity tight or ample?</b> · <b>Do you import raw materials?</b> · <b>How many lines?</b> ·
+    <b>Single site or network?</b> · <b>Who makes your forecast?</b> Answers set the <i>profile</i>, and the profile
+    <b>gates engines</b> — answer "all domestic" and the landed-cost/FX machinery folds away; answer "forecast is
+    supplied to us" and the model competition hides. Skippable, re-answerable any time in Setup.</div></div>
+  <div class="step"><div class="sn">2</div><div class="sb"><span class="where">HOME · COMMAND CENTER</span><br>
+    KPIs, the solver network, and one button that runs the <b>6-step planning spine</b> in dependency order:
+    <code>forecast → procurement → aggregate → production → linecap → montecarlo</code>. That order is itself a lesson —
+    materials commit on forecast before the capacity plan smooths it, because purchase lead times are longer than
+    planning cycles.</div></div>
+  <div class="step"><div class="sn">3</div><div class="sb"><span class="where">EVERY PAGE · THE FRESHNESS RIBBON</span><br>
+    A six-dot strip tracks each spine solve as <b>fresh / stale / not-run</b>. Change any input a solver read and its dot
+    goes stale — the app knows the dependency graph, so editing a cycle time stales production but not the forecast.
+    This is the app's quiet thesis: <b>a plan is a cached computation over inputs, and the cache knows when it's dirty.</b></div></div>
+  <div class="step"><div class="sn">4</div><div class="sb"><span class="where">EVERY PAGE · GUIDED ⇄ EXPERT</span><br>
+    GUIDED mode shows only the inputs this tab's primary solve actually reads, plus a do-these checklist; EXPERT unfolds
+    everything. Every prefilled number wears a <b>◇ seed badge</b> — the TPAC dataset is a teaching scaffold, not your data,
+    and each value is individually overridable (the GovField component carries the override).</div></div>
+
+  <div class="note i"><span class="t">HOW EACH STAGE SECTION BELOW WORKS</span>
+  Every stage gets the same six tabs. <b>CONCEPT</b> — the domain itself, taught to mastery depth.
+  <b>FLOW &amp; INPUTS</b> — every field the screen asks for, with units (units are where real systems silently break).
+  <b>SOLVER</b> — objective function, decision variables, constraints, as the Python actually writes them.
+  <b>OUTPUTS</b> — what renders, which named visualizer (VIS-1…VIS-10) draws it, and how to read it.
+  <b>VERDICT</b> — built ✓ / missing ✗ / wrongly-or-thinly done ⚠, graded honestly.
+  <b>WALKTHROUGH</b> — a numbered, field-by-field worked example on TPAC seeds.</div>
+</section>
+
+<!-- ════════════════════════ FOUNDATIONS ════════════════════════ -->
+<section class="stage" id="s-found">
+  <div class="stagehead"><span class="num">⚙</span><h2>Foundations — the optimization literacy everything else assumes</h2><span class="bandtag">READ ONCE, USE EVERYWHERE</span></div>
+
+  <p>Ten of this app's engines are <b>mathematical programs</b>: they hand a model to the CBC solver (via the PuLP
+  modeling library) and get back a <i>provably best</i> answer. Every one of them is built from exactly three parts.
+  Learn the three parts once and every SOLVER tab below becomes readable.</p>
+
+  <table>
+    <tr><th>PART</th><th>WHAT IT IS</th><th>HOW TO SPOT IT IN THIS APP</th></tr>
+    <tr><td><b>Decision variables</b></td><td>The numbers the solver is <i>allowed to choose</i>. Everything else is data.</td><td class="m">x[k,l,t] units of SKU k on line l in week t · W_t workers · q[k] monthly mix</td></tr>
+    <tr><td><b>Objective function</b></td><td>One linear expression to minimize or maximize. One. If you care about two things, you price one into the other's currency.</td><td class="m">max Σ margin·q − labor − setup &nbsp;·&nbsp; min Σ (reg+OT+hold+backorder+hire+fire)</td></tr>
+    <tr><td><b>Constraints</b></td><td>Linear ≤ / = / ≥ rows carving the space of allowed answers. The solver lives exactly on their boundary.</td><td class="m">Σ hours used ≤ hours available · I_t = I_{t−1} + P_t − D_t · q ≤ demand ceiling</td></tr>
+  </table>
+
+  <h3>The geometry — why "optimal" answers always sit in a corner</h3>
+  <p>Linear constraints carve a flat-sided region (a polytope); a linear objective is a tilted plane over it. Push the
+  plane as far as it goes and it last touches the region <b>at a vertex</b> — a corner where constraints intersect.
+  Three consequences you will see all over this app: optimal plans are <b>extreme</b> (a line runs flat-out or not at
+  all), they're <b>locally stable</b> (small data nudges don't move a vertex), and then <b>suddenly jumpy</b> (a big
+  nudge flips to a different vertex entirely). Drag the price below and watch the optimum snap between corners — it
+  never glides.</p>
+
+  <div class="widget" id="w-lp">
+    <span class="wt">⚡ INTERACTIVE — LP GEOMETRY</span>
+    <p style="margin-top:0">Two products, two shared resources. <b>max R·x + 90·y</b> s.t. machine-hours
+    <span class="k">2x + 1y ≤ 100</span>, finishing <span class="k">1x + 3y ≤ 120</span>, x,y ≥ 0.
+    Slide product X's unit margin R:</p>
+    <label>margin of X: ₹<span id="lp-r">60</span> / unit</label>
+    <input type="range" id="lp-slider" min="10" max="200" value="60">
+    <svg id="lp-svg" viewBox="0 0 360 240" style="width:100%; max-width:480px; background:#fffdf7; border:2px solid var(--ink); margin-top:8px"></svg>
+    <div class="out" id="lp-out"></div>
+  </div>
+
+  <h3>Duality — the solver tells you what capacity is worth</h3>
+  <p>Every LP secretly solves a twin problem: <i>price each constraint so the prices alone explain the optimum</i>.
+  Those prices are <b>shadow prices (duals)</b>: the objective improvement from one more unit of a constraint's
+  right-hand side. The rules to internalize:</p>
+  <table>
+    <tr><th>RULE</th><th>MEANING</th><th>WHERE THIS APP USES IT</th></tr>
+    <tr><td><b>Slack ⇒ price 0</b></td><td>A resource you don't fully use is worth nothing at the margin (complementary slackness).</td><td>Plan tab capacity table marks rows <span class="b ok">BINDING</span> only when slack &lt; 0.01 (<span class="k">aggregate.py:364–380</span> reads <span class="k">c.pi</span> per row)</td></tr>
+    <tr><td><b>Binding ⇒ price = marginal value</b></td><td>₹/hour the objective improves per extra hour — the rational ceiling on what you'd pay for overtime, a new machine, a debottleneck.</td><td>VIS-5 "elevate the constraint" prices a capacity raise against investment hurdle; Production imports "Line shadow ₹/hr (from Plan)"</td></tr>
+    <tr><td><b>MIP duals are invalid</b></td><td>Integer variables break the smooth geometry duals come from. Reading <span class="k">.pi</span> off a MILP is silently wrong.</td><td><span class="k">capital.py:69–133</span> re-solves the LP <i>relaxation</i> (integrality dropped) purely to get a legitimate budget shadow price — the honest workaround</td></tr>
+    <tr><td><b>Reduced cost</b></td><td>For a variable stuck at zero: how much its margin must improve before the solver would use it.</td><td>profitmix's verbal explainer: "At ₹N+, margin/hr exceeds marginal product" (<span class="k">profitmix.py:563</span>)</td></tr>
+  </table>
+
+  <h3>Integers, branch &amp; bound, and what "optimal" really claims</h3>
+  <p>The moment a variable must be whole (workers, pallets, a yes/no machine purchase), the problem becomes a <b>MILP</b>
+  and is solved by <b>branch &amp; bound</b>: solve the relaxed LP, pick a fractional variable, split into two
+  subproblems (x ≤ ⌊v⌋ / x ≥ ⌈v⌉), and prune any branch whose LP bound can't beat the best integer answer found so far.
+  "Optimal" means <b>the gap between best-found and best-possible closed to zero</b> — a certificate, not a vibe. When a
+  vendor says "near-optimal in seconds," ask what the gap was; a heuristic without a bound can't even tell you.</p>
+  <p>Where integers buy realism here: <span class="k">production.py</span> integer lots + binary run/changeover flags ·
+  <span class="k">aggregate.py</span> optional integer workforce · <span class="k">meio.py</span> one-hot service-time
+  selector · <span class="k">capital.py</span> binary buy/lease · <span class="k">procurement.py</span> MOQ steps.
+  Each binary roughly doubles the worst-case tree — which is why every model here keeps its integer count lean.</p>
+
+  <h3>Exact vs heuristic — both live in this app, on purpose</h3>
+  <table>
+    <tr><th>ENGINE STYLE</th><th>GUARANTEE</th><th>USED FOR</th></tr>
+    <tr><td>Exact LP/MILP (PuLP→CBC), 10 programs</td><td>Optimality certificate (closed B&amp;B gap)</td><td>profit mix · production lots · aggregate S&amp;OP · procurement · MEIO · capital · CVaR · line capacity · transport allocation</td></tr>
+    <tr><td>Exact by enumeration / DP</td><td>Optimal within its formulation</td><td>sequencing ≤8 SKUs (brute-forces all 40,320 orders) · Wagner-Whitin lot-sizing (DP)</td></tr>
+    <tr><td>Heuristic</td><td>Good, fast, <i>no certificate</i></td><td>sequencing &gt;8 SKUs (nearest-neighbour + reinsertion) · consolidation (greedy binning) · forecast model tournament</td></tr>
+    <tr><td>Simulation</td><td>Distribution, not a decision</td><td>Monte Carlo (correlated demand+cost shocks) · resilience stress</td></tr>
+  </table>
+
+  <h3>Reading any solve — the 4-step discipline</h3>
+  <div class="step"><div class="sn">1</div><div class="sb"><b>Check status first.</b> <span class="k">Optimal</span> is a claim with a proof. <span class="k">Infeasible</span> means your constraints contradict — the model is telling you about <i>your factory</i>, not about math. Several engines use elastic variables (priced slack like backorders or lost sales) so they degrade with an explanation instead of dying.</div></div>
+  <div class="step"><div class="sn">2</div><div class="sb"><b>Watch what binds.</b> The binding set IS the story of the plan. A plan where nothing binds is a plan you over-provisioned.</div></div>
+  <div class="step"><div class="sn">3</div><div class="sb"><b>Mistrust the units, trust the ledger.</b> <span class="k">yield_pct</span> is a <i>fraction</i> despite the name; <span class="k">hold_pct</span> is a percent; changeovers are hours in the UI and minutes at the API. The repo carries a units contract (UNITS.md) enforced by a lint — because unit bugs produce <i>plausible wrong answers</i>, the worst kind.</div></div>
+  <div class="step"><div class="sn">4</div><div class="sb"><b>Ask "compared to what?"</b> A ₹93,000 transport plan means nothing alone; vs the ₹-unserveable single-mode alternative it's the whole decision. The good engines here narrate the counterfactual; the VERDICT tabs call out the ones that don't.</div></div>
+</section>
+
+<!-- ════════════════════════ 01 · SETUP ════════════════════════ -->
+<section class="stage" id="s-setup">
+  <div class="stagehead"><span class="num">01</span><h2>Setup — Identity &amp; Calendar</h2><span class="bandtag">DEFINE</span></div>
+  <div class="stagehead" style="border:none; padding:0"><span class="sub2">Who you legally are, when your factory works, and which engines you even see. Every solver downstream reads its clock and its tax/currency context from here.</span></div>
+
+  <div class="tabs">
+    <button class="on">CONCEPT</button><button>FLOW &amp; INPUTS</button><button>SOLVER</button><button>OUTPUTS</button><button>VERDICT</button><button>WALKTHROUGH</button>
+  </div>
+  <div class="panes">
+    <div class="pane on">
+      <h4>Master this: configuration IS modeling</h4>
+      <p>Setup looks administrative; it is not. Three of its numbers silently multiply through every plan:
+      <b>working calendar</b> (work-days/week × net hours/shift × shifts = the capacity denominator every utilization
+      figure divides by), <b>service level</b> (one α drives every safety-stock z-score in MEIO, policy sizing, and CVaR
+      comparisons), and <b>tax/currency regime</b> (effective tax shapes the capital solver's after-tax NPVs; base
+      currency + FX shapes landed cost). A wrong calendar is the most common way real planning deployments produce
+      confidently wrong answers — the solvers are exact <i>about the world you described</i>.</p>
+      <p>The second concept is <b>profile gating</b>: the six onboarding answers (make policy, capacity tightness,
+      imports, line count, distribution, external forecast) live here and gate whole engines. This is the app teaching a
+      real lesson: a planning system should show a single-site domestic MTO shop a <i>different product</i> than a
+      multi-site importer — same substrate, different exposed surface.</p>
+    </div>
+    <div class="pane">
+      <h4>The screen, top to bottom</h4>
+      <table>
+        <tr><th>CARD</th><th>FIELDS (exact)</th><th>WHO READS IT DOWNSTREAM</th></tr>
+        <tr><td><b>Company Identity</b></td><td>Company · CIN · GST Registered · Plant State · Base Currency · Effective Tax % · Annual Turnover · Plant &amp; Machinery value</td><td>capital.py (tax), finance.py (duty/FX context), report headers</td></tr>
+        <tr><td><b>MSME Tier</b></td><td>none — <span class="b info">DERIVED</span> badge computed from turnover + plant&amp;machinery (Udyam thresholds)</td><td>display + financing context; a deliberate example of a field you <i>can't</i> edit because it's a function of two you can</td></tr>
+        <tr><td><b>Industry Quick-Start</b></td><td>pick an archetype → sets service level + flags relevant modules; does <i>not</i> overwrite your data</td><td>config.serviceLevel, config.industryProfile</td></tr>
+        <tr><td><b>Profile (the six gates)</b></td><td>Make policy (MTS/both/MTO/ATO) · Capacity tightness · Imports? · Production lines (1/many) · Distribution (single/network) · Forecast supplied externally?</td><td>gates: profit-mix + seasonal aggregate · sequencing · transport/logistics · landed-FX · demand model-competition</td></tr>
+        <tr><td><b>Calendar</b></td><td>Work Days / Wk ◇5 · Net Hrs / Shift ◇7.5 · shifts per line · Add holiday (date+label) · Horizon · Schedule Fence: Frozen Wks ◇2 · Slushy Wks</td><td>aggregate (hrs/period), production (labor_week_hrs = wdays × hrsPerShift), rolling re-plan (frozen_weeks), plant_calendar.py</td></tr>
+      </table>
+      <div class="note"><span class="t">UNITS TRAP №1</span> Net Hrs/Shift is <b>hours</b> and stays hours all the way
+      down (<span class="k">hrs_per_period</span>, <span class="k">ot_cap_hrs</span>…). But changeover times — defined
+      later in Products/Production — are <b>hours in the UI and minutes at the API</b>, converted at exactly one
+      sanctioned site in the store. The repo's UNITS.md ledger exists because of fields like these.</div>
+    </div>
+    <div class="pane">
+      <h4>No solver runs here — but two engines are fed</h4>
+      <p><b>plant_calendar.py</b> (analytic) expands the calendar into per-period available hours, netting holidays —
+      every "≤ capacity" row downstream gets its right-hand side from this expansion. And the <b>profile gate</b> is a
+      pure function: <span class="k">gate = f(profile)</span> → booleans like <span class="k">gate.transport</span>,
+      <span class="k">gate.landed</span>, <span class="k">gate.demandModels</span>. Nothing optimized; everything
+      parameterized.</p>
+      <div class="math">capacity RHS chain (read this once, recognize it everywhere):
+work_days/wk × net_hrs/shift × shifts × OEE  →  line-hours/week
+  → aggregate.py:   (P_t + O_t)·hours_per_agg_unit ≤ capacity_hours_t
+  → production.py:  Σ_k cycle_min(k)/60 · x[k,l,t] ≤ line_hours(l,t)
+  → linecap.py:     utilization & shadow ₹/hr per line</div>
+    </div>
+    <div class="pane">
+      <h4>What you see after filling it in</h4>
+      <p>The MSME badge re-derives live as you type turnover; the calendar card shows the computed
+      <b>hours/week per line</b>; the profile segments show, in real time, <i>how many capabilities each answer hides</i>
+      ("Profit-mix + seasonal Aggregate · Sequencing · Transport…" fold away as you toggle). The freshness ribbon goes
+      stale on every spine solve when you touch the calendar — correct, since every solver read it.</p>
+    </div>
+    <div class="pane">
+      <div class="verdict">
+        <div class="vcol built"><span class="vh">BUILT ✓</span><ul>
+          <li>Identity + derived MSME tier; industry quick-starts</li>
+          <li>Six-question profile with live capability gating; re-answerable</li>
+          <li>Calendar with holidays, fences (frozen/slushy weeks) feeding the rolling re-plan</li>
+          <li>JSON import/export of the whole model</li></ul></div>
+        <div class="vcol miss"><span class="vh">MISSING ✗</span><ul>
+          <li><b>Persistence &amp; auth</b> — everything lives in localStorage; clear the browser and the company is gone. The single most adoption-fatal gap in the app.</li>
+          <li>Multi-user / roles (planner vs approver) — no concept of who changed what</li>
+          <li>Fiscal-year / multi-calendar (plants with different week patterns)</li></ul></div>
+        <div class="vcol wrong"><span class="vh">THIN ⚠</span><ul>
+          <li>Holiday list nets capacity but isn't visualized on the production Gantt — you can't <i>see</i> Diwali week on the schedule</li>
+          <li>Version trail exists but restore is read-only ("restore (soon)")</li></ul></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="step"><div class="sn">1</div><div class="sb"><span class="where">SETUP · COMPANY IDENTITY</span><br>Keep the TPAC seed: <b>Tata Precision Auto Components Pvt. Ltd.</b>, Plant State ◇Tamil Nadu, Base Currency ◇INR, Effective Tax ◇25%. Watch the MSME badge derive from ◇turnover + ◇plant&amp;machinery.</div></div>
+      <div class="step"><div class="sn">2</div><div class="sb"><span class="where">SETUP · PROFILE</span><br>Answer the six gates as TPAC: MTS+MTO · tight capacity · <b>imports = yes</b> (keeps landed cost alive) · several lines · network · we forecast here. Note the "capabilities hidden" counter hit zero.</div></div>
+      <div class="step"><div class="sn">3</div><div class="sb"><span class="where">SETUP · CALENDAR</span><br>Work Days ◇5, Net Hrs/Shift ◇7.5. Add a holiday (e.g. 2026-10-20 "Diwali"). Set Frozen Wks ◇2 — later, in Production, you'll see the first 2 weeks of any re-plan refuse to move. That's this field acting.</div></div>
+      <div class="step"><div class="sn">4</div><div class="sb"><span class="where">VERIFY THE CHAIN</span><br>Change Net Hrs/Shift 7.5→6.0 and watch the freshness ribbon stale <i>all six</i> spine dots. Undo it. You've just seen the dependency graph in action.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 02 · PRODUCTS ════════════════════════ -->
+<section class="stage" id="s-products">
+  <div class="stagehead"><span class="num">02</span><h2>Products — Catalog, BOM &amp; Costs</h2><span class="bandtag">DEFINE</span></div>
+  <div class="stagehead" style="border:none; padding:0"><span class="sub2">What you make, what it's made of, and what it truly costs. The margin every optimizer maximizes is manufactured here — get cost wrong and every "optimal" mix is optimally wrong.</span></div>
+
+  <div class="tabs">
+    <button class="on">CONCEPT</button><button>FLOW &amp; INPUTS</button><button>SOLVER</button><button>OUTPUTS</button><button>VERDICT</button><button>WALKTHROUGH</button>
+  </div>
+  <div class="panes">
+    <div class="pane on">
+      <h4>Master this: the three costs and the one BOM</h4>
+      <p>Every planning system worth using maintains a <b>typed cost chain</b>, and this app makes it explicit:
+      <span class="k">p.cost</span> (direct material+labor) ⊂ <span class="k">effUnitCost</span> (the ONE blended truth
+      used for holding/margin everywhere) ⊂ <b>landed cost</b> (adds duty stack + freight + FX, computed in Sourcing).
+      Master the discipline: <i>any time you see a margin, ask which cost it nets against.</i> Mixing chain levels is the
+      classic spreadsheet sin this design exists to kill.</p>
+      <p>The <b>bill of materials</b> is the other spine: finished good → parts → quantities-per. MRP (Sourcing) is just
+      this tree times the schedule, offset by lead times. And <b>yield</b> belongs to the product master, not the
+      schedule: if only 95% of started units come out good, the planner's real choice is "start more" — and the cost of
+      that choice (extra starts + rework ₹/failed unit) must be priced <i>into the optimization</i>, not discovered
+      afterwards. That's exactly what V4-6 wired in.</p>
+    </div>
+    <div class="pane">
+      <h4>The screen, top to bottom</h4>
+      <table>
+        <tr><th>CARD</th><th>FIELDS (exact)</th><th>NOTES</th></tr>
+        <tr><td><b>Finished-Goods Catalog</b></td><td>per SKU: name · Sell Price · Unit Cost · annual demand · cycle min · weight kg — TPAC seeds 6 FGs: ◇TPA-4471 Crankshaft Bearing, ◇TPA-3215 Piston Ring Assembly, ◇TPA-9904 Valve Seat Insert, ◇TPA-2188 Connecting Rod, ◇TPA-5540 Oil Pump Housing, ◇TPA-7722 Timing Chain Tensioner</td><td><span class="k">p.demand</span> is units/<b>YEAR</b> — every per-period use converts via a rate, never naive ÷T</td></tr>
+        <tr><td><b>Costs</b></td><td>Labour / Unit · Total Unit Cost · CM % · Contribution (derived) · Setup Cost / Run</td><td>contribution margin = price − effUnitCost; the number profit-mix maximizes</td></tr>
+        <tr><td><b>BOM</b></td><td>FG → RM lines with qty-per (seeds: ◇RM-STL42 Chromoly Steel Bar 42mm, ◇RM-BRG18 Bearing Alloy Billet, …)</td><td>consumed by MRP explosion + procurement MILP</td></tr>
+        <tr><td><b>Yield-loss &amp; expiry</b></td><td>Yield % (good units / started) ◇0.95–0.98 · Rework ₹ / failed unit · Salvage % of make-cost · Shelf-life (days) · live "Units started → Good units out" mini-calc</td><td><span class="b part">UNITS TRAP</span> <span class="k">yield_pct</span> is a <b>FRACTION despite the name</b> — 0.95, not 95</td></tr>
+        <tr><td><b>Commercial terms</b></td><td>shared part master: Lot size (MOQ) · pay terms · supplier links</td><td>feeds procurement MOQ steps + working-capital timing</td></tr>
+      </table>
+    </div>
+    <div class="pane">
+      <h4>The math this stage parameterizes</h4>
+      <div class="math">margin chain:        margin_k = price_k − effUnitCost_k        (profitmix objective coefficient)
+yield into schedule:  good_out = x[k,l,t] · fy_k                 (fy = yield fraction)
+rework cost (V4-6):   cost += rework_₹_per_FAIL · (1 − fy_k) · x[k,l,t]
+                      ── the ₹/fail × fail-share fold happens in PYTHON (production.py);
+                         the UI sends the raw ◇p.rework. One conversion site, again.
+shelf life:           shelf_days → max cover constraint in policy sizing (weeks ↔ days handled there)</div>
+      <p>Also defined here and consumed later: <b>cannibalization coupling</b> — when a new SKU eats a sibling's demand,
+      profit-mix constrains <span class="k">q[k] + Σ cannib_terms ≤ effective_ceiling</span>
+      (<span class="k">profitmix.py:306</span>) so the optimizer can't double-count the same customer.</p>
+    </div>
+    <div class="pane">
+      <h4>What renders</h4>
+      <p><b>products-decide</b> — the decision strip for this tab (what to act on now); the <b>v4-yielddoc</b> panel —
+      a live started→good walk so the yield fraction is <i>seen</i>, not assumed; the catalog table with CM% colored by
+      contribution rank. ABC class chips appear once Demand has run.</p>
+    </div>
+    <div class="pane">
+      <div class="verdict">
+        <div class="vcol built"><span class="vh">BUILT ✓</span><ul>
+          <li>Typed cost chain with one blended truth (<span class="k">effUnitCost</span>)</li>
+          <li>BOM with qty-per feeding MRP + procurement</li>
+          <li>Yield + rework + salvage priced into the production MILP (V4-6), documented on-screen</li>
+          <li>Shelf-life flowing into policy cover ceilings</li></ul></div>
+        <div class="vcol miss"><span class="vh">MISSING ✗</span><ul>
+          <li>Multi-level BOM (subassembly → subassembly) — the tree is one level deep; real gearbox BOMs nest 5+</li>
+          <li>Engineering change control (effectivity dates on BOM lines)</li>
+          <li>Activity-based costing — labour/unit is flat, not routed-operation-specific</li></ul></div>
+        <div class="vcol wrong"><span class="vh">THIN ⚠</span><ul>
+          <li>Cannibalization matrix is entered as raw coefficients — no UI to estimate it from history</li>
+          <li>Expiry is a cover ceiling, not lot-level FEFO tracking</li></ul></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="step"><div class="sn">1</div><div class="sb"><span class="where">PRODUCTS · CATALOG</span><br>Open ◇TPA-4471 Crankshaft Bearing. Note Sell Price, Unit Cost, and that <b>Contribution</b> is derived — try editing Labour/Unit and watch CM% move without touching price.</div></div>
+      <div class="step"><div class="sn">2</div><div class="sb"><span class="where">PRODUCTS · YIELD CARD</span><br>Set Yield % to ◇0.95 (it's a fraction!). The mini-calc shows: start 1,000 → 950 good. Set Rework ₹/failed unit to ◇60. From here on, the production solver charges ₹60 × 5% × every unit started — visible later in the schedule's cost breakdown.</div></div>
+      <div class="step"><div class="sn">3</div><div class="sb"><span class="where">PRODUCTS · BOM</span><br>Confirm TPA-4471 consumes ◇RM-BRG18 Bearing Alloy Billet. This single line is why a demand spike on crankshaft bearings will, three tabs later, raise a PO on bearing alloy with a lead-time offset.</div></div>
+      <div class="step"><div class="sn">4</div><div class="sb"><span class="where">SANITY</span><br>The classic test: raise TPA-4471's Unit Cost until CM% goes negative — then in Console, run profit-mix and watch the solver <i>drop it to zero</i> with the reduced-cost explainer telling you the price at which it would re-enter.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 03 · NETWORK ════════════════════════ -->
+<section class="stage" id="s-network">
+  <div class="stagehead"><span class="num">03</span><h2>Network — Nodes, Lanes, Contracts &amp; On-Hand</h2><span class="bandtag">DEFINE</span></div>
+  <div class="stagehead" style="border:none; padding:0"><span class="sub2">Where material physically sits and moves: plants, warehouses, suppliers, customers; storage classes; time-varying contracts; and the opening on-hand ledger that every netting calculation starts from.</span></div>
+
+  <div class="tabs">
+    <button class="on">CONCEPT</button><button>FLOW &amp; INPUTS</button><button>SOLVER</button><button>OUTPUTS</button><button>VERDICT</button><button>WALKTHROUGH</button>
+  </div>
+  <div class="panes">
+    <div class="pane on">
+      <h4>Master this: one ledger, many readers</h4>
+      <p>The deepest idea on this tab is the <b>on-hand ledger</b>. Ask "how much stock do we have?" and a naive system
+      answers with one number; a real one asks <i>where</i> and <i>of what scope</i>. The ledger here is a node×item
+      matrix, and downstream solvers read it through a scoped lens: production's opening FG inventory and procurement's
+      <span class="k">init_inventory</span> both come from <span class="k">onHandFor()</span> — FG scoped by a governed
+      <span class="k">netFgScope</span> (plant+warehouse by default, the DRP convention), RM at plant+warehouse.
+      Multi-site netting (V5-1) means a warehouse full of finished goods correctly <i>reduces</i> what the plant
+      schedules.</p>
+      <p>Second idea: <b>contracts are time-varying prices</b>, not static fields. A supplier contract that steps from
+      ₹118 to ₹126 in March belongs in a ledger the procurement solver can read per-period — buying ahead of a price
+      step is one of the genuinely profitable moves an optimizer finds that humans systematically miss.</p>
+      <div class="note r"><span class="t">A BUG WORTH REMEMBERING</span> Before V5-1, procurement silently
+      <b>fabricated</b> any part's opening inventory as avg-demand × (lead-time+1) when the key was absent — a friendly
+      default that quietly invented stock. The ledger send exists to kill that path. Lesson for any planning system:
+      <i>defaults that invent material are bugs wearing helpful faces.</i></div>
+    </div>
+    <div class="pane">
+      <h4>The screen, top to bottom</h4>
+      <table>
+        <tr><th>CARD</th><th>WHAT YOU ENTER</th><th>DOWNSTREAM READER</th></tr>
+        <tr><td><b>Node Master</b></td><td>nodes: plant / warehouses / supplier sites / customer regions; add &amp; remove</td><td>meio_network (echelon graph) · transport (origins/destinations) · ledger rows</td></tr>
+        <tr><td><b>Storage Utilization</b></td><td>class capacity (m³) per storage class · storage class by item</td><td>utilization bars; over-capacity warnings</td></tr>
+        <tr><td><b>Supplier Master</b></td><td>supplier ↔ part links, lead times, MOQs (shared with Products' part master)</td><td>procurement MILP · supplier-capacity caps (V5-3)</td></tr>
+        <tr><td><b>Contracts · Time-Varying Price</b></td><td>contract ledger: part · supplier · ₹/uom per period window</td><td>procurement objective coefficients per period</td></tr>
+        <tr><td><b>Opening On-Hand / On-Hand Matrix</b></td><td>node × item quantities (item's OWN uom)</td><td>production <span class="k">opening_inventory</span> · procurement <span class="k">init_inventory</span> via <span class="k">onHandFor()</span> + <span class="k">netFgScope</span></td></tr>
+        <tr><td><b>Scheduled Receipts</b></td><td>in-flight POs: part · qty · arrival period</td><td>MRP netting (don't re-order what's already on the water)</td></tr>
+      </table>
+    </div>
+    <div class="pane">
+      <h4>The solver this feeds: MEIO over the network</h4>
+      <p>The network graph parameterizes <b>meio_network.py</b> + the <b>meio.py MILP</b> (full math in the Sourcing
+      section — it lives there in the UI). The shape to hold: each node j chooses a <i>service time</i>; downstream
+      nodes' safety stock grows with the square root of the net replenishment time they're quoted. The MILP picks the
+      service-time pattern minimizing total holding cost — exactly, via a one-hot selector
+      <span class="k">y[j,k]</span> with precomputed <span class="k">h·z·σ·√k</span> coefficients, dodging the usual
+      piecewise approximation of the √ term.</p>
+      <div class="math">netting identity (V5-1, the ledger consumed):
+net_requirement(item, t) = gross_req(item, t) − scheduled_receipts(item, t) − on_hand(scope, item)⁺
+  FG scope = config.netFgScope (plant+wh default)   RM scope = plant+wh</div>
+    </div>
+    <div class="pane">
+      <h4>What renders</h4>
+      <p><b>v5-net</b> — the multi-site netting strip (what the ledger subtracted, per item); <b>network-decide</b> —
+      the act-now strip; storage utilization bars per class with the m³ ceiling marked. The Reference tab's live model
+      map colors network nodes by whether a solve has actually touched them.</p>
+    </div>
+    <div class="pane">
+      <div class="verdict">
+        <div class="vcol built"><span class="vh">BUILT ✓</span><ul>
+          <li>Node master + on-hand matrix as the single netting source (V5-1), scope-governed</li>
+          <li>Time-varying contract ledger read per-period by procurement</li>
+          <li>Scheduled receipts netted by MRP</li>
+          <li>Storage classes with m³ capacity + utilization</li></ul></div>
+        <div class="vcol miss"><span class="vh">MISSING ✗</span><ul>
+          <li><b>Facility location</b> — where <i>should</i> the next warehouse be? (fixed-charge location MILP; classic, absent)</li>
+          <li>Inter-site transfer orders as first-class planned moves (netting sees stock, but no transfer scheduling)</li>
+          <li>Lane master with real distances/transit per node-pair (transport uses its own lane set)</li></ul></div>
+        <div class="vcol wrong"><span class="vh">THIN ⚠</span><ul>
+          <li>Storage capacity warns but doesn't constrain any solver — a full warehouse should push back on the plan</li>
+          <li>Contract ledger has no MOQ/tier-break dimension (volume discounts)</li></ul></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="step"><div class="sn">1</div><div class="sb"><span class="where">NETWORK · ON-HAND MATRIX</span><br>Find ◇TPA-4471 at the warehouse node. Note the quantity, then open Production: <b>Opening FG inventory</b> shows the plant+wh sum — the ledger feeding the schedule.</div></div>
+      <div class="step"><div class="sn">2</div><div class="sb"><span class="where">THE NETTING EXPERIMENT</span><br>Add +500 units of TPA-4471 at the warehouse. Re-run the schedule (Production ⚡). Week-1 planned production drops by ~500 — multi-site netting, observed. Remove the 500 after.</div></div>
+      <div class="step"><div class="sn">3</div><div class="sb"><span class="where">NETWORK · CONTRACTS</span><br>Give ◇RM-STL42 a price step: ₹118 now → ₹126 from period 4. Run procurement (Sourcing ⚡). Watch the buy plan pull volume forward into period 3 — the solver buying ahead of the step, holding-cost-permitting.</div></div>
+      <div class="step"><div class="sn">4</div><div class="sb"><span class="where">SCHEDULED RECEIPTS</span><br>Add an in-flight PO of ◇RM-BRG18 arriving period 2. Procurement's period-2 order for that part shrinks by exactly that quantity. Nothing is ordered twice.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 04 · DEMAND ════════════════════════ -->
+<section class="stage" id="s-demand">
+  <div class="stagehead"><span class="num">04</span><h2>Demand — History, Forecast, ABC/XYZ &amp; Pins</h2><span class="bandtag">PLAN</span></div>
+  <div class="stagehead" style="border:none; padding:0"><span class="sub2">The single most leveraged stage: every downstream solver optimizes against the number produced here. An exact optimizer fed a 40%-wrong forecast is a precision instrument aimed at the wrong target.</span></div>
+
+  <div class="tabs">
+    <button class="on">CONCEPT</button><button>FLOW &amp; INPUTS</button><button>SOLVER</button><button>OUTPUTS</button><button>VERDICT</button><button>WALKTHROUGH</button>
+  </div>
+  <div class="panes">
+    <div class="pane on">
+      <h4>Master this: forecasting as a competition you referee, not a model you marry</h4>
+      <p><b>1 · Decompose before you model.</b> Any demand series is level + trend + seasonality + noise. Eyeball the
+      TPAC history chart and name each component; if you can't see seasonality by eye, an algorithm claiming to model it
+      is probably fitting noise. The fraction of variance that is <i>noise</i> sets the ceiling on any forecast — the
+      goal is never zero error, it's <b>error no worse than the noise floor, with known bias</b>.</p>
+      <p><b>2 · Hold out or be fooled.</b> In-sample fit is flattery: a high-order model fits history perfectly and
+      forecasts garbage. The only honest score is on data the model never saw — train on all but the last N periods,
+      score on those N. Everything in this tab is ranked by <b>holdout MAPE</b>, never in-sample fit. Internalize the
+      asymmetry: a simple model that scores 12% holdout beats a sophisticated one at 11.8% in-sample <i>every time</i>.</p>
+      <p><b>3 · Know the model families and when each wins.</b>
+      <i>Naive-seasonal</i> ("same as last year, same week") — the baseline everything must beat, and embarrassingly
+      often doesn't get beaten. <i>Holt-Winters</i> (add/mult) — explicit level/trend/season smoothing; wins on clean
+      seasonal series with limited history. <i>ARIMA</i> — autocorrelation structure; wins when demand momentum matters.
+      <i>Tree ensembles (RF/GB/XGBoost)</i> — win when there are <b>regressors</b> (price, promotions, macro indices) or
+      nonlinear calendar effects; lose on short history. <i>MLP</i> — same regime, needs even more data.
+      <i>Hybrid</i> (HW + ML on residuals) — stats carries the seasonal skeleton, ML mops up what's left; often the
+      quiet winner.</p>
+      <p><b>4 · Measure like an adult.</b> MAPE for comparability, but know its flaw (explodes near zero demand);
+      <b>bias</b> separately, because a 10%-MAPE forecast that's always 10% <i>low</i> stocks you out forever;
+      <b>FVA — forecast value-add</b> — your touch-ups versus the statistical baseline: if human overrides make the
+      forecast <i>worse</i> (they usually do, optimism is occupational), FVA shows it, with receipts.</p>
+      <p><b>5 · Forecast ≠ plan.</b> The forecast is an input. The <b>consensus + override + pin</b> layer is where the
+      business commits — and committed numbers must survive a re-forecast (here, pins do — V5-2b). Separating the two is
+      the whole point of S&amp;OP.</p>
+
+      <div class="widget" id="w-fc">
+        <span class="wt">⚡ INTERACTIVE — WHICH MODEL FAMILY WINS?</span>
+        <p style="margin-top:0">The tournament's outcome is a function of your data's character. Slide the three traits
+        and see which of the 8 families takes the leaderboard, and why:</p>
+        <label>history length: <span id="fc-h">36</span> months</label>
+        <input type="range" id="fc-hs" min="6" max="72" value="36">
+        <label>seasonality strength: <span id="fc-s">60</span>%</label>
+        <input type="range" id="fc-ss" min="0" max="100" value="60">
+        <label>external-driver influence (price/promo/macro): <span id="fc-x">10</span>%</label>
+        <input type="range" id="fc-xs" min="0" max="100" value="10">
+        <div class="out" id="fc-out"></div>
+      </div>
+    </div>
+    <div class="pane">
+      <h4>The screen, top to bottom — the exact flow</h4>
+      <table>
+        <tr><th>CARD (in order)</th><th>WHAT HAPPENS THERE</th></tr>
+        <tr><td><b>How demand data gets in</b></td><td>three doors: ◇ seed history (illustrative, badge says so) · CSV import (your real history; step 1b nags you to) · API. Optional <b>regressor columns</b> ride along the CSV (V4-4) and feed ML/hybrid families only — stats families can't consume them, and the UI says so rather than pretending.</td></tr>
+        <tr><td><b>History + Forecast</b></td><td>the main chart: history, fitted, forecast with interval. Horizon picker. Per-SKU or all-SKU.</td></tr>
+        <tr><td><b>Model Competition / Leaderboard</b></td><td>the ⚡ Forecast button runs all 8 families per SKU; leaderboard ranks by holdout MAPE; champion badge per SKU; "Forecast by" lets you override the referee and force a family.</td></tr>
+        <tr><td><b>Override + Schedule / Consensus</b></td><td>cell-level planner overrides on forecast rows; all-SKU consensus grid; <b>PIN</b> a number to make it survive re-forecasts (V5-2b — pins hold through override/CSV/prune/What-If)</td></tr>
+        <tr><td><b>Actuals &amp; Demand Sensing</b></td><td>recent actuals stream in → sensing compares short-horizon actuals vs forecast and flags drift before the month closes</td></tr>
+        <tr><td><b>Accuracy by Horizon &amp; Reconciliation</b></td><td>error vs lead distance (1-step vs 6-step accuracy decays — see it, then stop promising 6-month precision); hierarchy reconciliation (SKU forecasts vs family totals made coherent — reconcile.py)</td></tr>
+        <tr><td><b>Forecast Quality Triggers</b></td><td>the honesty gates: MAPE &gt; 30% flags the SKU as forecast-unreliable downstream; blend refused when history &lt; 18 points (<span class="k">forecast.py:708</span>) — the engine declines to ensemble on thin data instead of faking confidence</td></tr>
+        <tr><td><b>FVA</b></td><td>your overrides scored against the champion model: value added or destroyed, per SKU</td></tr>
+        <tr><td><b>ABC/XYZ</b></td><td>value × variability segmentation; XYZ is recomputed from <i>residual</i> variability after the forecast runs (seed XYZ is replaced — the badge tells you)</td></tr>
+      </table>
+    </div>
+    <div class="pane">
+      <h4>Engine: forecast.py — a referee'd tournament, not a model</h4>
+      <div class="math">for each SKU:
+  split   history → train | holdout (last N)
+  fit     8 families:  naive-seasonal · HW-additive · HW-multiplicative · ARIMA (AIC grid)
+                       · RandomForest · GradientBoosting · XGBoost (if installed) · MLP
+                       · hybrid = HW skeleton + ML on residuals
+  score   holdout MAPE per family  →  leaderboard
+  gate    history &lt; 18 → REFUSE blend (single best only, stated reason)
+          champion MAPE &gt; 30% → flag SKU "low forecastability" downstream
+  emit    champion forecast + interval + per-family scores + bias</div>
+      <p>This is a <b>heuristic search over model space</b> — no optimality certificate exists for "the right model,"
+      so the design substitutes an honest referee: out-of-sample scoring, refusal rules, and visible alternatives.
+      Compare the VERDICT tab of engines that hide their alternatives; this one shows its work.</p>
+      <div class="card"><b>DONE PROBLEM — crown a champion by hand (3-point holdout)</b>
+        <div class="io"><span class="c">// holdout actuals = [110, 95, 130]</span>
+model A forecast [100, 100, 100]:  APEs = 9.09%, 5.26%, 23.08%  → MAPE <span class="r">12.5%</span>
+model B forecast [120,  90, 125]:  APEs = 9.09%, 5.26%,  3.85%  → MAPE <span class="g">6.1% ← champion</span>
+bias check: A errs LOW twice badly (under-forecasting = stockouts);
+            B errs both directions, small — same MAPE family, different business risk</div>
+        <p>Test separately: import a tiny CSV with a known pattern (e.g. pure trend), run ⚡ Forecast, and verify the
+        leaderboard punishes the families that can't see trend. You now know how the referee scores; never again accept
+        "our AI forecast is 94% accurate" without asking <i>on what holdout, and with what bias</i>.</p>
+      </div>
+
+      <p><b>Demand sensing</b> (pattern_sensing.py) is a separate analytic: short-horizon drift detection on streaming
+      actuals — level shifts and runs flagged with the rule that caught them. <b>Reconcile</b> (reconcile.py) makes the
+      SKU↔family hierarchy coherent so Plan's aggregate rows and Production's SKU rows are the <i>same number</i> at
+      different grains.</p>
+    </div>
+    <div class="pane">
+      <h4>What renders</h4>
+      <p><b>vis2 / VIS-2</b> — the structural-events card: trend breaks, level shifts, seasonality changes detected in
+      history, each tagged with evidence; <b>demand-pin</b> — pinned cells marked so a re-forecast visibly flows
+      <i>around</i> them; <b>demand-decide</b> — the act-now strip (which SKUs' forecasts to distrust, which overrides
+      destroyed value); the leaderboard with champion badges; FVA bars (green = your touch helped, red = it hurt);
+      accuracy-by-horizon decay chart.</p>
+    </div>
+    <div class="pane">
+      <div class="verdict">
+        <div class="vcol built"><span class="vh">BUILT ✓ (grade A−)</span><ul>
+          <li>8-family tournament, holdout-ranked, champion per SKU</li>
+          <li>Honesty gates: blend refusal &lt;18 pts · MAPE&gt;30 downstream flag — with stated reasons</li>
+          <li>Exog regressors via CSV riding into ML/hybrid only (V4-4)</li>
+          <li>FVA, sensing, accuracy-by-horizon, hierarchy reconciliation</li>
+          <li>Pins surviving re-forecast everywhere (V5-2b)</li></ul></div>
+        <div class="vcol miss"><span class="vh">MISSING ✗</span><ul>
+          <li><b>Intermittent demand</b> — no Croston/SBA; spare-parts-like SKUs (many zeros) get MAPE-meaningless scores today</li>
+          <li>Probabilistic forecasts as first-class output (quantile bands exist visually; downstream consumes point + MAPE, not the distribution)</li>
+          <li>Promotion/cannibalization-aware demand modeling (cannibalization lives in profit-mix, not in the forecast)</li></ul></div>
+        <div class="vcol wrong"><span class="vh">THIN ⚠</span><ul>
+          <li>MAPE on low-volume SKUs is unstable — WMAPE/sMAPE alternatives not offered</li>
+          <li>Holdout is a single split, not rolling-origin cross-validation — one lucky window can crown the wrong champion</li></ul></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="step"><div class="sn">1</div><div class="sb"><span class="where">DEMAND · DATA IN</span><br>Stay on ◇seed history first (the badge is explicit it's illustrative). Note ◇TPA-3215 Piston Ring Assembly's visible saw-tooth seasonality.</div></div>
+      <div class="step"><div class="sn">2</div><div class="sb"><span class="where">DEMAND · ⚡ FORECAST</span><br>Run the model competition. Watch the leaderboard fill: typically HW-mult or hybrid tops seasonal TPAC SKUs. Open a champion's row — every losing family's MAPE is right there. The referee shows its work.</div></div>
+      <div class="step"><div class="sn">3</div><div class="sb"><span class="where">DEMAND · OVERRIDE + PIN</span><br>You know a confirmed order: set month 3 of TPA-3215 to 5,000 and <b>pin it</b>. Re-run ⚡ Forecast: every cell updates except yours. That pin will flow through Plan, Production, and procurement untouched.</div></div>
+      <div class="step"><div class="sn">4</div><div class="sb"><span class="where">DEMAND · FVA</span><br>After a few overrides, open FVA. If your edits scored worse than the champion's raw numbers, the bar is red. Make peace with it — the discipline is to override only with <i>information</i> (a confirmed order), never with optimism.</div></div>
+      <div class="step"><div class="sn">5</div><div class="sb"><span class="where">DEMAND · QUALITY TRIGGERS</span><br>Find any SKU with champion MAPE &gt; 30%. Note the flag — and then notice, in Sourcing, that its safety stock runs on a fatter σ. The flag isn't decoration; it reshapes downstream buffers.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 05 · PLAN ════════════════════════ -->
+<section class="stage" id="s-plan">
+  <div class="stagehead"><span class="num">05</span><h2>Plan — S&amp;OP Aggregate, Level-vs-Chase &amp; Duals</h2><span class="bandtag">PLAN</span></div>
+  <div class="stagehead" style="border:none; padding:0"><span class="sub2">The month-grain capacity bargain: how much to produce, with how many people, holding how much, backordering what. The first true MILP in the user's path — and the tab where shadow prices become business language.</span></div>
+
+  <div class="tabs">
+    <button class="on">CONCEPT</button><button>FLOW &amp; INPUTS</button><button>SOLVER</button><button>OUTPUTS</button><button>VERDICT</button><button>WALKTHROUGH</button>
+  </div>
+  <div class="panes">
+    <div class="pane on">
+      <h4>Master this: the level-vs-chase bargain, priced</h4>
+      <p>Aggregate planning answers one question: <b>when demand is seasonal, do you flex to follow it (chase) or hold
+      steady and buffer with inventory (level)?</b> Chase pays in hiring/firing/overtime; level pays in holding cost and
+      backorder risk. Every consultant chart shows the two as a binary. The MILP's answer is better: it prices both and
+      lands wherever the mix is cheapest — usually a hybrid no chart would have drawn. Your job shifts from <i>choosing
+      a strategy</i> to <i>auditing the prices</i>: if the solver chases harder than feels right, your hire/fire costs
+      are probably understated, not the solver wrong.</p>
+      <p>Two subtleties this app gets right that most courses skip. <b>(a) The planning unit is labor-weighted, not
+      physical.</b> Adding crankshaft bearings to piston rings is meaningless; the aggregate unit here is
+      demand-weighted by labor content (cycle × hands-on %), so "capacity" means worker-time, which is the thing that's
+      actually scarce. The headline UI still shows physical units; the conversion is owned by one function.
+      <b>(b) Cost mode vs profit mode.</b> Classic aggregate planning minimizes cost <i>assuming all demand must be
+      met</i>. The V4-1 profit objective adds lost-sales variables priced at margin — now the solver may <i>choose</i>
+      to walk away from peak demand when serving it costs more than it earns. That single modeling change turns a
+      feasibility exercise into a business decision.</p>
+      <div class="widget" id="w-lc">
+        <span class="wt">⚡ INTERACTIVE — LEVEL vs CHASE, PRICED</span>
+        <p style="margin-top:0">Seasonal demand, your cost structure. Slide the two prices and watch the optimal mix
+        shift — there's no "strategy toggle" in the optimum, only prices:</p>
+        <label>hire+fire cost per worker-change: ₹<span id="lc-hf">8000</span></label>
+        <input type="range" id="lc-hfs" min="500" max="25000" step="500" value="8000">
+        <label>holding cost per unit-month: ₹<span id="lc-h">25</span></label>
+        <input type="range" id="lc-hs" min="2" max="120" value="25">
+        <div style="display:flex; gap:14px; margin-top:10px; flex-wrap:wrap">
+          <div style="flex:1; min-width:200px"><div style="font:700 10px var(--mono); letter-spacing:.1em">CHASE COST</div><div class="bar amb"><i id="lc-b1"></i><span id="lc-v1"></span></div></div>
+          <div style="flex:1; min-width:200px"><div style="font:700 10px var(--mono); letter-spacing:.1em">LEVEL COST</div><div class="bar"><i id="lc-b2"></i><span id="lc-v2"></span></div></div>
+        </div>
+        <div class="out" id="lc-out"></div>
+      </div>
+    </div>
+    <div class="pane">
+      <h4>The screen, top to bottom</h4>
+      <table>
+        <tr><th>CARD</th><th>FIELDS (exact)</th><th>UNIT NOTES</th></tr>
+        <tr><td><b>Plan Cost Inputs</b></td><td>Regular cost · Overtime cost · Backorder cost · Holding cost · Hire cost · Fire cost · Wage / worker · Rate / worker · Initial workforce · Min workforce · Labor headcount cap · Max overtime · σ-backorder weight</td><td>holding is ₹/unit/<b>MONTH</b> = carry-rate × blended cost ÷ 12 — the ÷12 is coupled to months-grain periods; hire/fire are ₹ per worker <b>event</b></td></tr>
+        <tr><td><b>Labor content (workforce weighting)</b></td><td>per-SKU hands-on % riding cycle times → the labor-weighted aggregate unit</td><td>1,260 physical can be 1,124 weighted — both shown, weighting owned by <span class="k">aggLaborWeights</span></td></tr>
+        <tr><td><b>Machine resources (V4-2)</b></td><td>derived: workdays × hrs/shift × shifts × 4.33 × OEE → <span class="k">capacity_hours</span>; <span class="k">hours_per_agg_unit</span> from demand-weighted cycle times</td><td>machine ceiling joins the labor ceiling — two resources, two possible binding sets</td></tr>
+        <tr><td><b>Strategy / objective</b></td><td>cost mode ⇄ <b>profit mode</b> (V4-1) · integer workforce toggle · OT per-shift caps (V4-3)</td><td><span class="k">max_ot_pct</span> is a <b>FRACTION despite the name</b> (◇0.25)</td></tr>
+        <tr><td><b>Capacity &amp; Duals</b></td><td>read-only after solve: per-period utilization, binding flags, shadow ₹/hr</td><td>the dual table that Production imports as "Line shadow ₹/hr (from Plan)"</td></tr>
+      </table>
+    </div>
+    <div class="pane">
+      <h4>aggregate.py — the program, as written</h4>
+      <div class="math">DECISION VARIABLES (per month t):
+  P_t  produce regular   O_t produce overtime   I_t inventory   B_t backorder
+  W_t  workforce (Integer if integer_wf)        H_t hire        F_t fire
+  L_t  lost sales (profit mode only, V4-1)
+
+OBJECTIVE (cost mode):
+  min Σ_t  reg·P + ot·O + hold·I + backorder·B + hire·H + fire·F + wage·W
+
+OBJECTIVE (profit mode, V4-1):
+  max Σ_t  margin·(D_t − L_t) − (all costs above)        L_t ≤ D_t
+
+CONSTRAINTS:
+  flow:      I_t − B_t = I_{t−1} − B_{t−1} + P_t + O_t − D_t (+ L_t in profit mode)
+  labor:     P_t ≤ k·W_t              OT cap: O_t ≤ max_ot · k·W_t   (per-shift, V4-3)
+  workforce: W_t = W_{t−1} + H_t − F_t          W_min ≤ W_t ≤ W_cap
+  machine:   (P_t + O_t)·hours_per_agg_unit ≤ capacity_hours_t      (V4-2)
+  linearization: I and B split nonnegative — only one nonzero at the optimum
+  timeLimit=30s, CBC</div>
+      <p><b>Duals, the legitimate way:</b> after solve, <span class="k">aggregate.py:364–380</span> walks the capacity
+      rows reading <span class="k">c.pi</span> and marks <span class="b ok">BINDING</span> where slack &lt; 0.01. With
+      integer workforce ON the program is a MILP and raw duals would be invalid — the integer toggle is exactly the
+      trade: realism of whole workers vs clean prices (the capital engine shows the LP-relaxation workaround;
+      see Finance).</p>
+      <details><summary>FULL PAYLOAD CONTRACT — every key aggregate.py reads (verified by grep)</summary><div>
+        <p class="m" style="font:600 12px/1.9 var(--mono)">
+        <b>per-period:</b> forecast/demand · periods ·
+        <b>costs:</b> reg_cost_per_unit · ot_cost_per_unit · holding_cost_per_unit (₹/u/MONTH) · backorder_cost_per_unit · backorder_sigma_weight · hire_cost · fire_cost · wage_per_worker · revenue_per_unit (profit mode) ·
+        <b>workforce:</b> init_workforce · min_workforce · max_workforce · rate_per_worker (u/worker/period) · integer_workforce · max_ot_pct (FRACTION ◇0.25) ·
+        <b>inventory:</b> init_inventory · ending_inventory_target · end_cover_periods · end_cover_service · safety_stock · demand_cv ·
+        <b>machine (V4-2):</b> resources{capacity_hours, hours_per_agg_unit} ·
+        <b>switches:</b> objective_mode (cost|profit) · allow_backorder</p>
+        <p>Where each is set: cost block + workforce block on this tab's <i>Plan Cost Inputs</i> card; resources derived on the <i>machine resources</i> card; objective_mode on <i>Strategy</i>. Nothing reaches the solver that isn't on this screen.</p>
+      </div></details>
+
+      <div class="card"><b>DONE PROBLEM — check the solver by hand (2 months, 1 product family)</b>
+        <div class="io"><span class="c">// inputs</span>
+demand = [1,000, 1,600] agg units      rate_per_worker = 50 u/worker/mo
+init_workforce = 20 (capacity 1,000)   hire ₹8,000  ·  hold ₹25/u/mo
+reg ₹100/u  ·  OT ₹130/u  ·  max_ot_pct 0.25     <span class="c">// wages omitted for clarity — the real model adds wage_per_worker·W_t</span></div>
+        <div class="io"><span class="c">// candidate plans, priced</span>
+<span class="y">CHASE</span>   m1: W=20, P=1,000 → ₹100,000
+        m2: hire 12 (₹96,000), W=32, P=1,600 → ₹160,000     <span class="r">total ₹356,000</span>
+<span class="y">LEVEL</span>   hire 6 → W=26, P=1,300 both months
+        m1: I=+300 (hold ₹7,500) · m2: 1,300+300=1,600 ✓
+        ₹260,000 + ₹48,000 + ₹7,500                          <span class="r">total ₹315,500</span>
+<span class="g">HYBRID</span>  hire 4 → W=24 (cap 1,200, OT cap 300)
+        m1: P=1,100 reg → I=+100 (hold ₹2,500)
+        m2: 1,200 reg + 300 OT (₹39,000) + 100 inv = 1,600 ✓
+        ₹230,000 + ₹39,000 + ₹32,000 + ₹2,500                <span class="g">total ₹303,500 ← optimal</span></div>
+        <p>The MILP returns the hybrid — cheaper than both pure strategies. Test it yourself: enter exactly these
+        numbers (one family, two periods) on this tab, solve, and confirm cost ₹303,500 + your wage term; then nudge
+        hire_cost to ₹15,000 and watch the optimum flip toward LEVEL (hiring 4 stops paying). That nudge-and-predict
+        loop is how you validate any solver against intuition.</p>
+      </div>
+
+      <div class="widget" id="w-sp">
+        <span class="wt">⚡ INTERACTIVE — READ A SHADOW PRICE</span>
+        <p style="margin-top:0">Capacity vs demand. Slide capacity and watch the dual flip between worthless and
+        priceless — there is no in-between:</p>
+        <label>monthly capacity: <span id="sp-c">900</span> units (demand fixed at 1,000 · margin ₹140/unit)</label>
+        <input type="range" id="sp-cs" min="600" max="1400" value="900">
+        <div class="out" id="sp-out"></div>
+      </div>
+    </div>
+    <div class="pane">
+      <h4>What renders</h4>
+      <p><b>VIS-1</b> — the feasibility thermometer from the solved plan; <b>VIS-3 / vis3</b> — the level-vs-chase strip
+      (the solved mix on the chase↔level spectrum); <b>v4-objective</b> + <b>v4-profit</b> — cost-vs-profit mode and the
+      lost-sales ledger when the solver chose to walk away from demand; <b>v4-resources</b> — labor vs machine ceilings
+      and which one binds when; <b>vis1</b> — the dual/capacity strip; then the <b>SKU disaggregation</b> table
+      (disaggregate.py) breaking monthly aggregate into per-SKU rows that Production will consume.</p>
+    </div>
+    <div class="pane">
+      <div class="verdict">
+        <div class="vcol built"><span class="vh">BUILT ✓ (grade A−)</span><ul>
+          <li>Full P/O/I/B/W/H/F MILP, integer-workforce option, per-shift OT caps (V4-3)</li>
+          <li>Profit objective with priced lost sales (V4-1) — rare even in commercial S&amp;OP</li>
+          <li>Machine + labor double ceiling (V4-2)</li>
+          <li>Legit dual extraction with binding flags; duals exported to Production</li>
+          <li>Labor-weighted aggregate unit, honestly dual-displayed (physical headline)</li></ul></div>
+        <div class="vcol miss"><span class="vh">MISSING ✗</span><ul>
+          <li>Multi-plant aggregate (one plant's calendar; network exists but S&amp;OP doesn't span it)</li>
+          <li>Scenario-attached S&amp;OP consensus workflow (executive sign-off trail on the chosen plan)</li>
+          <li>Piecewise OT cost (first 10% cheap, next 10% expensive)</li></ul></div>
+        <div class="vcol wrong"><span class="vh">THIN ⚠</span><ul>
+          <li>The ÷12 holding divisor is silently coupled to months-grain periods — documented in UNITS.md, but the payload would let you change grain and break it</li>
+          <li>Backorder cost is a guess dressed as a parameter; no link to actual customer-penalty contracts</li></ul></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="step"><div class="sn">1</div><div class="sb"><span class="where">PLAN · COST INPUTS</span><br>Keep TPAC seeds: Regular ◇, Overtime ◇, Holding ◇ (note it's ₹/unit/month), Hire ◇ / Fire ◇. Set Initial workforce ◇ and the headcount cap.</div></div>
+      <div class="step"><div class="sn">2</div><div class="sb"><span class="where">PLAN · SOLVE (cost mode)</span><br>Solve the aggregate plan. Read the strategy verdict on the level-vs-chase strip, then the month table: where I_t builds ahead of the seasonal peak, that's <i>level</i> behavior; where H_t/F_t move, that's <i>chase</i>. The mix is the answer.</div></div>
+      <div class="step"><div class="sn">3</div><div class="sb"><span class="where">PLAN · DUALS</span><br>Open Capacity &amp; Duals. Find the peak month: <span class="b ok">BINDING</span>, shadow ₹/hr &gt; 0. That number is the most you should pay for one more hour that month — overtime premium, rental machine, anything. Off-peak rows: ₹0. Capacity is only worth something when it runs out.</div></div>
+      <div class="step"><div class="sn">4</div><div class="sb"><span class="where">PLAN · PROFIT MODE (V4-1)</span><br>Flip to profit objective and re-solve. If peak-month demand was expensive to serve (OT + hiring), watch L_t &gt; 0 appear: the solver declines some demand and the v4-profit panel shows margin lost vs cost avoided. Disagree? Then your margin or OT cost is wrong — fix the data, not the verdict.</div></div>
+      <div class="step"><div class="sn">5</div><div class="sb"><span class="where">PLAN · INTEGER WORKFORCE</span><br>Toggle integer workforce. Headcount snaps to whole people, total cost ticks up slightly (integrality always costs), and the duals table warns it's now MILP-grade. The honest trade, made visible.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 06 · PRODUCTION ════════════════════════ -->
+<section class="stage" id="s-production">
+  <div class="stagehead"><span class="num">06</span><h2>Production — Lines, MPS, Sequencing &amp; ATP/CTP</h2><span class="bandtag">PLAN</span></div>
+  <div class="stagehead" style="border:none; padding:0"><span class="sub2">The month-plan becomes a week-by-week, line-by-line schedule with real lots, real changeovers, real yield — and a promise engine that can tell a customer "yes, by week 9" with a straight face.</span></div>
+
+  <div class="tabs">
+    <button class="on">CONCEPT</button><button>FLOW &amp; INPUTS</button><button>SOLVER</button><button>OUTPUTS</button><button>VERDICT</button><button>WALKTHROUGH</button>
+  </div>
+  <div class="panes">
+    <div class="pane on">
+      <h4>Master this: lot-sizing is the schedule; sequencing is a repair</h4>
+      <p>Be precise about what problem class this is, because vendors blur it. This engine solves <b>capacitated
+      lot-sizing (CLSP, big-bucket)</b>: each week is a bucket; the solver picks <i>how much of each SKU each line runs
+      that week</i>, paying setup when a SKU appears. What it does <b>not</b> decide is the minute-level order of jobs
+      within the week — that's <b>job-shop scheduling (JSSP)</b>, a genuinely different and harder problem (interval
+      variables, no-overlap, makespan), and this app honestly doesn't have it. Instead, a separate engine
+      (<span class="k">sequencing.py</span>) <i>repairs</i> the within-week order after the fact: exact brute force at
+      ≤8 SKUs (all 40,320 orders evaluated), nearest-neighbour + node-reinsertion above. Two-stage decomposition —
+      optimal lots, then good-enough order — is how most real APS systems work too; the difference is whether they tell you.</p>
+      <p>The second mastery item is <b>the fence</b>. A schedule that reshuffles itself every morning is worse than a
+      slightly stale one — the shop floor needs commitments. The frozen/slushy fence (from Setup) means re-plans hold
+      weeks 1–2 fixed, let 3–4 change with damping, and free everything beyond. The rolling re-solve
+      (<span class="k">app.py</span> rolling, <span class="k">frozen_weeks</span>) is the app's heartbeat — and the
+      substrate the future disruption lane builds on.</p>
+      <p>Third: <b>promising</b>. ATP (available-to-promise) is arithmetic — uncommitted supply per week, cumulative.
+      CTP (capable-to-promise, V4-5) is a <i>look-ahead solve</i>: "if I insert this order, what's the earliest week the
+      schedule still closes?" The difference between a sales tool and a planning tool is exactly the difference between
+      those two answers.</p>
+    </div>
+    <div class="pane">
+      <h4>The screen, top to bottom</h4>
+      <table>
+        <tr><th>CARD</th><th>FIELDS / CONTENT (exact)</th><th>NOTES</th></tr>
+        <tr><td><b>Production Architecture</b></td><td>lines with stages &amp; machines — ◇LINE-01 Precision Machining (OEE .84, bottleneck Grinding) · ◇LINE-02 Ring &amp; Assembly (.81, Honing) · ◇LINE-03 Heavy Components (.78, Heat Treat); per line: OEE, shifts, eligible SKUs, cycle times</td><td>line <span class="k">cap</span> (units/month) is consumed by linecap, <b>not</b> by production.py — hours are the real ceiling</td></tr>
+        <tr><td><b>Solver Parameters</b></td><td>Schedule Fence (Frozen ◇2 / Slushy wks) · Campaign min-run · Shutdown threshold ◇25% · Opening FG inventory (from Network ledger, V5-1) · Line labor rate · Line shadow ₹/hr (from Plan PL-A) · Rehire notice ◇80 hrs · Weekly OT cap · changeover matrix (UI hours ⇄ API minutes)</td><td>OT mode per shift (V4-3) — routed hours fix means OT scales the hours the SKU actually routes through</td></tr>
+        <tr><td><b>Master Production Schedule</b></td><td>the solved x[k,l,t] grid, week × SKU × line, with lot/run/changeover markers</td><td>⚡ Run schedule</td></tr>
+        <tr><td><b>Bottleneck Gantt</b></td><td>"where the minutes go" — runs, changeovers, idle, maintenance windows per line</td><td>VIS-4</td></tr>
+        <tr><td><b>ATP/CTP (V4-5)</b></td><td>order qty + SKU + requested week → promise verdict with the week the look-ahead solve found</td><td>v4-ctp</td></tr>
+      </table>
+    </div>
+    <div class="pane">
+      <h4>production.py — CLSP, as written</h4>
+      <div class="math">DECISION VARIABLES (SKU k, line l, week t):
+  x[k,l,t] ∈ ℤ⁺  units produced (integer lots)
+  y[k,l,t] ∈ {0,1}  SKU runs on line that week (setup flag)
+  switch[l,t] ∈ {0,1}+count   changeovers charged at count × MEAN changeover minutes
+
+OBJECTIVE:
+  min Σ  setup_cost·y + holding·I + labor + OT_premium
+      + rework_₹_per_fail · (1 − fy_k) · x[k,l,t]          (V4-6 — yield priced in)
+
+CONSTRAINTS:
+  hours:    Σ_k (cycle_min_k/60)·x[k,l,t] + changeover_time ≤ line_hours(l,t)
+            line_hours zeroed/scaled by maint_down / maint_scale windows
+  link:     x[k,l,t] ≤ M·y[k,l,t]            (no production without setup)
+  flow:     I[k,t] = I[k,t−1] + Σ_l fy_k·x[k,l,t] − demand[k,t]
+            opening I from the Network ledger (V5-1)
+  fence:    x fixed for t ≤ frozen_weeks on re-plan
+  campaign: x ≥ min_run · y   shutdown: line off if util &lt; threshold</div>
+      <p><b>The honest limitation, stated plainly:</b> changeovers are charged at <i>count × mean minutes</i>, not
+      sequence-dependent pair costs — because within a big bucket there is no sequence to price. The repair pass then
+      reorders within the week against the <i>real</i> pair matrix. This costs optimality in pathological changeover
+      structures (A→B cheap, B→A brutal) and is the single strongest argument for a CP-SAT small-bucket model on the
+      roadmap.</p>
+      <p><b>CTP look-ahead (V4-5):</b> clone schedule inputs + inject the candidate order at week w → re-solve → if
+      Optimal and service holds, promise w; else step w forward. A solve <i>as a question</i> — the pattern worth
+      stealing for everything (it's how the disruption lane will work too).</p>
+
+      <details><summary>FULL PAYLOAD CONTRACT — every key the production payload sends (verified in store.jsx)</summary><div>
+        <p class="m" style="font:600 12px/1.9 var(--mono)">
+        <b>per line:</b> id · name · oee · shifts_per_day · workers_per_shift · routing (eligible SKUs + cycleTimeMin) · parallelism ·
+        <b>calendar:</b> periods · grain · horizon_start_date · hrs_per_period · hours_per_shift · labor_week_hrs ·
+        <b>demand:</b> required_qty (time-phased, from disaggregated plan + pins) · opening_inventory (Network ledger, V5-1) ·
+        <b>costs:</b> setup_cost · holding_cost_per_unit · rework_cost_per_unit (₹/FAILED unit) · labor_cost_mode ·
+        <b>physics:</b> yield_pct (FRACTION) · changeover_matrix / changeover_mins (MINUTES at API — UI edits hours) · campaign_min_run ·
+        <b>labor/OT:</b> workforce · hourly_headcount_cap · ot_cap_hrs · rehire_notice_hrs ◇80 ·
+        <b>switches:</b> shutdown_threshold_pct (PERCENT ◇25) · time_phased</p>
+        <p>Placement check: physics fields live on the <i>Architecture</i> card (per line), costs + fences on <i>Solver
+        Parameters</i>, demand arrives computed (you don't type it — the spine hands it down). Two unit traps in one
+        payload: yield FRACTION, shutdown PERCENT.</p>
+      </div></details>
+
+      <div class="card"><b>DONE PROBLEM — one line, one week, by hand</b>
+        <div class="io"><span class="c">// LINE-01, 1 shift: 5 d × 7.5 h × OEE 0.84 = 31.5 h = 1,890 min</span>
+order 1: TPA-4471, need 250 GOOD units, yield 0.95, cycle 6 min
+  starts = ⌈250 / 0.95⌉ = <span class="y">264 started</span>  →  264 × 6 = 1,584 min
+  changeover in: mean 30 min → running total 1,614 ≤ 1,890 ✓ FEASIBLE
+  rework charge = 264 × (1−0.95) × ₹60/fail = <span class="y">₹792</span>  (V4-6, in the objective)
+remaining 276 min → TPA-9904 (cycle 4): ≤ 69 starts ≈ 65 good units max this week
+  → if its demand this week &gt; 65, the solver must carry inventory in from
+    an earlier week or split across lines — watch which it picks and why
+    (hold ₹ vs second setup ₹: it is doing this arithmetic, at scale)</div>
+        <p>Test separately: set one line, one week, exactly these numbers in Console's production panel and confirm
+        x = 264 starts, the ₹792 rework line, and infeasibility if you demand 300 good units of TPA-4471 alone
+        (300/0.95 × 6 = 1,895 min &gt; 1,890 — one minute over, and the solver will say so).</p>
+      </div>
+    </div>
+    <div class="pane">
+      <h4>What renders</h4>
+      <p><b>VIS-4 / vis4</b> — the bottleneck Gantt ribbon: the same solved schedule drawn as where-the-minutes-go;
+      time-based utilization (active weeks only, so a half-horizon SKU isn't averaged into a lie); <b>vis5 / VIS-5</b> —
+      the elevate-the-constraint card: prices what raising the bottleneck would earn (Goldratt's step 4, but with a real
+      dual instead of a slogan), wired to the hurdle from Finance; <b>v4-otmode</b> — OT by shift; <b>v4-rework</b> —
+      the yield cost ledger; <b>v4-ctp</b> — the promise panel; <b>v5-fgnet</b> — what the FG ledger netted off the
+      schedule; <b>q7b-compare</b> — plan-vs-plan diff after a re-solve (what moved, what the fence held).</p>
+    </div>
+    <div class="pane">
+      <div class="verdict">
+        <div class="vcol built"><span class="vh">BUILT ✓</span><ul>
+          <li>True CLSP MILP with integer lots, setup flags, yield+rework in the objective, maintenance windows, campaign min-runs, shutdown logic</li>
+          <li>Frozen/slushy fence honored by rolling re-solve</li>
+          <li>Exact-≤8 / heuristic-above sequencing repair with the real pair matrix</li>
+          <li>ATP arithmetic + CTP look-ahead solve (V4-5)</li>
+          <li>FG netting from the multi-site ledger (V5-1)</li></ul></div>
+        <div class="vcol miss"><span class="vh">MISSING ✗</span><ul>
+          <li><b>True scheduling</b> (JSSP/flow-shop): minute-level intervals, no-overlap machines, operator pools — the CP-SAT lane, not built</li>
+          <li>Sequence-dependent changeovers <i>inside</i> the optimization (see SOLVER tab)</li>
+          <li>Disruption lane (operator no-show → reshuffle) — designed (§ honest ledger), not built</li></ul></div>
+        <div class="vcol wrong"><span class="vh">WRONGLY THIN ⚠ (grade C on explanations)</span><ul>
+          <li><b>The worst reasoning-surfacing in the app:</b> the solver knows why each lot landed where it did (binding hours, setup trade, fence) and the response throws that away — the Gantt shows <i>what</i>, never <i>why</i>. Top fix on the roadmap (decisions[] block).</li>
+          <li>Mean-changeover charging understates brutal asymmetric matrices</li></ul></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="step"><div class="sn">1</div><div class="sb"><span class="where">PRODUCTION · ARCHITECTURE</span><br>Open ◇LINE-01 Precision Machining: OEE .84, bottleneck Grinding, eligible SKUs with cycle minutes. Check the changeover matrix — you're editing <b>hours</b>; the API gets minutes; the T3 contract banner says so.</div></div>
+      <div class="step"><div class="sn">2</div><div class="sb"><span class="where">PRODUCTION · ⚡ RUN SCHEDULE</span><br>Run it. Read the MPS grid: lots are whole units, runs carry setup markers, week 1–2 carry the fence badge. The Gantt shows Grinding saturated — that's your bottleneck, in minutes.</div></div>
+      <div class="step"><div class="sn">3</div><div class="sb"><span class="where">PRODUCTION · THE PINNED ORDER ARRIVES</span><br>Remember the pinned 5,000 of TPA-3215 in month 3? Find it in the weekly buckets — disaggregated, fence-respecting, yield-inflated starts (5,000/0.95 ≈ 5,263 started). One number, walked all the way down.</div></div>
+      <div class="step"><div class="sn">4</div><div class="sb"><span class="where">PRODUCTION · CTP</span><br>Ask the promise panel: 2,000 of ◇TPA-2188 Connecting Rod, week 6. Watch it answer with the earliest feasible week and <i>what had to move</i> to make room. Try 20,000 — watch it refuse honestly instead of promising fiction.</div></div>
+      <div class="step"><div class="sn">5</div><div class="sb"><span class="where">PRODUCTION · MAINTENANCE</span><br>Add a maintenance window on LINE-03 week 4 (maint_scale 0.5). Re-run: lots migrate to weeks 3/5 and the rework/OT costs of squeezing show up in the cost panel. This exact mechanism — capacity scaling — is what a crane-breakdown event will compile to in the disruption design.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 07 · SOURCING ════════════════════════ -->
+<section class="stage" id="s-sourcing">
+  <div class="stagehead"><span class="num">07</span><h2>Sourcing — MRP, Procurement MILP, Lot-Sizing &amp; MEIO</h2><span class="bandtag">PLAN</span></div>
+  <div class="stagehead" style="border:none; padding:0"><span class="sub2">The schedule explodes into material: what to buy, when, from whom, in what lots, with which safety buffers — under budgets, MOQs, supplier capacity, and lead-time ladders.</span></div>
+
+  <div class="tabs">
+    <button class="on">CONCEPT</button><button>FLOW &amp; INPUTS</button><button>SOLVER</button><button>OUTPUTS</button><button>VERDICT</button><button>WALKTHROUGH</button>
+  </div>
+  <div class="panes">
+    <div class="pane on">
+      <h4>Master this: four nested decisions, four different mathematics</h4>
+      <p><b>1 · MRP is bookkeeping, not optimization.</b> BOM × schedule, offset by lead time, netted against on-hand and
+      receipts. Deterministic arithmetic — master the netting identity (Network section) and the lead-time ladder
+      (order this week for material needed in week+LT) and you know MRP.</p>
+      <p><b>2 · Lot-sizing is a real optimization with a famous exact answer.</b> Given time-varying needs, ordering
+      cost per PO, and holding cost: EOQ assumes flat demand (wrong but robust); period-order-quantity, Silver-Meal,
+      least-unit-cost are heuristics; <b>Wagner-Whitin</b> is the exact dynamic program — O(T²), trivial at this scale,
+      and this app ships it among <b>13 policies</b> with an auto-selector that just evaluates all of them and takes the
+      cheapest. When ordering cost is high and demand lumpy, WW beats EOQ by double digits; when demand is flat they tie
+      — run the auto-select and read which regime you're in.</p>
+      <p><b>3 · Safety stock is a service-level contract with variance.</b> σ of demand over lead time × z(α) — but the
+      master move is <i>where</i> to hold it: <b>MEIO</b> (multi-echelon inventory optimization) decides per node, and
+      the Graves–Willems insight is that a node quoting zero service time to its downstream passes risk along; quote
+      longer and you hold it yourself. The MILP picks the cheapest risk placement across the whole network.</p>
+      <p><b>4 · Procurement under constraint is where it all collides:</b> budgets per period, MOQs, supplier capacity
+      caps (₹/period, V5-3), backup lanes at a premium, price steps from contracts. That's the procurement MILP — the
+      one engine consuming all three stages above it.</p>
+    </div>
+    <div class="pane">
+      <h4>The screen, top to bottom</h4>
+      <table>
+        <tr><th>CARD</th><th>FIELDS / CONTENT (exact)</th></tr>
+        <tr><td><b>BOM explosion · lead-time ladder</b></td><td>read-only walk: schedule → gross req → net req → planned orders, per part, with the LT offset drawn</td></tr>
+        <tr><td><b>Procurement MILP inputs</b></td><td>RM-spend budget / period · Service level (α) ◇ · Holding spread (storage·insurance·obsolescence) · carry rate (FRACTION ◇~0.24) · End cover · Lot size (MOQ) per part · Backup premium ◇12% (V5-3) · supplier ₹/period caps</td></tr>
+        <tr><td><b>Lot-sizing policies</b></td><td>13 policies per part incl. exact Wagner-Whitin · auto_select picks cheapest by evaluation · per-part override</td></tr>
+        <tr><td><b>MEIO</b></td><td>service level α · per-node hold % (<span class="k">hold_pct</span> is a PERCENT ◇18–24) · network from stage 03 · τ selector table after solve</td></tr>
+        <tr><td><b>External-Signal Drivers</b></td><td>commodity indices / FX riding procurement prices</td></tr>
+        <tr><td><b>OTIF / supplier scorecards</b></td><td>on-time-in-full tracking per supplier, feeding lead-time σ</td></tr>
+      </table>
+      <div class="note"><span class="t">UNITS TRAPS, CONCENTRATED</span> <span class="k">hold_pct</span> PERCENT (÷100
+      in python) but <span class="k">carry_rate</span> FRACTION (raw) but <span class="k">yield_pct</span> FRACTION
+      despite the suffix — all three meet in this one payload. This tab is why the UNITS.md ledger and its lint exist.</div>
+    </div>
+    <div class="pane">
+      <h4>Three programs, one tab</h4>
+      <div class="math">procurement.py (MILP):
+  vars:  buy[p,s,t] ≥ 0 (MOQ-stepped) · binary order flags · inventory I[p,t]
+  min Σ  price[p,s,t]·buy + ordering_cost·flag + hold·I + backup_premium·buy_backup
+  s.t.   I flow with net requirements (ledger-netted, V5-1)
+         Σ_p price·buy[p,s,t] ≤ supplier_cap[s,t]          (V5-3 ₹/period caps)
+         budget_t:  Σ spend ≤ RM_budget_t
+         safety floor: I[p,t] ≥ SS_p   (SS may come from CVaR — ss_source='cvar')
+         overflow → MOQ'd backup lane at (1 + premium/100)·cost
+
+meio.py (Graves–Willems, EXACT via one-hot):
+  vars:  y[j,k] ∈ {0,1}  — node j commits service time k (one-hot Σ_k y=1)
+  min Σ_j Σ_k  (h_j · z_α · σ_j · √k) · y[j,k]      ← √ precomputed per k, no approx
+  s.t.   service-time feasibility on every edge: τ_out ≤ τ_in + processing
+         τ=0 ⇒ MTO/pass-through node
+
+lot_sizing.py (DP + heuristics):  Wagner-Whitin exact backward recursion
+  C(t) = min over j≤t [ C(j−1) + K + h·Σ carried ]   + 12 heuristic policies, auto-evaluated</div>
+      <details><summary>FULL PAYLOAD CONTRACT — procurement.py reads 50+ keys; the load-bearing ones (verified by grep)</summary><div>
+        <p class="m" style="font:600 12px/1.9 var(--mono)">
+        <b>per part:</b> demand (net req) · init_inventory (ledger, V5-1) · node_init_inventory · minQty (MOQ) · carry_rate (FRACTION ◇0.24) · premium_pct (backup PERCENT ◇12) ·
+        <b>caps:</b> budget · budget_deflate · capacity / capacity_mode (supplier ₹/period, V5-3) · labor_hours_max · logistics_budget · co2_max_per_period · fx_exposure_max_pct ·
+        <b>service:</b> fill_rate_target / fill_rate_mode · abc_class · abc_service_a_min_pct · cvar_beta (when ss_source='cvar') · enable_min_coverage · enable_terminal_anchor ·
+        <b>time:</b> periods · effective_periods · committed_periods · locked_pos · holidays · horizon_start_date · inflation_pct_annual ·
+        <b>price events:</b> cost_events (the contract ledger steps) · regime_aware_sourcing · regime_concentration_tightening</p>
+        <p>This is the widest contract in the app — and the honest placement note: about a third of these only unfold in
+        EXPERT mode. If a knob seems missing on screen, it isn't missing from the engine; flip the GUIDED⇄EXPERT toggle.</p>
+      </div></details>
+
+      <div class="card"><b>DONE PROBLEM — Wagner-Whitin in three periods, by hand</b>
+        <div class="io"><span class="c">// needs = [120, 0, 300] units · K = ₹500/PO · h = ₹2/unit/period carried</span>
+C(1): order in p1 for {120}                        = ₹500
+C(2): d2 = 0 → nothing to add                      C(2) = ₹500
+C(3): three ways to cover the 300:
+  order in p3:            C(2) + 500               = <span class="g">₹1,000 ← optimal</span>
+  stretch p1's order:     500 + 300×2 periods×₹2   = ₹1,700
+  order in p2 (carry 1):  C(1) + 500 + 300×1×₹2    = ₹1,600
+PLAN: PO in p1 (120 u) + PO in p3 (300 u) · total ₹1,000</div>
+        <p>The DP's trick: C(t) only needs "when was the last order" — O(T²), exact, no solver needed. Test separately:
+        give one part exactly this need pattern, pick policy = wagner_whitin, confirm two POs and ₹1,000; then drop K to
+        ₹100 and watch it flip to three POs (ordering got cheaper than carrying). The auto-selector runs this comparison
+        across all 13 policies on every part.</p>
+      </div>
+
+      <div class="widget" id="w-ww">
+        <span class="wt">⚡ INTERACTIVE — WHEN DOES WAGNER-WHITIN BEAT EOQ?</span>
+        <p style="margin-top:0">Same total demand, different lumpiness. Slide and watch the exact DP's edge grow with
+        demand lumpiness and ordering cost:</p>
+        <label>demand lumpiness: <span id="ww-l">40</span>% (0 = flat, 100 = feast-or-famine)</label>
+        <input type="range" id="ww-ls" min="0" max="100" value="40">
+        <label>ordering cost per PO: ₹<span id="ww-k">800</span></label>
+        <input type="range" id="ww-ks" min="100" max="3000" step="100" value="800">
+        <div class="out" id="ww-out"></div>
+      </div>
+    </div>
+    <div class="pane">
+      <h4>What renders</h4>
+      <p><b>VIS-7 / vis7</b> — this FG's bill as a tree with lead-time bars + safety stock per node (the Step-6
+      picture); <b>VIS-8 / vis8</b> — the √N pooling card (why centralizing stock at fewer nodes cuts total buffer —
+      the σ√N law drawn); <b>v5-supcap</b> — supplier cap utilization + overflow-to-backup lanes with the premium paid;
+      <b>sourcing-decide</b> — act-now strip (POs to release this week, parts under budget pressure); the PO table with
+      MOQ-rounding and contract price steps visible; OTIF scorecards.</p>
+    </div>
+    <div class="pane">
+      <div class="verdict">
+        <div class="vcol built"><span class="vh">BUILT ✓</span><ul>
+          <li>Full MRP with ledger netting + scheduled receipts + LT ladder</li>
+          <li>Procurement MILP: budgets, MOQs, supplier ₹/period caps + premium backup lanes (V5-3), contract price steps, CVaR-fed safety floors</li>
+          <li>13 lot-sizing policies incl. exact WW, auto-selected (grade A−)</li>
+          <li>MEIO as exact MILP via one-hot τ (no piecewise hack) — genuinely uncommon</li></ul></div>
+        <div class="vcol miss"><span class="vh">MISSING ✗</span><ul>
+          <li>Supplier selection as multi-criteria decision (price+OTIF+risk scoring into the MILP — today price decides, OTIF only reports)</li>
+          <li>Stochastic procurement (two-stage recourse: order now, adjust after demand reveals) — the classic SP formulation, absent</li>
+          <li>Quantity-discount tiers in the buy variables</li></ul></div>
+        <div class="vcol wrong"><span class="vh">WRONGLY THIN ⚠ (grade C on explanations · B− MEIO)</span><ul>
+          <li><b>Procurement's reasons are discarded:</b> the solver knows a PO was pulled forward for a price step or pushed for budget — the response carries quantities only. Same decisions[] fix as production.</li>
+          <li>MEIO's τ table renders but the "why this node holds the buffer" narration is absent — the most explainable result in the app, unexplained</li></ul></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="step"><div class="sn">1</div><div class="sb"><span class="where">SOURCING · BOM LADDER</span><br>Pick ◇TPA-4471. Walk the ladder: week-5 production start → ◇RM-BRG18 gross req week 5 → minus on-hand &amp; receipts → net req → planned order at week 5 − LT. Every arrow on screen is one term of the netting identity.</div></div>
+      <div class="step"><div class="sn">2</div><div class="sb"><span class="where">SOURCING · ⚡ RUN PROCUREMENT</span><br>Run it with seeds. Read one part's buy plan against its contract prices — find a pull-forward ahead of the ◇RM-STL42 price step you set in Network. The MILP did inter-temporal arbitrage; nobody told it to.</div></div>
+      <div class="step"><div class="sn">3</div><div class="sb"><span class="where">SOURCING · SUPPLIER CAP (V5-3)</span><br>Cut the primary steel supplier's ₹/period cap below the plan's spend. Re-run: v5-supcap shows the cap binding and overflow routing to the backup lane at +◇12%. The premium paid is printed — that's the price of the cap, a dual told in rupees.</div></div>
+      <div class="step"><div class="sn">4</div><div class="sb"><span class="where">SOURCING · LOT-SIZING</span><br>Open a lumpy-demand part. Auto-select shows all 13 policies' evaluated costs — note WW at the top and EOQ's gap. Flip to a flat-demand part: the gap collapses. You just read the regime off real numbers.</div></div>
+      <div class="step"><div class="sn">5</div><div class="sb"><span class="where">SOURCING · MEIO</span><br>Solve MEIO. Read the τ table: the warehouse quotes τ=0 to customers (it holds the buffer); an upstream node quotes τ=2 and holds almost nothing. Total holding cost is printed next to the naive everyone-buffers baseline — the pooled saving is the headline.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 08 · LOGISTICS ════════════════════════ -->
+<section class="stage" id="s-logistics">
+  <div class="stagehead"><span class="num">08</span><h2>Logistics — Transport, Allocation &amp; Mode Split</h2><span class="bandtag">PLAN</span></div>
+  <div class="stagehead" style="border:none; padding:0"><span class="sub2">Moving the plan: which mode carries which shipment, how DC→customer allocation minimizes cost, when loads consolidate, and when a deadline forces splitting one shipment across fast and slow modes.</span></div>
+
+  <div class="tabs">
+    <button class="on">CONCEPT</button><button>FLOW &amp; INPUTS</button><button>SOLVER</button><button>OUTPUTS</button><button>VERDICT</button><button>WALKTHROUGH</button>
+  </div>
+  <div class="panes">
+    <div class="pane on">
+      <h4>Master this: mode choice is a deadline-and-density problem</h4>
+      <p>Every shipment lives on two axes: <b>how soon</b> it must land and <b>how heavy/dense</b> it is. Sea is ~10× cheaper
+      than air per kg and ~5× slower; rail and road sit between. The naive policy — "urgent → air, else sea" — wastes
+      money at both ends, and the two failure cases bound the whole domain:
+      <b>capacity binds</b> (the load physically doesn't fit one mode's vehicle/container — a 40' sea container caps
+      near 26,700 kg) and <b>deadline binds</b> (sea lands after the customer's date). The master move for a deadline
+      bind is the <b>bridge split</b>: compute the <i>days of stock you'll be short</i> before the slow mode lands, fly
+      only that bridge quantity (× a safety buffer), and ship the rest cheap. It routinely beats all-air by 40–60%.
+      The app's V5-4 engine does both splits, and only when a bind actually exists — armed but unbound solves return
+      byte-identical to disarmed ones, by design and by test.</p>
+      <p>Second concept: <b>allocation</b> — the classic transportation LP (the problem LP was practically invented
+      for): which DC serves which customer so total ₹·km is minimal, subject to supply at each DC and demand at each
+      customer. It's the one model here whose optimal basis has a beautiful structure (a spanning tree of lanes) —
+      visible in how few lanes the solution actually uses.</p>
+      <div class="widget" id="w-ms">
+        <span class="wt">⚡ INTERACTIVE — THE BRIDGE SPLIT, PRICED</span>
+        <p style="margin-top:0">A 4,000 kg shipment, customer deadline 30 days out. Sea lands day 38, air lands day 5.
+        You burn stock daily. Slide your current stock cover and watch the decision flip between SHIP SEA, SPLIT, and
+        the panic answer it replaces:</p>
+        <label>current stock cover: <span id="ms-c">22</span> days of consumption (100 kg/day · buffer ◇15%)</label>
+        <input type="range" id="ms-cs" min="0" max="45" value="22">
+        <div class="out" id="ms-out"></div>
+      </div>
+    </div>
+    <div class="pane">
+      <h4>The screen, top to bottom</h4>
+      <table>
+        <tr><th>CARD</th><th>FIELDS / CONTENT (exact)</th></tr>
+        <tr><td><b>Steering inputs · lane economics</b></td><td>per-mode tariffs ◇ (₹/kg — governed <span class="k">config.modeTariffs</span>, same unit as the engine's MODE_SPECS, no conversion) · lane rates (₹/km — a DIFFERENT unit, cost = rate × km) · Delivery SLA days · Bridge buffer ◇15%</td></tr>
+        <tr><td><b>Shipments</b></td><td>derived from the plan: weight_kg per lane via mix-accurate <span class="k">skuWeightKg</span> · value · deadline · spike flags with current stock + daily consumption</td></tr>
+        <tr><td><b>Mode split (V5-4)</b></td><td>"arm mode split" toggle → <span class="k">params.mode_split</span> + buffer; strip shows armed state, then CAPACITY/DEADLINE rows after solve</td></tr>
+        <tr><td><b>Allocation</b></td><td>DC supplies, customer demands, lane cost matrix → min-cost flow table</td></tr>
+        <tr><td><b>Consolidation</b></td><td>greedy load-building into vehicles/containers; fill % per load</td></tr>
+        <tr><td><b>Why these routes? — plain-English</b></td><td>the narration card: per shipment, what was chosen and what it was compared against</td></tr>
+      </table>
+    </div>
+    <div class="pane">
+      <h4>transport.py — chooser + LP + split logic</h4>
+      <div class="math">per shipment: evaluate modes {air, sea_fcl_40, sea_lcl, rail, road…}
+  feasible(mode) = transit_days ≤ deadline  ∧  weight ≤ mode_capacity
+  cost(mode)     = cost_per_kg[mode] × weight_kg          (tariff override aware)
+  pick min-cost feasible · narrate rejected modes with reasons
+
+spike shipments:  days_short = transit_slow − stock_days
+  decision ∈ { OK · USE AIR · SPLIT FAST+SLOW (V5-4) }
+  bridge_kg = days_short × daily_burn × (1 + buffer_pct/100)   ← buffer is PERCENT
+  fly bridge_kg · ship rest slow · keep split only if it beats best single mode
+
+capacity bind (V5-4): weight &gt; every single mode's vehicle cap
+  → bin-pack across mode legs (e.g. rail×2) — rescues lanes that were
+    "unserveable at ₹0" into real, costed plans (saving:null — honesty: no
+    fake baseline to claim savings against)
+
+Alloc LP (the one exact program here):
+  min Σ_ij cost_ij·f_ij   s.t. Σ_j f_ij ≤ supply_i · Σ_i f_ij = demand_j · f ≥ 0</div>
+      <details><summary>FULL PAYLOAD CONTRACT — every key transport.py reads (verified by grep)</summary><div>
+        <p class="m" style="font:600 12px/1.9 var(--mono)">
+        <b>per shipment:</b> name · origin · destination · weight_kg · volume_cbm · value · deadline_days · is_import · customs_clearance · urgency ·
+        <b>spike protocol:</b> demand_spike · spike_qty · current_stock · daily_consumption · stockout_risk_factor ·
+        <b>params:</b> mode_overrides{mode:{cost_per_kg}} (Logistics GovField tariffs) · mode_split (V5-4 arm) · split_bridge_buffer_pct (PERCENT ◇15) ·
+        <b>allocation LP:</b> origins · destinations · demand · cost_matrix (rate ₹/km × km — note: a DIFFERENT unit than tariffs' ₹/kg)</p>
+        <p>Placement: tariffs + SLA + buffer on <i>Steering inputs</i>; shipments are derived from the plan (mix-accurate
+        kg via skuWeightKg) — you steer economics, not freight lines.</p>
+      </div></details>
+
+      <div class="card"><b>DONE PROBLEM — the deadline split, by hand (the observed case)</b>
+        <div class="io"><span class="c">// SPIKE shipment: 4,000 kg · deadline 30 d · stock covers transit gap except 12 days · burn 100 kg/d · buffer 15%</span>
+all-air  :  4,000 kg × ₹16/kg                       = <span class="r">₹64,000  (the panic baseline — solver's own first verdict was USE AIR)</span>
+bridge   :  12 d × 100 kg/d × 1.15                  = <span class="y">1,380 kg flies</span>  → ₹22,080
+slow leg :  2,620 kg × ₹3.85/kg ≈                   ₹10,087
+split    :  22,080 + 10,087                         = <span class="g">₹32,167 — 50% saved · OBSERVED live via /api/solve/transport</span></div>
+        <p>Test separately: POST exactly this shipment (the payload is in the contract above) with
+        <span class="k">params:{mode_split:true}</span> and compare against <span class="k">params:{}</span> — decision
+        flips USE AIR → SPLIT FAST+SLOW, bridge_kg = 1,380, totals as computed.</p>
+      </div>
+
+      <div class="note g"><span class="t">OBSERVED, NOT CLAIMED</span> These numbers were watched happening in headless
+      Chromium against the live server: deadline split on a 4,000 kg spike — baseline USE AIR ₹64,000 → SPLIT FAST+SLOW
+      <b>₹32,167</b> with a <b>1,380 kg</b> bridge flying (12 days short × 100 kg/day × 1.15); capacity bind on a 70 t
+      lane — every single mode infeasible (shown ₹0-unserveable before) → <b>rail×2 at ₹93,000</b>, with
+      <span class="k">saving:null</span> because there is no honest baseline. Armed-but-unbound solves byte-match
+      disarmed ones.</div>
+    </div>
+    <div class="pane">
+      <h4>What renders</h4>
+      <p><b>v5-modesplit</b> — the split strip: armed state, then per-lane CAPACITY/DEADLINE rows with legs
+      (<span class="k">air:1380 + sea:2620</span>) and the ₹ delta; the <b>Why these routes?</b> plain-English card —
+      the best explanation surface in the app (grade A) and the model for what every other engine should emit;
+      allocation flow table; consolidation fill bars; CoG (center-of-gravity) hint for DC placement.</p>
+    </div>
+    <div class="pane">
+      <div class="verdict">
+        <div class="vcol built"><span class="vh">BUILT ✓ (grade A on explanations)</span><ul>
+          <li>Mode chooser with full rejected-alternatives narration</li>
+          <li>Deadline bridge split + capacity bin-pack (V5-4), bind-gated, byte-identical when off</li>
+          <li>Exact allocation LP · consolidation · CoG</li>
+          <li>Spike protocol reading real stock cover, not flags alone</li></ul></div>
+        <div class="vcol miss"><span class="vh">MISSING ✗</span><ul>
+          <li><b>Vehicle routing (CVRP)</b> — multi-stop route construction with time windows; named, classic, absent</li>
+          <li>Carrier contracts / tender rounds (rates are tariffs, not negotiated lanes with commitments)</li>
+          <li>CO₂ accounting per mode (one column away, not present)</li></ul></div>
+        <div class="vcol wrong"><span class="vh">THIN ⚠</span><ul>
+          <li>Consolidation is greedy first-fit — fine at this lane count, but it's the one "optimization" label on the tab without even a bound; honest fix is either a bin-packing MILP or a relabel</li>
+          <li>Transit times are deterministic — no variability on the sea leg that the bridge buffer is supposedly protecting against (the 15% is a guess, not a quantile)</li></ul></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="step"><div class="sn">1</div><div class="sb"><span class="where">LOGISTICS · BASELINE</span><br>Solve Transport on seeds. Read "Why these routes?" for one lane: chosen mode, cost, and each rejected mode's reason (too slow / over cap / pricier). This card is the explanation bar every engine is graded against.</div></div>
+      <div class="step"><div class="sn">2</div><div class="sb"><span class="where">LOGISTICS · ARM THE SPLIT</span><br>Click <b>arm mode split</b>. Strip mounts "armed"; payload now carries <span class="k">mode_split:true, split_bridge_buffer_pct:15</span>. Re-solve at seed flows: <i>no binds → no splits</i> — the strip says so instead of inventing work.</div></div>
+      <div class="step"><div class="sn">3</div><div class="sb"><span class="where">LOGISTICS · FORCE THE DEADLINE BIND</span><br>Flag a spike: 4,000 kg, deadline 30 d, stock 10 d of cover, burn 100 kg/day. Re-solve. Decision flips USE AIR → SPLIT FAST+SLOW; ~1,380 kg flies; cost roughly halves (₹64,000 → ₹32,167 observed). The bridge math from the CONCEPT tab, live.</div></div>
+      <div class="step"><div class="sn">4</div><div class="sb"><span class="where">LOGISTICS · FORCE THE CAPACITY BIND</span><br>Surge a lane past 26,700 kg (no single mode fits). Pre-split this rendered as unserveable-₹0; armed, it bin-packs (rail×2, ₹93,000 observed) and reports <span class="k">saving:null</span> — read that null as integrity, not absence.</div></div>
+      <div class="step"><div class="sn">5</div><div class="sb"><span class="where">LOGISTICS · DISARM</span><br>Disarm. Payload returns byte-identical to step 1 — toggles that leave residue are how planning tools rot; this one is tested not to.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 09 · FINANCE ════════════════════════ -->
+<section class="stage" id="s-finance">
+  <div class="stagehead"><span class="num">09</span><h2>Finance — Cash, Capital, Covenant &amp; Landed Cost</h2><span class="bandtag">DECIDE</span></div>
+  <div class="stagehead" style="border:none; padding:0"><span class="sub2">Where plans meet money: working capital the plan ties up, capex the bottleneck justifies, the debt structure that funds it, and the true landed cost of every imported part.</span></div>
+
+  <div class="tabs">
+    <button class="on">CONCEPT</button><button>FLOW &amp; INPUTS</button><button>SOLVER</button><button>OUTPUTS</button><button>VERDICT</button><button>WALKTHROUGH</button>
+  </div>
+  <div class="panes">
+    <div class="pane on">
+      <h4>Master this: the plan is a use of cash, and capacity is an investment</h4>
+      <p>Three literacies live on this tab. <b>(1) Working capital is the plan's shadow:</b> every week of inventory the
+      production plan holds and every day of payment terms the procurement plan accepts is cash frozen — the carry rate
+      (WACC + spread, a FRACTION ◇~0.2395) prices that freeze, and it's the same number the inventory holding costs
+      upstream were built from. One rate, one truth, every tab.</p>
+      <p><b>(2) Capacity investment is a MILP, not a hunch:</b> buy vs lease vs do-nothing per candidate (◇Heat-Treat #2
+      on LINE-03, ◇Grinder upgrade on LINE-01, ◇Honing cell on LINE-02), each with capex, lease/yr, maintenance,
+      salvage, useful life, WDV depreciation, tax shield — against the revenue the freed bottleneck hours earn (that's
+      the Plan tab's shadow price walking in the door). After-tax NPV in the objective, budget in the constraints.</p>
+      <p><b>(3) The funding side has a covenant:</b> capital_structure mixes debt/equity against a leverage covenant —
+      and reports <span class="k">equity_weight_pct</span> (a PERCENT in the response — units discipline goes both
+      directions across the boundary).</p>
+      <p>And the import literacy: <b>landed cost</b> = invoice → +freight → +insurance ◇0.5% → +BCD ◇10% → +SWS ◇10%
+      <i>of BCD</i> → +IGST ◇18% <i>of the stack</i> → ×FX ◇84 ₹/$. The duty stack compounds — naive "+38%" is wrong;
+      the order of operations is the lesson (finance.py:38–47).</p>
+    </div>
+    <div class="pane">
+      <h4>The screen, top to bottom</h4>
+      <table>
+        <tr><th>CARD</th><th>FIELDS / CONTENT (exact)</th></tr>
+        <tr><td><b>Working Capital — Period View</b></td><td>inventory ₹ + receivables − payables per period, driven by the actual plan + pay terms (pay_term_days)</td></tr>
+        <tr><td><b>Payment Ledger</b></td><td>PO-level outflows on their term dates — the cash calendar procurement implies</td></tr>
+        <tr><td><b>Capital plan (MILP)</b></td><td>per candidate: Buy upfront ₹ · Lease/yr · Maint/yr (buy) · Salvage (buy) · Useful life · WDV rate ◇0.20 (FRACTION) · Added hrs/yr (1 shift) · Budget / yr · Effective Tax ◇25% (PERCENT) · hurdle rate; "Find min" hurdle search</td></tr>
+        <tr><td><b>Capital structure</b></td><td>debt/equity mix vs covenant; solve verdict card</td></tr>
+        <tr><td><b>Budget — Plan vs Actual · EVM</b></td><td>budget lines vs actuals; earned-value (PV/EV/AC, SPI/CPI) on the plan-as-project</td></tr>
+        <tr><td><b>Landed cost</b></td><td>duty stack calculator per imported part: bcd/sws/igst/insurance percents · exchange_rate ◇84</td></tr>
+      </table>
+    </div>
+    <div class="pane">
+      <h4>capital.py — and the most instructive twelve lines in the repo</h4>
+      <div class="math">DECISION VARIABLES:  buy_c, lease_c ∈ {0,1} per candidate c   (+ at most one of each)
+OBJECTIVE:  max Σ_c  after_tax_NPV(c) · (buy_c or lease_c)
+  NPV(buy)  = Σ_t  [ margin·added_hrs − maint ]·(1−tax) + dep_t·tax  ⁄ (1+r)^t
+              − capex + salvage/(1+r)^T          dep via WDV (fraction, raw)
+  NPV(lease)= Σ_t  [ margin·added_hrs − lease ]·(1−tax) ⁄ (1+r)^t
+CONSTRAINTS:  Σ capex·buy_c ≤ budget   ·   buy_c + lease_c ≤ 1
+timeLimit=20s (capital_capacity)
+
+THE LESSON (capital.py:69–133): you want "what's one more ₹ of budget worth?"
+  — but this is a MILP; its duals are INVALID. So after the integer solve, the
+  engine re-solves the LP RELAXATION (x continuous) and reads the budget row's
+  dual from THAT. Approximate, honest, and labeled. Every analyst who has ever
+  read Excel Solver's "shadow price" on an integer model needed this lesson.</div>
+
+      <details><summary>FULL PAYLOAD CONTRACT — every key capital.py reads (verified by grep)</summary><div>
+        <p class="m" style="font:600 12px/1.9 var(--mono)">
+        <b>per investment:</b> the candidate card fields (buy upfront · lease/yr · maint/yr · salvage · useful life · WDV rate FRACTION ◇0.20 · added hrs/yr) ·
+        <b>global:</b> budget · wacc / hurdle · investments[] ·
+        <b>structure:</b> exclusivity_groups (pick at most one of these) · dependencies / requires / dependent (B only if A) · max_investments · indices</p>
+        <p>Note the two structural keys most users miss: <b>exclusivity_groups</b> and <b>dependencies</b> — they're how
+        "grinder upgrade OR new line, and the honing cell only if the line" becomes constraints instead of a footnote.</p>
+      </div></details>
+
+      <div class="card"><b>DONE PROBLEM — one candidate's after-tax NPV, by hand</b>
+        <div class="io"><span class="c">// Grinder upgrade: capex ₹30 L · adds 1,200 hr/yr · Plan's dual says ₹450/hr · maint ₹0.6 L/yr
+// tax 25% · WDV 20% · r = 12% · life 5 y · salvage ₹6 L</span>
+operating  : (1,200 × 450 − 60,000) × (1−.25) = ₹3.6 L/yr
+           → × annuity(12%, 5y) 3.6048          = ₹12.98 L
+dep shield : WDV 20% on 30 L → 6.0, 4.8, 3.84, 3.07, 2.46 L
+           → × 25% tax, discounted              = ₹ 3.82 L
+salvage    : 6 L / 1.12⁵                        = ₹ 3.40 L
+NPV        : 12.98 + 3.82 + 3.40 − 30           = <span class="r">−₹9.80 L → verdict: PASS (don't buy)</span>
+break-even : extra PV needed 9.8 L ÷ (2.704 per ₹1L gross/yr) → dual must reach ≈ <span class="y">₹752/hr</span></div>
+        <p>The lesson in the last line: <b>the buy verdict is a function of Plan's shadow price.</b> If the bottleneck
+        binds harder (dual ≥ ₹752/hr), this same card flips to BUY with no other change. Test separately: enter the
+        candidate exactly, solve at hurdle 12%, confirm PASS and the NPV; then use "Find min" and check it lands near
+        the dual-equivalent break-even.</p>
+      </div>
+    </div>
+    <div class="pane">
+      <h4>What renders</h4>
+      <p><b>finance-decide</b> — act-now strip; the working-capital ribbon per period; capital verdicts per candidate
+      (BUY / LEASE / PASS with NPV and the hurdle that flips it — "Find min" runs the search for the break-even hurdle);
+      covenant verdict card; the landed-cost waterfall per part (each duty layer a bar); EVM gauges (SPI/CPI).</p>
+    </div>
+    <div class="pane">
+      <div class="verdict">
+        <div class="vcol built"><span class="vh">BUILT ✓ (grade B)</span><ul>
+          <li>Capital MILP with after-tax NPV, WDV depreciation, salvage, budget; valid relaxation-dual for budget</li>
+          <li>Hurdle break-even search ("Find min")</li>
+          <li>Working capital + payment ledger driven by the real plan</li>
+          <li>Landed-cost duty stack, order-of-operations correct</li>
+          <li>Covenant-checked capital structure; EVM</li></ul></div>
+        <div class="vcol miss"><span class="vh">MISSING ✗</span><ul>
+          <li><b>Portfolio optimization</b> (Markowitz-style risk/return across projects) — named class, absent</li>
+          <li>Cash-flow <i>constraint</i> on the plan (today cash is reported, never binds production/procurement — a cash-poor month should be able to push a PO)</li>
+          <li>Loan amortization schedules / refinance timing</li></ul></div>
+        <div class="vcol wrong"><span class="vh">THIN ⚠</span><ul>
+          <li>EVM treats the plan as a project but actuals entry is manual — without the closed loop it drifts to decoration</li>
+          <li>FX is one rate, no forward curve — landed cost of a 6-month-out PO uses today's 84</li></ul></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="step"><div class="sn">1</div><div class="sb"><span class="where">FINANCE · WORKING CAPITAL</span><br>After the spine has run, open the period view: see the inventory build the aggregate plan chose (its level-strategy months) sitting there as frozen ₹ at the carry rate. Same decision, money lens.</div></div>
+      <div class="step"><div class="sn">2</div><div class="sb"><span class="where">FINANCE · CAPITAL</span><br>The Plan tab said Grinding's shadow price is ₹X/hr at peak. Now evaluate ◇Grinder upgrade (LINE-01): Added hrs/yr × that margin against Buy upfront / Lease per year. Solve. Read the verdict AND the relaxation-dual on the budget row — what one more lakh of budget would have bought.</div></div>
+      <div class="step"><div class="sn">3</div><div class="sb"><span class="where">FINANCE · HURDLE</span><br>Press <b>Find min</b>: the break-even hurdle rate at which the buy verdict flips. If your true cost of capital is below it, buy; above, pass. One number, decision-shaped.</div></div>
+      <div class="step"><div class="sn">4</div><div class="sb"><span class="where">FINANCE · LANDED COST</span><br>Open ◇RM-BRG18 (imported): walk the waterfall — invoice, freight, insurance 0.5%, BCD 10%, SWS 10% of BCD, IGST 18% of the stack, ×84 FX. Compare against the naive flat-38% answer; the difference is the compounding.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 10 · CONSOLE ════════════════════════ -->
+<section class="stage" id="s-console">
+  <div class="stagehead"><span class="num">10</span><h2>Console — 16 Engines, the Spine &amp; Branches</h2><span class="bandtag">DECIDE</span></div>
+  <div class="stagehead" style="border:none; padding:0"><span class="sub2">The cockpit: run any engine directly, run the whole planning spine in dependency order, or fan a decision out into concurrent scenario branches and compare.</span></div>
+
+  <div class="tabs">
+    <button class="on">CONCEPT</button><button>FLOW &amp; INPUTS</button><button>SOLVER</button><button>OUTPUTS</button><button>VERDICT</button><button>WALKTHROUGH</button>
+  </div>
+  <div class="panes">
+    <div class="pane on">
+      <h4>Master this: a planning system is a DAG of solvers, and the DAG is the product</h4>
+      <p>Each tab so far ran <i>its</i> engine. The Console's claim is bigger: the engines form a <b>dependency graph</b>,
+      and running them in the right order with each one's outputs feeding the next is what "planning" actually is. The
+      spine order — <code>forecast → procurement → aggregate → production → linecap → montecarlo</code> — encodes a real
+      operational truth: <b>material commitments precede capacity smoothing</b> because supplier lead times are longer
+      than your planning cycle; you order steel against the forecast, then plan workforce, then schedule, then check
+      which lines bind, then stress the whole thing under uncertainty. Most planners run this loop monthly in meetings;
+      here it's one button and ~seconds.</p>
+      <p>The second idea is <b>branching as a first-class operation</b> (V5-2): a real decision is "compare the world
+      where I add a shift vs the world where I buy the grinder vs do nothing." Each branch is a full spine run on a
+      perturbed input set, fanned out server-side concurrently (a thread pool behind
+      <span class="k">/api/solve/branches</span>), resolved in three dependency phases, and laid side by side. Pinned
+      demand survives into every branch — your committed numbers aren't hostage to the comparison.</p>
+    </div>
+    <div class="pane">
+      <h4>The screen</h4>
+      <table>
+        <tr><th>CARD</th><th>WHAT IT DOES</th></tr>
+        <tr><td><b>Orchestrate / Planning Spine</b></td><td>the 6-step runner with per-step status, timing, and the freshness ribbon synchronized; "runs the 6-step planning spine only — not all 16 engines" (the tooltip is honest about scope)</td></tr>
+        <tr><td><b>Solver Network</b></td><td>the live engine map — every endpoint, colored by run state, with payload/result inspection</td></tr>
+        <tr><td><b>Direct run panels</b></td><td>each engine with its current payload, editable, Run button: profitmix · production · procurement · aggregate · meio · montecarlo · cvar · transport · sequence · policy · lotsizing · linecap · consolidate · capital …</td></tr>
+        <tr><td><b>⚡ Run all (branches, V5-2)</b></td><td>define branches (input deltas) → server-side concurrent fan-out → comparison table</td></tr>
+      </table>
+      <div class="note i"><span class="t">THE OPEN SURFACE</span> Everything the Console does, you can do from a browser
+      console or any HTTP client: <span class="k">window.apiPost('/api/solve/…', payload)</span> against 41 endpoints,
+      with <span class="k">/api/meta/solvers</span> as the catalog. The UI is a client of the same API it documents —
+      no private channel. This is also what makes the app LLM-drivable: an assistant that can compose payloads can
+      operate the whole planning system.</div>
+    </div>
+    <div class="pane">
+      <h4>The orchestrations (app.py, not separate solvers)</h4>
+      <div class="math">pipeline:   run spine steps sequentially, each step's writes visible to the next
+rolling:    re-plan with t ≤ frozen_weeks pinned to the incumbent (the heartbeat)
+ctp:        clone + inject candidate order + re-solve  (the question-shaped solve)
+whatif:     one-delta perturbation → diff vs incumbent
+branches:   ThreadPool fan-out of full spines over input deltas (V5-2)
+            3 dependency phases server-side; demand PINS survive into every branch</div>
+
+      <details><summary>FULL PAYLOAD CONTRACTS — the three engines without a home tab above (verified by grep)</summary><div>
+        <p class="m" style="font:600 12px/1.9 var(--mono)">
+        <b>profitmix.py:</b> products[] (sell_price · variable_cost/_mat_cost · max_demand/demand_ceiling_mode · min_quantity · cycle_time MIN/unit · labor_per_unit · mape_pct PERCENT · shelf_life_periods) · lines[] · constraints (incl. cannibalization terms) · labor_cost_mode (3 modes) · planning_horizon_months ◇12 (slices ANNUAL p.demand) · mto_orders · carry_rate · fixed_daily_cost · salvage_rate · history/forecast/actuals (demand_mode)<br><br>
+        <b>meio.py:</b> stages[] (the echelon graph from Network: per node holding ₹, σ, lead/processing time) · service_level (α) · time_unit — small contract, subtle model.<br><br>
+        <b>linecap.py:</b> routing · envelope · h_periods · holidays · laborRate · laborOtCapHrs · laborHeadcountCap · otMode · setupCost · holdingCost · campaignMinRun · shutdownPct · rehireNoticeHrs · season_length · time_grain · horizon_start_date — the per-line capacity dual engine (the ribbon's "capital dual" dot).</p>
+      </div></details>
+    </div>
+    <div class="pane">
+      <h4>What renders</h4>
+      <p>Per-step spine cards with elapsed ms and result summaries; the solver network map (same map as Reference, here
+      with run-state); branch comparison table — KPI rows (profit, service, inventory ₹, OT hours) × branch columns,
+      deltas vs incumbent colored. <b>VIS-10</b> — the cascade made kinetic: when a solve lands, the dependency wave
+      ripples across stage chips in walk order, so you <i>see</i> what just got invalidated and recomputed.</p>
+    </div>
+    <div class="pane">
+      <div class="verdict">
+        <div class="vcol built"><span class="vh">BUILT ✓</span><ul>
+          <li>6-step spine with dependency-honest ordering + freshness integration</li>
+          <li>Server-side concurrent branching with phase-correct resolution (V5-2)</li>
+          <li>Every engine runnable directly with editable payloads; open API + catalog endpoint</li></ul></div>
+        <div class="vcol miss"><span class="vh">MISSING ✗</span><ul>
+          <li>Scheduled runs (nightly re-plan) — no automation surface at all</li>
+          <li>Run history / audit log persisted across sessions (localStorage again)</li>
+          <li>Branch templates (saved decision patterns: "the add-a-shift study")</li></ul></div>
+        <div class="vcol wrong"><span class="vh">THIN ⚠</span><ul>
+          <li>16 direct-run panels + 41 endpoints is sprawl — power users love it, everyone else needs the GUIDED gate it partially has; consolidation is overdue</li>
+          <li>Branch comparison ranks by profit only — service/risk tie-breaks are eyeballed, not scored</li></ul></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="step"><div class="sn">1</div><div class="sb"><span class="where">CONSOLE · RUN THE SPINE</span><br>One button. Watch the six steps light in order and the ribbon go all-fresh. Note procurement runs <i>before</i> aggregate — now you know why (lead times beat planning cycles).</div></div>
+      <div class="step"><div class="sn">2</div><div class="sb"><span class="where">CONSOLE · DIRECT RUN</span><br>Open the profitmix panel. Read the actual payload JSON — find <span class="k">cycle_time_by_sku_min</span> (minutes!), the margin coefficients, the cannibalization terms. Edit a margin, Run, watch the mix snap to a different vertex (the Foundations widget, live).</div></div>
+      <div class="step"><div class="sn">3</div><div class="sb"><span class="where">CONSOLE · ⚡ RUN ALL BRANCHES</span><br>Define three branches: +1 shift on LINE-01 · grinder bought (hours added) · baseline. Run all. The comparison lands in seconds because the fan-out is server-concurrent. Read the profit deltas <i>and</i> check the OT column — the shift branch usually wins profit but look what it does to weekend hours.</div></div>
+      <div class="step"><div class="sn">4</div><div class="sb"><span class="where">CONSOLE · THE OPEN API</span><br>Browser devtools: <span class="k">await window.apiPost('/api/solve/cvar', …)</span> with a payload copied from the panel. Same engine, no UI. Everything in this guide is scriptable.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 11 · SCENARIOS ════════════════════════ -->
+<section class="stage" id="s-scenarios">
+  <div class="stagehead"><span class="num">11</span><h2>Scenarios — Monte Carlo, CVaR &amp; Resilience</h2><span class="bandtag">DECIDE</span></div>
+  <div class="stagehead" style="border:none; padding:0"><span class="sub2">The committed plan meets uncertainty: simulate correlated shocks, read the tail not the average, size buffers against the bad days, and stress the plan to its breaking point on purpose.</span></div>
+
+  <div class="tabs">
+    <button class="on">CONCEPT</button><button>FLOW &amp; INPUTS</button><button>SOLVER</button><button>OUTPUTS</button><button>VERDICT</button><button>WALKTHROUGH</button>
+  </div>
+  <div class="panes">
+    <div class="pane on">
+      <h4>Master this: averages lie, tails decide, correlation is the multiplier</h4>
+      <p><b>1 · The flaw of averages:</b> a plan optimized against mean demand is <i>not</i> the plan with mean
+      performance — costs are asymmetric (a stockout costs more than the equivalent overstock saves), so the expected
+      cost of a plan under uncertainty is always worse than its cost at expected demand. Simulation exists to measure
+      that gap.</p>
+      <p><b>2 · Newsvendor is the atom of stochastic inventory:</b> with underage cost Cu (margin lost) and overage Co
+      (holding/salvage loss), the optimal stocking quantile is the <b>critical fractile Cu/(Cu+Co)</b>. Every
+      service-level decision is this equation wearing different clothes.</p>
+      <p><b>3 · CVaR is the grown-up objective:</b> VaR says "the 95th-percentile loss is X"; <b>CVaR says "and the
+      <i>average</i> of the worst 5% is Y"</b> — coherent, convex, and (the Rockafellar–Uryasev result) minimizable with
+      a plain LP. Optimizing CVaR instead of expected cost buys insurance: slightly worse average, much better worst
+      days.</p>
+      <p><b>4 · Correlation is what kills diversification:</b> if demand surges <i>and</i> input costs spike together
+      (ρ&gt;0 — they do; both ride the same boom), your bad scenarios are badder than independent sampling pretends. The
+      V4-7 engine shocks demand and cost through a Cholesky factor with default ρ ◇0.4 — remove that and the tail
+      thins dishonestly.</p>
+      <div class="widget" id="w-nv">
+        <span class="wt">⚡ INTERACTIVE — CRITICAL FRACTILE</span>
+        <p style="margin-top:0">Margin lost per unit short vs loss per unit over. The optimal service level is not a
+        policy choice — it's a ratio:</p>
+        <label>underage Cu (margin lost if short): ₹<span id="nv-u">140</span></label>
+        <input type="range" id="nv-us" min="10" max="400" value="140">
+        <label>overage Co (holding/salvage loss if over): ₹<span id="nv-o">35</span></label>
+        <input type="range" id="nv-os" min="5" max="200" value="35">
+        <div class="out" id="nv-out"></div>
+      </div>
+    </div>
+    <div class="pane">
+      <h4>The screen, top to bottom</h4>
+      <table>
+        <tr><th>CARD</th><th>WHAT HAPPENS</th></tr>
+        <tr><td><b>Exception Cockpit</b></td><td>"what needs my attention" — threshold breaches across the whole model, ranked</td></tr>
+        <tr><td><b>Monte Carlo — committed plan</b></td><td>S scenarios of correlated demand+cost shocks (ρ ◇0.4) against the <i>actual</i> committed plan: fill-rate, stockout, obsolescence (salvage ◇0.8 fraction) distributions</td></tr>
+        <tr><td><b>CVaR-robust stock</b></td><td>the LP sizes per-SKU buffers: "hold N more" per SKU vs the risk-neutral answer; β slider (95% default)</td></tr>
+        <tr><td><b>Resilience</b></td><td>stress the committed plan to failure: scale demand/capacity/lead-times until service breaks; report the breaking factor per axis</td></tr>
+        <tr><td><b>What-If + branches</b></td><td>one-delta probes (v5-branches strip when fan-out used); pins survive every probe (V5-2b)</td></tr>
+        <tr><td><b>Risk register (HMM)</b></td><td>risk.py's regime detector on history — which state the demand process is in now</td></tr>
+      </table>
+    </div>
+    <div class="pane">
+      <h4>The two engines, as written</h4>
+      <div class="math">montecarlo.py (V4-7 — correlated shocks):
+  L = chol([[1, ρ],[ρ, 1]])        ρ = 0.4 default  (montecarlo.py:51–59)
+  (z_d, z_c) = L · (iid normals)   → demand_s = D·(1 + σ_d·z_d) · cost_s likewise
+  simulate committed plan over S scenarios → fill, stockout-₹, obsolescence
+  (salvage_rate 0.8 FRACTION raw — montecarlo.py:131)
+
+cvar.py — Rockafellar–Uryasev, verbatim:
+  vars: Q (stock) · α (≈VaR at optimum) · z_s ≥ 0 per scenario
+  min  α + 1/((1−β)·S) · Σ_s z_s
+  s.t. z_s ≥ (h·overage_s + p·underage_s) − α     ∀s
+  the LP "discovers" VaR: α lands at the β-quantile because any other value
+  costs more — duality doing epistemology. Q* → procurement as ss_source='cvar' floor</div>
+
+      <details><summary>FULL PAYLOAD CONTRACTS — cvar.py + montecarlo.py (verified by grep)</summary><div>
+        <p class="m" style="font:600 12px/1.9 var(--mono)">
+        <b>cvar.py (all six):</b> mean · std (demand) · holding_cost (Co) · shortage_cost (Cu) · beta ◇0.95 · n_scenarios —
+        the smallest contract in the app; everything else is the LP.<br>
+        <b>montecarlo.py:</b> production_plan / plan_committed (the ACTUAL plan) · demand + mape_pct (PERCENT, ÷100 inside) ·
+        corr_demand_cost ◇0.4 · demand_corr_matrix (cross-SKU, V4-7) · n_runs · sell_price · variable_cost · landed_cost ·
+        carry_rate · salvage_rate (FRACTION ◇0.8) · yield_pct (FRACTION) · shelf_life · service_level ·
+        prod_lead_time (+ _cv) · init_inventory · capacity · setup_cost · periods · periods_per_year</p>
+      </div></details>
+
+      <div class="card"><b>DONE PROBLEM — CVaR with five scenarios, by hand</b>
+        <div class="io"><span class="c">// stock Q = 100 · demand scenarios [80, 90, 100, 110, 140] · Co = ₹2/u over · Cu = ₹10/u short · β = 0.8</span>
+losses : over 20→₹40 · over 10→₹20 · exact→₹0 · short 10→₹100 · short 40→<span class="r">₹400</span>
+sorted : 0, 20, 40, 100, 400
+VaR₈₀  : the 80th-percentile loss                 = ₹100
+CVaR₈₀ : mean of the worst (1−β)=20% (1 scenario) = <span class="y">₹400  ← 4× VaR. THIS is why tails decide.</span>
+R–U LP check: α + 1/((1−.8)·5)·Σ z_s  with z_s = max(0, loss_s − α)
+  at α = 100:  100 + 1·(0+0+0+0+300) = 400 ✓     the LP minimum equals CVaR</div>
+        <p>Test separately: Console → cvar with mean 104, matching std, these costs, β 0.8, then read Q* — it will land
+        above 100 because Cu/(Cu+Co) = 10/12 = 83% says stock to the 83rd percentile (the fractile widget above, acting).</p>
+      </div>
+    </div>
+    <div class="pane">
+      <h4>What renders</h4>
+      <p><b>vis9 / VIS-9</b> — the service-risk picture from the solver's own scenario set: the loss histogram with VaR
+      and CVaR marked (mean vs tail, one glance); <b>v4-mccorr</b> — the correlation toggle's effect on the tail, drawn
+      (the dishonest-thin tail vs the ρ=0.4 truth); <b>v5-branches</b> — branch fan-out results; the resilience
+      breaking-point gauges per stress axis; <b>scenarios-decide</b> — act-now strip.</p>
+    </div>
+    <div class="pane">
+      <div class="verdict">
+        <div class="vcol built"><span class="vh">BUILT ✓ (grade B+)</span><ul>
+          <li>MC on the committed plan (not a toy series), correlated demand×cost (V4-7)</li>
+          <li>Faithful R–U CVaR LP, feeding procurement's safety floor — simulation→optimization closed loop</li>
+          <li>Resilience stress-to-failure; exception cockpit; HMM regime sensing</li>
+          <li>Pins survive every what-if (V5-2b)</li></ul></div>
+        <div class="vcol miss"><span class="vh">MISSING ✗</span><ul>
+          <li><b>Two-stage stochastic programming with recourse</b> — decisions that adapt <i>within</i> the model (order now, expedite later) rather than simulate-then-patch; the named class, absent</li>
+          <li>Lead-time uncertainty in MC (demand and cost shock; the sea leg doesn't)</li>
+          <li>Scenario persistence/sharing (a study you can send someone)</li></ul></div>
+        <div class="vcol wrong"><span class="vh">THIN ⚠</span><ul>
+          <li>S defaults modest for tail estimates — CVaR at β=0.95 on small S has wide error bars the UI doesn't draw</li>
+          <li>Resilience scales axes independently; correlated failure modes (the monsoon that cuts capacity AND spikes lead times) aren't composable</li></ul></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="step"><div class="sn">1</div><div class="sb"><span class="where">SCENARIOS · MONTE CARLO</span><br>Run MC on the committed plan. Read three numbers: mean fill, P5 fill, expected stockout ₹. The gap between mean and P5 is the flaw of averages, measured on <i>your</i> plan.</div></div>
+      <div class="step"><div class="sn">2</div><div class="sb"><span class="where">SCENARIOS · THE CORRELATION LESSON</span><br>Toggle ρ 0.4 → 0 (v4-mccorr) and re-run. Watch the tail thin. Now remember every consultant deck that simulated demand and cost independently — and read the difference as the size of that lie.</div></div>
+      <div class="step"><div class="sn">3</div><div class="sb"><span class="where">SCENARIOS · CVaR</span><br>Solve CVaR-robust stock at β ◇0.95. Read per-SKU "hold N more": concentrated on high-margin, high-σ SKUs — the critical fractile acting through the LP. Accept, and procurement's next run carries the floors (<span class="k">ss_source='cvar'</span>).</div></div>
+      <div class="step"><div class="sn">4</div><div class="sb"><span class="where">SCENARIOS · RESILIENCE</span><br>Stress to failure: demand breaks the plan at ×1.A, capacity at ×0.B, lead time at +C wks. The weakest axis is your real fragility — usually not the one the last war room argued about.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════ 12 · REFERENCE + HOME ════════════════════════ -->
+<section class="stage" id="s-reference">
+  <div class="stagehead"><span class="num">12</span><h2>Reference &amp; Home — Learn, Map, Operate</h2><span class="bandtag">LEARN</span></div>
+  <div class="stagehead" style="border:none; padding:0"><span class="sub2">The learning lab, the SAP-equivalence map, the live model map, the endpoint catalog — and Home, where the day starts.</span></div>
+  <div class="card">
+    <p><b>Home — Command Center</b> opens the day: KPI headlines, the solver lifecycle, the spine button. Its honest
+    tooltip ("runs the 6-step planning spine only — not all 16 engines") sets the tone the whole app keeps.</p>
+    <p><b>Reference</b> carries four things worth knowing exist: the <b>Learning Lab</b> (including <b>VIS-6</b>, the
+    feasible-region toy — the same geometry as this guide's first widget, inside the product); the <b>SAP map</b>
+    (every engine ↔ its SAP module equivalent: aggregate↔SOP/IBP, production↔PP/DS, procurement↔MM/MRP, MEIO↔IBP
+    inventory — the fastest way for an SAP-literate visitor to locate themselves); the <b>live model map</b>, colored by
+    what solves have actually touched; and the <b>endpoint catalog + solve tracer</b> — pick any past solve and walk its
+    payload → engine → result chain. The tracer is the observability the VERDICT tabs keep asking the engines
+    themselves to emit.</p>
+  </div>
+</section>
+
+<!-- ════════════════════════ THE HONEST LEDGER ════════════════════════ -->
+<section class="stage" id="s-ledger">
+  <div class="stagehead"><span class="num">!</span><h2>The Honest Ledger — across the whole system</h2><span class="bandtag">VERDICT</span></div>
+
+  <h3>Explanation coverage — the audit, one row per engine</h3>
+  <p>The bar: does the result say <i>"I did this because…"</i> with the binding constraint, the marginal value, and the
+  rejected alternative? About <b>one-third</b> of the system clears it. The pattern behind every C: the reason is
+  computed inside the engine and <b>discarded at the response boundary</b>. The fix is one uniform block on every
+  response — <span class="k">decisions[] {what, because, binding_constraints[], marginal_value,
+  alternatives_rejected[]}</span> — plus a "Why this?" expander in every result panel. It is the top backlog item.</p>
+  <table>
+    <tr><th>ENGINE</th><th>GRADE</th><th>WHAT IT EXPLAINS TODAY</th><th>WHAT IT SILENTLY KNOWS</th></tr>
+    <tr><td>transport</td><td><span class="b ok">A</span></td><td>chosen vs rejected modes, reasons, split math, saving:null honesty</td><td>—</td></tr>
+    <tr><td>aggregate</td><td><span class="b ok">A−</span></td><td>binding rows, duals, strategy verdict</td><td>why hire here not OT there, per month</td></tr>
+    <tr><td>forecast</td><td><span class="b ok">A−</span></td><td>leaderboard, refusal reasons, FVA</td><td>per-SKU why-this-family narrative</td></tr>
+    <tr><td>lot-sizing / policy</td><td><span class="b ok">A−</span></td><td>all 13 policies' evaluated costs</td><td>—</td></tr>
+    <tr><td>CTP</td><td><span class="b ok">A−</span></td><td>the week found + what moved</td><td>—</td></tr>
+    <tr><td>cvar / MC / risk</td><td><span class="b part">B+</span></td><td>distributions, VaR/CVaR markers</td><td>which scenarios drive the tail</td></tr>
+    <tr><td>profitmix</td><td><span class="b part">B</span></td><td>reduced-cost re-entry prices (verbal)</td><td>full binding story per SKU</td></tr>
+    <tr><td>capital</td><td><span class="b part">B</span></td><td>NPV per verdict, relaxation dual</td><td>ranking rationale between candidates</td></tr>
+    <tr><td>meio</td><td><span class="b part">B−</span></td><td>τ table, total vs baseline</td><td>why THIS node holds the buffer — the most explainable result in the app, unexplained</td></tr>
+    <tr><td>production</td><td><span class="b no">C</span></td><td>the gantt (what only)</td><td>binding hours, setup trades, fence effects — all computed, all dropped</td></tr>
+    <tr><td>procurement</td><td><span class="b no">C</span></td><td>quantities, costs</td><td>price-step pull-forwards, budget pushes, MOQ roundings — likewise dropped</td></tr>
+  </table>
+
+  <h3>Problem classes — what exists, what doesn't (the Gurobi-catalog view)</h3>
+  <div class="grid2">
+    <div class="card" style="margin:0"><b>Covered, exactly</b><br>
+      <span class="b ok">capacitated lot-sizing</span> <span class="b ok">aggregate planning</span>
+      <span class="b ok">transportation/allocation LP</span> <span class="b ok">multi-echelon inventory (GS)</span>
+      <span class="b ok">newsvendor/CVaR</span> <span class="b ok">capital budgeting MILP</span>
+      <span class="b ok">Wagner-Whitin</span> <span class="b ok">product-mix with coupling</span></div>
+    <div class="card" style="margin:0"><b>Named, absent — say so when asked</b><br>
+      <span class="b no">job-shop / flow-shop (JSSP)</span> <span class="b no">vehicle routing (CVRP)</span>
+      <span class="b no">facility location</span> <span class="b no">two-stage stochastic w/ recourse</span>
+      <span class="b no">portfolio (Markowitz)</span> <span class="b no">cutting stock</span></div>
+  </div>
+
+  <h3>Gaps against the benchmark stacks — CBC vs the field, honestly</h3>
+  <p>Every exact program here runs on <b>PuLP → CBC</b>. Two facts up front: PuLP is a <i>modeling layer</i>, not a
+  solver (swapping the engine under it is a one-line change), and at this app's scale — thousands of variables, not
+  millions — <b>CBC loses us nothing measurable today</b>. The honest comparison:</p>
+  <table>
+    <tr><th>STACK</th><th>WHAT IT IS</th><th>WHERE IT BEATS OUR CBC</th><th>VERDICT FOR US</th></tr>
+    <tr><td><b>CBC (current)</b></td><td>open-source B&amp;B MILP</td><td>—</td><td>fine at our scale; weakest numerics in the list; no conflict analysis, no callbacks</td></tr>
+    <tr><td><b>HiGHS</b></td><td>open-source, the modern default</td><td>2–10× faster LP/MILP, better numerics, active development</td><td><span class="b ok">FIRST UPGRADE</span> — free, one-line PuLP swap (HiGHS_CMD); do it on the first customer instance that makes CBC sweat</td></tr>
+    <tr><td><b>OR-Tools CP-SAT</b></td><td>Google's constraint-programming SAT solver</td><td>true scheduling: interval variables, no-overlap, sequence-dependent setups — the JSSP/reshuffle math MILP is wrong for</td><td><span class="b ok">THE SCHEDULING LANE</span> — not a CBC replacement, a different tool for the minute-grain problems we honestly lack</td></tr>
+    <tr><td><b>Gurobi</b></td><td>commercial, the speed king</td><td>10–100× on hard MILPs · <b>IIS conflict explanation</b> ("these 3 constraints contradict") · callbacks/lazy constraints · enterprise numerics</td><td>buy only on customer-instance evidence; the real purchase reason at our scale would be <b>IIS</b> (debugging infeasibility), not speed</td></tr>
+    <tr><td><b>Hexaly</b></td><td>commercial heuristic local-search</td><td>huge messy problems where exactness is hopeless (giant VRP/packing)</td><td>different philosophy: <b>no optimality certificate by design</b> — "optimal" on their slides means "best found." Not our gap.</td></tr>
+  </table>
+  <p><b>Where CBC genuinely falls short for us, today:</b> (1) no IIS — when a model goes infeasible we debug with
+  elastic variables and intuition instead of a machine-generated conflict set; (2) no callbacks — patterns like lazy
+  subtour cuts (needed if we ever build real CVRP) are unavailable; (3) scale headroom — a 50-site, 500-SKU customer
+  would force the HiGHS swap immediately; (4) numerics — tight big-M models occasionally need babying CBC that better
+  solvers don't ask for. None of these blocks the current product; all four shape the roadmap above.</p>
+  <p><b>Decode the marketing while you're here:</b> "optimal" = closed branch-and-bound gap (a proof). "Near-optimal in
+  seconds" = a heuristic answer plus hope, unless a bound is printed next to it. When a vendor benchmark shows 100×
+  speedups, ask what instance class — at this app's sizes, every stack in the table returns in seconds; the
+  differentiators are explanation tooling (IIS) and problem-class reach (CP-SAT's scheduling), not raw speed.</p>
+
+  <h3>The five structural debts, ranked</h3>
+  <div class="step"><div class="sn">1</div><div class="sb"><b>Persistence/auth/data-onboarding.</b> localStorage is a demo's spine, not a product's. Until a company can log in, load its real items, and come back tomorrow, everything else is a showroom. (Fatal for adoption; nothing else on this list matters first.)</div></div>
+  <div class="step"><div class="sn">2</div><div class="sb"><b>decisions[] everywhere.</b> The ⅓→100% explanation move. Cheap (the reasons already exist in-engine), differentiating (the transport card proves the pattern), and the foundation for any LLM copilot story.</div></div>
+  <div class="step"><div class="sn">3</div><div class="sb"><b>The disruption lane.</b> Designed in full (typed event log where every event — operator no-show, crane down, material late — compiles to a constraint delta the solvers already accept: capacity_hours delta, maint_scale, receipt shift; then pin-the-past + branch the recovery family: absorb / OT / reroute / expedite). NOT BUILT — but it sits on three substrates that are: rolling re-solve, maint_scale, branch fan-out. The killer demo when it lands.</div></div>
+  <div class="step"><div class="sn">4</div><div class="sb"><b>Weekly buckets vs minute reality.</b> The CLSP is the right plan-of-record; the shop floor's reflexes need CP-SAT interval scheduling. The upgrade ladder is already chosen: HiGHS as the free CBC swap when scale demands → OR-Tools CP-SAT for true scheduling → Gurobi only on customer-instance evidence (its IIS conflict-explainer being the actual purchase reason, not speed).</div></div>
+  <div class="step"><div class="sn">5</div><div class="sb"><b>Under-used duals.</b> Legitimate shadow prices flow from aggregate and capital — and mostly stop at tables. Every binding constraint is a priced business lever; VIS-5 monetizes exactly one of them. The pattern wants to be everywhere.</div></div>
+
+  <div class="note g"><span class="t">WHAT THIS APP GETS RIGHT THAT BIGGER ONES DON'T</span>
+  Provenance on every number (◇ seed vs yours) · one blended cost truth · the finance spine priced by the same carry
+  rate everywhere · forecast→stock→buy→move as one closed, freshness-tracked loop · refusal behaviors (blend refusal,
+  saving:null, MIP-dual honesty) baked into engines rather than disclaimers · and the whole thing drivable through one
+  open API. The honest gaps above are sequencing, not contradiction: the substrate they need already exists.</div>
+
+  <footer>
+    mastery_guide.html · supersedes solver_expert_guide.html (kept) and supply_chain_12_steps (1).html ·
+    TPAC seed dataset throughout — ◇ marks every seeded number · grades and observed figures from the live-app audit
+    (headless Chromium against the running server) · spine: forecast → procurement → aggregate → production → linecap → montecarlo
+  </footer>
+</section>
+
+
+</div>
+<script>
+/* nav active state + flow map jumps + tab strips */
+(function(){
+  document.getElementById('flowmap').addEventListener('click', function(e){
+    const n = e.target.closest('.fnode'); if(!n) return;
+    const t = document.getElementById(n.dataset.go); if(t) t.scrollIntoView({behavior:'smooth'});
+  });
+  document.addEventListener('click', function(e){
+    const b = e.target.closest('.tabs button'); if(!b) return;
+    const strip = b.parentElement, panes = strip.nextElementSibling;
+    [...strip.children].forEach(x=>x.classList.toggle('on', x===b));
+    [...panes.children].forEach((p,i)=>p.classList.toggle('on', i===[...strip.children].indexOf(b)));
+  });
+  const links=[...document.querySelectorAll('#rail a')];
+  const secs=links.map(a=>document.querySelector(a.getAttribute('href'))).filter(Boolean);
+  addEventListener('scroll', ()=>{
+    let cur=secs[0];
+    for(const s of secs){ if(s.getBoundingClientRect().top<120) cur=s; }
+    links.forEach(a=>a.classList.toggle('on', a.getAttribute('href')==='#'+cur.id));
+  }, {passive:true});
+})();
+
+/* LP geometry widget */
+(function(){
+  const svg=document.getElementById('lp-svg'), out=document.getElementById('lp-out'),
+        sl=document.getElementById('lp-slider'), rl=document.getElementById('lp-r');
+  if(!svg) return;
+  const X=x=>30+x*5.2, Y=y=>210-y*4.2;  // x:0..60, y:0..45 view
+  function corners(){ return [[0,0],[50,0],[36,28],[0,40]]; } // vertices of 2x+y<=100, x+3y<=120
+  function draw(){
+    const R=+sl.value; rl.textContent=R;
+    const cs=corners();
+    let best=0, bi=0;
+    cs.forEach((c,i)=>{ const v=R*c[0]+90*c[1]; if(v>best){best=v; bi=i;} });
+    const poly=cs.map(c=>X(c[0])+','+Y(c[1])).join(' ');
+    // objective contour through best vertex: R*x+90*y=best → two points
+    const yA=best/90, xA=best/R;
+    svg.innerHTML=
+      '<polygon points="'+poly+'" fill="#dfe3f8" stroke="#4338ca" stroke-width="2"/>'+
+      '<line x1="'+X(0)+'" y1="'+Y(0)+'" x2="'+X(62)+'" y2="'+Y(0)+'" stroke="#16130f" stroke-width="2"/>'+
+      '<line x1="'+X(0)+'" y1="'+Y(0)+'" x2="'+X(0)+'" y2="'+Y(46)+'" stroke="#16130f" stroke-width="2"/>'+
+      '<line x1="'+X(Math.min(xA,62))+'" y1="'+Y(xA>62?(best-R*62)/90:0)+'" x2="'+X(yA>46?(best-90*46)/R:0)+'" y2="'+Y(Math.min(yA,46))+'" stroke="#b45309" stroke-width="2" stroke-dasharray="6 4"/>'+
+      cs.map((c,i)=>'<circle cx="'+X(c[0])+'" cy="'+Y(c[1])+'" r="'+(i===bi?8:4)+'" fill="'+(i===bi?'#b91c1c':'#4338ca')+'" stroke="#16130f" stroke-width="2"/>').join('')+
+      '<text x="'+(X(cs[bi][0])+10)+'" y="'+(Y(cs[bi][1])-8)+'" font-size="11" font-weight="700">OPTIMUM</text>'+
+      '<text x="295" y="225" font-size="10">x →</text><text x="8" y="20" font-size="10">y ↑</text>';
+    const v=cs[bi];
+    out.innerHTML='optimum = <b>('+v[0]+', '+v[1]+')</b> · profit ₹'+best.toLocaleString('en-IN')+
+      ' — always a <b>vertex</b>. '+(bi===2?'Both resources BINDING (interior corner): each has a nonzero shadow price.':
+      bi===1?'Machine-hours binding, finishing slack ⇒ finishing\'s shadow price is ₹0.':
+      bi===3?'Finishing binding, machine-hours slack ⇒ machine-hours\' shadow price is ₹0.':'Nothing produced.');
+  }
+  sl.addEventListener('input', draw); draw();
+})();
+
+/* forecast tournament widget */
+(function(){
+  const h=document.getElementById('fc-hs'); if(!h) return;
+  const s=document.getElementById('fc-ss'), x=document.getElementById('fc-xs'), out=document.getElementById('fc-out');
+  function run(){
+    const H=+h.value, S=+s.value, X=+x.value;
+    document.getElementById('fc-h').textContent=H;
+    document.getElementById('fc-s').textContent=S;
+    document.getElementById('fc-x').textContent=X;
+    let fam, why, extra='';
+    if(H<18){ fam='Naive seasonal (single model)'; why='history < 18 points — the engine REFUSES to blend or fit heavy models on this little data; the honest answer is the simplest one plus wide error bars.'; }
+    else if(X>45 && H>=30){ fam='Tree ensemble (RF/GB/XGBoost)'; why='strong external drivers + enough history: trees can consume the regressor columns (V4-4); stats families cannot see price/promo at all.'; }
+    else if(X>25){ fam='Hybrid (HW skeleton + ML residuals)'; why='moderate driver influence: Holt-Winters carries the seasonal shape, ML mops up the regressor-driven residual.'; }
+    else if(S>40){ fam='Holt-Winters '+(S>70?'multiplicative':'additive'); why='clean seasonality, weak external drivers: explicit season smoothing wins, '+(S>70?'multiplicative because the seasonal swing scales with level.':'additive because the swing is level-independent.'); }
+    else if(H>=36){ fam='ARIMA (AIC grid)'; why='little seasonality, decent history: autocorrelation/momentum structure is the main signal left.'; }
+    else { fam='Naive seasonal'; why='weak structure everywhere — the baseline is genuinely hard to beat, and pretending otherwise is overfitting.'; }
+    if(H<30 && X>45) extra=' ⚠ drivers present but history too thin to learn them — collect more before trusting the trees.';
+    out.innerHTML='leaderboard champion → <b>'+fam+'</b><br><span style="font-weight:600">'+why+extra+'</span>';
+  }
+  [h,s,x].forEach(e=>e.addEventListener('input', run)); run();
+})();
+
+/* level-vs-chase widget */
+(function(){
+  const hf=document.getElementById('lc-hfs'); if(!hf) return;
+  const hh=document.getElementById('lc-hs'), out=document.getElementById('lc-out');
+  const D=[800,820,900,1100,1400,1600,1500,1200,950,850,800,820]; // seasonal demand
+  function run(){
+    const HF=+hf.value, HO=+hh.value;
+    document.getElementById('lc-hf').textContent=HF.toLocaleString('en-IN');
+    document.getElementById('lc-h').textContent=HO;
+    const perW=50; // units per worker-month
+    // chase: workforce tracks demand exactly
+    let chase=0, w=D[0]/perW;
+    D.forEach(d=>{ const nw=d/perW; chase+=Math.abs(nw-w)*HF; w=nw; });
+    // level: flat workforce at mean, inventory absorbs
+    const mean=D.reduce((a,b)=>a+b)/12; let inv=0, level=0;
+    D.forEach(d=>{ inv+=mean-d; if(inv>0) level+=inv*HO; else level+=(-inv)*HO*3; /* backorder 3x */ });
+    const max=Math.max(chase,level);
+    document.getElementById('lc-b1').style.width=(chase/max*100)+'%';
+    document.getElementById('lc-b2').style.width=(level/max*100)+'%';
+    document.getElementById('lc-v1').textContent='₹'+Math.round(chase).toLocaleString('en-IN');
+    document.getElementById('lc-v2').textContent='₹'+Math.round(level).toLocaleString('en-IN');
+    const r=chase/level;
+    out.innerHTML = r>1.4 ? 'verdict: <b>mostly LEVEL</b> — workforce changes are expensive relative to carrying stock; build inventory ahead of the peak. The MILP will still chase a little at the extreme months.'
+      : r<0.7 ? 'verdict: <b>mostly CHASE</b> — holding is expensive relative to flexing headcount; track demand and keep inventory lean.'
+      : 'verdict: <b>HYBRID</b> — the costs are balanced, so the optimum mixes both. No strategy chart would have drawn this; prices did.';
+  }
+  [hf,hh].forEach(e=>e.addEventListener('input', run)); run();
+})();
+
+/* shadow price widget */
+(function(){
+  const c=document.getElementById('sp-cs'); if(!c) return;
+  const out=document.getElementById('sp-out');
+  function run(){
+    const C=+c.value; document.getElementById('sp-c').textContent=C.toLocaleString('en-IN');
+    if(C<1000){
+      out.innerHTML='capacity <b>BINDING</b> (serve '+C.toLocaleString('en-IN')+' of 1,000) · shadow price = <b>₹140/unit of capacity</b> — every extra unit of capacity earns a full margin. Pay up to ₹140 for one more unit-month: overtime, rental, expedite. Slack = 0.';
+    } else {
+      out.innerHTML='capacity <b>SLACK</b> ('+(C-1000).toLocaleString('en-IN')+' units idle) · shadow price = <b>₹0</b> — one more unit of capacity earns nothing; demand ran out first. Notice there is no in-between: the dual jumps 140 → 0 exactly at the vertex.';
+    }
+  }
+  c.addEventListener('input', run); run();
+})();
+
+/* Wagner-Whitin vs EOQ widget */
+(function(){
+  const l=document.getElementById('ww-ls'); if(!l) return;
+  const k=document.getElementById('ww-ks'), out=document.getElementById('ww-out');
+  function run(){
+    const L=+l.value/100, K=+k.value, h=4, T=12, total=2400;
+    document.getElementById('ww-l').textContent=Math.round(L*100);
+    document.getElementById('ww-k').textContent=K.toLocaleString('en-IN');
+    // lumpy demand with IRREGULAR spikes (a periodic mask would gift EOQ's fixed cadence a tie)
+    const MASK=[1,0,0,1,0,1,0,0,0,1,0,0];
+    const d=[]; for(let t=0;t<T;t++){ const spike=MASK[t]?1+2.5*L:1-L*0.95; d.push(200*spike); }
+    const sc=total/d.reduce((a,b)=>a+b); for(let t=0;t<T;t++) d[t]*=sc;
+    // EOQ adapted to discrete periods = period-order-quantity: order the next n periods' demand
+    const avg=total/T, Q=Math.sqrt(2*K*avg/h), n=Math.max(1,Math.round(Q/avg));
+    let eoq=0, ww;
+    for(let t=0;t<T;){ let inv=0; eoq+=K; for(let u=t;u<Math.min(T,t+n);u++) inv+=d[u];
+      for(let u=t;u<Math.min(T,t+n);u++){ inv-=d[u]; eoq+=inv*h; } t+=n; }
+    // WW exact DP
+    const INF=1e15, C=[0]; const cum=[0]; d.forEach((x,i)=>cum.push(cum[i]+x));
+    for(let t=1;t<=T;t++){ let best=INF;
+      for(let j=1;j<=t;j++){ let hold=0; for(let u=j;u<=t;u++) hold+=h*(cum[t]-cum[u]); best=Math.min(best, C[j-1]+K+hold); }
+      C.push(best); }
+    ww=C[T];
+    const gap=Math.max(0,(eoq-ww)/eoq*100);
+    out.innerHTML='EOQ-policy cost ₹'+Math.round(eoq).toLocaleString('en-IN')+' · <b>Wagner-Whitin ₹'+Math.round(ww).toLocaleString('en-IN')+'</b> — exact DP '+
+      (gap>12?'wins by <b>'+gap.toFixed(0)+'%</b>: lumpy demand + costly POs is exactly its regime.':
+       gap>3?'wins by '+gap.toFixed(0)+'% — a real but modest edge.':
+       'ties (≤'+Math.max(1,gap).toFixed(0)+'%): with flat demand the constant-lot assumption EOQ makes is nearly true.')+
+      ' The app evaluates all 13 policies and just takes the cheapest — this comparison, automated.';
+  }
+  [l,k].forEach(e=>e.addEventListener('input', run)); run();
+})();
+
+/* bridge split widget */
+(function(){
+  const c=document.getElementById('ms-cs'); if(!c) return;
+  const out=document.getElementById('ms-out');
+  const W=4000, burn=100, seaDays=38, deadline=30, buf=1.15, airKg=16, seaKg=1.6;
+  function run(){
+    const cover=+c.value; document.getElementById('ms-c').textContent=cover;
+    const short=seaDays-cover; // days short before sea lands (vs consumption)
+    const allSea=Math.round(W*seaKg), allAir=Math.round(W*airKg);
+    if(short<=0){
+      out.innerHTML='stock covers the whole sea transit → <b>SHIP SEA</b>, ₹'+allSea.toLocaleString('en-IN')+'. No drama, no air.';
+    } else {
+      const bridge=Math.min(W, Math.round(short*burn*buf));
+      const split=Math.round(bridge*airKg+(W-bridge)*seaKg);
+      if(bridge>=W){ out.innerHTML='you are short the entire shipment window → <b>USE AIR</b> for all '+W.toLocaleString('en-IN')+' kg, ₹'+allAir.toLocaleString('en-IN')+'. Splits help; they don\'t resurrect a dead calendar.'; }
+      else out.innerHTML='short <b>'+short+' days</b> before sea lands → <b>SPLIT FAST+SLOW</b>: fly bridge = '+short+'d × '+burn+'kg × 1.15 = <b>'+bridge.toLocaleString('en-IN')+' kg</b>, ship '+(W-bridge).toLocaleString('en-IN')+' kg sea.<br>cost ₹'+split.toLocaleString('en-IN')+' vs all-air ₹'+allAir.toLocaleString('en-IN')+' — <b>'+Math.round((1-split/allAir)*100)+'% saved</b> vs the panic answer.'+(short===12?' <b>← this is exactly the observed live-app case: 1,380 kg bridge, ₹64,000→₹32,167.</b>':'');
+    }
+  }
+  c.addEventListener('input', run); run();
+})();
+
+/* critical fractile widget */
+(function(){
+  const u=document.getElementById('nv-us'); if(!u) return;
+  const o=document.getElementById('nv-os'), out=document.getElementById('nv-out');
+  function run(){
+    const U=+u.value, O=+o.value, f=U/(U+O);
+    document.getElementById('nv-u').textContent=U; document.getElementById('nv-o').textContent=O;
+    out.innerHTML='critical fractile = Cu/(Cu+Co) = '+U+'/('+U+'+'+O+') = <b>'+(f*100).toFixed(1)+'%</b> — stock to the '+
+      (f*100).toFixed(0)+'th percentile of demand. '+
+      (f>0.9?'High-margin, cheap-to-hold: err big. This is why A-class service levels of 95%+ are economics, not policy.':
+       f<0.6?'Thin margin or expensive holding: a '+Math.round(f*100)+'% service level is the RATIONAL answer — chasing 95% here burns money.':
+       'The unglamorous middle — and the reason one-size-fits-all service levels are always wrong in both directions.');
+  }
+  [u,o].forEach(e=>e.addEventListener('input', run)); run();
+})();
+</script>
+</body>
+</html>
