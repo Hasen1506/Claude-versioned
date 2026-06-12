@@ -23,7 +23,9 @@ const _RIBBON_STAGES = [
     val:r=>`${(r.materials||[]).length||0} parts` },
   { key:'production',  phase:'schedule',     go:'production',
     val:r=>`${(r.gantt||[]).length||0} runs` },
-  { key:'linecap',     phase:'capital dual', go:'plan',
+  // label override: linecap ALSO lands on Plan — two chips both reading "PLAN"
+  // looked like a duplicate (design audit DA-5); name matches Home's lifecycle card.
+  { key:'linecap',     phase:'capital dual', go:'plan', label:'LINE CAPITAL',
     val:r=>`${(r.lines||[]).filter(l=>l.binding).length} binding` },
   { key:'montecarlo',  phase:'risk·CVaR',    go:'scenarios',
     val:r=>r.avg_fill!=null?`${r.avg_fill}% fill`:'solved' },
@@ -83,7 +85,7 @@ function PipelineRibbon({ active, onNav }) {
               }}/>
               <span style={{minWidth:0}}>
                 <span style={{display:'flex', alignItems:'center', gap:6}}>
-                  <span style={{fontFamily:F.disp, fontSize:11, fontWeight:800, letterSpacing:'.03em', textTransform:'uppercase'}}>{page}</span>
+                  <span style={{fontFamily:F.disp, fontSize:11, fontWeight:800, letterSpacing:'.03em', textTransform:'uppercase'}}>{p.label||page}</span>
                   <span style={{fontFamily:F.mono, fontSize:8.5, color:C.tx3}}>{p.phase}</span>
                 </span>
                 <span className="num" style={{fontFamily:F.mono, fontSize:10, color: status==='idle'?C.tx3:status==='stale'?C.a4:C.tx, fontWeight:600}}>{val}</span>

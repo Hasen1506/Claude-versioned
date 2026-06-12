@@ -458,7 +458,8 @@ const M = {
   // Seed COPY only (chrome content, no numbers): each item names a real action on
   // that tab so a first-time user can finish the loop without reading docs.
   guidedChecklist:{
-    home:       ['work the exception inbox — red first','check solve freshness on the ribbon','re-plan when anything reads stale'],
+    // DA-4: re-plan comes FIRST — a fresh visitor has no exceptions to work yet
+    home:       ['re-plan the spine (▶ above) if nothing is solved yet','check solve freshness on the ribbon','work the exception inbox — red first'],
     setup:      ['set service level α + shift hours','set the calendar & frozen/slushy fences','confirm tax + financing inputs'],
     products:   ['pick your working item','check its BOM & part costs','set price & cost — margin drives every solve'],
     network:    ['confirm nodes & lanes','set on-hand at each node','check lane cost / lead time'],

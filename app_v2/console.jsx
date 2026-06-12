@@ -399,7 +399,7 @@ function ResProcure() {
   return (
     <Grid cols={2}>
       <Card icon="📦" title="Procurement MILP Results" badge={r?`₹${(r.total_cost/1e7).toFixed(2)} Cr`:'₹3.12 Cr'} badgeTone="y"
-        right={r ? <Provenance kind="solved" asOf={proc.ranAt}/> : <Btn kind="accent" sm onClick={()=>proc.run().catch(()=>{})}>{proc.solving?'⏳ Planning…':'📦 Run MILP'}</Btn>}
+        right={r ? <Provenance kind="solved" asOf={proc.ranAt}/> : <span style={{display:'flex', alignItems:'center', gap:8}}><Provenance kind="seed"/><Btn kind="accent" sm onClick={()=>proc.run().catch(()=>{})}>{proc.solving?'⏳ Planning…':'📦 Run MILP'}</Btn></span>}
         info={{ what:'Optimal PO plan minimising inventory + ordering cost.', flows:'POs → Sourcing release plan.' }} span={2}
         dev={{ comp:'ProcurementResults', props:'solve.procurement' }}>
         {proc.error && <div style={{margin:'0 0 10px', padding:'7px 11px', border:`2px solid ${C.dg}`, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>procurement error: {proc.error}</div>}
@@ -409,7 +409,7 @@ function ResProcure() {
           foot={r ? ['TOTAL','','','—','',`₹${(r.total_cost/1e5).toFixed(1)}L`] : ['TOTAL','','','—','','₹11.4L']}/>
       </Card>
       <Card icon="📋" title="Reorder Policy (s,S) / (R,Q)" badge={pols?`${pols.length} parts · solved`:'per part'} badgeTone={pols?'g':undefined} span={2}
-        right={pols ? <Provenance kind="solved" asOf={proc.ranAt}/> : undefined}
+        right={pols ? <Provenance kind="solved" asOf={proc.ranAt}/> : <Provenance kind="seed"/>}
         info={{ what:'Computed reorder point & order-up-to / qty.', flows:'Policy → MRP.' }}
         dev={{ comp:'ReorderPolicyCard', props:'solve.procurement.policy' }}>
         <DataTable dense cols={['Part','Policy','s (ROP)','S / Q','Review']} align={['left','left','right','right','left']}
@@ -465,7 +465,7 @@ function ResProduce() {
   return (
     <Grid cols={1}>
       <Card icon="📅" title="Production Schedule · Gantt" badge={r?`${r.lines.length} lines · ${r.periods}p · solved`:'3 lines · 18 wk'} badgeTone="y"
-        right={r ? <Provenance kind="solved" asOf={pr.ranAt}/> : <Btn kind="accent" sm onClick={()=>pr.run().catch(()=>{})}>{pr.solving?'⏳ Scheduling…':'📅 Run scheduler'}</Btn>}
+        right={r ? <Provenance kind="solved" asOf={pr.ranAt}/> : <span style={{display:'flex', alignItems:'center', gap:8}}><Provenance kind="seed"/><Btn kind="accent" sm onClick={()=>pr.run().catch(()=>{})}>{pr.solving?'⏳ Scheduling…':'📅 Run scheduler'}</Btn></span>}
         info={{ what:'Sequenced jobs per line over the horizon.', flows:'Schedule → shop-floor execution.' }}
         dev={{ comp:'GanttCard', props:'solve.production.schedule' }}>
         {pr.error && <div style={{margin:'0 0 10px', padding:'7px 11px', border:`2px solid ${C.dg}`, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>production error: {pr.error}</div>}
@@ -1076,7 +1076,7 @@ function ResRisk() {
   return (
     <Grid cols={2}>
       <Card icon="🎲" title="Monte Carlo Results" badge={r?`${r.n_runs} runs · ${r.policy_simulated}`:'1,000 runs'} badgeTone="y" info={{ what:'Total-cost distribution under uncertainty.', flows:'Risk → CVaR & hedging.' }} span={2}
-        right={r ? <Provenance kind="solved" asOf={mc.ranAt}/> : <Btn kind="accent" sm onClick={()=>mc.run().catch(()=>{})}>{mc.solving?'⏳ Simulating…':'🎲 Run 500 sims'}</Btn>}
+        right={r ? <Provenance kind="solved" asOf={mc.ranAt}/> : <span style={{display:'flex', alignItems:'center', gap:8}}><Provenance kind="seed"/><Btn kind="accent" sm onClick={()=>mc.run().catch(()=>{})}>{mc.solving?'⏳ Simulating…':'🎲 Run 500 sims'}</Btn></span>}
         dev={{ comp:'MonteCarloResults', props:'solve.montecarlo', note:'montecarlo.py backend.' }}>
         {mc.error && <div style={{margin:'0 0 10px', padding:'7px 11px', border:`2px solid ${C.dg}`, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>monte-carlo error: {mc.error}</div>}
         <McChart hist={r?r.histogram:undefined} mean={r?r.avg_cost:undefined}/>
@@ -1133,7 +1133,7 @@ function ResCapital() {
   return (
     <Grid cols={2}>
       <Card icon="🏗️" title="Capital Budget Results" badge={r?`fund ${r.selected.length}/${CAPEX_PROPOSALS.length} · ₹${(r.total_capex/1e7).toFixed(2)}Cr`:'endogenous'} badgeTone="y"
-        right={r ? <Provenance kind="solved" asOf={cap.ranAt}/> : <Btn kind="accent" sm onClick={runCap}>{cap.solving?'⏳ Allocating…':'🏗️ Run capital budget'}</Btn>}
+        right={r ? <Provenance kind="solved" asOf={cap.ranAt}/> : <span style={{display:'flex', alignItems:'center', gap:8}}><Provenance kind="seed"/><Btn kind="accent" sm onClick={runCap}>{cap.solving?'⏳ Allocating…':'🏗️ Run capital budget'}</Btn></span>}
         info={{ what:'Optimal capacity investments under a binding budget.', flows:'CapEx → Finance verdict.' }} span={2}
         dev={{ comp:'CapitalResults', props:'solve.capital', note:'capital.py backend.' }}>
         {cap.error && <div style={{margin:'0 0 10px', padding:'7px 11px', border:`2px solid ${C.dg}`, fontFamily:F.mono, fontSize:10.5, color:C.dg}}>capital error: {cap.error}</div>}

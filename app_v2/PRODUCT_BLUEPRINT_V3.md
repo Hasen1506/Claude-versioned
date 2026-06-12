@@ -919,6 +919,26 @@ V4-1 profit-aware aggregate objective toggle · V4-2 multi-resource aggregate (m
 class) · V4-3 OT per-shift mode · V4-4 price/exog forecast columns · V4-5 ATP/CTP order-promise ·
 V4-6 rework cost adder + yield doc · V4-7 correlated MC.
 
+**PHASE-III ✅ 2026-06-12 — full-site design audit → `docs/design-audit/README.md` + `assets/` (~95 screenshots).**
+Method: live site, headless Chromium 1440×900, every stage captured fresh-boot + guided + solved (one real
+▶ Re-plan spine run), scroll-tiled (the app scrolls an inner container — `fullPage` captures only the first
+viewport; tiler finds the max-scrollHeight element and steps 820px). Two personas (first-day + experienced
+senior design lead), every issue tagged understanding/trust/conversion + specific fix. **5 safe-small fixes
+applied on the spot, all probe-verified live then re-shot:** DA-1 plan.jsx:170 "VIEWING ▸ PORTFOLIO
+AGGREGATE" chip was black-on-black in MONO (`C.onAc`==`C.ink`==#0a0a0a) → `C.paper` · DA-2 console.jsx ×5
+Interpret cards (procurement/policy/production/MC/capital) showed hard-coded seed tables pre-solve with no
+marking → `Provenance kind="seed"` chips · DA-3 home.jsx ×5 "run loop" → "re-plan to fill" (one name per
+action) · DA-4 guidedChecklist.home reordered (re-plan first — fresh user has no exceptions) · DA-5 ribbon
+linecap chip relabelled LINE CAPITAL (was a second "PLAN" chip). **Top systemic finding (recommendation,
+NOT spot-fixed):** the loop's own LP-A demand-commit stales all 8 non-spine engines, so the success state
+shows "8 SOLVES STALE — RE-PLAN TO REFRESH" — but re-plan can't refresh non-spine engines; fix = split
+spine-stale vs advisory-stale in freshness derivation + collapse the 8 mechanical exception rows to one.
+Other H findings: Sourcing PO-release/shortage/freight cards stay "ILLUSTRATIVE — run procurement" even
+after the loop solved procurement (cache never hydrates the tab cards); service-level renders 0.95
+(Sourcing/Scenarios) vs 95% (Setup) for the SAME token. Screenshot-byte gotcha: Read renders PNGs >~150 KB
+as thumbnails — quantize viewing copies to 128 colors. Gate 4/4 after fixes (128 pytest · lints · 7/7 ·
+9/9). Audit explicitly protects the style + honesty furniture ("what NOT to change").
+
 **PHASE-II-R ✅ REBUILT 2026-06-12 — `app_v2/mastery_guide.html` (user rejected the first guide's design; full rewrite).**
 User verdict on solver_expert_guide.html: poorly designed, "based off V1–V5" framing wrong — wanted the WHOLE app
 in exact user-flow order with visuals/interactivity, per-section mastery + built/missing/wrong + step-by-step

@@ -137,11 +137,11 @@ function StageHome({ onNav }) {
           <Blk label="Revenue" value={_crH(revenue)} sub="price × demand" tone="k"/>
           <Blk label="COGS" value={_crH(cogs)} sub="cost × demand"/>
           <Blk label="Margin ▸" value={(margin*100).toFixed(1)+'%'} accent={C.gn} onClick={()=>setDrill('margin')}/>
-          <Blk label="Plan cost" value={ag?_lkH(ag.total_cost):'—'} sub={ag?(ag.strategy||'solved'):'run loop'} tone={ag?'c':'k'}/>
-          <Blk label="Scheduled" value={prodUnits!=null?prodUnits.toLocaleString('en-IN')+' u':'—'} sub={pr?(pr.status||'solved'):'run loop'} tone={pr?'g':'k'}/>
-          <Blk label="Mean fill" value={mc&&mc.avg_fill!=null?mc.avg_fill+'%':'—'} sub={mc?`policy ${mc.policy_simulated}`:'run loop'} accent={mc&&mc.avg_fill<95?C.dg:(mc?C.gn:undefined)}/>
-          <Blk label="Risk CVaR95" value={mc?_lkH(mc.cvar95):'—'} sub={mc?`mean ${_lkH(mc.avg_cost)}`:'run loop'} accent={mc?C.dg:undefined}/>
-          <Blk label="Binding lines" value={bind==null?'—':String(bind)} sub={bind!=null?(bind?'capacity tight':'all slack'):'run loop'} accent={bind?C.dg:undefined}/>
+          <Blk label="Plan cost" value={ag?_lkH(ag.total_cost):'—'} sub={ag?(ag.strategy||'solved'):'re-plan to fill'} tone={ag?'c':'k'}/>
+          <Blk label="Scheduled" value={prodUnits!=null?prodUnits.toLocaleString('en-IN')+' u':'—'} sub={pr?(pr.status||'solved'):'re-plan to fill'} tone={pr?'g':'k'}/>
+          <Blk label="Mean fill" value={mc&&mc.avg_fill!=null?mc.avg_fill+'%':'—'} sub={mc?`policy ${mc.policy_simulated}`:'re-plan to fill'} accent={mc&&mc.avg_fill<95?C.dg:(mc?C.gn:undefined)}/>
+          <Blk label="Risk CVaR95" value={mc?_lkH(mc.cvar95):'—'} sub={mc?`mean ${_lkH(mc.avg_cost)}`:'re-plan to fill'} accent={mc?C.dg:undefined}/>
+          <Blk label="Binding lines" value={bind==null?'—':String(bind)} sub={bind!=null?(bind?'capacity tight':'all slack'):'re-plan to fill'} accent={bind?C.dg:undefined}/>
         </KpiRow>
         {drill && <KpiDrill kpi={drill} onClose={()=>setDrill(null)}/>}
         {log && <div style={{marginTop:10, display:'flex', flexDirection:'column', gap:3}}>

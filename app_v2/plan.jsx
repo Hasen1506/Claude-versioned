@@ -167,7 +167,7 @@ function StagePlan({ onNav }) {
       <StageHeader n="05" title="Plan · Sales & Operations" kicker="Level-vs-chase strategy · seasonal prebuild · workforce plan · capacity duals · SKU disaggregation"
         right={<Btn kind="accent" onClick={runAgg}>{agg.solving?'⏳ Solving…':'⚡ Solve Aggregate'}</Btn>}/>
       <div style={{padding:'9px 18px', borderBottom:`2px solid ${C.line}`, background:C.bg3, display:'flex', alignItems:'center', gap:10}}>
-        <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.12em', color:C.onAc, background:C.ink, padding:'3px 8px', whiteSpace:'nowrap'}}>VIEWING ▸ PORTFOLIO AGGREGATE</span>
+        <span style={{fontFamily:F.mono, fontSize:9, fontWeight:800, letterSpacing:'.12em', color:C.paper, background:C.ink, padding:'3px 8px', whiteSpace:'nowrap'}}>VIEWING ▸ PORTFOLIO AGGREGATE</span>
         <span style={{fontFamily:F.body, fontSize:11.5, color:C.tx2, lineHeight:1.4}}>
           This is <b>ONE pooled aggregate plan across your whole finished portfolio</b> — {nFin} SKUs{famN>1?<> spanning <b>{famN} families</b></>:null}, <b>not</b> a separate plan per family. Every finished SKU's committed demand is pooled by <b>worker-time</b> into one capacity &amp; workforce plan; per-SKU numbers are recovered in <b>step 4 · Disaggregation</b>.
         </span>
