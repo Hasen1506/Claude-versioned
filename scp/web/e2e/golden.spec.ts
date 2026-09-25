@@ -220,3 +220,40 @@ test("scheduling: schedule → select order → resequence → reset → edit se
   await page.goto("/#/data/changeovers");
   await expect(page.locator("td", { hasText: /^3$/ }).first()).toBeVisible();
 });
+
+test("promising: check → CTP simulation → commit → supply shrinks → at risk → BOP → commit", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("Kaveri Kitchenware").click();
+  await expect(page.locator(".net .node")).toHaveCount(12);
+  await page.goto("/#/promise");
+  await page.getByRole("button", { name: "Check orders" }).click();
+  await expect(page.getByText("Orders on time")).toBeVisible();
+  await expect(page.locator("tr", { hasText: "SO-88221" }).locator(".badge", { hasText: "late" })).toBeVisible();   // allocation pushes 200 out
+
+  // a big new order: ATP covers part, capable-to-promise quotes the rest through production
+  await page.goto("/#/promise/simulate");
+  await page.locator("select").nth(1).selectOption("MG-750");
+  await page.locator('input[type="number"]').first().fill("6000");
+  await page.getByRole("button", { name: "Check availability" }).click();
+  await expect(page.getByText("How the new supply gets there")).toBeVisible();
+  await expect(page.getByText("capable-to-promise").first()).toBeVisible();
+
+  // commit, then take planned receipts out of the scope: committed promises are no longer covered
+  await page.goto("/#/promise");
+  await page.getByRole("button", { name: "Commit promises" }).click();
+  await expect(page.getByText(/schedule lines committed/)).toBeVisible();
+  await page.goto("/#/promise/settings");
+  await page.locator('input[id="include_planned_orders"]').uncheck();
+  await expect(page.locator('.spine a[href="#/promise"] .dot')).toHaveClass(/stale/);
+  await page.goto("/#/promise");
+  await page.getByRole("button", { name: "Re-run" }).click();
+  await expect(page.getByText(/promises at risk/)).toBeVisible();
+
+  await page.getByRole("link", { name: "Open BOP" }).click();
+  await page.getByRole("button", { name: "Simulate BOP" }).click();
+  await expect(page.locator("td .badge", { hasText: "lost" }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Commit BOP result" }).click();
+  await expect(page.getByText(/schedule lines committed/)).toBeVisible();
+  await page.goto("/#/promise");
+  await expect(page.getByText(/promises at risk/)).toHaveCount(0);
+});

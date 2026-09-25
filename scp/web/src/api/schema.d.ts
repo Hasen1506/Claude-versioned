@@ -245,6 +245,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/promise": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Promise */
+        post: operations["post_promise_api_promise_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/promise/bop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Bop */
+        post: operations["post_bop_api_promise_bop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/promise/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Promise Check */
+        post: operations["post_promise_check_api_promise_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/promise/commit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Promise Commit */
+        post: operations["post_promise_commit_api_promise_commit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/plan": {
         parameters: {
             query?: never;
@@ -266,6 +334,98 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * Allocation
+         * @description Product allocation (PAL): caps what can be confirmed for a product (and optionally a set of
+         *     customers) in a period, independent of stock. Once a product-customer combination has any
+         *     allocation, a date in no allocation period has nothing to confirm (strict, as in aATP).
+         */
+        Allocation: {
+            /** Id */
+            id: string;
+            /** Product */
+            product: string;
+            /**
+             * Customers
+             * @description Demand locations it applies to (empty = all)
+             */
+            customers?: string[];
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             * @description Exclusive
+             */
+            end: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Fallback
+             * @description When the period is used up: confirm the rest in later periods, or not at all
+             * @default next_period
+             * @enum {string}
+             */
+            fallback: "next_period" | "reject";
+        };
+        /** AllocationUse */
+        AllocationUse: {
+            /** Id */
+            id: string;
+            /** Product */
+            product: string;
+            /** Customers */
+            customers: string[];
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Qty */
+            qty: number;
+            /** Used */
+            used: number;
+            /** Fallback */
+            fallback: string;
+        };
+        /** AtpNode */
+        AtpNode: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Rlt Days */
+            rlt_days: number | null;
+            /** On Hand */
+            on_hand: number;
+            /** Dates */
+            dates: string[];
+            /** Receipts */
+            receipts: number[];
+            /** Other Demand */
+            other_demand: number[];
+            /** Promised */
+            promised: number[];
+            /** Cumulative */
+            cumulative: number[];
+            /** Available */
+            available: (number | null)[];
+            /** Shortage Date */
+            shortage_date: string | null;
+            /**
+             * Shortage Qty
+             * @default 0
+             */
+            shortage_qty: number;
+        };
         /** BacktestPoint */
         BacktestPoint: {
             /** Origin */
@@ -332,6 +492,63 @@ export interface components {
              */
             operation?: number | null;
         };
+        /** BopRow */
+        BopRow: {
+            /** Order */
+            order: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Priority */
+            priority: number;
+            /** Segment */
+            segment: string | null;
+            /** Strategy */
+            strategy: string | null;
+            /** Before Confirmed */
+            before_confirmed: number;
+            /** Before On Time */
+            before_on_time: number;
+            /** After Confirmed */
+            after_confirmed: number;
+            /** After On Time */
+            after_on_time: number;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "gained" | "lost" | "unchanged" | "changed";
+        };
+        /** BopSegment */
+        BopSegment: {
+            /** Name */
+            name: string;
+            /**
+             * Priorities
+             * @description Order priorities selected (empty = any)
+             */
+            priorities?: number[];
+            /**
+             * Customers
+             * @description Demand locations selected (empty = any)
+             */
+            customers?: string[];
+            /**
+             * Products
+             * @description Products selected (empty = any)
+             */
+            products?: string[];
+            /** @default redistribute */
+            strategy: components["schemas"]["ConfirmationStrategy"];
+            /**
+             * Sort
+             * @description Order inside the segment: priority then requested date, date only, or largest first
+             * @default priority_date
+             * @enum {string}
+             */
+            sort: "priority_date" | "date" | "qty_desc";
+        };
         /** BucketOut */
         BucketOut: {
             /** Index */
@@ -387,6 +604,67 @@ export interface components {
             /** Hours */
             hours: number;
         };
+        /**
+         * Confirmation
+         * @description A persisted schedule line: what was promised to a sales order, from where and when.
+         */
+        Confirmation: {
+            /**
+             * Order
+             * @description Sales-order demand record id
+             */
+            order: string;
+            /** Ship From */
+            ship_from: string;
+            /**
+             * Ship Date
+             * Format: date
+             */
+            ship_date: string;
+            /**
+             * Date
+             * Format: date
+             * @description Confirmed delivery date at the demand location
+             */
+            date: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Method
+             * @default atp
+             * @enum {string}
+             */
+            method: "atp" | "rlt" | "ctp";
+        };
+        /**
+         * ConfirmationStrategy
+         * @description BOP confirmation strategy (guide §7.3).
+         * @enum {string}
+         */
+        ConfirmationStrategy: "win" | "gain" | "redistribute" | "fill" | "lose";
+        /** CtpStep */
+        CtpStep: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "transfer" | "make" | "buy" | "stock" | "component" | "capacity";
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /** Start */
+            start: string | null;
+            /** End */
+            end: string | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
         /** CvSuggestion */
         CvSuggestion: {
             /** Location */
@@ -441,6 +719,11 @@ export interface components {
             /** Changeovers */
             changeovers?: components["schemas"]["Changeover"][];
             scheduling?: components["schemas"]["ScheduleSettings"];
+            /** Allocations */
+            allocations?: components["schemas"]["Allocation"][];
+            /** Confirmations */
+            confirmations?: components["schemas"]["Confirmation"][];
+            promising?: components["schemas"]["PromiseSettings"];
         };
         /** DdmrpRow */
         DdmrpRow: {
@@ -609,6 +892,12 @@ export interface components {
              * @default 5
              */
             priority: number;
+            /**
+             * Complete Delivery
+             * @description Sales order: confirm only the full quantity on one date
+             * @default false
+             */
+            complete_delivery: boolean;
             /**
              * Period Days
              * @description Forecast only: the record covers [date, date + period_days) and is spread evenly over the working days of that window (PIR splitting). Empty = the whole quantity is due on `date`.
@@ -1765,6 +2054,78 @@ export interface components {
              */
             parallel_units?: number | null;
         };
+        /** OrderPromise */
+        OrderPromise: {
+            /** Order */
+            order: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Requested
+             * Format: date
+             */
+            requested: string;
+            /** Priority */
+            priority: number;
+            /** Complete Delivery */
+            complete_delivery: boolean;
+            /** Segment */
+            segment: string | null;
+            /** Strategy */
+            strategy: string | null;
+            /** Lines */
+            lines: components["schemas"]["ScheduleLine"][];
+            /**
+             * Confirmed
+             * @default 0
+             */
+            confirmed: number;
+            /**
+             * On Time
+             * @default 0
+             */
+            on_time: number;
+            /**
+             * Unconfirmed
+             * @default 0
+             */
+            unconfirmed: number;
+            /**
+             * Status
+             * @default unconfirmed
+             * @enum {string}
+             */
+            status: "on_time" | "late" | "partial" | "unconfirmed";
+            /**
+             * Allocation Capped
+             * @default 0
+             */
+            allocation_capped: number;
+            /** Ctp */
+            ctp: components["schemas"]["CtpStep"][];
+            /** Previous */
+            previous: components["schemas"]["ScheduleLine"][];
+            /**
+             * Change
+             * @default new
+             * @enum {string}
+             */
+            change: "new" | "kept" | "gained" | "lost" | "changed" | "unchanged";
+            /**
+             * At Risk
+             * @default false
+             */
+            at_risk: boolean;
+            /**
+             * Value
+             * @default 0
+             */
+            value: number;
+        };
         /**
          * OutlierMethod
          * @enum {string}
@@ -2051,6 +2412,143 @@ export interface components {
             valid_from?: string | null;
             /** Valid To */
             valid_to?: string | null;
+        };
+        /** PromiseCheckRequest */
+        PromiseCheckRequest: {
+            dataset: components["schemas"]["Dataset"];
+            order: components["schemas"]["DemandRecord"];
+        };
+        /** PromiseCommitRequest */
+        PromiseCommitRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Mode
+             * @default entry
+             * @enum {string}
+             */
+            mode: "entry" | "bop";
+        };
+        /** PromiseCommitResponse */
+        PromiseCommitResponse: {
+            dataset: components["schemas"]["Dataset"];
+            result: components["schemas"]["PromiseResult"];
+        };
+        /** PromiseKpis */
+        PromiseKpis: {
+            /**
+             * Orders
+             * @default 0
+             */
+            orders: number;
+            /**
+             * Qty
+             * @default 0
+             */
+            qty: number;
+            /**
+             * On Time Qty
+             * @default 0
+             */
+            on_time_qty: number;
+            /**
+             * Confirmed Qty
+             * @default 0
+             */
+            confirmed_qty: number;
+            /**
+             * Unconfirmed Qty
+             * @default 0
+             */
+            unconfirmed_qty: number;
+            /**
+             * On Time Orders
+             * @default 0
+             */
+            on_time_orders: number;
+            /**
+             * Value Unconfirmed
+             * @default 0
+             */
+            value_unconfirmed: number;
+            /**
+             * Rlt Lines
+             * @default 0
+             */
+            rlt_lines: number;
+            /**
+             * Ctp Lines
+             * @default 0
+             */
+            ctp_lines: number;
+            /**
+             * Alternative Lines
+             * @default 0
+             */
+            alternative_lines: number;
+            /**
+             * At Risk Orders
+             * @default 0
+             */
+            at_risk_orders: number;
+        };
+        /** PromiseResult */
+        PromiseResult: {
+            /** Ok */
+            ok: boolean;
+            /**
+             * Mode
+             * @default entry
+             * @enum {string}
+             */
+            mode: "entry" | "bop" | "check";
+            /** Origin */
+            origin: string | null;
+            /**
+             * Currency
+             * @default
+             */
+            currency: string;
+            /** Orders */
+            orders: components["schemas"]["OrderPromise"][];
+            /** Nodes */
+            nodes: components["schemas"]["AtpNode"][];
+            /** Allocations */
+            allocations: components["schemas"]["AllocationUse"][];
+            /** Bop */
+            bop: components["schemas"]["BopRow"][];
+            kpis: components["schemas"]["PromiseKpis"];
+            checked: components["schemas"]["OrderPromise"] | null;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+        };
+        /** PromiseSettings */
+        PromiseSettings: {
+            /**
+             * Include Planned Orders
+             * @description Scope of check: count MRP planned receipts as supply (else stock and firm receipts only)
+             * @default true
+             */
+            include_planned_orders: boolean;
+            /**
+             * Confirm Beyond Rlt
+             * @description Confirm unconditionally beyond the replenishment lead time (else backorder)
+             * @default true
+             */
+            confirm_beyond_rlt: boolean;
+            /**
+             * Alternative Locations
+             * @description Alternative-based confirmation: try other shipping locations when the first is short
+             * @default true
+             */
+            alternative_locations: boolean;
+            /**
+             * Ctp
+             * @description Capable-to-promise: quote new production / transfers for what ATP cannot cover
+             * @default true
+             */
+            ctp: boolean;
+            /** Bop Segments */
+            bop_segments?: components["schemas"]["BopSegment"][];
         };
         /**
          * PurchasingSource
@@ -2435,6 +2933,30 @@ export interface components {
              * @default 0
              */
             objective: number;
+        };
+        /** ScheduleLine */
+        ScheduleLine: {
+            /** Ship From */
+            ship_from: string;
+            /**
+             * Ship Date
+             * Format: date
+             */
+            ship_date: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Method
+             * @enum {string}
+             */
+            method: "atp" | "rlt" | "ctp";
+            /** On Time */
+            on_time: boolean;
         };
         /** ScheduleRequest */
         ScheduleRequest: {
@@ -3596,6 +4118,138 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScheduleResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_promise_api_promise_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromiseResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_bop_api_promise_bop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromiseResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_promise_check_api_promise_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromiseCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromiseResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_promise_commit_api_promise_commit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromiseCommitRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromiseCommitResponse"];
                 };
             };
             /** @description Validation Error */

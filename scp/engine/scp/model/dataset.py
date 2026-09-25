@@ -13,6 +13,7 @@ from pydantic import Field
 from .common import LocationType, Model
 from .demand import DemandEvent, ForecastOverride, ForecastSettings, NpiRule
 from .inventory import InventorySettings
+from .promise import Allocation, Confirmation, PromiseSettings
 from .schedule import Changeover, ScheduleSettings
 from .sop import SopSettings
 from .master import (
@@ -44,6 +45,9 @@ class Dataset(Model):
     sop: SopSettings = Field(default_factory=SopSettings)
     changeovers: list[Changeover] = Field(default_factory=list)
     scheduling: ScheduleSettings = Field(default_factory=ScheduleSettings)
+    allocations: list[Allocation] = Field(default_factory=list)
+    confirmations: list[Confirmation] = Field(default_factory=list)
+    promising: PromiseSettings = Field(default_factory=PromiseSettings)
 
     # ---- indices (first occurrence wins; duplicates are reported by the readiness gate) ----
     @cached_property

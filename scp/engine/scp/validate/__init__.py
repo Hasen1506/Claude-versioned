@@ -64,6 +64,7 @@ RULES: dict[str, tuple[Severity, str]] = {
     "NPI_DUPLICATE": ("warning", "More than one NPI rule for the same location-product"),
     "OVERRIDE_OUTSIDE_HORIZON": ("warning", "Consensus override outside the forecast horizon is ignored"),
     "OVERRIDE_WITHOUT_FORECAST": ("warning", "Consensus override for a series with no history or NPI rule"),
+    "CONFIRMATION_ORPHAN": ("warning", "Persisted confirmation for an order that no longer exists"),
 }
 
 
@@ -210,6 +211,21 @@ def _references(ds: Dataset, c: _Collector) -> None:
         oid = f"{o.location}/{o.product}@{o.date.isoformat()}"
         _ref(ds, c, "location", o.location, "override", oid, "location")
         _ref(ds, c, "product", o.product, "override", oid, "product")
+    so_ids = {d.id for d in ds.demand if d.kind is DemandKind.SALES_ORDER and d.id}
+    for a in ds.allocations:
+        _ref(ds, c, "product", a.product, "allocation", a.id, "product")
+        for cu in a.customers:
+            _ref(ds, c, "location", cu, "allocation", a.id, "customers")
+    for i, cf in enumerate(ds.confirmations):
+        _ref(ds, c, "location", cf.ship_from, "confirmation", f"#{i}", "ship_from")
+        if cf.order not in so_ids:
+            c.add("CONFIRMATION_ORPHAN", "confirmation", f"#{i}", f"Confirmation for {cf.order}, which is not an open sales order",
+                  "Remove it, or re-run promising and commit")
+    for sg in ds.promising.bop_segments:
+        for cu in sg.customers:
+            _ref(ds, c, "location", cu, "bop_segment", sg.name, "customers")
+        for p in sg.products:
+            _ref(ds, c, "product", p, "bop_segment", sg.name, "products")
     for i, co in enumerate(ds.changeovers):
         _ref(ds, c, "resource", co.resource, "changeover", f"#{i}", "resource")
     for r in ds.receipts:

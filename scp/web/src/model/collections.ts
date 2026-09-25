@@ -6,7 +6,7 @@ type Obj = Record<string, unknown>;
 
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
-  | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides";
+  | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides";
 
 export interface Column {
   label: string;
@@ -147,6 +147,27 @@ export const COLLECTIONS: CollectionDef[] = [
       { label: "Id", get: (o) => s(o.id) }, { label: "Kind", get: (o) => s(o.kind) },
       { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
       { label: "Due", get: (o) => s(o.due_date) }, { label: "Qty", get: (o) => o.qty as number, num: true },
+    ],
+  },
+  {
+    key: "allocations", label: "Allocations", singular: "allocation", defName: "Allocation", issueType: "allocation",
+    group: "Planning data", keyOf: (o) => s(o.id),
+    blurb: "Product allocation: the most that may be promised to a product (and customers) in a period, whatever the stock.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Product", get: (o) => s(o.product) },
+      { label: "Customers", get: (o) => ((o.customers as string[]) ?? []).join(", ") || "all" },
+      { label: "From", get: (o) => s(o.start) }, { label: "To", get: (o) => s(o.end) },
+      { label: "Qty", get: (o) => o.qty as number, num: true },
+    ],
+  },
+  {
+    key: "confirmations", label: "Confirmations", singular: "confirmation", defName: "Confirmation", issueType: "confirmation",
+    group: "Planning data", keyOf: (_o, i) => `#${i}`,
+    blurb: "Committed promises (schedule lines) per sales order. Written by Promising → Commit; they claim supply in every later check.",
+    columns: [
+      { label: "Order", get: (o) => s(o.order) }, { label: "From", get: (o) => s(o.ship_from) },
+      { label: "Ships", get: (o) => s(o.ship_date) }, { label: "Delivers", get: (o) => s(o.date) },
+      { label: "Method", get: (o) => s(o.method ?? "atp") }, { label: "Qty", get: (o) => o.qty as number, num: true },
     ],
   },
   {

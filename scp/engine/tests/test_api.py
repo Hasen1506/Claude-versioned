@@ -87,3 +87,16 @@ def test_schedule():
     m = client.post("/api/schedule", json={"dataset": d, "sequence": {"PUNE-L1": seq}}).json()
     assert m["search"]["mode"] == "manual"
     assert next(x for x in m["resources"] if x["id"] == "PUNE-L1")["sequence"] == seq
+
+
+def test_promise_flow():
+    d = example_dict("kitchenware_network")
+    r = client.post("/api/promise", json=d).json()
+    assert r["ok"] and r["kpis"]["orders"] == 9
+    c = client.post("/api/promise/check", json={"dataset": d, "order": {
+        "location": "CUS-WEST-TRADE", "product": "MG-750", "date": "2026-10-02", "qty": 6000}}).json()
+    assert c["mode"] == "check" and c["checked"]["qty"] == 6000
+    m = client.post("/api/promise/commit", json={"dataset": d}).json()
+    assert len(m["dataset"]["confirmations"]) >= 9
+    b = client.post("/api/promise/bop", json=m["dataset"]).json()
+    assert b["mode"] == "bop" and len(b["bop"]) == 9

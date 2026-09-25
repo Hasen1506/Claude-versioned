@@ -278,6 +278,18 @@ def kitchenware() -> dict:
          "kind": "sales_order", "priority": 1},
         {"id": "SO-88177", "location": "CUS-ECOM", "product": "KT-15", "date": "2026-10-09", "qty": 900,
          "kind": "sales_order", "priority": 3},
+        {"id": "SO-88190", "location": "CUS-NORTH-TRADE", "product": "MG-500", "date": "2026-10-03", "qty": 1200,
+         "kind": "sales_order", "priority": 4},
+        {"id": "SO-88195", "location": "CUS-ECOM", "product": "MG-750", "date": "2026-10-05", "qty": 2200,
+         "kind": "sales_order", "priority": 6},
+        {"id": "SO-88202", "location": "CUS-WEST-TRADE", "product": "KT-15", "date": "2026-10-08", "qty": 2600,
+         "kind": "sales_order", "priority": 2, "complete_delivery": True},
+        {"id": "SO-88210", "location": "CUS-NORTH-TRADE", "product": "KT-15", "date": "2026-10-12", "qty": 1400,
+         "kind": "sales_order", "priority": 7},
+        {"id": "SO-88214", "location": "CUS-ECOM", "product": "MG-500", "date": "2026-10-14", "qty": 700,
+         "kind": "sales_order", "priority": 8},
+        {"id": "SO-88221", "location": "CUS-ECOM", "product": "KT-15", "date": "2026-10-20", "qty": 800,
+         "kind": "sales_order", "priority": 5},
     ]
     receipts = [
         {"id": "PO-4500012871", "kind": "purchase", "location": "PLT-PUNE", "product": "RM-HEATER", "qty": 10000,
@@ -299,6 +311,13 @@ def kitchenware() -> dict:
         "overrides": overrides,
         # sequence-dependent setups: winding gauge change (thick→thin needs re-tensioning) and
         # test-bench fixture swaps between grinders and kettles
+        # e-commerce kettle launch quantities are capped per month (product allocation)
+        "allocations": [
+            {"id": "AL-ECOM-KT-OCT", "product": "KT-15", "customers": ["CUS-ECOM"], "start": "2026-09-28",
+             "end": "2026-11-01", "qty": 1500, "fallback": "next_period"},
+            {"id": "AL-ECOM-KT-NOV", "product": "KT-15", "customers": ["CUS-ECOM"], "start": "2026-11-01",
+             "end": "2026-12-01", "qty": 1800, "fallback": "next_period"},
+        ],
         "changeovers": [
             {"resource": "PUNE-WIND", "from_group": "W500", "to_group": "W750", "hours": 1.0},
             {"resource": "PUNE-WIND", "from_group": "W750", "to_group": "W500", "hours": 2.5},

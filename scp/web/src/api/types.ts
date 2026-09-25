@@ -75,3 +75,11 @@ export type ScheduleResource = S["ScheduleResource"];
 export type ScheduleKpis = S["ScheduleKpis"];
 export type LabourDay = S["LabourDay"];
 export type Changeover = S["Changeover"];
+
+export type PromiseResult = S["PromiseResult"];
+export type OrderPromise = S["OrderPromise"];
+export type AtpNode = S["AtpNode"];
+export type ScheduleLine = S["ScheduleLine"];
+export type CtpStep = S["CtpStep"];
+export type BopRow = S["BopRow"];
+export type PromiseCommitResponse = S["PromiseCommitResponse"];

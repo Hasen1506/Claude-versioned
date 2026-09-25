@@ -1,5 +1,5 @@
 import type {
-  Dataset, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
+  Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   SchemaError, ValidationResult,
 } from "./types";
 
@@ -44,6 +44,12 @@ export const api = {
   sop: (ds: Dataset) => post<SopResult>("/api/sop", ds),
   sopRelease: (ds: Dataset) => post<SopReleaseResponse>("/api/sop/release", ds),
   inventory: (ds: Dataset) => post<InventoryResult>("/api/inventory", ds),
+  promise: (ds: Dataset) => post<PromiseResult>("/api/promise", ds),
+  bop: (ds: Dataset) => post<PromiseResult>("/api/promise/bop", ds),
+  promiseCheck: (dataset: Dataset, order: DemandRecord) =>
+    call<PromiseResult>("/api/promise/check", { method: "POST", body: JSON.stringify({ dataset, order }) }),
+  promiseCommit: (dataset: Dataset, mode: "entry" | "bop") =>
+    call<PromiseCommitResponse>("/api/promise/commit", { method: "POST", body: JSON.stringify({ dataset, mode }) }),
   /** Detailed schedule; `sequence` (resource → operation keys) fixes the order on those resources. */
   schedule: (dataset: Dataset, sequence?: Record<string, string[]>) =>
     call<ScheduleResult>("/api/schedule", { method: "POST", body: JSON.stringify({ dataset, sequence: sequence ?? null }) }),

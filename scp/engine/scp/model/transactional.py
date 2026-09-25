@@ -18,6 +18,7 @@ class DemandRecord(Model):
     qty: float = Unit("qty")
     kind: DemandKind = DemandKind.FORECAST
     priority: int = Field(5, ge=1, le=9, description="1 = highest; used by promising and constrained plans")
+    complete_delivery: bool = Field(False, description="Sales order: confirm only the full quantity on one date")
     period_days: int | None = Field(
         None, ge=1, le=366,
         description="Forecast only: the record covers [date, date + period_days) and is spread evenly over the "

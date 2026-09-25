@@ -28,7 +28,7 @@ Start from an example (a fictional multi-echelon appliance maker with two years 
 one-product plant), create a blank
 network, or import a dataset JSON. The dataset is saved in your browser and can be exported at any time.
 
-## What is here (P0–P5)
+## What is here (P0–P6)
 
 | Area | Where | What it does |
 |---|---|---|
@@ -40,8 +40,9 @@ network, or import a dataset JSON. The dataset is saved in your browser and can 
 | Inventory optimisation | `engine/scp/inventory` | Demand and its variability flowed up the network (risk pooling), the single-echelon α baseline with lead-time variance, multi-echelon placement with the Graves–Willems guaranteed-service model solved exactly as a MILP (HiGHS), DDMRP buffer zones and net-flow position, and a pooling (square-root law) analysis. Recommendations reach the plan only after the planner approves them. |
 | S&OP | `engine/scp/sop` | A time-phased network LP over the same master data (HiGHS): production, purchases, transfers, stock, late and lost demand, overtime; limits on resource hours, overtime, suppliers, lanes, storage and shelf life; cost or profit mode; shadow prices with their validity ranges; demand and capacity scenario levers; release of the constrained volumes to MRP. |
 | Detailed scheduling | `engine/scp/schedule` | Finite sequencing of the MRP make orders inside a scheduling window, plus firm production orders, in clock time on each resource's shift windows (OEE, parallel units with sublots, queue times). Setups depend on sequence: a changeover matrix per resource, minor setups inside a setup group, and none for the same product. An EDD baseline is improved by campaign and insertion moves on a weighted tardiness + changeover objective, and an independent feasibility checker verifies every schedule. Planners can also give their own sequence. Labour pools are load-checked per day. |
-| API | `engine/scp/api` | `examples`, `schema`, `rules`, `validate`, `network`, `forecast`, `forecast/release`, `inventory`, `sop`, `sop/release`, `plan`, `schedule` |
-| Web | `web/src` | The legacy app's brutalist design language (Mono / Noir / Sepia themes, numbered stages, a planning-spine freshness strip, provenance and "reading" boxes), a network map with product trace, schema-generated editors with undo/redo, readiness, the demand workspace (leaderboards, cleansing log, consensus grid, release), the inventory workspace (service-time placement chart, approve-to-apply recommendations, DDMRP zone bars, pooling), the S&OP workspace (demand vs constrained supply, capacity with the value of an hour, shadow prices, scenario pin-and-compare, release), the plan workspace (KPIs, stock/requirements, capacity, orders with a pegging tree), and the scheduling workspace (a planning board Gantt with shift windows, changeover hatching and late flags, click-to-follow orders and move them in the sequence, the setup-matrix editor, labour load). |
+| Order promising | `engine/scp/promise` | aATP-style promising: cumulative ATP with look-ahead over stock, firm and (optionally) MRP planned receipts net of MRP dependent demand and earlier promises; complete or partial delivery with split schedule lines; total replenishment lead time with unconditional confirmation beyond it (or backorders); product allocations per period and customer group with next-period or reject fallback; alternative shipping locations; multi-level capable-to-promise through transfers, production (components and finite free capacity) and purchasing; persisted confirmations with at-risk detection; backorder processing by segment with Win / Gain / Redistribute / Fill / Lose and a gain/loss log. |
+| API | `engine/scp/api` | `examples`, `schema`, `rules`, `validate`, `network`, `forecast`, `forecast/release`, `inventory`, `sop`, `sop/release`, `plan`, `schedule`, `promise`, `promise/check`, `promise/bop`, `promise/commit` |
+| Web | `web/src` | The legacy app's brutalist design language (Mono / Noir / Sepia themes, numbered stages, a planning-spine freshness strip, provenance and "reading" boxes), a network map with product trace, schema-generated editors with undo/redo, readiness, the demand workspace (leaderboards, cleansing log, consensus grid, release), the inventory workspace (service-time placement chart, approve-to-apply recommendations, DDMRP zone bars, pooling), the S&OP workspace (demand vs constrained supply, capacity with the value of an hour, shadow prices, scenario pin-and-compare, release), the plan workspace (KPIs, stock/requirements, capacity, orders with a pegging tree), and the scheduling workspace (a planning board Gantt with shift windows, changeover hatching and late flags, click-to-follow orders and move them in the sequence, the setup-matrix editor, labour load), and the promising workspace (order book with schedule-line chips, the ATP picture per shipping location, a new-order check with the CTP chain as a timeline, the BOP segment cascade with its gain/loss log, allocation consumption). |
 
 ## How correctness is checked
 
@@ -66,6 +67,11 @@ cd scp/web && npm run build && npx playwright test   # end-to-end in a real brow
   checked on hand cases. An independent checker (no unit overlap, work inside windows, release and precedence with
   queue times, setups matching the rule, quantities complete) passes on the examples and on 60 random instances for
   the EDD, improved and shuffled sequences. The improver never returns a worse objective than EDD.
+- **Order promising:** the guide's §20.1 scenarios 2–5 are tests (full stock on the requested date; partial
+  stock with split lines, complete delivery and RLT behaviour both ways; an allocation-capped order with both
+  fallback rules; BOP after a shortage where the priority customer gains and the low-priority one loses),
+  plus the ATP look-ahead, alternative locations, CTP through purchase → production → transfer, commit and
+  simulation without persistence.
 - **Plan invariants:** material balance, pegging, requirement sizing and date order. These are checked on the
   examples and on 40 randomly generated networks.
 - **CI** runs all of it (`.github/workflows/scp.yml`).

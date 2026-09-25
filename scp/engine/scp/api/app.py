@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,10 +19,11 @@ from ..demand import foundation
 from ..demand.models import SPECS
 from ..demand.result import FoundationStatus
 from ..inventory import InventoryResult, run_inventory
-from ..model import Dataset, ForecastModelId
+from ..model import Dataset, DemandRecord, ForecastModelId
 from ..model.common import Out
 from ..network import build_graph, location_edges, location_layers
 from ..plan import PlanResult, run_mrp
+from ..promise import PromiseResult, check_order, commit, run_bop, run_promise
 from ..schedule import ScheduleResult, run_schedule
 from ..sop import SopRelease, SopResult, release_sop, run_sop
 from ..validate import RULES, Issue, validate
@@ -252,6 +254,44 @@ class ScheduleRequest(Out):
 @app.post("/api/schedule", response_model=ScheduleResult)
 def post_schedule(req: ScheduleRequest) -> ScheduleResult:
     return run_schedule(req.dataset, req.sequence)
+
+
+@app.post("/api/promise", response_model=PromiseResult)
+def post_promise(ds: Dataset) -> PromiseResult:
+    return run_promise(ds)
+
+
+@app.post("/api/promise/bop", response_model=PromiseResult)
+def post_bop(ds: Dataset) -> PromiseResult:
+    return run_bop(ds)
+
+
+class PromiseCheckRequest(Out):
+    dataset: Dataset
+    order: DemandRecord
+
+
+@app.post("/api/promise/check", response_model=PromiseResult)
+def post_promise_check(req: PromiseCheckRequest) -> PromiseResult:
+    return check_order(req.dataset, req.order)
+
+
+class PromiseCommitRequest(Out):
+    dataset: Dataset
+    mode: Literal["entry", "bop"] = "entry"
+
+
+class PromiseCommitResponse(Out):
+    dataset: Dataset
+    result: PromiseResult
+
+
+@app.post("/api/promise/commit", response_model=PromiseCommitResponse)
+def post_promise_commit(req: PromiseCommitRequest) -> PromiseCommitResponse:
+    new, res = commit(req.dataset, req.mode)
+    if not res.ok:
+        raise HTTPException(409, "the readiness gate has errors; fix them before committing promises")
+    return PromiseCommitResponse(dataset=new, result=res)
 
 
 @app.post("/api/plan", response_model=PlanResult)

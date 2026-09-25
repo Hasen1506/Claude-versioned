@@ -5,7 +5,7 @@
 // cascade, done by construction instead of by a dependency table.
 import { useSyncExternalStore } from "react";
 import { api, SchemaRejected } from "../api/client";
-import type { Dataset, ForecastResult, InventoryResult, NetworkView, PlanResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
+import type { Dataset, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
 
 export interface RunResults {
   forecast: ForecastResult;
@@ -13,6 +13,7 @@ export interface RunResults {
   sop: SopResult;
   plan: PlanResult;
   schedule: ScheduleResult;
+  promise: PromiseResult;
 }
 export type RunKey = keyof RunResults;
 
@@ -43,13 +44,14 @@ const RUNNERS: { [K in RunKey]: (ds: Dataset) => Promise<RunResults[K]> } = {
   sop: api.sop,
   plan: api.plan,
   schedule: (ds) => api.schedule(ds),
+  promise: api.promise,
 };
 
 const STORAGE_KEY = "scp.dataset.v1";
 const HISTORY = 100;
 
 const emptyRun = <T>(): Run<T> => ({ data: null, revision: null, running: false, error: null, at: null });
-const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), inventory: emptyRun(), sop: emptyRun(), plan: emptyRun(), schedule: emptyRun() });
+const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), inventory: emptyRun(), sop: emptyRun(), plan: emptyRun(), schedule: emptyRun(), promise: emptyRun() });
 
 let state: State = {
   dataset: null, revision: 0, validation: null, schemaErrors: [], network: null, runs: emptyRuns(),
