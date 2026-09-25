@@ -1,0 +1,122 @@
+"""Unit values and order costs, all in company currency.
+
+Landed cost (per base unit) of a purchase =
+    price × fx × (1 + duty_rate) + freight per unit on the supplier lane + inbound handling.
+It is the *unit value* for inventory valuation and holding cost. It is NOT the ordering cost:
+the ordering cost is the fixed cost per order (``ordering_cost`` fields) used for lot sizing.
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+from ..model import Dataset, LaneMode, TransportLane
+from ..network import NetworkGraph, Node, SupplyOption
+from .leadtime import started_qty, supplier_lane
+
+
+def fx(ds: Dataset, currency: str | None) -> float:
+    if not currency or currency == ds.settings.currency:
+        return 1.0
+    return ds.settings.fx_rates.get(currency, 1.0)
+
+
+def freight_per_unit(ds: Dataset, mode: LaneMode, product: str) -> float:
+    p = ds.product_by_id.get(product)
+    kg = (p.weight_kg or 0.0) if p else 0.0
+    m3 = (p.volume_m3 or 0.0) if p else 0.0
+    return mode.cost_per_unit + kg * mode.cost_per_kg + m3 * mode.cost_per_m3
+
+
+def shipments_needed(ds: Dataset, mode: LaneMode, product: str, qty: float) -> int:
+    """Vehicles needed for one order (≥ 1)."""
+    p = ds.product_by_id.get(product)
+    n = 1.0
+    if p and mode.vehicle_capacity_kg and p.weight_kg:
+        n = max(n, qty * p.weight_kg / mode.vehicle_capacity_kg)
+    if p and mode.vehicle_capacity_m3 and p.volume_m3:
+        n = max(n, qty * p.volume_m3 / mode.vehicle_capacity_m3)
+    return max(1, math.ceil(n - 1e-9))
+
+
+def handling(ds: Dataset, loc: str) -> float:
+    lo = ds.location_by_id.get(loc)
+    return lo.handling_cost_per_unit if lo else 0.0
+
+
+def landed_unit_cost(ds: Dataset, src_id: str) -> float:
+    pu = ds.purchasing_source_by_id[src_id]
+    lane = supplier_lane(ds, pu.supplier, pu.location, pu.product)
+    fr = freight_per_unit(ds, lane.planning_mode, pu.product) if lane else 0.0
+    return pu.price * fx(ds, pu.currency) * (1.0 + pu.duty_rate) + fr + handling(ds, pu.location)
+
+
+def conversion_unit_cost(ds: Dataset, src_id: str) -> float:
+    """Variable make cost per good unit excluding materials: resource run cost + conversion."""
+    ps = ds.production_source_by_id[src_id]
+    per_start = 0.0
+    for op in ps.operations:
+        r = ds.resource_by_id.get(op.resource)
+        per_start += op.run_hours_per_unit * (r.cost_per_hour if r else 0.0)
+        if op.labor_resource:
+            lr = ds.resource_by_id.get(op.labor_resource)
+            per_start += op.labor_hours_per_unit * (lr.cost_per_hour if lr else 0.0)
+    return started_qty(ps, 1.0) * per_start + ps.conversion_cost_per_unit
+
+
+def setup_cost(ds: Dataset, src_id: str) -> float:
+    ps = ds.production_source_by_id[src_id]
+    total = 0.0
+    for op in ps.operations:
+        r = ds.resource_by_id.get(op.resource)
+        total += op.setup_hours * (r.cost_per_hour if r else 0.0)
+    return total
+
+
+def component_factor(ds: Dataset, src_id: str, component: str) -> float:
+    """Issued component quantity per good unit of output."""
+    ps = ds.production_source_by_id[src_id]
+    for c in ps.components:
+        if c.product == component:
+            return started_qty(ps, 1.0) * (c.qty / ps.output_qty) / (1.0 - c.scrap)
+    raise KeyError(component)
+
+
+@dataclass
+class Valuation:
+    unit_value: dict[Node, float]
+    basis: dict[Node, str]
+
+
+def roll_up(ds: Dataset, g: NetworkGraph) -> Valuation:
+    """Unit value per node: override → standard cost → primary source roll-up (upstream first)."""
+    value: dict[Node, float] = {}
+    basis: dict[Node, str] = {}
+    for node in sorted(g.order, key=lambda n: -g.llc[n]):
+        loc, prod = node
+        lp = ds.location_product_by_key.get(node)
+        p = ds.product_by_id.get(prod)
+        if lp and lp.unit_cost is not None:
+            value[node], basis[node] = lp.unit_cost, "location-product unit_cost"
+            continue
+        if p and p.standard_cost is not None:
+            value[node], basis[node] = p.standard_cost, "product standard_cost"
+            continue
+        opts = g.options.get(node) or []
+        if not opts:
+            value[node], basis[node] = 0.0, "no source: unvalued"
+            continue
+        value[node], basis[node] = option_unit_cost(ds, opts[0], value), f"roll-up via {opts[0].kind} {opts[0].source_id}"
+    return Valuation(value, basis)
+
+
+def option_unit_cost(ds: Dataset, opt: SupplyOption, value: dict[Node, float]) -> float:
+    loc, prod = opt.node
+    if opt.kind == "buy":
+        return landed_unit_cost(ds, opt.source_id)
+    if opt.kind == "transfer":
+        ln: TransportLane = ds.lane_by_id[opt.source_id]
+        return value.get((ln.origin, prod), 0.0) + freight_per_unit(ds, ln.planning_mode, prod) + handling(ds, loc)
+    ps = ds.production_source_by_id[opt.source_id]
+    mat = sum(value.get((loc, c.product), 0.0) * component_factor(ds, ps.id, c.product) for c in ps.components)
+    return mat + conversion_unit_cost(ds, ps.id)

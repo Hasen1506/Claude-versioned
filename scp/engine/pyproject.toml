@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scp"
+version = "0.1.0"
+description = "Supply chain planning engine: typed network master data, readiness gate, MRP/DRP, inventory policy."
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.7",
+  "numpy>=1.26",
+  "scipy>=1.12",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[tool.setuptools.packages.find]
+include = ["scp*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
