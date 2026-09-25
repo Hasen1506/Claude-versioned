@@ -93,8 +93,10 @@ def kitchenware() -> dict:
          "volume_m3": 0.031, "price": 3990, "setup_group": "MG"},
         {"id": "KT-15", "name": "Electric kettle 1.5 L", "type": "FG", "family": "Kettles", "weight_kg": 1.3,
          "volume_m3": 0.009, "price": 1190, "setup_group": "KT"},
-        {"id": "MOT-500", "name": "Motor assembly 500 W", "type": "SFG", "weight_kg": 1.6, "volume_m3": 0.004},
-        {"id": "MOT-750", "name": "Motor assembly 750 W", "type": "SFG", "weight_kg": 2.0, "volume_m3": 0.005},
+        {"id": "MOT-500", "name": "Motor assembly 500 W", "type": "SFG", "weight_kg": 1.6, "volume_m3": 0.004,
+         "setup_group": "W500"},
+        {"id": "MOT-750", "name": "Motor assembly 750 W", "type": "SFG", "weight_kg": 2.0, "volume_m3": 0.005,
+         "setup_group": "W750"},
         {"id": "RM-CU-WIRE", "name": "Enamelled copper wire", "type": "RM", "base_uom": "KG", "weight_kg": 1.0,
          "volume_m3": 0.0002},
         {"id": "RM-STAMP", "name": "Stator/rotor lamination set", "type": "RM", "weight_kg": 0.9, "volume_m3": 0.0006},
@@ -295,6 +297,14 @@ def kitchenware() -> dict:
         "resources": resources, "production_sources": production_sources, "purchasing_sources": purchasing,
         "lanes": lanes, "demand": demand, "receipts": receipts, "history": history, "events": events, "npi": npi,
         "overrides": overrides,
+        # sequence-dependent setups: winding gauge change (thick→thin needs re-tensioning) and
+        # test-bench fixture swaps between grinders and kettles
+        "changeovers": [
+            {"resource": "PUNE-WIND", "from_group": "W500", "to_group": "W750", "hours": 1.0},
+            {"resource": "PUNE-WIND", "from_group": "W750", "to_group": "W500", "hours": 2.5},
+            {"resource": "PUNE-TEST", "from_group": "MG", "to_group": "KT", "hours": 1.5},
+            {"resource": "PUNE-TEST", "from_group": "KT", "to_group": "MG", "hours": 2.0},
+        ],
     }
 
 

@@ -8,6 +8,7 @@ from .demand import (
     ForecastSettings, NpiRule, OutlierMethod, SelectionMetric,
 )
 from .inventory import InventorySettings
+from .schedule import Changeover, ScheduleSettings
 from .sop import SopMode, SopSettings
 from .master import (
     BomItem, Calendar, LaneMode, Location, LocationProduct, LotSizing, Operation, Product,
@@ -19,9 +20,9 @@ from .transactional import DemandRecord, SalesHistory, ScheduledReceipt
 __all__ = [
     "DEFAULT_MODELS", "DemandEvent", "EventKind", "ForecastModelId", "ForecastOverride", "ForecastPeriod",
     "ForecastSettings", "InventorySettings", "NpiRule", "OutlierMethod", "SelectionMetric",
-    "BomItem", "BucketSize", "Calendar", "Dataset", "DemandKind", "DemandRecord", "LaneMode",
+    "BomItem", "BucketSize", "Calendar", "Changeover", "Dataset", "DemandKind", "DemandRecord", "LaneMode",
     "Location", "LocationProduct", "LocationType", "LotSizePolicy", "LotSizing", "MrpType",
     "Operation", "Product", "ProductType", "ProductionSource", "PurchasingSource", "ReceiptKind",
     "Resource", "ResourceKind", "SafetyStockMethod", "SafetyStockPolicy", "SalesHistory",
-    "ScheduledReceipt", "Settings", "SopMode", "SopSettings", "Strategy", "TransportLane", "TransportMode", "UomConversion",
+    "ScheduleSettings", "ScheduledReceipt", "Settings", "SopMode", "SopSettings", "Strategy", "TransportLane", "TransportMode", "UomConversion",
 ]

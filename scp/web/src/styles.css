@@ -408,3 +408,14 @@ td input.cell:focus { outline: 2px solid var(--accent); }
   .field .help, .field .err { grid-column: 1; }
   .grid-2 { grid-template-columns: 1fr; }
 }
+
+/* ---- detailed-scheduling planning board ---- */
+.gantt { display: flex; border-top: 1px solid var(--border); }
+.gantt-labels { flex: none; border-right: var(--rule) solid var(--ink); background: var(--surface); }
+.gantt-lane-label { display: flex; align-items: center; gap: 4px; padding: 0 10px; font: 11px var(--mono); white-space: nowrap; overflow: hidden; }
+.gantt-lane-label.first { border-top: 1.5px solid var(--ink); }
+.gantt-labels > .gantt-lane-label:nth-child(2) { border-top: 0; }
+.gantt-scroll { overflow-x: auto; flex: 1; min-width: 0; }
+.gantt-scroll svg { display: block; }
+.gantt-setup-key { background: repeating-linear-gradient(135deg, var(--text-2) 0 2px, var(--surface) 2px 5px); }
+.gantt-off-key { background: repeating-linear-gradient(45deg, var(--surface-3) 0 3px, var(--surface-2) 3px 6px); }

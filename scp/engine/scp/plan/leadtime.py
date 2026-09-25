@@ -147,7 +147,7 @@ def schedule_make(ds: Dataset, ps: ProductionSource, good_qty: float, *, availab
             op_start = cal.next_workday(cursor)
             op_end = cal.add_workdays(op_start, n - 1) + timedelta(days=1) if n > 0 else op_start
             windows.append(OpWindow(seq, op.resource, op.labor_resource, op_start, op_end, mh, lh))
-            cursor = cal.add_workdays(op_end, op.queue_workdays) if op.queue_workdays else op_end
+            cursor = cal.add_workdays(cal.next_workday(op_end), op.queue_workdays) if op.queue_workdays else op_end
         due = cursor
     return Schedule(st, due, due + _days(gr), windows, component_dates=_component_dates(ps, windows, st))
 

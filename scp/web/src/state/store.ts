@@ -5,13 +5,14 @@
 // cascade, done by construction instead of by a dependency table.
 import { useSyncExternalStore } from "react";
 import { api, SchemaRejected } from "../api/client";
-import type { Dataset, ForecastResult, InventoryResult, NetworkView, PlanResult, SopResult, SchemaError, ValidationResult } from "../api/types";
+import type { Dataset, ForecastResult, InventoryResult, NetworkView, PlanResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
 
 export interface RunResults {
   forecast: ForecastResult;
   inventory: InventoryResult;
   sop: SopResult;
   plan: PlanResult;
+  schedule: ScheduleResult;
 }
 export type RunKey = keyof RunResults;
 
@@ -41,13 +42,14 @@ const RUNNERS: { [K in RunKey]: (ds: Dataset) => Promise<RunResults[K]> } = {
   inventory: api.inventory,
   sop: api.sop,
   plan: api.plan,
+  schedule: (ds) => api.schedule(ds),
 };
 
 const STORAGE_KEY = "scp.dataset.v1";
 const HISTORY = 100;
 
 const emptyRun = <T>(): Run<T> => ({ data: null, revision: null, running: false, error: null, at: null });
-const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), inventory: emptyRun(), sop: emptyRun(), plan: emptyRun() });
+const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), inventory: emptyRun(), sop: emptyRun(), plan: emptyRun(), schedule: emptyRun() });
 
 let state: State = {
   dataset: null, revision: 0, validation: null, schemaErrors: [], network: null, runs: emptyRuns(),
@@ -178,6 +180,11 @@ export const store = {
         setRun(key, { running: false, error: "The dataset has invalid values." });
       } else setRun(key, { running: false, error: String(e) });
     }
+  },
+
+  /** Store a result computed outside `run` (e.g. a schedule with a hand-edited sequence). */
+  put<K extends RunKey>(key: K, data: RunResults[K], rev: number) {
+    setRun(key, { data, revision: rev, running: false, error: null, at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
   },
 
   restore() {

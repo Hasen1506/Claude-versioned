@@ -67,3 +67,11 @@ export type SopReleaseResponse = S["SopReleaseResponse"];
 export type SopDemandLine = S["DemandLine"];
 export type SopResourceLine = S["ResourceLine"];
 export type SopBinding = S["Binding"];
+
+export type ScheduleResult = S["ScheduleResult"];
+export type ScheduledOp = S["ScheduledOp"];
+export type ScheduledOrder = S["ScheduledOrder"];
+export type ScheduleResource = S["ScheduleResource"];
+export type ScheduleKpis = S["ScheduleKpis"];
+export type LabourDay = S["LabourDay"];
+export type Changeover = S["Changeover"];

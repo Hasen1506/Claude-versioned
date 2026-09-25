@@ -341,7 +341,7 @@ The four legacy gates exist because the architecture let solvers disagree. The n
 | **P2 Demand planning** | History ingest and cleansing, segmentation, model competition and backtest, events, NPI, consensus overrides, forecast consumption, release | Backtest metrics against known series; consumption tests for each strategy |
 | **P3 Inventory optimisation** | α/β SS with lead-time variance, GSM MEIO, DDMRP, pooling analysis, policy push with approval | GSM matches Graves–Willems worked example and brute-force on small trees |
 | **P4 S&OP LP** | Constrained plan, cost and profit modes, duals and ranges, scenario compare, release to MRP | Duals equal finite-difference re-solve; single-product reduces to margin/hour ranking |
-| **P5 Detailed scheduling** | Bottleneck sequencing with setup groups, campaigns, Gantt | Schedule feasibility checker; changeover total ≤ greedy baseline |
+| **P5 Detailed scheduling** | Bottleneck sequencing with setup groups, campaigns, Gantt | Schedule feasibility checker; weighted objective (tardiness + changeover) ≤ EDD baseline |
 | **P6 Order promising** | ATP/CTP, allocation, BOP | Guide §20.1 scenarios 2–5 |
 | **P7 Orders & actuals** | Firm orders, goods movements, on-hand from events, accuracy loop, SQLite persistence | Stock = Σ movements; forecast accuracy report |
 | **P8 Versions & scenarios** | Server-side branches of plan versions, compare, promote | Base version byte-identical after branch discard |
@@ -351,5 +351,7 @@ The four legacy gates exist because the architecture let solvers disagree. The n
 **Delivered:** P0 and P1, then P2 (demand planning, with Google TimesFM as an optional candidate model; see
 [TIMESFM.md](TIMESFM.md)), then P3 (inventory optimisation: single-echelon baseline, guaranteed-service MEIO as an
 exact MILP, DDMRP, pooling, approve-to-apply policies), then P4 (S&OP LP with duals and ranges on HiGHS, cost and
-profit modes, scenario levers and compare, release to MRP). The web client adopts the legacy app's design language: Mono / Noir / Sepia themes,
+profit modes, scenario levers and compare, release to MRP), then P5 (detailed scheduling: shift-window clock time,
+sequence-dependent changeover matrix, sublots over parallel units, EDD baseline plus campaign and insertion local
+search, independent feasibility checker, manual resequencing, labour load check, planning-board Gantt). The web client adopts the legacy app's design language: Mono / Noir / Sepia themes,
 numbered stages, the planning-spine freshness strip, and provenance / reading / solver-IO boxes.

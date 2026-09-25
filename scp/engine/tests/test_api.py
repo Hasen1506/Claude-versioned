@@ -77,3 +77,13 @@ def test_sop_and_release():
     assert rel["release"]["records"] > 0
     assert any(x.get("id", "") and x["id"].startswith("SOP-") for x in rel["dataset"]["demand"])
     assert client.post("/api/plan", json=rel["dataset"]).json()["ok"]
+
+
+def test_schedule():
+    d = example_dict("kitchenware_network")
+    r = client.post("/api/schedule", json={"dataset": d}).json()
+    assert r["ok"] and r["violations"] == [] and r["search"]["mode"] == "improved"
+    seq = next(x for x in r["resources"] if x["id"] == "PUNE-L1")["sequence"][::-1]
+    m = client.post("/api/schedule", json={"dataset": d, "sequence": {"PUNE-L1": seq}}).json()
+    assert m["search"]["mode"] == "manual"
+    assert next(x for x in m["resources"] if x["id"] == "PUNE-L1")["sequence"] == seq

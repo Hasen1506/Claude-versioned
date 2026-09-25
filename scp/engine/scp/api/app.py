@@ -22,6 +22,7 @@ from ..model import Dataset, ForecastModelId
 from ..model.common import Out
 from ..network import build_graph, location_edges, location_layers
 from ..plan import PlanResult, run_mrp
+from ..schedule import ScheduleResult, run_schedule
 from ..sop import SopRelease, SopResult, release_sop, run_sop
 from ..validate import RULES, Issue, validate
 
@@ -241,6 +242,16 @@ def post_sop_release(ds: Dataset) -> SopReleaseResponse:
         raise HTTPException(409, "the S&OP plan did not solve; fix the readiness issues first")
     new, info = release_sop(ds, result)
     return SopReleaseResponse(dataset=new, release=info)
+
+
+class ScheduleRequest(Out):
+    dataset: Dataset
+    sequence: dict[str, list[str]] | None = None   # resource → operation keys; None = EDD + local search
+
+
+@app.post("/api/schedule", response_model=ScheduleResult)
+def post_schedule(req: ScheduleRequest) -> ScheduleResult:
+    return run_schedule(req.dataset, req.sequence)
 
 
 @app.post("/api/plan", response_model=PlanResult)

@@ -179,14 +179,16 @@
    "name": "Motor assembly 500 W",
    "type": "SFG",
    "weight_kg": 1.6,
-   "volume_m3": 0.004
+   "volume_m3": 0.004,
+   "setup_group": "W500"
   },
   {
    "id": "MOT-750",
    "name": "Motor assembly 750 W",
    "type": "SFG",
    "weight_kg": 2.0,
-   "volume_m3": 0.005
+   "volume_m3": 0.005,
+   "setup_group": "W750"
   },
   {
    "id": "RM-CU-WIRE",
@@ -8001,6 +8003,32 @@
    "qty": 900,
    "reason": "Distributor Diwali stocking (sales input)",
    "author": "Sales West"
+  }
+ ],
+ "changeovers": [
+  {
+   "resource": "PUNE-WIND",
+   "from_group": "W500",
+   "to_group": "W750",
+   "hours": 1.0
+  },
+  {
+   "resource": "PUNE-WIND",
+   "from_group": "W750",
+   "to_group": "W500",
+   "hours": 2.5
+  },
+  {
+   "resource": "PUNE-TEST",
+   "from_group": "MG",
+   "to_group": "KT",
+   "hours": 1.5
+  },
+  {
+   "resource": "PUNE-TEST",
+   "from_group": "KT",
+   "to_group": "MG",
+   "hours": 2.0
   }
  ]
 }

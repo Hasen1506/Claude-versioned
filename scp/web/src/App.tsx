@@ -8,6 +8,7 @@ import { STAGES, stageById } from "./lib/stages";
 import { COLLECTIONS, items } from "./model/collections";
 import { Demand } from "./pages/Demand";
 import { Inventory } from "./pages/Inventory";
+import { Schedule } from "./pages/Schedule";
 import { Sop } from "./pages/Sop";
 import { DATA_GROUPS, MasterData } from "./pages/MasterData";
 import { Network } from "./pages/Network";
@@ -45,6 +46,7 @@ export function App() {
           : page === "inventory" ? <Inventory route={route} />
           : page === "sop" ? <Sop route={route} />
           : page === "plan" ? <Plan route={route} />
+          : page === "schedule" ? <Schedule route={route} />
           : <Network route={route} />}
       </main>
     </div>
@@ -133,6 +135,10 @@ function Spine({ page }: { page: string }) {
     runChip("plan", "plan", () => {
       const p = s.runs.plan.data!;
       return p.ok ? `fill ${pct(p.kpis.on_time_fill_rate, 1)} · ${p.orders.length} orders` : "not planned";
+    }),
+    runChip("schedule", "schedule", () => {
+      const v = s.runs.schedule.data!;
+      return v.ok ? `${v.kpis.late_orders}/${v.kpis.orders} late · ${v.kpis.changeovers} changeovers` : "not scheduled";
     }),
   ];
   const stale = chips.filter((c) => c.state === "stale").length;

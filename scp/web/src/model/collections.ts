@@ -6,7 +6,7 @@ type Obj = Record<string, unknown>;
 
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
-  | "purchasing_sources" | "lanes" | "calendars" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides";
+  | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides";
 
 export interface Column {
   label: string;
@@ -85,7 +85,16 @@ export const COLLECTIONS: CollectionDef[] = [
         return +(u * sh * h * e).toFixed(1);
       } },
     ],
+  },  {
+    key: "changeovers", label: "Changeovers", singular: "changeover", defName: "Changeover", issueType: "changeover",
+    group: "Make & buy", keyOf: (_o, i) => `#${i}`,
+    blurb: "The setup matrix: hours to switch a resource from one setup group to another. Without an entry a switch costs the operation's full setup.",
+    columns: [
+      { label: "Resource", get: (o) => s(o.resource) || "all" }, { label: "From", get: (o) => s(o.from_group) },
+      { label: "To", get: (o) => s(o.to_group) }, { label: "Hours", get: (o) => o.hours as number, num: true },
+    ],
   },
+
   {
     key: "production_sources", label: "Production sources", singular: "production source",
     defName: "ProductionSource", issueType: "production_source", group: "Make & buy", keyOf: (o) => s(o.id),

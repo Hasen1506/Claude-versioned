@@ -210,6 +210,8 @@ def _references(ds: Dataset, c: _Collector) -> None:
         oid = f"{o.location}/{o.product}@{o.date.isoformat()}"
         _ref(ds, c, "location", o.location, "override", oid, "location")
         _ref(ds, c, "product", o.product, "override", oid, "product")
+    for i, co in enumerate(ds.changeovers):
+        _ref(ds, c, "resource", co.resource, "changeover", f"#{i}", "resource")
     for r in ds.receipts:
         if _ref(ds, c, "location", r.location, "receipt", r.id, "location"):
             _loc_type(ds, c, r.location, STOCKING_LOCATION_TYPES, "receipt", r.id, "location",

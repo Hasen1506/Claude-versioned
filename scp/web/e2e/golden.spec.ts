@@ -188,3 +188,35 @@ test("S&OP: solve → pin → cut capacity → shadow prices → release to MRP 
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(page.locator("td", { hasText: /^SOP-/ })).toHaveCount(0);
 });
+
+test("scheduling: schedule → select order → resequence → reset → edit setup matrix → stale", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("Kaveri Kitchenware").click();
+  await expect(page.locator(".net .node")).toHaveCount(12);
+  await page.goto("/#/schedule");
+  await page.getByRole("button", { name: "Schedule", exact: true }).click();
+  await expect(page.getByText("Orders scheduled")).toBeVisible();
+  await expect(page.locator('.spine a[href="#/schedule"] .dot')).toHaveClass(/fresh/);
+  await expect(page.locator(".gantt svg g[data-order]").first()).toBeVisible();
+
+  // follow an order across resources, then push it one place later on its first resource
+  await page.locator('.gantt svg g[data-order="MO-00024"]').first().dispatchEvent("click");
+  await expect(page.getByText("MO-00024 · MG-500")).toBeVisible();
+  await page.getByRole("button", { name: "later ▶" }).first().click();
+  await expect(page.getByText("Manual sequence")).toBeVisible();
+  await page.getByRole("button", { name: "Reset to optimised" }).click();
+  await expect(page.getByText("Manual sequence")).toHaveCount(0);
+
+  await page.goto("/#/schedule/orders");
+  await expect(page.locator("td", { hasText: "MO-100455" })).toBeVisible();
+
+  // the setup matrix edits the dataset: the schedule goes stale
+  await page.goto("/#/schedule/setups");
+  await page.getByRole("button", { name: "PUNE-TEST" }).click();
+  const cell = page.getByLabel("KT to MG hours");
+  await cell.fill("3");
+  await cell.press("Enter");
+  await expect(page.locator('.spine a[href="#/schedule"] .dot')).toHaveClass(/stale/);
+  await page.goto("/#/data/changeovers");
+  await expect(page.locator("td", { hasText: /^3$/ }).first()).toBeVisible();
+});

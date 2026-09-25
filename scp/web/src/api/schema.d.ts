@@ -228,6 +228,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Schedule */
+        post: operations["post_schedule_api_schedule_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/plan": {
         parameters: {
             query?: never;
@@ -354,6 +371,22 @@ export interface components {
             /** Holidays */
             holidays?: string[];
         };
+        /**
+         * Changeover
+         * @description Setup time when a resource switches from one setup group to another (≈ PP-DS setup matrix).
+         *
+         *     ``resource`` empty = applies to every resource; a resource-specific entry wins.
+         */
+        Changeover: {
+            /** Resource */
+            resource?: string | null;
+            /** From Group */
+            from_group: string;
+            /** To Group */
+            to_group: string;
+            /** Hours */
+            hours: number;
+        };
         /** CvSuggestion */
         CvSuggestion: {
             /** Location */
@@ -405,6 +438,9 @@ export interface components {
             overrides?: components["schemas"]["ForecastOverride"][];
             inventory?: components["schemas"]["InventorySettings"];
             sop?: components["schemas"]["SopSettings"];
+            /** Changeovers */
+            changeovers?: components["schemas"]["Changeover"][];
+            scheduling?: components["schemas"]["ScheduleSettings"];
         };
         /** DdmrpRow */
         DdmrpRow: {
@@ -1140,6 +1176,22 @@ export interface components {
              * @default 0
              */
             max_utilization: number;
+        };
+        /** LabourDay */
+        LabourDay: {
+            /** Resource */
+            resource: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Required */
+            required: number;
+            /** Available */
+            available: number;
+            /** Overload */
+            overload: boolean;
         };
         /** LaneMode */
         LaneMode: {
@@ -2336,6 +2388,252 @@ export interface components {
              */
             promo: boolean;
         };
+        /** ScheduleKpis */
+        ScheduleKpis: {
+            /**
+             * Orders
+             * @default 0
+             */
+            orders: number;
+            /**
+             * Operations
+             * @default 0
+             */
+            operations: number;
+            /**
+             * Late Orders
+             * @default 0
+             */
+            late_orders: number;
+            /**
+             * Tardiness Hours
+             * @default 0
+             */
+            tardiness_hours: number;
+            /**
+             * Max Lateness Hours
+             * @default 0
+             */
+            max_lateness_hours: number;
+            /**
+             * Setup Hours
+             * @default 0
+             */
+            setup_hours: number;
+            /**
+             * Changeovers
+             * @default 0
+             */
+            changeovers: number;
+            /**
+             * Makespan Hours
+             * @default 0
+             */
+            makespan_hours: number;
+            /**
+             * Objective
+             * @default 0
+             */
+            objective: number;
+        };
+        /** ScheduleRequest */
+        ScheduleRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Sequence */
+            sequence?: {
+                [key: string]: string[];
+            } | null;
+        };
+        /** ScheduleResource */
+        ScheduleResource: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Kind */
+            kind: string;
+            /** Units */
+            units: number;
+            /** Finite */
+            finite: boolean;
+            /** Efficiency */
+            efficiency: number;
+            /** Windows */
+            windows: number[][];
+            /** Busy Hours */
+            busy_hours: number;
+            /** Setup Hours */
+            setup_hours: number;
+            /** Available Hours */
+            available_hours: number;
+            /** Utilization */
+            utilization: number;
+            /** Changeovers */
+            changeovers: number;
+            /** Sequence */
+            sequence: string[];
+        };
+        /** ScheduleResult */
+        ScheduleResult: {
+            /** Ok */
+            ok: boolean;
+            /** Origin */
+            origin: string | null;
+            /**
+             * Span Hours
+             * @default 0
+             */
+            span_hours: number;
+            /**
+             * Day Start Hour
+             * @default 0
+             */
+            day_start_hour: number;
+            /** Ops */
+            ops: components["schemas"]["ScheduledOp"][];
+            /** Orders */
+            orders: components["schemas"]["ScheduledOrder"][];
+            /** Resources */
+            resources: components["schemas"]["ScheduleResource"][];
+            /** Labour */
+            labour: components["schemas"]["LabourDay"][];
+            baseline: components["schemas"]["ScheduleKpis"];
+            kpis: components["schemas"]["ScheduleKpis"];
+            search: components["schemas"]["SearchInfo"];
+            /** Violations */
+            violations: string[];
+            /**
+             * Beyond Horizon
+             * @default 0
+             */
+            beyond_horizon: number;
+            /**
+             * Without Routing
+             * @default 0
+             */
+            without_routing: number;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+        };
+        /** ScheduleSettings */
+        ScheduleSettings: {
+            /**
+             * Horizon Days
+             * @description Schedule make orders whose planned start falls inside this window
+             * @default 42
+             */
+            horizon_days: number;
+            /**
+             * Day Start Hour
+             * @description Clock hour the first shift starts on a working day
+             * @default 6
+             */
+            day_start_hour: number;
+            /**
+             * Minor Setup Factor
+             * @description Setup within the same setup group (another product) as a share of the full setup
+             * @default 0.2
+             */
+            minor_setup_factor: number;
+            /**
+             * Tardiness Weight
+             * @description Objective weight per hour an order finishes late (4 = an hour late costs as much as four hours of changeover)
+             * @default 4
+             */
+            tardiness_weight: number;
+            /**
+             * Setup Weight
+             * @description Objective weight per hour of changeover
+             * @default 1
+             */
+            setup_weight: number;
+            /**
+             * Improve
+             * @description Improve the EDD sequence by campaign / swap local search
+             * @default true
+             */
+            improve: boolean;
+            /**
+             * Time Limit Seconds
+             * @description Local-search time budget
+             * @default 4
+             */
+            time_limit_seconds: number;
+        };
+        /** ScheduledOp */
+        ScheduledOp: {
+            /** Id */
+            id: string;
+            /** Key */
+            key: string;
+            /** Order */
+            order: string;
+            /** Seq */
+            seq: number;
+            /** Sub */
+            sub: number;
+            /** Product */
+            product: string;
+            /** Group */
+            group: string;
+            /** Resource */
+            resource: string;
+            /** Unit */
+            unit: number;
+            /** Qty */
+            qty: number;
+            /** Setup Start */
+            setup_start: number;
+            /** Run Start */
+            run_start: number;
+            /** End */
+            end: number;
+            /** Setup Hours */
+            setup_hours: number;
+            /** Run Hours */
+            run_hours: number;
+            /** Setup From */
+            setup_from: string | null;
+            /** Late */
+            late: boolean;
+        };
+        /** ScheduledOrder */
+        ScheduledOrder: {
+            /** Id */
+            id: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Group */
+            group: string;
+            /** Qty */
+            qty: number;
+            /** Release */
+            release: number;
+            /** Due */
+            due: number;
+            /** Completion */
+            completion: number;
+            /** Lateness Hours */
+            lateness_hours: number;
+            /** Tardy */
+            tardy: boolean;
+            /** Baseline Completion */
+            baseline_completion: number;
+            /**
+             * Mrp Start Date
+             * Format: date
+             */
+            mrp_start_date: string;
+            /**
+             * Mrp Due Date
+             * Format: date
+             */
+            mrp_due_date: string;
+            /** Firm */
+            firm: boolean;
+        };
         /**
          * ScheduledReceipt
          * @description Firm supply already committed: open PO, released production order, stock in transit.
@@ -2378,6 +2676,42 @@ export interface components {
              * Format: date
              */
             date: string;
+        };
+        /** SearchInfo */
+        SearchInfo: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "improved" | "edd" | "manual";
+            /**
+             * Moves Tried
+             * @default 0
+             */
+            moves_tried: number;
+            /**
+             * Moves Accepted
+             * @default 0
+             */
+            moves_accepted: number;
+            /**
+             * Passes
+             * @default 0
+             */
+            passes: number;
+            /**
+             * Seconds
+             * @default 0
+             */
+            seconds: number;
+            /**
+             * Stopped
+             * @default off
+             * @enum {string}
+             */
+            stopped: "converged" | "time_limit" | "off";
+            /** Trace */
+            trace: number[];
         };
         /** Segment */
         Segment: {
@@ -3229,6 +3563,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SopReleaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_schedule_api_schedule_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResult"];
                 };
             };
             /** @description Validation Error */
