@@ -2,8 +2,8 @@
 
 **Rebuild blueprint.** This is the one document that decides *what* we build, *in which order*, and *how we prove it is right*.
 It replaces the scattered plans in the repo root and `app_v2/` (EXECUTION_PLAN, PRODUCT_BLUEPRINT_V3,
-OBSERVABILITY_MAP, GOLDEN_JOURNEY_SPEC, MUST_FIX …). Those stay in git history as reference, but they do not
-drive work any more.
+OBSERVABILITY_MAP, GOLDEN_JOURNEY_SPEC, MUST_FIX …). The legacy app and those plans have since been removed
+from the tree; they stay in git history at commit `176b26f`, and the paths below refer to that commit.
 
 Reference sources this blueprint is built against:
 

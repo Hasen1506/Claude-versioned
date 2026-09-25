@@ -5,8 +5,8 @@ bills of material, routings on machines and labour, suppliers and transport lane
 it end to end.
 
 **Read [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) first.** It covers the scope, the data model, the planning
-flow, how correctness is proven, and the phased roadmap. This directory is independent of the legacy app in
-the repository root.
+flow, how correctness is proven, and the phased roadmap. The legacy Enterprise Simulator it replaces was removed
+from the tree; it stays in git history at commit `176b26f`.
 
 ## Run it
 
