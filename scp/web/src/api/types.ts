@@ -64,6 +64,7 @@ export type PoolingRow = S["PoolingRow"];
 
 export type SopResult = S["SopResult"];
 export type SopReleaseResponse = S["SopReleaseResponse"];
+export type PlacementResponse = S["PlacementResponse"];
 export type SopDemandLine = S["DemandLine"];
 export type SopResourceLine = S["ResourceLine"];
 export type SopBinding = S["Binding"];

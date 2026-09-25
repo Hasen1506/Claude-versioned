@@ -98,7 +98,7 @@ ROAST_ORDERS = [  # (need, start): FIXED 500 kg; 2 roasting days + 1 queue (cool
 ]
 GREEN_POS = [  # (need, start, available): MOQ 600; 10 d supplier + 14 d sea + 2 d goods receipt = 26 d
     ("2026-01-19", "2026-01-05", "2026-01-31"), ("2026-02-03", "2026-01-08", "2026-02-03"),
-    ("2026-02-12", "2026-01-17", "2026-02-12"), ("2026-02-17", "2026-01-22", "2026-02-17"),
+    ("2026-02-12", "2026-01-16", "2026-02-11"), ("2026-02-17", "2026-01-22", "2026-02-17"),  # 17 Jan is a Saturday
 ]
 BAG_POS = [("2026-01-16", 500), ("2026-01-30", 1000), ("2026-02-17", 1000)]
 
@@ -164,7 +164,8 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
                [(d(a), d(b), d(c_), 600) for a, b, c_ in GREEN_POS],
                "1,000 on hand covers 8 Jan; each later shortage (250, 275, 300, 325 kg) is raised to the MOQ of "
                "600 (a multiple of 60-kg sacks). 26 days of lead time put the first order before today, so it "
-               "starts today and arrives 31 Jan, 12 days late.")
+               "starts today and arrives 31 Jan, 12 days late. The third would be placed on Saturday 17 Jan; the "
+               "buyers work Monday to Friday, so it goes out on Friday 16 Jan and arrives a day early.")
         ctx.eq("first green PO flagged start-in-past", green[0].start_in_past, True)
 
         bags = sorted(by(plan.orders, product="PKG-BAG"), key=lambda o: o.need_date)
@@ -260,5 +261,6 @@ SCENARIO = Scenario(
     stages=["readiness", "network", "plan", "finance", "execution"],
     found=["A per-kg lane from a supplier flagged a missing weight on products that supplier never sells",
            "The projection showed demand reached a day late as covered, while the exception list called it at risk",
-           "Firming a late order made the next run plan a second one instead of rescheduling the firm order in"],
+           "Firming a late order made the next run plan a second one instead of rescheduling the firm order in",
+           "A purchase order was placed on a Saturday: the start was offset by lead time but not moved to a working day"],
     build=build, run=run)

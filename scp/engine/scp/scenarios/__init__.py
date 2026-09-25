@@ -12,8 +12,9 @@ from .s5_paints import SCENARIO as S5
 from .s6_tents import SCENARIO as S6
 from .s7_bakery import SCENARIO as S7
 from .s8_golive import SCENARIO as S8
+from .generated import SCENARIO as S9
 
-SCENARIOS: list[Scenario] = [S1, S2, S3, S4, S5, S6, S7, S8]
+SCENARIOS: list[Scenario] = [S1, S2, S3, S4, S5, S6, S7, S8, S9]
 BY_ID: dict[str, Scenario] = {s.id: s for s in SCENARIOS}
 
 __all__ = ["BY_ID", "Check", "Client", "ClientError", "EngineClient", "SCENARIOS", "Scenario", "ScenarioInfo", "ScenarioReport",

@@ -65,10 +65,25 @@ def sigma_lt(policy: SafetyStockPolicy, x: SSInputs) -> float:
     return math.sqrt(exposure * sd_daily ** 2 + (x.mean_daily * x.lead_time_std_days) ** 2)
 
 
+def safety_factor(fill_rate: bool, target: float, sigma: float, order_qty: float) -> float:
+    """The multiple of σ a target needs: z(α) for a cycle-service level; for a fill rate β the k with
+    σ·G(k) = (1 − β)·Q, which depends on σ, so on how many days of demand the buffer covers."""
+    if not fill_rate:
+        return _N.inv_cdf(target)
+    if sigma <= 0:
+        return 0.0
+    return k_for_fill_rate((1.0 - target) * max(order_qty, 1e-9) / sigma)
+
+
+def buffer(fill_rate: bool, target: float, sigma: float, order_qty: float) -> float:
+    """Safety stock for demand over the exposure with standard deviation ``sigma``."""
+    return max(0.0, safety_factor(fill_rate, target, sigma, order_qty) * sigma)
+
+
 def statistical_ss(policy: SafetyStockPolicy, x: SSInputs) -> SSResult:
     s = sigma_lt(policy, x)
     if policy.method is SafetyStockMethod.SERVICE_LEVEL:
-        z = _N.inv_cdf(x.service_level)
+        z = safety_factor(False, x.service_level, s, x.order_qty)
         return SSResult(max(0.0, z * s),
                         f"α={x.service_level:.3f} → z={z:.3f}; σ_LT={s:.2f} (d̄={x.mean_daily:.2f}/d, "
                         f"L+R={x.lead_time_days + policy.review_period_days:.1f} d, σ_L={x.lead_time_std_days:.1f} d)")
@@ -76,7 +91,7 @@ def statistical_ss(policy: SafetyStockPolicy, x: SSInputs) -> SSResult:
         if s <= 0:
             return SSResult(0.0, "σ_LT = 0: no uncertainty, no safety stock")
         q = max(x.order_qty, 1e-9)
-        k = k_for_fill_rate((1.0 - x.service_level) * q / s)
+        k = safety_factor(True, x.service_level, s, q)
         return SSResult(max(0.0, k * s),
                         f"β={x.service_level:.3f}, Q≈{q:.1f} → k={k:.3f}; σ_LT={s:.2f}")
     raise ValueError(policy.method)

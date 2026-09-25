@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import date, timedelta
 
 from ..model import AccuracyRecord, Dataset, DemandKind, GoodsMovement, MovementType
@@ -166,24 +167,56 @@ def forecast_in(ds: Dataset, start: date, end: date) -> dict[Node, float]:
     return dict(out)
 
 
+def sales_arrived(ds: Dataset, start: date, end: date, keys: set[Node]) -> dict[Node, float]:
+    """Journal sales per demand node that arrive in [start, end)."""
+    act: dict[Node, float] = defaultdict(float)
+    for m in ds.movements:
+        if m.type is MovementType.SALE:
+            node, day = sale_point(ds, m, keys)
+            if start <= day < end:
+                act[node] += m.qty
+    return act
+
+
+def week_grid(start: date, end: date) -> list[tuple[date, date]]:
+    """The weeks a roll from ``start`` to ``end`` closes: seven days each from ``start``, the last one partial."""
+    out = []
+    w = start
+    while w < end:
+        out.append((w, min(w + timedelta(days=7), end)))
+        w = out[-1][1]
+    return out
+
+
 def accuracy_records(ds: Dataset, start: date, end: date) -> list[AccuracyRecord]:
     """One record per series and elapsed week of [start, end); sales count in the week they arrive."""
     keys = demand_keys(ds)
     out: list[AccuracyRecord] = []
-    w = start
-    while w < end:
-        we = min(w + timedelta(days=7), end)
+    for w, we in week_grid(start, end):
         fc = forecast_in(ds, w, we)
-        act: dict[Node, float] = defaultdict(float)
-        for m in ds.movements:
-            if m.type is MovementType.SALE:
-                node, day = sale_point(ds, m, keys)
-                if w <= day < we:
-                    act[node] += m.qty
+        act = sales_arrived(ds, w, we, keys)
         for n in sorted(set(fc) | set(act)):
             out.append(AccuracyRecord(location=n[0], product=n[1], start=w, end=we, forecast=round(fc.get(n, 0.0), 6),
                                       actual=round(act.get(n, 0.0), 6)))
-        w = we
+    return out
+
+
+def refresh_actuals(ds: Dataset, records: list[AccuracyRecord],
+                    weeks: Sequence[tuple[date, date]] = ()) -> list[AccuracyRecord]:
+    """Closed weeks (``weeks``, and every week ``records`` logged) with their actuals re-read from the journal: a
+    sale posted late for an elapsed week counts in it (a series with no forecast that week gets a record once it
+    has sales, even in a week that logged nothing at the time). The forecast stays as logged."""
+    keys = demand_keys(ds)
+    by_week: dict[tuple[date, date], dict[Node, AccuracyRecord]] = {w: {} for w in weeks}
+    for r in records:
+        by_week.setdefault((r.start, r.end), {})[(r.location, r.product)] = r
+    out: list[AccuracyRecord] = []
+    for (w, we), recs in sorted(by_week.items()):
+        act = sales_arrived(ds, w, we, keys)
+        for n in sorted(set(recs) | {n for n, q in act.items() if q > EPS}):
+            fc = recs[n].forecast if n in recs else 0.0
+            out.append(AccuracyRecord(location=n[0], product=n[1], start=w, end=we, forecast=fc,
+                                      actual=round(act.get(n, 0.0), 6)))
     return out
 
 

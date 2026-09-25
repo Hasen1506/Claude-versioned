@@ -275,7 +275,9 @@ class Promiser:
         finish(res)
         if res.unconfirmed > EPS:
             res.reason = (f"{res.unconfirmed:g} not available from {sh.node[0]} within the horizon"
-                          + ("; no capable-to-promise route either" if self.cfg.ctp else ""))
+                          + ("; no capable-to-promise route either" if self.cfg.ctp else "")
+                          + ". ATP promises stock and receipts to orders, never the forecast: firm or plan more "
+                            "supply to confirm more")
         return res
 
     def _late(self, d: DemandRecord, sh: Ship, i0: int, qty: float, allocs: list[Allocation]) -> list[ScheduleLine]:

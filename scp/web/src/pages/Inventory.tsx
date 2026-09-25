@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { api } from "../api/client";
 import type { Dataset, DdmrpRow, InventoryResult, NodeInventory, PoolingRow } from "../api/types";
 import {
   Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs,
@@ -180,34 +181,36 @@ function Placement({ res, ds }: { res: InventoryResult; ds: Dataset }) {
   const target = (n: NodeInventory) => (n.role === "stocking" ? Math.ceil(n.meio_ss - 1e-9) : 0);
   const changes = stages.filter((n) => sel.has(key(n)) && n.role === "stocking");
   const delta = changes.reduce((a, n) => a + (target(n) - n.current_ss) * n.unit_value, 0);
-  const apply = () => {
-    store.update((d) => {
-      d.location_products ??= [];
-      for (const n of changes) {
-        let lp = d.location_products.find((x) => x.location === n.location && x.product === n.product);
-        if (!lp) {
-          lp = { location: n.location, product: n.product } as (typeof d.location_products)[number];
-          d.location_products.push(lp);
-        }
-        const q = target(n);
-        lp.safety_stock = { ...(lp.safety_stock ?? {}), method: q > 0 ? "fixed" : "none", qty: q > 0 ? q : null } as typeof lp.safety_stock;
-      }
-    });
-    setSel(new Set());
-    setConfirm(false);
+  const [applying, setApplying] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // the engine writes the policies (POST /api/inventory/apply), so a script applies exactly what this button does
+  const apply = async () => {
+    setApplying(true);
+    setErr(null);
+    try {
+      const out = await api.applyPlacement(ds, changes.map((n) => `${n.location}|${n.product}`));
+      store.replace(out.dataset);
+      setSel(new Set());
+      setConfirm(false);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setApplying(false);
+    }
   };
   const toggle = (k: string) => setSel((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const differs = stages.filter((n) => n.role === "stocking" && Math.abs(target(n) - n.current_ss) >= 1);
   return (
     <div className="stack">
       <Panel title="Where the network holds stock"><PlacementChart nodes={stages} /></Panel>
+      {err && <div className="banner error" role="alert">{err}</div>}
       {confirm && changes.length > 0 && (
         <div className="banner info" role="dialog" aria-label="Approve safety-stock changes">
           <Badge sev="warning">Approval</Badge>
           <span>Set {changes.length} safety-stock polic{changes.length === 1 ? "y" : "ies"} to the multi-echelon recommendation as a fixed quantity
             ({changes.filter((n) => target(n) === 0).length} to none). Safety-stock value changes by <b>{money(delta, c)}</b>. The supply plan becomes stale; undo reverts it.</span>
           <span className="spacer" />
-          <button className="btn sm accent" onClick={apply}>Approve and apply</button>
+          <button className="btn sm accent" onClick={apply} disabled={applying}>{applying ? "Applying…" : "Approve and apply"}</button>
           <button className="btn sm ghost" onClick={() => setConfirm(false)}>Cancel</button>
         </div>
       )}

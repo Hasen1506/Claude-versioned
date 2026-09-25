@@ -14,7 +14,9 @@ Demand dates are delivery dates at the demand location, so a sale shipped to a c
 it arrives there (goods issue + the lane's transit): for OTIF, for accuracy weeks and for history.
 
 Every quantity is recomputed from original quantities and the whole journal, so rolling twice to the same
-date — or re-rolling after a late posting — gives the same result.
+date — or re-rolling after a late posting — gives the same result. That holds for what earlier rolls wrote
+too: a movement posted late for a day before the current start still reaches the stock, the history, the
+logged accuracy weeks and the closed-order log on the next roll.
 """
 from __future__ import annotations
 
@@ -22,11 +24,12 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from ..model import (
-    ClosedOrder, Dataset, DemandKind, LocationProduct, MovementType, SalesHistory,
+    ClosedOrder, Dataset, DemandKind, LocationProduct, MovementType, RolledWeek, SalesHistory,
 )
 from .result import OrderChange, RollReport, StockChange
 from .stock import (
-    EPS, _sum, accuracy_records, arrival, before, by_ref, counterparty, demand_keys, sale_point, stock,
+    EPS, _sum, accuracy_records, arrival, before, by_ref, counterparty, demand_keys, refresh_actuals, sale_point,
+    stock, week_grid,
 )
 
 
@@ -80,7 +83,8 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
                 left = req - by_ref(iss, rc.id, rv.product, rv.location)
                 if left > EPS:
                     rvs.append(rv.model_copy(update={"qty": round(left, 6), "required_qty": req}))
-            receipts.append(rc.model_copy(update={"qty": round(open_q, 6), "reservations": rvs,
+            # nothing received: the quantity is the order's own, unrounded, so the next roll starts from it
+            receipts.append(rc.model_copy(update={"qty": round(open_q, 6) if delivered > EPS else open_q, "reservations": rvs,
                                                   "ordered_qty": ordered if delivered > EPS else rc.ordered_qty}))
         if closed or delivered > EPS:
             rep.orders.append(OrderChange(kind=rc.kind.value, id=rc.id, location=rc.location, product=rc.product,
@@ -127,7 +131,7 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
                                           first_delivery=first, last_delivery=last, closed_on=last or as_of))
             rep.confirmations_trimmed += len(cf)
         else:
-            demand.append(d.model_copy(update={"qty": round(open_q, 6),
+            demand.append(d.model_copy(update={"qty": round(open_q, 6) if delivered > EPS else open_q,
                                                "ordered_qty": ordered if delivered > EPS else d.ordered_qty}))
             # delivered quantity came off the earliest schedule lines
             cut = sum(c.qty for c in confs.get(d.id, [])) - open_q
@@ -145,29 +149,37 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
                                           open_before=d.qty, open_after=0.0 if closed else round(open_q, 6), closed=closed))
     keep_confs += [c for c in ds.confirmations if c.order not in {d.id for d in ds.demand if d.id}]
 
-    # ⑤ history ----------------------------------------------------------------------------------------------
+    # ⑤ history: every journal sale before as_of on the day it arrives, rebuilt from the whole journal so a late
+    # posting for an earlier day lands; imported history is kept as it is and wins on a day it covers ---------
     keys = demand_keys(ds)
-    have = {(h.location, h.product, h.date) for h in ds.history}
-    new_hist: dict[tuple[str, str, date], float] = defaultdict(float)
+    imported = [h for h in ds.history if not h.from_journal]
+    have = {(h.location, h.product, h.date) for h in imported}
+    was = {(h.location, h.product, h.date): h.qty for h in ds.history if h.from_journal}
+    journal: dict[tuple[str, str, date], float] = defaultdict(float)
     for m in ds.movements:
         if m.type is not MovementType.SALE:
             continue
         (loc, prod), day = sale_point(ds, m, keys)
-        if prev <= day < as_of and (loc, prod, day) not in have:
-            new_hist[(loc, prod, day)] += m.qty
-    history = list(ds.history) + [SalesHistory(location=k[0], product=k[1], date=k[2], qty=round(q, 6),
-                                               price=(p.price if (p := ds.product_by_id.get(k[1])) else None))
-                                  for k, q in sorted(new_hist.items())]
-    rep.history_added = len(new_hist)
+        if day < as_of and (loc, prod, day) not in have:
+            journal[(loc, prod, day)] += m.qty
+    history = imported + [SalesHistory(location=k[0], product=k[1], date=k[2], qty=round(q, 6),
+                                       price=(p.price if (p := ds.product_by_id.get(k[1])) else None), from_journal=True)
+                          for k, q in sorted(journal.items())]
+    rep.history_added = sum(1 for k, q in journal.items() if abs(was.get(k, 0.0) - round(q, 6)) > EPS)
 
-    logged = {(a.location, a.product, a.start) for a in rep.accuracy}
-    acc = [a for a in ds.accuracy if (a.location, a.product, a.start) not in logged] + rep.accuracy
+    # ⑥ the logs: earlier weeks and closed orders re-read from the journal ---------------------------------
+    now = set(week_grid(prev, as_of))
+    earlier = sorted({(w.start, w.end) for w in ds.rolled_weeks} - now)
+    acc = refresh_actuals(ds, [a for a in ds.accuracy if (a.start, a.end) not in now], earlier) + rep.accuracy
+    rolled = [RolledWeek(start=w, end=we) for w, we in sorted(set(earlier) | now)]
     closed_ids = {(c.kind, c.id) for c in rep.closed}
-    closed_log = [c for c in ds.closed_orders if (c.kind, c.id) not in closed_ids] + rep.closed
+    closed_log = [_redeliver(ds, c, (got, g_first, g_last), (sold, s_first, s_last))
+                  for c in ds.closed_orders if (c.kind, c.id) not in closed_ids] + rep.closed
+    closed_log.sort(key=lambda c: (c.closed_on, c.kind, c.id))   # one order however many rolls it took
     new = ds.model_copy(update={
         "settings": ds.settings.model_copy(update={"planning_start": as_of}),
         "location_products": lps, "receipts": receipts, "demand": demand, "confirmations": keep_confs,
-        "history": history, "accuracy": acc, "closed_orders": closed_log,
+        "history": history, "accuracy": acc, "rolled_weeks": rolled, "closed_orders": closed_log,
     })
     past_due = [r.id for r in receipts if r.due_date < as_of]
     if past_due:
@@ -175,3 +187,21 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
                             + ("…" if len(past_due) > 6 else ""))
     rep.ok = True
     return Dataset.model_validate(new.model_dump()), rep
+
+
+def _redeliver(ds: Dataset, c: ClosedOrder, receipts: tuple[dict, dict, dict], sales: tuple[dict, dict, dict]) -> ClosedOrder:
+    """A closed order's deliveries as the journal now has them (a late posting may add one)."""
+    if c.kind == "sales":
+        sold, first, last = sales
+        ks = [k for k in sold if k[0] == c.id and k[2] == c.product]
+        delivered = by_ref(sold, c.id, c.product)
+        lo = min((arrival(ds, k[1], c.location, c.product, first[k]) for k in ks), default=None)
+        hi = max((arrival(ds, k[1], c.location, c.product, last[k]) for k in ks), default=None)
+    else:
+        got, first, last = receipts
+        k = (c.id, c.location, c.product)
+        delivered, lo, hi = got.get(k, 0.0), first.get(k), last.get(k)
+    if abs(delivered - c.delivered_qty) <= EPS:
+        return c
+    return c.model_copy(update={"delivered_qty": delivered, "first_delivery": lo, "last_delivery": hi,
+                                "closed_on": hi or c.closed_on})

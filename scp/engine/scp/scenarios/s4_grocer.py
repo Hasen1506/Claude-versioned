@@ -106,13 +106,16 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
                  why="Clipped to the rolling median (100) + 4 robust σ of the ±5 noise.")
         ctx.near("SPIKE forecast stays near 100", float(np.mean([p.statistical for p in s["SPIKE"].forecast])), 100, 3)
         rev = _revenue()
+        rev["SPIKE"] += (cleaned - 1000) * PRICES["SPIKE"]      # ranked without the freak order (clipped above)
         total = sum(rev.values())
         ctx.near("revenue shares", {p: s[p].segment.revenue_share for p in rev}, {p: v / total for p, v in rev.items()},
-                 1e-9, "Raw history × price: TREND 11,025, PROMO 6,200, FLAT 6,000, INTERMIT 4,200, SPIKE 3,904, "
-                       "SEASON 3,000 of 34,329.")
+                 1e-9, "History × price, outliers cleansed: TREND 11,025, PROMO 6,200 (its promotions were real "
+                       f"sales and stay), FLAT 6,000, INTERMIT 4,200, SPIKE 3,904 − 1,000 + {cleaned:.1f} = "
+                       f"{rev['SPIKE']:,.1f}, SEASON 3,000 of {total:,.1f}.")
         ctx.eq("ABC classes", {p: s[p].segment.abc for p in sorted(rev)},
-               {"FLAT": "A", "INTERMIT": "A", "PROMO": "A", "SEASON": "B", "SPIKE": "A", "TREND": "A"},
-               "Cumulative share before each product: SPIKE starts at 79.9 % (< 80 %: A), SEASON at 91.3 % (B).")
+               {"FLAT": "A", "INTERMIT": "A", "PROMO": "A", "SEASON": "B", "SPIKE": "B", "TREND": "A"},
+               "Cumulative share before each product: SPIKE starts at 82.0 % (≥ 80 %: B), SEASON at 91.0 % (B). "
+               "On raw revenue the one freak order would have made SPIKE an A item (79.9 %).")
 
     with ctx.step("Consensus: event, launch, override", "demand", "POST /api/forecast",
                   "The summer promotion has no lift typed in, so the measured +50 % applies; NEW launches on "
@@ -162,8 +165,9 @@ SCENARIO = Scenario(
           "warehouse's supply is still being set up, and demand planning must not wait for it.",
     proves=["champion selection with tie-breaks", "exact trend and season", "intermittent pattern and SBA",
             "promotion cleansing and measured lift", "outlier clipping", "NPI ramp and cannibalisation",
-            "consensus override", "ABC by revenue", "prorated release of partial weeks",
+            "consensus override", "ABC by cleansed revenue", "prorated release of partial weeks",
             "demand planning not blocked by supply gaps", "released volumes reach MRP intact"],
     stages=["readiness", "demand", "plan"],
-    found=["A warehouse without a supplier stopped the forecast, although demand planning never reads suppliers"],
+    found=["A warehouse without a supplier stopped the forecast, although demand planning never reads suppliers",
+           "ABC ranked on raw revenue, so the one freak order the forecast cleansed away still made SPIKE an A item"],
     build=build, run=run)

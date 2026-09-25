@@ -22,7 +22,7 @@ from ..tower import TowerResult, WorkItem, get_tracker, run_tower
 from ..demand import foundation
 from ..demand.models import SPECS
 from ..demand.result import FoundationStatus
-from ..inventory import InventoryResult, run_inventory
+from ..inventory import InventoryResult, PlacementApplied, apply_placement, run_inventory
 from ..model import Dataset, DemandRecord, ForecastModelId
 from ..model.common import Out
 from ..network import build_graph, location_edges, location_layers
@@ -236,6 +236,28 @@ def post_release(req: ReleaseRequest) -> ReleaseResponse:
 @app.post("/api/inventory", response_model=InventoryResult)
 def post_inventory(ds: Dataset) -> InventoryResult:
     return run_inventory(ds)
+
+
+class PlacementRequest(Out):
+    dataset: Dataset
+    keys: list[str] | None = None     # "location|product"; None: every stage whose recommendation differs
+
+
+class PlacementResponse(Out):
+    dataset: Dataset
+    applied: PlacementApplied
+
+
+@app.post("/api/inventory/apply", response_model=PlacementResponse)
+def post_inventory_apply(req: PlacementRequest) -> PlacementResponse:
+    result = run_inventory(req.dataset)
+    if not result.ok:
+        raise HTTPException(409, "the placement did not solve; fix the readiness issues first")
+    try:
+        new, info = apply_placement(req.dataset, result, req.keys)
+    except KeyError as e:
+        raise HTTPException(404, str(e.args[0])) from None
+    return PlacementResponse(dataset=new, applied=info)
 
 
 @app.post("/api/sop", response_model=SopResult)

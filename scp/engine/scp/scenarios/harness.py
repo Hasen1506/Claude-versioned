@@ -28,7 +28,7 @@ from typing import Any, Protocol
 from ..actuals import ActualsView, FirmReport, RollReport, actuals_view, firm_orders, roll_forward
 from ..demand import ForecastResult, ReleaseResult, release, run_forecast
 from ..finance import FinanceResult, run_finance
-from ..inventory import InventoryResult, run_inventory
+from ..inventory import InventoryResult, PlacementApplied, apply_placement, run_inventory
 from ..model import Dataset, DemandRecord
 from ..model.common import Out
 from ..plan import PlanResult, run_mrp
@@ -102,6 +102,7 @@ class Client(Protocol):
     def forecast(self, ds: Dataset) -> ForecastResult: ...
     def release_forecast(self, ds: Dataset, keys: list[str] | None = None) -> tuple[Dataset, ReleaseResult]: ...
     def inventory(self, ds: Dataset) -> InventoryResult: ...
+    def apply_placement(self, ds: Dataset, keys: list[str] | None = None) -> tuple[Dataset, PlacementApplied]: ...
     def sop(self, ds: Dataset) -> SopResult: ...
     def release_sop(self, ds: Dataset) -> tuple[Dataset, SopRelease]: ...
     def plan(self, ds: Dataset) -> PlanResult: ...
@@ -151,6 +152,12 @@ class EngineClient:
 
     def inventory(self, ds: Dataset) -> InventoryResult:
         return run_inventory(ds)
+
+    def apply_placement(self, ds: Dataset, keys: list[str] | None = None) -> tuple[Dataset, PlacementApplied]:
+        try:
+            return apply_placement(ds, run_inventory(ds), keys)
+        except KeyError as e:          # the API answers 404
+            raise ClientError(404, str(e.args[0])) from e
 
     def sop(self, ds: Dataset) -> SopResult:
         return run_sop(ds)

@@ -89,16 +89,18 @@ def build() -> dict:
 def gsm_oracle() -> tuple[float, int, int]:
     """Enumerate every integer outbound service time of the base and the paint stage (the DCs must quote 0).
 
-    τ_base = 10 − S_base; τ_paint = S_base + 5 − S_paint; τ_DC = S_paint + 3 at both DCs.
+    τ_base = 10 − S_base; τ_paint = S_base + 5 − S_paint; τ_DC = S_paint + 3 at both DCs. The east DC and
+    the plant hold z·σ·√τ; the west DC's fill-rate target needs the loss-function k for σ·√τ at each τ.
     Returns (objective, S_base, S_paint) of the cheapest plan."""
     c_base = VALUE["BASE"] * RATE * Z95 * SD_PLANT
     c_paint = VALUE["PAINT"] * RATE * Z95 * SD_PLANT
-    c_dc = VALUE["DC"] * RATE * (Z95 + Z99) * SD_DC        # both DCs: z 0.95 east, 0.99 west
+    c_dce = VALUE["DC"] * RATE * Z95 * SD_DC
     best = (math.inf, -1, -1)
     for s_base in range(LT["BASE"] + 1):
         for s_paint in range(s_base + LT["PAINT"] + 1):
+            tau_dc = s_paint + LT["DC"]
             cost = (c_base * math.sqrt(LT["BASE"] - s_base) + c_paint * math.sqrt(s_base + LT["PAINT"] - s_paint)
-                    + c_dc * math.sqrt(s_paint + LT["DC"]))
+                    + c_dce * math.sqrt(tau_dc) + VALUE["DC"] * RATE * fill_rate_ss(0.99, Q_W, SD_DC * math.sqrt(tau_dc)))
             best = min(best, (cost, s_base, s_paint))
     return best
 
@@ -118,6 +120,9 @@ def fill_rate_ss(beta: float, q: float, sigma: float) -> float:
 
 def eoq(annual: float, order_cost: float, unit_value: float, rate: float) -> float:
     return math.sqrt(2 * annual * order_cost / (unit_value * rate))
+
+
+Q_W = eoq(3650, 50, VALUE["DC"], RATE)          # the west DC's lot: 10 a day for a year, €50 an order
 
 
 def zones(adu: float, dlt: float, ltf: float, vf: float, cycle: float = 7) -> tuple[float, float, float]:
@@ -155,13 +160,15 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
         ctx.near("holding rate", dce.holding_rate, RATE, 1e-12, "WACC 15 % + spread 10 %.")
 
     with ctx.step("Single-echelon baseline", "inventory", "POST /api/inventory",
-                  "Every stage buffers its own lead time: SS = z·√(L·σ_d² + d̄²·σ_L²)."):
-        single = {"DC-E": Z95 * SD_DC * math.sqrt(3), "DC-W": Z99 * SD_DC * math.sqrt(3),
+                  "Every stage buffers its own lead time: SS = z·√(L·σ_d² + d̄²·σ_L²), or for the west DC's "
+                  "fill rate, the k that leaves 1 % of its lot short."):
+        single = {"DC-E": Z95 * SD_DC * math.sqrt(3), "DC-W": fill_rate_ss(0.99, Q_W, SD_DC * math.sqrt(3)),
                   "PAINT": Z95 * SD_PLANT * math.sqrt(5),
                   "BASE": Z95 * math.sqrt(10 * SD_PLANT ** 2 + (20 * 2) ** 2)}
         ctx.near("single-echelon SS", [dce.single_ss, dcw.single_ss, paint.single_ss, base.single_ss],
                  list(single.values()), 1e-6,
-                 "DC-E 1.645·7.94·√3 = 22.61; DC-W at 99 %: 2.326·7.94·√3 = 31.98; paint 1.645·11.22·√5 = 41.29; "
+                 "DC-E 1.645·7.94·√3 = 22.61; DC-W: 1 % of Q = 217 is 2.17 short per cycle = 13.75·G(k), k = 0.640, "
+                 "8.80 (not z(99 %) = 2.326, which would hold 31.98); paint 1.645·11.22·√5 = 41.29; "
                  "base 1.645·√(10·126 + (20·2)²) = 87.97: the supplier's ±2-day lead time costs more than demand.")
 
     with ctx.step("Multi-echelon placement (guaranteed service)", "inventory", "POST /api/inventory",
@@ -178,10 +185,11 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
                                              base.meio_net_days], [8, 8, 0, 10])
         ctx.near("solver objective = enumerated optimum", inv.solver.objective, obj, 1e-6,
                  f"Σ c·√τ = {obj:.2f} per year; the runner-up (buffer at every stage) costs more.")
-        meio = {"DC-E": Z95 * SD_DC * math.sqrt(8), "DC-W": Z99 * SD_DC * math.sqrt(8), "PAINT": 0.0,
+        meio = {"DC-E": Z95 * SD_DC * math.sqrt(8), "DC-W": fill_rate_ss(0.99, Q_W, SD_DC * math.sqrt(8)), "PAINT": 0.0,
                 "BASE": single["BASE"]}
         ctx.near("recommended SS", [dce.meio_ss, dcw.meio_ss, paint.meio_ss, base.meio_ss], list(meio.values()), 1e-6,
-                 "DC-E 1.645·7.94·√8 = 36.93, DC-W 2.326·7.94·√8 = 52.23, none at the paint stage, base as before "
+                 "DC-E 1.645·7.94·√8 = 36.93; DC-W over 8 days: 2.17 = 22.45·G(k), k = 0.921, 20.67; none at the "
+                 "paint stage, base as before "
                  "(σ_L added back at the buffering stage).")
         value = lambda d: d["DC-E"] * 31 + d["DC-W"] * 31 + d["PAINT"] * 30 + d["BASE"] * 10  # noqa: E731
         ctx.near("stock value: single vs multi-echelon", (inv.totals.single_ss_value, inv.totals.meio_ss_value),
@@ -199,7 +207,7 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
                   "The inventory screen's 'current' safety stock must be the one MRP actually plans with."):
         plan = c.plan(ds)
         mrp = {(x.location, x.product): x.buckets[0].safety_stock for x in plan.nodes}
-        q = eoq(3650, 50, 31, RATE)
+        q = Q_W
         fr = fill_rate_ss(0.99, q, SD_DC * math.sqrt(3))
         ctx.near("west DC economic order quantity", q, 217.02, 0.01, "√(2 · 3,650 · 50 ÷ (31 · 0.25)).")
         ctx.near("MRP safety stock", [mrp["PLANT", "BASE"], mrp["PLANT", "PAINT"], mrp["DC-E", "PAINT"],
@@ -208,6 +216,48 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
                  f"{fr / (SD_DC * math.sqrt(3)):.3f}, SS = {fr:.2f}.")
         ctx.near("inventory 'current' SS matches MRP", [base.current_ss, paint.current_ss, dce.current_ss, dcw.current_ss],
                  [150, 100, single["DC-E"], fr], 1e-6)
+
+    with ctx.step("Approve the placement and plan again", "inventory+plan", "POST /api/inventory/apply",
+                  "Applying writes each recommendation, rounded up to whole tins, as a fixed policy; the next MRP "
+                  "run must hold exactly that. The paint stage passes through, so its buffer is removed."):
+        only, one_change = c.apply_placement(ds, ["DC-E|PAINT"])
+        ctx.eq("apply one stage by key", [(x.location, x.ss_after) for x in one_change.changes], [("DC-E", 37)],
+               "⌈36.93⌉ = 37.")
+        ctx.raises("an unknown stage is refused", lambda: c.apply_placement(ds, ["CUST-E|PAINT"]), 404,
+                   "not a stocking stage")
+        applied, info = c.apply_placement(ds)
+        after = {"DC-E": math.ceil(meio["DC-E"]), "DC-W": math.ceil(meio["DC-W"]), "PAINT": 0,
+                 "BASE": math.ceil(meio["BASE"])}
+        ctx.eq("every stage that differs, with its new quantity",
+               sorted((x.location, x.product, x.ss_after) for x in info.changes),
+               [("DC-E", "PAINT", after["DC-E"]), ("DC-W", "PAINT", after["DC-W"]), ("PLANT", "BASE", after["BASE"]),
+                ("PLANT", "PAINT", 0)], "⌈36.93⌉, ⌈20.67⌉, ⌈87.97⌉, and none at the paint stage.")
+        was = {"DC-E": single["DC-E"], "DC-W": fr, "PAINT": 100, "BASE": 150}
+        ctx.near("safety-stock value change", info.value_change,
+                 sum((after[k] - was[k]) * {"DC-E": 31, "DC-W": 31, "PAINT": 30, "BASE": 10}[k] for k in after), 1e-6,
+                 "(37 − 22.61)·31 + (21 − 8.80)·31 − 100·30 − (150 − 88)·10: the plant's round numbers were the "
+                 "expensive habit.")
+        replan = {(x.location, x.product): x.buckets[0].safety_stock for x in c.plan(applied).nodes}
+        ctx.near("MRP now holds the recommendation", [replan["DC-E", "PAINT"], replan["DC-W", "PAINT"],
+                                                     replan["PLANT", "PAINT"], replan["PLANT", "BASE"]],
+                 [after["DC-E"], after["DC-W"], 0, after["BASE"]], 1e-9)
+        ctx.eq("the one-stage apply left the others alone",
+               [(lp.location, lp.product, lp.safety_stock.method.value) for lp in only.location_products
+                if lp.location in ("PLANT", "DC-W")],
+               [("PLANT", "BASE", "fixed"), ("PLANT", "PAINT", "fixed"), ("DC-W", "PAINT", "fill_rate")])
+
+    with ctx.step("S&OP sees the demand MRP plans", "sop", "POST /api/sop",
+                  "In weekly S&OP buckets the east orders replace the forecast they consume rather than competing "
+                  "with it: the plan balances 560 tins a customer, as MRP and the inventory screen do."):
+        raw = json.loads(ds.model_dump_json())
+        raw["sop"] = {"bucket": "week"}
+        sop = c.sop(Dataset.model_validate(raw))
+        east, west = one(sop.demand, location="CUST-E"), one(sop.demand, location="CUST-W")
+        ctx.near("east demand by week", east.demand, [220, 0, 0, 60, 70, 70, 70, 70], 1e-9,
+                 "Orders 30 + 150 + 40 in week 1; they consume weeks 1–3 and 10 of week 4. Taking the larger of "
+                 "forecast and orders per week would plan 220 + 7·70 = 710.")
+        ctx.near("total demand per customer (east, west)", (sum(east.demand), sum(west.demand)), (560, 560), 1e-9,
+                 "8 weeks × 70, orders included.")
 
     with ctx.step("DDMRP buffers at the DCs only", "inventory", "POST /api/inventory",
                   "Only the DCs are decoupling points, so the east DC's decoupled lead time runs all the way back "
@@ -252,11 +302,16 @@ SCENARIO = Scenario(
     proves=["risk pooling of variances", "lead-time variability in safety stock", "cost roll-up to unit values",
             "single-echelon vs multi-echelon placement (exact optimum)", "square-root law",
             "fill-rate safety stock with an EOQ lot", "the same safety stock in MRP and inventory",
+            "the same demand in S&OP as in MRP", "an approved placement is what MRP then holds",
             "DDMRP decoupled lead time, zones and qualified spikes from customer orders"],
-    stages=["readiness", "inventory", "plan"],
+    stages=["readiness", "inventory", "sop", "plan"],
     found=["Inventory sized a fill-rate item's lot as a week of demand while MRP used the EOQ: two safety stocks for "
            "one item",
            "The demand rate took the larger of forecast and orders instead of forecast after consumption plus orders",
            "A CV of exactly 0.3 computed as 0.30000000000000004 and fell into the medium DDMRP band",
-           "DDMRP qualified demand ignored the orders of the customers a buffer ships to"],
+           "DDMRP qualified demand ignored the orders of the customers a buffer ships to",
+           "The placement priced the west DC's 99 % fill rate as a 99 % cycle-service level (z = 2.33): 31.98 "
+           "single-echelon where MRP holds 8.80, and an optimum built on stock no screen would hold",
+           "S&OP took the larger of forecast and orders per bucket: 710 tins for a customer MRP plans 560 for",
+           "No API call applied a placement: only the web client could, by editing the policies itself"],
     build=build, run=run)

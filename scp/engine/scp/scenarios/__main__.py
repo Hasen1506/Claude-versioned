@@ -3,6 +3,8 @@
     python -m scp.scenarios                       # all scenarios, straight through the engine
     python -m scp.scenarios s2-kettles -v         # one scenario, every checkpoint with its derivation
     python -m scp.scenarios --url http://localhost:8000   # through a running server's HTTP API
+    python -m scp.scenarios s9-generated --seeds 500      # the generated flow over 500 companies
+    python -m scp.scenarios s9-generated --seed 17 -v     # one generated company (its data: generated.company(17))
 
 Exit status 1 if any checkpoint fails.
 """
@@ -42,10 +44,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("ids", nargs="*", help="scenario ids (default: all)")
     ap.add_argument("--url", help="run through the HTTP API of a running server")
     ap.add_argument("-v", "--verbose", action="store_true", help="show every checkpoint and its derivation")
+    ap.add_argument("--seeds", type=int, help="s9-generated: run the first N generated companies")
+    ap.add_argument("--seed", type=int, action="append", help="s9-generated: run this company (repeatable)")
     a = ap.parse_args(argv)
-    unknown = [i for i in a.ids if i not in BY_ID]
+    scenarios = dict(BY_ID)
+    if a.seeds or a.seed:
+        from .generated import make
+        scenarios["s9-generated"] = make(a.seed or range(a.seeds))
+    unknown = [i for i in a.ids if i not in scenarios]
     if unknown:
-        ap.error(f"unknown scenario(s) {', '.join(unknown)}; choose from {', '.join(BY_ID)}")
+        ap.error(f"unknown scenario(s) {', '.join(unknown)}; choose from {', '.join(scenarios)}")
     def client() -> Client:          # a fresh client per scenario: its own version store in the engine
         if not a.url:
             return EngineClient()
@@ -54,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
         from .http import HttpClient
         return HttpClient(httpx.Client(base_url=a.url, timeout=120))
 
-    reports = [BY_ID[i].execute(client()) for i in (a.ids or [s.id for s in SCENARIOS])]
+    reports = [scenarios[i].execute(client()) for i in (a.ids or [s.id for s in SCENARIOS])]
     for r in reports:
         _print(r, a.verbose)
     total = sum(r.passed + r.failed for r in reports)

@@ -2,7 +2,10 @@
 
 MTS          forecast drives supply; sales orders are not planning-relevant (SAP 10)
 MTS_CONSUME  sales orders consume forecast: backward first (nearest earlier bucket outward),
-             then forward, within the consumption windows; orders are demand (SAP 40)
+             then forward, within the consumption windows; orders are demand (SAP 40).
+             A forecast for a period (``period_days``) covers every day of it, so an order first
+             consumes the forecast of the period it falls in, however far into the period it is:
+             an S&OP release dated at the start of the month is consumed by that month's orders.
 MTO          sales orders only; forecast ignored (SAP 20)
 ATO          as MTS_CONSUME for quantities; supply created for forecast is flagged
              non-convertible until an order arrives (SAP 50)
@@ -30,6 +33,7 @@ def effective_demand(records: list[tuple[str, DemandRecord]], strategy: Strategy
                      back_days: float, fwd_days: float) -> list[IndependentReq]:
     fcs = [IndependentReq(f"D:{rid}", r.date, r.qty, "forecast", r.priority, rid)
            for rid, r in records if r.kind is DemandKind.FORECAST]
+    span = {f"D:{rid}": max(1, r.period_days or 1) for rid, r in records}
     sos = [IndependentReq(f"D:{rid}", r.date, r.qty, "sales_order", r.priority, rid)
            for rid, r in records if r.kind is DemandKind.SALES_ORDER]
     if strategy is Strategy.MTS:
@@ -41,7 +45,7 @@ def effective_demand(records: list[tuple[str, DemandRecord]], strategy: Strategy
         need = so.qty
         lo = so.date - timedelta(days=back_days)
         hi = so.date + timedelta(days=fwd_days)
-        backward = [f for f in reversed(fcs) if lo <= f.date <= so.date]
+        backward = [f for f in reversed(fcs) if f.date <= so.date and f.date + timedelta(days=span[f.id] - 1) >= lo]
         forward = [f for f in fcs if so.date < f.date <= hi]
         for f in backward + forward:
             if need <= 1e-12:

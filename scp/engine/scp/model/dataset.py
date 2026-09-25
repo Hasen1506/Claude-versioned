@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from .actuals import AccuracyRecord, ClosedOrder, ExecutionSettings, GoodsMovement
+from .actuals import AccuracyRecord, ClosedOrder, ExecutionSettings, GoodsMovement, RolledWeek
 from .common import LocationType, Model
 from .finance import FinanceSettings
 from .tower import TowerSettings
@@ -55,6 +55,7 @@ class Dataset(Model):
     movements: list[GoodsMovement] = Field(default_factory=list)
     closed_orders: list[ClosedOrder] = Field(default_factory=list)
     accuracy: list[AccuracyRecord] = Field(default_factory=list)
+    rolled_weeks: list[RolledWeek] = Field(default_factory=list)
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
     finance: FinanceSettings = Field(default_factory=FinanceSettings)
     tower: TowerSettings = Field(default_factory=TowerSettings)

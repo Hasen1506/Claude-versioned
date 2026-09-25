@@ -1,5 +1,5 @@
 import type {
-  Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
+  Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   ScenarioInfo, ScenarioReport, SchemaError, ValidationResult,
 } from "./types";
 
@@ -44,6 +44,9 @@ export const api = {
   sop: (ds: Dataset) => post<SopResult>("/api/sop", ds),
   sopRelease: (ds: Dataset) => post<SopReleaseResponse>("/api/sop/release", ds),
   inventory: (ds: Dataset) => post<InventoryResult>("/api/inventory", ds),
+  /** Write the multi-echelon recommendation as fixed policies; keys "location|product", null = every stage that differs. */
+  applyPlacement: (dataset: Dataset, keys: string[] | null) =>
+    call<PlacementResponse>("/api/inventory/apply", { method: "POST", body: JSON.stringify({ dataset, keys }) }),
   promise: (ds: Dataset) => post<PromiseResult>("/api/promise", ds),
   bop: (ds: Dataset) => post<PromiseResult>("/api/promise/bop", ds),
   promiseCheck: (dataset: Dataset, order: DemandRecord) =>

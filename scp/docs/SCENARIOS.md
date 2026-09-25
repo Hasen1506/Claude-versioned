@@ -2,13 +2,17 @@
 
 Unit tests check each module against its author's idea of the answer. The scenarios check the whole product
 against a planner's: eight small fictional companies, each worked out by hand before the engine ran, driven
-through the same API calls the web client makes, from master data to the books.
+through the same API calls the web client makes, from master data to the books. A ninth runs one generated
+workflow over many random companies and holds every run to properties instead of hand-worked values (see
+[One flow, many companies](#one-flow-many-companies)).
 
 ```bash
 cd scp/engine
-python -m scp.scenarios                          # all eight, in-process
+python -m scp.scenarios                          # all nine, in-process
 python -m scp.scenarios s5-paints -v             # one scenario, every checkpoint with its derivation
 python -m scp.scenarios --url http://localhost:8000   # against a running server
+python -m scp.scenarios s9-generated --seeds 500 # the generated flow over 500 companies
+python -m scp.scenarios s9-generated --seed 17 -v   # one generated company; its data is generated.company(17)
 pytest tests/test_scenarios.py tests/test_regressions.py
 ```
 
@@ -33,7 +37,7 @@ its API call, what should happen and why, and each checkpoint's hand-worked valu
 6. **Declared stages are checked stages.** A test keeps a scenario's `stages` equal to the stages its steps
    check, so the coverage matrix cannot overstate.
 
-## The eight companies
+## The eight hand-worked companies
 
 | | Company | What it tests | Checked against |
 |---|---|---|---|
@@ -45,22 +49,81 @@ its API call, what should happen and why, and each checkpoint's hand-worked valu
 | S6 | Fjord Outfitters | Month-end: plan, promise, firm, two weeks of goods movements, roll-forward, accuracy, OTIF, supplier reliability, idempotence, late postings, the version lifecycle | A hand stock ledger; KPI arithmetic; SHA-256 of canonical JSON |
 | S7 | Oakleaf Bakery | Scheduling through allergen changeovers: EDD, the improved sequence, a manual override, labour against headcount | All 720 sequences on an independent shift clock |
 | S8 | Crescent Preserves | The go-live gate: one planted mistake per readiness rule, found once on the right object; demand unblocks before supply | The planted list, exactly |
+| S9 | Generated companies | The whole flow, gate to saved version, over random companies (12 in the suite; any number from the CLI) | Invariants, agreements between modules, metamorphic relations |
+
+## One flow, many companies
+
+Why are S1–S8 eight separate companies rather than one flow with the inputs varied? Because each checkpoint
+there is a *value* worked out by hand, and a hand derivation only stays followable on a company built for it:
+three items to show consumption, one import that cannot arrive in time, a shift clock small enough to
+enumerate. Vary the inputs and the hand answer is gone. Those scenarios catch what no relation can: a number
+that is wrong while every module agrees with every other (the fill-rate placement priced as a cycle-service
+level was internally consistent; only a closed form caught it).
+
+S9 (`scenarios/generated.py`) is the other half. `company(seed)` builds a random but valid company: a plant
+with one or two BOM levels, up to two DCs and three customers, random lot rules, safety-stock methods (with
+review periods), lead times and their spread, weekly history, forecasts, sales orders and opening stock. `flow`
+takes each through the planner's workflow: validate → forecast + release → S&OP + release → MRP → placement +
+apply → MRP → promise + commit → firm → post a journal (late and short receipts, the issues they draw, shipped
+lines, some short) → roll a week, and another → finance → the tower → a saved version. Nobody knows the right
+plan for a random company, so every run is held to what must be true of any plan:
+
+- **Invariants**: MRP's projection is the running balance; pegging never over-allocates; an order is its pegged
+  quantity plus what is not pegged, and splits into demand, buffer and lot size; dates run in order and a
+  purchase order starts on a working day; dependent requirements are sized by their order. Confirmed lines plus
+  unconfirmed equal what was ordered, nothing is delivered before it was asked for, and what is committed is
+  what was promised. Stock after a roll is the journal's sum. The books close. A version's hash is the hash of
+  what it stores, and it reads back byte for byte.
+- **Agreements**: S&OP plans the demand MRP plans, node by node; after the S&OP release MRP plans each week's
+  S&OP sales in that week; MRP holds the safety stock the inventory screen reports; the single-echelon
+  recommendation at a node's own target is its policy's stock; MRP holds an applied placement; the optimal
+  placement never costs more than buffering every stage.
+- **Metamorphic relations**: the same company with every table in another order, or started whole weeks
+  later, gets the same plan; firming every planned order and planning again changes nothing; promising again
+  after a commit keeps every confirmation; rolling twice to a date changes nothing; rolling a week and then
+  another ends where rolling two weeks does; a movement posted after its week was rolled ends where posting it
+  on time does; more safety stock at a lot-for-lot node never means less supply.
+
+A failing property names the seeds it fails for. Sweeps over 600 companies found eight defects the hand-worked
+scenarios had not (the S9 `found` list): three ways firming a plan and planning again changed it, a buffer
+sized on one-off requirements, a placement that rounded lead times up, and three ways the roll-forward's result
+depended on how it was reached. One relation was wrong rather than the engine: under any minimum lot (EOQ, a fixed lot, a
+minimum or rounding quantity, a supplier's MOQ) a bigger buffer can absorb a small later shortfall that would
+otherwise be ordered as a whole lot, so total supply can rightly fall. That relation now holds only where
+nothing imposes a minimum lot.
 
 ## Semantics the scenarios settled
 
-The scenarios found fourteen defects (listed on the Proof page and in `tests/test_regressions.py`). Several
+The scenarios found twenty-eight defects (listed on the Proof page and in `tests/test_regressions.py`). Several
 were two modules disagreeing about a definition. These are now one definition each:
 
-- **Demand rate** (`plan/rates.py`): forecast after consumption plus sales orders, averaged per day over the
-  horizon, past-due excluded, flowed up the network through BOM and sourcing shares; variances add (pooling).
-  MRP and inventory read it; S&OP uses it for safety stock (its bucket demand still takes the larger of
-  forecast and orders, an open item).
-- **Safety stock**: one policy function for MRP, inventory and S&OP; a fill-rate policy uses the node's
-  typical lot (EOQ, fixed, periodic, or a bucket of demand).
+- **Independent demand** (`plan/rates.py`): forecast after consumption by sales orders plus the orders, by
+  planning strategy. A forecast covers `[date, date + period_days)`, and an order consumes the forecast whose
+  window it falls in. MRP plans it, S&OP plans it bucket by bucket (past-due orders in the first bucket), and
+  the demand rate is it averaged per day over the horizon, flowed up the network through BOM and sourcing
+  shares; variances add (pooling).
+- **Safety stock**: one policy function for MRP, inventory and S&OP, on the shared rate (a node only firm or
+  one-off requirements draw on has no forecast error and holds no statistical buffer). A fill-rate target is
+  sized as a fill rate everywhere, placement included: the `k` with σ·G(k) = (1 − β)·Q against the node's
+  typical lot (EOQ, fixed, periodic, or a bucket of demand), over the lead time plus the review period. The
+  placement's cost curve per stage carries that `k` at each net replenishment time, charged on the demand
+  the stage really covers (whole-day service times round a lead time up; the stock does not).
+- **Placement is applied, not retyped**: `POST /api/inventory/apply` writes the recommended buffers as fixed
+  safety stock, and MRP then holds exactly them.
 - **S&OP release** writes the constrained demand *and* stock targets; MRP nets against the targets as a
-  threshold, so the build-ahead survives the hand-off.
+  threshold, so the build-ahead survives the hand-off. The threshold is checked where requirements fall,
+  buckets start and targets are set, never on a date where only a receipt lands.
+- **Firm supply is pulled in before new supply is planned** when a new order could not land sooner, judged for
+  the lot that would replace it (its size sets its production time). Firming a plan and planning again
+  therefore changes nothing.
+- **An order says what it is for**: its quantity splits into requirements, the buffer (`for_buffer`) and lot
+  size rounding (`for_lot_size`). A purchase order starts on the buyer's working day.
 - **A sale counts when the customer receives it** (goods issue plus lane transit) for accuracy, OTIF and
   history.
+- **The journal is the record**: every roll recomputes from original quantities and the whole journal, so a
+  movement posted late for an elapsed day reaches stock, history, every closed week's accuracy and the
+  closed-order log on the next roll; rolling twice ends where rolling once does.
+- **ABC ranks on cleansed revenue**, the history the forecast uses.
 - **A confirmed delivery is never before the requested date.**
 - **Readiness blocks by consumer**: an error in demand's own inputs blocks forecasting; any error blocks
   supply planning.

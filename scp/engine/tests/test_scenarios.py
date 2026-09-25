@@ -2,6 +2,8 @@
 through the HTTP API the web client uses."""
 from __future__ import annotations
 
+from functools import cache
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -12,6 +14,12 @@ from scp.scenarios.http import HttpClient
 from scp.versions import get_store
 
 IDS = [s.id for s in SCENARIOS]
+
+
+@cache
+def _engine(sid: str) -> ScenarioReport:
+    """Each scenario runs once in-process; the tests below read the same report."""
+    return next(s for s in SCENARIOS if s.id == sid).execute(EngineClient())
 
 
 def _explain(r: ScenarioReport) -> str:
@@ -27,7 +35,7 @@ def _explain(r: ScenarioReport) -> str:
 
 @pytest.mark.parametrize("sc", SCENARIOS, ids=IDS)
 def test_scenario_engine(sc):
-    r = sc.execute(EngineClient())
+    r = _engine(sc.id)
     assert r.ok, _explain(r)
     assert r.passed >= 10 and all(st.checks for st in r.steps)
 
@@ -40,7 +48,7 @@ def test_scenario_over_http(sc):
 
 def test_every_checkpoint_carries_a_derivation_or_a_self_evident_label():
     for sc in SCENARIOS:
-        r = sc.execute(EngineClient())
+        r = _engine(sc.id)
         assert all(st.narrative for st in r.steps), sc.id
         explained = sum(1 for st in r.steps for c in st.checks if c.why)
         assert explained >= len(r.steps) // 2, f"{sc.id}: only {explained} checkpoints explain themselves"
@@ -49,7 +57,7 @@ def test_every_checkpoint_carries_a_derivation_or_a_self_evident_label():
 def test_the_declared_stages_are_the_stages_the_steps_check():
     """The Proof page's coverage matrix reads both: a stage a scenario claims must carry checkpoints."""
     for sc in SCENARIOS:
-        checked = {st for s in sc.execute(EngineClient()).steps if s.checks for st in s.stage.split("+")}
+        checked = {st for s in _engine(sc.id).steps if s.checks for st in s.stage.split("+")}
         assert checked == set(sc.stages), sc.id
 
 

@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from ..actuals import ActualsView, FirmReport, RollReport
 from ..demand import ForecastResult, ReleaseResult
 from ..finance import FinanceResult
-from ..inventory import InventoryResult
+from ..inventory import InventoryResult, PlacementApplied
 from ..model import Dataset, DemandRecord
 from ..plan import PlanResult
 from ..promise import PromiseResult
@@ -79,6 +79,9 @@ class HttpClient:
 
     def inventory(self, ds: Dataset) -> InventoryResult:
         return self._post("/api/inventory", _ds(ds), InventoryResult)
+
+    def apply_placement(self, ds: Dataset, keys: list[str] | None = None) -> tuple[Dataset, PlacementApplied]:
+        return self._pair("/api/inventory/apply", {"dataset": _ds(ds), "keys": keys}, "applied", PlacementApplied)
 
     def sop(self, ds: Dataset) -> SopResult:
         return self._post("/api/sop", _ds(ds), SopResult)

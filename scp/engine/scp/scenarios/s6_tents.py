@@ -153,6 +153,15 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
         ctx.near("re-rolling after a late posting picks it up",
                  (one(rerolled.location_products, location="WH").on_hand, rr2.accuracy[1].actual), (30, 70), 1e-9,
                  "Roll the pre-roll version again with the late sale in the journal: stock 30, week 2 sales 70.")
+        on = json.loads(rolled.model_dump_json())
+        on["movements"].append(late["movements"][-1])
+        nxt, rr3 = c.roll(Dataset.model_validate(on), ROLL + dt.timedelta(days=7))
+        ctx.eq("…or post it on the rolled plan and roll on a week",
+               (one(nxt.location_products, location="WH").on_hand, one(nxt.history, date=d("2026-05-14")).qty,
+                [(a.start, a.forecast, a.actual) for a in nxt.accuracy]),
+               (30, 40, [(d("2026-05-04"), 70, 98), (d("2026-05-11"), 70, 70), (d("2026-05-18"), 70, 0)]),
+               "The sale went out 13 May, before the current start, and arrives 14 May: that day's history becomes "
+               "38 + 2 and the logged week 2 reads 70. Week 3 is new: 70 forecast on 20 May, nothing sold.")
 
     with ctx.step("Control tower after the roll", "tower", "POST /api/tower",
                   "The KPIs are computed from the closed-order and accuracy logs the roll just wrote."):
@@ -209,9 +218,11 @@ SCENARIO = Scenario(
     proves=["firming skips customer deliveries", "stock derived from the goods-movement journal",
             "partial and final deliveries", "deliveries dated at the customer (transit)",
             "forecast accuracy and bias per week", "OTIF, perfect order and supplier reliability",
-            "idempotent roll-forward", "late postings re-rolled", "immutable, hashed versions",
+            "idempotent roll-forward", "late postings reach the next roll", "immutable, hashed versions",
             "branch, edit, compare, discard, promote"],
     stages=["plan", "promise", "execution", "tower", "versions"],
     found=["Sales counted in the week they shipped, not the week the customer received them, shifting accuracy and "
-           "OTIF by the transit time"],
+           "OTIF by the transit time",
+           "A movement posted late for a day before the current start reached the stock but not the history, the "
+           "logged accuracy week or the closed-order log: only re-rolling the pre-roll version picked it up"],
     build=build, run=run)

@@ -55,7 +55,10 @@ class PlannedOrder(Out):
     shipments: int | None = None
     delay_days: float = 0.0       # projected lateness vs need incl. upstream delays; −1 = an input is uncovered
     projected_available_date: dt.date | None = None
-    lot_excess: float = 0.0       # quantity not pegged to any requirement (lot sizing / SS)
+    lot_excess: float = 0.0       # quantity not pegged to any requirement by the end of the horizon
+    # why the order is this size, as planned: qty = for requirements + for_buffer + for_lot_size
+    for_buffer: float = 0.0       # raises projected stock to the safety stock, stock target or reorder point
+    for_lot_size: float = 0.0     # beyond the shortage: the lot-size rule, minimums and rounding
 
 
 class ScheduledReceiptOut(Out):

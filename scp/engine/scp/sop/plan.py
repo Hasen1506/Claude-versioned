@@ -32,12 +32,12 @@ import math
 from collections import defaultdict
 from datetime import date, timedelta
 
-from ..model import DemandKind, SopMode
+from ..model import SopMode
 from ..model.dataset import Dataset
 from ..network import Node, build_graph
 from ..plan import costing
 from ..plan.leadtime import lead_time_std_days, nominal_lead_time_days, resource_calendar
-from ..plan.rates import bucket_days, horizon_flows, node_role, policy_safety_stock
+from ..plan.rates import bucket_days, horizon_flows, independent_demand, node_role, policy_safety_stock
 from ..time import Buckets
 from ..validate import has_errors, validate
 from .lp import INF, LinearProgram
@@ -76,31 +76,31 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
     rate = {n: (lp.holding_rate if (lp := ds.location_product_by_key.get(n)) and lp.holding_rate is not None
                 else s.carrying_rate) for n in nodes}
 
-    # ---- demand per node and bucket: max(forecast, orders), orders past due land in bucket 0 ----------
+    # ---- demand per node and bucket: what MRP plans (forecast after consumption plus orders) --------
+    # a forecast spreads over its period; an order past due lands in the first bucket
     fc: dict[Node, list[float]] = defaultdict(lambda: [0.0] * T)
     so: dict[Node, list[float]] = defaultdict(lambda: [0.0] * T)
     pw: dict[Node, list[float]] = defaultdict(lambda: [0.0] * T)   # Σ qty·priority
-    for d in ds.demand:
-        n = (d.location, d.product)
+    for n, reqs in independent_demand(ds).items():
         if n not in role:
             continue
-        if d.kind is DemandKind.FORECAST:
-            span = d.period_days or 1
-            for b in bk:
-                ov = (min(d.date + timedelta(days=span), b.end) - max(d.date, b.start)).days
-                if ov > 0:
-                    q = d.qty * ov / span
-                    fc[n][b.index] += q
-                    pw[n][b.index] += q * d.priority
-        else:
-            i = 0 if d.date < start else bk.index_of(d.date)
-            if 0 <= i < T:
-                so[n][i] += d.qty
-                pw[n][i] += d.qty * d.priority
+        for r, span in reqs:
+            if r.kind == "forecast":
+                for b in bk:
+                    ov = (min(r.date + timedelta(days=span), b.end) - max(r.date, b.start)).days
+                    if ov > 0:
+                        q = r.qty * ov / span
+                        fc[n][b.index] += q
+                        pw[n][b.index] += q * r.priority
+            else:
+                i = 0 if r.date < start else bk.index_of(r.date)
+                if 0 <= i < T:
+                    so[n][i] += r.qty
+                    pw[n][i] += r.qty * r.priority
     dem: dict[Node, list[float]] = {}
     prio: dict[Node, list[float]] = {}
     for n in set(fc) | set(so):
-        row = [max(fc[n][t], so[n][t]) * cfg.demand_factor for t in range(T)]
+        row = [(fc[n][t] + so[n][t]) * cfg.demand_factor for t in range(T)]
         if sum(row) <= 0:
             continue
         dem[n] = row
@@ -464,7 +464,8 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
     res.notes = [
         f"{T} {cfg.bucket.value} buckets; lead times are rounded to whole buckets "
         f"(mean bucket {mean_bd:.1f} days), so a lead time under half a bucket is same-bucket.",
-        "Demand per bucket is the larger of forecast and sales orders; overdue orders are due in the first bucket.",
+        "Demand per bucket is what MRP plans: forecast after consumption by sales orders, plus the orders; overdue "
+        "orders are due in the first bucket.",
         "Setups, lot sizes and minimum order quantities are left to MRP and scheduling: the LP plans volumes.",
         "Safety-stock targets are each node's configured policy; falling below costs the shortfall penalty.",
     ]

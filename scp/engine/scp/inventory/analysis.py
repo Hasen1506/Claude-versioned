@@ -7,7 +7,11 @@
 2. **Single-echelon baseline.** Every stage buffers its own replenishment lead time:
    SS = z · √((L + R)·σ_d² + d̄²·σ_L²).
 3. **Multi-echelon placement.** The guaranteed-service model (:mod:`.gsm`) chooses the service
-   times; recommended SS = z · √(τ·σ_d² + d̄²·σ_L²) where the stage holds stock (τ > 0).
+   times; recommended SS = z · √((τ + R)·σ_d² + d̄²·σ_L²) where the stage holds stock (τ > 0).
+   A fill-rate target is sized the way MRP sizes it (the loss function against the node's typical
+   lot) at every candidate τ, so the placement is priced on the stock the node would really hold.
+   Service times are whole days, so a fractional lead time is rounded up in the model; a stage's
+   stock covers τ less that rounding, so buffering every stage costs exactly the single-echelon baseline.
 4. **DDMRP.** Buffer zones and the net-flow position for every stocking node (:mod:`.ddmrp`).
 5. **Pooling.** For each product, the stock needed at the demand-facing locations separately
    versus one pooled position (the square-root law).
@@ -19,14 +23,15 @@ from collections import defaultdict
 from datetime import date, timedelta
 from statistics import NormalDist
 
-from ..model import DemandKind
+from ..model import DemandKind, SafetyStockMethod
 from ..model.dataset import Dataset
 from ..network import NetworkGraph, Node, build_graph
 from ..plan import costing
 from ..plan.leadtime import lead_time_std_days, nominal_lead_time_days
 from ..plan.rates import (
-    SQRT7, Flow, bucket_days, demand_flows, node_role, policy_safety_stock, upstream_mix,
+    SQRT7, Flow, bucket_days, demand_flows, node_role, policy_safety_stock, typical_lot, upstream_mix,
 )
+from ..plan.safety import buffer as size_buffer
 from ..time import Buckets
 from ..validate import has_errors, validate
 from . import ddmrp, gsm
@@ -84,6 +89,29 @@ def run_inventory(ds: Dataset, *, time_limit: float = 30.0) -> InventoryResult:
         lp = ds.location_product_by_key.get(n)
         return lp.holding_rate if lp and lp.holding_rate is not None else s.carrying_rate
 
+    def review(n: Node) -> float:
+        lp = ds.location_product_by_key.get(n)
+        return lp.safety_stock.review_period_days if lp else 0.0
+
+    # a fill-rate target is measured against the lot the node orders (as in MRP); None: a z target
+    lot: dict[Node, float | None] = {}
+    for n in g.order:
+        lp = ds.location_product_by_key.get(n)
+        fr = lp is not None and lp.safety_stock.method is SafetyStockMethod.FILL_RATE
+        lot[n] = typical_lot(ds, g, n, flow.mean[n], val.unit_value.get(n, 0.0), per_bucket) if fr else None
+
+    def buffer(n: Node, days: float, lt_std: float) -> float:
+        """The stock n's service target needs to cover ``days`` of demand plus lead-time variability."""
+        sigma = math.sqrt(max(0.0, days) * flow.var[n] + (flow.mean[n] * lt_std) ** 2)
+        return size_buffer(lot[n] is not None, service_level(n), sigma, lot[n] or 0.0)
+
+    def whole_days(n: Node) -> int:
+        return int(math.ceil(lt[n] - 1e-9))
+
+    def exposure(n: Node, tau: int) -> float:
+        """Days of demand a stage covers at net time τ (whole days): τ less the rounding up of its lead time."""
+        return max(0.0, tau - max(0.0, whole_days(n) - lt[n]))
+
     # ---- guaranteed-service placement --------------------------------------------------
     stages: list[gsm.Stage] = []
     max_service: dict[Node, int | None] = {}
@@ -95,11 +123,14 @@ def run_inventory(ds: Dataset, *, time_limit: float = 30.0) -> InventoryResult:
         if n in demand_facing:
             bound = inv.customer_service_days if bound is None else min(bound, inv.customer_service_days)
         max_service[n] = None if bound is None else int(math.floor(bound + 1e-9))
-        z = _N.inv_cdf(service_level(n))
-        sd = math.sqrt(flow.var[n])
-        cost = val.unit_value.get(n, 0.0) * rate(n) * max(z, 0.0) * sd
-        stages.append(gsm.Stage(n, int(math.ceil(lt[n] - 1e-9)), cost, stock_up[n], max_service[n],
-                                no_stock=role[n] == "no_stock"))
+        h = val.unit_value.get(n, 0.0) * rate(n)
+        cost = h * max(_N.inv_cdf(service_level(n)), 0.0) * math.sqrt(flow.var[n])
+        # demand variability over τ, plus the review period once the stage holds stock; σ_L is added after.
+        # The model counts whole days, so a lead time is rounded up; the stage is charged for the demand it
+        # really covers, τ less that rounding, so buffering at every stage costs what single-echelon does
+        curve = lambda t, n=n, h=h: h * buffer(n, exposure(n, t) + review(n), 0.0) if t > 0 else 0.0  # noqa: E731
+        stages.append(gsm.Stage(n, whole_days(n), cost, stock_up[n], max_service[n],
+                                no_stock=role[n] == "no_stock", cost_at=curve))
     sol = gsm.solve(stages, time_limit=time_limit)
     cum_real: dict[Node, float] = {}
     for n in reversed(g.order):  # suppliers first (descending LLC)
@@ -113,22 +144,19 @@ def run_inventory(ds: Dataset, *, time_limit: float = 30.0) -> InventoryResult:
         mean, var = flow.mean[n], flow.var[n]
         sd = math.sqrt(var)
         sl = service_level(n)
-        z = _N.inv_cdf(sl)
         uv = val.unit_value.get(n, 0.0)
         r = rate(n)
-        lp = ds.location_product_by_key.get(n)
-        review = lp.safety_stock.review_period_days if lp else 0.0
+        own = math.sqrt((lt[n] + review(n)) * var + (mean * lt_sd[n]) ** 2)
         pol = policy_safety_stock(ds, g, n, mean_daily=mean, lead_time=lt[n], lead_time_std=lt_sd[n],
                                   unit_value=uv, days_per_bucket=per_bucket)
         method, cur = pol.method, pol.qty
-        if role[n] == "stocking":
-            single = max(0.0, z) * math.sqrt((lt[n] + review) * var + (mean * lt_sd[n]) ** 2)
-        else:
-            single = 0.0
+        single = buffer(n, lt[n] + review(n), lt_sd[n]) if role[n] == "stocking" else 0.0
+        # z for a service level; for a fill rate, the k it takes over the node's own lead time
+        z = _N.inv_cdf(sl) if lot[n] is None else (single / own if own > 0 else 0.0)
         si = sol.inbound.get(n, 0)
         so = sol.service.get(n, 0)
         tau = sol.net.get(n, 0)
-        meio = max(0.0, z) * math.sqrt(tau * var + (mean * lt_sd[n]) ** 2) if role[n] == "stocking" and tau > 0 else 0.0
+        meio = buffer(n, exposure(n, tau) + review(n), lt_sd[n]) if role[n] == "stocking" and tau > 0 else 0.0
         decision = ("customer" if role[n] == "customer" else "no_stock" if role[n] == "no_stock"
                     else "buffer" if tau > 0 else "pass_through")
         nodes.append(NodeInventory(
@@ -161,8 +189,10 @@ def run_inventory(ds: Dataset, *, time_limit: float = 30.0) -> InventoryResult:
     tot.saving_vs_single = tot.single_cost - tot.meio_cost
     tot.saving_vs_current = tot.current_cost - tot.meio_cost
     notes = [
-        f"Demand is averaged over the {s.horizon_days}-day horizon; the larger of forecast and sales orders "
-        "counts per node. Variability flows upstream as independent streams (variances add).",
+        f"Demand is averaged over the {s.horizon_days}-day horizon: forecast after consumption by sales orders, "
+        "plus the orders. Variability flows upstream as independent streams (variances add).",
+        "A fill-rate target is sized with the normal loss function against the node's typical lot, at every "
+        "net replenishment time the placement considers; z shows the equivalent factor over its own lead time.",
         f"Nodes without a measured demand_cv use the default weekly CV {inv.default_demand_cv:g} at the demand point.",
         f"Customers are promised {inv.customer_service_days:g} day(s) service: demand-facing stages must quote "
         "at most that (a location-product's max_service_days can tighten it).",

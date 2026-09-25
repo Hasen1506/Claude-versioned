@@ -182,7 +182,9 @@ class _Planner:
             st.ss_note = f"coverage: requirements in the next {days:g} days"
             return
         opts_lt = lead_time_std_days(self.ds, opts[0]) if opts else 0.0
-        res = rates.policy_safety_stock(self.ds, self.g, node, mean_daily=self._rate(node, st),
+        # the shared network rate, as the inventory screen sizes it: a node only firm or one-off requirements draw
+        # on has no forecast error to protect against, so no statistical buffer
+        res = rates.policy_safety_stock(self.ds, self.g, node, mean_daily=self.flow.mean.get(node, 0.0),
                                         lead_time=st.lead_time or 0.0, lead_time_std=opts_lt,
                                         unit_value=self.val.unit_value.get(node, 0.0),
                                         days_per_bucket=rates.bucket_days(self.ds, len(self.b)))
@@ -190,8 +192,8 @@ class _Planner:
         st.ss_note = res.note
 
     def _rate(self, node: Node, st: _NodeState) -> float:
-        """Mean daily demand: the network demand rate every module shares (:mod:`.rates`); a node that only
-        firm orders draw on falls back to its own requirements."""
+        """Mean daily demand for lot sizing: the network demand rate every module shares (:mod:`.rates`); a node
+        that only firm orders draw on falls back to its own requirements, so its EOQ still has a volume."""
         r = self.flow.mean.get(node, 0.0)
         return r if r > EPS else sum(x.qty for x in st.reqs) / self.s.horizon_days
 
@@ -209,8 +211,12 @@ class _Planner:
             return
         reqs = sorted(st.reqs, key=lambda r: (r.date, r.priority, r.id))
         receipts = sorted((s for s in st.supplies if s.kind == "receipt"), key=lambda s: s.date)
-        dates = sorted({r.date for r in reqs} | {s.date for s in receipts} | {bk.start for bk in self.b}
-                       | {t for t, _ in st.targets if self.start <= t < self.b.end})
+        # the buffer is checked where requirements fall, buckets start and targets are set, never on a date where
+        # only a receipt lands: a stock target ramps daily, so checking on receipt dates would size orders by
+        # when firm supply happens to arrive (and firming a plan, then planning again, would change it)
+        checks = ({r.date for r in reqs} | {bk.start for bk in self.b}
+                  | {t for t, _ in st.targets if self.start <= t < self.b.end})
+        dates = sorted(checks | {s.date for s in receipts})
         req_on: dict[date, float] = defaultdict(float)
         for r in reqs:
             req_on[r.date] += r.qty
@@ -226,6 +232,8 @@ class _Planner:
                           node=node)
         for d in dates:
             avail += rec_on.get(d, 0.0) - req_on.get(d, 0.0)
+            if d not in checks:
+                continue
             bi = self.b.index_of(d)
             ss = 0.0 if mto else (st.ss_by_bucket[bi] if 0 <= bi < len(self.b) else 0.0)
             threshold = max(ss, 0.0 if mto else target_at(st.targets, d))
@@ -234,27 +242,40 @@ class _Planner:
             if avail >= threshold - EPS:
                 continue
             # reschedule in (S/4 rescheduling check): a firm receipt that lands no later than a new order could
-            # is expedited to cover the shortage instead of being duplicated by a new order
-            pulled = self._reschedule_in(node, st, receipts, rec_on, d, threshold - avail)
+            # is expedited to cover the shortage instead of being duplicated by a new order. How soon a new order
+            # could land depends on its size (production time grows with it), so it is asked for the lot that would
+            # replace the firm supply: sized as if none lay ahead (a period lot the receipt already covers would
+            # otherwise shrink to the shortage and look faster than the order it duplicates)
+            lot = self._lot(lp, mto, threshold - avail, d, avail, req_on, {}, eoq_qty)[0]
+            pulled = self._reschedule_in(node, st, receipts, rec_on, d, threshold - avail, lot)
             avail += pulled
             if avail >= threshold - EPS:
                 continue
             shortage = threshold - avail
-            ls = lp.lot_sizing
-            window = 0.0
-            if ls.policy is LotSizePolicy.POQ and not mto:
-                end_idx = min(bi + (ls.periods or 1), len(self.b))
-                we = self.b[end_idx].start if end_idx < len(self.b) else self.b.end
-                window = max(0.0, sum(q for dd, q in req_on.items() if d < dd < we)
-                             - sum(q for dd, q in rec_on.items() if d < dd < we))
-            gap = (lp.max_stock - avail) if lp.max_stock is not None else None
-            qty = shortage if mto else base_lot(ls, shortage, window_requirements=window,
-                                                 max_stock_gap=gap, eoq_qty=eoq_qty)
+            qty, gap = self._lot(lp, mto, shortage, d, avail, req_on, rec_on, eoq_qty)
             need = max(self.start, d - timedelta(days=lp.safety_time_days)) if lp.safety_time_days else d
-            ceiling = gap if ls.policy is LotSizePolicy.MIN_MAX and not mto else None
-            created = self._supply(node, st, qty, need, shortage=shortage, ceiling=ceiling)
+            ceiling = gap if lp.lot_sizing.policy is LotSizePolicy.MIN_MAX and not mto else None
+            # what the order is for: requirements below zero first, then the buffer up to the threshold
+            created = self._supply(node, st, qty, need, shortage=shortage, ceiling=ceiling,
+                                   below_zero=min(shortage, max(0.0, -avail)))
             avail += created
         self._peg(node, st)
+
+    def _lot(self, lp: LocationProduct, mto: bool, shortage: float, d: date, avail: float, req_on: dict[date, float],
+             rec_on: dict[date, float], eoq_qty: float | None) -> tuple[float, float | None]:
+        """The lot a shortage on ``d`` is ordered in, and the room left to the maximum stock."""
+        ls = lp.lot_sizing
+        window = 0.0
+        if ls.policy is LotSizePolicy.POQ and not mto:
+            bi = self.b.index_of(d)
+            end_idx = min(bi + (ls.periods or 1), len(self.b))
+            we = self.b[end_idx].start if end_idx < len(self.b) else self.b.end
+            window = max(0.0, sum(q for dd, q in req_on.items() if d < dd < we)
+                         - sum(q for dd, q in rec_on.items() if d < dd < we))
+        gap = (lp.max_stock - avail) if lp.max_stock is not None else None
+        if mto:
+            return shortage, gap
+        return base_lot(ls, shortage, window_requirements=window, max_stock_gap=gap, eoq_qty=eoq_qty), gap
 
     def _earliest_new(self, node: Node, st: _NodeState, need: date, qty: float) -> date | None:
         """When a new order for ``need`` would be available: on time if its backward-scheduled start is not in
@@ -270,10 +291,10 @@ class _Planner:
         return schedule(self.ds, opt, qty, start=self.start).available_date
 
     def _reschedule_in(self, node: Node, st: _NodeState, receipts: list[_Supply], rec_on: dict[date, float],
-                       d: date, short: float) -> float:
-        """Pull later firm receipts forward to ``d`` (for netting) while a new order could not arrive before them.
-        Their physical date is kept, so the projection and the pegging still show the delay."""
-        earliest = self._earliest_new(node, st, d, short)
+                       d: date, short: float, lot: float) -> float:
+        """Pull later firm receipts forward to ``d`` (for netting) while a new order of ``lot`` could not arrive
+        before them. Their physical date is kept, so the projection and the pegging still show the delay."""
+        earliest = self._earliest_new(node, st, d, lot)
         if earliest is None or earliest <= d:
             return 0.0
         got = 0.0
@@ -292,7 +313,7 @@ class _Planner:
         return got
 
     def _supply(self, node: Node, st: _NodeState, qty: float, need: date, *, shortage: float | None = None,
-                ceiling: float | None = None) -> float:
+                ceiling: float | None = None, below_zero: float | None = None) -> float:
         opt = self._choose(node, need, qty)
         if opt is None:
             self._exc("NO_VALID_SOURCE", "error", f"No valid source on {need.isoformat()} for {qty:,.1f}",
@@ -319,8 +340,16 @@ class _Planner:
                 if down >= max([shortage or 0.0, *mins]) - EPS:
                     lots = apply_modifiers(down, mins=[], roundings=[], maxes=maxes)
         total = 0.0
+        req_left = qty if below_zero is None else below_zero
+        buf_left = 0.0 if shortage is None else max(0.0, shortage - req_left)
         for q in lots:
             self._create_order(node, st, opt, q, need)
+            o = self.orders[-1]
+            for_req = min(q, req_left)
+            o.for_buffer = min(q - for_req, buf_left)
+            o.for_lot_size = max(0.0, q - for_req - o.for_buffer)
+            req_left -= for_req
+            buf_left -= o.for_buffer
             self.quota_alloc[(node, opt.source_id)] += q
             total += q
         return total
@@ -688,8 +717,12 @@ class _Planner:
                     late += r.qty - covered
                     first = r.date if first is None else min(first, r.date)
             if late > 1e-6:
+                why = ""
+                if first is not None and (soon := self._earliest_new(node, self.state[node], first, late)) and soon > first:
+                    why = (f": a new order started today is available {soon.isoformat()} at the earliest, so earlier "
+                           "demand needs stock on hand or a firm receipt")
                 self._exc("DEMAND_AT_RISK", "error",
-                          f"{late:,.1f} units of demand projected late or uncovered (first {first.isoformat()})",
+                          f"{late:,.1f} units of demand projected late or uncovered (first {first.isoformat()}){why}",
                           node=node, when=first, qty=late)
 
     def _resources(self) -> list[ResourcePlan]:

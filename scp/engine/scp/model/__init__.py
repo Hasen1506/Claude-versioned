@@ -1,5 +1,5 @@
 from .actuals import (
-    AccuracyRecord, ClosedOrder, ExecutionSettings, GoodsMovement, MovementType,
+    AccuracyRecord, ClosedOrder, ExecutionSettings, GoodsMovement, MovementType, RolledWeek,
 )
 from .common import (
     BucketSize, DemandKind, LocationType, LotSizePolicy, MrpType, ProductType, ReceiptKind,
@@ -26,7 +26,7 @@ from .master import (
 from .transactional import DemandRecord, Reservation, SalesHistory, ScheduledReceipt
 
 __all__ = [
-    "AccuracyRecord", "OwnerRule", "TowerSettings", "CapacityOption", "FinanceSettings", "ClosedOrder", "ExecutionSettings", "GoodsMovement", "MovementType", "Reservation",
+    "AccuracyRecord", "OwnerRule", "TowerSettings", "CapacityOption", "FinanceSettings", "ClosedOrder", "ExecutionSettings", "GoodsMovement", "MovementType", "RolledWeek", "Reservation",
     "DEFAULT_MODELS", "Allocation", "BopSegment", "Confirmation", "ConfirmationStrategy", "PromiseSettings", "DemandEvent", "EventKind", "ForecastModelId", "ForecastOverride", "ForecastPeriod",
     "ForecastSettings", "InventorySettings", "NpiRule", "OutlierMethod", "SelectionMetric",
     "BomItem", "BucketSize", "Calendar", "Changeover", "Dataset", "DemandKind", "DemandRecord", "LaneMode",

@@ -194,6 +194,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/inventory/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Inventory Apply */
+        post: operations["post_inventory_apply_api_inventory_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sop": {
         parameters: {
             query?: never;
@@ -1397,6 +1414,8 @@ export interface components {
             closed_orders?: components["schemas"]["ClosedOrder"][];
             /** Accuracy */
             accuracy?: components["schemas"]["AccuracyRecord"][];
+            /** Rolled Weeks */
+            rolled_weeks?: components["schemas"]["RolledWeek"][];
             execution?: components["schemas"]["ExecutionSettings"];
             finance?: components["schemas"]["FinanceSettings"];
             tower?: components["schemas"]["TowerSettings"];
@@ -3253,6 +3272,39 @@ export interface components {
             /** Qty */
             qty: number;
         };
+        /** PlacementApplied */
+        PlacementApplied: {
+            /** Changes */
+            changes: components["schemas"]["PlacementChange"][];
+            /** Value Change */
+            value_change: number;
+        };
+        /** PlacementChange */
+        PlacementChange: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Method Before */
+            method_before: string;
+            /** Ss Before */
+            ss_before: number;
+            /** Ss After */
+            ss_after: number;
+            /** Value Change */
+            value_change: number;
+        };
+        /** PlacementRequest */
+        PlacementRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Keys */
+            keys?: string[] | null;
+        };
+        /** PlacementResponse */
+        PlacementResponse: {
+            dataset: components["schemas"]["Dataset"];
+            applied: components["schemas"]["PlacementApplied"];
+        };
         /** PlanException */
         PlanException: {
             /** Code */
@@ -3409,6 +3461,16 @@ export interface components {
              * @default 0
              */
             lot_excess: number;
+            /**
+             * For Buffer
+             * @default 0
+             */
+            for_buffer: number;
+            /**
+             * For Lot Size
+             * @default 0
+             */
+            for_lot_size: number;
         };
         /** PoolingRow */
         PoolingRow: {
@@ -4069,6 +4131,25 @@ export interface components {
             dataset: components["schemas"]["Dataset"];
             report: components["schemas"]["RollReport"];
         };
+        /**
+         * RolledWeek
+         * @description A week the roll-forward closed (written by the roll). Its accuracy is logged per series that had forecast or
+         *     sales, and re-read on every later roll, so a sale posted late for it still counts, even in a week that logged
+         *     nothing at the time.
+         */
+        RolledWeek: {
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             * @description Exclusive
+             */
+            end: string;
+        };
         /** RuleInfo */
         RuleInfo: {
             /** Code */
@@ -4137,6 +4218,12 @@ export interface components {
              * @default false
              */
             promo: boolean;
+            /**
+             * From Journal
+             * @description Written by the roll-forward from sale movements, and rebuilt from the whole journal on every roll (so a late posting reaches it)
+             * @default false
+             */
+            from_journal: boolean;
         };
         /** SaveBaseRequest */
         SaveBaseRequest: {
@@ -5737,6 +5824,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InventoryResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_inventory_apply_api_inventory_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlacementRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlacementResponse"];
                 };
             };
             /** @description Validation Error */

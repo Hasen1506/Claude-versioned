@@ -132,3 +132,17 @@ class InventoryResult(Out):
     solver: SolverInfo | None = None
     notes: list[str] = []
     issues: list[Issue] = []
+
+
+class PlacementChange(Out):
+    location: str
+    product: str
+    method_before: str
+    ss_before: float
+    ss_after: float
+    value_change: float
+
+
+class PlacementApplied(Out):
+    changes: list[PlacementChange]
+    value_change: float               # safety-stock value after − before, at unit value

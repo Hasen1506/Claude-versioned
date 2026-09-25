@@ -24,7 +24,7 @@ from ..model import LocationProduct, LocationType, LotSizePolicy, SafetyStockMet
 from ..model.dataset import Dataset
 from ..network import NetworkGraph, Node, SupplyOption
 from . import costing
-from .consumption import effective_demand
+from .consumption import IndependentReq, effective_demand
 from .lotsize import eoq
 from .safety import SSInputs, statistical_ss
 
@@ -50,22 +50,27 @@ def _lp(ds: Dataset, node: Node) -> LocationProduct:
     return ds.location_product_by_key.get(node) or LocationProduct(location=node[0], product=node[1])
 
 
-def direct_rates(ds: Dataset, lo: date, hi: date) -> dict[Node, float]:
-    """Mean daily independent demand per node in [lo, hi), after forecast consumption."""
+def independent_demand(ds: Dataset) -> dict[Node, list[tuple[IndependentReq, int]]]:
+    """Each node's independent requirements as MRP plans them (forecast after consumption by sales orders,
+    plus the orders, by planning strategy), each with the days it spreads over (an order: one)."""
     recs: dict[Node, list] = defaultdict(list)
     for i, d in enumerate(ds.demand):
         recs[(d.location, d.product)].append((d.id or f"#{i}", d))
-    span = max(1, (hi - lo).days)
-    out: dict[Node, float] = {}
+    out: dict[Node, list[tuple[IndependentReq, int]]] = {}
     for node, rs in recs.items():
         lp = _lp(ds, node)
         period = {rid: (r.period_days or 1) for rid, r in rs}
-        total = 0.0
-        for r in effective_demand(rs, lp.strategy, lp.consumption_backward_days, lp.consumption_forward_days):
-            days = period[r.source_ref] if r.kind == "forecast" else 1
-            total += r.qty * _overlap(r.date, days, lo, hi)
-        out[node] = total / span
+        out[node] = [(r, period[r.source_ref] if r.kind == "forecast" else 1)
+                     for r in effective_demand(rs, lp.strategy, lp.consumption_backward_days,
+                                               lp.consumption_forward_days)]
     return out
+
+
+def direct_rates(ds: Dataset, lo: date, hi: date) -> dict[Node, float]:
+    """Mean daily independent demand per node in [lo, hi), after forecast consumption."""
+    span = max(1, (hi - lo).days)
+    return {node: sum(r.qty * _overlap(r.date, days, lo, hi) for r, days in reqs) / span
+            for node, reqs in independent_demand(ds).items()}
 
 
 def upstream_mix(ds: Dataset, g: NetworkGraph, node: Node) -> list[tuple[Node, float]]:
@@ -191,5 +196,5 @@ def policy_safety_stock(ds: Dataset, g: NetworkGraph, node: Node, *, mean_daily:
     return PolicySS(m.value, res.qty, res.explanation)
 
 
-__all__ = ["Flow", "PolicySS", "bucket_days", "demand_flows", "direct_rates", "eoq_qty", "holding_rate",
+__all__ = ["Flow", "PolicySS", "bucket_days", "demand_flows", "direct_rates", "eoq_qty", "holding_rate", "independent_demand",
            "horizon_flows", "node_role", "ordering_cost", "policy_safety_stock", "typical_lot", "upstream_mix"]
