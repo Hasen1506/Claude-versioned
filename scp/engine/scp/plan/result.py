@@ -4,19 +4,14 @@ from __future__ import annotations
 import datetime as dt
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
+from ..model.common import Out
 from ..validate import Issue
 
 OrderKind = Literal["make", "buy", "transfer"]
 ReqKind = Literal["forecast", "sales_order", "dependent", "transfer"]
 SupplyKind = Literal["on_hand", "receipt", "order"]
-
-
-class Out(BaseModel):
-    """Output model: fields with defaults are still always present in responses (exact API types)."""
-
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class Peg(Out):

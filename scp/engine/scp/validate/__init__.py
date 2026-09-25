@@ -59,6 +59,11 @@ RULES: dict[str, tuple[Severity, str]] = {
     "RESOURCE_UNUSED": ("warning", "Resource not used by any operation"),
     "LOCATION_PRODUCT_DEFAULTED": ("warning", "Planning node without a location-product: defaults used"),
     "SHELF_LIFE_VS_LEAD_TIME": ("warning", "Replenishment lead time exceeds shelf life"),
+    "HISTORY_AFTER_START": ("warning", "Sales history on or after planning start is not used"),
+    "NPI_LIKE_WITHOUT_HISTORY": ("warning", "NPI like product has no sales history at that location"),
+    "NPI_DUPLICATE": ("warning", "More than one NPI rule for the same location-product"),
+    "OVERRIDE_OUTSIDE_HORIZON": ("warning", "Consensus override outside the forecast horizon is ignored"),
+    "OVERRIDE_WITHOUT_FORECAST": ("warning", "Consensus override for a series with no history or NPI rule"),
 }
 
 
@@ -84,6 +89,7 @@ def validate(ds: Dataset) -> list[Issue]:
     _lanes(ds, c)
     _policies(ds, c)
     _demand(ds, c)
+    _forecasting(ds, c)
     _graph(ds, c)
     order = {"error": 0, "warning": 1}
     c.issues.sort(key=lambda i: (order[i.severity], i.code, i.object_type, i.object_id))
@@ -184,6 +190,26 @@ def _references(ds: Dataset, c: _Collector) -> None:
             _loc_type(ds, c, d.location, STOCKING_LOCATION_TYPES | {LocationType.CUSTOMER}, "demand", oid,
                       "location", "demand cannot occur at a supplier")
         _ref(ds, c, "product", d.product, "demand", oid, "product")
+    for i, hr in enumerate(ds.history):
+        oid = f"#{i}"
+        if _ref(ds, c, "location", hr.location, "history", oid, "location"):
+            _loc_type(ds, c, hr.location, STOCKING_LOCATION_TYPES | {LocationType.CUSTOMER}, "history", oid,
+                      "location", "sales history belongs to a customer or stocking location")
+        _ref(ds, c, "product", hr.product, "history", oid, "product")
+    for e in ds.events:
+        for p in e.products:
+            _ref(ds, c, "product", p, "event", e.id, "products")
+        for loc in e.locations:
+            _ref(ds, c, "location", loc, "event", e.id, "locations")
+    for n in ds.npi:
+        oid = f"{n.location}/{n.product}"
+        for fld, kind in (("location", "location"), ("product", "product"), ("like_product", "product"),
+                          ("like_location", "location")):
+            _ref(ds, c, kind, getattr(n, fld), "npi", oid, fld)
+    for o in ds.overrides:
+        oid = f"{o.location}/{o.product}@{o.date.isoformat()}"
+        _ref(ds, c, "location", o.location, "override", oid, "location")
+        _ref(ds, c, "product", o.product, "override", oid, "product")
     for r in ds.receipts:
         if _ref(ds, c, "location", r.location, "receipt", r.id, "location"):
             _loc_type(ds, c, r.location, STOCKING_LOCATION_TYPES, "receipt", r.id, "location",
@@ -319,6 +345,36 @@ def _demand(ds: Dataset, c: _Collector) -> None:
     for loc, prod in sorted(mto_fc):
         c.add("MTO_WITH_FORECAST", "location_product", f"{loc}/{prod}",
               "Forecast exists but the strategy is MTO", "Use MTS_CONSUME or ATO to pre-plan")
+
+
+def _forecasting(ds: Dataset, c: _Collector) -> None:
+    s = ds.settings
+    end = s.planning_start + timedelta(days=s.horizon_days)
+    late = sum(1 for h in ds.history if h.date >= s.planning_start)
+    if late:
+        c.add("HISTORY_AFTER_START", "history", "*", f"{late} history rows are on or after planning start",
+              "History ends the day before planning starts; move planning start or drop those rows")
+    with_history = {(h.location, h.product) for h in ds.history if h.date < s.planning_start and h.qty > 0}
+    npi_keys = Counter((n.location, n.product) for n in ds.npi)
+    for (loc, prod), k in npi_keys.items():
+        if k > 1:
+            c.add("NPI_DUPLICATE", "npi", f"{loc}/{prod}", f"{k} NPI rules for {prod} at {loc}; the last one wins",
+                  "Keep one rule per location-product")
+    for n in ds.npi:
+        like = (n.like_location or n.location, n.like_product)
+        if like not in with_history:
+            c.add("NPI_LIKE_WITHOUT_HISTORY", "npi", f"{n.location}/{n.product}",
+                  f"{like[1]} has no sales history at {like[0]}: the NPI forecast will be zero",
+                  "Pick a like product with history, or set like_location", "like_product")
+    for o in ds.overrides:
+        oid = f"{o.location}/{o.product}@{o.date.isoformat()}"
+        if not s.planning_start <= o.date < end:
+            c.add("OVERRIDE_OUTSIDE_HORIZON", "override", oid, "The override date is outside the horizon",
+                  "Move it into the planning horizon or delete it", "date")
+        elif (o.location, o.product) not in with_history and (o.location, o.product) not in npi_keys:
+            c.add("OVERRIDE_WITHOUT_FORECAST", "override", oid,
+                  f"No history or NPI rule for {o.product} at {o.location}, so there is no forecast to adjust",
+                  "Add history, add an NPI rule, or enter the demand as a forecast record")
 
 
 def _graph(ds: Dataset, c: _Collector) -> None:

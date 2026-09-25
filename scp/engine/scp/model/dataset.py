@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import Field
 
 from .common import LocationType, Model
+from .demand import DemandEvent, ForecastOverride, ForecastSettings, NpiRule
 from .master import (
     Calendar, Location, LocationProduct, Product, ProductionSource, PurchasingSource, Resource,
     Settings, TransportLane,
@@ -32,6 +33,10 @@ class Dataset(Model):
     demand: list[DemandRecord] = Field(default_factory=list)
     receipts: list[ScheduledReceipt] = Field(default_factory=list)
     history: list[SalesHistory] = Field(default_factory=list)
+    forecasting: ForecastSettings = Field(default_factory=ForecastSettings)
+    events: list[DemandEvent] = Field(default_factory=list)
+    npi: list[NpiRule] = Field(default_factory=list)
+    overrides: list[ForecastOverride] = Field(default_factory=list)
 
     # ---- indices (first occurrence wins; duplicates are reported by the readiness gate) ----
     @cached_property

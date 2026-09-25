@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Dataset, NetEdge, NetLocation, NetworkView, PlanResult } from "../api/types";
-import { Badge, cols, Empty, Panel, useTooltip } from "../components/ui";
+import { Badge, Empty, Panel, StageHeader, cols, useTooltip } from "../components/ui";
 import { TYPE_LABEL } from "../lib/format";
 import { go, href } from "../lib/router";
 import { useStore, NO_ISSUES } from "../state/store";
@@ -100,7 +100,7 @@ export function Network({ route }: { route: string[] }) {
   const ds = useStore((s) => s.dataset);
   const net = useStore((s) => s.network);
   const issues = useStore((s) => s.validation?.issues ?? NO_ISSUES);
-  const plan = useStore((s) => s.plan);
+  const plan = useStore((s) => s.runs.plan.data);
   const [product, setProduct] = useState("");
   const [withBom, setWithBom] = useState(true);
   const [geo, setGeo] = useState(false);
@@ -132,13 +132,7 @@ export function Network({ route }: { route: string[] }) {
 
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <h1>Network</h1>
-          <p>Your supply network from suppliers to customers. Pick a product to trace its path, including its components, through every location that stocks, makes, buys or moves it.</p>
-        </div>
-        <span className="spacer" />
-        <div className="row wrap">
+      <StageHeader n="01" title="Network" kicker="Your supply network from suppliers to customers. Pick a product to trace its path, including its components, through every location that stocks, makes, buys or moves it." right={<>
           <select className="select" value={product} onChange={(e) => setProduct(e.target.value)} style={{ width: 220 }} aria-label="Trace product">
             <option value="">All products</option>
             {products.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -149,8 +143,8 @@ export function Network({ route }: { route: string[] }) {
             <button className={`btn sm ${geo ? "primary" : ""}`} onClick={() => setGeo(true)} disabled={!geoOk}
               title={geoOk ? "" : "Add latitude/longitude to locations"}>Geography</button>
           </div>
-        </div>
-      </div>
+      </>} />
+      <div className="content">
       {net.cycles.length > 0 && <div className="banner error"><Badge sev="error">Circular sourcing</Badge>{net.cycles.length} loop(s) — see Readiness.</div>}
       <div className="split" style={cols(selected ? "minmax(0,1fr) 380px" : "minmax(0,1fr)")}>
         <Panel flush>
@@ -194,14 +188,14 @@ export function Network({ route }: { route: string[] }) {
                         transform={`translate(${x},${y})`} style={{ cursor: "pointer" }}
                         onClick={() => go("network", loc.id)} onMouseMove={(ev) => tip.show(ev, <NodeTip loc={loc} />)}
                         onMouseLeave={tip.hide}>
-                        <rect width={NODE_W} height={NODE_H} rx={8} />
+                        <rect width={NODE_W} height={NODE_H} />
                         <circle cx={20} cy={NODE_H / 2} r={11} fill={TYPE_COLOR[loc.type]} />
                         <text x={20} y={NODE_H / 2 + 4} textAnchor="middle" style={{ fill: "#fff", fontSize: 11 }}>{TYPE_GLYPH[loc.type]}</text>
                         <text x={38} y={19}>{trunc(loc.id, 20)}</text>
                         <text className="sub" x={38} y={34}>{trunc(loc.name, 24)}</text>
                         {h && (h.errors > 0 || h.warnings > 0) && (
                           <g transform={`translate(${NODE_W - 8},-6)`}>
-                            <rect x={-26} y={0} width={28} height={16} rx={8} style={{ fill: h.errors ? "var(--critical)" : "var(--warning)", stroke: "none" }} />
+                            <rect x={-26} y={0} width={28} height={16} style={{ fill: h.errors ? "var(--critical)" : "var(--warning)", stroke: "none" }} />
                             <text x={-12} y={12} textAnchor="middle" style={{ fill: h.errors ? "#fff" : "#000", fontSize: 10, fontWeight: 700 }}>
                               {h.errors ? `!${h.errors}` : `▲${h.warnings}`}
                             </text>
@@ -217,6 +211,7 @@ export function Network({ route }: { route: string[] }) {
         {selected && <LocationPanel id={selected} ds={ds} net={net} plan={plan} />}
       </div>
       {tip.node}
+      </div>
     </div>
   );
 }

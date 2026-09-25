@@ -6,7 +6,7 @@ type Obj = Record<string, unknown>;
 
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
-  | "purchasing_sources" | "lanes" | "calendars" | "demand" | "receipts";
+  | "purchasing_sources" | "lanes" | "calendars" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides";
 
 export interface Column {
   label: string;
@@ -23,7 +23,7 @@ export interface CollectionDef {
   issueType: string;
   keyOf: (o: Obj, index: number) => string;
   columns: Column[];
-  group: "Network" | "Make & buy" | "Planning data";
+  group: "Network" | "Make & buy" | "Planning data" | "Demand inputs";
   blurb: string;
 }
 
@@ -140,6 +140,47 @@ export const COLLECTIONS: CollectionDef[] = [
       { label: "Due", get: (o) => s(o.due_date) }, { label: "Qty", get: (o) => o.qty as number, num: true },
     ],
   },
+  {
+    key: "history", label: "Sales history", singular: "history row", defName: "SalesHistory", issueType: "history",
+    group: "Demand inputs", keyOf: (_o, i) => `#${i}`,
+    blurb: "What actually sold, per location, product and date (long format). The forecast learns from it; promo rows are cleansed.",
+    columns: [
+      { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
+      { label: "Date", get: (o) => s(o.date) }, { label: "Qty", get: (o) => o.qty as number, num: true },
+      { label: "Promo", get: (o) => (o.promo ? "yes" : "") },
+    ],
+  },
+  {
+    key: "events", label: "Demand events", singular: "event", defName: "DemandEvent", issueType: "event",
+    group: "Demand inputs", keyOf: (o) => s(o.id),
+    blurb: "Promotions, price changes, launches, competitor moves. Past events are cleansed from history and their lift measured; future ones lift the forecast.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Kind", get: (o) => s(o.kind) },
+      { label: "From", get: (o) => s(o.start) }, { label: "To", get: (o) => s(o.end) },
+      { label: "Lift", get: (o) => (o.lift === null || o.lift === undefined ? "measured" : `${Math.round((o.lift as number) * 100)}%`) },
+    ],
+  },
+  {
+    key: "npi", label: "New products (NPI)", singular: "NPI rule", defName: "NpiRule", issueType: "npi",
+    group: "Demand inputs", keyOf: (o) => `${s(o.location)}|${s(o.product)}`,
+    blurb: "Forecast a product without history from a like product: scale, launch date, ramp-up and cannibalisation.",
+    columns: [
+      { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
+      { label: "Like", get: (o) => s(o.like_product) }, { label: "Scale", get: (o) => `${Math.round(((o.scale as number) ?? 1) * 100)}%` },
+      { label: "Launch", get: (o) => s(o.launch_date) },
+    ],
+  },
+  {
+    key: "overrides", label: "Consensus overrides", singular: "override", defName: "ForecastOverride", issueType: "override",
+    group: "Demand inputs", keyOf: (_o, i) => `#${i}`,
+    blurb: "Planner or sales adjustments to one forecast period: a final quantity or a percentage change, with a reason.",
+    columns: [
+      { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
+      { label: "Period of", get: (o) => s(o.date) },
+      { label: "Change", get: (o) => (o.qty !== null && o.qty !== undefined ? `= ${o.qty}` : `${Math.round(((o.change as number) ?? 0) * 100)}%`) },
+      { label: "Reason", get: (o) => s(o.reason) },
+    ],
+  },
 ];
 
 export const byKey = Object.fromEntries(COLLECTIONS.map((c) => [c.key, c])) as Record<CollectionKey, CollectionDef>;
@@ -162,6 +203,10 @@ export function whereUsed(ds: Dataset, kind: "location" | "product" | "resource"
     add(lp > 0, `${lp} planning polic${lp === 1 ? "y" : "ies"}`);
     const dm = (ds.demand ?? []).filter((x) => x.location === id).length;
     add(dm > 0, `${dm} demand record(s)`);
+    const hs = (ds.history ?? []).filter((x) => x.location === id).length;
+    add(hs > 0, `${hs} history row(s)`);
+    for (const n of ds.npi ?? []) add(n.location === id || n.like_location === id, `NPI rule ${n.location}|${n.product}`);
+    for (const e of ds.events ?? []) add(!!e.locations?.includes(id), `event ${e.id}`);
   }
   if (kind === "product") {
     for (const p of ds.production_sources ?? []) {
@@ -174,6 +219,10 @@ export function whereUsed(ds: Dataset, kind: "location" | "product" | "resource"
     add(lp > 0, `${lp} planning polic${lp === 1 ? "y" : "ies"}`);
     const dm = (ds.demand ?? []).filter((x) => x.product === id).length;
     add(dm > 0, `${dm} demand record(s)`);
+    const hs = (ds.history ?? []).filter((x) => x.product === id).length;
+    add(hs > 0, `${hs} history row(s)`);
+    for (const n of ds.npi ?? []) add(n.product === id || n.like_product === id, `NPI rule ${n.location}|${n.product}`);
+    for (const e of ds.events ?? []) add(!!e.products?.includes(id), `event ${e.id}`);
   }
   if (kind === "resource") {
     for (const p of ds.production_sources ?? [])
@@ -195,6 +244,7 @@ export function issueRoute(objectType: string, objectId: string): string[] | nul
   if (objectType === "network") return ["network"];
   const c = byIssueType[objectType];
   if (!c || objectId === "*") return c ? ["data", c.key] : null;
-  const id = c.key === "location_products" ? objectId.replace("/", "|") : objectId;
+  if (c.key === "overrides") return ["data", c.key];
+  const id = c.key === "location_products" || c.key === "npi" ? objectId.replace("/", "|") : objectId;
   return ["data", c.key, id];
 }

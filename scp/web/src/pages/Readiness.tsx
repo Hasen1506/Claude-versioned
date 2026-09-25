@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { RuleInfo } from "../api/types";
-import { Badge, Panel } from "../components/ui";
+import { Badge, Panel, StageHeader } from "../components/ui";
 import { byKey, issueRoute, type CollectionKey } from "../model/collections";
 import { href } from "../lib/router";
 import { useStore } from "../state/store";
@@ -25,16 +25,11 @@ export function Readiness() {
 
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <h1>Readiness</h1>
-          <p>Master-data checks that run before any plan, like the SAP readiness gate: most "the system planned it wrong"
-            problems are data defects. Errors block planning; warnings are planned around and shown with the plan.</p>
-        </div>
-        <span className="spacer" />
-        {checking ? <Badge sev="info">Checking…</Badge> : schemaErrors.length ? <Badge sev="error">Cannot read dataset</Badge>
-          : errors ? <Badge sev="error">{errors} blocking</Badge> : <Badge sev="ok">Ready to plan</Badge>}
-      </div>
+      <StageHeader n="02" title="Readiness" kicker={<>Master-data checks that run before any plan, like the SAP readiness gate: most
+        "the system planned it wrong" problems are data defects. Errors block planning; warnings are planned around and shown
+        with the plan.</>} right={checking ? <Badge sev="info">Checking…</Badge> : schemaErrors.length ? <Badge sev="error">Cannot read dataset</Badge>
+          : errors ? <Badge sev="error">{errors} blocking</Badge> : <Badge sev="ok">Ready to plan</Badge>} />
+      <div className="content">
 
       {schemaErrors.length > 0 && (
         <Panel title="The engine rejected these values">
@@ -101,6 +96,7 @@ export function Readiness() {
           </details>
         </div>
       )}
+      </div>
     </div>
   );
 }

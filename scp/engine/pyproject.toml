@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "scp"
 version = "0.1.0"
-description = "Supply chain planning engine: typed network master data, readiness gate, MRP/DRP, inventory policy."
+description = "Supply chain planning engine: typed network master data, readiness gate, demand planning, MRP/DRP, inventory policy."
 requires-python = ">=3.11"
 dependencies = [
   "pydantic>=2.7",
@@ -16,10 +16,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "httpx>=0.27"]
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.6"]
+# Google's TimesFM foundation model as an optional forecast candidate (see scp/demand/foundation.py)
+timesfm = ["timesfm[torch]>=2.0"]
 
 [tool.setuptools.packages.find]
 include = ["scp*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "B", "UP"]
+ignore = ["E501", "UP042"]  # long data literals in tests/examples; str-mixin enums serialise as plain strings

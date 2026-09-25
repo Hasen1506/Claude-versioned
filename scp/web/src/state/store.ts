@@ -1,10 +1,25 @@
 // The client owns the planning dataset (one JSON document). Every edit goes through `update`,
 // which bumps the revision, records undo history, persists locally, and schedules a
-// re-validation against the engine. A plan remembers the revision it was computed on, so the UI
-// can show "stale" the moment any input changes (the legacy STALE cascade, done by construction).
+// re-validation against the engine. Every engine run (forecast, plan, …) remembers the revision it
+// was computed on, so the UI can show "stale" the moment any input changes — the legacy STALE
+// cascade, done by construction instead of by a dependency table.
 import { useSyncExternalStore } from "react";
 import { api, SchemaRejected } from "../api/client";
-import type { Dataset, NetworkView, PlanResult, SchemaError, ValidationResult } from "../api/types";
+import type { Dataset, ForecastResult, NetworkView, PlanResult, SchemaError, ValidationResult } from "../api/types";
+
+export interface RunResults {
+  forecast: ForecastResult;
+  plan: PlanResult;
+}
+export type RunKey = keyof RunResults;
+
+export interface Run<T> {
+  data: T | null;
+  revision: number | null;   // dataset revision the result was computed on
+  running: boolean;
+  error: string | null;
+  at: string | null;         // wall-clock time of the last successful run
+}
 
 export interface State {
   dataset: Dataset | null;
@@ -12,21 +27,27 @@ export interface State {
   validation: ValidationResult | null;
   schemaErrors: SchemaError[];
   network: NetworkView | null;
-  plan: PlanResult | null;
-  planRevision: number | null;
-  planning: boolean;
+  runs: { [K in RunKey]: Run<RunResults[K]> };
   checking: boolean;
   engineError: string | null;
   canUndo: boolean;
   canRedo: boolean;
 }
 
+const RUNNERS: { [K in RunKey]: (ds: Dataset) => Promise<RunResults[K]> } = {
+  forecast: api.forecast,
+  plan: api.plan,
+};
+
 const STORAGE_KEY = "scp.dataset.v1";
 const HISTORY = 100;
 
+const emptyRun = <T>(): Run<T> => ({ data: null, revision: null, running: false, error: null, at: null });
+const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), plan: emptyRun() });
+
 let state: State = {
-  dataset: null, revision: 0, validation: null, schemaErrors: [], network: null, plan: null,
-  planRevision: null, planning: false, checking: false, engineError: null, canUndo: false, canRedo: false,
+  dataset: null, revision: 0, validation: null, schemaErrors: [], network: null, runs: emptyRuns(),
+  checking: false, engineError: null, canUndo: false, canRedo: false,
 };
 const listeners = new Set<() => void>();
 const past: Dataset[] = [];
@@ -36,6 +57,10 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 function set(patch: Partial<State>) {
   state = { ...state, ...patch, canUndo: past.length > 0, canRedo: future.length > 0 };
   listeners.forEach((l) => l());
+}
+
+function setRun<K extends RunKey>(key: K, patch: Partial<Run<RunResults[K]>>) {
+  set({ runs: { ...state.runs, [key]: { ...state.runs[key], ...patch } } });
 }
 
 function persist(ds: Dataset | null) {
@@ -68,6 +93,15 @@ async function check() {
   }
 }
 
+function commit(next: Dataset) {
+  past.push(state.dataset!);
+  if (past.length > HISTORY) past.shift();
+  future.length = 0;
+  persist(next);
+  set({ dataset: next, revision: state.revision + 1 });
+  scheduleCheck();
+}
+
 export const store = {
   get: () => state,
   subscribe(l: () => void) {
@@ -75,12 +109,12 @@ export const store = {
     return () => listeners.delete(l);
   },
 
-  /** Replace the whole dataset (load example, import file). Clears history and the plan. */
+  /** Replace the whole dataset (load example, import file). Clears history and every result. */
   load(ds: Dataset) {
     past.length = 0;
     future.length = 0;
     persist(ds);
-    set({ dataset: ds, revision: state.revision + 1, plan: null, planRevision: null, validation: null, network: null });
+    set({ dataset: ds, revision: state.revision + 1, runs: emptyRuns(), validation: null, network: null });
     scheduleCheck();
   },
 
@@ -88,7 +122,7 @@ export const store = {
     past.length = 0;
     future.length = 0;
     persist(null);
-    set({ dataset: null, revision: state.revision + 1, plan: null, planRevision: null, validation: null, network: null,
+    set({ dataset: null, revision: state.revision + 1, runs: emptyRuns(), validation: null, network: null,
       schemaErrors: [] });
   },
 
@@ -99,12 +133,13 @@ export const store = {
     mutate(draft);
     // a no-op edit (e.g. the same value committed on Enter and again on blur) must not create history
     if (JSON.stringify(draft) === JSON.stringify(state.dataset)) return;
-    past.push(state.dataset);
-    if (past.length > HISTORY) past.shift();
-    future.length = 0;
-    persist(draft);
-    set({ dataset: draft, revision: state.revision + 1 });
-    scheduleCheck();
+    commit(draft);
+  },
+
+  /** Replace the dataset with an engine-produced version (e.g. a released forecast), undoable. */
+  replace(next: Dataset) {
+    if (!state.dataset) return;
+    commit(next);
   },
 
   undo() {
@@ -125,17 +160,19 @@ export const store = {
     scheduleCheck();
   },
 
-  async runPlan() {
+  async run<K extends RunKey>(key: K) {
     const ds = state.dataset;
     if (!ds) return;
     const rev = state.revision;
-    set({ planning: true, engineError: null });
+    setRun(key, { running: true, error: null });
     try {
-      const plan = await api.plan(ds);
-      set({ plan, planRevision: rev, planning: false });
+      const data = await RUNNERS[key](ds);
+      setRun(key, { data, revision: rev, running: false, at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
     } catch (e) {
-      if (e instanceof SchemaRejected) set({ schemaErrors: e.errors, planning: false });
-      else set({ engineError: String(e), planning: false });
+      if (e instanceof SchemaRejected) {
+        set({ schemaErrors: e.errors });
+        setRun(key, { running: false, error: "The dataset has invalid values." });
+      } else setRun(key, { running: false, error: String(e) });
     }
   },
 
@@ -157,7 +194,8 @@ export function useStore<T>(select: (s: State) => T): T {
   return useSyncExternalStore(store.subscribe, () => select(state));
 }
 
-export const planIsStale = (s: State) => s.plan !== null && s.planRevision !== s.revision;
+/** A result exists but the dataset changed after it was computed. */
+export const isStale = (s: State, key: RunKey) => s.runs[key].data !== null && s.runs[key].revision !== s.revision;
 
 /** Stable empty values for selectors: a fresh `[]` per call would re-render forever. */
 export const NO_ISSUES: NonNullable<State["validation"]>["issues"] = [];

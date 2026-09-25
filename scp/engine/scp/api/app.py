@@ -12,10 +12,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict
-
 from .. import __version__
-from ..model import Dataset
+from ..demand import ForecastResult, ReleaseResult, release, run_forecast
+from ..demand import foundation
+from ..demand.models import SPECS
+from ..demand.result import FoundationStatus
+from ..model import Dataset, ForecastModelId
+from ..model.common import Out
 from ..network import build_graph, location_edges, location_layers
 from ..plan import PlanResult, run_mrp
 from ..validate import RULES, Issue, validate
@@ -25,13 +28,9 @@ EXAMPLES = ROOT / "examples"
 WEB_DIST = ROOT / "web" / "dist"
 
 app = FastAPI(title="SCP — Supply Chain Planning", version=__version__,
-              description="Typed network master data, readiness gate, network MRP/DRP.")
+              description="Typed network master data, readiness gate, demand planning, network MRP/DRP.")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                    allow_methods=["*"], allow_headers=["*"])
-
-
-class Out(BaseModel):
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
 class Health(Out):
@@ -172,6 +171,50 @@ def post_network(ds: Dataset) -> NetworkView:
                      options=[NetOption(kind=o.kind, source_id=o.source_id, upstream=list(o.upstream))
                               for o in g.options.get(n, [])]) for n in g.nodes]
     return NetworkView(locations=locs, edges=edges, nodes=nodes, cycles=g.cycles)
+
+
+class ModelInfo(Out):
+    id: ForecastModelId
+    label: str
+    family: str
+    description: str
+
+
+class ForecastModels(Out):
+    models: list[ModelInfo]
+    foundation: FoundationStatus
+
+
+class ReleaseRequest(Out):
+    dataset: Dataset
+    keys: list[str] | None = None
+
+
+class ReleaseResponse(Out):
+    dataset: Dataset
+    release: ReleaseResult
+
+
+@app.get("/api/forecast/models", response_model=ForecastModels)
+def forecast_models() -> ForecastModels:
+    _, st = foundation.get()
+    return ForecastModels(
+        models=[ModelInfo(id=s.id, label=s.label, family=s.family, description=s.description) for s in SPECS.values()],
+        foundation=FoundationStatus(**st.__dict__))
+
+
+@app.post("/api/forecast", response_model=ForecastResult)
+def post_forecast(ds: Dataset) -> ForecastResult:
+    return run_forecast(ds)
+
+
+@app.post("/api/forecast/release", response_model=ReleaseResponse)
+def post_release(req: ReleaseRequest) -> ReleaseResponse:
+    result = run_forecast(req.dataset)
+    if not result.ok:
+        raise HTTPException(409, "the readiness gate has errors; fix them before releasing a forecast")
+    new, info = release(req.dataset, result, req.keys)
+    return ReleaseResponse(dataset=new, release=info)
 
 
 @app.post("/api/plan", response_model=PlanResult)

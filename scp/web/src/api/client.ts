@@ -1,5 +1,6 @@
 import type {
-  Dataset, ExampleInfo, NetworkView, PlanResult, RuleInfo, SchemaError, ValidationResult,
+  Dataset, ExampleInfo, ForecastModels, ForecastResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
+  SchemaError, ValidationResult,
 } from "./types";
 
 /** Thrown when the engine rejects the dataset shape (HTTP 422). Carries field-level errors. */
@@ -18,7 +19,15 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     const body = await res.json();
     throw new SchemaRejected((body.detail ?? []) as SchemaError[]);
   }
-  if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+  if (!res.ok) {
+    let detail = "";
+    try {
+      detail = ((await res.json()) as { detail?: string }).detail ?? "";
+    } catch {
+      /* not JSON */
+    }
+    throw new Error(detail || `${path}: HTTP ${res.status}`);
+  }
   return (await res.json()) as T;
 }
 
@@ -32,6 +41,10 @@ export const api = {
   validate: (ds: Dataset) => post<ValidationResult>("/api/validate", ds),
   network: (ds: Dataset) => post<NetworkView>("/api/network", ds),
   plan: (ds: Dataset) => post<PlanResult>("/api/plan", ds),
+  forecastModels: () => call<ForecastModels>("/api/forecast/models"),
+  forecast: (ds: Dataset) => post<ForecastResult>("/api/forecast", ds),
+  release: (dataset: Dataset, keys?: string[]) =>
+    call<ReleaseResponse>("/api/forecast/release", { method: "POST", body: JSON.stringify({ dataset, keys: keys ?? null }) }),
 };
 
 // Minimal JSON-schema shape used by the form generator.

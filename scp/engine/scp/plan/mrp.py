@@ -444,7 +444,7 @@ class _Planner:
                     need -= take
                 if left[i] <= EPS:
                     i += 1
-        for s, rem in zip(supplies, left):
+        for s, rem in zip(supplies, left, strict=True):
             if s.kind == "order":
                 self.order_by_id[s.id].lot_excess = max(0.0, rem)
         if st.lp.strategy is Strategy.ATO:
@@ -538,7 +538,7 @@ class _Planner:
                         bks[bi].planned_receipts += sp.qty
             onhand = 0.0 if self.is_customer(node) else lp.on_hand
             poh = onhand
-            for bk, meta in zip(bks, self.b):
+            for bk, meta in zip(bks, self.b, strict=True):
                 poh += bk.scheduled_receipts + bk.planned_receipts - bk.gross_independent - bk.gross_dependent
                 bk.projected_on_hand = poh
                 bk.shortage = max(0.0, -poh)
@@ -685,7 +685,7 @@ class _Planner:
             pu = self.ds.purchasing_source_by_id[src_id]
             if not pu.capacity_per_week:
                 continue
-            for b, q in zip(self.b, loads):
+            for b, q in zip(self.b, loads, strict=True):
                 cap = pu.capacity_per_week * b.days / 7.0
                 if q > cap + 1e-6:
                     self._exc("SUPPLIER_CAPACITY", "error",
@@ -695,7 +695,7 @@ class _Planner:
             mode = self.ds.lane_by_id[lane_id].planning_mode
             if not mode.capacity_units_per_week:
                 continue
-            for b, q in zip(self.b, loads):
+            for b, q in zip(self.b, loads, strict=True):
                 cap = mode.capacity_units_per_week * b.days / 7.0
                 if q > cap + 1e-6:
                     self._exc("LANE_CAPACITY", "error", f"Lane {lane_id}: {q:,.0f} shipped vs capacity {cap:,.0f} in {b.label}",

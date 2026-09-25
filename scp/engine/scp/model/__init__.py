@@ -3,6 +3,10 @@ from .common import (
     ResourceKind, SafetyStockMethod, Strategy, TransportMode,
 )
 from .dataset import Dataset
+from .demand import (
+    DEFAULT_MODELS, DemandEvent, EventKind, ForecastModelId, ForecastOverride, ForecastPeriod,
+    ForecastSettings, NpiRule, OutlierMethod, SelectionMetric,
+)
 from .master import (
     BomItem, Calendar, LaneMode, Location, LocationProduct, LotSizing, Operation, Product,
     ProductionSource, PurchasingSource, Resource, SafetyStockPolicy, Settings, TransportLane,
@@ -11,6 +15,8 @@ from .master import (
 from .transactional import DemandRecord, SalesHistory, ScheduledReceipt
 
 __all__ = [
+    "DEFAULT_MODELS", "DemandEvent", "EventKind", "ForecastModelId", "ForecastOverride", "ForecastPeriod",
+    "ForecastSettings", "NpiRule", "OutlierMethod", "SelectionMetric",
     "BomItem", "BucketSize", "Calendar", "Dataset", "DemandKind", "DemandRecord", "LaneMode",
     "Location", "LocationProduct", "LocationType", "LotSizePolicy", "LotSizing", "MrpType",
     "Operation", "Product", "ProductType", "ProductionSource", "PurchasingSource", "ReceiptKind",

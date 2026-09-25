@@ -127,7 +127,7 @@ class LotSizing(Model):
     ordering_cost: float = Unit("money", default=0.0, description="Fixed cost per order (EOQ)")
 
     @model_validator(mode="after")
-    def _params(self) -> "LotSizing":
+    def _params(self) -> LotSizing:
         if self.policy is LotSizePolicy.FIXED and self.fixed_qty is None:
             raise ValueError("FIXED lot sizing needs fixed_qty")
         if self.policy is LotSizePolicy.POQ and self.periods is None:
@@ -148,7 +148,7 @@ class SafetyStockPolicy(Model):
     review_period_days: float = Unit("days", default=0.0, description="Periodic review interval R")
 
     @model_validator(mode="after")
-    def _params(self) -> "SafetyStockPolicy":
+    def _params(self) -> SafetyStockPolicy:
         m = self.method
         if m is SafetyStockMethod.FIXED and self.qty is None:
             raise ValueError("fixed safety stock needs qty")
@@ -180,7 +180,7 @@ class LocationProduct(Model):
                                       description="Annual carrying rate override (default: WACC + spread)")
 
     @model_validator(mode="after")
-    def _params(self) -> "LocationProduct":
+    def _params(self) -> LocationProduct:
         if self.mrp_type is MrpType.REORDER_POINT and self.reorder_point is None:
             raise ValueError("reorder_point MRP type needs reorder_point")
         if self.lot_sizing.policy is LotSizePolicy.MIN_MAX and self.max_stock is None:
@@ -210,7 +210,7 @@ class Resource(Model):
     finite: bool = Field(True, description="Constrain plans by this resource's capacity")
 
     @model_validator(mode="after")
-    def _day(self) -> "Resource":
+    def _day(self) -> Resource:
         if self.shifts_per_day * self.hours_per_shift + self.overtime_hours_per_day > 24 + 1e-9:
             raise ValueError("shifts × hours per shift + overtime exceeds 24 h per day")
         return self
@@ -246,7 +246,7 @@ class Operation(Model):
                                                                 "(default: all units of the resource)")
 
     @model_validator(mode="after")
-    def _labor(self) -> "Operation":
+    def _labor(self) -> Operation:
         if self.labor_hours_per_unit > 0 and not self.labor_resource:
             raise ValueError("labor_hours_per_unit needs a labor_resource")
         return self
@@ -275,7 +275,7 @@ class ProductionSource(Model):
     valid_to: date | None = None
 
     @model_validator(mode="after")
-    def _structure(self) -> "ProductionSource":
+    def _structure(self) -> ProductionSource:
         seqs = [o.seq for o in self.operations]
         if len(seqs) != len(set(seqs)):
             raise ValueError("duplicate operation seq")
@@ -350,7 +350,7 @@ class TransportLane(Model):
     quota: float | None = Unit("fraction", default=None, le=1)
 
     @model_validator(mode="after")
-    def _ends(self) -> "TransportLane":
+    def _ends(self) -> TransportLane:
         if self.origin == self.destination:
             raise ValueError("lane origin and destination are the same")
         if sum(1 for m in self.modes if m.default) > 1:

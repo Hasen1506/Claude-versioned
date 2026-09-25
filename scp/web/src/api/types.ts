@@ -16,6 +16,11 @@ export type TransportLane = S["TransportLane"];
 export type DemandRecord = S["DemandRecord"];
 export type ScheduledReceipt = S["ScheduledReceipt"];
 export type Calendar = S["Calendar"];
+export type SalesHistory = S["SalesHistory"];
+export type DemandEvent = S["DemandEvent"];
+export type NpiRule = S["NpiRule"];
+export type ForecastOverride = S["ForecastOverride"];
+export type ForecastSettings = S["ForecastSettings"];
 
 export type Issue = S["Issue"];
 export type ValidationResult = S["ValidationResult"];
@@ -43,3 +48,11 @@ export interface SchemaError {
   msg: string;
   type: string;
 }
+
+export type ForecastResult = S["ForecastResult"];
+export type ForecastSeries = S["Series"];
+export type ForecastPoint = S["ForecastPoint"];
+export type HistoryPoint = S["HistoryPoint"];
+export type ModelScore = S["ModelScore"];
+export type ForecastModels = S["ForecastModels"];
+export type ReleaseResponse = S["ReleaseResponse"];

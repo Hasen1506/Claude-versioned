@@ -94,7 +94,7 @@ def production_workdays(ds: Dataset, ps: ProductionSource, good_qty: float) -> f
         return ps.fixed_lead_time_workdays
     q = started_qty(ps, good_qty)
     return sum(math.ceil(d - 1e-9) + op.queue_workdays
-               for (_, d, _, _), op in zip(_op_workdays(ds, ps, q), ps.operations))
+               for (_, d, _, _), op in zip(_op_workdays(ds, ps, q), ps.operations, strict=True))
 
 
 def schedule_make(ds: Dataset, ps: ProductionSource, good_qty: float, *, available: date | None = None,

@@ -348,4 +348,6 @@ The four legacy gates exist because the architecture let solvers disagree. The n
 | **P9 Finance overlay** | Inventory value, cost-to-serve, margin, capacity NPV from duals | Reconciles to plan costs exactly |
 | **P10 Control tower** | Exception worklists with owner and age, KPI set from guide §18.2 | KPI definitions tested against fixtures |
 
-This session delivers **P0 and P1**.
+**Delivered:** P0 and P1, then P2 (demand planning, with Google TimesFM as an optional candidate model; see
+[TIMESFM.md](TIMESFM.md)). The web client adopts the legacy app's design language: Mono / Noir / Sepia themes,
+numbered stages, the planning-spine freshness strip, and provenance / reading / solver-IO boxes.

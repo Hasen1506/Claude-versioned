@@ -138,6 +138,28 @@ def _shelf(d):
     d["products"][1]["shelf_life_days"] = 2
 
 
+def _history_late(d):
+    d["history"] = [{"location": "P", "product": "A", "date": "2026-01-06", "qty": 4}]
+
+
+def _npi_like(d):
+    d["npi"] = [{"location": "P", "product": "C", "like_product": "A", "launch_date": "2026-01-12"}]
+
+
+def _npi_dup(d):
+    d["history"] = [{"location": "P", "product": "A", "date": "2025-12-01", "qty": 4}]
+    rule = {"location": "P", "product": "C", "like_product": "A", "launch_date": "2026-01-12"}
+    d["npi"] = [rule, dict(rule, scale=0.5)]
+
+
+def _override_outside(d):
+    d["overrides"] = [{"location": "P", "product": "A", "date": "2027-01-01", "qty": 5}]
+
+
+def _override_no_fc(d):
+    d["overrides"] = [{"location": "P", "product": "A", "date": "2026-01-12", "change": 0.1}]
+
+
 MUTATORS = {
     "DUP_ID": _dup_id, "DUP_LOCATION_PRODUCT": _dup_lp, "REF_UNKNOWN": _ref_unknown,
     "REF_WRONG_TYPE": _ref_wrong_type, "FX_MISSING": _fx_missing, "CALENDAR_NO_WORKDAY_IN_HORIZON": _calendar,
@@ -148,6 +170,8 @@ MUTATORS = {
     "QUOTA_SUM": _quota, "DEMAND_OUTSIDE_HORIZON": _outside, "DEMAND_PAST_DUE": _past,
     "MTO_WITH_FORECAST": _mto_fc, "STOCK_AT_CUSTOMER": _stock_at_customer, "RESOURCE_UNUSED": _unused,
     "LOCATION_PRODUCT_DEFAULTED": _defaulted, "SHELF_LIFE_VS_LEAD_TIME": _shelf,
+    "HISTORY_AFTER_START": _history_late, "NPI_LIKE_WITHOUT_HISTORY": _npi_like, "NPI_DUPLICATE": _npi_dup,
+    "OVERRIDE_OUTSIDE_HORIZON": _override_outside, "OVERRIDE_WITHOUT_FORECAST": _override_no_fc,
 }
 
 

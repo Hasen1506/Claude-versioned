@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Dataset, Issue } from "../api/types";
-import { Badge, Empty, Panel } from "../components/ui";
+import { Badge, Empty, Panel, StageHeader } from "../components/ui";
 import { byKey, COLLECTIONS, items, whereUsed, type CollectionKey } from "../model/collections";
 import { go, href } from "../lib/router";
 import { defaults, SchemaForm, useSchema, type FieldErrors } from "../schema/SchemaForm";
@@ -58,8 +58,17 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
       while (list.some((o) => o.id === `${prefix}-${n}`)) n++;
       seed.id = `${prefix}-${n}`;
     }
-    if (ckey === "demand") seed.date = ds.settings.planning_start;
-    if (ckey === "receipts") seed.due_date = ds.settings.planning_start;
+    const start = ds.settings.planning_start;
+    if (ckey === "demand" || ckey === "overrides") seed.date = start;
+    if (ckey === "receipts") seed.due_date = start;
+    if (ckey === "npi") seed.launch_date = start;
+    if (ckey === "events") { seed.start = start; seed.end = start; }
+    if (ckey === "history") {
+      const d = new Date(start + "T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() - 7);
+      seed.date = d.toISOString().slice(0, 10);
+    }
+    if (ckey === "overrides") seed.change = 0;
     const obj = defaults(schema, def.defName, seed);
     store.update((d) => { items(d, ckey).push(obj); });
     go("data", ckey, def.keyOf(obj, list.length));
@@ -67,12 +76,8 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
 
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <h1>{def.label}</h1>
-          <p>{def.blurb}</p>
-        </div>
-      </div>
+      <StageHeader n="MD" title={def.label} kicker={def.blurb} />
+      <div className="content">
       <div className="split">
         <Panel flush title={<div className="row" style={{ flex: 1 }}>
           <input className="input" placeholder={`Search ${def.label.toLowerCase()}…`} value={q}
@@ -108,6 +113,7 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
             <Panel><div className="faint">Select a {def.singular} to edit, or create a new one.</div></Panel>
           )}
         </div>
+      </div>
       </div>
     </div>
   );
@@ -182,14 +188,9 @@ function SettingsEditor() {
   const rate = (ds.settings.wacc ?? 0.12) + (ds.settings.holding_spread ?? 0.08);
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <h1>Settings</h1>
-          <p>The world every engine runs in: currency and exchange rates, the planning start and horizon, bucket size,
-            and the cost of money. Carrying rate = WACC + holding spread = <b>{(rate * 100).toFixed(1)}% per year</b>.</p>
-        </div>
-      </div>
-      <div style={{ maxWidth: 760 }}>
+      <StageHeader n="MD" title="Settings" kicker={<>The world every engine runs in: currency and exchange rates, the planning start and
+        horizon, bucket size, and the cost of money. Carrying rate = WACC + holding spread = <b>{(rate * 100).toFixed(1)}% per year</b>.</>} />
+      <div className="content" style={{ maxWidth: 800 }}>
         <Panel title="Planning settings">
           <SchemaForm defName="Settings" value={ds.settings as unknown as Obj} errors={errors}
             onChange={(next) => store.update((d) => { d.settings = next as unknown as Dataset["settings"]; })} />
@@ -199,5 +200,5 @@ function SettingsEditor() {
   );
 }
 
-export const DATA_GROUPS = ["Network", "Make & buy", "Planning data"] as const;
+export const DATA_GROUPS = ["Network", "Make & buy", "Planning data", "Demand inputs"] as const;
 export { COLLECTIONS };

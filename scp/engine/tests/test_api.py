@@ -21,7 +21,7 @@ def test_validate_network_plan_round_trip():
     v = client.post("/api/validate", json=d).json()
     assert v == {"issues": [], "blocking": False}
     net = client.post("/api/network", json=d).json()
-    assert {l["id"] for l in net["locations"]} >= {"PLT-PUNE", "DC-DELHI", "SUP-SHENZHEN"}
+    assert {loc["id"] for loc in net["locations"]} >= {"PLT-PUNE", "DC-DELHI", "SUP-SHENZHEN"}
     assert any(e["kind"] == "purchase" and e["origin"] == "SUP-SHENZHEN" for e in net["edges"])
     plan = client.post("/api/plan", json=d).json()
     assert plan["ok"] and plan["orders"] and plan["kpis"]["total_cost"] > 0
@@ -42,3 +42,21 @@ def test_rules_catalog():
 
 def test_unknown_api_route_is_404_not_the_spa():
     assert client.get("/api/nope").status_code == 404
+
+
+def test_forecast_and_release():
+    d = example_dict("kitchenware_network")
+    models = client.get("/api/forecast/models").json()
+    assert {m["id"] for m in models["models"]} >= {"ses", "croston", "timesfm"}
+    assert models["foundation"]["available"] is False
+    r = client.post("/api/forecast", json=d).json()
+    assert r["ok"] and len(r["series"]) == 9 and r["summary"]["wape"] > 0
+    rel = client.post("/api/forecast/release", json={"dataset": d, "keys": [r["series"][0]["key"]]}).json()
+    assert rel["release"]["series"] == 1 and rel["release"]["records"] > 0
+    assert client.post("/api/plan", json=rel["dataset"]).json()["ok"]
+
+
+def test_release_refuses_a_blocked_dataset():
+    d = example_dict("kitchenware_network")
+    d["history"][0]["product"] = "NOPE"
+    assert client.post("/api/forecast/release", json={"dataset": d}).status_code == 409

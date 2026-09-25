@@ -25,6 +25,13 @@ class Model(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, use_enum_values=False)
 
 
+class Out(BaseModel):
+    """Base for engine OUTPUT schemas: fields with defaults are still always present in responses,
+    so the generated API types are exact (no optional-but-always-there fields)."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+
 def _extra(unit: str | None = None, ref: str | None = None, **more: Any) -> dict[str, Any]:
     out: dict[str, Any] = {}
     if unit:

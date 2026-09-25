@@ -17,7 +17,7 @@ export function useSchema(): JsonSchema | null {
   return s;
 }
 
-type Obj = Record<string, unknown>;
+export type Obj = Record<string, unknown>;
 export type FieldErrors = Record<string, string>;
 
 export function deref(schema: JsonSchema, node: JsonSchemaNode): JsonSchemaNode {
@@ -153,6 +153,27 @@ function FieldFor({ schema, name, raw, required, value, onChange, errors, path }
         ) : (
           <SchemaForm defName={defName} value={obj as Obj} onChange={onChange} errors={errors} path={path} />
         )}
+      </div>
+    );
+  }
+  // list of enum values → a checkbox set
+  const itemNode = node.type === "array" && node.items ? deref(schema, node.items) : null;
+  if (itemNode?.enum) {
+    const list = (value as string[] | null | undefined) ?? [];
+    return (
+      <div className="field">
+        <label>{title}{required && <span className="req">*</span>}</label>
+        <div className="chips" role="group" aria-label={title}>
+          {itemNode.enum.map((opt) => (
+            <label key={opt} className="chip" style={{ cursor: "pointer" }}>
+              <input type="checkbox" checked={list.includes(opt)}
+                onChange={(e) => onChange(e.target.checked ? [...list, opt] : list.filter((x) => x !== opt))} />
+              {opt}
+            </label>
+          ))}
+        </div>
+        {err && <div className="err">{err}</div>}
+        {help && !err && <div className="help">{help}</div>}
       </div>
     );
   }

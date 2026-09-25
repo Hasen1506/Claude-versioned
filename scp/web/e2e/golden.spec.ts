@@ -26,13 +26,15 @@ test("golden path: example → readiness → plan → drill-down → edit → st
   await expect(page.getByText("Products planned here")).toBeVisible();
 
   // readiness passes
-  await page.getByRole("link", { name: /Readiness/ }).click();
+  await page.locator('a.nav-item[href="#/readiness"]').click();
   await expect(page.getByText("Ready to plan")).toBeVisible();
 
   // plan
-  await page.getByRole("button", { name: "Run plan" }).first().click();
+  const supplyChip = page.locator('.spine a[href="#/plan"] .dot');
+  await page.locator('a.nav-item[href="#/plan"]').click();
+  await page.getByRole("button", { name: "Run plan" }).click();
   await expect(page.getByText("Total plan cost")).toBeVisible();
-  await expect(page.getByText("Plan current")).toBeVisible();
+  await expect(supplyChip).toHaveClass(/fresh/);
   await expect(page.locator(".tile .value").nth(1)).toContainText("%");
 
   // node drill-down and pegging
@@ -51,14 +53,49 @@ test("golden path: example → readiness → plan → drill-down → edit → st
   const onHand = page.locator('input[id="on_hand"]');
   await onHand.fill("20000");
   await onHand.press("Enter");
-  await expect(page.getByText("Plan stale")).toBeVisible();
-  await page.getByRole("button", { name: "Run plan" }).click();
-  await expect(page.getByText("Plan current")).toBeVisible();
+  await expect(supplyChip).toHaveClass(/stale/);
+  await page.goto("/#/plan");
+  await expect(page.getByText("⚠ STALE")).toBeVisible();
+  await page.getByRole("button", { name: "Re-plan" }).click();
+  await expect(supplyChip).toHaveClass(/fresh/);
 
   // undo restores the previous value
   await page.goto("/#/data/location_products/PLT-PUNE%7CRM-HEATER");
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(page.locator('input[id="on_hand"]')).toHaveValue("14000");
+});
+
+test("demand planning: forecast → workbench → consensus override → release → plan stale → undo", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("Kaveri Kitchenware").click();
+  await expect(page.locator(".net .node")).toHaveCount(12);
+  await page.goto("/#/demand");
+  await page.getByRole("button", { name: "Run forecast" }).click();
+  await expect(page.getByText("Backtest WAPE")).toBeVisible();
+  await expect(page.locator('.spine a[href="#/demand"] .dot')).toHaveClass(/fresh/);
+
+  // workbench: leaderboard with a champion and the cleansing log
+  await page.goto("/#/demand/series/CUS-ECOM%7CMG-500");
+  await expect(page.getByText("Model leaderboard")).toBeVisible();
+  await expect(page.locator("tr.selected").first()).toBeVisible();
+  await expect(page.getByText(/History cleansing/)).toBeVisible();
+
+  // consensus grid: type an override, the forecast re-runs with it
+  await page.goto("/#/demand/consensus");
+  const cell = page.getByLabel(/^KT-15 CUS-ECOM/).first();
+  await cell.fill("777");
+  await cell.press("Enter");
+  await expect(page.locator("td.edit input[value='777']")).toBeVisible();
+
+  // release writes the consensus into forecast demand; undo reverts it
+  await page.getByRole("button", { name: "Release to plan" }).click();
+  await expect(page.getByText(/forecast records for 9 series/)).toBeVisible();
+  await page.goto("/#/data/demand");
+  await page.getByLabel("Search").fill("KT-15");
+  const released = page.locator("td", { hasText: /^777$/ });
+  await expect(released).toHaveCount(1);
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(released).toHaveCount(0);
 });
 
 test("typed inputs: a percent typed as a fraction is rejected with the field named", async ({ page }) => {
@@ -70,13 +107,13 @@ test("typed inputs: a percent typed as a fraction is rejected with the field nam
   await expect(wacc).toHaveValue("12"); // shown as percent, stored as 0.12
   await wacc.fill("1200");
   await wacc.press("Enter");
-  await expect(page.getByText("Invalid values")).toBeVisible();
+  await expect(page.getByText("Invalid values", { exact: true })).toBeVisible();
   await page.goto("/#/readiness");
   await expect(page.getByText("settings › wacc")).toBeVisible();
   await page.goto("/#/settings");
   await page.locator('input[id="wacc"]').fill("12");
   await page.locator('input[id="wacc"]').press("Enter");
-  await expect(page.getByText("Invalid values")).toHaveCount(0);
+  await expect(page.getByText("Invalid values", { exact: true })).toHaveCount(0);
 });
 
 test("blank network: readiness guides the first steps", async ({ page }) => {

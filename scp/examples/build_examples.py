@@ -16,7 +16,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "engine"))
 
-from scp.model import Dataset  # noqa: E402
+from scp.demand import release, run_forecast  # noqa: E402
+from scp.model import Dataset, DemandKind  # noqa: E402
 
 START = date(2026, 9, 28)  # a Monday
 
@@ -30,6 +31,28 @@ def weekly_forecast(loc: str, prod: str, base: float, weeks: int, season: dict[i
         q = max(0, round(base * f * (1 + rng.uniform(-noise, noise))))
         out.append({"location": loc, "product": prod, "date": d.isoformat(), "qty": q, "kind": "forecast",
                     "period_days": 7})
+    return out
+
+
+def weekly_history(loc: str, prod: str, base: float, season: dict[int, float], rng: random.Random, *,
+                   noise: float = 0.08, growth: float = 0.08, weeks: int = 104, promo: dict[str, float] | None = None,
+                   spikes: dict[str, float] | None = None) -> list[dict]:
+    """Two years of weekly sell-out ending the week before START, on today's level (``base``) with
+    annual growth, monthly seasonality and noise. ``promo`` weeks carry the promo flag and a lift;
+    ``spikes`` are one-off orders the cleansing step should catch."""
+    out = []
+    first = START - timedelta(weeks=weeks)
+    for w in range(weeks):
+        d = first + timedelta(weeks=w)
+        trend = (1 + growth) ** ((w - weeks) / 52)
+        q = base * season.get(d.month, 1.0) * trend * (1 + rng.gauss(0, noise))
+        lift = (promo or {}).get(d.isoformat())
+        q *= (1 + lift) if lift else 1
+        q *= (spikes or {}).get(d.isoformat(), 1)
+        row = {"location": loc, "product": prod, "date": d.isoformat(), "qty": max(0, round(q))}
+        if lift:
+            row["promo"] = True
+        out.append(row)
     return out
 
 
@@ -218,17 +241,32 @@ def kitchenware() -> dict:
         {"location": "PLT-PUNE", "product": "PK-CARTON-L", "on_hand": 6000},
         {"location": "PLT-PUNE", "product": "PK-CARTON-S", "on_hand": 5000},
     ]
+    kt_season = {10: 1.2, 11: 1.15, 12: 1.3, 1: 1.35}
+    ecom_mg = {10: 1.8, 11: 1.4}
+    ecom_kt = {10: 1.6, 11: 1.3, 12: 1.2, 1: 1.25}
+    sale_days = {"2024-10-07": 0.6, "2025-09-22": 0.6, "2025-09-29": 0.45}
+    history = []
+    history += weekly_history("CUS-WEST-TRADE", "MG-500", 520, festive, rng)
+    history += weekly_history("CUS-WEST-TRADE", "MG-750", 300, festive, rng, spikes={"2025-06-09": 2.6})
+    history += weekly_history("CUS-WEST-TRADE", "KT-15", 640, kt_season, rng)
+    history += weekly_history("CUS-ECOM", "MG-500", 260, ecom_mg, rng, noise=0.15, growth=0.25, promo=sale_days)
+    history += weekly_history("CUS-ECOM", "MG-750", 190, ecom_mg, rng, noise=0.15, growth=0.25, promo=sale_days)
+    history += weekly_history("CUS-ECOM", "KT-15", 420, ecom_kt, rng, noise=0.15, growth=0.25, promo=sale_days)
+    history += weekly_history("CUS-NORTH-TRADE", "MG-500", 380, festive, rng)
+    history += weekly_history("CUS-NORTH-TRADE", "MG-750", 210, festive, rng)
+    events = [
+        {"id": "EV-WEST-SCHEME-25", "name": "West distributor scheme (Mar 2025)", "kind": "promo",
+         "locations": ["CUS-WEST-TRADE"], "products": ["MG-500", "MG-750"], "start": "2025-03-10", "end": "2025-03-23"},
+        {"id": "EV-ECOM-SALE-26", "name": "Marketplace festive sale 2026", "kind": "promo", "locations": ["CUS-ECOM"],
+         "start": "2026-10-05", "end": "2026-10-11"},
+        {"id": "EV-KT-PRICE-27", "name": "Kettle price increase (+6 %)", "kind": "price_change", "products": ["KT-15"],
+         "start": "2027-01-04", "end": "2027-03-28", "lift": -0.05},
+    ]
+    npi = [{"location": "CUS-NORTH-TRADE", "product": "KT-15", "like_product": "KT-15",
+            "like_location": "CUS-WEST-TRADE", "scale": 0.8, "launch_date": "2026-10-12", "ramp_periods": 4}]
+    overrides = [{"location": "CUS-WEST-TRADE", "product": "MG-500", "date": "2026-10-19", "qty": 900,
+                  "reason": "Distributor Diwali stocking (sales input)", "author": "Sales West"}]
     demand = []
-    weeks = 26
-    demand += weekly_forecast("CUS-WEST-TRADE", "MG-500", 520, weeks, festive, rng)
-    demand += weekly_forecast("CUS-WEST-TRADE", "MG-750", 300, weeks, festive, rng)
-    demand += weekly_forecast("CUS-WEST-TRADE", "KT-15", 640, weeks, {10: 1.2, 11: 1.15, 12: 1.3, 1: 1.35}, rng)
-    demand += weekly_forecast("CUS-ECOM", "MG-500", 260, weeks, {10: 1.8, 11: 1.4}, rng, 0.15)
-    demand += weekly_forecast("CUS-ECOM", "MG-750", 190, weeks, {10: 1.9, 11: 1.4}, rng, 0.15)
-    demand += weekly_forecast("CUS-ECOM", "KT-15", 420, weeks, {10: 1.6, 11: 1.3, 12: 1.2, 1: 1.25}, rng, 0.15)
-    demand += weekly_forecast("CUS-NORTH-TRADE", "MG-500", 380, weeks, festive, rng)
-    demand += weekly_forecast("CUS-NORTH-TRADE", "MG-750", 210, weeks, festive, rng)
-    demand += weekly_forecast("CUS-NORTH-TRADE", "KT-15", 520, weeks, {11: 1.2, 12: 1.45, 1: 1.5, 2: 1.2}, rng)
     demand += [
         {"id": "SO-88121", "location": "CUS-WEST-TRADE", "product": "MG-500", "date": "2026-10-01", "qty": 450,
          "kind": "sales_order", "priority": 2},
@@ -253,8 +291,20 @@ def kitchenware() -> dict:
                      "default_service_level": 0.95, "default_calendar": "CAL-IN-6D"},
         "calendars": cal, "locations": locations, "products": products, "location_products": lps,
         "resources": resources, "production_sources": production_sources, "purchasing_sources": purchasing,
-        "lanes": lanes, "demand": demand, "receipts": receipts, "history": [],
+        "lanes": lanes, "demand": demand, "receipts": receipts, "history": history, "events": events, "npi": npi,
+        "overrides": overrides,
     }
+
+
+def released(data: dict) -> dict:
+    """Run the demand-planning pipeline and write its consensus forecast into ``demand`` exactly as the
+    Release button does, rounded to whole units so the file is reproducible across platforms."""
+    ds = Dataset.model_validate(data)
+    new, _ = release(ds, run_forecast(ds))
+    fc = [{"location": d.location, "product": d.product, "date": d.date.isoformat(), "qty": round(d.qty),
+           "kind": "forecast", "period_days": d.period_days}
+          for d in new.demand if d.kind is DemandKind.FORECAST and round(d.qty) > 0]
+    return {**data, "demand": fc + [d for d in data["demand"] if d["kind"] != "forecast"]}
 
 
 def single_product() -> dict:
@@ -307,7 +357,8 @@ def single_product() -> dict:
 
 
 def main() -> None:
-    for name, build in (("kitchenware_network", kitchenware), ("single_product_plant", single_product)):
+    for name, build in (("kitchenware_network", lambda: released(kitchenware())),
+                        ("single_product_plant", single_product)):
         data = build()
         Dataset.model_validate(data)  # fail loudly if an example drifts from the schema
         (HERE / f"{name}.json").write_text(json.dumps(data, indent=1) + "\n")

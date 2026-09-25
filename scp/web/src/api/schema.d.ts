@@ -126,6 +126,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forecast/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Forecast Models */
+        get: operations["forecast_models_api_forecast_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forecast": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Forecast */
+        post: operations["post_forecast_api_forecast_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forecast/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Release */
+        post: operations["post_release_api_forecast_release_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/plan": {
         parameters: {
             query?: never;
@@ -147,6 +198,22 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** BacktestPoint */
+        BacktestPoint: {
+            /** Origin */
+            origin: number;
+            /** Step */
+            step: number;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /** Actual */
+            actual: number;
+            /** Forecast */
+            forecast: number;
+        };
         /** BomItem */
         BomItem: {
             /** Product */
@@ -207,6 +274,17 @@ export interface components {
             /** Holidays */
             holidays?: string[];
         };
+        /** CvSuggestion */
+        CvSuggestion: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Current */
+            current: number | null;
+            /** Suggested */
+            suggested: number;
+        };
         /** Dataset */
         Dataset: {
             /**
@@ -238,6 +316,58 @@ export interface components {
             receipts?: components["schemas"]["ScheduledReceipt"][];
             /** History */
             history?: components["schemas"]["SalesHistory"][];
+            forecasting?: components["schemas"]["ForecastSettings"];
+            /** Events */
+            events?: components["schemas"]["DemandEvent"][];
+            /** Npi */
+            npi?: components["schemas"]["NpiRule"][];
+            /** Overrides */
+            overrides?: components["schemas"]["ForecastOverride"][];
+        };
+        /**
+         * DemandEvent
+         * @description Something that moves demand for a period: a promotion, a price change, a competitor launch…
+         *
+         *     Past events mark the history they affected, so the baseline is cleansed of them and their lift
+         *     is measured. Future events multiply the baseline forecast by ``1 + lift``. Leave ``lift`` empty
+         *     on a future event to use the lift measured on past events of the same kind.
+         */
+        DemandEvent: {
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** @default promo */
+            kind: components["schemas"]["EventKind"];
+            /**
+             * Products
+             * @description Empty = every product
+             */
+            products?: string[];
+            /**
+             * Locations
+             * @description Empty = every location
+             */
+            locations?: string[];
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             * @description Last day of the event (inclusive)
+             */
+            end: string;
+            /**
+             * Lift
+             * @description Demand change while the event runs: 0.3 = +30 %, −0.2 = −20 %
+             */
+            lift?: number | null;
         };
         /**
          * DemandKind
@@ -279,6 +409,11 @@ export interface components {
              */
             period_days?: number | null;
         };
+        /**
+         * EventKind
+         * @enum {string}
+         */
+        EventKind: "promo" | "price_change" | "launch" | "competitor" | "store_opening" | "disruption" | "other";
         /** ExampleInfo */
         ExampleInfo: {
             /** Name */
@@ -289,6 +424,220 @@ export interface components {
             locations: number;
             /** Products */
             products: number;
+        };
+        /**
+         * ForecastModelId
+         * @description Models entered into the forecast competition. See ``scp.demand.models``.
+         * @enum {string}
+         */
+        ForecastModelId: "naive" | "seasonal_naive" | "moving_average" | "ses" | "holt_damped" | "holt_winters" | "croston" | "sba" | "tsb" | "regression" | "combination" | "timesfm";
+        /** ForecastModels */
+        ForecastModels: {
+            /** Models */
+            models: components["schemas"]["ModelInfo"][];
+            foundation: components["schemas"]["FoundationStatus"];
+        };
+        /**
+         * ForecastOverride
+         * @description A consensus adjustment for one period: an absolute quantity or a relative change.
+         */
+        ForecastOverride: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /**
+             * Date
+             * Format: date
+             * @description Any date inside the forecast period to adjust
+             */
+            date: string;
+            /**
+             * Qty
+             * @description Final quantity for the period
+             */
+            qty?: number | null;
+            /**
+             * Change
+             * @description Relative change to the statistical forecast: 0.1 = +10 %
+             */
+            change?: number | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Author
+             * @default
+             */
+            author: string;
+        };
+        /**
+         * ForecastPeriod
+         * @enum {string}
+         */
+        ForecastPeriod: "week" | "month";
+        /** ForecastPoint */
+        ForecastPoint: {
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Label */
+            label: string;
+            /** Share */
+            share: number;
+            /** Statistical */
+            statistical: number;
+            /**
+             * Event Factor
+             * @default 1
+             */
+            event_factor: number;
+            /**
+             * Events
+             * @default []
+             */
+            events: string[];
+            /**
+             * Cannibalised
+             * @default 0
+             */
+            cannibalised: number;
+            /** Override */
+            override: number | null;
+            /**
+             * Override Reason
+             * @default
+             */
+            override_reason: string;
+            /** Final */
+            final: number;
+            /** Lower */
+            lower: number;
+            /** Upper */
+            upper: number;
+            /** Released Qty */
+            released_qty: number;
+        };
+        /** ForecastResult */
+        ForecastResult: {
+            /** Ok */
+            ok: boolean;
+            /**
+             * Period
+             * @enum {string}
+             */
+            period: "week" | "month";
+            /** Season Length */
+            season_length: number;
+            /** Periods */
+            periods: string[];
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Series */
+            series: components["schemas"]["Series"][];
+            summary: components["schemas"]["Summary"];
+            foundation: components["schemas"]["FoundationStatus"];
+        };
+        /**
+         * ForecastSettings
+         * @description How the statistical forecast is built and chosen (S/4 guide §4: IBP Demand).
+         */
+        ForecastSettings: {
+            /**
+             * @description Time grain of history and forecast
+             * @default week
+             */
+            period: components["schemas"]["ForecastPeriod"];
+            /**
+             * Season Length
+             * @description Periods per seasonal cycle; empty = 52 for weeks, 12 for months
+             */
+            season_length?: number | null;
+            /**
+             * Models
+             * @description Candidate models. TimesFM is only used when the engine has it installed.
+             */
+            models?: components["schemas"]["ForecastModelId"][];
+            /** @default mase */
+            selection_metric: components["schemas"]["SelectionMetric"];
+            /**
+             * Backtest Origins
+             * @description Rolling forecast origins in the backtest
+             * @default 6
+             */
+            backtest_origins: number;
+            /**
+             * Backtest Horizon
+             * @description Periods forecast from each origin; match it to the replenishment lead time
+             * @default 4
+             */
+            backtest_horizon: number;
+            /**
+             * Min History Periods
+             * @description Series shorter than this skip the competition and use a simple average
+             * @default 8
+             */
+            min_history_periods: number;
+            /** @default mad */
+            outlier_method: components["schemas"]["OutlierMethod"];
+            /**
+             * Outlier Threshold
+             * @description Robust z-score (median / MAD) beyond which a value is clipped
+             * @default 4
+             */
+            outlier_threshold: number;
+            /**
+             * Abc A
+             * @description Cumulative revenue share that closes class A
+             * @default 0.8
+             */
+            abc_a: number;
+            /**
+             * Abc B
+             * @description Cumulative revenue share that closes class B
+             * @default 0.95
+             */
+            abc_b: number;
+            /**
+             * Xyz X
+             * @description Forecast-error CV that closes class X
+             * @default 0.5
+             */
+            xyz_x: number;
+            /**
+             * Xyz Y
+             * @description Forecast-error CV that closes class Y
+             * @default 1
+             */
+            xyz_y: number;
+            /**
+             * Interval
+             * @description Central prediction interval shown with the forecast (0.8 = P10–P90)
+             * @default 0.8
+             */
+            interval: number;
+        };
+        /** FoundationStatus */
+        FoundationStatus: {
+            /** Enabled */
+            enabled: boolean;
+            /** Available */
+            available: boolean;
+            /** Model */
+            model: string;
+            /** License */
+            license: string;
+            /** Detail */
+            detail: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -301,6 +650,27 @@ export interface components {
             status: string;
             /** Version */
             version: string;
+        };
+        /** HistoryPoint */
+        HistoryPoint: {
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /** Label */
+            label: string;
+            /** Raw */
+            raw: number;
+            /** Cleaned */
+            cleaned: number;
+            /** Flag */
+            flag: ("event" | "outlier") | null;
+            /**
+             * Events
+             * @default []
+             */
+            events: string[];
         };
         /** Issue */
         Issue: {
@@ -610,6 +980,43 @@ export interface components {
              */
             ordering_cost: number;
         };
+        /** ModelInfo */
+        ModelInfo: {
+            id: components["schemas"]["ForecastModelId"];
+            /** Label */
+            label: string;
+            /** Family */
+            family: string;
+            /** Description */
+            description: string;
+        };
+        /** ModelScore */
+        ModelScore: {
+            model: components["schemas"]["ForecastModelId"];
+            /** Label */
+            label: string;
+            /** Family */
+            family: string;
+            /** Eligible */
+            eligible: boolean;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /** Mae */
+            mae: number | null;
+            /** Rmse */
+            rmse: number | null;
+            /** Mase */
+            mase: number | null;
+            /** Wape */
+            wape: number | null;
+            /** Bias */
+            bias: number | null;
+            /** Rank */
+            rank: number | null;
+        };
         /**
          * MrpType
          * @enum {string}
@@ -773,6 +1180,55 @@ export interface components {
             /** Order Ids */
             order_ids: string[];
         };
+        /**
+         * NpiRule
+         * @description New product introduction: forecast a product without history from a like product.
+         */
+        NpiRule: {
+            /**
+             * Location
+             * @description Where the new product sells
+             */
+            location: string;
+            /**
+             * Product
+             * @description The new product
+             */
+            product: string;
+            /**
+             * Like Product
+             * @description Existing product whose demand shape it follows
+             */
+            like_product: string;
+            /**
+             * Like Location
+             * @description Empty = the same location
+             */
+            like_location?: string | null;
+            /**
+             * Scale
+             * @description Share of the like product's volume
+             * @default 1
+             */
+            scale: number;
+            /**
+             * Launch Date
+             * Format: date
+             */
+            launch_date: string;
+            /**
+             * Ramp Periods
+             * @description Periods to ramp linearly from 0 to full volume
+             * @default 4
+             */
+            ramp_periods: number;
+            /**
+             * Cannibalisation
+             * @description Share of the new volume taken from the like product (its forecast is reduced)
+             * @default 0
+             */
+            cannibalisation: number;
+        };
         /** Operation */
         Operation: {
             /** Seq */
@@ -816,6 +1272,11 @@ export interface components {
              */
             parallel_units?: number | null;
         };
+        /**
+         * OutlierMethod
+         * @enum {string}
+         */
+        OutlierMethod: "none" | "mad";
         /** Peg */
         Peg: {
             /**
@@ -1162,6 +1623,28 @@ export interface components {
          * @enum {string}
          */
         ReceiptKind: "purchase" | "production" | "transfer";
+        /** ReleaseRequest */
+        ReleaseRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Keys */
+            keys?: string[] | null;
+        };
+        /** ReleaseResponse */
+        ReleaseResponse: {
+            dataset: components["schemas"]["Dataset"];
+            release: components["schemas"]["ReleaseResult"];
+        };
+        /** ReleaseResult */
+        ReleaseResult: {
+            /** Records */
+            records: number;
+            /** Series */
+            series: number;
+            /** Replaced */
+            replaced: number;
+            /** Cv Suggestions */
+            cv_suggestions: components["schemas"]["CvSuggestion"][];
+        };
         /** Requirement */
         Requirement: {
             /** Id */
@@ -1409,6 +1892,91 @@ export interface components {
              */
             date: string;
         };
+        /** Segment */
+        Segment: {
+            /**
+             * Abc
+             * @enum {string}
+             */
+            abc: "A" | "B" | "C";
+            /**
+             * Xyz
+             * @enum {string}
+             */
+            xyz: "X" | "Y" | "Z";
+            /**
+             * Pattern
+             * @enum {string}
+             */
+            pattern: "smooth" | "erratic" | "intermittent" | "lumpy" | "none";
+            /**
+             * Lifecycle
+             * @enum {string}
+             */
+            lifecycle: "new" | "mature" | "inactive" | "npi";
+            /** Revenue */
+            revenue: number;
+            /** Revenue Share */
+            revenue_share: number;
+            /** Adi */
+            adi: number | null;
+            /** Cv2 */
+            cv2: number | null;
+            /** Error Cv */
+            error_cv: number | null;
+            /** Suggested Service Level */
+            suggested_service_level: number;
+        };
+        /**
+         * SelectionMetric
+         * @enum {string}
+         */
+        SelectionMetric: "mase" | "wape" | "rmse";
+        /** Series */
+        Series: {
+            /** Key */
+            key: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            segment: components["schemas"]["Segment"];
+            /** History */
+            history: components["schemas"]["HistoryPoint"][];
+            /** Leaderboard */
+            leaderboard: components["schemas"]["ModelScore"][];
+            champion: components["schemas"]["ForecastModelId"] | null;
+            /**
+             * Champion Label
+             * @default
+             */
+            champion_label: string;
+            /** Fva */
+            fva: number | null;
+            /**
+             * Backtest
+             * @default []
+             */
+            backtest: components["schemas"]["BacktestPoint"][];
+            /** Forecast */
+            forecast: components["schemas"]["ForecastPoint"][];
+            /**
+             * Lifts
+             * @default {}
+             */
+            lifts: {
+                [key: string]: number;
+            };
+            /** Sigma One Step */
+            sigma_one_step: number | null;
+            /** Demand Cv Weekly */
+            demand_cv_weekly: number | null;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
         /** Settings */
         Settings: {
             /**
@@ -1478,6 +2046,43 @@ export interface components {
          * @enum {string}
          */
         Strategy: "MTS" | "MTS_CONSUME" | "MTO" | "ATO";
+        /** Summary */
+        Summary: {
+            /** Series */
+            series: number;
+            /** Wape */
+            wape: number | null;
+            /** Bias */
+            bias: number | null;
+            /** Fva */
+            fva: number | null;
+            /**
+             * Champions
+             * @default {}
+             */
+            champions: {
+                [key: string]: number;
+            };
+            /**
+             * Abc
+             * @default {}
+             */
+            abc: {
+                [key: string]: number;
+            };
+            /**
+             * Patterns
+             * @default {}
+             */
+            patterns: {
+                [key: string]: number;
+            };
+            /**
+             * Total Final
+             * @default 0
+             */
+            total_final: number;
+        };
         /** TransportLane */
         TransportLane: {
             /** Id */
@@ -1711,6 +2316,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NetworkView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    forecast_models_api_forecast_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForecastModels"];
+                };
+            };
+        };
+    };
+    post_forecast_api_forecast_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForecastResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_release_api_forecast_release_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReleaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseResponse"];
                 };
             };
             /** @description Validation Error */

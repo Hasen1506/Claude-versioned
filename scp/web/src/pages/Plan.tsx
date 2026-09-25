@@ -1,57 +1,59 @@
 import { useMemo, useState } from "react";
 import type { PlanResult, PlannedOrder, Requirement } from "../api/types";
 import { BucketChart } from "../components/charts";
-import { Badge, cols, Empty, Panel, StatTile, Tabs, type Severity } from "../components/ui";
+import {
+  Badge, cols, Empty, Panel, Provenance, SolverIO, StageHeader, StaleMark, StatTile, Tabs, type Severity,
+} from "../components/ui";
 import { day, money, ORDER_LABEL, pct, qty } from "../lib/format";
 import { go, href } from "../lib/router";
-import { planIsStale, store, useStore } from "../state/store";
+import { isStale, store, useStore } from "../state/store";
 
 type View = "overview" | "node" | "capacity" | "orders";
 
 export function Plan({ route }: { route: string[] }) {
-  const plan = useStore((s) => s.plan);
-  const stale = useStore(planIsStale);
-  const planning = useStore((s) => s.planning);
+  const run = useStore((s) => s.runs.plan);
+  const plan = run.data;
+  const stale = useStore((s) => isStale(s, "plan"));
   const blocking = useStore((s) => s.validation?.blocking ?? false);
   const view = ((route[1] as View) || "overview") as View;
 
   const head = (
-    <div className="page-head">
-      <div>
-        <h1>Supply plan</h1>
-        <p>Network MRP/DRP: requirements are netted per location and product in low-level-code order, lot-sized,
-          sourced, scheduled on working days and exploded through BOMs and lanes. Every order is pegged to the demand it serves.</p>
-      </div>
-      <span className="spacer" />
-      <button className="btn primary" onClick={() => store.runPlan()} disabled={planning || blocking}>
-        {planning ? "Planning…" : plan ? "Re-plan" : "Run plan"}
-      </button>
-    </div>
+    <StageHeader n="06" title="Supply plan" kicker={<>Network MRP/DRP. Requirements are netted per location and product in low-level-code
+      order, lot-sized, sourced, scheduled on working days and exploded through BOMs and lanes. Every order is pegged to
+      the demand it serves.</>} right={<>
+      {plan && <Provenance kind="solved" at={run.at} stale={stale} />}
+      <button className="btn accent" onClick={() => store.run("plan")} disabled={run.running || blocking}>
+        {run.running ? "Planning…" : plan ? "Re-plan" : "Run plan"}
+      </button></>} />
   );
+  const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
+  if (run.error) return body(<div className="banner error"><Badge sev="error">Plan failed</Badge>{run.error}</div>);
   if (!plan) {
-    return <div>{head}<Panel><Empty title={blocking ? "Fix blocking readiness issues first" : "No plan yet"}>
-      {blocking ? <a className="btn" href={href("readiness")}>Open readiness</a> : <p>Run the plan to see orders, projected stock, capacity load and exceptions.</p>}
-    </Empty></Panel></div>;
+    return body(<>
+      <SolverIO answers="What to make, buy and move, when, where, and how much: with stock, capacity load and exceptions."
+        from="Released forecast and sales orders, stock, receipts, sources, BOMs, routings, lanes, calendars, policies."
+        feeds="Capacity, orders to execute, promising, finance and the control tower." />
+      <div style={{ height: 14 }} />
+      <Panel><Empty title={blocking ? "Fix blocking readiness issues first" : "No plan yet"}>
+        {blocking ? <a className="btn" href={href("readiness")}>Open readiness</a> : <p>Run the plan to see orders, projected stock, capacity load and exceptions.</p>}
+      </Empty></Panel></>);
   }
   if (!plan.ok) {
-    return <div>{head}<div className="banner error"><Badge sev="error">Not planned</Badge>The dataset has blocking readiness issues. <a href={href("readiness")}>Review them</a>.</div></div>;
+    return body(<div className="banner error"><Badge sev="error">Not planned</Badge>The dataset has blocking readiness issues. <a href={href("readiness")}>Review them</a>.</div>);
   }
-  return (
-    <div>
-      {head}
-      {stale && <div className="banner warning"><Badge sev="warning">Stale</Badge>Inputs changed since this plan was computed. Re-plan to refresh every number below.</div>}
-      <Tabs<View> value={view} onChange={(v) => go("plan", v)} tabs={[
-        { id: "overview", label: "Overview" },
-        { id: "node", label: "Stock & requirements", count: plan.nodes.length },
-        { id: "capacity", label: "Capacity", count: plan.resources.length },
-        { id: "orders", label: "Orders", count: plan.orders.length },
-      ]} />
-      {view === "overview" && <Overview plan={plan} />}
-      {view === "node" && <NodeView plan={plan} loc={route[2]} prod={route[3]} />}
-      {view === "capacity" && <CapacityView plan={plan} res={route[2]} />}
-      {view === "orders" && <OrdersView plan={plan} sel={route[2]} />}
-    </div>
-  );
+  return body(<>
+    {stale && <StaleMark what="plan" onRerun={() => store.run("plan")} busy={run.running} />}
+    <Tabs<View> value={view} onChange={(v) => go("plan", v)} tabs={[
+      { id: "overview", label: "Overview" },
+      { id: "node", label: "Stock & requirements", count: plan.nodes.length },
+      { id: "capacity", label: "Capacity", count: plan.resources.length },
+      { id: "orders", label: "Orders", count: plan.orders.length },
+    ]} />
+    {view === "overview" && <Overview plan={plan} />}
+    {view === "node" && <NodeView plan={plan} loc={route[2]} prod={route[3]} />}
+    {view === "capacity" && <CapacityView plan={plan} res={route[2]} />}
+    {view === "orders" && <OrdersView plan={plan} sel={route[2]} />}
+  </>);
 }
 
 // ------------------------------------------------------------------------------------------------
