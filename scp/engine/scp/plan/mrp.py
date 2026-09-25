@@ -13,8 +13,9 @@ For every planning node (location, product), in ascending low-level code:
 Then: FIFO pegging per node, upstream-delay propagation (projected availability), the physical
 projection per bucket, capacity/supplier/lane checks, exceptions and KPIs.
 
-Netting uses *need dates* (the plan's intent) so orders are never duplicated; the physical
-projection and the fill-rate KPI use *available / projected dates* (what will actually happen).
+Netting uses *need dates* (the plan's intent) so orders are never duplicated. The physical projection
+uses each order's *available date* (the MD04 view of the plan); the fill-rate KPI, DEMAND_AT_RISK and the
+per-bucket ``at_risk`` row use *projected dates*, which carry upstream delays down the pegging.
 """
 from __future__ import annotations
 
@@ -29,18 +30,17 @@ from ..model import (
 from ..network import NetworkGraph, Node, SupplyOption, build_graph
 from ..time import Buckets
 from ..validate import has_errors, validate
-from . import costing
+from . import costing, rates
 from .consumption import effective_demand
 from .leadtime import (
     Schedule, gr_days, lead_time_std_days, location_calendar, nominal_lead_time_days, resource_calendar,
     schedule, supplier_lane,
 )
-from .lotsize import apply_modifiers, base_lot, eoq
+from .lotsize import apply_modifiers, base_lot
 from .result import (
     BucketOut, Kpis, NodeBucket, NodePlan, Peg, PlanException, PlannedOrder, PlanResult,
     Requirement, ResourceBucket, ResourcePlan, ScheduledReceiptOut,
 )
-from .safety import SSInputs, statistical_ss
 
 EPS = 1e-9
 _PREFIX = {"make": "MO", "buy": "PR", "transfer": "TO"}
@@ -61,6 +61,7 @@ class _NodeState:
     reqs: list[Requirement] = field(default_factory=list)
     supplies: list[_Supply] = field(default_factory=list)
     ss_by_bucket: list[float] = field(default_factory=list)
+    targets: list[tuple[date, float]] = field(default_factory=list)   # S&OP stock targets (date, qty), by date
     ss_note: str = ""
     lead_time: float | None = None
 
@@ -73,6 +74,7 @@ class _Planner:
         self.b = Buckets(ds.settings)
         self.start = ds.settings.planning_start
         self.val = costing.roll_up(ds, g)
+        self.flow = rates.horizon_flows(ds, g)
         self.orders: list[PlannedOrder] = []
         self.order_by_id: dict[str, PlannedOrder] = {}
         self.order_inputs: dict[str, list[str]] = defaultdict(list)  # order → requirement ids it created
@@ -98,6 +100,10 @@ class _Planner:
     def seed(self) -> None:
         for node in self.g.order:
             self.state[node] = _NodeState(lp=self.lp(node))
+        for t in sorted(self.ds.stock_targets, key=lambda t: t.date):
+            st = self.state.get((t.location, t.product))
+            if st is not None and not self.is_customer((t.location, t.product)):
+                st.targets.append((t.date, t.qty))
         by_node: dict[Node, list] = defaultdict(list)
         for i, d in enumerate(self.ds.demand):
             by_node[(d.location, d.product)].append((d.id or f"#{i}", d))
@@ -175,41 +181,19 @@ class _Planner:
                 st.ss_by_bucket[bk.index] = sum(r.qty for r in st.reqs if bk.start <= r.date < hi)
             st.ss_note = f"coverage: requirements in the next {days:g} days"
             return
-        total = sum(r.qty for r in st.reqs)
-        mean_daily = total / self.s.horizon_days
-        sl = pol.service_level or self.s.default_service_level
-        lt = st.lead_time or 0.0
-        lt_sd = lead_time_std_days(self.ds, opts[0]) if opts else 0.0
-        q = self._typical_lot(node, st, mean_daily)
-        res = statistical_ss(pol, SSInputs(mean_daily, lt, lt_sd, sl, q))
+        opts_lt = lead_time_std_days(self.ds, opts[0]) if opts else 0.0
+        res = rates.policy_safety_stock(self.ds, self.g, node, mean_daily=self._rate(node, st),
+                                        lead_time=st.lead_time or 0.0, lead_time_std=opts_lt,
+                                        unit_value=self.val.unit_value.get(node, 0.0),
+                                        days_per_bucket=rates.bucket_days(self.ds, len(self.b)))
         st.ss_by_bucket = [res.qty] * n
-        st.ss_note = res.explanation
+        st.ss_note = res.note
 
-    def _typical_lot(self, node: Node, st: _NodeState, mean_daily: float) -> float:
-        ls = st.lp.lot_sizing
-        bucket_days = self.s.horizon_days / max(1, len(self.b))
-        if ls.policy is LotSizePolicy.FIXED and ls.fixed_qty:
-            return ls.fixed_qty
-        if ls.policy is LotSizePolicy.EOQ:
-            q = self._eoq(node, st, mean_daily)
-            if q:
-                return q
-        if ls.policy is LotSizePolicy.POQ and ls.periods:
-            return mean_daily * bucket_days * ls.periods
-        return max(mean_daily * bucket_days, ls.min_qty)
-
-    def _eoq(self, node: Node, st: _NodeState, mean_daily: float) -> float | None:
-        ls = st.lp.lot_sizing
-        s_cost = ls.ordering_cost
-        opts = self.g.options.get(node) or []
-        if s_cost <= 0 and opts:
-            o = opts[0]
-            if o.kind == "buy":
-                s_cost = self.ds.purchasing_source_by_id[o.source_id].ordering_cost
-            elif o.kind == "make":
-                s_cost = costing.setup_cost(self.ds, o.source_id)
-        rate = st.lp.holding_rate if st.lp.holding_rate is not None else self.s.carrying_rate
-        return eoq(mean_daily * 365.0, s_cost, self.val.unit_value.get(node, 0.0), rate)
+    def _rate(self, node: Node, st: _NodeState) -> float:
+        """Mean daily demand: the network demand rate every module shares (:mod:`.rates`); a node that only
+        firm orders draw on falls back to its own requirements."""
+        r = self.flow.mean.get(node, 0.0)
+        return r if r > EPS else sum(x.qty for x in st.reqs) / self.s.horizon_days
 
     # ------------------------------------------------------------------ netting
     def plan_node(self, node: Node) -> None:
@@ -225,7 +209,8 @@ class _Planner:
             return
         reqs = sorted(st.reqs, key=lambda r: (r.date, r.priority, r.id))
         receipts = sorted((s for s in st.supplies if s.kind == "receipt"), key=lambda s: s.date)
-        dates = sorted({r.date for r in reqs} | {s.date for s in receipts} | {bk.start for bk in self.b})
+        dates = sorted({r.date for r in reqs} | {s.date for s in receipts} | {bk.start for bk in self.b}
+                       | {t for t, _ in st.targets if self.start <= t < self.b.end})
         req_on: dict[date, float] = defaultdict(float)
         for r in reqs:
             req_on[r.date] += r.qty
@@ -235,7 +220,7 @@ class _Planner:
         avail = 0.0 if mto else onhand
         eoq_qty = None
         if lp.lot_sizing.policy is LotSizePolicy.EOQ:
-            eoq_qty = self._eoq(node, st, sum(r.qty for r in reqs) / self.s.horizon_days)
+            eoq_qty = rates.eoq_qty(self.ds, self.g, node, self._rate(node, st), self.val.unit_value.get(node, 0.0))
             if eoq_qty is None:
                 self._exc("EOQ_FALLBACK", "info", "EOQ undefined (no ordering cost, value or demand): lot-for-lot used",
                           node=node)
@@ -243,9 +228,15 @@ class _Planner:
             avail += rec_on.get(d, 0.0) - req_on.get(d, 0.0)
             bi = self.b.index_of(d)
             ss = 0.0 if mto else (st.ss_by_bucket[bi] if 0 <= bi < len(self.b) else 0.0)
-            threshold = ss
+            threshold = max(ss, 0.0 if mto else target_at(st.targets, d))
             if lp.mrp_type is MrpType.REORDER_POINT and lp.reorder_point is not None:
-                threshold = max(ss, lp.reorder_point)
+                threshold = max(threshold, lp.reorder_point)
+            if avail >= threshold - EPS:
+                continue
+            # reschedule in (S/4 rescheduling check): a firm receipt that lands no later than a new order could
+            # is expedited to cover the shortage instead of being duplicated by a new order
+            pulled = self._reschedule_in(node, st, receipts, rec_on, d, threshold - avail)
+            avail += pulled
             if avail >= threshold - EPS:
                 continue
             shortage = threshold - avail
@@ -264,6 +255,41 @@ class _Planner:
             created = self._supply(node, st, qty, need, shortage=shortage, ceiling=ceiling)
             avail += created
         self._peg(node, st)
+
+    def _earliest_new(self, node: Node, st: _NodeState, need: date, qty: float) -> date | None:
+        """When a new order for ``need`` would be available: on time if its backward-scheduled start is not in
+        the past (nor inside the fence), else its forward-scheduled date from today (or the fence end)."""
+        opt = self._choose(node, need, qty)
+        if opt is None:
+            return None
+        fence_end = self.start + timedelta(days=st.lp.planning_time_fence_days)
+        target = max(need, fence_end) if st.lp.planning_time_fence_days > 0 else need
+        sch = schedule(self.ds, opt, qty, available=target)
+        if sch.start_date >= self.start:
+            return target
+        return schedule(self.ds, opt, qty, start=self.start).available_date
+
+    def _reschedule_in(self, node: Node, st: _NodeState, receipts: list[_Supply], rec_on: dict[date, float],
+                       d: date, short: float) -> float:
+        """Pull later firm receipts forward to ``d`` (for netting) while a new order could not arrive before them.
+        Their physical date is kept, so the projection and the pegging still show the delay."""
+        earliest = self._earliest_new(node, st, d, short)
+        if earliest is None or earliest <= d:
+            return 0.0
+        got = 0.0
+        for s in receipts:
+            if got >= short - EPS:
+                break
+            if s.date <= d or s.date > earliest:
+                continue
+            rec_on[s.date] -= s.qty
+            self._exc("RESCHEDULE_IN", "warning",
+                      f"{s.id}: arrives {s.date.isoformat()} but is needed {d.isoformat()}; expedite it by "
+                      f"{(s.date - d).days} d (a new order could not arrive before {earliest.isoformat()})",
+                      node=node, order=s.id, when=d, qty=s.qty)
+            s.date = d
+            got += s.qty
+        return got
 
     def _supply(self, node: Node, st: _NodeState, qty: float, need: date, *, shortage: float | None = None,
                 ceiling: float | None = None) -> float:
@@ -536,7 +562,9 @@ class _Planner:
             lp = st.lp
             val = self.val.unit_value.get(node, 0.0)
             rate = lp.holding_rate if lp.holding_rate is not None else s.carrying_rate
-            bks = [NodeBucket(bucket=i, safety_stock=st.ss_by_bucket[i] if st.ss_by_bucket else 0.0) for i in range(n)]
+            bks = [NodeBucket(bucket=i, safety_stock=st.ss_by_bucket[i] if st.ss_by_bucket else 0.0,
+                              target_stock=target_at(st.targets, self.b[i].end - timedelta(days=1)))
+                   for i in range(n)]
             for r in st.reqs:
                 bi = self.b.index_of(r.date)
                 if 0 <= bi < n:
@@ -573,9 +601,11 @@ class _Planner:
                 if r.kind not in ("forecast", "sales_order"):
                     continue
                 total_ind += r.qty
-                for p in self._pegs_by_req.get(r.id, []):
-                    if self._supply_date(p) <= r.date:
-                        on_time += p.qty
+                covered = sum(p.qty for p in self._pegs_by_req.get(r.id, []) if self._supply_date(p) <= r.date)
+                on_time += covered
+                bi = self.b.index_of(r.date)
+                if 0 <= bi < n and r.qty - covered > 1e-6:
+                    bks[bi].at_risk += r.qty - covered
             opts = self.g.options.get(node) or []
             out.nodes.append(NodePlan(
                 location=node[0], product=node[1], llc=self.g.llc[node], strategy=lp.strategy.value,
@@ -724,6 +754,17 @@ class _Planner:
         self.exceptions.append(PlanException(code=code, severity=severity, message=message,
                                              location=node[0] if node else None, product=node[1] if node else None,
                                              resource=resource, order_id=order, date=when, qty=qty))
+
+
+def target_at(points: list[tuple[date, float]], d: date) -> float:
+    """The S&OP stock target on ``d``: linear between the surrounding points, none outside them."""
+    if not points or d < points[0][0] or d > points[-1][0]:
+        return 0.0
+    for (d0, q0), (d1, q1) in zip(points, points[1:], strict=False):
+        if d0 <= d <= d1:
+            span = (d1 - d0).days
+            return q1 if span <= 0 else q0 + (q1 - q0) * (d - d0).days / span
+    return points[-1][1] if d == points[-1][0] else 0.0
 
 
 def run_mrp(ds: Dataset) -> PlanResult:

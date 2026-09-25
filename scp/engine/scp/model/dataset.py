@@ -18,7 +18,7 @@ from .demand import DemandEvent, ForecastOverride, ForecastSettings, NpiRule
 from .inventory import InventorySettings
 from .promise import Allocation, Confirmation, PromiseSettings
 from .schedule import Changeover, ScheduleSettings
-from .sop import SopSettings
+from .sop import SopSettings, StockTarget
 from .master import (
     Calendar, Location, LocationProduct, Product, ProductionSource, PurchasingSource, Resource,
     Settings, TransportLane,
@@ -46,6 +46,7 @@ class Dataset(Model):
     overrides: list[ForecastOverride] = Field(default_factory=list)
     inventory: InventorySettings = Field(default_factory=InventorySettings)
     sop: SopSettings = Field(default_factory=SopSettings)
+    stock_targets: list[StockTarget] = Field(default_factory=list)
     changeovers: list[Changeover] = Field(default_factory=list)
     scheduling: ScheduleSettings = Field(default_factory=ScheduleSettings)
     allocations: list[Allocation] = Field(default_factory=list)

@@ -10,6 +10,9 @@ What happened before ``as_of`` becomes the new starting position:
 * the elapsed weeks are logged as forecast-vs-actual records, and actual sales are appended to history;
 * closed orders are logged with due and delivery dates — the source of OTIF and supplier reliability.
 
+Demand dates are delivery dates at the demand location, so a sale shipped to a customer counts on the day
+it arrives there (goods issue + the lane's transit): for OTIF, for accuracy weeks and for history.
+
 Every quantity is recomputed from original quantities and the whole journal, so rolling twice to the same
 date — or re-rolling after a late posting — gives the same result.
 """
@@ -22,7 +25,9 @@ from ..model import (
     ClosedOrder, Dataset, DemandKind, LocationProduct, MovementType, SalesHistory,
 )
 from .result import OrderChange, RollReport, StockChange
-from .stock import EPS, _sum, accuracy_records, before, by_ref, counterparty, demand_keys, sale_key, stock
+from .stock import (
+    EPS, _sum, accuracy_records, arrival, before, by_ref, counterparty, demand_keys, sale_point, stock,
+)
 
 
 def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
@@ -109,8 +114,8 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
         ordered = d.ordered_qty if d.ordered_qty is not None else d.qty
         delivered = by_ref(sold, d.id, d.product)
         ks = [k for k in sold if k[0] == d.id and k[2] == d.product]
-        first = min((s_first[k] for k in ks), default=None)
-        last = max((s_last[k] for k in ks), default=None)
+        first = min((arrival(ds, k[1], d.location, d.product, s_first[k]) for k in ks), default=None)
+        last = max((arrival(ds, k[1], d.location, d.product, s_last[k]) for k in ks), default=None)
         open_q = ordered - delivered
         closed = open_q <= ordered * tol + EPS or d.id in s_final
         if closed:
@@ -144,11 +149,12 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
     keys = demand_keys(ds)
     have = {(h.location, h.product, h.date) for h in ds.history}
     new_hist: dict[tuple[str, str, date], float] = defaultdict(float)
-    for m in movs:
-        if m.type is MovementType.SALE and prev <= m.date < as_of:
-            loc, prod = sale_key(m, keys)
-            if (loc, prod, m.date) not in have:
-                new_hist[(loc, prod, m.date)] += m.qty
+    for m in ds.movements:
+        if m.type is not MovementType.SALE:
+            continue
+        (loc, prod), day = sale_point(ds, m, keys)
+        if prev <= day < as_of and (loc, prod, day) not in have:
+            new_hist[(loc, prod, day)] += m.qty
     history = list(ds.history) + [SalesHistory(location=k[0], product=k[1], date=k[2], qty=round(q, 6),
                                                price=(p.price if (p := ds.product_by_id.get(k[1])) else None))
                                   for k, q in sorted(new_hist.items())]

@@ -71,16 +71,23 @@ def supply_options(ds: Dataset, node: Node) -> list[SupplyOption]:
 
 def seed_nodes(ds: Dataset) -> list[Node]:
     """Nodes that exist regardless of sourcing: demand points, maintained location-products,
-    and nodes with scheduled receipts."""
+    and nodes with scheduled receipts. A record with a broken reference (unknown location or product)
+    seeds nothing: the readiness gate reports it once, as the broken reference, not again as a phantom
+    node with no source."""
     seen: dict[Node, None] = {}
+
+    def add(loc: str, prod: str, *, supplier_ok: bool = False) -> None:
+        t = ds.location_type(loc)
+        if t is None or prod not in ds.product_by_id or (t is LocationType.SUPPLIER and not supplier_ok):
+            return
+        seen.setdefault((loc, prod))
+
     for d in ds.demand:
-        if ds.location_type(d.location) is not LocationType.SUPPLIER:
-            seen.setdefault((d.location, d.product))
+        add(d.location, d.product)
     for lp in ds.location_products:
-        if ds.location_type(lp.location) is not LocationType.SUPPLIER:
-            seen.setdefault((lp.location, lp.product))
+        add(lp.location, lp.product)
     for r in ds.receipts:
-        seen.setdefault((r.location, r.product))
+        add(r.location, r.product, supplier_ok=True)
     return list(seen)
 
 

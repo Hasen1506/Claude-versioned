@@ -32,12 +32,12 @@ import math
 from collections import defaultdict
 from datetime import date, timedelta
 
-from ..inventory.analysis import demand_flows, node_role, policy_safety_stock
 from ..model import DemandKind, SopMode
 from ..model.dataset import Dataset
 from ..network import Node, build_graph
 from ..plan import costing
 from ..plan.leadtime import lead_time_std_days, nominal_lead_time_days, resource_calendar
+from ..plan.rates import bucket_days, horizon_flows, node_role, policy_safety_stock
 from ..time import Buckets
 from ..validate import has_errors, validate
 from .lp import INF, LinearProgram
@@ -226,7 +226,8 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
                 firm[(rv.location, rv.product)][j] -= rv.qty
 
     # ---- safety-stock targets (the node's configured policy, as MRP holds it) --------------------------
-    horizon = demand_flows(ds, g, start, start + timedelta(days=s.horizon_days))
+    horizon = horizon_flows(ds, g)
+    per_bucket = bucket_days(ds, len(Buckets(s)))
     ss_target: dict[Node, float] = {}
     gap: dict[Node, list[int]] = {}
     for n in nodes:
@@ -235,7 +236,9 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
             continue
         opts = g.options.get(n) or []
         lt = (nominal_lead_time_days(ds, opts[0]) or 0.0) if opts else 0.0
-        _, q = policy_safety_stock(ds, n, role[n], horizon.mean[n], lt, lead_time_std_days(ds, opts[0]) if opts else 0.0)
+        q = policy_safety_stock(ds, g, n, mean_daily=horizon.mean[n], lead_time=lt,
+                                lead_time_std=lead_time_std_days(ds, opts[0]) if opts else 0.0,
+                                unit_value=val.unit_value.get(n, 0.0), days_per_bucket=per_bucket).qty
         ss_target[n] = q
         if q > 0:
             uv = val.unit_value.get(n, 0.0)

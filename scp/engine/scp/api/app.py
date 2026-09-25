@@ -28,6 +28,7 @@ from ..model.common import Out
 from ..network import build_graph, location_edges, location_layers
 from ..plan import PlanResult, run_mrp
 from ..promise import PromiseResult, check_order, commit, run_bop, run_promise
+from ..scenarios import BY_ID as SCENARIOS, EngineClient, ScenarioInfo, ScenarioReport
 from ..schedule import ScheduleResult, run_schedule
 from ..sop import SopRelease, SopResult, release_sop, run_sop
 from ..validate import RULES, Issue, validate
@@ -460,6 +461,31 @@ def compare_versions(a: str, b: str) -> Comparison:
 def post_compare(req: CompareRequest) -> Comparison:
     """Compare any two datasets, e.g. the working copy against a stored version."""
     return compare(req.a, req.b, req.label_a, req.label_b)
+
+
+# --- proof: end-to-end scenarios with hand-derived answers --------------------------------------------
+def _scenario(sid: str):
+    sc = SCENARIOS.get(sid)
+    if sc is None:
+        raise HTTPException(404, f"no scenario '{sid}'")
+    return sc
+
+
+@app.get("/api/scenarios", response_model=list[ScenarioInfo])
+def list_scenarios() -> list[ScenarioInfo]:
+    return [s.info() for s in SCENARIOS.values()]
+
+
+@app.get("/api/scenarios/{sid}/dataset", response_model=Dataset)
+def scenario_dataset(sid: str) -> Dataset:
+    """The scenario's starting dataset: open it in the app to follow the workflow by hand."""
+    return _scenario(sid).dataset()
+
+
+@app.post("/api/scenarios/{sid}/run", response_model=ScenarioReport)
+def run_scenario(sid: str) -> ScenarioReport:
+    """Run every step and checkpoint against an isolated in-memory version store (never the user's)."""
+    return _scenario(sid).execute(EngineClient())
 
 
 # --- single-page app (built web client) --------------------------------------------------------

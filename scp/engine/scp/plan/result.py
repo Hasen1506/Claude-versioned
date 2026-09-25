@@ -75,9 +75,12 @@ class NodeBucket(Out):
     planned_receipts: float = 0.0
     projected_on_hand: float = 0.0   # end of bucket, physical (by available dates)
     safety_stock: float = 0.0
+    target_stock: float = 0.0        # S&OP build-ahead target on the bucket's last day (0 = none)
     below_safety: float = 0.0        # max(0, SS − projected)
     shortage: float = 0.0            # max(0, −projected)
     holding_cost: float = 0.0        # carrying cost of the projected stock over the bucket
+    at_risk: float = 0.0             # independent demand due in the bucket that its pegged supply reaches late
+                                     # (upstream delays included) or not at all: what DEMAND_AT_RISK counts
 
 
 class NodePlan(Out):

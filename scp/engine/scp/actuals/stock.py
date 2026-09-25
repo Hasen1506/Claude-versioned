@@ -1,6 +1,7 @@
 """Stock, open quantities and forecast accuracy from the goods-movement journal (pure functions)."""
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -129,6 +130,29 @@ def sale_key(m: GoodsMovement, keys: set[Node]) -> Node:
     return (m.location, m.product)
 
 
+def transit_days(ds: Dataset, origin: str, destination: str, product: str) -> int:
+    """Whole days a shipment takes on the lane that carries it (0 when origin and destination coincide)."""
+    if origin == destination:
+        return 0
+    for ln in ds.lanes:
+        if ln.origin == origin and ln.destination == destination and ln.carries(product):
+            return math.ceil(ln.planning_mode.transit_days - 1e-9)
+    return 0
+
+
+def arrival(ds: Dataset, ship_from: str, to: str, product: str, goods_issue: date) -> date:
+    """When the demand location receives a shipment: demand dates (forecast, requested and confirmed dates)
+    are delivery dates at the demand location, so a sale is measured against them on this date."""
+    return goods_issue + timedelta(days=transit_days(ds, ship_from, to, product))
+
+
+def sale_point(ds: Dataset, m: GoodsMovement, keys: set[Node]) -> tuple[Node, date]:
+    """Where and when a sale counts as demand: at the customer on the day it arrives, if demand is planned
+    there; else at the shipping location on the goods-issue date."""
+    node = sale_key(m, keys)
+    return node, arrival(ds, m.location, node[0], m.product, m.date)
+
+
 def forecast_in(ds: Dataset, start: date, end: date) -> dict[Node, float]:
     """Forecast quantity falling in [start, end), period records spread evenly over their calendar days."""
     out: dict[Node, float] = defaultdict(float)
@@ -143,7 +167,7 @@ def forecast_in(ds: Dataset, start: date, end: date) -> dict[Node, float]:
 
 
 def accuracy_records(ds: Dataset, start: date, end: date) -> list[AccuracyRecord]:
-    """One record per series and elapsed week of [start, end)."""
+    """One record per series and elapsed week of [start, end); sales count in the week they arrive."""
     keys = demand_keys(ds)
     out: list[AccuracyRecord] = []
     w = start
@@ -152,8 +176,10 @@ def accuracy_records(ds: Dataset, start: date, end: date) -> list[AccuracyRecord
         fc = forecast_in(ds, w, we)
         act: dict[Node, float] = defaultdict(float)
         for m in ds.movements:
-            if m.type is MovementType.SALE and w <= m.date < we:
-                act[sale_key(m, keys)] += m.qty
+            if m.type is MovementType.SALE:
+                node, day = sale_point(ds, m, keys)
+                if w <= day < we:
+                    act[node] += m.qty
         for n in sorted(set(fc) | set(act)):
             out.append(AccuracyRecord(location=n[0], product=n[1], start=w, end=we, forecast=round(fc.get(n, 0.0), 6),
                                       actual=round(act.get(n, 0.0), 6)))

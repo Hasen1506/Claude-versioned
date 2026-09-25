@@ -19,7 +19,7 @@ import numpy as np
 from ..model import (
     Dataset, DemandKind, DemandRecord, ForecastModelId, ForecastPeriod, NpiRule, OutlierMethod,
 )
-from ..validate import has_errors, validate
+from ..validate import blocks_demand, validate
 from . import foundation as fm
 from .competition import Outcome, compete, origins
 from .models import INTERMITTENT_ONLY, SMOOTH_ONLY, SPECS
@@ -259,7 +259,7 @@ def run_forecast(ds: Dataset) -> ForecastResult:
     provider, status = fm.get() if ForecastModelId.TIMESFM in fs.models else (None, fm.Status(
         False, False, "", "", "Not selected in forecast settings."))
     foundation_status = FoundationStatus(**status.__dict__)
-    if has_errors(issues):
+    if blocks_demand(issues):
         return ForecastResult(ok=False, period=period.value, season_length=m, periods=[p.label for p in fut],
                               issues=issues, series=[], summary=Summary(series=0), foundation=foundation_status)
 

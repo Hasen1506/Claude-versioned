@@ -51,6 +51,7 @@ class OrderPromise(Out):
     previous: list[ScheduleLine] = Field(default_factory=list)
     change: Literal["new", "kept", "gained", "lost", "changed", "unchanged"] = "new"
     at_risk: bool = False            # persisted promise no longer covered by supply
+    reason: str = ""                 # why (part of) the order could not be confirmed
     value: float = 0.0               # qty × price
 
 

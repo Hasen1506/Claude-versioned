@@ -17,7 +17,7 @@ from .promise import (
     Allocation, BopSegment, Confirmation, ConfirmationStrategy, PromiseSettings,
 )
 from .schedule import Changeover, ScheduleSettings
-from .sop import SopMode, SopSettings
+from .sop import SopMode, SopSettings, StockTarget
 from .master import (
     BomItem, Calendar, LaneMode, Location, LocationProduct, LotSizing, Operation, Product,
     ProductionSource, PurchasingSource, Resource, SafetyStockPolicy, Settings, TransportLane,
@@ -33,5 +33,5 @@ __all__ = [
     "Location", "LocationProduct", "LocationType", "LotSizePolicy", "LotSizing", "MrpType",
     "Operation", "Product", "ProductType", "ProductionSource", "PurchasingSource", "ReceiptKind",
     "Resource", "ResourceKind", "SafetyStockMethod", "SafetyStockPolicy", "SalesHistory",
-    "ScheduleSettings", "ScheduledReceipt", "Settings", "SopMode", "SopSettings", "Strategy", "TransportLane", "TransportMode", "UomConversion",
+    "ScheduleSettings", "ScheduledReceipt", "Settings", "SopMode", "SopSettings", "StockTarget", "Strategy", "TransportLane", "TransportMode", "UomConversion",
 ]

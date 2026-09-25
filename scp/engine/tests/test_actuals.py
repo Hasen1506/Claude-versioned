@@ -99,7 +99,8 @@ def test_roll_forward_derives_stock_reduces_orders_and_trims_confirmations():
     fc = sorted((x.date.isoformat(), x.qty, x.period_days) for x in new.demand if x.kind.value == "forecast")
     assert fc == [("2026-01-12", 70, 7), ("2026-01-19", 70, 7)] and rep.forecast_dropped == 70
     # sales became history at the customer, and the elapsed week was logged against the forecast
-    assert sorted((h.location, h.date.isoformat(), h.qty) for h in new.history) == [("K", "2026-01-07", 5), ("K", "2026-01-08", 25)]
+    # (dated when K receives them: goods issue + the 1-day lane)
+    assert sorted((h.location, h.date.isoformat(), h.qty) for h in new.history) == [("K", "2026-01-08", 5), ("K", "2026-01-09", 25)]
     assert [(a.start.isoformat(), a.end.isoformat(), a.forecast, a.actual) for a in new.accuracy] == [
         ("2026-01-05", "2026-01-12", 70, 30)]
     assert not [i for i in validate(new) if i.code == "STOCK_NOT_SYNCED"]
@@ -126,8 +127,9 @@ def test_completion_closes_orders_with_delivery_performance():
     po, so = c["PO-00001"], c["SO1"]
     assert (po.kind, po.counterparty, po.ordered_qty, po.delivered_qty, po.last_delivery) == (
         "purchase", "S", 100, 99, date(2026, 1, 9))
+    # delivered when K receives it: the 11 Jan goods issue arrives on the 12th, still inside the 13 Jan promise
     assert (so.kind, so.ordered_qty, so.delivered_qty, so.due_date, so.promised_date, so.last_delivery) == (
-        "sales", 40, 35, date(2026, 1, 9), date(2026, 1, 13), date(2026, 1, 11))
+        "sales", 40, 35, date(2026, 1, 9), date(2026, 1, 13), date(2026, 1, 12))
 
 
 def test_accuracy_report_over_weeks():

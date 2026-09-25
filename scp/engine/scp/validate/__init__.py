@@ -105,6 +105,17 @@ def has_errors(issues: list[Issue]) -> bool:
     return any(i.severity == "error" for i in issues)
 
 
+_DEMAND_CODES = {"DUP_ID", "DUP_LOCATION_PRODUCT", "REF_UNKNOWN", "REF_WRONG_TYPE"}
+_DEMAND_OBJECTS = {"history", "event", "npi", "override", "demand", "location", "product"}
+
+
+def blocks_demand(issues: list[Issue]) -> bool:
+    """Errors that stop demand planning: broken identities or references in its own inputs. Supply-side
+    defects (no source, BOM cycles, lanes, capacity, safety-stock parameters) block supply planning only, so a
+    demand planner can forecast while the supply network is still being set up."""
+    return any(i.severity == "error" and i.code in _DEMAND_CODES and i.object_type in _DEMAND_OBJECTS for i in issues)
+
+
 # ---------------------------------------------------------------------------------------------
 def _duplicates(ds: Dataset, c: _Collector) -> None:
     groups = {
@@ -120,7 +131,8 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
     for (loc, prod), n in Counter((lp.location, lp.product) for lp in ds.location_products).items():
         if n > 1:
             c.add("DUP_LOCATION_PRODUCT", "location_product", f"{loc}/{prod}",
-                  f"{prod} at {loc} is maintained {n} times", "Keep exactly one planning record")
+                  f"{prod} at {loc} is maintained {n} times; the first record is used",
+                  "Keep exactly one planning record")
 
 
 def _ref(ds: Dataset, c: _Collector, kind: str, value: str | None, typ: str, oid: str, field: str) -> bool:
@@ -335,8 +347,13 @@ def _lanes(ds: Dataset, c: _Collector) -> None:
         per_m3 = any(m.cost_per_m3 > 0 or m.vehicle_capacity_m3 for m in ln.modes)
         if not (per_kg or per_m3):
             continue
-        prods = ln.products or sorted({d.product for d in ds.demand if d.location == ln.destination} |
-                                      {lp.product for lp in ds.location_products if lp.location == ln.destination})
+        if ds.location_type(ln.origin) is LocationType.SUPPLIER:
+            # a supplier lane only carries what is bought from that supplier for the destination
+            prods = sorted({pu.product for pu in ds.purchasing_sources
+                            if pu.supplier == ln.origin and pu.location == ln.destination and ln.carries(pu.product)})
+        else:
+            prods = ln.products or sorted({d.product for d in ds.demand if d.location == ln.destination} |
+                                          {lp.product for lp in ds.location_products if lp.location == ln.destination})
         for pid in prods:
             p = ds.product_by_id.get(pid)
             if p is None:

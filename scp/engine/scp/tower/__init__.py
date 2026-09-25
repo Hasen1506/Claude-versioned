@@ -11,7 +11,7 @@ from ..model import Dataset
 from ..plan import PlanResult, run_mrp
 from ..promise import run_promise
 from ..validate import RULES, validate
-from ..versions.store import canonical, get_store, sha
+from ..versions.store import Store, canonical, get_store, sha
 from .kpis import Kpis
 from .result import DataQualityRow, Kpi, KpiRow, TowerResult, WorkItem
 from .worklist import Tracker, collect, get_tracker
@@ -42,8 +42,8 @@ def plan_stability(cur: PlanResult, prev: PlanResult, prev_end: dt.date, start: 
     return (m / n if n else None), n, m, rows
 
 
-def _previous_base(ds: Dataset) -> tuple[Dataset | None, str]:
-    store = get_store()
+def _previous_base(ds: Dataset, store: Store | None = None) -> tuple[Dataset | None, str]:
+    store = store or get_store()
     own = sha(canonical(ds))
     start = ds.settings.planning_start.isoformat()
     cands = [m for m in store.list() if m.kind == "base" and m.company == ds.settings.company_name
@@ -54,8 +54,9 @@ def _previous_base(ds: Dataset) -> tuple[Dataset | None, str]:
     return store.dataset(prev.id), f"{prev.id} ({prev.name}, start {prev.planning_start})"
 
 
-def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult | None = None) -> TowerResult:
-    tracker = tracker or get_tracker()
+def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult | None = None,
+              store: Store | None = None) -> TowerResult:
+    tracker = tracker or (Tracker(store) if store is not None else get_tracker())
     issues = validate(ds)
     out = TowerResult(ok=True, company=ds.settings.company_name, as_of=ds.settings.planning_start, issues=issues)
     by_code: dict[str, list[str]] = defaultdict(list)
@@ -84,7 +85,7 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
     k.adherence()
     if plan.ok:
         k.inventory(plan)
-        prev, label = _previous_base(ds)
+        prev, label = _previous_base(ds, store)
         if prev is not None:
             pplan = run_mrp(prev)
             end = prev.settings.planning_start + dt.timedelta(days=prev.settings.horizon_days)
