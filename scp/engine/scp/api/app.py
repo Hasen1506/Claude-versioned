@@ -18,6 +18,7 @@ from .. import __version__
 from ..actuals import ActualsView, FirmReport, RollReport, actuals_view, firm_orders, roll_forward
 from ..demand import ForecastResult, ReleaseResult, release, run_forecast
 from ..finance import FinanceResult, run_finance
+from ..tower import TowerResult, WorkItem, get_tracker, run_tower
 from ..demand import foundation
 from ..demand.models import SPECS
 from ..demand.result import FoundationStatus
@@ -408,6 +409,35 @@ def update_version(vid: str, ds: Dataset) -> VersionMeta:
 @app.post("/api/versions/{vid}/branch", response_model=VersionMeta)
 def branch_version(vid: str, req: BranchRequest) -> VersionMeta:
     return get_store().branch(vid, req.name, req.note)
+
+
+@app.post("/api/tower", response_model=TowerResult)
+def post_tower(ds: Dataset) -> TowerResult:
+    """KPIs, the exception worklist (recorded in the version store: first seen, owner, status) and data quality."""
+    return run_tower(ds)
+
+
+class WorkItemUpdate(Out):
+    owner: str | None = None        # "" = back to the owner rules
+    status: Literal["open", "acknowledged", "resolved"] | None = None
+    note: str | None = None
+    sla_days: dict[str, int] = {}
+
+
+class WorkItemEntry(Out):
+    at: str
+    action: str
+    detail: str
+
+
+@app.post("/api/tower/items/{iid}", response_model=WorkItem)
+def update_work_item(iid: str, body: WorkItemUpdate) -> WorkItem:
+    return get_tracker().update(iid, owner=body.owner, status=body.status, note=body.note, sla=body.sla_days)
+
+
+@app.get("/api/tower/items/{iid}/history", response_model=list[WorkItemEntry])
+def work_item_history(iid: str) -> list[WorkItemEntry]:
+    return [WorkItemEntry(at=a, action=b, detail=c) for a, b, c in get_tracker().history(iid)]
 
 
 @app.post("/api/versions/{vid}/discard", response_model=VersionMeta)

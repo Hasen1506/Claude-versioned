@@ -1,5 +1,5 @@
 import type {
-  Comparison, FinanceResult, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
+  Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   SchemaError, ValidationResult,
 } from "./types";
 
@@ -75,6 +75,11 @@ export const api = {
   compare: (a: Dataset, b: Dataset, labelA: string, labelB: string) =>
     call<Comparison>("/api/compare", { method: "POST", body: JSON.stringify({ a, b, label_a: labelA, label_b: labelB }) }),
   finance: (ds: Dataset) => post<FinanceResult>("/api/finance", ds),
+  tower: (ds: Dataset) => post<TowerResult>("/api/tower", ds),
+  /** Assign (owner "" = back to the rules), acknowledge / resolve / reopen, or annotate a worklist item. */
+  towerItem: (id: string, patch: { owner?: string; status?: "open" | "acknowledged" | "resolved"; note?: string; sla_days?: Record<string, number> }) =>
+    call<WorkItem>(`/api/tower/items/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(patch) }),
+  towerHistory: (id: string) => call<WorkItemEntry[]>(`/api/tower/items/${encodeURIComponent(id)}/history`),
   forecastModels: () => call<ForecastModels>("/api/forecast/models"),
   forecast: (ds: Dataset) => post<ForecastResult>("/api/forecast", ds),
   release: (dataset: Dataset, keys?: string[]) =>

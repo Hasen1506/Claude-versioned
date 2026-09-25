@@ -19,6 +19,7 @@ export const STAGES: Stage[] = [
   { id: "promise", n: "08", name: "Promising", sub: "ATP · CTP · BOP" },
   { id: "execution", n: "09", name: "Execution", sub: "orders & actuals" },
   { id: "finance", n: "10", name: "Finance", sub: "cost · value · NPV" },
+  { id: "tower", n: "11", name: "Control tower", sub: "KPIs & worklist" },
 ];
 
 export const stageById = Object.fromEntries(STAGES.map((s) => [s.id, s])) as Record<string, Stage>;

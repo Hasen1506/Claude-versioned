@@ -363,5 +363,7 @@ SQLite store with immutable base versions guarded by a database trigger, scenari
 audit log, a field-level dataset diff and side-by-side plan KPIs), then P9 (finance overlay: plan cost reconciled
 category by category, cost to serve along the pegging with margin by customer, region and product, inventory value
 over time, and capacity investments appraised on the S&OP plan by shadow prices confirmed with a re-solve, then NPV,
-IRR and payback). The web client adopts the legacy app's design language: Mono / Noir / Sepia themes,
+IRR and payback), then P10 (control tower: the §18.2 KPI set with definitions, sources, breakdowns and graded
+targets; an exception worklist with rule-based and manual owners, SLA and a life cycle kept in the version store and
+aged on the planning clock; master-data defects in a separate data-quality view). All ten phases are delivered. The web client adopts the legacy app's design language: Mono / Noir / Sepia themes,
 numbered stages, the planning-spine freshness strip, and provenance / reading / solver-IO boxes.

@@ -454,6 +454,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tower": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Tower
+         * @description KPIs, the exception worklist (recorded in the version store: first seen, owner, status) and data quality.
+         */
+        post: operations["post_tower_api_tower_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tower/items/{iid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Update Work Item */
+        post: operations["update_work_item_api_tower_items__iid__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tower/items/{iid}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Work Item History */
+        get: operations["work_item_history_api_tower_items__iid__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/versions/{vid}/discard": {
         parameters: {
             query?: never;
@@ -1196,6 +1250,22 @@ export interface components {
             /** Suggested */
             suggested: number;
         };
+        /** DataQualityRow */
+        DataQualityRow: {
+            /** Code */
+            code: string;
+            /** Severity */
+            severity: string;
+            /** Title */
+            title: string;
+            /** Count */
+            count: number;
+            /**
+             * Examples
+             * @default []
+             */
+            examples: string[];
+        };
         /** Dataset */
         Dataset: {
             /**
@@ -1252,6 +1322,7 @@ export interface components {
             accuracy?: components["schemas"]["AccuracyRecord"][];
             execution?: components["schemas"]["ExecutionSettings"];
             finance?: components["schemas"]["FinanceSettings"];
+            tower?: components["schemas"]["TowerSettings"];
         };
         /** DatasetDiff */
         DatasetDiff: {
@@ -2122,6 +2193,87 @@ export interface components {
              */
             more: number;
         };
+        /** Kpi */
+        Kpi: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Definition */
+            definition: string;
+            /** Source */
+            source: string;
+            /**
+             * Unit
+             * @enum {string}
+             */
+            unit: "ratio" | "days" | "money_per_unit" | "money";
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "up" | "down" | "zero" | "none";
+            /** Value */
+            value: number | null;
+            /** Target */
+            target: number | null;
+            /**
+             * Status
+             * @default none
+             * @enum {string}
+             */
+            status: "good" | "warning" | "critical" | "none";
+            /**
+             * Numerator
+             * @default 0
+             */
+            numerator: number;
+            /**
+             * Denominator
+             * @default 0
+             */
+            denominator: number;
+            /**
+             * N
+             * @default 0
+             */
+            n: number;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /**
+             * Breakdown By
+             * @default
+             */
+            breakdown_by: string;
+            /**
+             * Breakdown
+             * @default []
+             */
+            breakdown: components["schemas"]["KpiRow"][];
+        };
+        /**
+         * KpiRow
+         * @description One slice of a KPI (a customer, a supplier, a product type…).
+         */
+        KpiRow: {
+            /** Label */
+            label: string;
+            /** Value */
+            value: number | null;
+            /**
+             * Numerator
+             * @default 0
+             */
+            numerator: number;
+            /**
+             * Denominator
+             * @default 0
+             */
+            denominator: number;
+        };
         /** Kpis */
         Kpis: {
             /**
@@ -2967,6 +3119,34 @@ export interface components {
          * @enum {string}
          */
         OutlierMethod: "none" | "mad";
+        /**
+         * OwnerRule
+         * @description The first rule that matches an exception names its owner. Empty lists match anything.
+         */
+        OwnerRule: {
+            /** Owner */
+            owner: string;
+            /**
+             * Categories
+             * @description Any of coverage, capacity, inventory, orders, delivery, demand
+             */
+            categories?: string[];
+            /**
+             * Locations
+             * @description Location ids
+             */
+            locations?: string[];
+            /**
+             * Products
+             * @description Product ids
+             */
+            products?: string[];
+            /**
+             * Families
+             * @description Product families
+             */
+            families?: string[];
+        };
         /** Peg */
         Peg: {
             /**
@@ -4768,6 +4948,96 @@ export interface components {
             /** Saving Vs Current */
             saving_vs_current: number;
         };
+        /** TowerResult */
+        TowerResult: {
+            /** Ok */
+            ok: boolean;
+            /** Company */
+            company: string;
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /**
+             * Kpis
+             * @default []
+             */
+            kpis: components["schemas"]["Kpi"][];
+            /**
+             * Worklist
+             * @default []
+             */
+            worklist: components["schemas"]["WorkItem"][];
+            /**
+             * Cleared
+             * @default []
+             */
+            cleared: components["schemas"]["WorkItem"][];
+            /**
+             * Data Quality
+             * @default []
+             */
+            data_quality: components["schemas"]["DataQualityRow"][];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+            /**
+             * Issues
+             * @default []
+             */
+            issues: components["schemas"]["Issue"][];
+        };
+        /** TowerSettings */
+        TowerSettings: {
+            /**
+             * Default Owner
+             * @default Unassigned
+             */
+            default_owner: string;
+            /** Owners */
+            owners?: components["schemas"]["OwnerRule"][];
+            /**
+             * Sla Days
+             * @description Days an exception may stay open, by category, before it breaches
+             */
+            sla_days?: {
+                [key: string]: number;
+            };
+            /**
+             * Targets
+             * @description KPI targets by KPI id
+             */
+            targets?: {
+                [key: string]: number;
+            };
+            /**
+             * Kpi Window Days
+             * @description Closed orders and accuracy records counted: this many days before the planning start
+             * @default 91
+             */
+            kpi_window_days: number;
+            /**
+             * Excess Cover Days
+             * @description Stock above this many days of requirements is excess
+             * @default 90
+             */
+            excess_cover_days: number;
+            /**
+             * Slow Moving Days
+             * @description Stock with no issue or sale for this long is slow-moving
+             * @default 90
+             */
+            slow_moving_days: number;
+            /**
+             * Bias Alert
+             * @description Flag a series whose forecast bias exceeds this
+             * @default 0.2
+             */
+            bias_alert: number;
+        };
         /** TransportLane */
         TransportLane: {
             /** Id */
@@ -4882,6 +5152,110 @@ export interface components {
             size: number;
             /** Company */
             company: string;
+        };
+        /**
+         * WorkItem
+         * @description An exception on the worklist, with its lifecycle kept across runs in the version store.
+         */
+        WorkItem: {
+            /** Id */
+            id: string;
+            /** Key */
+            key: string;
+            /** Code */
+            code: string;
+            /** Category */
+            category: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "error" | "warning" | "info";
+            /** Message */
+            message: string;
+            /** Location */
+            location: string | null;
+            /** Product */
+            product: string | null;
+            /** Resource */
+            resource: string | null;
+            /** Order Id */
+            order_id: string | null;
+            /** Date */
+            date: string | null;
+            /** Qty */
+            qty: number | null;
+            /** Owner */
+            owner: string;
+            /**
+             * Owner Source
+             * @enum {string}
+             */
+            owner_source: "rule" | "default" | "manual";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "acknowledged" | "resolved" | "cleared";
+            /**
+             * First Seen
+             * Format: date
+             */
+            first_seen: string;
+            /**
+             * Last Seen
+             * Format: date
+             */
+            last_seen: string;
+            /** Resolved On */
+            resolved_on: string | null;
+            /**
+             * Age Days
+             * @default 0
+             */
+            age_days: number;
+            /** Sla Days */
+            sla_days: number | null;
+            /**
+             * Breached
+             * @default false
+             */
+            breached: boolean;
+            /**
+             * Reopened
+             * @default 0
+             */
+            reopened: number;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** WorkItemEntry */
+        WorkItemEntry: {
+            /** At */
+            at: string;
+            /** Action */
+            action: string;
+            /** Detail */
+            detail: string;
+        };
+        /** WorkItemUpdate */
+        WorkItemUpdate: {
+            /** Owner */
+            owner?: string | null;
+            /** Status */
+            status?: ("open" | "acknowledged" | "resolved") | null;
+            /** Note */
+            note?: string | null;
+            /**
+             * Sla Days
+             * @default {}
+             */
+            sla_days: {
+                [key: string]: number;
+            };
         };
     };
     responses: never;
@@ -5727,6 +6101,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VersionMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_tower_api_tower_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TowerResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_work_item_api_tower_items__iid__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                iid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkItemUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    work_item_history_api_tower_items__iid__history_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                iid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkItemEntry"][];
                 };
             };
             /** @description Validation Error */

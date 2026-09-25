@@ -389,6 +389,80 @@ def with_journal(data: dict) -> dict:
     return {**data, "movements": movs}
 
 
+def with_history(data: dict) -> dict:
+    """Eight weeks of execution before the planning start, as the roll-forward would have logged them: forecast vs
+    actual per series-week and closed sales, purchase and production orders — the control tower's KPI inputs —
+    plus the owners of each kind of exception."""
+    rng = random.Random(1811)
+    weeks = 8
+    first = START - timedelta(weeks=weeks)
+    level: dict[tuple[str, str], float] = {}
+    for x in data["demand"]:
+        if x["kind"] == "forecast" and date.fromisoformat(x["date"]) < START + timedelta(weeks=4):
+            level[(x["location"], x["product"])] = level.get((x["location"], x["product"]), 0) + x["qty"] / 4
+    acc = []
+    for (loc, prod), wk in sorted(level.items()):
+        skew = -0.12 if loc == "CUS-ECOM" else 0.04   # e-commerce keeps beating its forecast
+        for w in range(weeks):
+            f = round(wk * (1 + rng.uniform(-0.06, 0.06)))
+            a = max(0, round(f * (1 - skew + rng.gauss(0, 0.16))))
+            s = first + timedelta(weeks=w)
+            acc.append({"location": loc, "product": prod, "start": s.isoformat(),
+                        "end": (s + timedelta(days=7)).isoformat(), "forecast": f, "actual": a})
+    closed = []
+    serve = {ln["destination"]: ln["origin"] for ln in data["lanes"]}
+
+    def day_in_window() -> date:
+        return first + timedelta(days=rng.randrange(weeks * 7 - 3))
+
+    for i in range(36):
+        cus = ["CUS-WEST-TRADE", "CUS-NORTH-TRADE", "CUS-ECOM"][i % 3]
+        prod = ["MG-500", "MG-750", "KT-15"][rng.randrange(3)]
+        qty = rng.randrange(2, 25) * 50
+        due = day_in_window()
+        promised = due + timedelta(days=rng.choice([0] * 8 + [1, 3]))
+        late = rng.choice([0] * 14 + [1, 2, 4]) + (1 if cus == "CUS-ECOM" and rng.random() < 0.25 else 0)
+        last = promised + timedelta(days=late)
+        delivered = qty if rng.random() < 0.92 else round(qty * rng.uniform(0.9, 0.97))
+        split = rng.random() < 0.1
+        closed.append({"kind": "sales", "id": f"SO-87{400 + i}", "location": cus, "product": prod,
+                       "counterparty": serve.get(cus), "ordered_qty": qty, "delivered_qty": delivered,
+                       "due_date": due.isoformat(), "promised_date": promised.isoformat(),
+                       "first_delivery": (last - timedelta(days=3) if split else last).isoformat(),
+                       "last_delivery": last.isoformat(), "closed_on": last.isoformat()})
+    reliability = {"SUP-COPPER": 0.95, "SUP-STAMP": 0.9, "SUP-JARS": 0.85, "SUP-MOULD": 0.8, "SUP-SHENZHEN": 0.6,
+                   "SUP-PACK": 1.0}
+    for i, pu in enumerate(p for p in data["purchasing_sources"] for _ in range(2)):
+        qty = rng.randrange(5, 40) * 100
+        due = day_in_window()
+        ok = rng.random() < reliability.get(pu["supplier"], 0.9)
+        last = due - timedelta(days=rng.randrange(2)) if ok else due + timedelta(days=rng.randrange(2, 9))
+        closed.append({"kind": "purchase", "id": f"PO-45{100 + i}", "location": pu["location"],
+                       "product": pu["product"], "counterparty": pu["supplier"], "ordered_qty": qty,
+                       "delivered_qty": qty if ok or rng.random() < 0.5 else round(qty * 0.9),
+                       "due_date": due.isoformat(), "first_delivery": last.isoformat(),
+                       "last_delivery": last.isoformat(), "closed_on": min(last, START - timedelta(days=1)).isoformat()})
+    for i in range(14):
+        ps = data["production_sources"][i % len(data["production_sources"])]
+        qty = rng.randrange(4, 20) * 100
+        due = day_in_window()
+        last = due + timedelta(days=rng.choice([0, 0, 0, 1, -1, 2, 5, 8]))
+        last = min(last, START - timedelta(days=1))
+        closed.append({"kind": "production", "id": f"MO-100{300 + i}", "location": ps["location"],
+                       "product": ps["product"], "counterparty": ps["id"], "ordered_qty": qty, "delivered_qty": qty,
+                       "due_date": due.isoformat(), "first_delivery": last.isoformat(),
+                       "last_delivery": last.isoformat(), "closed_on": last.isoformat()})
+    closed.sort(key=lambda c: (c["closed_on"], c["id"]))
+    tower = {"default_owner": "Planning lead", "owners": [
+        {"owner": "Anita Rao (demand)", "categories": ["demand"]},
+        {"owner": "Customer service desk", "categories": ["delivery"]},
+        {"owner": "Rahul Mehta (distribution)", "locations": ["DC-BHIWANDI", "DC-DELHI", "CUS-WEST-TRADE",
+                                                            "CUS-NORTH-TRADE", "CUS-ECOM"]},
+        {"owner": "Priya Nair (plant)", "locations": ["PLT-PUNE"]},
+    ]}
+    return {**data, "accuracy": acc, "closed_orders": closed, "tower": tower}
+
+
 def single_product() -> dict:
     """One plant, one product sold at the factory gate — the smallest useful network."""
     rng = random.Random(7)
@@ -439,7 +513,7 @@ def single_product() -> dict:
 
 
 def main() -> None:
-    for name, build in (("kitchenware_network", lambda: with_journal(released(kitchenware()))),
+    for name, build in (("kitchenware_network", lambda: with_history(with_journal(released(kitchenware())))),
                         ("single_product_plant", single_product)):
         data = build()
         Dataset.model_validate(data)  # fail loudly if an example drifts from the schema

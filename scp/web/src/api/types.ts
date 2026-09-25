@@ -101,6 +101,12 @@ export type CostLine = S["CostLine"];
 export type InventoryValue = S["InventoryValue"];
 export type CapacityAppraisal = S["CapacityAppraisal"];
 
+export type TowerResult = S["TowerResult"];
+export type Kpi = S["Kpi"];
+export type WorkItem = S["WorkItem"];
+export type WorkItemEntry = S["WorkItemEntry"];
+export type DataQualityRow = S["DataQualityRow"];
+
 export type VersionMeta = S["VersionMeta"];
 export type VersionDoc = S["VersionDoc"];
 export type Comparison = S["Comparison"];

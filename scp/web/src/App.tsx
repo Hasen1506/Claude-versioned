@@ -9,6 +9,7 @@ import { COLLECTIONS, items } from "./model/collections";
 import { Demand } from "./pages/Demand";
 import { Execution } from "./pages/Execution";
 import { Finance } from "./pages/Finance";
+import { Tower } from "./pages/Tower";
 import { Versions } from "./pages/Versions";
 import { Inventory } from "./pages/Inventory";
 import { Promising } from "./pages/Promising";
@@ -54,6 +55,7 @@ export function App() {
           : page === "promise" ? <Promising route={route} />
           : page === "execution" ? <Execution route={route} />
           : page === "finance" ? <Finance route={route} />
+          : page === "tower" ? <Tower route={route} />
           : page === "versions" ? <Versions />
           : <Network route={route} />}
       </main>
@@ -168,6 +170,13 @@ function Spine({ page }: { page: string }) {
       const rev = v.serve.reduce((a, r) => a + r.revenue, 0);
       const mar = v.serve.reduce((a, r) => a + r.margin, 0);
       return `${v.reconciliation.reconciled ? "books close" : "does not reconcile"}${rev > 0 ? ` · margin ${pct(mar / rev, 0)}` : ""}`;
+    }),
+    runChip("tower", "tower", () => {
+      const v = s.runs.tower.data!;
+      const live = v.worklist.filter((w) => w.status === "open" || w.status === "acknowledged");
+      const late = live.filter((w) => w.breached).length;
+      const red = v.kpis.filter((k) => k.status === "critical").length;
+      return `${live.length} open${late ? ` · ${late} past SLA` : ""} · ${red} KPI${red === 1 ? "" : "s"} red`;
     }),
   ];
   const stale = chips.filter((c) => c.state === "stale").length;

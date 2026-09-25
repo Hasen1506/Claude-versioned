@@ -121,6 +121,21 @@ def test_finance():
     assert {a["id"] for a in r["capacity"]} == {"CAP-L1-SHIFT3", "CAP-WIND-M4"}
 
 
+def test_tower_flow():
+    d = example_dict("kitchenware_network")
+    r = client.post("/api/tower", json=d).json()
+    assert {k["id"] for k in r["kpis"]} >= {"forecast_accuracy", "otif_requested", "supplier_reliability",
+                                             "excess_obsolete", "exception_ageing", "cost_to_serve"}
+    item = r["worklist"][0]
+    u = client.post(f"/api/tower/items/{item['id']}", json={"owner": "Asha", "status": "acknowledged"}).json()
+    assert u["owner"] == "Asha" and u["owner_source"] == "manual" and u["status"] == "acknowledged"
+    again = client.post("/api/tower", json=d).json()
+    assert next(w for w in again["worklist"] if w["id"] == item["id"])["owner"] == "Asha"
+    assert [h["action"] for h in client.get(f"/api/tower/items/{item['id']}/history").json()] == ["opened", "acknowledged", "assigned"]
+    assert client.post("/api/tower/items/nope", json={"status": "resolved"}).status_code == 404
+    assert client.post(f"/api/tower/items/{item['id']}", json={"status": "cleared"}).status_code == 422
+
+
 def test_versions_flow():
     d = example_dict("single_product_plant")
     base = client.post("/api/versions", json={"dataset": d, "name": "Week 1"}).json()

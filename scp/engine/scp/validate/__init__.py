@@ -249,6 +249,11 @@ def _references(ds: Dataset, c: _Collector) -> None:
         _ref(ds, c, "location", m.counterparty, "movement", m.id, "counterparty")
     for co in ds.finance.capacity_options:
         _ref(ds, c, "resource", co.resource, "capacity_option", co.id, "resource")
+    for i, rule in enumerate(ds.tower.owners):
+        for loc in rule.locations:
+            _ref(ds, c, "location", loc, "owner_rule", f"#{i + 1} {rule.owner}", "locations")
+        for prod in rule.products:
+            _ref(ds, c, "product", prod, "owner_rule", f"#{i + 1} {rule.owner}", "products")
     for rid in ds.sop.capacity_add_hours_per_week:
         _ref(ds, c, "resource", rid, "sop", "sop", "capacity_add_hours_per_week")
 

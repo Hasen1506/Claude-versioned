@@ -442,3 +442,23 @@ table.t tr.dim td { color: var(--text-3); }
 .split-bar > span:last-child { border-radius: 0 3px 3px 0; }
 .key-sq { display: inline-block; width: 10px; height: 10px; margin-right: 7px; vertical-align: -1px; }
 tr.total td { font-weight: 800; border-top: var(--rule) solid var(--ink); }
+
+/* control tower (P10): KPI cards graded by a status rail (with an icon + label badge, never colour alone) */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-bottom: 6px; }
+.kpi-card { display: grid; gap: 6px; text-align: left; padding: 10px 12px 10px 16px; background: var(--surface); color: var(--text);
+  border: var(--rule) solid var(--ink); border-left: 6px solid var(--text-3); cursor: pointer; font: inherit; }
+.kpi-card:hover { background: var(--surface-2); }
+.kpi-card.on { box-shadow: inset 0 -3px 0 var(--hl); }
+.kpi-card.good { border-left-color: var(--good); }
+.kpi-card.warning { border-left-color: var(--warning); }
+.kpi-card.critical { border-left-color: var(--critical); }
+.kpi-card .kpi-name { font: 700 9.5px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-2); }
+.kpi-card .kpi-value { font: 700 26px/1.05 var(--display); letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
+.kpi-card .kpi-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font: 10.5px var(--mono); }
+.kpi-card .kpi-n { font: 10px var(--mono); }
+.bar-target { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); }
+.age-bar { height: 6px; background: var(--surface-3); border: 1px solid var(--border); margin-bottom: 3px; }
+.age-bar > span { display: block; height: 100%; background: var(--series-1); }
+.age-bar > span.late { background: var(--critical); }
+.neg-text { color: var(--critical-text); font-weight: 700; }
+td.nowrap, .nowrap { white-space: nowrap; }

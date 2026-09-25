@@ -347,3 +347,26 @@ test("finance: cost the plan → books close → cost to serve by region → cap
   await page.getByLabel("Discount rate").blur();
   await expect(page.locator('.spine a[href="#/finance"] .dot')).toHaveClass(/stale/);
 });
+
+test("control tower: KPIs graded → drill into OTIF → worklist → assign & acknowledge → survives refresh", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("Kaveri Kitchenware").click();
+  await expect(page.locator(".net .node")).toHaveCount(12);
+  await page.goto("/#/tower");
+  await page.getByRole("button", { name: "Refresh tower" }).click();
+  await expect(page.locator(".kpi-card")).toHaveCount(13);
+  await page.getByRole("button", { name: /^OTIF to requested date:/ }).click();
+  await expect(page.locator(".section-band h2", { hasText: "OTIF to requested date" })).toBeVisible();
+  await expect(page.locator("td", { hasText: "CUS-ECOM" }).first()).toBeVisible();
+
+  await page.getByRole("tab", { name: /Exception worklist/ }).click();
+  const owner = page.getByLabel(/^Owner of DEMAND_AT_RISK/).first();
+  await owner.fill("Asha Kulkarni");
+  await owner.press("Enter");
+  await page.getByRole("button", { name: /^Ack DEMAND_AT_RISK|^Acknowledge DEMAND_AT_RISK/ }).first().click();
+  await expect(page.locator(".tile", { hasText: "Acknowledged" }).locator(".value")).toHaveText("1");
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(page.locator(".tile", { hasText: "Acknowledged" }).locator(".value")).toHaveText("1");
+  await expect(page.locator('input[value="Asha Kulkarni"]')).toHaveCount(1);
+  await expect(page.locator('.spine a[href="#/tower"] .val')).toContainText("open");
+});

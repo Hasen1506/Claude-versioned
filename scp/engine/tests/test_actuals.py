@@ -222,10 +222,11 @@ def test_example_journal_rolls_forward_a_week():
     assert all(r.difference == 0 for r in actuals_view(ex).stock)            # opening balances = on-hand
     new, rep = roll_forward(ex, date(2026, 10, 5))
     assert rep.ok and not rep.warnings
-    closed = {c.id: c for c in new.closed_orders}
+    before = {c.id for c in ex.closed_orders}                                 # the example's eight weeks of history
+    closed = {c.id: c for c in new.closed_orders if c.id not in before}
     assert set(closed) == {"SO-88121", "MO-100455", "STO-2201"}
     assert next(x for x in new.demand if x.id == "SO-88190").qty == 500     # 700 of 1 200 delivered
-    r = accuracy_report(new.accuracy)
+    r = accuracy_report(new.accuracy[len(ex.accuracy):])
     assert r.periods == 1 and r.accuracy is not None and 0 < r.accuracy < 1
     assert run_mrp(new).ok
     again, _ = roll_forward(new, date(2026, 10, 5))

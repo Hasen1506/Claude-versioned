@@ -8514,5 +8514,1538 @@
    "qty": 140,
    "counterparty": "CUS-WEST-TRADE"
   }
- ]
+ ],
+ "accuracy": [
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 562,
+   "actual": 753
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 560,
+   "actual": 474
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 580,
+   "actual": 708
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 557,
+   "actual": 617
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 571,
+   "actual": 518
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 548,
+   "actual": 553
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 526,
+   "actual": 520
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 526,
+   "actual": 538
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 291,
+   "actual": 204
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 296,
+   "actual": 390
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 297,
+   "actual": 302
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 282,
+   "actual": 293
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 284,
+   "actual": 337
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 270,
+   "actual": 335
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 291,
+   "actual": 317
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 291,
+   "actual": 335
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 310,
+   "actual": 344
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 288,
+   "actual": 204
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 299,
+   "actual": 345
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 285,
+   "actual": 264
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 278,
+   "actual": 352
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 280,
+   "actual": 289
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 309,
+   "actual": 334
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 310,
+   "actual": 351
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 102,
+   "actual": 103
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 99,
+   "actual": 105
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 101,
+   "actual": 93
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 106,
+   "actual": 93
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 101,
+   "actual": 79
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 99,
+   "actual": 77
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 101,
+   "actual": 109
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 104,
+   "actual": 109
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 481,
+   "actual": 456
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 442,
+   "actual": 365
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 490,
+   "actual": 344
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 443,
+   "actual": 404
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 443,
+   "actual": 294
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 457,
+   "actual": 369
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 440,
+   "actual": 456
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 472,
+   "actual": 420
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 254,
+   "actual": 244
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 230,
+   "actual": 192
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 244,
+   "actual": 220
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 248,
+   "actual": 213
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 254,
+   "actual": 281
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 243,
+   "actual": 250
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 236,
+   "actual": 291
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 248,
+   "actual": 213
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 674,
+   "actual": 595
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 667,
+   "actual": 521
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 675,
+   "actual": 525
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 675,
+   "actual": 781
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 666,
+   "actual": 488
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 612,
+   "actual": 581
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 625,
+   "actual": 631
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 686,
+   "actual": 765
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 687,
+   "actual": 755
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 669,
+   "actual": 988
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 735,
+   "actual": 489
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 707,
+   "actual": 724
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 719,
+   "actual": 753
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 729,
+   "actual": 864
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 714,
+   "actual": 644
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 710,
+   "actual": 749
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 351,
+   "actual": 276
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 354,
+   "actual": 353
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 383,
+   "actual": 269
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 383,
+   "actual": 423
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 393,
+   "actual": 379
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 390,
+   "actual": 395
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 381,
+   "actual": 382
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 356,
+   "actual": 324
+  }
+ ],
+ "closed_orders": [
+  {
+   "kind": "purchase",
+   "id": "PO-45101",
+   "location": "PLT-PUNE",
+   "product": "RM-CU-WIRE",
+   "counterparty": "SUP-COPPER",
+   "ordered_qty": 3700,
+   "delivered_qty": 3700,
+   "due_date": "2026-08-05",
+   "first_delivery": "2026-08-04",
+   "last_delivery": "2026-08-04",
+   "closed_on": "2026-08-04"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87425",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 550,
+   "delivered_qty": 550,
+   "due_date": "2026-08-05",
+   "promised_date": "2026-08-05",
+   "first_delivery": "2026-08-05",
+   "last_delivery": "2026-08-05",
+   "closed_on": "2026-08-05"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87410",
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 550,
+   "delivered_qty": 550,
+   "due_date": "2026-08-07",
+   "promised_date": "2026-08-07",
+   "first_delivery": "2026-08-07",
+   "last_delivery": "2026-08-07",
+   "closed_on": "2026-08-07"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87431",
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 400,
+   "delivered_qty": 400,
+   "due_date": "2026-08-08",
+   "promised_date": "2026-08-08",
+   "first_delivery": "2026-08-08",
+   "last_delivery": "2026-08-08",
+   "closed_on": "2026-08-08"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87409",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 400,
+   "delivered_qty": 400,
+   "due_date": "2026-08-05",
+   "promised_date": "2026-08-05",
+   "first_delivery": "2026-08-09",
+   "last_delivery": "2026-08-09",
+   "closed_on": "2026-08-09"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87428",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 350,
+   "delivered_qty": 350,
+   "due_date": "2026-08-10",
+   "promised_date": "2026-08-10",
+   "first_delivery": "2026-08-10",
+   "last_delivery": "2026-08-10",
+   "closed_on": "2026-08-10"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87429",
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 350,
+   "delivered_qty": 350,
+   "due_date": "2026-08-10",
+   "promised_date": "2026-08-10",
+   "first_delivery": "2026-08-10",
+   "last_delivery": "2026-08-10",
+   "closed_on": "2026-08-10"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45107",
+   "location": "PLT-PUNE",
+   "product": "RM-BODY-MG",
+   "counterparty": "SUP-MOULD",
+   "ordered_qty": 500,
+   "delivered_qty": 500,
+   "due_date": "2026-08-11",
+   "first_delivery": "2026-08-11",
+   "last_delivery": "2026-08-11",
+   "closed_on": "2026-08-11"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87430",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 1000,
+   "delivered_qty": 1000,
+   "due_date": "2026-08-08",
+   "promised_date": "2026-08-11",
+   "first_delivery": "2026-08-08",
+   "last_delivery": "2026-08-11",
+   "closed_on": "2026-08-11"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100303",
+   "location": "PLT-PUNE",
+   "product": "MG-750",
+   "counterparty": "PV-MG-750",
+   "ordered_qty": 1600,
+   "delivered_qty": 1600,
+   "due_date": "2026-08-13",
+   "first_delivery": "2026-08-13",
+   "last_delivery": "2026-08-13",
+   "closed_on": "2026-08-13"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45113",
+   "location": "PLT-PUNE",
+   "product": "RM-SWITCH",
+   "counterparty": "SUP-SHENZHEN",
+   "ordered_qty": 2800,
+   "delivered_qty": 2800,
+   "due_date": "2026-08-14",
+   "first_delivery": "2026-08-13",
+   "last_delivery": "2026-08-13",
+   "closed_on": "2026-08-13"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100300",
+   "location": "PLT-PUNE",
+   "product": "MOT-500",
+   "counterparty": "PV-MOT-500",
+   "ordered_qty": 900,
+   "delivered_qty": 900,
+   "due_date": "2026-08-14",
+   "first_delivery": "2026-08-14",
+   "last_delivery": "2026-08-14",
+   "closed_on": "2026-08-14"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87414",
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 100,
+   "delivered_qty": 100,
+   "due_date": "2026-08-14",
+   "promised_date": "2026-08-14",
+   "first_delivery": "2026-08-14",
+   "last_delivery": "2026-08-14",
+   "closed_on": "2026-08-14"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100313",
+   "location": "PLT-PUNE",
+   "product": "MG-750",
+   "counterparty": "PV-MG-750",
+   "ordered_qty": 1300,
+   "delivered_qty": 1300,
+   "due_date": "2026-08-15",
+   "first_delivery": "2026-08-15",
+   "last_delivery": "2026-08-15",
+   "closed_on": "2026-08-15"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87419",
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 100,
+   "delivered_qty": 90,
+   "due_date": "2026-08-15",
+   "promised_date": "2026-08-15",
+   "first_delivery": "2026-08-15",
+   "last_delivery": "2026-08-15",
+   "closed_on": "2026-08-15"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45102",
+   "location": "PLT-PUNE",
+   "product": "RM-STAMP",
+   "counterparty": "SUP-STAMP",
+   "ordered_qty": 1400,
+   "delivered_qty": 1400,
+   "due_date": "2026-08-17",
+   "first_delivery": "2026-08-17",
+   "last_delivery": "2026-08-17",
+   "closed_on": "2026-08-17"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87416",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 150,
+   "delivered_qty": 150,
+   "due_date": "2026-08-17",
+   "promised_date": "2026-08-17",
+   "first_delivery": "2026-08-17",
+   "last_delivery": "2026-08-17",
+   "closed_on": "2026-08-17"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45117",
+   "location": "PLT-PUNE",
+   "product": "PK-CARTON-S",
+   "counterparty": "SUP-PACK",
+   "ordered_qty": 2900,
+   "delivered_qty": 2900,
+   "due_date": "2026-08-19",
+   "first_delivery": "2026-08-18",
+   "last_delivery": "2026-08-18",
+   "closed_on": "2026-08-18"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87404",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 900,
+   "delivered_qty": 900,
+   "due_date": "2026-08-18",
+   "promised_date": "2026-08-18",
+   "first_delivery": "2026-08-18",
+   "last_delivery": "2026-08-18",
+   "closed_on": "2026-08-18"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87406",
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 1000,
+   "delivered_qty": 1000,
+   "due_date": "2026-08-18",
+   "promised_date": "2026-08-18",
+   "first_delivery": "2026-08-18",
+   "last_delivery": "2026-08-18",
+   "closed_on": "2026-08-18"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45115",
+   "location": "PLT-PUNE",
+   "product": "PK-CARTON-L",
+   "counterparty": "SUP-PACK",
+   "ordered_qty": 500,
+   "delivered_qty": 500,
+   "due_date": "2026-08-20",
+   "first_delivery": "2026-08-20",
+   "last_delivery": "2026-08-20",
+   "closed_on": "2026-08-20"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100307",
+   "location": "PLT-PUNE",
+   "product": "MG-500",
+   "counterparty": "PV-MG-500",
+   "ordered_qty": 600,
+   "delivered_qty": 600,
+   "due_date": "2026-08-14",
+   "first_delivery": "2026-08-22",
+   "last_delivery": "2026-08-22",
+   "closed_on": "2026-08-22"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87412",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 100,
+   "delivered_qty": 100,
+   "due_date": "2026-08-22",
+   "promised_date": "2026-08-22",
+   "first_delivery": "2026-08-22",
+   "last_delivery": "2026-08-22",
+   "closed_on": "2026-08-22"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100310",
+   "location": "PLT-PUNE",
+   "product": "MOT-500",
+   "counterparty": "PV-MOT-500",
+   "ordered_qty": 1100,
+   "delivered_qty": 1100,
+   "due_date": "2026-08-15",
+   "first_delivery": "2026-08-23",
+   "last_delivery": "2026-08-23",
+   "closed_on": "2026-08-23"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100304",
+   "location": "PLT-PUNE",
+   "product": "KT-15",
+   "counterparty": "PV-KT-15",
+   "ordered_qty": 1500,
+   "delivered_qty": 1500,
+   "due_date": "2026-08-21",
+   "first_delivery": "2026-08-26",
+   "last_delivery": "2026-08-26",
+   "closed_on": "2026-08-26"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45100",
+   "location": "PLT-PUNE",
+   "product": "RM-CU-WIRE",
+   "counterparty": "SUP-COPPER",
+   "ordered_qty": 1300,
+   "delivered_qty": 1300,
+   "due_date": "2026-08-27",
+   "first_delivery": "2026-08-26",
+   "last_delivery": "2026-08-26",
+   "closed_on": "2026-08-26"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87411",
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 100,
+   "delivered_qty": 100,
+   "due_date": "2026-08-22",
+   "promised_date": "2026-08-22",
+   "first_delivery": "2026-08-23",
+   "last_delivery": "2026-08-26",
+   "closed_on": "2026-08-26"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87415",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 100,
+   "delivered_qty": 100,
+   "due_date": "2026-08-26",
+   "promised_date": "2026-08-26",
+   "first_delivery": "2026-08-26",
+   "last_delivery": "2026-08-26",
+   "closed_on": "2026-08-26"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87401",
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 200,
+   "delivered_qty": 200,
+   "due_date": "2026-08-27",
+   "promised_date": "2026-08-27",
+   "first_delivery": "2026-08-27",
+   "last_delivery": "2026-08-27",
+   "closed_on": "2026-08-27"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45103",
+   "location": "PLT-PUNE",
+   "product": "RM-STAMP",
+   "counterparty": "SUP-STAMP",
+   "ordered_qty": 1400,
+   "delivered_qty": 1400,
+   "due_date": "2026-08-28",
+   "first_delivery": "2026-08-28",
+   "last_delivery": "2026-08-28",
+   "closed_on": "2026-08-28"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100301",
+   "location": "PLT-PUNE",
+   "product": "MOT-750",
+   "counterparty": "PV-MOT-750",
+   "ordered_qty": 1700,
+   "delivered_qty": 1700,
+   "due_date": "2026-08-24",
+   "first_delivery": "2026-08-29",
+   "last_delivery": "2026-08-29",
+   "closed_on": "2026-08-29"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87417",
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 500,
+   "delivered_qty": 500,
+   "due_date": "2026-08-29",
+   "promised_date": "2026-08-29",
+   "first_delivery": "2026-08-29",
+   "last_delivery": "2026-08-29",
+   "closed_on": "2026-08-29"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87422",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 950,
+   "delivered_qty": 950,
+   "due_date": "2026-08-30",
+   "promised_date": "2026-08-30",
+   "first_delivery": "2026-08-30",
+   "last_delivery": "2026-08-30",
+   "closed_on": "2026-08-30"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100302",
+   "location": "PLT-PUNE",
+   "product": "MG-500",
+   "counterparty": "PV-MG-500",
+   "ordered_qty": 400,
+   "delivered_qty": 400,
+   "due_date": "2026-08-27",
+   "first_delivery": "2026-09-01",
+   "last_delivery": "2026-09-01",
+   "closed_on": "2026-09-01"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45106",
+   "location": "PLT-PUNE",
+   "product": "RM-BODY-MG",
+   "counterparty": "SUP-MOULD",
+   "ordered_qty": 2500,
+   "delivered_qty": 2500,
+   "due_date": "2026-09-02",
+   "first_delivery": "2026-09-01",
+   "last_delivery": "2026-09-01",
+   "closed_on": "2026-09-01"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100309",
+   "location": "PLT-PUNE",
+   "product": "KT-15",
+   "counterparty": "PV-KT-15",
+   "ordered_qty": 600,
+   "delivered_qty": 600,
+   "due_date": "2026-09-01",
+   "first_delivery": "2026-09-02",
+   "last_delivery": "2026-09-02",
+   "closed_on": "2026-09-02"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87413",
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 200,
+   "delivered_qty": 200,
+   "due_date": "2026-09-01",
+   "promised_date": "2026-09-02",
+   "first_delivery": "2026-08-30",
+   "last_delivery": "2026-09-02",
+   "closed_on": "2026-09-02"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45116",
+   "location": "PLT-PUNE",
+   "product": "PK-CARTON-S",
+   "counterparty": "SUP-PACK",
+   "ordered_qty": 3500,
+   "delivered_qty": 3500,
+   "due_date": "2026-09-03",
+   "first_delivery": "2026-09-03",
+   "last_delivery": "2026-09-03",
+   "closed_on": "2026-09-03"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100306",
+   "location": "PLT-PUNE",
+   "product": "MOT-750",
+   "counterparty": "PV-MOT-750",
+   "ordered_qty": 1800,
+   "delivered_qty": 1800,
+   "due_date": "2026-08-30",
+   "first_delivery": "2026-09-04",
+   "last_delivery": "2026-09-04",
+   "closed_on": "2026-09-04"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87402",
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 100,
+   "delivered_qty": 100,
+   "due_date": "2026-09-03",
+   "promised_date": "2026-09-03",
+   "first_delivery": "2026-09-04",
+   "last_delivery": "2026-09-04",
+   "closed_on": "2026-09-04"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87405",
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 300,
+   "delivered_qty": 300,
+   "due_date": "2026-09-03",
+   "promised_date": "2026-09-03",
+   "first_delivery": "2026-09-04",
+   "last_delivery": "2026-09-04",
+   "closed_on": "2026-09-04"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87427",
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 750,
+   "delivered_qty": 750,
+   "due_date": "2026-09-04",
+   "promised_date": "2026-09-04",
+   "first_delivery": "2026-09-04",
+   "last_delivery": "2026-09-04",
+   "closed_on": "2026-09-04"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45104",
+   "location": "PLT-PUNE",
+   "product": "RM-JARSET",
+   "counterparty": "SUP-JARS",
+   "ordered_qty": 1100,
+   "delivered_qty": 1100,
+   "due_date": "2026-09-06",
+   "first_delivery": "2026-09-05",
+   "last_delivery": "2026-09-05",
+   "closed_on": "2026-09-05"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45109",
+   "location": "PLT-PUNE",
+   "product": "RM-BODY-KT",
+   "counterparty": "SUP-MOULD",
+   "ordered_qty": 3200,
+   "delivered_qty": 3200,
+   "due_date": "2026-09-05",
+   "first_delivery": "2026-09-05",
+   "last_delivery": "2026-09-05",
+   "closed_on": "2026-09-05"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87432",
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 550,
+   "delivered_qty": 550,
+   "due_date": "2026-09-05",
+   "promised_date": "2026-09-05",
+   "first_delivery": "2026-09-05",
+   "last_delivery": "2026-09-05",
+   "closed_on": "2026-09-05"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45108",
+   "location": "PLT-PUNE",
+   "product": "RM-BODY-KT",
+   "counterparty": "SUP-MOULD",
+   "ordered_qty": 600,
+   "delivered_qty": 600,
+   "due_date": "2026-09-07",
+   "first_delivery": "2026-09-06",
+   "last_delivery": "2026-09-06",
+   "closed_on": "2026-09-06"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45112",
+   "location": "PLT-PUNE",
+   "product": "RM-SWITCH",
+   "counterparty": "SUP-SHENZHEN",
+   "ordered_qty": 2400,
+   "delivered_qty": 2160,
+   "due_date": "2026-08-30",
+   "first_delivery": "2026-09-06",
+   "last_delivery": "2026-09-06",
+   "closed_on": "2026-09-06"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87426",
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 1000,
+   "delivered_qty": 906,
+   "due_date": "2026-09-06",
+   "promised_date": "2026-09-06",
+   "first_delivery": "2026-09-06",
+   "last_delivery": "2026-09-06",
+   "closed_on": "2026-09-06"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100311",
+   "location": "PLT-PUNE",
+   "product": "MOT-750",
+   "counterparty": "PV-MOT-750",
+   "ordered_qty": 1100,
+   "delivered_qty": 1100,
+   "due_date": "2026-09-10",
+   "first_delivery": "2026-09-09",
+   "last_delivery": "2026-09-09",
+   "closed_on": "2026-09-09"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45114",
+   "location": "PLT-PUNE",
+   "product": "PK-CARTON-L",
+   "counterparty": "SUP-PACK",
+   "ordered_qty": 500,
+   "delivered_qty": 500,
+   "due_date": "2026-09-10",
+   "first_delivery": "2026-09-09",
+   "last_delivery": "2026-09-09",
+   "closed_on": "2026-09-09"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87418",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 600,
+   "delivered_qty": 562,
+   "due_date": "2026-09-09",
+   "promised_date": "2026-09-09",
+   "first_delivery": "2026-09-09",
+   "last_delivery": "2026-09-09",
+   "closed_on": "2026-09-09"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45111",
+   "location": "PLT-PUNE",
+   "product": "RM-HEATER",
+   "counterparty": "SUP-SHENZHEN",
+   "ordered_qty": 2500,
+   "delivered_qty": 2500,
+   "due_date": "2026-09-11",
+   "first_delivery": "2026-09-10",
+   "last_delivery": "2026-09-10",
+   "closed_on": "2026-09-10"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45105",
+   "location": "PLT-PUNE",
+   "product": "RM-JARSET",
+   "counterparty": "SUP-JARS",
+   "ordered_qty": 1400,
+   "delivered_qty": 1400,
+   "due_date": "2026-09-12",
+   "first_delivery": "2026-09-11",
+   "last_delivery": "2026-09-11",
+   "closed_on": "2026-09-11"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87424",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 350,
+   "delivered_qty": 350,
+   "due_date": "2026-09-11",
+   "promised_date": "2026-09-11",
+   "first_delivery": "2026-09-11",
+   "last_delivery": "2026-09-11",
+   "closed_on": "2026-09-11"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100308",
+   "location": "PLT-PUNE",
+   "product": "MG-750",
+   "counterparty": "PV-MG-750",
+   "ordered_qty": 1300,
+   "delivered_qty": 1300,
+   "due_date": "2026-09-16",
+   "first_delivery": "2026-09-16",
+   "last_delivery": "2026-09-16",
+   "closed_on": "2026-09-16"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45110",
+   "location": "PLT-PUNE",
+   "product": "RM-HEATER",
+   "counterparty": "SUP-SHENZHEN",
+   "ordered_qty": 500,
+   "delivered_qty": 500,
+   "due_date": "2026-09-17",
+   "first_delivery": "2026-09-16",
+   "last_delivery": "2026-09-16",
+   "closed_on": "2026-09-16"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87420",
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 200,
+   "delivered_qty": 200,
+   "due_date": "2026-09-18",
+   "promised_date": "2026-09-18",
+   "first_delivery": "2026-09-18",
+   "last_delivery": "2026-09-18",
+   "closed_on": "2026-09-18"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100305",
+   "location": "PLT-PUNE",
+   "product": "MOT-500",
+   "counterparty": "PV-MOT-500",
+   "ordered_qty": 800,
+   "delivered_qty": 800,
+   "due_date": "2026-09-19",
+   "first_delivery": "2026-09-19",
+   "last_delivery": "2026-09-19",
+   "closed_on": "2026-09-19"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100312",
+   "location": "PLT-PUNE",
+   "product": "MG-500",
+   "counterparty": "PV-MG-500",
+   "ordered_qty": 1100,
+   "delivered_qty": 1100,
+   "due_date": "2026-09-12",
+   "first_delivery": "2026-09-20",
+   "last_delivery": "2026-09-20",
+   "closed_on": "2026-09-20"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87433",
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 950,
+   "delivered_qty": 896,
+   "due_date": "2026-09-19",
+   "promised_date": "2026-09-20",
+   "first_delivery": "2026-09-17",
+   "last_delivery": "2026-09-20",
+   "closed_on": "2026-09-20"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87434",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 550,
+   "delivered_qty": 550,
+   "due_date": "2026-09-20",
+   "promised_date": "2026-09-20",
+   "first_delivery": "2026-09-20",
+   "last_delivery": "2026-09-20",
+   "closed_on": "2026-09-20"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87435",
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 200,
+   "delivered_qty": 200,
+   "due_date": "2026-09-20",
+   "promised_date": "2026-09-20",
+   "first_delivery": "2026-09-20",
+   "last_delivery": "2026-09-20",
+   "closed_on": "2026-09-20"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87403",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 450,
+   "delivered_qty": 450,
+   "due_date": "2026-09-22",
+   "promised_date": "2026-09-22",
+   "first_delivery": "2026-09-22",
+   "last_delivery": "2026-09-22",
+   "closed_on": "2026-09-22"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87400",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 600,
+   "delivered_qty": 600,
+   "due_date": "2026-09-24",
+   "promised_date": "2026-09-24",
+   "first_delivery": "2026-09-24",
+   "last_delivery": "2026-09-24",
+   "closed_on": "2026-09-24"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87407",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 850,
+   "delivered_qty": 850,
+   "due_date": "2026-09-24",
+   "promised_date": "2026-09-24",
+   "first_delivery": "2026-09-24",
+   "last_delivery": "2026-09-24",
+   "closed_on": "2026-09-24"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87408",
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 100,
+   "delivered_qty": 96,
+   "due_date": "2026-09-19",
+   "promised_date": "2026-09-19",
+   "first_delivery": "2026-09-24",
+   "last_delivery": "2026-09-24",
+   "closed_on": "2026-09-24"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87421",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 750,
+   "delivered_qty": 750,
+   "due_date": "2026-09-24",
+   "promised_date": "2026-09-24",
+   "first_delivery": "2026-09-24",
+   "last_delivery": "2026-09-24",
+   "closed_on": "2026-09-24"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87423",
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 350,
+   "delivered_qty": 350,
+   "due_date": "2026-09-23",
+   "promised_date": "2026-09-24",
+   "first_delivery": "2026-09-21",
+   "last_delivery": "2026-09-24",
+   "closed_on": "2026-09-24"
+  }
+ ],
+ "tower": {
+  "default_owner": "Planning lead",
+  "owners": [
+   {
+    "owner": "Anita Rao (demand)",
+    "categories": [
+     "demand"
+    ]
+   },
+   {
+    "owner": "Customer service desk",
+    "categories": [
+     "delivery"
+    ]
+   },
+   {
+    "owner": "Rahul Mehta (distribution)",
+    "locations": [
+     "DC-BHIWANDI",
+     "DC-DELHI",
+     "CUS-WEST-TRADE",
+     "CUS-NORTH-TRADE",
+     "CUS-ECOM"
+    ]
+   },
+   {
+    "owner": "Priya Nair (plant)",
+    "locations": [
+     "PLT-PUNE"
+    ]
+   }
+  ]
+ }
 }
