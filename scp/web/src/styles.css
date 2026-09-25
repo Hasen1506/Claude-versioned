@@ -400,6 +400,7 @@ td input.cell:focus { outline: 2px solid var(--accent); }
   .nav-item { white-space: nowrap; border-bottom: 0; border-right: 1px solid var(--border); padding: 7px 10px; }
   .nav-item .count { margin-left: 6px; }
   .nav-section { display: none; }
+  .sidebar > div { display: contents; }   /* a data group's items join the one scrolling row */
   .split { grid-template-columns: 1fr; }
   .split .editor { position: static; max-height: none; }
   .main .content { padding: 14px 16px 0; }

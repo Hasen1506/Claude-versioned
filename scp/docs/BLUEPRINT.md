@@ -235,6 +235,12 @@ history once execution data exists. That answers the legacy question "is yield/S
 Guide pitfall honoured: safety stock **and** safety time on the same node is flagged as double buffering by the
 readiness gate.
 
+**One number everywhere.** MRP, inventory optimisation and S&OP compute a policy's safety stock with one function
+(`plan/rates.py`) from one demand rate: forecast after consumption plus sales orders, averaged per day over the
+horizon and flowed up the network with variances added. A fill-rate policy sizes its expected shortage against the
+node's typical lot (EOQ, fixed, periodic, or a bucket of demand), the same lot MRP orders. The end-to-end scenarios
+found the screens disagreeing before this was shared ([SCENARIOS.md](SCENARIOS.md)).
+
 ---
 
 ## 6. S&OP / constrained supply LP (the IBP optimizer analogue)
@@ -259,7 +265,8 @@ A time-phased network-flow LP over the same master data:
 
 The guide §4 pitfall ("releasing unconstrained consensus into MRP ignores capacity") is solved by the release
 step: S&OP writes the constrained volumes as the demand MRP plans against, and the unconstrained forecast stays
-visible for gap analysis.
+visible for gap analysis. It also writes the plan's end-of-bucket stock as **stock targets**, which MRP nets
+against as a threshold, so a build-ahead chosen by the LP survives the hand-off instead of MRP chasing the peak.
 
 ---
 
@@ -283,6 +290,12 @@ The four legacy gates exist because the architecture let solvers disagree. The n
    stock with quantities surviving every hand-off; MTO order; ATO; multi-plant transfer; capacity-constrained
    S&OP.
 6. **UI end-to-end tests (Playwright)** on the golden path, in CI (GitHub Actions) on every push.
+7. **End-to-end scenarios** (`scp.scenarios`, [SCENARIOS.md](SCENARIOS.md)): eight fictional companies worked out by
+   hand and driven through the API as a planner would, run in-process and over HTTP, every checkpoint carrying its
+   derivation. They settled definitions two modules had disagreed on: the demand rate and safety stock above, the
+   release's stock targets, a sale dated when the customer receives it, a delivery never confirmed before the date
+   asked, and readiness blocking demand planning only for errors in demand's own inputs. The app's Proof page runs
+   them.
 
 ---
 
