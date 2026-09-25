@@ -51,6 +51,7 @@ class PlannedOrder(Out):
     convertible: bool = True      # False: ATO forecast-driven FG supply
     unit_cost: float = 0.0
     total_cost: float = 0.0
+    costs: dict[str, float] = {}  # total_cost by category (purchase, production, setup, ordering, transport, handling)
     shipments: int | None = None
     delay_days: float = 0.0       # projected lateness vs need incl. upstream delays; −1 = an input is uncovered
     projected_available_date: dt.date | None = None
@@ -76,6 +77,7 @@ class NodeBucket(Out):
     safety_stock: float = 0.0
     below_safety: float = 0.0        # max(0, SS − projected)
     shortage: float = 0.0            # max(0, −projected)
+    holding_cost: float = 0.0        # carrying cost of the projected stock over the bucket
 
 
 class NodePlan(Out):

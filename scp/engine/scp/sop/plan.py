@@ -285,7 +285,8 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
     for r in ds.resources:
         cal = resource_calendar(ds, r.id)
         f = cfg.capacity_factor
-        capacity[r.id] = [cal.workdays_between(b.start, b.end) * r.hours_per_workday * f for b in bk]
+        extra = cfg.capacity_add_hours_per_week.get(r.id, 0.0)
+        capacity[r.id] = [cal.workdays_between(b.start, b.end) * r.hours_per_workday * f + extra * b.days / 7.0 for b in bk]
         ot_limit[r.id] = [cal.workdays_between(b.start, b.end) * r.overtime_hours_per_day * r.units * f
                           if cfg.allow_overtime else 0.0 for b in bk]
         ot_cols[r.id] = []

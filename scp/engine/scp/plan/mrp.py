@@ -422,12 +422,14 @@ class _Planner:
             k.ordering_cost += pu.ordering_cost
             k.handling_cost += hand
             total = qty * price + freight + pu.ordering_cost + hand
+            order.costs = {"purchase": qty * price, "transport": freight, "ordering": pu.ordering_cost, "handling": hand}
         elif opt.kind == "make":
             conv = qty * costing.conversion_unit_cost(ds, opt.source_id)
             setup = costing.setup_cost(ds, opt.source_id)
             k.production_cost += conv
             k.setup_cost += setup
             total = conv + setup
+            order.costs = {"production": conv, "setup": setup}
         else:
             ln = ds.lane_by_id[opt.source_id]
             mode = ln.planning_mode
@@ -437,6 +439,7 @@ class _Planner:
             k.transport_cost += freight
             k.handling_cost += hand
             total = freight + hand
+            order.costs = {"transport": freight, "handling": hand}
         order.total_cost = total
         order.unit_cost = total / qty if qty > 0 else 0.0
 
@@ -558,7 +561,8 @@ class _Planner:
                 bk.shortage = max(0.0, -poh)
                 bk.below_safety = max(0.0, bk.safety_stock - max(poh, 0.0)) if bk.safety_stock > 0 else 0.0
                 if not self.is_customer(node):
-                    k.holding_cost += max(0.0, poh) * val * rate * meta.days / 365.0
+                    bk.holding_cost = max(0.0, poh) * val * rate * meta.days / 365.0
+                    k.holding_cost += bk.holding_cost
                     inv_avg_num += max(0.0, poh) * val * meta.days
             if not self.is_customer(node):
                 inv_start += onhand * val

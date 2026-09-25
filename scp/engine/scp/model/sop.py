@@ -31,3 +31,5 @@ class SopSettings(Model):
     demand_factor: float = Unit("ratio", le=10, default=1.0, description="Scenario: scale all demand (1 = as planned)")
     capacity_factor: float = Unit("ratio", le=10, default=1.0,
                                   description="Scenario: scale regular and overtime hours of every resource")
+    capacity_add_hours_per_week: dict[str, float] = Field(
+        default_factory=dict, description="Scenario: extra regular hours per week by resource id (e.g. an added shift)")

@@ -2388,6 +2388,11 @@ export interface components {
              * @default 0
              */
             shortage: number;
+            /**
+             * Holding Cost
+             * @default 0
+             */
+            holding_cost: number;
         };
         /** NodeInventory */
         NodeInventory: {
@@ -2873,6 +2878,13 @@ export interface components {
              * @default 0
              */
             total_cost: number;
+            /**
+             * Costs
+             * @default {}
+             */
+            costs: {
+                [key: string]: number;
+            };
             /** Shipments */
             shipments: number | null;
             /**
@@ -4292,6 +4304,13 @@ export interface components {
              * @default 1
              */
             capacity_factor: number;
+            /**
+             * Capacity Add Hours Per Week
+             * @description Scenario: extra regular hours per week by resource id (e.g. an added shift)
+             */
+            capacity_add_hours_per_week?: {
+                [key: string]: number;
+            };
         };
         /** StockChange */
         StockChange: {
