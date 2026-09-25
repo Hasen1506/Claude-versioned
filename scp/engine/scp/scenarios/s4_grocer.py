@@ -102,7 +102,7 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
         spike = [(h.start, h.flag) for h in s["SPIKE"].history if h.flag]
         ctx.eq("the freak order is flagged as an outlier", spike, [(d("2026-02-16"), "outlier")])
         cleaned = one(s["SPIKE"].history, start=d("2026-02-16")).cleaned
-        ctx.true("…and clipped near the local level", 100 < cleaned < 125, actual=cleaned,
+        ctx.true("…and clipped near the local level", 100 < cleaned < 125, actual=cleaned, expect="between 100 and 125",
                  why="Clipped to the rolling median (100) + 4 robust σ of the ±5 noise.")
         ctx.near("SPIKE forecast stays near 100", float(np.mean([p.statistical for p in s["SPIKE"].forecast])), 100, 3)
         rev = _revenue()
@@ -165,4 +165,5 @@ SCENARIO = Scenario(
             "consensus override", "ABC by revenue", "prorated release of partial weeks",
             "demand planning not blocked by supply gaps", "released volumes reach MRP intact"],
     stages=["readiness", "demand", "plan"],
+    found=["A warehouse without a supplier stopped the forecast, although demand planning never reads suppliers"],
     build=build, run=run)

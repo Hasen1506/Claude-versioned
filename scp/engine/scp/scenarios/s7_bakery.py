@@ -159,11 +159,12 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
         ctx.near("tardiness and late orders", (opt.kpis.tardiness_hours, opt.kpis.late_orders), (0, 0), 1e-9)
         seq = [k.split(":")[0] for k in one(opt.resources, id="OVEN").sequence]
         ctx.true("the sequence is one of the optimal ones", simulate([jobs[k] for k in seq])["objective"]
-                 <= best["objective"] + 1e-9, actual=seq)
+                 <= best["objective"] + 1e-9, actual=seq,
+                 expect="a sequence scoring the enumerated optimum")
         ctx.eq("changeovers (group changes)", opt.kpis.changeovers, 3,
                "plain→nut, nut→seeded, seeded→plain; plain→plain and nut→nut are not changeovers.")
         ctx.true("never worse than EDD", opt.kpis.objective <= opt.baseline.objective + 1e-9,
-                 actual=(opt.baseline.objective, opt.kpis.objective))
+                 actual=(opt.baseline.objective, opt.kpis.objective), expect="(EDD, improved) with improved ≤ EDD")
         ctx.eq("no violations (improved)", opt.violations, [])
         a = one(opt.ops, order="MO-A")
         ctx.eq("MO-A is set up from the plain group", a.setup_from, "plain")

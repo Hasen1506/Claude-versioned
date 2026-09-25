@@ -179,7 +179,7 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
         ctx.near("all overtime used", one(prof.resources, resource="WELD").overtime, [62, 56, 62], 1e-6,
                  "Even the less profitable MTB earns 500 − 150 per overtime hour.")
 
-    with ctx.step("Release to MRP", "sop", "POST /api/sop/release → POST /api/plan",
+    with ctx.step("Release to MRP", "sop+plan", "POST /api/sop/release → POST /api/plan",
                   "MRP plans at infinite capacity: it must be given the build-ahead, not just the demand."):
         rel_ds, rel = c.release_sop(ds)
         ctx.eq("release (records, build-ahead nodes)", (rel.records, rel.target_nodes), (6, 1))
@@ -223,4 +223,5 @@ SCENARIO = Scenario(
             "profit mode = margin per bottleneck hour", "release keeps the build-ahead in MRP",
             "capacity investment: dual estimate, re-solve, NPV, IRR, payback"],
     stages=["readiness", "sop", "plan", "finance"],
+    found=["Releasing the S&OP plan dropped its build-ahead, so MRP overloaded the peak month it was meant to protect"],
     build=build, run=run)

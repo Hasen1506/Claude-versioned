@@ -112,3 +112,8 @@ export type VersionDoc = S["VersionDoc"];
 export type Comparison = S["Comparison"];
 export type DatasetDiff = S["DatasetDiff"];
 export type PlanSummary = S["PlanSummary"];
+
+export type ScenarioInfo = S["ScenarioInfo"];
+export type ScenarioReport = S["ScenarioReport"];
+export type ScenarioStep = S["StepReport"];
+export type ScenarioCheck = S["Check"];

@@ -579,6 +579,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/scenarios": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Scenarios */
+        get: operations["list_scenarios_api_scenarios_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scenarios/{sid}/dataset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Scenario Dataset
+         * @description The scenario's starting dataset: open it in the app to follow the workflow by hand.
+         */
+        get: operations["scenario_dataset_api_scenarios__sid__dataset_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scenarios/{sid}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Scenario
+         * @description Run every step and checkpoint against an isolated in-memory version store (never the user's).
+         */
+        post: operations["run_scenario_api_scenarios__sid__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1075,6 +1132,24 @@ export interface components {
             /** Hours */
             hours: number;
         };
+        /** Check */
+        Check: {
+            /** Label */
+            label: string;
+            /** Expected */
+            expected: unknown;
+            /** Actual */
+            actual: unknown;
+            /** Tolerance */
+            tolerance: number | null;
+            /** Passed */
+            passed: boolean;
+            /**
+             * Why
+             * @default
+             */
+            why: string;
+        };
         /**
          * ClosedOrder
          * @description A completed order, logged by the roll-forward: the source of OTIF and supplier reliability.
@@ -1306,6 +1381,8 @@ export interface components {
             overrides?: components["schemas"]["ForecastOverride"][];
             inventory?: components["schemas"]["InventorySettings"];
             sop?: components["schemas"]["SopSettings"];
+            /** Stock Targets */
+            stock_targets?: components["schemas"]["StockTarget"][];
             /** Changeovers */
             changeovers?: components["schemas"]["Changeover"][];
             scheduling?: components["schemas"]["ScheduleSettings"];
@@ -2769,6 +2846,11 @@ export interface components {
              */
             safety_stock: number;
             /**
+             * Target Stock
+             * @default 0
+             */
+            target_stock: number;
+            /**
              * Below Safety
              * @default 0
              */
@@ -2783,6 +2865,11 @@ export interface components {
              * @default 0
              */
             holding_cost: number;
+            /**
+             * At Risk
+             * @default 0
+             */
+            at_risk: number;
         };
         /** NodeInventory */
         NodeInventory: {
@@ -3108,6 +3195,11 @@ export interface components {
              * @default false
              */
             at_risk: boolean;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
             /**
              * Value
              * @default 0
@@ -4057,6 +4149,45 @@ export interface components {
              */
             note: string;
         };
+        /** ScenarioInfo */
+        ScenarioInfo: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Company */
+            company: string;
+            /** Story */
+            story: string;
+            /** Proves */
+            proves: string[];
+            /** Stages */
+            stages: string[];
+            /**
+             * Found
+             * @default []
+             */
+            found: string[];
+        };
+        /** ScenarioReport */
+        ScenarioReport: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Client */
+            client: string;
+            /** Ok */
+            ok: boolean;
+            /** Passed */
+            passed: number;
+            /** Failed */
+            failed: number;
+            /** Seconds */
+            seconds: number;
+            /** Steps */
+            steps: components["schemas"]["StepReport"][];
+        };
         /** ScheduleKpis */
         ScheduleKpis: {
             /**
@@ -4704,6 +4835,11 @@ export interface components {
             constrained_qty: number;
             /** Unconstrained Qty */
             unconstrained_qty: number;
+            /**
+             * Target Nodes
+             * @default 0
+             */
+            target_nodes: number;
         };
         /** SopReleaseResponse */
         SopReleaseResponse: {
@@ -4816,6 +4952,31 @@ export interface components {
                 [key: string]: number;
             };
         };
+        /** StepReport */
+        StepReport: {
+            /** N */
+            n: number;
+            /** Title */
+            title: string;
+            /** Stage */
+            stage: string;
+            /** Call */
+            call: string;
+            /** Narrative */
+            narrative: string;
+            /**
+             * Checks
+             * @default []
+             */
+            checks: components["schemas"]["Check"][];
+            /** Error */
+            error: string | null;
+            /**
+             * Seconds
+             * @default 0
+             */
+            seconds: number;
+        };
         /** StockChange */
         StockChange: {
             /** Location */
@@ -4849,6 +5010,31 @@ export interface components {
             };
             /** Negative On */
             negative_on: string | null;
+        };
+        /**
+         * StockTarget
+         * @description A stock level MRP plans to keep at a node on a date, on top of its safety stock: the build-ahead the
+         *     constrained S&OP plan decided (written by the S&OP release). Between two targets of a node the level is
+         *     interpolated linearly by date; before the first and after the last there is none.
+         */
+        StockTarget: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Source
+             * @description What wrote it (the S&OP release writes 'sop')
+             * @default sop
+             */
+            source: string;
         };
         /**
          * Strategy
@@ -6331,6 +6517,88 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Comparison"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_scenarios_api_scenarios_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioInfo"][];
+                };
+            };
+        };
+    };
+    scenario_dataset_api_scenarios__sid__dataset_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Dataset"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_scenario_api_scenarios__sid__run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioReport"];
                 };
             };
             /** @description Validation Error */

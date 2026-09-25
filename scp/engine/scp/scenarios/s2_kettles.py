@@ -226,4 +226,6 @@ SCENARIO = Scenario(
             "capable-to-promise through production and transfer", "at-risk detection after a delay",
             "backorder processing: win, redistribute, lose", "control-tower worklist"],
     stages=["readiness", "network", "plan", "promise", "tower"],
+    found=["A Monday delivery was confirmed for the Saturday the truck arrives, before the date the customer asked for",
+           "A customer's first order could not be quoted at all, and the unconfirmed quote gave no reason"],
     build=build, run=run)

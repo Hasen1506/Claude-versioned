@@ -46,6 +46,13 @@ def test_every_checkpoint_carries_a_derivation_or_a_self_evident_label():
         assert explained >= len(r.steps) // 2, f"{sc.id}: only {explained} checkpoints explain themselves"
 
 
+def test_the_declared_stages_are_the_stages_the_steps_check():
+    """The Proof page's coverage matrix reads both: a stage a scenario claims must carry checkpoints."""
+    for sc in SCENARIOS:
+        checked = {st for s in sc.execute(EngineClient()).steps if s.checks for st in s.stage.split("+")}
+        assert checked == set(sc.stages), sc.id
+
+
 def test_scenario_api_lists_serves_and_runs_in_isolation():
     api = TestClient(app)
     listed = api.get("/api/scenarios").json()

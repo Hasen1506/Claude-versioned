@@ -183,20 +183,21 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
                "One per planted mistake: " + " ".join(ERRORS.values()))
         ctx.eq("warnings", sorted(_found(issues, "warning")), sorted(WARNINGS))
         ctx.true("every finding says what to do", all(i.hint for i in issues),
-                 actual=[i.code for i in issues if not i.hint])
+                 actual=[i.code for i in issues if not i.hint], expect="no finding without a hint")
         ctx.eq("every readiness rule fires", sorted({i.code for i in issues}), sorted(RULES),
                f"{len(RULES)} rules, one planted mistake each. SO-9's unknown product is reported once: it does not "
                "also become a phantom JAM-XL node 'without a source'.")
         dup = next(i for i in issues if i.code == "DUP_LOCATION_PRODUCT")
-        ctx.true("a duplicate says which record is used", "first record is used" in dup.message, actual=dup.message)
+        ctx.true("a duplicate says which record is used", "first record is used" in dup.message, actual=dup.message,
+                 expect="…the first record is used")
 
-    with ctx.step("What the gate blocks", "readiness", "POST /api/forecast, /api/plan",
+    with ctx.step("What the gate blocks", "demand+plan", "POST /api/forecast, /api/plan",
                   "A broken reference in demand (SO-9) blocks forecasting; any error blocks supply planning."):
         ctx.true("demand planning blocked by its own input", blocks_demand(issues))
         ctx.eq("forecast refused", c.forecast(ds).ok, False)
         ctx.eq("plan refused", c.plan(ds).ok, False)
 
-    with ctx.step("Fix the demand side first", "readiness", "POST /api/forecast",
+    with ctx.step("Fix the demand side first", "demand", "POST /api/forecast",
                   "SO-9 was for JAM. The supply-side errors remain, and forecasting may go ahead anyway."):
         ds = _edit(ds, _fix_demand)
         issues = c.validate(ds)
@@ -205,7 +206,7 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
         ctx.eq("forecast runs", c.forecast(ds).ok, True)
         ctx.eq("plan still refused", c.plan(ds).ok, False)
 
-    with ctx.step("Fix the supply side", "readiness", "POST /api/validate → POST /api/plan",
+    with ctx.step("Fix the supply side", "readiness+plan", "POST /api/validate → POST /api/plan",
                   "Drop the return lane, clear the shutdown holidays, remove the duplicate kettle and DC record, add "
                   "the USD rate, weigh the gift box and pack it at the kitchen, re-address PO-77 to the DC, give the "
                   "kitchen its own filler (retiring the co-packer's) and the fruit a demand CV."):
@@ -227,4 +228,6 @@ SCENARIO = Scenario(
     proves=["every readiness rule", "exact findings (no noise, no misses)", "every finding has a remedy",
             "demand-side vs supply-side blocking", "fix, re-validate, plan"],
     stages=["readiness", "demand", "plan"],
+    found=["A sales order for an unknown product also produced phantom NO_SOURCE and defaulted-record findings for it",
+           "The duplicate-record warning did not say which of the records the engine uses"],
     build=build, run=run)

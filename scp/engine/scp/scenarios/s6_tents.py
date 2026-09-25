@@ -95,7 +95,8 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
         firmed = sorted((f.receipt_id, f.qty, f.due_date) for f in rep.firmed)
         ctx.eq("purchase orders created", firmed, [("PO-00001", 40, d("2026-05-12")), ("PO-00002", 70, d("2026-05-19"))])
         ctx.true("customer deliveries skipped with a reason", len(rep.skipped) > 0
-                 and all("customer" in r for r in rep.skipped.values()), actual=sorted(set(rep.skipped.values())))
+                 and all("customer" in r for r in rep.skipped.values()), actual=sorted(set(rep.skipped.values())),
+                 expect="at least one, each naming the customer")
 
     with ctx.step("Post two weeks of goods movements", "execution", "POST /api/actuals",
                   "Stock is never typed: it is the sum of the journal. The view flags what does not add up yet."):
@@ -143,7 +144,8 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
     with ctx.step("Roll again: nothing changes", "execution", "POST /api/actuals/roll",
                   "Every quantity is recomputed from original quantities and the whole journal."):
         again, _ = c.roll(rolled, ROLL)
-        ctx.true("rolling the rolled plan to the same date is a no-op", _canon(again) == _canon(rolled))
+        ctx.true("rolling the rolled plan to the same date is a no-op", _canon(again) == _canon(rolled),
+                 expect="the same dataset, byte for byte")
         late = json.loads(ds.model_dump_json())
         late["movements"].append({"id": "GI-7", "date": "2026-05-13", "type": "sale", "location": "WH", "product": "TENT",
                                   "qty": 2, "counterparty": "CUST", "note": "Posted late"})
@@ -185,7 +187,8 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
         lp_diff = one(cmp.diff.collections, collection="location_products")
         ctx.eq("the comparison finds one changed record", (cmp.diff.changes, lp_diff.changed), (1, 1))
         ctx.true("safety stock costs money", cmp.plan_b.inventory_value_avg > cmp.plan_a.inventory_value_avg,
-                 actual=(round(cmp.plan_a.inventory_value_avg, 2), round(cmp.plan_b.inventory_value_avg, 2)))
+                 actual=(round(cmp.plan_a.inventory_value_avg, 2), round(cmp.plan_b.inventory_value_avg, 2)),
+                 expect="(A, B) with B > A")
         other = c.branch(base.id, "Forecast −20 %")
         ctx.eq("discarded", c.discard(other.id).status, "discarded")
         ctx.raises("a discarded scenario cannot be branched", lambda: c.branch(other.id, "x"), 409, "discarded")
@@ -209,4 +212,6 @@ SCENARIO = Scenario(
             "idempotent roll-forward", "late postings re-rolled", "immutable, hashed versions",
             "branch, edit, compare, discard, promote"],
     stages=["plan", "promise", "execution", "tower", "versions"],
+    found=["Sales counted in the week they shipped, not the week the customer received them, shifting accuracy and "
+           "OTIF by the transit time"],
     build=build, run=run)

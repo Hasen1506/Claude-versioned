@@ -224,7 +224,8 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
         fin = c.finance(ds)
         rec = fin.reconciliation
         ctx.true("books close category by category", rec is not None and rec.reconciled,
-                 actual=[(x.category, round(x.difference, 9)) for x in rec.lines] if rec else None)
+                 actual=[(x.category, round(x.difference, 9)) for x in rec.lines] if rec else None,
+                 expect="every category's difference is 0")
         ctx.near("total plan cost = MRP total", rec.total_plan if rec else None, plan.kpis.total_cost, 1e-6)
         ctx.near("opening inventory value", fin.inventory.start if fin.inventory else None,
                  300 * uv["FG-BAG"] + 200 * uv["SFG-ROAST"] + 1000 * 9.60 + 400 * 0.45, 1e-6)
@@ -257,4 +258,7 @@ SCENARIO = Scenario(
             "landed cost with FX, duty and freight", "delay propagation to demand", "cost KPIs and holding cost",
             "finance reconciliation", "firming leaves the plan unchanged"],
     stages=["readiness", "network", "plan", "finance", "execution"],
+    found=["A per-kg lane from a supplier flagged a missing weight on products that supplier never sells",
+           "The projection showed demand reached a day late as covered, while the exception list called it at risk",
+           "Firming a late order made the next run plan a second one instead of rescheduling the firm order in"],
     build=build, run=run)

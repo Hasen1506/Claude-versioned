@@ -254,4 +254,9 @@ SCENARIO = Scenario(
             "fill-rate safety stock with an EOQ lot", "the same safety stock in MRP and inventory",
             "DDMRP decoupled lead time, zones and qualified spikes from customer orders"],
     stages=["readiness", "inventory", "plan"],
+    found=["Inventory sized a fill-rate item's lot as a week of demand while MRP used the EOQ: two safety stocks for "
+           "one item",
+           "The demand rate took the larger of forecast and orders instead of forecast after consumption plus orders",
+           "A CV of exactly 0.3 computed as 0.30000000000000004 and fell into the medium DDMRP band",
+           "DDMRP qualified demand ignored the orders of the customers a buffer ships to"],
     build=build, run=run)

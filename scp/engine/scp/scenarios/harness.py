@@ -70,6 +70,7 @@ class ScenarioInfo(Out):
     story: str
     proves: list[str]
     stages: list[str]
+    found: list[str] = []      # defects this scenario exposed (each has a regression test)
 
 
 class ScenarioReport(Out):
@@ -241,7 +242,7 @@ def _plain(v: Any) -> Any:
     if isinstance(v, (list, tuple)):
         return [_plain(x) for x in v]
     if isinstance(v, dict):
-        return {str(k): _plain(x) for k, x in v.items()}
+        return {"/".join(map(str, k)) if isinstance(k, tuple) else str(k): _plain(x) for k, x in v.items()}
     if isinstance(v, Enum) and isinstance(v.value, str):   # enums
         return v.value
     return v
@@ -290,9 +291,10 @@ class Ctx:
         a, e = _plain(actual), _plain(expected)
         return self._add(Check(label=label, expected=e, actual=a, tolerance=tol, passed=_close(a, e, tol), why=why))
 
-    def true(self, label: str, cond: bool, why: str = "", actual: Any = None) -> bool:
-        return self._add(Check(label=label, expected=True, actual=_plain(actual) if actual is not None else bool(cond),
-                               passed=bool(cond), why=why))
+    def true(self, label: str, cond: bool, why: str = "", actual: Any = None, expect: str = "holds") -> bool:
+        """A condition rather than a value: ``expect`` says in words what must hold, ``actual`` is the evidence."""
+        shown = _plain(actual) if actual is not None else ("holds" if cond else "does not hold")
+        return self._add(Check(label=label, expected=expect, actual=shown, passed=bool(cond), why=why))
 
     def raises(self, label: str, call: Callable[[], Any], status: int, contains: str, why: str = "") -> bool:
         """The application must refuse ``call`` with ``status`` and a message containing ``contains``."""
@@ -318,13 +320,14 @@ class Scenario:
     build: Callable[[], dict]
     run: Callable[[Ctx, Client, Dataset], None]
     tags: list[str] = field(default_factory=list)
+    found: list[str] = field(default_factory=list)
 
     def dataset(self) -> Dataset:
         return Dataset.model_validate(self.build())
 
     def info(self) -> ScenarioInfo:
         return ScenarioInfo(id=self.id, title=self.title, company=self.company, story=self.story,
-                            proves=self.proves, stages=self.stages)
+                            proves=self.proves, stages=self.stages, found=self.found)
 
     def execute(self, client: Client | None = None) -> ScenarioReport:
         client = client or EngineClient()
