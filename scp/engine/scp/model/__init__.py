@@ -8,6 +8,7 @@ from .demand import (
     ForecastSettings, NpiRule, OutlierMethod, SelectionMetric,
 )
 from .inventory import InventorySettings
+from .sop import SopMode, SopSettings
 from .master import (
     BomItem, Calendar, LaneMode, Location, LocationProduct, LotSizing, Operation, Product,
     ProductionSource, PurchasingSource, Resource, SafetyStockPolicy, Settings, TransportLane,
@@ -22,5 +23,5 @@ __all__ = [
     "Location", "LocationProduct", "LocationType", "LotSizePolicy", "LotSizing", "MrpType",
     "Operation", "Product", "ProductType", "ProductionSource", "PurchasingSource", "ReceiptKind",
     "Resource", "ResourceKind", "SafetyStockMethod", "SafetyStockPolicy", "SalesHistory",
-    "ScheduledReceipt", "Settings", "Strategy", "TransportLane", "TransportMode", "UomConversion",
+    "ScheduledReceipt", "Settings", "SopMode", "SopSettings", "Strategy", "TransportLane", "TransportMode", "UomConversion",
 ]

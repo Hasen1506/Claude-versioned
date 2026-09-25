@@ -22,6 +22,7 @@ from ..model import Dataset, ForecastModelId
 from ..model.common import Out
 from ..network import build_graph, location_edges, location_layers
 from ..plan import PlanResult, run_mrp
+from ..sop import SopRelease, SopResult, release_sop, run_sop
 from ..validate import RULES, Issue, validate
 
 ROOT = Path(__file__).resolve().parents[3]          # scp/
@@ -221,6 +222,25 @@ def post_release(req: ReleaseRequest) -> ReleaseResponse:
 @app.post("/api/inventory", response_model=InventoryResult)
 def post_inventory(ds: Dataset) -> InventoryResult:
     return run_inventory(ds)
+
+
+@app.post("/api/sop", response_model=SopResult)
+def post_sop(ds: Dataset) -> SopResult:
+    return run_sop(ds)
+
+
+class SopReleaseResponse(Out):
+    dataset: Dataset
+    release: SopRelease
+
+
+@app.post("/api/sop/release", response_model=SopReleaseResponse)
+def post_sop_release(ds: Dataset) -> SopReleaseResponse:
+    result = run_sop(ds)
+    if not result.ok:
+        raise HTTPException(409, "the S&OP plan did not solve; fix the readiness issues first")
+    new, info = release_sop(ds, result)
+    return SopReleaseResponse(dataset=new, release=info)
 
 
 @app.post("/api/plan", response_model=PlanResult)

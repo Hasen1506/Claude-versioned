@@ -153,3 +153,38 @@ test("inventory: optimise → placement → approve recommendation → policies 
   await page.getByLabel("Show every stocking stage").uncheck();
   await expect(page.getByLabel("Position buffer at DC-DELHI MG-500")).toBeChecked();
 });
+
+test("S&OP: solve → pin → cut capacity → shadow prices → release to MRP → undo", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("Kaveri Kitchenware").click();
+  await expect(page.locator(".net .node")).toHaveCount(12);
+  await page.goto("/#/sop");
+  await page.getByRole("button", { name: "Solve" }).click();
+  await expect(page.getByText("Demand served")).toBeVisible();
+  await page.getByRole("button", { name: "Pin this plan as baseline" }).click();
+
+  // scenario: 40 % of the hours → capacity binds and gets a price
+  await page.goto("/#/sop/settings");
+  const factor = page.locator('input[id="capacity_factor"]');
+  await factor.fill("0.4");
+  await factor.press("Enter");
+  await expect(page.locator('.spine a[href="#/sop"] .dot')).toHaveClass(/stale/);
+  await page.goto("/#/sop");
+  await page.getByRole("button", { name: "Re-run" }).click();
+  await expect(page.locator('.spine a[href="#/sop"] .dot')).toHaveClass(/fresh/);
+  await expect(page.getByText(/vs .* plan pinned/).first()).toBeVisible();
+  await page.goto("/#/sop/prices");
+  await expect(page.locator("td .badge", { hasText: "resource" }).first()).toBeVisible();
+  await page.goto("/#/sop/capacity");
+  await expect(page.getByText("Value of capacity")).toBeVisible();
+
+  // release the constrained plan: forecast demand is replaced, MRP becomes stale; undo restores it
+  await page.goto("/#/sop");
+  await page.getByRole("button", { name: "Release to MRP" }).click();
+  await expect(page.getByText(/constrained demand records/)).toBeVisible();
+  await page.goto("/#/data/demand");
+  await page.getByLabel("Search").fill("SOP-");
+  await expect(page.locator("td", { hasText: /^SOP-/ }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.locator("td", { hasText: /^SOP-/ })).toHaveCount(0);
+});

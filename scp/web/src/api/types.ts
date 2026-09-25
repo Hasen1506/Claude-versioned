@@ -61,3 +61,9 @@ export type InventoryResult = S["InventoryResult"];
 export type NodeInventory = S["NodeInventory"];
 export type DdmrpRow = S["DdmrpRow"];
 export type PoolingRow = S["PoolingRow"];
+
+export type SopResult = S["SopResult"];
+export type SopReleaseResponse = S["SopReleaseResponse"];
+export type SopDemandLine = S["DemandLine"];
+export type SopResourceLine = S["ResourceLine"];
+export type SopBinding = S["Binding"];

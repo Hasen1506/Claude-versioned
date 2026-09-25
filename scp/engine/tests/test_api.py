@@ -67,3 +67,13 @@ def test_inventory():
     assert r["ok"] and r["solver"]["status"] == "optimal"
     assert r["totals"]["meio_cost"] <= r["totals"]["single_cost"]
     assert {n["decision"] for n in r["nodes"]} >= {"buffer", "pass_through", "customer"}
+
+
+def test_sop_and_release():
+    d = example_dict("kitchenware_network")
+    r = client.post("/api/sop", json=d).json()
+    assert r["ok"] and r["solver"]["status"] == "optimal" and r["kpis"]["fill_rate"] > 0.9
+    rel = client.post("/api/sop/release", json=d).json()
+    assert rel["release"]["records"] > 0
+    assert any(x.get("id", "") and x["id"].startswith("SOP-") for x in rel["dataset"]["demand"])
+    assert client.post("/api/plan", json=rel["dataset"]).json()["ok"]

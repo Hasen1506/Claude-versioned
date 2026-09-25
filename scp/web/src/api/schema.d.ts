@@ -194,6 +194,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Sop */
+        post: operations["post_sop_api_sop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sop/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Sop Release */
+        post: operations["post_sop_release_api_sop_release_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/plan": {
         parameters: {
             query?: never;
@@ -230,6 +264,35 @@ export interface components {
             actual: number;
             /** Forecast */
             forecast: number;
+        };
+        /**
+         * Binding
+         * @description A constraint that limits the plan, with the value of relaxing it by one unit.
+         */
+        Binding: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "resource" | "overtime" | "supplier" | "lane" | "storage" | "shelf_life";
+            /** Id */
+            id: string;
+            /** Bucket */
+            bucket: number;
+            /** Label */
+            label: string;
+            /** Limit */
+            limit: number;
+            /** Used */
+            used: number;
+            /** Shadow Price */
+            shadow_price: number;
+            /** Unit */
+            unit: string;
+            /** Valid Up */
+            valid_up: number | null;
+            /** Valid Down */
+            valid_down: number | null;
         };
         /** BomItem */
         BomItem: {
@@ -341,6 +404,7 @@ export interface components {
             /** Overrides */
             overrides?: components["schemas"]["ForecastOverride"][];
             inventory?: components["schemas"]["InventorySettings"];
+            sop?: components["schemas"]["SopSettings"];
         };
         /** DdmrpRow */
         DdmrpRow: {
@@ -459,6 +523,28 @@ export interface components {
          */
         DemandKind: "forecast" | "sales_order";
         /**
+         * DemandLine
+         * @description One demand point: what was asked, what the constrained plan delivers, and the gap.
+         */
+        DemandLine: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Price */
+            price: number;
+            /** Demand */
+            demand: number[];
+            /** Sales */
+            sales: number[];
+            /** Backlog */
+            backlog: number[];
+            /** Lost */
+            lost: number[];
+            /** Marginal Cost */
+            marginal_cost: number[];
+        };
+        /**
          * DemandRecord
          * @description A forecast bucket (≈ PIR) or a firm sales-order schedule line (≈ VBBE).
          */
@@ -493,6 +579,31 @@ export interface components {
              */
             period_days?: number | null;
         };
+        /** Economics */
+        Economics: {
+            /** Revenue */
+            revenue: number;
+            /** Purchase */
+            purchase: number;
+            /** Production */
+            production: number;
+            /** Transport */
+            transport: number;
+            /** Holding */
+            holding: number;
+            /** Overtime */
+            overtime: number;
+            /** Backlog Penalty */
+            backlog_penalty: number;
+            /** Lost Penalty */
+            lost_penalty: number;
+            /** Ss Penalty */
+            ss_penalty: number;
+            /** Total Cost */
+            total_cost: number;
+            /** Profit */
+            profit: number;
+        };
         /**
          * EventKind
          * @enum {string}
@@ -508,6 +619,28 @@ export interface components {
             locations: number;
             /** Products */
             products: number;
+        };
+        /** Flow */
+        Flow: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "make" | "buy" | "transfer";
+            /** Source Id */
+            source_id: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Origin */
+            origin: string | null;
+            /** Qty */
+            qty: number[];
+            /** Unit Cost */
+            unit_cost: number;
+            /** Lead Buckets */
+            lead_buckets: number;
         };
         /**
          * ForecastModelId
@@ -2096,6 +2229,31 @@ export interface components {
          * @enum {string}
          */
         ResourceKind: "machine" | "line" | "labor" | "tool";
+        /** ResourceLine */
+        ResourceLine: {
+            /** Resource */
+            resource: string;
+            /** Location */
+            location: string;
+            /** Finite */
+            finite: boolean;
+            /** Capacity */
+            capacity: number[];
+            /** Load */
+            load: number[];
+            /** Overtime */
+            overtime: number[];
+            /** Overtime Limit */
+            overtime_limit: number[];
+            /** Utilization */
+            utilization: number[];
+            /** Shadow Price */
+            shadow_price: number[];
+            /** Valid Up */
+            valid_up: (number | null)[];
+            /** Valid Down */
+            valid_down: (number | null)[];
+        };
         /** ResourcePlan */
         ResourcePlan: {
             /** Resource */
@@ -2384,6 +2542,177 @@ export interface components {
             /** Message */
             message: string;
         };
+        /** SolverStats */
+        SolverStats: {
+            /** Status */
+            status: string;
+            /** Rows */
+            rows: number;
+            /** Columns */
+            columns: number;
+            /** Iterations */
+            iterations: number;
+            /** Seconds */
+            seconds: number;
+        };
+        /** SopBucket */
+        SopBucket: {
+            /** Index */
+            index: number;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Label */
+            label: string;
+            /** Days */
+            days: number;
+        };
+        /** SopKpis */
+        SopKpis: {
+            /** Demand */
+            demand: number;
+            /** Sales */
+            sales: number;
+            /** Lost */
+            lost: number;
+            /** Backlog End */
+            backlog_end: number;
+            /** Fill Rate */
+            fill_rate: number;
+            /** On Time Rate */
+            on_time_rate: number;
+            /** Max Utilization */
+            max_utilization: number;
+        };
+        /**
+         * SopMode
+         * @enum {string}
+         */
+        SopMode: "cost" | "profit";
+        /** SopRelease */
+        SopRelease: {
+            /** Nodes */
+            nodes: number;
+            /** Records */
+            records: number;
+            /** Replaced */
+            replaced: number;
+            /** Constrained Qty */
+            constrained_qty: number;
+            /** Unconstrained Qty */
+            unconstrained_qty: number;
+        };
+        /** SopReleaseResponse */
+        SopReleaseResponse: {
+            dataset: components["schemas"]["Dataset"];
+            release: components["schemas"]["SopRelease"];
+        };
+        /** SopResult */
+        SopResult: {
+            /** Ok */
+            ok: boolean;
+            mode: components["schemas"]["SopMode"];
+            /** Currency */
+            currency: string;
+            /** Carrying Rate */
+            carrying_rate: number;
+            /**
+             * Buckets
+             * @default []
+             */
+            buckets: components["schemas"]["SopBucket"][];
+            /**
+             * Demand
+             * @default []
+             */
+            demand: components["schemas"]["DemandLine"][];
+            /**
+             * Supply
+             * @default []
+             */
+            supply: components["schemas"]["SupplyLine"][];
+            /**
+             * Flows
+             * @default []
+             */
+            flows: components["schemas"]["Flow"][];
+            /**
+             * Resources
+             * @default []
+             */
+            resources: components["schemas"]["ResourceLine"][];
+            /**
+             * Binding
+             * @default []
+             */
+            binding: components["schemas"]["Binding"][];
+            economics: components["schemas"]["Economics"] | null;
+            kpis: components["schemas"]["SopKpis"] | null;
+            solver: components["schemas"]["SolverStats"] | null;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+            /**
+             * Issues
+             * @default []
+             */
+            issues: components["schemas"]["Issue"][];
+        };
+        /** SopSettings */
+        SopSettings: {
+            /** @default cost */
+            mode: components["schemas"]["SopMode"];
+            /**
+             * @description S&OP time bucket (monthly is the S&OP norm)
+             * @default month
+             */
+            bucket: components["schemas"]["BucketSize"];
+            /**
+             * Backlog Rate Per Day
+             * @description Late-delivery penalty per unit per day, as a share of the unit's reference value (price, else cost); scaled by demand priority
+             * @default 0.005
+             */
+            backlog_rate_per_day: number;
+            /**
+             * Lost Sale Rate
+             * @description Cost mode: penalty per unit never delivered, as a multiple of the reference value
+             * @default 2
+             */
+            lost_sale_rate: number;
+            /**
+             * Ss Shortfall Rate Per Day
+             * @description Penalty per unit per day below the safety-stock target, as a share of unit value
+             * @default 0.002
+             */
+            ss_shortfall_rate_per_day: number;
+            /**
+             * Allow Overtime
+             * @description Let the plan buy overtime hours up to each resource's limit
+             * @default true
+             */
+            allow_overtime: boolean;
+            /**
+             * Demand Factor
+             * @description Scenario: scale all demand (1 = as planned)
+             * @default 1
+             */
+            demand_factor: number;
+            /**
+             * Capacity Factor
+             * @description Scenario: scale regular and overtime hours of every resource
+             * @default 1
+             */
+            capacity_factor: number;
+        };
         /**
          * Strategy
          * @description Planning strategy (S/4 guide §5.2).
@@ -2426,6 +2755,36 @@ export interface components {
              * @default 0
              */
             total_final: number;
+        };
+        /** SupplyLine */
+        SupplyLine: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "stocking" | "customer";
+            /** Make */
+            make: number[];
+            /** Buy */
+            buy: number[];
+            /** Transfer In */
+            transfer_in: number[];
+            /** Transfer Out */
+            transfer_out: number[];
+            /** Consumed */
+            consumed: number[];
+            /** Inventory */
+            inventory: number[];
+            /** Ss Target */
+            ss_target: number;
+            /** Ss Shortfall */
+            ss_shortfall: number[];
+            /** Unit Value */
+            unit_value: number;
         };
         /** Totals */
         Totals: {
@@ -2804,6 +3163,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InventoryResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_sop_api_sop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SopResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_sop_release_api_sop_release_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SopReleaseResponse"];
                 };
             };
             /** @description Validation Error */

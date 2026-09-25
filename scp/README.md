@@ -28,7 +28,7 @@ Start from an example (a fictional multi-echelon appliance maker with two years 
 one-product plant), create a blank
 network, or import a dataset JSON. The dataset is saved in your browser and can be exported at any time.
 
-## What is here (P0–P3)
+## What is here (P0–P4)
 
 | Area | Where | What it does |
 |---|---|---|
@@ -38,8 +38,9 @@ network, or import a dataset JSON. The dataset is saved in your browser and can 
 | Supply planning | `engine/scp/plan` | Network MRP/DRP: forecast consumption by strategy, PIR splitting, safety stock (fixed / coverage / α / β), lot sizing (L4L / FIXED / EOQ / POQ / MIN_MAX + MOQ / rounding / max split), quota sourcing, working-day scheduling, firming fence, BOM explosion with scrap, capacity / supplier / lane load, pegging, delay propagation, exceptions, cost KPIs. |
 | Demand planning | `engine/scp/demand` | History to periods, cleansing (event baseline, robust outliers), ABC/XYZ and demand-pattern segmentation, a 12-model competition on a rolling backtest (MASE / WAPE / bias / value added), prediction ranges, events with measured lifts, NPI like-modelling with ramp and cannibalisation, consensus overrides, and release as forecast demand. Google TimesFM is an optional candidate model ([docs/TIMESFM.md](docs/TIMESFM.md)). |
 | Inventory optimisation | `engine/scp/inventory` | Demand and its variability flowed up the network (risk pooling), the single-echelon α baseline with lead-time variance, multi-echelon placement with the Graves–Willems guaranteed-service model solved exactly as a MILP (HiGHS), DDMRP buffer zones and net-flow position, and a pooling (square-root law) analysis. Recommendations reach the plan only after the planner approves them. |
-| API | `engine/scp/api` | `examples`, `schema`, `rules`, `validate`, `network`, `forecast`, `forecast/release`, `inventory`, `plan` |
-| Web | `web/src` | The legacy app's brutalist design language (Mono / Noir / Sepia themes, numbered stages, a planning-spine freshness strip, provenance and "reading" boxes), a network map with product trace, schema-generated editors with undo/redo, readiness, the demand workspace (leaderboards, cleansing log, consensus grid, release), the inventory workspace (service-time placement chart, approve-to-apply recommendations, DDMRP zone bars, pooling), and the plan workspace (KPIs, stock/requirements, capacity, orders with a pegging tree). |
+| S&OP | `engine/scp/sop` | A time-phased network LP over the same master data (HiGHS): production, purchases, transfers, stock, late and lost demand, overtime; limits on resource hours, overtime, suppliers, lanes, storage and shelf life; cost or profit mode; shadow prices with their validity ranges; demand and capacity scenario levers; release of the constrained volumes to MRP. |
+| API | `engine/scp/api` | `examples`, `schema`, `rules`, `validate`, `network`, `forecast`, `forecast/release`, `inventory`, `sop`, `sop/release`, `plan` |
+| Web | `web/src` | The legacy app's brutalist design language (Mono / Noir / Sepia themes, numbered stages, a planning-spine freshness strip, provenance and "reading" boxes), a network map with product trace, schema-generated editors with undo/redo, readiness, the demand workspace (leaderboards, cleansing log, consensus grid, release), the inventory workspace (service-time placement chart, approve-to-apply recommendations, DDMRP zone bars, pooling), the S&OP workspace (demand vs constrained supply, capacity with the value of an hour, shadow prices, scenario pin-and-compare, release), and the plan workspace (KPIs, stock/requirements, capacity, orders with a pegging tree). |
 
 ## How correctness is checked
 
@@ -57,6 +58,9 @@ cd scp/web && npm run build && npx playwright test   # end-to-end in a real brow
   exact answers; metrics are checked by hand; champion selection and tie-breaks are tested.
 - **Multi-echelon placement:** hand-computed two-stage cases, the extreme-point property on serial lines, and
   exact agreement with brute-force enumeration on 120 random networks. DDMRP zones are checked against the formulas.
+- **S&OP LP:** capacity shadow prices equal a finite-difference re-solve (cost and profit mode); a single
+  resource in profit mode reproduces margin-per-bottleneck-hour ranking; pre-build, overtime, supplier limits,
+  shelf life and release are tested on hand-sized cases; material balance holds on the examples.
 - **Plan invariants:** material balance, pegging, requirement sizing and date order. These are checked on the
   examples and on 40 randomly generated networks.
 - **CI** runs all of it (`.github/workflows/scp.yml`).

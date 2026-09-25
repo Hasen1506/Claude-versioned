@@ -350,5 +350,6 @@ The four legacy gates exist because the architecture let solvers disagree. The n
 
 **Delivered:** P0 and P1, then P2 (demand planning, with Google TimesFM as an optional candidate model; see
 [TIMESFM.md](TIMESFM.md)), then P3 (inventory optimisation: single-echelon baseline, guaranteed-service MEIO as an
-exact MILP, DDMRP, pooling, approve-to-apply policies). The web client adopts the legacy app's design language: Mono / Noir / Sepia themes,
+exact MILP, DDMRP, pooling, approve-to-apply policies), then P4 (S&OP LP with duals and ranges on HiGHS, cost and
+profit modes, scenario levers and compare, release to MRP). The web client adopts the legacy app's design language: Mono / Noir / Sepia themes,
 numbered stages, the planning-spine freshness strip, and provenance / reading / solver-IO boxes.

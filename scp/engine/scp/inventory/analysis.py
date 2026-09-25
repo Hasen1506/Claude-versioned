@@ -40,7 +40,7 @@ SQRT7 = math.sqrt(7.0)
 
 
 @dataclass
-class _Flow:
+class Flow:
     direct: dict[Node, float] = field(default_factory=dict)      # mean daily direct demand
     mean: dict[Node, float] = field(default_factory=dict)        # mean daily total demand
     var: dict[Node, float] = field(default_factory=dict)         # variance of daily demand
@@ -67,7 +67,7 @@ def _direct(ds: Dataset, lo: date, hi: date) -> dict[Node, float]:
     return {n: max(fc.get(n, 0.0), so.get(n, 0.0)) / span for n in set(fc) | set(so)}
 
 
-def _upward(ds: Dataset, g: NetworkGraph, node: Node) -> list[tuple[Node, float]]:
+def upstream_mix(ds: Dataset, g: NetworkGraph, node: Node) -> list[tuple[Node, float]]:
     """(upstream node, units per unit of this node's demand) for the planned sourcing mix."""
     opts: list[SupplyOption] = g.options.get(node) or []
     if not opts:
@@ -86,8 +86,8 @@ def _upward(ds: Dataset, g: NetworkGraph, node: Node) -> list[tuple[Node, float]
     return out
 
 
-def _flows(ds: Dataset, g: NetworkGraph, lo: date, hi: date) -> _Flow:
-    f = _Flow(direct=_direct(ds, lo, hi))
+def demand_flows(ds: Dataset, g: NetworkGraph, lo: date, hi: date) -> Flow:
+    f = Flow(direct=_direct(ds, lo, hi))
     default_cv = ds.inventory.default_demand_cv
     inflow_mean: dict[Node, float] = defaultdict(float)
     inflow_var: dict[Node, float] = defaultdict(float)
@@ -102,13 +102,13 @@ def _flows(ds: Dataset, g: NetworkGraph, lo: date, hi: date) -> _Flow:
             var = (default_cv * mu_d * SQRT7) ** 2 + inflow_var[node]
             src = "pooled" if inflow_var[node] > 0 else ("default" if mu_d > 0 else "none")
         f.mean[node], f.var[node], f.cv_source[node] = mean, var, src
-        for up, k in _upward(ds, g, node):
+        for up, k in upstream_mix(ds, g, node):
             inflow_mean[up] += k * mean
             inflow_var[up] += (k * k) * var
     return f
 
 
-def _role(ds: Dataset, node: Node) -> str:
+def node_role(ds: Dataset, node: Node) -> str:
     if ds.location_type(node[0]) is LocationType.CUSTOMER:
         return "customer"
     lp = ds.location_product_by_key.get(node)
@@ -117,7 +117,7 @@ def _role(ds: Dataset, node: Node) -> str:
     return "stocking"
 
 
-def _current_ss(ds: Dataset, node: Node, role: str, mean: float, lt: float, lt_sd: float) -> tuple[str, float]:
+def policy_safety_stock(ds: Dataset, node: Node, role: str, mean: float, lt: float, lt_sd: float) -> tuple[str, float]:
     lp = ds.location_product_by_key.get(node)
     if lp is None or role != "stocking":
         return ("none", 0.0)
@@ -150,11 +150,11 @@ def run_inventory(ds: Dataset, *, time_limit: float = 30.0) -> InventoryResult:
     g = build_graph(ds)
     val = costing.roll_up(ds, g)
     start = s.planning_start
-    flow = _flows(ds, g, start, start + timedelta(days=s.horizon_days))
+    flow = demand_flows(ds, g, start, start + timedelta(days=s.horizon_days))
     inv = ds.inventory
 
     # ---- per-node inputs ---------------------------------------------------------------
-    role = {n: _role(ds, n) for n in g.order}
+    role = {n: node_role(ds, n) for n in g.order}
     lt: dict[Node, float] = {}
     lt_sd: dict[Node, float] = {}
     for n in g.order:
@@ -163,7 +163,7 @@ def run_inventory(ds: Dataset, *, time_limit: float = 30.0) -> InventoryResult:
         lt_sd[n] = lead_time_std_days(ds, opts[0]) if opts else 0.0
     stock_up: dict[Node, list[Node]] = {}
     for n in g.order:
-        ups = [u for u, _ in _upward(ds, g, n) if u in role and role[u] != "customer"]
+        ups = [u for u, _ in upstream_mix(ds, g, n) if u in role and role[u] != "customer"]
         stock_up[n] = list(dict.fromkeys(ups))
     feeds_customer: set[Node] = set()
     for n in g.order:
@@ -215,7 +215,7 @@ def run_inventory(ds: Dataset, *, time_limit: float = 30.0) -> InventoryResult:
         r = rate(n)
         lp = ds.location_product_by_key.get(n)
         review = lp.safety_stock.review_period_days if lp else 0.0
-        method, cur = _current_ss(ds, n, role[n], mean, lt[n], lt_sd[n])
+        method, cur = policy_safety_stock(ds, n, role[n], mean, lt[n], lt_sd[n])
         if role[n] == "stocking":
             single = max(0.0, z) * math.sqrt((lt[n] + review) * var + (mean * lt_sd[n]) ** 2)
         else:
@@ -277,10 +277,10 @@ def run_inventory(ds: Dataset, *, time_limit: float = 30.0) -> InventoryResult:
 
 
 def _ddmrp(ds: Dataset, g: NetworkGraph, role: dict[Node, str], stock_up: dict[Node, list[Node]],
-           lt: dict[Node, float], horizon: _Flow, unit_value: dict[Node, float]) -> list[DdmrpRow]:
+           lt: dict[Node, float], horizon: Flow, unit_value: dict[Node, float]) -> list[DdmrpRow]:
     inv = ds.inventory
     start = ds.settings.planning_start
-    adu_flow = _flows(ds, g, start, start + timedelta(days=inv.adu_window_days))
+    adu_flow = demand_flows(ds, g, start, start + timedelta(days=inv.adu_window_days))
     positioned = {n for n in g.order if (lp := ds.location_product_by_key.get(n)) and lp.ddmrp_buffer}
     dlt: dict[Node, float] = {}
     for n in reversed(g.order):

@@ -1,5 +1,5 @@
 import type {
-  Dataset, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
+  Dataset, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   SchemaError, ValidationResult,
 } from "./types";
 
@@ -41,6 +41,8 @@ export const api = {
   validate: (ds: Dataset) => post<ValidationResult>("/api/validate", ds),
   network: (ds: Dataset) => post<NetworkView>("/api/network", ds),
   plan: (ds: Dataset) => post<PlanResult>("/api/plan", ds),
+  sop: (ds: Dataset) => post<SopResult>("/api/sop", ds),
+  sopRelease: (ds: Dataset) => post<SopReleaseResponse>("/api/sop/release", ds),
   inventory: (ds: Dataset) => post<InventoryResult>("/api/inventory", ds),
   forecastModels: () => call<ForecastModels>("/api/forecast/models"),
   forecast: (ds: Dataset) => post<ForecastResult>("/api/forecast", ds),

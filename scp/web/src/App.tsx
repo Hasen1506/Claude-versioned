@@ -8,6 +8,7 @@ import { STAGES, stageById } from "./lib/stages";
 import { COLLECTIONS, items } from "./model/collections";
 import { Demand } from "./pages/Demand";
 import { Inventory } from "./pages/Inventory";
+import { Sop } from "./pages/Sop";
 import { DATA_GROUPS, MasterData } from "./pages/MasterData";
 import { Network } from "./pages/Network";
 import { Plan } from "./pages/Plan";
@@ -42,6 +43,7 @@ export function App() {
           : page === "readiness" ? <Readiness />
           : page === "demand" ? <Demand route={route} />
           : page === "inventory" ? <Inventory route={route} />
+          : page === "sop" ? <Sop route={route} />
           : page === "plan" ? <Plan route={route} />
           : <Network route={route} />}
       </main>
@@ -123,6 +125,10 @@ function Spine({ page }: { page: string }) {
     runChip("inventory", "inventory", () => {
       const v = s.runs.inventory.data!;
       return v.ok && v.totals ? `${v.totals.buffers_placed}/${v.totals.stocking_nodes} buffered · −${pct(v.totals.single_cost ? v.totals.saving_vs_single / v.totals.single_cost : 0, 0)}` : "not optimised";
+    }),
+    runChip("sop", "sop", () => {
+      const v = s.runs.sop.data!;
+      return v.ok && v.kpis ? `fill ${pct(v.kpis.fill_rate, 1)} · ${v.binding.length} binding` : "not solved";
     }),
     runChip("plan", "plan", () => {
       const p = s.runs.plan.data!;
