@@ -26,8 +26,18 @@ export interface Run<T> {
   at: string | null;         // wall-clock time of the last successful run
 }
 
+/** The stored version the working copy was opened from or last saved to (P8). */
+export interface WorkingVersion {
+  id: string;
+  name: string;
+  kind: string;          // base | scenario
+  status: string;
+  savedRevision: number; // working-copy revision that equals the stored content
+}
+
 export interface State {
   dataset: Dataset | null;
+  version: WorkingVersion | null;
   revision: number;
   validation: ValidationResult | null;
   schemaErrors: SchemaError[];
@@ -50,13 +60,14 @@ const RUNNERS: { [K in RunKey]: (ds: Dataset) => Promise<RunResults[K]> } = {
 };
 
 const STORAGE_KEY = "scp.dataset.v1";
+const VERSION_KEY = "scp.version.v1";
 const HISTORY = 100;
 
 const emptyRun = <T>(): Run<T> => ({ data: null, revision: null, running: false, error: null, at: null });
 const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), inventory: emptyRun(), sop: emptyRun(), plan: emptyRun(), schedule: emptyRun(), promise: emptyRun(), actuals: emptyRun() });
 
 let state: State = {
-  dataset: null, revision: 0, validation: null, schemaErrors: [], network: null, runs: emptyRuns(),
+  dataset: null, version: null, revision: 0, validation: null, schemaErrors: [], network: null, runs: emptyRuns(),
   checking: false, engineError: null, canUndo: false, canRedo: false,
 };
 const listeners = new Set<() => void>();
@@ -79,6 +90,15 @@ function persist(ds: Dataset | null) {
     else localStorage.removeItem(STORAGE_KEY);
   } catch {
     /* storage unavailable (private mode, quota) — the app still works in memory */
+  }
+}
+
+function persistVersion(v: WorkingVersion | null, modified: boolean) {
+  try {
+    if (v) localStorage.setItem(VERSION_KEY, JSON.stringify({ ...v, modified }));
+    else localStorage.removeItem(VERSION_KEY);
+  } catch {
+    /* ignore */
   }
 }
 
@@ -108,6 +128,7 @@ function commit(next: Dataset) {
   if (past.length > HISTORY) past.shift();
   future.length = 0;
   persist(next);
+  if (state.version) persistVersion(state.version, true);
   set({ dataset: next, revision: state.revision + 1 });
   scheduleCheck();
 }
@@ -119,20 +140,32 @@ export const store = {
     return () => listeners.delete(l);
   },
 
-  /** Replace the whole dataset (load example, import file). Clears history and every result. */
-  load(ds: Dataset) {
+  /** Replace the whole dataset (load example, import file, open a version). Clears history and every
+   *  result; `version` names the stored version it came from (none for an example or a file). */
+  load(ds: Dataset, version: Omit<WorkingVersion, "savedRevision"> | null = null) {
     past.length = 0;
     future.length = 0;
     persist(ds);
-    set({ dataset: ds, revision: state.revision + 1, runs: emptyRuns(), validation: null, network: null });
+    const rev = state.revision + 1;
+    const v = version ? { ...version, savedRevision: rev } : null;
+    persistVersion(v, false);
+    set({ dataset: ds, version: v, revision: rev, runs: emptyRuns(), validation: null, network: null });
     scheduleCheck();
+  },
+
+  /** The working copy was just saved as (or to) this version. */
+  saved(version: Omit<WorkingVersion, "savedRevision">) {
+    const v = { ...version, savedRevision: state.revision };
+    persistVersion(v, false);
+    set({ version: v });
   },
 
   clear() {
     past.length = 0;
     future.length = 0;
     persist(null);
-    set({ dataset: null, revision: state.revision + 1, runs: emptyRuns(), validation: null, network: null,
+    persistVersion(null, false);
+    set({ dataset: null, version: null, revision: state.revision + 1, runs: emptyRuns(), validation: null, network: null,
       schemaErrors: [] });
   },
 
@@ -196,7 +229,12 @@ export const store = {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const ds = JSON.parse(raw) as Dataset;
-        set({ dataset: ds, revision: state.revision + 1 });
+        const rev = state.revision + 1;
+        const vr = localStorage.getItem(VERSION_KEY);
+        const v = vr ? (JSON.parse(vr) as WorkingVersion & { modified?: boolean }) : null;
+        // a reload keeps the link to the stored version; "modified" survives as a revision mismatch
+        const version = v ? { id: v.id, name: v.name, kind: v.kind, status: v.status, savedRevision: v.modified ? -1 : rev } : null;
+        set({ dataset: ds, version, revision: rev });
         scheduleCheck();
       }
     } catch {
@@ -214,3 +252,6 @@ export const isStale = (s: State, key: RunKey) => s.runs[key].data !== null && s
 
 /** Stable empty values for selectors: a fresh `[]` per call would re-render forever. */
 export const NO_ISSUES: NonNullable<State["validation"]>["issues"] = [];
+
+/** The working copy differs from the stored version it came from. */
+export const isModified = (s: State) => s.version !== null && s.version.savedRevision !== s.revision;

@@ -289,3 +289,40 @@ test("execution: journal → stock in sync → ship → roll forward → accurac
   await expect(page.getByText(/planned orders firmed/)).toBeVisible();
   await expect(page.locator("td", { hasText: /^PRD-\d{5}$/ }).first()).toBeVisible();
 });
+
+test("versions: save base → edit → save as scenario → compare → promote; the base is unchanged", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("Kaveri Kitchenware").click();
+  await expect(page.locator(".net .node")).toHaveCount(12);
+  await page.goto("/#/versions");
+  await page.getByLabel("Version name").fill("October cycle");
+  await page.getByRole("button", { name: "Save as base version" }).click();
+  await expect(page.locator(".version-chip")).toContainText("base · October cycle");
+  const baseSha = await page.locator("tr", { hasText: "October cycle" }).locator("td[title]").getAttribute("title");
+
+  // edit the working copy: modified; a base cannot be overwritten, so save as a scenario of it
+  await page.goto("/#/data/location_products/PLT-PUNE%7CRM-HEATER");
+  await page.locator('input[id="on_hand"]').fill("20000");
+  await page.locator('input[id="on_hand"]').press("Enter");
+  await expect(page.locator(".version-chip")).toContainText("modified");
+  await page.goto("/#/versions");
+  await expect(page.getByRole("button", { name: /^Save to V/ })).toHaveCount(0);
+  await page.getByLabel("Version name").fill("More heaters");
+  await page.getByRole("button", { name: /Save as new scenario of V\d+/ }).click();
+  await expect(page.locator(".version-chip")).toContainText("scenario · More heaters");
+  await expect(page.locator(".version-chip")).not.toContainText("modified");
+
+  // compare base (A) with the scenario (B)
+  await page.getByRole("button", { name: "Compare V0001 as A" }).click();
+  await page.getByRole("button", { name: "Compare V0002 as B" }).click();
+  await page.getByRole("button", { name: "Compare", exact: true }).click();
+  await expect(page.getByText("Plan side by side (MRP)")).toBeVisible();
+  await page.locator("tr.clickable", { hasText: "location products" }).click();
+  await expect(page.getByText("on_hand: 14000 → 20000")).toBeVisible();
+
+  // promote: a new base; the old one is superseded but byte-identical
+  await page.getByRole("button", { name: "Promote V0002" }).click();
+  await expect(page.locator("tr", { hasText: "V0003" }).getByText("active")).toBeVisible();
+  await expect(page.locator("tr", { hasText: "October cycle" }).getByText("superseded")).toBeVisible();
+  expect(await page.locator("tr", { hasText: "October cycle" }).locator("td[title]").getAttribute("title")).toBe(baseSha);
+});

@@ -15,6 +15,8 @@ export default defineConfig({
   webServer: {
     command: `python3 -m uvicorn scp.api.app:app --port ${port}`,
     cwd: "../engine",
+    env: { SCP_DB: ":memory:" },   // a fresh version store per run
+
     url: `http://127.0.0.1:${port}/api/health`,
     reuseExistingServer: false,
     timeout: 60_000,

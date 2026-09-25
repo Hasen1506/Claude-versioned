@@ -1,5 +1,5 @@
 import type {
-  ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
+  Comparison, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   SchemaError, ValidationResult,
 } from "./types";
 
@@ -60,6 +60,20 @@ export const api = {
   /** Firm planned orders into receipts: `ids`, or everything starting within the firm zone. */
   firm: (dataset: Dataset, ids?: string[], withinDays?: number) =>
     call<FirmResponse>("/api/orders/firm", { method: "POST", body: JSON.stringify({ dataset, ids: ids ?? null, within_days: withinDays ?? null }) }),
+  versions: () => call<VersionMeta[]>("/api/versions"),
+  version: (id: string) => call<VersionDoc>(`/api/versions/${encodeURIComponent(id)}`),
+  saveBase: (dataset: Dataset, name: string, note = "") =>
+    call<VersionMeta>("/api/versions", { method: "POST", body: JSON.stringify({ dataset, name, note }) }),
+  saveVersion: (id: string, dataset: Dataset) =>
+    call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(dataset) }),
+  branch: (id: string, name: string, note = "") =>
+    call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/branch`, { method: "POST", body: JSON.stringify({ name, note }) }),
+  discard: (id: string) => call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/discard`, { method: "POST" }),
+  promote: (id: string, name?: string) =>
+    call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/promote`, { method: "POST", body: JSON.stringify({ name: name ?? null }) }),
+  compareVersions: (a: string, b: string) => call<Comparison>(`/api/versions/${encodeURIComponent(a)}/compare/${encodeURIComponent(b)}`),
+  compare: (a: Dataset, b: Dataset, labelA: string, labelB: string) =>
+    call<Comparison>("/api/compare", { method: "POST", body: JSON.stringify({ a, b, label_a: labelA, label_b: labelB }) }),
   forecastModels: () => call<ForecastModels>("/api/forecast/models"),
   forecast: (ds: Dataset) => post<ForecastResult>("/api/forecast", ds),
   release: (dataset: Dataset, keys?: string[]) =>

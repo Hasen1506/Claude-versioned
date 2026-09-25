@@ -381,6 +381,130 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Versions */
+        get: operations["list_versions_api_versions_get"];
+        put?: never;
+        /** Save Base */
+        post: operations["save_base_api_versions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/versions/{vid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Version */
+        get: operations["get_version_api_versions__vid__get"];
+        /** Update Version */
+        put: operations["update_version_api_versions__vid__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/versions/{vid}/branch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Branch Version */
+        post: operations["branch_version_api_versions__vid__branch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/versions/{vid}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discard Version */
+        post: operations["discard_version_api_versions__vid__discard_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/versions/{vid}/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Promote Version */
+        post: operations["promote_version_api_versions__vid__promote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/versions/{a}/compare/{b}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Compare Versions */
+        get: operations["compare_versions_api_versions__a__compare__b__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Compare
+         * @description Compare any two datasets, e.g. the working copy against a stored version.
+         */
+        post: operations["post_compare_api_compare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -703,6 +827,16 @@ export interface components {
              */
             sort: "priority_date" | "date" | "qty_desc";
         };
+        /** BranchRequest */
+        BranchRequest: {
+            /** Name */
+            name: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
         /** BucketOut */
         BucketOut: {
             /** Index */
@@ -803,6 +937,44 @@ export interface components {
              * Format: date
              */
             closed_on: string;
+        };
+        /** CollectionDiff */
+        CollectionDiff: {
+            /** Collection */
+            collection: string;
+            /** Added */
+            added: number;
+            /** Removed */
+            removed: number;
+            /** Changed */
+            changed: number;
+            /** Items */
+            items: components["schemas"]["ItemChange"][];
+        };
+        /** CompareRequest */
+        CompareRequest: {
+            a: components["schemas"]["Dataset"];
+            b: components["schemas"]["Dataset"];
+            /**
+             * Label A
+             * @default A
+             */
+            label_a: string;
+            /**
+             * Label B
+             * @default B
+             */
+            label_b: string;
+        };
+        /** Comparison */
+        Comparison: {
+            /** A */
+            a: string;
+            /** B */
+            b: string;
+            diff: components["schemas"]["DatasetDiff"];
+            plan_a: components["schemas"]["PlanSummary"];
+            plan_b: components["schemas"]["PlanSummary"];
         };
         /**
          * Confirmation
@@ -931,6 +1103,15 @@ export interface components {
             /** Accuracy */
             accuracy?: components["schemas"]["AccuracyRecord"][];
             execution?: components["schemas"]["ExecutionSettings"];
+        };
+        /** DatasetDiff */
+        DatasetDiff: {
+            /** Identical */
+            identical: boolean;
+            /** Collections */
+            collections: components["schemas"]["CollectionDiff"][];
+            /** Changes */
+            changes: number;
         };
         /** DdmrpRow */
         DdmrpRow: {
@@ -1171,6 +1352,15 @@ export interface components {
              * @default 0.02
              */
             delivery_tolerance: number;
+        };
+        /** FieldChange */
+        FieldChange: {
+            /** Path */
+            path: string;
+            /** A */
+            a: unknown;
+            /** B */
+            b: unknown;
         };
         /** FirmReport */
         FirmReport: {
@@ -1695,6 +1885,20 @@ export interface components {
             /** Field */
             field: string | null;
         };
+        /** ItemChange */
+        ItemChange: {
+            /** Key */
+            key: string;
+            /** Change */
+            change: string;
+            /** Fields */
+            fields: components["schemas"]["FieldChange"][];
+            /**
+             * More
+             * @default 0
+             */
+            more: number;
+        };
         /** Kpis */
         Kpis: {
             /**
@@ -1965,6 +2169,15 @@ export interface components {
          * @enum {string}
          */
         LocationType: "plant" | "dc" | "warehouse" | "store" | "supplier" | "customer";
+        /** LogEntry */
+        LogEntry: {
+            /** At */
+            at: string;
+            /** Action */
+            action: string;
+            /** Detail */
+            detail: string;
+        };
         /**
          * LotSizePolicy
          * @enum {string}
@@ -2577,6 +2790,25 @@ export interface components {
             /** Issues */
             issues: components["schemas"]["Issue"][];
         };
+        /** PlanSummary */
+        PlanSummary: {
+            /** Ok */
+            ok: boolean;
+            /** Total Cost */
+            total_cost: number;
+            /** Fill Rate */
+            fill_rate: number;
+            /** Orders */
+            orders: number;
+            /** Inventory Value Avg */
+            inventory_value_avg: number;
+            /** Max Utilization */
+            max_utilization: number;
+            /** Exceptions */
+            exceptions: number;
+            /** Errors */
+            errors: number;
+        };
         /** PlannedOrder */
         PlannedOrder: {
             /** Id */
@@ -2929,6 +3161,16 @@ export interface components {
             ctp: boolean;
             /** Bop Segments */
             bop_segments?: components["schemas"]["BopSegment"][];
+        };
+        /** PromoteRequest */
+        PromoteRequest: {
+            /** Name */
+            name?: string | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /**
          * PurchasingSource
@@ -3338,6 +3580,17 @@ export interface components {
              * @default false
              */
             promo: boolean;
+        };
+        /** SaveBaseRequest */
+        SaveBaseRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Name */
+            name: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /** ScheduleKpis */
         ScheduleKpis: {
@@ -4230,6 +4483,40 @@ export interface components {
             /** Blocking */
             blocking: boolean;
         };
+        /** VersionDoc */
+        VersionDoc: {
+            meta: components["schemas"]["VersionMeta"];
+            dataset: components["schemas"]["Dataset"];
+            /** Log */
+            log: components["schemas"]["LogEntry"][];
+        };
+        /** VersionMeta */
+        VersionMeta: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Kind */
+            kind: string;
+            /** Parent Id */
+            parent_id: string | null;
+            /** Status */
+            status: string;
+            /** Note */
+            note: string;
+            /** Created At */
+            created_at: string;
+            /** Updated At */
+            updated_at: string;
+            /** Planning Start */
+            planning_start: string;
+            /** Sha256 */
+            sha256: string;
+            /** Size */
+            size: number;
+            /** Company */
+            company: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -4887,6 +5174,291 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FirmResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_versions_api_versions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionMeta"][];
+                };
+            };
+        };
+    };
+    save_base_api_versions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveBaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_version_api_versions__vid__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                vid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionDoc"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_version_api_versions__vid__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                vid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    branch_version_api_versions__vid__branch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                vid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BranchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discard_version_api_versions__vid__discard_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                vid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    promote_version_api_versions__vid__promote_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                vid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_versions_api_versions__a__compare__b__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                a: string;
+                b: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Comparison"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_compare_api_compare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompareRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Comparison"];
                 };
             };
             /** @description Validation Error */

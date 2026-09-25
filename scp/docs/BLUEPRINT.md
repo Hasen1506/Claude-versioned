@@ -358,5 +358,7 @@ search, independent feasibility checker, manual resequencing, labour load check,
 persisted confirmations, BOP with the five strategies, all four §20.1 promising scenarios as tests), then P7 (orders
 and actuals: goods-movement journal, stock derived from movements, firming with reservations, idempotent
 roll-forward, forecast-accuracy log and report, closed-order log for delivery KPIs; the journal is part of the
-dataset document, so SQLite persistence arrives with the version store in P8). The web client adopts the legacy app's design language: Mono / Noir / Sepia themes,
+dataset document, so SQLite persistence arrives with the version store in P8), then P8 (versions and scenarios: an
+SQLite store with immutable base versions guarded by a database trigger, scenario branches, discard and promote, an
+audit log, a field-level dataset diff and side-by-side plan KPIs). The web client adopts the legacy app's design language: Mono / Noir / Sepia themes,
 numbered stages, the planning-spine freshness strip, and provenance / reading / solver-IO boxes.

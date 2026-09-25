@@ -8,6 +8,7 @@ import { STAGES, stageById } from "./lib/stages";
 import { COLLECTIONS, items } from "./model/collections";
 import { Demand } from "./pages/Demand";
 import { Execution } from "./pages/Execution";
+import { Versions } from "./pages/Versions";
 import { Inventory } from "./pages/Inventory";
 import { Promising } from "./pages/Promising";
 import { Schedule } from "./pages/Schedule";
@@ -16,7 +17,7 @@ import { DATA_GROUPS, MasterData } from "./pages/MasterData";
 import { Network } from "./pages/Network";
 import { Plan } from "./pages/Plan";
 import { Readiness } from "./pages/Readiness";
-import { isStale, store, useStore, NO_ISSUES, type RunKey } from "./state/store";
+import { isModified, isStale, store, useStore, NO_ISSUES, type RunKey } from "./state/store";
 
 export function App() {
   const route = useRoute();
@@ -51,6 +52,7 @@ export function App() {
           : page === "schedule" ? <Schedule route={route} />
           : page === "promise" ? <Promising route={route} />
           : page === "execution" ? <Execution route={route} />
+          : page === "versions" ? <Versions />
           : <Network route={route} />}
       </main>
     </div>
@@ -64,6 +66,8 @@ function TopBar() {
   const engineError = useStore((s) => s.engineError);
   const schemaBad = useStore((s) => s.schemaErrors.length > 0);
   const file = useRef<HTMLInputElement>(null);
+  const version = useStore((s) => s.version);
+  const modified = useStore(isModified);
 
   const exportJson = () => {
     if (!ds) return;
@@ -79,6 +83,9 @@ function TopBar() {
     <header className="topbar">
       <div className="brand"><span className="brand-mark">S</span>SCP</div>
       {ds && <span className="company" title={ds.settings.company_name}>{ds.settings.company_name}</span>}
+      {ds && <a className="version-chip" href={href("versions")} title="Versions & scenarios">
+        {version ? <><b>{version.id}</b> {version.kind} · {version.name}</> : <>unsaved working copy</>}
+        {version && modified && <span className="mod"> · modified</span>}</a>}
       {ds && engineError && <Badge sev="error">Engine unreachable</Badge>}
       {ds && !engineError && schemaBad && <a href={href("readiness")}><Badge sev="error">Invalid values</Badge></a>}
       <span className="spacer" />
@@ -205,6 +212,7 @@ function Sidebar({ page, sub, ds }: { page: string; sub?: string; ds: Dataset })
         </div>
       ))}
       <div className="nav-section">Company</div>
+      {item(["versions"], "Versions & scenarios", page === "versions")}
       {item(["settings"], "Settings", page === "settings")}
     </nav>
   );

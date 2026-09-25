@@ -113,3 +113,24 @@ def test_actuals_flow():
     f = client.post("/api/orders/firm", json={"dataset": r["dataset"]}).json()
     assert f["report"]["ok"] and f["report"]["firmed"]
     assert len(f["dataset"]["receipts"]) == len(r["dataset"]["receipts"]) + len(f["report"]["firmed"])
+
+
+def test_versions_flow():
+    d = example_dict("single_product_plant")
+    base = client.post("/api/versions", json={"dataset": d, "name": "Week 1"}).json()
+    assert base["kind"] == "base" and base["status"] == "active"
+    sc = client.post(f"/api/versions/{base['id']}/branch", json={"name": "Double demand"}).json()
+    doc = client.get(f"/api/versions/{sc['id']}").json()
+    edited = doc["dataset"]
+    for x in edited["demand"]:
+        x["qty"] *= 2
+    assert client.put(f"/api/versions/{sc['id']}", json=edited).json()["sha256"] != base["sha256"]
+    assert client.put(f"/api/versions/{base['id']}", json=edited).status_code == 409
+    c = client.get(f"/api/versions/{base['id']}/compare/{sc['id']}").json()
+    assert c["diff"]["changes"] == len(edited["demand"]) and c["plan_b"]["orders"] >= c["plan_a"]["orders"]
+    new = client.post(f"/api/versions/{sc['id']}/promote", json={}).json()
+    assert new["kind"] == "base" and new["parent_id"] == sc["id"]
+    assert [v["status"] for v in client.get("/api/versions").json()] == ["superseded", "promoted", "active"]
+    assert client.get("/api/versions/V9999").status_code == 404
+    same = client.post("/api/compare", json={"a": d, "b": d}).json()
+    assert same["diff"]["identical"]

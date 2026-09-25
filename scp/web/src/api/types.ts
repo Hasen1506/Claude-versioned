@@ -94,3 +94,9 @@ export type RollResponse = S["RollResponse"];
 export type FirmResponse = S["FirmResponse"];
 export type GoodsMovement = S["GoodsMovement"];
 export type ClosedOrder = S["ClosedOrder"];
+
+export type VersionMeta = S["VersionMeta"];
+export type VersionDoc = S["VersionDoc"];
+export type Comparison = S["Comparison"];
+export type DatasetDiff = S["DatasetDiff"];
+export type PlanSummary = S["PlanSummary"];

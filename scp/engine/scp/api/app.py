@@ -12,7 +12,7 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from .. import __version__
 from ..actuals import ActualsView, FirmReport, RollReport, actuals_view, firm_orders, roll_forward
@@ -29,6 +29,7 @@ from ..promise import PromiseResult, check_order, commit, run_bop, run_promise
 from ..schedule import ScheduleResult, run_schedule
 from ..sop import SopRelease, SopResult, release_sop, run_sop
 from ..validate import RULES, Issue, validate
+from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
 
 ROOT = Path(__file__).resolve().parents[3]          # scp/
 EXAMPLES = ROOT / "examples"
@@ -38,6 +39,11 @@ app = FastAPI(title="SCP — Supply Chain Planning", version=__version__,
               description="Typed network master data, readiness gate, demand planning, network MRP/DRP.")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                    allow_methods=["*"], allow_headers=["*"])
+
+
+@app.exception_handler(VersionError)
+def _version_error(_request, exc: VersionError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status, content={"detail": str(exc)})
 
 
 class Health(Out):
@@ -346,6 +352,77 @@ def post_firm(req: FirmRequest) -> FirmResponse:
     if not rep.ok:
         raise HTTPException(409, "the readiness gate has errors; fix them before firming orders")
     return FirmResponse(dataset=new, report=rep)
+
+
+# --- versions & scenarios (P8) -------------------------------------------------------------------
+class SaveBaseRequest(Out):
+    dataset: Dataset
+    name: str
+    note: str = ""
+
+
+class BranchRequest(Out):
+    name: str
+    note: str = ""
+
+
+class PromoteRequest(Out):
+    name: str | None = None
+    note: str = ""
+
+
+class CompareRequest(Out):
+    a: Dataset
+    b: Dataset
+    label_a: str = "A"
+    label_b: str = "B"
+
+
+@app.get("/api/versions", response_model=list[VersionMeta])
+def list_versions() -> list[VersionMeta]:
+    return get_store().list()
+
+
+@app.post("/api/versions", response_model=VersionMeta)
+def save_base(req: SaveBaseRequest) -> VersionMeta:
+    return get_store().save_base(req.dataset, req.name, req.note)
+
+
+@app.get("/api/versions/{vid}", response_model=VersionDoc)
+def get_version(vid: str) -> VersionDoc:
+    return get_store().get(vid)
+
+
+@app.put("/api/versions/{vid}", response_model=VersionMeta)
+def update_version(vid: str, ds: Dataset) -> VersionMeta:
+    return get_store().update(vid, ds)
+
+
+@app.post("/api/versions/{vid}/branch", response_model=VersionMeta)
+def branch_version(vid: str, req: BranchRequest) -> VersionMeta:
+    return get_store().branch(vid, req.name, req.note)
+
+
+@app.post("/api/versions/{vid}/discard", response_model=VersionMeta)
+def discard_version(vid: str) -> VersionMeta:
+    return get_store().discard(vid)
+
+
+@app.post("/api/versions/{vid}/promote", response_model=VersionMeta)
+def promote_version(vid: str, req: PromoteRequest) -> VersionMeta:
+    return get_store().promote(vid, req.name, req.note)
+
+
+@app.get("/api/versions/{a}/compare/{b}", response_model=Comparison)
+def compare_versions(a: str, b: str) -> Comparison:
+    st = get_store()
+    return compare(st.dataset(a), st.dataset(b), a, b)
+
+
+@app.post("/api/compare", response_model=Comparison)
+def post_compare(req: CompareRequest) -> Comparison:
+    """Compare any two datasets, e.g. the working copy against a stored version."""
+    return compare(req.a, req.b, req.label_a, req.label_b)
 
 
 # --- single-page app (built web client) --------------------------------------------------------
