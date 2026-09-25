@@ -32,10 +32,6 @@ class Res:
     clock: ResourceClock
     finite: bool = True
 
-    @property
-    def day_span_work(self) -> float:
-        return self.clock.span * self.clock.eff
-
 
 @dataclass
 class OpSpec:

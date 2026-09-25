@@ -309,8 +309,8 @@ function Welcome() {
           <span className="stage-head" style={{ padding: 0, border: 0, background: "none" }}><span className="n" style={{ fontSize: 26 }}>QED</span></span>
           <div style={{ flex: 1, minWidth: 260 }}>
             <h3 style={{ fontSize: 13 }}>Can you trust the numbers?</h3>
-            <p className="muted small" style={{ margin: "4px 0 0" }}>Eight companies worked out by hand, from master data to the books. Run them and
-              see every answer the engine gives beside the one derived independently.</p>
+            <p className="muted small" style={{ margin: "4px 0 0" }}>Eight companies worked out by hand and one flow over generated companies, from master
+              data to the books. Run them and see every answer the engine gives beside the one derived independently.</p>
           </div>
           <a className="btn accent" href={href("proof")}>See the proof</a>
         </div>

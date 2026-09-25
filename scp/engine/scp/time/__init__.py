@@ -136,6 +136,3 @@ class Buckets:
         if d >= self.end:
             return len(self.items)
         return bisect_right(self._starts, d) - 1
-
-    def in_horizon(self, d: date) -> bool:
-        return self.start <= d < self.end

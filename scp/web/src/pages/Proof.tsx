@@ -74,9 +74,10 @@ export function Proof({ route }: { route: Route }) {
 
   return (
     <div>
-      <StageHeader n="QED" title="Proof" kicker={<>Eight fictional companies, each worked out by hand before the engine ran. Every
+      <StageHeader n="QED" title="Proof" kicker={<>Eight fictional companies, each worked out by hand before the engine ran: every
         checkpoint sets the engine's answer beside one derived independently (a closed form, a full enumeration, a brute-force
-        search or a second solver) with the arithmetic in between. Runs use a private in-memory store: your data is never touched.</>}
+        search or a second solver) with the arithmetic in between. A ninth runs the same flow over generated companies and
+        checks what must hold for any plan. Runs use a private in-memory store: your data is never touched.</>}
         right={<>
           {done.length > 0 && (failed ? <Badge sev="error">{failed} failed</Badge> : <Badge sev="ok">{passed} checkpoints hold</Badge>)}
           <button className="btn accent" disabled={!!running} onClick={runAll}>{running ? `Running ${running}…` : `Run all ${infos.length}`}</button>
