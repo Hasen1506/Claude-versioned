@@ -1,0 +1,10051 @@
+{
+ "schema_version": "1",
+ "settings": {
+  "company_name": "Kaveri Kitchenware Pvt Ltd (fictional)",
+  "currency": "INR",
+  "planning_start": "2026-09-28",
+  "horizon_days": 182,
+  "bucket": "week",
+  "fx_rates": {
+   "USD": 84.2
+  },
+  "wacc": 0.13,
+  "holding_spread": 0.09,
+  "default_service_level": 0.95,
+  "default_calendar": "CAL-IN-6D"
+ },
+ "calendars": [
+  {
+   "id": "CAL-IN-6D",
+   "name": "India Mon\u2013Sat",
+   "workdays": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "holidays": [
+    "2026-10-02",
+    "2026-10-20",
+    "2026-11-09",
+    "2026-11-10",
+    "2026-12-25",
+    "2027-01-26"
+   ]
+  }
+ ],
+ "locations": [
+  {
+   "id": "PLT-PUNE",
+   "name": "Pune plant (Chakan)",
+   "type": "plant",
+   "region": "West",
+   "calendar": "CAL-IN-6D",
+   "lat": 18.76,
+   "lon": 73.86,
+   "storage_capacity_m3": 2500,
+   "handling_cost_per_unit": 2
+  },
+  {
+   "id": "DC-BHIWANDI",
+   "name": "Bhiwandi DC (Mumbai)",
+   "type": "dc",
+   "region": "West",
+   "calendar": "CAL-IN-6D",
+   "lat": 19.3,
+   "lon": 73.06,
+   "storage_capacity_m3": 4000,
+   "handling_cost_per_unit": 6
+  },
+  {
+   "id": "DC-DELHI",
+   "name": "Delhi NCR DC",
+   "type": "dc",
+   "region": "North",
+   "calendar": "CAL-IN-6D",
+   "lat": 28.46,
+   "lon": 77.03,
+   "storage_capacity_m3": 3000,
+   "handling_cost_per_unit": 7
+  },
+  {
+   "id": "CUS-WEST-TRADE",
+   "name": "West trade distributors",
+   "type": "customer",
+   "region": "West",
+   "lat": 19.08,
+   "lon": 72.88
+  },
+  {
+   "id": "CUS-ECOM",
+   "name": "E-commerce marketplaces",
+   "type": "customer",
+   "region": "Pan-India",
+   "lat": 12.97,
+   "lon": 77.59
+  },
+  {
+   "id": "CUS-NORTH-TRADE",
+   "name": "North trade distributors",
+   "type": "customer",
+   "region": "North",
+   "lat": 28.61,
+   "lon": 77.21
+  },
+  {
+   "id": "SUP-COPPER",
+   "name": "Hindalco copper (Silvassa)",
+   "type": "supplier",
+   "region": "West",
+   "lat": 20.27,
+   "lon": 73.02
+  },
+  {
+   "id": "SUP-STAMP",
+   "name": "Chakan stampings",
+   "type": "supplier",
+   "region": "West",
+   "lat": 18.75,
+   "lon": 73.85
+  },
+  {
+   "id": "SUP-JARS",
+   "name": "Rajkot jar works",
+   "type": "supplier",
+   "region": "West",
+   "lat": 22.3,
+   "lon": 70.8
+  },
+  {
+   "id": "SUP-MOULD",
+   "name": "Pune polymer moulders",
+   "type": "supplier",
+   "region": "West",
+   "lat": 18.52,
+   "lon": 73.85
+  },
+  {
+   "id": "SUP-SHENZHEN",
+   "name": "Shenzhen electro-components",
+   "type": "supplier",
+   "region": "China",
+   "lat": 22.54,
+   "lon": 114.06
+  },
+  {
+   "id": "SUP-PACK",
+   "name": "Bhosari corrugated boxes",
+   "type": "supplier",
+   "region": "West",
+   "lat": 18.64,
+   "lon": 73.84
+  }
+ ],
+ "products": [
+  {
+   "id": "MG-500",
+   "name": "Mixer grinder 500 W",
+   "type": "FG",
+   "family": "Mixer grinders",
+   "weight_kg": 4.2,
+   "volume_m3": 0.028,
+   "price": 2890,
+   "setup_group": "MG"
+  },
+  {
+   "id": "MG-750",
+   "name": "Mixer grinder 750 W",
+   "type": "FG",
+   "family": "Mixer grinders",
+   "weight_kg": 4.9,
+   "volume_m3": 0.031,
+   "price": 3990,
+   "setup_group": "MG"
+  },
+  {
+   "id": "KT-15",
+   "name": "Electric kettle 1.5 L",
+   "type": "FG",
+   "family": "Kettles",
+   "weight_kg": 1.3,
+   "volume_m3": 0.009,
+   "price": 1190,
+   "setup_group": "KT"
+  },
+  {
+   "id": "MOT-500",
+   "name": "Motor assembly 500 W",
+   "type": "SFG",
+   "weight_kg": 1.6,
+   "volume_m3": 0.004,
+   "setup_group": "W500"
+  },
+  {
+   "id": "MOT-750",
+   "name": "Motor assembly 750 W",
+   "type": "SFG",
+   "weight_kg": 2.0,
+   "volume_m3": 0.005,
+   "setup_group": "W750"
+  },
+  {
+   "id": "RM-CU-WIRE",
+   "name": "Enamelled copper wire",
+   "type": "RM",
+   "base_uom": "KG",
+   "weight_kg": 1.0,
+   "volume_m3": 0.0002
+  },
+  {
+   "id": "RM-STAMP",
+   "name": "Stator/rotor lamination set",
+   "type": "RM",
+   "weight_kg": 0.9,
+   "volume_m3": 0.0006
+  },
+  {
+   "id": "RM-JARSET",
+   "name": "Stainless jar set (3 jars)",
+   "type": "RM",
+   "weight_kg": 1.4,
+   "volume_m3": 0.012
+  },
+  {
+   "id": "RM-BODY-MG",
+   "name": "Moulded MG body",
+   "type": "RM",
+   "weight_kg": 0.6,
+   "volume_m3": 0.006
+  },
+  {
+   "id": "RM-BODY-KT",
+   "name": "Kettle body (SS)",
+   "type": "RM",
+   "weight_kg": 0.7,
+   "volume_m3": 0.006
+  },
+  {
+   "id": "RM-HEATER",
+   "name": "Concealed heating element",
+   "type": "RM",
+   "weight_kg": 0.25,
+   "volume_m3": 0.0005,
+   "shelf_life_days": 720
+  },
+  {
+   "id": "RM-SWITCH",
+   "name": "Rotary switch + PCB",
+   "type": "RM",
+   "weight_kg": 0.08,
+   "volume_m3": 0.0001
+  },
+  {
+   "id": "PK-CARTON-L",
+   "name": "Carton (large)",
+   "type": "PKG",
+   "weight_kg": 0.5,
+   "volume_m3": 0.003,
+   "conversions": [
+    {
+     "uom": "BDL",
+     "factor": 25
+    }
+   ]
+  },
+  {
+   "id": "PK-CARTON-S",
+   "name": "Carton (small)",
+   "type": "PKG",
+   "weight_kg": 0.2,
+   "volume_m3": 0.0015,
+   "conversions": [
+    {
+     "uom": "BDL",
+     "factor": 50
+    }
+   ]
+  }
+ ],
+ "location_products": [
+  {
+   "location": "DC-BHIWANDI",
+   "product": "MG-500",
+   "on_hand": 2600,
+   "safety_stock": {
+    "method": "service_level",
+    "service_level": 0.97,
+    "demand_cv": 0.25
+   },
+   "lot_sizing": {
+    "policy": "POQ",
+    "periods": 1
+   },
+   "gr_processing_days": 1
+  },
+  {
+   "location": "DC-BHIWANDI",
+   "product": "MG-750",
+   "on_hand": 1700,
+   "safety_stock": {
+    "method": "service_level",
+    "service_level": 0.97,
+    "demand_cv": 0.25
+   },
+   "lot_sizing": {
+    "policy": "POQ",
+    "periods": 1
+   },
+   "gr_processing_days": 1
+  },
+  {
+   "location": "DC-BHIWANDI",
+   "product": "KT-15",
+   "on_hand": 3200,
+   "safety_stock": {
+    "method": "service_level",
+    "service_level": 0.97,
+    "demand_cv": 0.25
+   },
+   "lot_sizing": {
+    "policy": "POQ",
+    "periods": 1
+   },
+   "gr_processing_days": 1
+  },
+  {
+   "location": "DC-DELHI",
+   "product": "MG-500",
+   "on_hand": 1500,
+   "safety_stock": {
+    "method": "service_level",
+    "service_level": 0.97,
+    "demand_cv": 0.25
+   },
+   "lot_sizing": {
+    "policy": "POQ",
+    "periods": 1
+   },
+   "gr_processing_days": 1
+  },
+  {
+   "location": "DC-DELHI",
+   "product": "MG-750",
+   "on_hand": 900,
+   "safety_stock": {
+    "method": "service_level",
+    "service_level": 0.97,
+    "demand_cv": 0.25
+   },
+   "lot_sizing": {
+    "policy": "POQ",
+    "periods": 1
+   },
+   "gr_processing_days": 1
+  },
+  {
+   "location": "DC-DELHI",
+   "product": "KT-15",
+   "on_hand": 1500,
+   "safety_stock": {
+    "method": "service_level",
+    "service_level": 0.97,
+    "demand_cv": 0.25
+   },
+   "lot_sizing": {
+    "policy": "POQ",
+    "periods": 1
+   },
+   "gr_processing_days": 1
+  },
+  {
+   "location": "PLT-PUNE",
+   "product": "MG-500",
+   "on_hand": 1400,
+   "safety_stock": {
+    "method": "days_of_supply",
+    "days": 5
+   },
+   "lot_sizing": {
+    "policy": "POQ",
+    "periods": 1,
+    "rounding_qty": 50
+   },
+   "planning_time_fence_days": 3
+  },
+  {
+   "location": "PLT-PUNE",
+   "product": "MG-750",
+   "on_hand": 900,
+   "safety_stock": {
+    "method": "days_of_supply",
+    "days": 5
+   },
+   "lot_sizing": {
+    "policy": "POQ",
+    "periods": 1,
+    "rounding_qty": 50
+   },
+   "planning_time_fence_days": 3
+  },
+  {
+   "location": "PLT-PUNE",
+   "product": "KT-15",
+   "on_hand": 1600,
+   "safety_stock": {
+    "method": "days_of_supply",
+    "days": 5
+   },
+   "lot_sizing": {
+    "policy": "POQ",
+    "periods": 1,
+    "rounding_qty": 50
+   },
+   "planning_time_fence_days": 3
+  },
+  {
+   "location": "PLT-PUNE",
+   "product": "MOT-500",
+   "on_hand": 2600,
+   "lot_sizing": {
+    "policy": "POQ",
+    "periods": 1
+   },
+   "safety_stock": {
+    "method": "fixed",
+    "qty": 500
+   }
+  },
+  {
+   "location": "PLT-PUNE",
+   "product": "MOT-750",
+   "on_hand": 1700,
+   "lot_sizing": {
+    "policy": "POQ",
+    "periods": 1
+   },
+   "safety_stock": {
+    "method": "fixed",
+    "qty": 300
+   }
+  },
+  {
+   "location": "PLT-PUNE",
+   "product": "RM-CU-WIRE",
+   "on_hand": 5200,
+   "lot_sizing": {
+    "policy": "EOQ"
+   },
+   "safety_stock": {
+    "method": "service_level",
+    "service_level": 0.98,
+    "demand_cv": 0.3
+   },
+   "gr_processing_days": 1
+  },
+  {
+   "location": "PLT-PUNE",
+   "product": "RM-STAMP",
+   "on_hand": 7500,
+   "safety_stock": {
+    "method": "days_of_supply",
+    "days": 7
+   }
+  },
+  {
+   "location": "PLT-PUNE",
+   "product": "RM-JARSET",
+   "on_hand": 6500,
+   "lot_sizing": {
+    "policy": "POQ",
+    "periods": 2
+   },
+   "safety_stock": {
+    "method": "days_of_supply",
+    "days": 10
+   }
+  },
+  {
+   "location": "PLT-PUNE",
+   "product": "RM-BODY-MG",
+   "on_hand": 6000
+  },
+  {
+   "location": "PLT-PUNE",
+   "product": "RM-BODY-KT",
+   "on_hand": 4000
+  },
+  {
+   "location": "PLT-PUNE",
+   "product": "RM-HEATER",
+   "on_hand": 14000,
+   "lot_sizing": {
+    "policy": "POQ",
+    "periods": 4
+   },
+   "safety_stock": {
+    "method": "fill_rate",
+    "service_level": 0.99,
+    "demand_cv": 0.3
+   },
+   "gr_processing_days": 2,
+   "ddmrp_buffer": true
+  },
+  {
+   "location": "PLT-PUNE",
+   "product": "RM-SWITCH",
+   "on_hand": 42000,
+   "lot_sizing": {
+    "policy": "POQ",
+    "periods": 4
+   },
+   "safety_stock": {
+    "method": "service_level",
+    "service_level": 0.98,
+    "demand_cv": 0.3
+   },
+   "gr_processing_days": 2,
+   "ddmrp_buffer": true
+  },
+  {
+   "location": "PLT-PUNE",
+   "product": "PK-CARTON-L",
+   "on_hand": 6000
+  },
+  {
+   "location": "PLT-PUNE",
+   "product": "PK-CARTON-S",
+   "on_hand": 5000
+  }
+ ],
+ "resources": [
+  {
+   "id": "PUNE-WIND",
+   "name": "Motor winding machines",
+   "location": "PLT-PUNE",
+   "kind": "machine",
+   "units": 3,
+   "shifts_per_day": 2,
+   "hours_per_shift": 8,
+   "efficiency": 0.82,
+   "cost_per_hour": 420,
+   "overtime_hours_per_day": 3,
+   "overtime_cost_per_hour": 650
+  },
+  {
+   "id": "PUNE-L1",
+   "name": "Assembly line 1 (mixer grinders)",
+   "location": "PLT-PUNE",
+   "kind": "line",
+   "units": 1,
+   "shifts_per_day": 2,
+   "hours_per_shift": 8,
+   "efficiency": 0.78,
+   "cost_per_hour": 1800,
+   "overtime_hours_per_day": 4,
+   "overtime_cost_per_hour": 2900
+  },
+  {
+   "id": "PUNE-L2",
+   "name": "Assembly line 2 (kettles)",
+   "location": "PLT-PUNE",
+   "kind": "line",
+   "units": 1,
+   "shifts_per_day": 1,
+   "hours_per_shift": 8,
+   "efficiency": 0.8,
+   "cost_per_hour": 1200,
+   "overtime_hours_per_day": 4,
+   "overtime_cost_per_hour": 1900
+  },
+  {
+   "id": "PUNE-TEST",
+   "name": "Hi-pot & run test benches",
+   "location": "PLT-PUNE",
+   "kind": "machine",
+   "units": 4,
+   "shifts_per_day": 2,
+   "hours_per_shift": 8,
+   "efficiency": 0.85,
+   "cost_per_hour": 250
+  },
+  {
+   "id": "PUNE-LABOUR",
+   "name": "Assembly operators",
+   "location": "PLT-PUNE",
+   "kind": "labor",
+   "units": 36,
+   "shifts_per_day": 1,
+   "hours_per_shift": 8,
+   "efficiency": 0.9,
+   "cost_per_hour": 210,
+   "overtime_hours_per_day": 2,
+   "overtime_cost_per_hour": 420
+  }
+ ],
+ "production_sources": [
+  {
+   "id": "PV-MOT-500",
+   "location": "PLT-PUNE",
+   "product": "MOT-500",
+   "output_qty": 1,
+   "components": [
+    {
+     "product": "RM-CU-WIRE",
+     "qty": 0.42,
+     "scrap": 0.02
+    },
+    {
+     "product": "RM-STAMP",
+     "qty": 1,
+     "scrap": 0.01
+    }
+   ],
+   "operations": [
+    {
+     "seq": 10,
+     "name": "Wind & insert",
+     "resource": "PUNE-WIND",
+     "setup_hours": 1.5,
+     "run_hours_per_unit": 0.045,
+     "labor_resource": "PUNE-LABOUR",
+     "labor_hours_per_unit": 0.0225,
+     "queue_workdays": 1
+    }
+   ],
+   "assembly_scrap": 0.015,
+   "conversion_cost_per_unit": 35,
+   "min_lot": 200
+  },
+  {
+   "id": "PV-MOT-750",
+   "location": "PLT-PUNE",
+   "product": "MOT-750",
+   "output_qty": 1,
+   "components": [
+    {
+     "product": "RM-CU-WIRE",
+     "qty": 0.55,
+     "scrap": 0.02
+    },
+    {
+     "product": "RM-STAMP",
+     "qty": 1,
+     "scrap": 0.01
+    }
+   ],
+   "operations": [
+    {
+     "seq": 10,
+     "name": "Wind & insert",
+     "resource": "PUNE-WIND",
+     "setup_hours": 1.5,
+     "run_hours_per_unit": 0.055,
+     "labor_resource": "PUNE-LABOUR",
+     "labor_hours_per_unit": 0.0275,
+     "queue_workdays": 1
+    }
+   ],
+   "assembly_scrap": 0.015,
+   "conversion_cost_per_unit": 35,
+   "min_lot": 200
+  },
+  {
+   "id": "PV-MG-500",
+   "location": "PLT-PUNE",
+   "product": "MG-500",
+   "output_qty": 1,
+   "components": [
+    {
+     "product": "MOT-500",
+     "qty": 1,
+     "operation": 10
+    },
+    {
+     "product": "RM-JARSET",
+     "qty": 1,
+     "operation": 10
+    },
+    {
+     "product": "RM-BODY-MG",
+     "qty": 1,
+     "operation": 10,
+     "scrap": 0.01
+    },
+    {
+     "product": "RM-SWITCH",
+     "qty": 1,
+     "operation": 10
+    },
+    {
+     "product": "PK-CARTON-L",
+     "qty": 1,
+     "operation": 20
+    }
+   ],
+   "operations": [
+    {
+     "seq": 10,
+     "name": "Final assembly",
+     "resource": "PUNE-L1",
+     "setup_hours": 2.0,
+     "run_hours_per_unit": 0.0125,
+     "labor_resource": "PUNE-LABOUR",
+     "labor_hours_per_unit": 0.2
+    },
+    {
+     "seq": 20,
+     "name": "Test & pack",
+     "resource": "PUNE-TEST",
+     "setup_hours": 0,
+     "run_hours_per_unit": 0.02,
+     "labor_resource": "PUNE-LABOUR",
+     "labor_hours_per_unit": 0.05
+    }
+   ],
+   "assembly_scrap": 0.01,
+   "conversion_cost_per_unit": 40,
+   "min_lot": 300
+  },
+  {
+   "id": "PV-MG-750",
+   "location": "PLT-PUNE",
+   "product": "MG-750",
+   "output_qty": 1,
+   "components": [
+    {
+     "product": "MOT-750",
+     "qty": 1,
+     "operation": 10
+    },
+    {
+     "product": "RM-JARSET",
+     "qty": 1,
+     "operation": 10
+    },
+    {
+     "product": "RM-BODY-MG",
+     "qty": 1,
+     "operation": 10,
+     "scrap": 0.01
+    },
+    {
+     "product": "RM-SWITCH",
+     "qty": 1,
+     "operation": 10
+    },
+    {
+     "product": "PK-CARTON-L",
+     "qty": 1,
+     "operation": 20
+    }
+   ],
+   "operations": [
+    {
+     "seq": 10,
+     "name": "Final assembly",
+     "resource": "PUNE-L1",
+     "setup_hours": 2.0,
+     "run_hours_per_unit": 0.0125,
+     "labor_resource": "PUNE-LABOUR",
+     "labor_hours_per_unit": 0.2
+    },
+    {
+     "seq": 20,
+     "name": "Test & pack",
+     "resource": "PUNE-TEST",
+     "setup_hours": 0,
+     "run_hours_per_unit": 0.02,
+     "labor_resource": "PUNE-LABOUR",
+     "labor_hours_per_unit": 0.05
+    }
+   ],
+   "assembly_scrap": 0.01,
+   "conversion_cost_per_unit": 40,
+   "min_lot": 300
+  },
+  {
+   "id": "PV-KT-15",
+   "location": "PLT-PUNE",
+   "product": "KT-15",
+   "output_qty": 1,
+   "components": [
+    {
+     "product": "RM-BODY-KT",
+     "qty": 1,
+     "scrap": 0.01
+    },
+    {
+     "product": "RM-HEATER",
+     "qty": 1
+    },
+    {
+     "product": "RM-SWITCH",
+     "qty": 1
+    },
+    {
+     "product": "PK-CARTON-S",
+     "qty": 1,
+     "operation": 20
+    }
+   ],
+   "operations": [
+    {
+     "seq": 10,
+     "name": "Assembly",
+     "resource": "PUNE-L2",
+     "setup_hours": 1.0,
+     "run_hours_per_unit": 0.008,
+     "labor_resource": "PUNE-LABOUR",
+     "labor_hours_per_unit": 0.1
+    },
+    {
+     "seq": 20,
+     "name": "Test & pack",
+     "resource": "PUNE-TEST",
+     "run_hours_per_unit": 0.01,
+     "labor_resource": "PUNE-LABOUR",
+     "labor_hours_per_unit": 0.03
+    }
+   ],
+   "assembly_scrap": 0.008,
+   "conversion_cost_per_unit": 18,
+   "min_lot": 400
+  }
+ ],
+ "purchasing_sources": [
+  {
+   "id": "PIR-CU",
+   "supplier": "SUP-COPPER",
+   "product": "RM-CU-WIRE",
+   "location": "PLT-PUNE",
+   "price": 905,
+   "ordering_cost": 2500,
+   "moq": 500,
+   "rounding_qty": 250,
+   "lead_time_days": 7,
+   "lead_time_std_days": 1.5,
+   "capacity_per_week": 6000
+  },
+  {
+   "id": "PIR-STAMP",
+   "supplier": "SUP-STAMP",
+   "product": "RM-STAMP",
+   "location": "PLT-PUNE",
+   "price": 118,
+   "moq": 1000,
+   "rounding_qty": 500,
+   "lead_time_days": 5,
+   "lead_time_std_days": 1
+  },
+  {
+   "id": "PIR-JARS",
+   "supplier": "SUP-JARS",
+   "product": "RM-JARSET",
+   "location": "PLT-PUNE",
+   "price": 410,
+   "moq": 500,
+   "rounding_qty": 100,
+   "lead_time_days": 10,
+   "lead_time_std_days": 2
+  },
+  {
+   "id": "PIR-BODY-MG",
+   "supplier": "SUP-MOULD",
+   "product": "RM-BODY-MG",
+   "location": "PLT-PUNE",
+   "price": 96,
+   "rounding_qty": 200,
+   "lead_time_days": 4
+  },
+  {
+   "id": "PIR-BODY-KT",
+   "supplier": "SUP-MOULD",
+   "product": "RM-BODY-KT",
+   "location": "PLT-PUNE",
+   "price": 165,
+   "rounding_qty": 200,
+   "lead_time_days": 6
+  },
+  {
+   "id": "PIR-HEATER",
+   "supplier": "SUP-SHENZHEN",
+   "product": "RM-HEATER",
+   "location": "PLT-PUNE",
+   "price": 1.35,
+   "currency": "USD",
+   "duty_rate": 0.2,
+   "ordering_cost": 18000,
+   "moq": 5000,
+   "rounding_qty": 1000,
+   "lead_time_days": 14,
+   "lead_time_std_days": 3
+  },
+  {
+   "id": "PIR-SWITCH",
+   "supplier": "SUP-SHENZHEN",
+   "product": "RM-SWITCH",
+   "location": "PLT-PUNE",
+   "price": 0.62,
+   "currency": "USD",
+   "duty_rate": 0.2,
+   "ordering_cost": 18000,
+   "moq": 10000,
+   "rounding_qty": 2000,
+   "lead_time_days": 14,
+   "lead_time_std_days": 3
+  },
+  {
+   "id": "PIR-CART-L",
+   "supplier": "SUP-PACK",
+   "product": "PK-CARTON-L",
+   "location": "PLT-PUNE",
+   "price": 38,
+   "rounding_qty": 25,
+   "lead_time_days": 3
+  },
+  {
+   "id": "PIR-CART-S",
+   "supplier": "SUP-PACK",
+   "product": "PK-CARTON-S",
+   "location": "PLT-PUNE",
+   "price": 19,
+   "rounding_qty": 50,
+   "lead_time_days": 3
+  }
+ ],
+ "lanes": [
+  {
+   "id": "LN-PUNE-BHW",
+   "origin": "PLT-PUNE",
+   "destination": "DC-BHIWANDI",
+   "products": [
+    "MG-500",
+    "MG-750",
+    "KT-15"
+   ],
+   "modes": [
+    {
+     "mode": "truck_ftl",
+     "transit_days": 1,
+     "cost_per_kg": 2.1,
+     "cost_per_shipment": 1500,
+     "vehicle_capacity_kg": 9000,
+     "vehicle_capacity_m3": 32,
+     "default": true
+    }
+   ]
+  },
+  {
+   "id": "LN-PUNE-DEL",
+   "origin": "PLT-PUNE",
+   "destination": "DC-DELHI",
+   "products": [
+    "MG-500",
+    "MG-750",
+    "KT-15"
+   ],
+   "modes": [
+    {
+     "mode": "truck_ftl",
+     "transit_days": 3,
+     "transit_std_days": 0.7,
+     "cost_per_kg": 5.4,
+     "cost_per_shipment": 3000,
+     "vehicle_capacity_kg": 9000,
+     "vehicle_capacity_m3": 32,
+     "default": true
+    },
+    {
+     "mode": "rail",
+     "transit_days": 5,
+     "transit_std_days": 1.2,
+     "cost_per_kg": 3.2,
+     "cost_per_shipment": 6000,
+     "vehicle_capacity_kg": 20000
+    }
+   ]
+  },
+  {
+   "id": "LN-BHW-WEST",
+   "origin": "DC-BHIWANDI",
+   "destination": "CUS-WEST-TRADE",
+   "modes": [
+    {
+     "mode": "truck_ltl",
+     "transit_days": 1,
+     "cost_per_kg": 3.5
+    }
+   ]
+  },
+  {
+   "id": "LN-BHW-ECOM",
+   "origin": "DC-BHIWANDI",
+   "destination": "CUS-ECOM",
+   "modes": [
+    {
+     "mode": "courier",
+     "transit_days": 2,
+     "cost_per_unit": 55
+    }
+   ]
+  },
+  {
+   "id": "LN-DEL-NORTH",
+   "origin": "DC-DELHI",
+   "destination": "CUS-NORTH-TRADE",
+   "modes": [
+    {
+     "mode": "truck_ltl",
+     "transit_days": 1,
+     "cost_per_kg": 3.8
+    }
+   ]
+  },
+  {
+   "id": "LN-SZ-PUNE",
+   "origin": "SUP-SHENZHEN",
+   "destination": "PLT-PUNE",
+   "modes": [
+    {
+     "mode": "sea",
+     "transit_days": 30,
+     "transit_std_days": 5,
+     "cost_per_m3": 6500,
+     "cost_per_shipment": 45000
+    }
+   ]
+  },
+  {
+   "id": "LN-CU-PUNE",
+   "origin": "SUP-COPPER",
+   "destination": "PLT-PUNE",
+   "modes": [
+    {
+     "mode": "truck_ftl",
+     "transit_days": 2,
+     "cost_per_kg": 1.8
+    }
+   ]
+  }
+ ],
+ "demand": [
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-09-28",
+   "qty": 462,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-10-05",
+   "qty": 768,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-10-12",
+   "qty": 494,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-10-19",
+   "qty": 508,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-10-26",
+   "qty": 519,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-11-02",
+   "qty": 527,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-11-09",
+   "qty": 531,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-11-16",
+   "qty": 532,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-11-23",
+   "qty": 530,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-11-30",
+   "qty": 525,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-12-07",
+   "qty": 519,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-12-14",
+   "qty": 511,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-12-21",
+   "qty": 503,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-12-28",
+   "qty": 495,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2027-01-04",
+   "qty": 463,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2027-01-11",
+   "qty": 457,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2027-01-18",
+   "qty": 452,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2027-01-25",
+   "qty": 449,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2027-02-01",
+   "qty": 446,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2027-02-08",
+   "qty": 445,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2027-02-15",
+   "qty": 444,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2027-02-22",
+   "qty": 443,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2027-03-01",
+   "qty": 442,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2027-03-08",
+   "qty": 441,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2027-03-15",
+   "qty": 440,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2027-03-22",
+   "qty": 438,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-09-28",
+   "qty": 238,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-10-05",
+   "qty": 344,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-10-12",
+   "qty": 289,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-10-19",
+   "qty": 253,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-10-26",
+   "qty": 267,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-11-02",
+   "qty": 271,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-11-09",
+   "qty": 277,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-11-16",
+   "qty": 285,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-11-23",
+   "qty": 284,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-11-30",
+   "qty": 223,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-12-07",
+   "qty": 247,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-12-14",
+   "qty": 224,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-12-21",
+   "qty": 255,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-12-28",
+   "qty": 243,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2027-01-04",
+   "qty": 231,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2027-01-11",
+   "qty": 260,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2027-01-18",
+   "qty": 247,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2027-01-25",
+   "qty": 225,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2027-02-01",
+   "qty": 245,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2027-02-08",
+   "qty": 236,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2027-02-15",
+   "qty": 244,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2027-02-22",
+   "qty": 239,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2027-03-01",
+   "qty": 256,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2027-03-08",
+   "qty": 231,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2027-03-15",
+   "qty": 247,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2027-03-22",
+   "qty": 261,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-09-28",
+   "qty": 244,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-10-05",
+   "qty": 405,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-10-12",
+   "qty": 263,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-10-19",
+   "qty": 268,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-10-26",
+   "qty": 268,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-11-02",
+   "qty": 264,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-11-09",
+   "qty": 256,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-11-16",
+   "qty": 246,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-11-23",
+   "qty": 235,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-11-30",
+   "qty": 223,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-12-07",
+   "qty": 211,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-12-14",
+   "qty": 202,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-12-21",
+   "qty": 195,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-12-28",
+   "qty": 190,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2027-01-04",
+   "qty": 189,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2027-01-11",
+   "qty": 190,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2027-01-18",
+   "qty": 193,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2027-01-25",
+   "qty": 197,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2027-02-01",
+   "qty": 201,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2027-02-08",
+   "qty": 205,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2027-02-15",
+   "qty": 207,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2027-02-22",
+   "qty": 208,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2027-03-01",
+   "qty": 207,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2027-03-08",
+   "qty": 205,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2027-03-15",
+   "qty": 201,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2027-03-22",
+   "qty": 197,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2026-10-12",
+   "qty": 129,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2026-10-19",
+   "qty": 272,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2026-10-26",
+   "qty": 379,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2026-11-02",
+   "qty": 516,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2026-11-09",
+   "qty": 555,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2026-11-16",
+   "qty": 500,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2026-11-23",
+   "qty": 493,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2026-11-30",
+   "qty": 527,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2026-12-07",
+   "qty": 543,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2026-12-14",
+   "qty": 546,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2026-12-21",
+   "qty": 556,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2026-12-28",
+   "qty": 532,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2027-01-04",
+   "qty": 493,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2027-01-11",
+   "qty": 511,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2027-01-18",
+   "qty": 537,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2027-01-25",
+   "qty": 525,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2027-02-01",
+   "qty": 446,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2027-02-08",
+   "qty": 468,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2027-02-15",
+   "qty": 484,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2027-02-22",
+   "qty": 493,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2027-03-01",
+   "qty": 475,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2027-03-08",
+   "qty": 473,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2027-03-15",
+   "qty": 455,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2027-03-22",
+   "qty": 460,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-09-28",
+   "qty": 405,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-10-05",
+   "qty": 467,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-10-12",
+   "qty": 491,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-10-19",
+   "qty": 504,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-10-26",
+   "qty": 427,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-11-02",
+   "qty": 455,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-11-09",
+   "qty": 491,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-11-16",
+   "qty": 446,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-11-23",
+   "qty": 449,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-11-30",
+   "qty": 365,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-12-07",
+   "qty": 360,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-12-14",
+   "qty": 372,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-12-21",
+   "qty": 357,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-12-28",
+   "qty": 359,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2027-01-04",
+   "qty": 321,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2027-01-11",
+   "qty": 336,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2027-01-18",
+   "qty": 370,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2027-01-25",
+   "qty": 336,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2027-02-01",
+   "qty": 354,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2027-02-08",
+   "qty": 346,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2027-02-15",
+   "qty": 379,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2027-02-22",
+   "qty": 337,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2027-03-01",
+   "qty": 419,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2027-03-08",
+   "qty": 368,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2027-03-15",
+   "qty": 364,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2027-03-22",
+   "qty": 401,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-09-28",
+   "qty": 234,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-10-05",
+   "qty": 241,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-10-12",
+   "qty": 247,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-10-19",
+   "qty": 251,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-10-26",
+   "qty": 252,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-11-02",
+   "qty": 251,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-11-09",
+   "qty": 247,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-11-16",
+   "qty": 240,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-11-23",
+   "qty": 231,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-11-30",
+   "qty": 222,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-12-07",
+   "qty": 211,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-12-14",
+   "qty": 201,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-12-21",
+   "qty": 193,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-12-28",
+   "qty": 186,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2027-01-04",
+   "qty": 181,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2027-01-11",
+   "qty": 179,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2027-01-18",
+   "qty": 179,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2027-01-25",
+   "qty": 182,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2027-02-01",
+   "qty": 186,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2027-02-08",
+   "qty": 192,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2027-02-15",
+   "qty": 197,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2027-02-22",
+   "qty": 203,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2027-03-01",
+   "qty": 207,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2027-03-08",
+   "qty": 211,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2027-03-15",
+   "qty": 213,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2027-03-22",
+   "qty": 213,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-09-28",
+   "qty": 586,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-10-05",
+   "qty": 682,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-10-12",
+   "qty": 645,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-10-19",
+   "qty": 679,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-10-26",
+   "qty": 631,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-11-02",
+   "qty": 645,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-11-09",
+   "qty": 693,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-11-16",
+   "qty": 626,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-11-23",
+   "qty": 616,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-11-30",
+   "qty": 659,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-12-07",
+   "qty": 679,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-12-14",
+   "qty": 683,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-12-21",
+   "qty": 695,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-12-28",
+   "qty": 665,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2027-01-04",
+   "qty": 616,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2027-01-11",
+   "qty": 639,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2027-01-18",
+   "qty": 671,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2027-01-25",
+   "qty": 657,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2027-02-01",
+   "qty": 558,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2027-02-08",
+   "qty": 585,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2027-02-15",
+   "qty": 606,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2027-02-22",
+   "qty": 616,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2027-03-01",
+   "qty": 594,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2027-03-08",
+   "qty": 591,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2027-03-15",
+   "qty": 569,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2027-03-22",
+   "qty": 575,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-09-28",
+   "qty": 605,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-10-05",
+   "qty": 628,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-10-12",
+   "qty": 648,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-10-19",
+   "qty": 900,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-10-26",
+   "qty": 670,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-11-02",
+   "qty": 668,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-11-09",
+   "qty": 659,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-11-16",
+   "qty": 641,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-11-23",
+   "qty": 618,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-11-30",
+   "qty": 590,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-12-07",
+   "qty": 561,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-12-14",
+   "qty": 534,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-12-21",
+   "qty": 510,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-12-28",
+   "qty": 492,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2027-01-04",
+   "qty": 482,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2027-01-11",
+   "qty": 478,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2027-01-18",
+   "qty": 482,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2027-01-25",
+   "qty": 492,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2027-02-01",
+   "qty": 506,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2027-02-08",
+   "qty": 522,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2027-02-15",
+   "qty": 539,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2027-02-22",
+   "qty": 553,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2027-03-01",
+   "qty": 563,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2027-03-08",
+   "qty": 568,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2027-03-15",
+   "qty": 569,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2027-03-22",
+   "qty": 564,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-09-28",
+   "qty": 354,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-10-05",
+   "qty": 368,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-10-12",
+   "qty": 379,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-10-19",
+   "qty": 386,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-10-26",
+   "qty": 389,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-11-02",
+   "qty": 387,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-11-09",
+   "qty": 379,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-11-16",
+   "qty": 368,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-11-23",
+   "qty": 352,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-11-30",
+   "qty": 335,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-12-07",
+   "qty": 318,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-12-14",
+   "qty": 301,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-12-21",
+   "qty": 287,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-12-28",
+   "qty": 276,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2027-01-04",
+   "qty": 269,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2027-01-11",
+   "qty": 267,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2027-01-18",
+   "qty": 268,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2027-01-25",
+   "qty": 273,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2027-02-01",
+   "qty": 280,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2027-02-08",
+   "qty": 289,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2027-02-15",
+   "qty": 298,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2027-02-22",
+   "qty": 306,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2027-03-01",
+   "qty": 313,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2027-03-08",
+   "qty": 317,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2027-03-15",
+   "qty": 319,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2027-03-22",
+   "qty": 319,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "id": "SO-88121",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-10-01",
+   "qty": 450,
+   "kind": "sales_order",
+   "priority": 2
+  },
+  {
+   "id": "SO-88140",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-10-06",
+   "qty": 380,
+   "kind": "sales_order",
+   "priority": 1
+  },
+  {
+   "id": "SO-88177",
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-10-09",
+   "qty": 900,
+   "kind": "sales_order",
+   "priority": 3
+  },
+  {
+   "id": "SO-88190",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-10-03",
+   "qty": 1200,
+   "kind": "sales_order",
+   "priority": 4
+  },
+  {
+   "id": "SO-88195",
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-10-05",
+   "qty": 2200,
+   "kind": "sales_order",
+   "priority": 6
+  },
+  {
+   "id": "SO-88202",
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-10-08",
+   "qty": 2600,
+   "kind": "sales_order",
+   "priority": 2,
+   "complete_delivery": true
+  },
+  {
+   "id": "SO-88210",
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "date": "2026-10-12",
+   "qty": 1400,
+   "kind": "sales_order",
+   "priority": 7
+  },
+  {
+   "id": "SO-88214",
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-10-14",
+   "qty": 700,
+   "kind": "sales_order",
+   "priority": 8
+  },
+  {
+   "id": "SO-88221",
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-10-20",
+   "qty": 800,
+   "kind": "sales_order",
+   "priority": 5
+  }
+ ],
+ "receipts": [
+  {
+   "id": "PO-4500012871",
+   "kind": "purchase",
+   "location": "PLT-PUNE",
+   "product": "RM-HEATER",
+   "qty": 10000,
+   "due_date": "2026-10-19",
+   "source": "PIR-HEATER"
+  },
+  {
+   "id": "MO-100455",
+   "kind": "production",
+   "location": "PLT-PUNE",
+   "product": "MG-500",
+   "qty": 800,
+   "due_date": "2026-09-30",
+   "source": "PV-MG-500"
+  },
+  {
+   "id": "STO-2201",
+   "kind": "transfer",
+   "location": "DC-DELHI",
+   "product": "KT-15",
+   "qty": 600,
+   "due_date": "2026-09-29",
+   "source": "LN-PUNE-DEL"
+  }
+ ],
+ "history": [
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2024-09-30",
+   "qty": 441
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2024-10-07",
+   "qty": 594
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2024-10-14",
+   "qty": 598
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2024-10-21",
+   "qty": 638
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2024-10-28",
+   "qty": 599
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2024-11-04",
+   "qty": 494
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2024-11-11",
+   "qty": 577
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2024-11-18",
+   "qty": 551
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2024-11-25",
+   "qty": 554
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2024-12-02",
+   "qty": 433
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2024-12-09",
+   "qty": 438
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2024-12-16",
+   "qty": 471
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2024-12-23",
+   "qty": 454
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2024-12-30",
+   "qty": 436
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-01-06",
+   "qty": 385
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-01-13",
+   "qty": 377
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-01-20",
+   "qty": 419
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-01-27",
+   "qty": 455
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-02-03",
+   "qty": 436
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-02-10",
+   "qty": 432
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-02-17",
+   "qty": 455
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-02-24",
+   "qty": 386
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-03-03",
+   "qty": 472
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-03-10",
+   "qty": 503
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-03-17",
+   "qty": 519
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-03-24",
+   "qty": 476
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-03-31",
+   "qty": 501
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-04-07",
+   "qty": 473
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-04-14",
+   "qty": 494
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-04-21",
+   "qty": 424
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-04-28",
+   "qty": 487
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-05-05",
+   "qty": 410
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-05-12",
+   "qty": 369
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-05-19",
+   "qty": 445
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-05-26",
+   "qty": 434
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-06-02",
+   "qty": 502
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-06-09",
+   "qty": 495
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-06-16",
+   "qty": 425
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-06-23",
+   "qty": 504
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-06-30",
+   "qty": 434
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-07-07",
+   "qty": 470
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-07-14",
+   "qty": 463
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-07-21",
+   "qty": 479
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-07-28",
+   "qty": 506
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-08-04",
+   "qty": 500
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-08-11",
+   "qty": 490
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-08-18",
+   "qty": 502
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-08-25",
+   "qty": 496
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-09-01",
+   "qty": 455
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-09-08",
+   "qty": 452
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-09-15",
+   "qty": 462
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-09-22",
+   "qty": 500
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-09-29",
+   "qty": 472
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-10-06",
+   "qty": 773
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-10-13",
+   "qty": 609
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-10-20",
+   "qty": 595
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-10-27",
+   "qty": 694
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-11-03",
+   "qty": 675
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-11-10",
+   "qty": 632
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-11-17",
+   "qty": 649
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-11-24",
+   "qty": 679
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-12-01",
+   "qty": 460
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-12-08",
+   "qty": 411
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-12-15",
+   "qty": 445
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-12-22",
+   "qty": 501
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2025-12-29",
+   "qty": 412
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-01-05",
+   "qty": 444
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-01-12",
+   "qty": 452
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-01-19",
+   "qty": 433
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-01-26",
+   "qty": 470
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-02-02",
+   "qty": 492
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-02-09",
+   "qty": 558
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-02-16",
+   "qty": 495
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-02-23",
+   "qty": 449
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-03-02",
+   "qty": 499
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-03-09",
+   "qty": 488
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-03-16",
+   "qty": 564
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-03-23",
+   "qty": 501
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-03-30",
+   "qty": 522
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-04-06",
+   "qty": 531
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-04-13",
+   "qty": 473
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-04-20",
+   "qty": 491
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-04-27",
+   "qty": 429
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-05-04",
+   "qty": 460
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-05-11",
+   "qty": 482
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-05-18",
+   "qty": 522
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-05-25",
+   "qty": 555
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-06-01",
+   "qty": 506
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-06-08",
+   "qty": 518
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-06-15",
+   "qty": 515
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-06-22",
+   "qty": 554
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-06-29",
+   "qty": 547
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-07-06",
+   "qty": 522
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-07-13",
+   "qty": 470
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-07-20",
+   "qty": 549
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-07-27",
+   "qty": 529
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-08-03",
+   "qty": 564
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-08-10",
+   "qty": 513
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-08-17",
+   "qty": 596
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-08-24",
+   "qty": 501
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-08-31",
+   "qty": 583
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-09-07",
+   "qty": 522
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-09-14",
+   "qty": 497
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-09-21",
+   "qty": 472
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2024-09-30",
+   "qty": 254
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2024-10-07",
+   "qty": 387
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2024-10-14",
+   "qty": 371
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2024-10-21",
+   "qty": 368
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2024-10-28",
+   "qty": 283
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2024-11-04",
+   "qty": 342
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2024-11-11",
+   "qty": 339
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2024-11-18",
+   "qty": 311
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2024-11-25",
+   "qty": 309
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2024-12-02",
+   "qty": 248
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2024-12-09",
+   "qty": 282
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2024-12-16",
+   "qty": 227
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2024-12-23",
+   "qty": 240
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2024-12-30",
+   "qty": 276
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-01-06",
+   "qty": 228
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-01-13",
+   "qty": 230
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-01-20",
+   "qty": 239
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-01-27",
+   "qty": 214
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-02-03",
+   "qty": 255
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-02-10",
+   "qty": 227
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-02-17",
+   "qty": 270
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-02-24",
+   "qty": 252
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-03-03",
+   "qty": 330
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-03-10",
+   "qty": 286
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-03-17",
+   "qty": 310
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-03-24",
+   "qty": 251
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-03-31",
+   "qty": 278
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-04-07",
+   "qty": 275
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-04-14",
+   "qty": 306
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-04-21",
+   "qty": 232
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-04-28",
+   "qty": 290
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-05-05",
+   "qty": 282
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-05-12",
+   "qty": 303
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-05-19",
+   "qty": 285
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-05-26",
+   "qty": 272
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-06-02",
+   "qty": 260
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-06-09",
+   "qty": 635
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-06-16",
+   "qty": 276
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-06-23",
+   "qty": 268
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-06-30",
+   "qty": 317
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-07-07",
+   "qty": 260
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-07-14",
+   "qty": 280
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-07-21",
+   "qty": 239
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-07-28",
+   "qty": 265
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-08-04",
+   "qty": 280
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-08-11",
+   "qty": 293
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-08-18",
+   "qty": 307
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-08-25",
+   "qty": 275
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-09-01",
+   "qty": 251
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-09-08",
+   "qty": 287
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-09-15",
+   "qty": 288
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-09-22",
+   "qty": 288
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-09-29",
+   "qty": 262
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-10-06",
+   "qty": 410
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-10-13",
+   "qty": 379
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-10-20",
+   "qty": 398
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-10-27",
+   "qty": 416
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-11-03",
+   "qty": 367
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-11-10",
+   "qty": 358
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-11-17",
+   "qty": 411
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-11-24",
+   "qty": 358
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-12-01",
+   "qty": 261
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-12-08",
+   "qty": 270
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-12-15",
+   "qty": 300
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-12-22",
+   "qty": 271
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2025-12-29",
+   "qty": 280
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-01-05",
+   "qty": 280
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-01-12",
+   "qty": 245
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-01-19",
+   "qty": 221
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-01-26",
+   "qty": 263
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-02-02",
+   "qty": 276
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-02-09",
+   "qty": 258
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-02-16",
+   "qty": 291
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-02-23",
+   "qty": 285
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-03-02",
+   "qty": 277
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-03-09",
+   "qty": 314
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-03-16",
+   "qty": 297
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-03-23",
+   "qty": 267
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-03-30",
+   "qty": 314
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-04-06",
+   "qty": 288
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-04-13",
+   "qty": 272
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-04-20",
+   "qty": 302
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-04-27",
+   "qty": 302
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-05-04",
+   "qty": 277
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-05-11",
+   "qty": 301
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-05-18",
+   "qty": 315
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-05-25",
+   "qty": 275
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-06-01",
+   "qty": 301
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-06-08",
+   "qty": 293
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-06-15",
+   "qty": 347
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-06-22",
+   "qty": 250
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-06-29",
+   "qty": 311
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-07-06",
+   "qty": 287
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-07-13",
+   "qty": 293
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-07-20",
+   "qty": 341
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-07-27",
+   "qty": 296
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-08-03",
+   "qty": 350
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-08-10",
+   "qty": 286
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-08-17",
+   "qty": 306
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-08-24",
+   "qty": 286
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-08-31",
+   "qty": 282
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-09-07",
+   "qty": 300
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-09-14",
+   "qty": 292
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "date": "2026-09-21",
+   "qty": 304
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2024-09-30",
+   "qty": 456
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2024-10-07",
+   "qty": 765
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2024-10-14",
+   "qty": 652
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2024-10-21",
+   "qty": 754
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2024-10-28",
+   "qty": 609
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2024-11-04",
+   "qty": 651
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2024-11-11",
+   "qty": 798
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2024-11-18",
+   "qty": 593
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2024-11-25",
+   "qty": 562
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2024-12-02",
+   "qty": 691
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2024-12-09",
+   "qty": 751
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2024-12-16",
+   "qty": 765
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2024-12-23",
+   "qty": 801
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2024-12-30",
+   "qty": 712
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-01-06",
+   "qty": 659
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-01-13",
+   "qty": 731
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-01-20",
+   "qty": 834
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-01-27",
+   "qty": 788
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-02-03",
+   "qty": 475
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-02-10",
+   "qty": 563
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-02-17",
+   "qty": 628
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-02-24",
+   "qty": 662
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-03-03",
+   "qty": 592
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-03-10",
+   "qty": 582
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-03-17",
+   "qty": 512
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-03-24",
+   "qty": 531
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-03-31",
+   "qty": 572
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-04-07",
+   "qty": 594
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-04-14",
+   "qty": 598
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-04-21",
+   "qty": 551
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-04-28",
+   "qty": 521
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-05-05",
+   "qty": 539
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-05-12",
+   "qty": 522
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-05-19",
+   "qty": 606
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-05-26",
+   "qty": 470
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-06-02",
+   "qty": 562
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-06-09",
+   "qty": 600
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-06-16",
+   "qty": 650
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-06-23",
+   "qty": 584
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-06-30",
+   "qty": 628
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-07-07",
+   "qty": 564
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-07-14",
+   "qty": 548
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-07-21",
+   "qty": 552
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-07-28",
+   "qty": 656
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-08-04",
+   "qty": 632
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-08-11",
+   "qty": 609
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-08-18",
+   "qty": 744
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-08-25",
+   "qty": 587
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-09-01",
+   "qty": 618
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-09-08",
+   "qty": 604
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-09-15",
+   "qty": 580
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-09-22",
+   "qty": 701
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-09-29",
+   "qty": 664
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-10-06",
+   "qty": 632
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-10-13",
+   "qty": 690
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-10-20",
+   "qty": 739
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-10-27",
+   "qty": 760
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-11-03",
+   "qty": 612
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-11-10",
+   "qty": 563
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-11-17",
+   "qty": 584
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-11-24",
+   "qty": 686
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-12-01",
+   "qty": 774
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-12-08",
+   "qty": 803
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-12-15",
+   "qty": 735
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-12-22",
+   "qty": 707
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2025-12-29",
+   "qty": 658
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-01-05",
+   "qty": 838
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-01-12",
+   "qty": 842
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-01-19",
+   "qty": 884
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-01-26",
+   "qty": 872
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-02-02",
+   "qty": 599
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-02-09",
+   "qty": 675
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-02-16",
+   "qty": 604
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-02-23",
+   "qty": 579
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-03-02",
+   "qty": 587
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-03-09",
+   "qty": 584
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-03-16",
+   "qty": 508
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-03-23",
+   "qty": 623
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-03-30",
+   "qty": 628
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-04-06",
+   "qty": 599
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-04-13",
+   "qty": 582
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-04-20",
+   "qty": 637
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-04-27",
+   "qty": 705
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-05-04",
+   "qty": 622
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-05-11",
+   "qty": 596
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-05-18",
+   "qty": 593
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-05-25",
+   "qty": 620
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-06-01",
+   "qty": 561
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-06-08",
+   "qty": 619
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-06-15",
+   "qty": 629
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-06-22",
+   "qty": 719
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-06-29",
+   "qty": 675
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-07-06",
+   "qty": 681
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-07-13",
+   "qty": 594
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-07-20",
+   "qty": 664
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-07-27",
+   "qty": 574
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-08-03",
+   "qty": 648
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-08-10",
+   "qty": 655
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-08-17",
+   "qty": 595
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-08-24",
+   "qty": 737
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-08-31",
+   "qty": 665
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-09-07",
+   "qty": 540
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-09-14",
+   "qty": 666
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "date": "2026-09-21",
+   "qty": 618
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2024-09-30",
+   "qty": 166
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2024-10-07",
+   "qty": 515,
+   "promo": true
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2024-10-14",
+   "qty": 320
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2024-10-21",
+   "qty": 211
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2024-10-28",
+   "qty": 252
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2024-11-04",
+   "qty": 266
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2024-11-11",
+   "qty": 286
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2024-11-18",
+   "qty": 309
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2024-11-25",
+   "qty": 306
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2024-12-02",
+   "qty": 120
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2024-12-09",
+   "qty": 194
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2024-12-16",
+   "qty": 124
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2024-12-23",
+   "qty": 218
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2024-12-30",
+   "qty": 183
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-01-06",
+   "qty": 146
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-01-13",
+   "qty": 231
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-01-20",
+   "qty": 195
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-01-27",
+   "qty": 128
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-02-03",
+   "qty": 188
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-02-10",
+   "qty": 161
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-02-17",
+   "qty": 184
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-02-24",
+   "qty": 169
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-03-03",
+   "qty": 221
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-03-10",
+   "qty": 144
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-03-17",
+   "qty": 193
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-03-24",
+   "qty": 236
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-03-31",
+   "qty": 163
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-04-07",
+   "qty": 193
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-04-14",
+   "qty": 193
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-04-21",
+   "qty": 169
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-04-28",
+   "qty": 208
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-05-05",
+   "qty": 193
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-05-12",
+   "qty": 164
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-05-19",
+   "qty": 242
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-05-26",
+   "qty": 215
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-06-02",
+   "qty": 189
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-06-09",
+   "qty": 176
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-06-16",
+   "qty": 172
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-06-23",
+   "qty": 232
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-06-30",
+   "qty": 192
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-07-07",
+   "qty": 211
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-07-14",
+   "qty": 193
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-07-21",
+   "qty": 218
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-07-28",
+   "qty": 197
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-08-04",
+   "qty": 224
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-08-11",
+   "qty": 196
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-08-18",
+   "qty": 228
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-08-25",
+   "qty": 224
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-09-01",
+   "qty": 201
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-09-08",
+   "qty": 179
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-09-15",
+   "qty": 177
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-09-22",
+   "qty": 295,
+   "promo": true
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-09-29",
+   "qty": 257,
+   "promo": true
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-10-06",
+   "qty": 425
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-10-13",
+   "qty": 375
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-10-20",
+   "qty": 469
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-10-27",
+   "qty": 511
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-11-03",
+   "qty": 299
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-11-10",
+   "qty": 229
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-11-17",
+   "qty": 283
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-11-24",
+   "qty": 298
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-12-01",
+   "qty": 168
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-12-08",
+   "qty": 209
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-12-15",
+   "qty": 227
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-12-22",
+   "qty": 204
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2025-12-29",
+   "qty": 195
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-01-05",
+   "qty": 196
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-01-12",
+   "qty": 281
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-01-19",
+   "qty": 217
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-01-26",
+   "qty": 196
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-02-02",
+   "qty": 212
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-02-09",
+   "qty": 258
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-02-16",
+   "qty": 203
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-02-23",
+   "qty": 244
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-03-02",
+   "qty": 254
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-03-09",
+   "qty": 255
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-03-16",
+   "qty": 279
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-03-23",
+   "qty": 212
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-03-30",
+   "qty": 272
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-04-06",
+   "qty": 206
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-04-13",
+   "qty": 221
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-04-20",
+   "qty": 278
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-04-27",
+   "qty": 266
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-05-04",
+   "qty": 238
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-05-11",
+   "qty": 196
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-05-18",
+   "qty": 260
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-05-25",
+   "qty": 218
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-06-01",
+   "qty": 208
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-06-08",
+   "qty": 219
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-06-15",
+   "qty": 253
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-06-22",
+   "qty": 167
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-06-29",
+   "qty": 259
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-07-06",
+   "qty": 253
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-07-13",
+   "qty": 226
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-07-20",
+   "qty": 288
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-07-27",
+   "qty": 273
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-08-03",
+   "qty": 228
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-08-10",
+   "qty": 227
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-08-17",
+   "qty": 280
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-08-24",
+   "qty": 197
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-08-31",
+   "qty": 243
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-09-07",
+   "qty": 232
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-09-14",
+   "qty": 260
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "date": "2026-09-21",
+   "qty": 267
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2024-09-30",
+   "qty": 122
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2024-10-07",
+   "qty": 412,
+   "promo": true
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2024-10-14",
+   "qty": 228
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2024-10-21",
+   "qty": 211
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2024-10-28",
+   "qty": 182
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2024-11-04",
+   "qty": 193
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2024-11-11",
+   "qty": 189
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2024-11-18",
+   "qty": 214
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2024-11-25",
+   "qty": 156
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2024-12-02",
+   "qty": 127
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2024-12-09",
+   "qty": 126
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2024-12-16",
+   "qty": 126
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2024-12-23",
+   "qty": 128
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2024-12-30",
+   "qty": 96
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-01-06",
+   "qty": 145
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-01-13",
+   "qty": 142
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-01-20",
+   "qty": 152
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-01-27",
+   "qty": 175
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-02-03",
+   "qty": 125
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-02-10",
+   "qty": 131
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-02-17",
+   "qty": 133
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-02-24",
+   "qty": 172
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-03-03",
+   "qty": 99
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-03-10",
+   "qty": 144
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-03-17",
+   "qty": 105
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-03-24",
+   "qty": 83
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-03-31",
+   "qty": 95
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-04-07",
+   "qty": 108
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-04-14",
+   "qty": 159
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-04-21",
+   "qty": 120
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-04-28",
+   "qty": 134
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-05-05",
+   "qty": 115
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-05-12",
+   "qty": 152
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-05-19",
+   "qty": 117
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-05-26",
+   "qty": 169
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-06-02",
+   "qty": 120
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-06-09",
+   "qty": 126
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-06-16",
+   "qty": 145
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-06-23",
+   "qty": 144
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-06-30",
+   "qty": 174
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-07-07",
+   "qty": 147
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-07-14",
+   "qty": 119
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-07-21",
+   "qty": 133
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-07-28",
+   "qty": 134
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-08-04",
+   "qty": 163
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-08-11",
+   "qty": 156
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-08-18",
+   "qty": 145
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-08-25",
+   "qty": 168
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-09-01",
+   "qty": 138
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-09-08",
+   "qty": 147
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-09-15",
+   "qty": 155
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-09-22",
+   "qty": 298,
+   "promo": true
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-09-29",
+   "qty": 217,
+   "promo": true
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-10-06",
+   "qty": 260
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-10-13",
+   "qty": 233
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-10-20",
+   "qty": 306
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-10-27",
+   "qty": 254
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-11-03",
+   "qty": 229
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-11-10",
+   "qty": 156
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-11-17",
+   "qty": 254
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-11-24",
+   "qty": 176
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-12-01",
+   "qty": 140
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-12-08",
+   "qty": 184
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-12-15",
+   "qty": 127
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-12-22",
+   "qty": 158
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2025-12-29",
+   "qty": 163
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-01-05",
+   "qty": 137
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-01-12",
+   "qty": 195
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-01-19",
+   "qty": 199
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-01-26",
+   "qty": 115
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-02-02",
+   "qty": 129
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-02-09",
+   "qty": 185
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-02-16",
+   "qty": 133
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-02-23",
+   "qty": 157
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-03-02",
+   "qty": 170
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-03-09",
+   "qty": 185
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-03-16",
+   "qty": 163
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-03-23",
+   "qty": 172
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-03-30",
+   "qty": 150
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-04-06",
+   "qty": 204
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-04-13",
+   "qty": 159
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-04-20",
+   "qty": 181
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-04-27",
+   "qty": 160
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-05-04",
+   "qty": 176
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-05-11",
+   "qty": 170
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-05-18",
+   "qty": 171
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-05-25",
+   "qty": 149
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-06-01",
+   "qty": 198
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-06-08",
+   "qty": 215
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-06-15",
+   "qty": 185
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-06-22",
+   "qty": 199
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-06-29",
+   "qty": 202
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-07-06",
+   "qty": 206
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-07-13",
+   "qty": 189
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-07-20",
+   "qty": 188
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-07-27",
+   "qty": 206
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-08-03",
+   "qty": 185
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-08-10",
+   "qty": 157
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-08-17",
+   "qty": 186
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-08-24",
+   "qty": 133
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-08-31",
+   "qty": 187
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-09-07",
+   "qty": 199
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-09-14",
+   "qty": 223
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "date": "2026-09-21",
+   "qty": 193
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2024-09-30",
+   "qty": 306
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2024-10-07",
+   "qty": 691,
+   "promo": true
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2024-10-14",
+   "qty": 367
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2024-10-21",
+   "qty": 343
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2024-10-28",
+   "qty": 374
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2024-11-04",
+   "qty": 284
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2024-11-11",
+   "qty": 393
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2024-11-18",
+   "qty": 349
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2024-11-25",
+   "qty": 393
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2024-12-02",
+   "qty": 339
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2024-12-09",
+   "qty": 389
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2024-12-16",
+   "qty": 392
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2024-12-23",
+   "qty": 307
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2024-12-30",
+   "qty": 327
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-01-06",
+   "qty": 328
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-01-13",
+   "qty": 271
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-01-20",
+   "qty": 396
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-01-27",
+   "qty": 426
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-02-03",
+   "qty": 290
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-02-10",
+   "qty": 270
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-02-17",
+   "qty": 341
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-02-24",
+   "qty": 191
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-03-03",
+   "qty": 303
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-03-10",
+   "qty": 303
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-03-17",
+   "qty": 272
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-03-24",
+   "qty": 362
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-03-31",
+   "qty": 344
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-04-07",
+   "qty": 290
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-04-14",
+   "qty": 299
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-04-21",
+   "qty": 287
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-04-28",
+   "qty": 282
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-05-05",
+   "qty": 247
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-05-12",
+   "qty": 372
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-05-19",
+   "qty": 357
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-05-26",
+   "qty": 348
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-06-02",
+   "qty": 261
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-06-09",
+   "qty": 412
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-06-16",
+   "qty": 409
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-06-23",
+   "qty": 325
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-06-30",
+   "qty": 275
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-07-07",
+   "qty": 278
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-07-14",
+   "qty": 341
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-07-21",
+   "qty": 278
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-07-28",
+   "qty": 322
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-08-04",
+   "qty": 378
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-08-11",
+   "qty": 252
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-08-18",
+   "qty": 426
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-08-25",
+   "qty": 406
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-09-01",
+   "qty": 269
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-09-08",
+   "qty": 261
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-09-15",
+   "qty": 319
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-09-22",
+   "qty": 453,
+   "promo": true
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-09-29",
+   "qty": 468,
+   "promo": true
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-10-06",
+   "qty": 331
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-10-13",
+   "qty": 524
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-10-20",
+   "qty": 692
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-10-27",
+   "qty": 455
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-11-03",
+   "qty": 428
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-11-10",
+   "qty": 348
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-11-17",
+   "qty": 493
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-11-24",
+   "qty": 437
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-12-01",
+   "qty": 541
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-12-08",
+   "qty": 434
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-12-15",
+   "qty": 399
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-12-22",
+   "qty": 460
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2025-12-29",
+   "qty": 394
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-01-05",
+   "qty": 356
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-01-12",
+   "qty": 468
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-01-19",
+   "qty": 438
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-01-26",
+   "qty": 463
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-02-02",
+   "qty": 383
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-02-09",
+   "qty": 337
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-02-16",
+   "qty": 389
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-02-23",
+   "qty": 464
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-03-02",
+   "qty": 308
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-03-09",
+   "qty": 468
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-03-16",
+   "qty": 359
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-03-23",
+   "qty": 331
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-03-30",
+   "qty": 512
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-04-06",
+   "qty": 386
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-04-13",
+   "qty": 457
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-04-20",
+   "qty": 427
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-04-27",
+   "qty": 286
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-05-04",
+   "qty": 391
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-05-11",
+   "qty": 355
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-05-18",
+   "qty": 309
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-05-25",
+   "qty": 285
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-06-01",
+   "qty": 396
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-06-08",
+   "qty": 427
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-06-15",
+   "qty": 417
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-06-22",
+   "qty": 377
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-06-29",
+   "qty": 350
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-07-06",
+   "qty": 340
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-07-13",
+   "qty": 367
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-07-20",
+   "qty": 340
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-07-27",
+   "qty": 392
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-08-03",
+   "qty": 404
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-08-10",
+   "qty": 353
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-08-17",
+   "qty": 395
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-08-24",
+   "qty": 364
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-08-31",
+   "qty": 413
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-09-07",
+   "qty": 446
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-09-14",
+   "qty": 428
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "date": "2026-09-21",
+   "qty": 448
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2024-09-30",
+   "qty": 283
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2024-10-07",
+   "qty": 427
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2024-10-14",
+   "qty": 451
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2024-10-21",
+   "qty": 464
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2024-10-28",
+   "qty": 386
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2024-11-04",
+   "qty": 415
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2024-11-11",
+   "qty": 451
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2024-11-18",
+   "qty": 406
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2024-11-25",
+   "qty": 409
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2024-12-02",
+   "qty": 325
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2024-12-09",
+   "qty": 320
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2024-12-16",
+   "qty": 332
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2024-12-23",
+   "qty": 317
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2024-12-30",
+   "qty": 319
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-01-06",
+   "qty": 281
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-01-13",
+   "qty": 296
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-01-20",
+   "qty": 330
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-01-27",
+   "qty": 296
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-02-03",
+   "qty": 314
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-02-10",
+   "qty": 306
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-02-17",
+   "qty": 339
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-02-24",
+   "qty": 297
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-03-03",
+   "qty": 379
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-03-10",
+   "qty": 327
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-03-17",
+   "qty": 324
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-03-24",
+   "qty": 361
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-03-31",
+   "qty": 359
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-04-07",
+   "qty": 347
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-04-14",
+   "qty": 368
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-04-21",
+   "qty": 329
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-04-28",
+   "qty": 353
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-05-05",
+   "qty": 316
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-05-12",
+   "qty": 376
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-05-19",
+   "qty": 359
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-05-26",
+   "qty": 357
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-06-02",
+   "qty": 348
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-06-09",
+   "qty": 322
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-06-16",
+   "qty": 335
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-06-23",
+   "qty": 358
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-06-30",
+   "qty": 345
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-07-07",
+   "qty": 349
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-07-14",
+   "qty": 309
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-07-21",
+   "qty": 352
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-07-28",
+   "qty": 328
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-08-04",
+   "qty": 318
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-08-11",
+   "qty": 344
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-08-18",
+   "qty": 297
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-08-25",
+   "qty": 369
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-09-01",
+   "qty": 374
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-09-08",
+   "qty": 349
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-09-15",
+   "qty": 323
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-09-22",
+   "qty": 325
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-09-29",
+   "qty": 348
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-10-06",
+   "qty": 383
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-10-13",
+   "qty": 483
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-10-20",
+   "qty": 502
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-10-27",
+   "qty": 466
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-11-03",
+   "qty": 426
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-11-10",
+   "qty": 450
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-11-17",
+   "qty": 457
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-11-24",
+   "qty": 484
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-12-01",
+   "qty": 339
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-12-08",
+   "qty": 321
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-12-15",
+   "qty": 327
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-12-22",
+   "qty": 345
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2025-12-29",
+   "qty": 383
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-01-05",
+   "qty": 315
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-01-12",
+   "qty": 297
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-01-19",
+   "qty": 302
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-01-26",
+   "qty": 270
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-02-02",
+   "qty": 352
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-02-09",
+   "qty": 306
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-02-16",
+   "qty": 310
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-02-23",
+   "qty": 290
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-03-02",
+   "qty": 348
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-03-09",
+   "qty": 400
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-03-16",
+   "qty": 343
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-03-23",
+   "qty": 330
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-03-30",
+   "qty": 389
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-04-06",
+   "qty": 356
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-04-13",
+   "qty": 379
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-04-20",
+   "qty": 389
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-04-27",
+   "qty": 368
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-05-04",
+   "qty": 330
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-05-11",
+   "qty": 365
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-05-18",
+   "qty": 384
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-05-25",
+   "qty": 353
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-06-01",
+   "qty": 328
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-06-08",
+   "qty": 404
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-06-15",
+   "qty": 359
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-06-22",
+   "qty": 360
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-06-29",
+   "qty": 373
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-07-06",
+   "qty": 404
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-07-13",
+   "qty": 382
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-07-20",
+   "qty": 364
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-07-27",
+   "qty": 395
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-08-03",
+   "qty": 440
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-08-10",
+   "qty": 418
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-08-17",
+   "qty": 397
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-08-24",
+   "qty": 343
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-08-31",
+   "qty": 491
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-09-07",
+   "qty": 342
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-09-14",
+   "qty": 368
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "date": "2026-09-21",
+   "qty": 358
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2024-09-30",
+   "qty": 203
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2024-10-07",
+   "qty": 252
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2024-10-14",
+   "qty": 216
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2024-10-21",
+   "qty": 249
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2024-10-28",
+   "qty": 255
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2024-11-04",
+   "qty": 221
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2024-11-11",
+   "qty": 205
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2024-11-18",
+   "qty": 214
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2024-11-25",
+   "qty": 220
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2024-12-02",
+   "qty": 174
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2024-12-09",
+   "qty": 166
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2024-12-16",
+   "qty": 184
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2024-12-23",
+   "qty": 161
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2024-12-30",
+   "qty": 150
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-01-06",
+   "qty": 156
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-01-13",
+   "qty": 184
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-01-20",
+   "qty": 158
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-01-27",
+   "qty": 197
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-02-03",
+   "qty": 183
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-02-10",
+   "qty": 160
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-02-17",
+   "qty": 164
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-02-24",
+   "qty": 180
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-03-03",
+   "qty": 177
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-03-10",
+   "qty": 233
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-03-17",
+   "qty": 180
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-03-24",
+   "qty": 207
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-03-31",
+   "qty": 219
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-04-07",
+   "qty": 186
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-04-14",
+   "qty": 173
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-04-21",
+   "qty": 184
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-04-28",
+   "qty": 194
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-05-05",
+   "qty": 202
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-05-12",
+   "qty": 190
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-05-19",
+   "qty": 168
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-05-26",
+   "qty": 190
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-06-02",
+   "qty": 179
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-06-09",
+   "qty": 157
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-06-16",
+   "qty": 180
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-06-23",
+   "qty": 169
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-06-30",
+   "qty": 200
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-07-07",
+   "qty": 221
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-07-14",
+   "qty": 220
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-07-21",
+   "qty": 183
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-07-28",
+   "qty": 185
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-08-04",
+   "qty": 203
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-08-11",
+   "qty": 209
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-08-18",
+   "qty": 186
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-08-25",
+   "qty": 191
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-09-01",
+   "qty": 227
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-09-08",
+   "qty": 192
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-09-15",
+   "qty": 186
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-09-22",
+   "qty": 196
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-09-29",
+   "qty": 203
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-10-06",
+   "qty": 241
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-10-13",
+   "qty": 258
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-10-20",
+   "qty": 239
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-10-27",
+   "qty": 258
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-11-03",
+   "qty": 282
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-11-10",
+   "qty": 260
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-11-17",
+   "qty": 244
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-11-24",
+   "qty": 228
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-12-01",
+   "qty": 183
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-12-08",
+   "qty": 203
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-12-15",
+   "qty": 179
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-12-22",
+   "qty": 210
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2025-12-29",
+   "qty": 168
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-01-05",
+   "qty": 175
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-01-12",
+   "qty": 204
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-01-19",
+   "qty": 150
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-01-26",
+   "qty": 197
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-02-02",
+   "qty": 162
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-02-09",
+   "qty": 189
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-02-16",
+   "qty": 188
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-02-23",
+   "qty": 203
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-03-02",
+   "qty": 158
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-03-09",
+   "qty": 179
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-03-16",
+   "qty": 202
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-03-23",
+   "qty": 212
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-03-30",
+   "qty": 197
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-04-06",
+   "qty": 199
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-04-13",
+   "qty": 183
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-04-20",
+   "qty": 196
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-04-27",
+   "qty": 190
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-05-04",
+   "qty": 208
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-05-11",
+   "qty": 213
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-05-18",
+   "qty": 228
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-05-25",
+   "qty": 194
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-06-01",
+   "qty": 200
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-06-08",
+   "qty": 206
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-06-15",
+   "qty": 201
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-06-22",
+   "qty": 205
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-06-29",
+   "qty": 180
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-07-06",
+   "qty": 212
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-07-13",
+   "qty": 191
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-07-20",
+   "qty": 191
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-07-27",
+   "qty": 181
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-08-03",
+   "qty": 227
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-08-10",
+   "qty": 205
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-08-17",
+   "qty": 227
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-08-24",
+   "qty": 213
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-08-31",
+   "qty": 180
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-09-07",
+   "qty": 191
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-09-14",
+   "qty": 222
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "date": "2026-09-21",
+   "qty": 197
+  }
+ ],
+ "events": [
+  {
+   "id": "EV-WEST-SCHEME-25",
+   "name": "West distributor scheme (Mar 2025)",
+   "kind": "promo",
+   "locations": [
+    "CUS-WEST-TRADE"
+   ],
+   "products": [
+    "MG-500",
+    "MG-750"
+   ],
+   "start": "2025-03-10",
+   "end": "2025-03-23"
+  },
+  {
+   "id": "EV-ECOM-SALE-26",
+   "name": "Marketplace festive sale 2026",
+   "kind": "promo",
+   "locations": [
+    "CUS-ECOM"
+   ],
+   "start": "2026-10-05",
+   "end": "2026-10-11"
+  },
+  {
+   "id": "EV-KT-PRICE-27",
+   "name": "Kettle price increase (+6 %)",
+   "kind": "price_change",
+   "products": [
+    "KT-15"
+   ],
+   "start": "2027-01-04",
+   "end": "2027-03-28",
+   "lift": -0.05
+  }
+ ],
+ "npi": [
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "like_product": "KT-15",
+   "like_location": "CUS-WEST-TRADE",
+   "scale": 0.8,
+   "launch_date": "2026-10-12",
+   "ramp_periods": 4
+  }
+ ],
+ "overrides": [
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "date": "2026-10-19",
+   "qty": 900,
+   "reason": "Distributor Diwali stocking (sales input)",
+   "author": "Sales West"
+  }
+ ],
+ "allocations": [
+  {
+   "id": "AL-ECOM-KT-OCT",
+   "product": "KT-15",
+   "customers": [
+    "CUS-ECOM"
+   ],
+   "start": "2026-09-28",
+   "end": "2026-11-01",
+   "qty": 1500,
+   "fallback": "next_period"
+  },
+  {
+   "id": "AL-ECOM-KT-NOV",
+   "product": "KT-15",
+   "customers": [
+    "CUS-ECOM"
+   ],
+   "start": "2026-11-01",
+   "end": "2026-12-01",
+   "qty": 1800,
+   "fallback": "next_period"
+  }
+ ],
+ "finance": {
+  "capacity_options": [
+   {
+    "id": "CAP-L1-SHIFT3",
+    "name": "Third shift on assembly line 1",
+    "resource": "PUNE-L1",
+    "added_hours_per_week": 48,
+    "capex": 0,
+    "fixed_cost_per_year": 2400000,
+    "life_years": 3
+   },
+   {
+    "id": "CAP-WIND-M4",
+    "name": "Fourth winding machine",
+    "resource": "PUNE-WIND",
+    "added_hours_per_week": 96,
+    "capex": 3800000,
+    "fixed_cost_per_year": 350000,
+    "life_years": 8
+   }
+  ]
+ },
+ "changeovers": [
+  {
+   "resource": "PUNE-WIND",
+   "from_group": "W500",
+   "to_group": "W750",
+   "hours": 1.0
+  },
+  {
+   "resource": "PUNE-WIND",
+   "from_group": "W750",
+   "to_group": "W500",
+   "hours": 2.5
+  },
+  {
+   "resource": "PUNE-TEST",
+   "from_group": "MG",
+   "to_group": "KT",
+   "hours": 1.5
+  },
+  {
+   "resource": "PUNE-TEST",
+   "from_group": "KT",
+   "to_group": "MG",
+   "hours": 2.0
+  }
+ ],
+ "movements": [
+  {
+   "id": "GM-00001",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "DC-BHIWANDI",
+   "product": "MG-500",
+   "qty": 2600,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00002",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "DC-BHIWANDI",
+   "product": "MG-750",
+   "qty": 1700,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00003",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "DC-BHIWANDI",
+   "product": "KT-15",
+   "qty": 3200,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00004",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "DC-DELHI",
+   "product": "MG-500",
+   "qty": 1500,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00005",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "DC-DELHI",
+   "product": "MG-750",
+   "qty": 900,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00006",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "DC-DELHI",
+   "product": "KT-15",
+   "qty": 1500,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00007",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "MG-500",
+   "qty": 1400,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00008",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "MG-750",
+   "qty": 900,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00009",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "KT-15",
+   "qty": 1600,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00010",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "MOT-500",
+   "qty": 2600,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00011",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "MOT-750",
+   "qty": 1700,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00012",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "RM-CU-WIRE",
+   "qty": 5200,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00013",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "RM-STAMP",
+   "qty": 7500,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00014",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "RM-JARSET",
+   "qty": 6500,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00015",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "RM-BODY-MG",
+   "qty": 6000,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00016",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "RM-BODY-KT",
+   "qty": 4000,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00017",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "RM-HEATER",
+   "qty": 14000,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00018",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "RM-SWITCH",
+   "qty": 42000,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00019",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "PK-CARTON-L",
+   "qty": 6000,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00020",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "PK-CARTON-S",
+   "qty": 5000,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00021",
+   "date": "2026-09-29",
+   "type": "receipt",
+   "location": "DC-DELHI",
+   "product": "KT-15",
+   "qty": 600,
+   "reference": "STO-2201",
+   "counterparty": "PLT-PUNE"
+  },
+  {
+   "id": "GM-00022",
+   "date": "2026-09-30",
+   "type": "receipt",
+   "location": "PLT-PUNE",
+   "product": "MG-500",
+   "qty": 800,
+   "reference": "MO-100455"
+  },
+  {
+   "id": "GM-00023",
+   "date": "2026-09-30",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-500",
+   "qty": 450,
+   "reference": "SO-88121",
+   "counterparty": "CUS-WEST-TRADE"
+  },
+  {
+   "id": "GM-00024",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-DELHI",
+   "product": "MG-500",
+   "qty": 700,
+   "reference": "SO-88190",
+   "counterparty": "CUS-NORTH-TRADE"
+  },
+  {
+   "id": "GM-00025",
+   "date": "2026-10-01",
+   "type": "scrap",
+   "location": "DC-BHIWANDI",
+   "product": "MG-750",
+   "qty": 6,
+   "note": "transit damage"
+  },
+  {
+   "id": "GM-00026",
+   "date": "2026-10-03",
+   "type": "adjustment",
+   "location": "PLT-PUNE",
+   "product": "RM-SWITCH",
+   "qty": -120,
+   "note": "cycle count"
+  },
+  {
+   "id": "GM-00027",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "KT-15",
+   "qty": 166,
+   "counterparty": "CUS-ECOM"
+  },
+  {
+   "id": "GM-00028",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "KT-15",
+   "qty": 202,
+   "counterparty": "CUS-ECOM"
+  },
+  {
+   "id": "GM-00029",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-500",
+   "qty": 118,
+   "counterparty": "CUS-ECOM"
+  },
+  {
+   "id": "GM-00030",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-500",
+   "qty": 145,
+   "counterparty": "CUS-ECOM"
+  },
+  {
+   "id": "GM-00031",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-750",
+   "qty": 97,
+   "counterparty": "CUS-ECOM"
+  },
+  {
+   "id": "GM-00032",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-750",
+   "qty": 119,
+   "counterparty": "CUS-ECOM"
+  },
+  {
+   "id": "GM-00033",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-DELHI",
+   "product": "MG-500",
+   "qty": 204,
+   "counterparty": "CUS-NORTH-TRADE"
+  },
+  {
+   "id": "GM-00034",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-DELHI",
+   "product": "MG-500",
+   "qty": 250,
+   "counterparty": "CUS-NORTH-TRADE"
+  },
+  {
+   "id": "GM-00035",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-DELHI",
+   "product": "MG-750",
+   "qty": 116,
+   "counterparty": "CUS-NORTH-TRADE"
+  },
+  {
+   "id": "GM-00036",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-DELHI",
+   "product": "MG-750",
+   "qty": 141,
+   "counterparty": "CUS-NORTH-TRADE"
+  },
+  {
+   "id": "GM-00037",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "KT-15",
+   "qty": 260,
+   "counterparty": "CUS-WEST-TRADE"
+  },
+  {
+   "id": "GM-00038",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "KT-15",
+   "qty": 318,
+   "counterparty": "CUS-WEST-TRADE"
+  },
+  {
+   "id": "GM-00039",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-500",
+   "qty": 266,
+   "counterparty": "CUS-WEST-TRADE"
+  },
+  {
+   "id": "GM-00040",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-500",
+   "qty": 326,
+   "counterparty": "CUS-WEST-TRADE"
+  },
+  {
+   "id": "GM-00041",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-750",
+   "qty": 115,
+   "counterparty": "CUS-WEST-TRADE"
+  },
+  {
+   "id": "GM-00042",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-750",
+   "qty": 140,
+   "counterparty": "CUS-WEST-TRADE"
+  }
+ ],
+ "accuracy": [
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 562,
+   "actual": 753
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 560,
+   "actual": 474
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 580,
+   "actual": 708
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 557,
+   "actual": 617
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 571,
+   "actual": 518
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 548,
+   "actual": 553
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 526,
+   "actual": 520
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 526,
+   "actual": 538
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 291,
+   "actual": 204
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 296,
+   "actual": 390
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 297,
+   "actual": 302
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 282,
+   "actual": 293
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 284,
+   "actual": 337
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 270,
+   "actual": 335
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 291,
+   "actual": 317
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 291,
+   "actual": 335
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 310,
+   "actual": 344
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 288,
+   "actual": 204
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 299,
+   "actual": 345
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 285,
+   "actual": 264
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 278,
+   "actual": 352
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 280,
+   "actual": 289
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 309,
+   "actual": 334
+  },
+  {
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 310,
+   "actual": 351
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 102,
+   "actual": 103
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 99,
+   "actual": 105
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 101,
+   "actual": 93
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 106,
+   "actual": 93
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 101,
+   "actual": 79
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 99,
+   "actual": 77
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 101,
+   "actual": 109
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 104,
+   "actual": 109
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 481,
+   "actual": 456
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 442,
+   "actual": 365
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 490,
+   "actual": 344
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 443,
+   "actual": 404
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 443,
+   "actual": 294
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 457,
+   "actual": 369
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 440,
+   "actual": 456
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 472,
+   "actual": 420
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 254,
+   "actual": 244
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 230,
+   "actual": 192
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 244,
+   "actual": 220
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 248,
+   "actual": 213
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 254,
+   "actual": 281
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 243,
+   "actual": 250
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 236,
+   "actual": 291
+  },
+  {
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 248,
+   "actual": 213
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 674,
+   "actual": 595
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 667,
+   "actual": 521
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 675,
+   "actual": 525
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 675,
+   "actual": 781
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 666,
+   "actual": 488
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 612,
+   "actual": 581
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 625,
+   "actual": 631
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 686,
+   "actual": 765
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 687,
+   "actual": 755
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 669,
+   "actual": 988
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 735,
+   "actual": 489
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 707,
+   "actual": 724
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 719,
+   "actual": 753
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 729,
+   "actual": 864
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 714,
+   "actual": 644
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 710,
+   "actual": 749
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-03",
+   "end": "2026-08-10",
+   "forecast": 351,
+   "actual": 276
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-10",
+   "end": "2026-08-17",
+   "forecast": 354,
+   "actual": 353
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-17",
+   "end": "2026-08-24",
+   "forecast": 383,
+   "actual": 269
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-24",
+   "end": "2026-08-31",
+   "forecast": 383,
+   "actual": 423
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-08-31",
+   "end": "2026-09-07",
+   "forecast": 393,
+   "actual": 379
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-09-07",
+   "end": "2026-09-14",
+   "forecast": 390,
+   "actual": 395
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-09-14",
+   "end": "2026-09-21",
+   "forecast": 381,
+   "actual": 382
+  },
+  {
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "start": "2026-09-21",
+   "end": "2026-09-28",
+   "forecast": 356,
+   "actual": 324
+  }
+ ],
+ "closed_orders": [
+  {
+   "kind": "purchase",
+   "id": "PO-45101",
+   "location": "PLT-PUNE",
+   "product": "RM-CU-WIRE",
+   "counterparty": "SUP-COPPER",
+   "ordered_qty": 3700,
+   "delivered_qty": 3700,
+   "due_date": "2026-08-05",
+   "first_delivery": "2026-08-04",
+   "last_delivery": "2026-08-04",
+   "closed_on": "2026-08-04"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87425",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 550,
+   "delivered_qty": 550,
+   "due_date": "2026-08-05",
+   "promised_date": "2026-08-05",
+   "first_delivery": "2026-08-05",
+   "last_delivery": "2026-08-05",
+   "closed_on": "2026-08-05"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87410",
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 550,
+   "delivered_qty": 550,
+   "due_date": "2026-08-07",
+   "promised_date": "2026-08-07",
+   "first_delivery": "2026-08-07",
+   "last_delivery": "2026-08-07",
+   "closed_on": "2026-08-07"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87431",
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 400,
+   "delivered_qty": 400,
+   "due_date": "2026-08-08",
+   "promised_date": "2026-08-08",
+   "first_delivery": "2026-08-08",
+   "last_delivery": "2026-08-08",
+   "closed_on": "2026-08-08"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87409",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 400,
+   "delivered_qty": 400,
+   "due_date": "2026-08-05",
+   "promised_date": "2026-08-05",
+   "first_delivery": "2026-08-09",
+   "last_delivery": "2026-08-09",
+   "closed_on": "2026-08-09"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87428",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 350,
+   "delivered_qty": 350,
+   "due_date": "2026-08-10",
+   "promised_date": "2026-08-10",
+   "first_delivery": "2026-08-10",
+   "last_delivery": "2026-08-10",
+   "closed_on": "2026-08-10"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87429",
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 350,
+   "delivered_qty": 350,
+   "due_date": "2026-08-10",
+   "promised_date": "2026-08-10",
+   "first_delivery": "2026-08-10",
+   "last_delivery": "2026-08-10",
+   "closed_on": "2026-08-10"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45107",
+   "location": "PLT-PUNE",
+   "product": "RM-BODY-MG",
+   "counterparty": "SUP-MOULD",
+   "ordered_qty": 500,
+   "delivered_qty": 500,
+   "due_date": "2026-08-11",
+   "first_delivery": "2026-08-11",
+   "last_delivery": "2026-08-11",
+   "closed_on": "2026-08-11"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87430",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 1000,
+   "delivered_qty": 1000,
+   "due_date": "2026-08-08",
+   "promised_date": "2026-08-11",
+   "first_delivery": "2026-08-08",
+   "last_delivery": "2026-08-11",
+   "closed_on": "2026-08-11"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100303",
+   "location": "PLT-PUNE",
+   "product": "MG-750",
+   "counterparty": "PV-MG-750",
+   "ordered_qty": 1600,
+   "delivered_qty": 1600,
+   "due_date": "2026-08-13",
+   "first_delivery": "2026-08-13",
+   "last_delivery": "2026-08-13",
+   "closed_on": "2026-08-13"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45113",
+   "location": "PLT-PUNE",
+   "product": "RM-SWITCH",
+   "counterparty": "SUP-SHENZHEN",
+   "ordered_qty": 2800,
+   "delivered_qty": 2800,
+   "due_date": "2026-08-14",
+   "first_delivery": "2026-08-13",
+   "last_delivery": "2026-08-13",
+   "closed_on": "2026-08-13"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100300",
+   "location": "PLT-PUNE",
+   "product": "MOT-500",
+   "counterparty": "PV-MOT-500",
+   "ordered_qty": 900,
+   "delivered_qty": 900,
+   "due_date": "2026-08-14",
+   "first_delivery": "2026-08-14",
+   "last_delivery": "2026-08-14",
+   "closed_on": "2026-08-14"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87414",
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 100,
+   "delivered_qty": 100,
+   "due_date": "2026-08-14",
+   "promised_date": "2026-08-14",
+   "first_delivery": "2026-08-14",
+   "last_delivery": "2026-08-14",
+   "closed_on": "2026-08-14"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100313",
+   "location": "PLT-PUNE",
+   "product": "MG-750",
+   "counterparty": "PV-MG-750",
+   "ordered_qty": 1300,
+   "delivered_qty": 1300,
+   "due_date": "2026-08-15",
+   "first_delivery": "2026-08-15",
+   "last_delivery": "2026-08-15",
+   "closed_on": "2026-08-15"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87419",
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 100,
+   "delivered_qty": 90,
+   "due_date": "2026-08-15",
+   "promised_date": "2026-08-15",
+   "first_delivery": "2026-08-15",
+   "last_delivery": "2026-08-15",
+   "closed_on": "2026-08-15"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45102",
+   "location": "PLT-PUNE",
+   "product": "RM-STAMP",
+   "counterparty": "SUP-STAMP",
+   "ordered_qty": 1400,
+   "delivered_qty": 1400,
+   "due_date": "2026-08-17",
+   "first_delivery": "2026-08-17",
+   "last_delivery": "2026-08-17",
+   "closed_on": "2026-08-17"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87416",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 150,
+   "delivered_qty": 150,
+   "due_date": "2026-08-17",
+   "promised_date": "2026-08-17",
+   "first_delivery": "2026-08-17",
+   "last_delivery": "2026-08-17",
+   "closed_on": "2026-08-17"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45117",
+   "location": "PLT-PUNE",
+   "product": "PK-CARTON-S",
+   "counterparty": "SUP-PACK",
+   "ordered_qty": 2900,
+   "delivered_qty": 2900,
+   "due_date": "2026-08-19",
+   "first_delivery": "2026-08-18",
+   "last_delivery": "2026-08-18",
+   "closed_on": "2026-08-18"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87404",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 900,
+   "delivered_qty": 900,
+   "due_date": "2026-08-18",
+   "promised_date": "2026-08-18",
+   "first_delivery": "2026-08-18",
+   "last_delivery": "2026-08-18",
+   "closed_on": "2026-08-18"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87406",
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 1000,
+   "delivered_qty": 1000,
+   "due_date": "2026-08-18",
+   "promised_date": "2026-08-18",
+   "first_delivery": "2026-08-18",
+   "last_delivery": "2026-08-18",
+   "closed_on": "2026-08-18"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45115",
+   "location": "PLT-PUNE",
+   "product": "PK-CARTON-L",
+   "counterparty": "SUP-PACK",
+   "ordered_qty": 500,
+   "delivered_qty": 500,
+   "due_date": "2026-08-20",
+   "first_delivery": "2026-08-20",
+   "last_delivery": "2026-08-20",
+   "closed_on": "2026-08-20"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100307",
+   "location": "PLT-PUNE",
+   "product": "MG-500",
+   "counterparty": "PV-MG-500",
+   "ordered_qty": 600,
+   "delivered_qty": 600,
+   "due_date": "2026-08-14",
+   "first_delivery": "2026-08-22",
+   "last_delivery": "2026-08-22",
+   "closed_on": "2026-08-22"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87412",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 100,
+   "delivered_qty": 100,
+   "due_date": "2026-08-22",
+   "promised_date": "2026-08-22",
+   "first_delivery": "2026-08-22",
+   "last_delivery": "2026-08-22",
+   "closed_on": "2026-08-22"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100310",
+   "location": "PLT-PUNE",
+   "product": "MOT-500",
+   "counterparty": "PV-MOT-500",
+   "ordered_qty": 1100,
+   "delivered_qty": 1100,
+   "due_date": "2026-08-15",
+   "first_delivery": "2026-08-23",
+   "last_delivery": "2026-08-23",
+   "closed_on": "2026-08-23"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100304",
+   "location": "PLT-PUNE",
+   "product": "KT-15",
+   "counterparty": "PV-KT-15",
+   "ordered_qty": 1500,
+   "delivered_qty": 1500,
+   "due_date": "2026-08-21",
+   "first_delivery": "2026-08-26",
+   "last_delivery": "2026-08-26",
+   "closed_on": "2026-08-26"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45100",
+   "location": "PLT-PUNE",
+   "product": "RM-CU-WIRE",
+   "counterparty": "SUP-COPPER",
+   "ordered_qty": 1300,
+   "delivered_qty": 1300,
+   "due_date": "2026-08-27",
+   "first_delivery": "2026-08-26",
+   "last_delivery": "2026-08-26",
+   "closed_on": "2026-08-26"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87411",
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 100,
+   "delivered_qty": 100,
+   "due_date": "2026-08-22",
+   "promised_date": "2026-08-22",
+   "first_delivery": "2026-08-23",
+   "last_delivery": "2026-08-26",
+   "closed_on": "2026-08-26"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87415",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 100,
+   "delivered_qty": 100,
+   "due_date": "2026-08-26",
+   "promised_date": "2026-08-26",
+   "first_delivery": "2026-08-26",
+   "last_delivery": "2026-08-26",
+   "closed_on": "2026-08-26"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87401",
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 200,
+   "delivered_qty": 200,
+   "due_date": "2026-08-27",
+   "promised_date": "2026-08-27",
+   "first_delivery": "2026-08-27",
+   "last_delivery": "2026-08-27",
+   "closed_on": "2026-08-27"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45103",
+   "location": "PLT-PUNE",
+   "product": "RM-STAMP",
+   "counterparty": "SUP-STAMP",
+   "ordered_qty": 1400,
+   "delivered_qty": 1400,
+   "due_date": "2026-08-28",
+   "first_delivery": "2026-08-28",
+   "last_delivery": "2026-08-28",
+   "closed_on": "2026-08-28"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100301",
+   "location": "PLT-PUNE",
+   "product": "MOT-750",
+   "counterparty": "PV-MOT-750",
+   "ordered_qty": 1700,
+   "delivered_qty": 1700,
+   "due_date": "2026-08-24",
+   "first_delivery": "2026-08-29",
+   "last_delivery": "2026-08-29",
+   "closed_on": "2026-08-29"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87417",
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 500,
+   "delivered_qty": 500,
+   "due_date": "2026-08-29",
+   "promised_date": "2026-08-29",
+   "first_delivery": "2026-08-29",
+   "last_delivery": "2026-08-29",
+   "closed_on": "2026-08-29"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87422",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 950,
+   "delivered_qty": 950,
+   "due_date": "2026-08-30",
+   "promised_date": "2026-08-30",
+   "first_delivery": "2026-08-30",
+   "last_delivery": "2026-08-30",
+   "closed_on": "2026-08-30"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100302",
+   "location": "PLT-PUNE",
+   "product": "MG-500",
+   "counterparty": "PV-MG-500",
+   "ordered_qty": 400,
+   "delivered_qty": 400,
+   "due_date": "2026-08-27",
+   "first_delivery": "2026-09-01",
+   "last_delivery": "2026-09-01",
+   "closed_on": "2026-09-01"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45106",
+   "location": "PLT-PUNE",
+   "product": "RM-BODY-MG",
+   "counterparty": "SUP-MOULD",
+   "ordered_qty": 2500,
+   "delivered_qty": 2500,
+   "due_date": "2026-09-02",
+   "first_delivery": "2026-09-01",
+   "last_delivery": "2026-09-01",
+   "closed_on": "2026-09-01"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100309",
+   "location": "PLT-PUNE",
+   "product": "KT-15",
+   "counterparty": "PV-KT-15",
+   "ordered_qty": 600,
+   "delivered_qty": 600,
+   "due_date": "2026-09-01",
+   "first_delivery": "2026-09-02",
+   "last_delivery": "2026-09-02",
+   "closed_on": "2026-09-02"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87413",
+   "location": "CUS-NORTH-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 200,
+   "delivered_qty": 200,
+   "due_date": "2026-09-01",
+   "promised_date": "2026-09-02",
+   "first_delivery": "2026-08-30",
+   "last_delivery": "2026-09-02",
+   "closed_on": "2026-09-02"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45116",
+   "location": "PLT-PUNE",
+   "product": "PK-CARTON-S",
+   "counterparty": "SUP-PACK",
+   "ordered_qty": 3500,
+   "delivered_qty": 3500,
+   "due_date": "2026-09-03",
+   "first_delivery": "2026-09-03",
+   "last_delivery": "2026-09-03",
+   "closed_on": "2026-09-03"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100306",
+   "location": "PLT-PUNE",
+   "product": "MOT-750",
+   "counterparty": "PV-MOT-750",
+   "ordered_qty": 1800,
+   "delivered_qty": 1800,
+   "due_date": "2026-08-30",
+   "first_delivery": "2026-09-04",
+   "last_delivery": "2026-09-04",
+   "closed_on": "2026-09-04"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87402",
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 100,
+   "delivered_qty": 100,
+   "due_date": "2026-09-03",
+   "promised_date": "2026-09-03",
+   "first_delivery": "2026-09-04",
+   "last_delivery": "2026-09-04",
+   "closed_on": "2026-09-04"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87405",
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 300,
+   "delivered_qty": 300,
+   "due_date": "2026-09-03",
+   "promised_date": "2026-09-03",
+   "first_delivery": "2026-09-04",
+   "last_delivery": "2026-09-04",
+   "closed_on": "2026-09-04"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87427",
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 750,
+   "delivered_qty": 750,
+   "due_date": "2026-09-04",
+   "promised_date": "2026-09-04",
+   "first_delivery": "2026-09-04",
+   "last_delivery": "2026-09-04",
+   "closed_on": "2026-09-04"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45104",
+   "location": "PLT-PUNE",
+   "product": "RM-JARSET",
+   "counterparty": "SUP-JARS",
+   "ordered_qty": 1100,
+   "delivered_qty": 1100,
+   "due_date": "2026-09-06",
+   "first_delivery": "2026-09-05",
+   "last_delivery": "2026-09-05",
+   "closed_on": "2026-09-05"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45109",
+   "location": "PLT-PUNE",
+   "product": "RM-BODY-KT",
+   "counterparty": "SUP-MOULD",
+   "ordered_qty": 3200,
+   "delivered_qty": 3200,
+   "due_date": "2026-09-05",
+   "first_delivery": "2026-09-05",
+   "last_delivery": "2026-09-05",
+   "closed_on": "2026-09-05"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87432",
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 550,
+   "delivered_qty": 550,
+   "due_date": "2026-09-05",
+   "promised_date": "2026-09-05",
+   "first_delivery": "2026-09-05",
+   "last_delivery": "2026-09-05",
+   "closed_on": "2026-09-05"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45108",
+   "location": "PLT-PUNE",
+   "product": "RM-BODY-KT",
+   "counterparty": "SUP-MOULD",
+   "ordered_qty": 600,
+   "delivered_qty": 600,
+   "due_date": "2026-09-07",
+   "first_delivery": "2026-09-06",
+   "last_delivery": "2026-09-06",
+   "closed_on": "2026-09-06"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45112",
+   "location": "PLT-PUNE",
+   "product": "RM-SWITCH",
+   "counterparty": "SUP-SHENZHEN",
+   "ordered_qty": 2400,
+   "delivered_qty": 2160,
+   "due_date": "2026-08-30",
+   "first_delivery": "2026-09-06",
+   "last_delivery": "2026-09-06",
+   "closed_on": "2026-09-06"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87426",
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 1000,
+   "delivered_qty": 906,
+   "due_date": "2026-09-06",
+   "promised_date": "2026-09-06",
+   "first_delivery": "2026-09-06",
+   "last_delivery": "2026-09-06",
+   "closed_on": "2026-09-06"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100311",
+   "location": "PLT-PUNE",
+   "product": "MOT-750",
+   "counterparty": "PV-MOT-750",
+   "ordered_qty": 1100,
+   "delivered_qty": 1100,
+   "due_date": "2026-09-10",
+   "first_delivery": "2026-09-09",
+   "last_delivery": "2026-09-09",
+   "closed_on": "2026-09-09"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45114",
+   "location": "PLT-PUNE",
+   "product": "PK-CARTON-L",
+   "counterparty": "SUP-PACK",
+   "ordered_qty": 500,
+   "delivered_qty": 500,
+   "due_date": "2026-09-10",
+   "first_delivery": "2026-09-09",
+   "last_delivery": "2026-09-09",
+   "closed_on": "2026-09-09"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87418",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 600,
+   "delivered_qty": 562,
+   "due_date": "2026-09-09",
+   "promised_date": "2026-09-09",
+   "first_delivery": "2026-09-09",
+   "last_delivery": "2026-09-09",
+   "closed_on": "2026-09-09"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45111",
+   "location": "PLT-PUNE",
+   "product": "RM-HEATER",
+   "counterparty": "SUP-SHENZHEN",
+   "ordered_qty": 2500,
+   "delivered_qty": 2500,
+   "due_date": "2026-09-11",
+   "first_delivery": "2026-09-10",
+   "last_delivery": "2026-09-10",
+   "closed_on": "2026-09-10"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45105",
+   "location": "PLT-PUNE",
+   "product": "RM-JARSET",
+   "counterparty": "SUP-JARS",
+   "ordered_qty": 1400,
+   "delivered_qty": 1400,
+   "due_date": "2026-09-12",
+   "first_delivery": "2026-09-11",
+   "last_delivery": "2026-09-11",
+   "closed_on": "2026-09-11"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87424",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 350,
+   "delivered_qty": 350,
+   "due_date": "2026-09-11",
+   "promised_date": "2026-09-11",
+   "first_delivery": "2026-09-11",
+   "last_delivery": "2026-09-11",
+   "closed_on": "2026-09-11"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100308",
+   "location": "PLT-PUNE",
+   "product": "MG-750",
+   "counterparty": "PV-MG-750",
+   "ordered_qty": 1300,
+   "delivered_qty": 1300,
+   "due_date": "2026-09-16",
+   "first_delivery": "2026-09-16",
+   "last_delivery": "2026-09-16",
+   "closed_on": "2026-09-16"
+  },
+  {
+   "kind": "purchase",
+   "id": "PO-45110",
+   "location": "PLT-PUNE",
+   "product": "RM-HEATER",
+   "counterparty": "SUP-SHENZHEN",
+   "ordered_qty": 500,
+   "delivered_qty": 500,
+   "due_date": "2026-09-17",
+   "first_delivery": "2026-09-16",
+   "last_delivery": "2026-09-16",
+   "closed_on": "2026-09-16"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87420",
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 200,
+   "delivered_qty": 200,
+   "due_date": "2026-09-18",
+   "promised_date": "2026-09-18",
+   "first_delivery": "2026-09-18",
+   "last_delivery": "2026-09-18",
+   "closed_on": "2026-09-18"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100305",
+   "location": "PLT-PUNE",
+   "product": "MOT-500",
+   "counterparty": "PV-MOT-500",
+   "ordered_qty": 800,
+   "delivered_qty": 800,
+   "due_date": "2026-09-19",
+   "first_delivery": "2026-09-19",
+   "last_delivery": "2026-09-19",
+   "closed_on": "2026-09-19"
+  },
+  {
+   "kind": "production",
+   "id": "MO-100312",
+   "location": "PLT-PUNE",
+   "product": "MG-500",
+   "counterparty": "PV-MG-500",
+   "ordered_qty": 1100,
+   "delivered_qty": 1100,
+   "due_date": "2026-09-12",
+   "first_delivery": "2026-09-20",
+   "last_delivery": "2026-09-20",
+   "closed_on": "2026-09-20"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87433",
+   "location": "CUS-WEST-TRADE",
+   "product": "KT-15",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 950,
+   "delivered_qty": 896,
+   "due_date": "2026-09-19",
+   "promised_date": "2026-09-20",
+   "first_delivery": "2026-09-17",
+   "last_delivery": "2026-09-20",
+   "closed_on": "2026-09-20"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87434",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 550,
+   "delivered_qty": 550,
+   "due_date": "2026-09-20",
+   "promised_date": "2026-09-20",
+   "first_delivery": "2026-09-20",
+   "last_delivery": "2026-09-20",
+   "closed_on": "2026-09-20"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87435",
+   "location": "CUS-ECOM",
+   "product": "KT-15",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 200,
+   "delivered_qty": 200,
+   "due_date": "2026-09-20",
+   "promised_date": "2026-09-20",
+   "first_delivery": "2026-09-20",
+   "last_delivery": "2026-09-20",
+   "closed_on": "2026-09-20"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87403",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 450,
+   "delivered_qty": 450,
+   "due_date": "2026-09-22",
+   "promised_date": "2026-09-22",
+   "first_delivery": "2026-09-22",
+   "last_delivery": "2026-09-22",
+   "closed_on": "2026-09-22"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87400",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 600,
+   "delivered_qty": 600,
+   "due_date": "2026-09-24",
+   "promised_date": "2026-09-24",
+   "first_delivery": "2026-09-24",
+   "last_delivery": "2026-09-24",
+   "closed_on": "2026-09-24"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87407",
+   "location": "CUS-NORTH-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-DELHI",
+   "ordered_qty": 850,
+   "delivered_qty": 850,
+   "due_date": "2026-09-24",
+   "promised_date": "2026-09-24",
+   "first_delivery": "2026-09-24",
+   "last_delivery": "2026-09-24",
+   "closed_on": "2026-09-24"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87408",
+   "location": "CUS-ECOM",
+   "product": "MG-500",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 100,
+   "delivered_qty": 96,
+   "due_date": "2026-09-19",
+   "promised_date": "2026-09-19",
+   "first_delivery": "2026-09-24",
+   "last_delivery": "2026-09-24",
+   "closed_on": "2026-09-24"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87421",
+   "location": "CUS-WEST-TRADE",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 750,
+   "delivered_qty": 750,
+   "due_date": "2026-09-24",
+   "promised_date": "2026-09-24",
+   "first_delivery": "2026-09-24",
+   "last_delivery": "2026-09-24",
+   "closed_on": "2026-09-24"
+  },
+  {
+   "kind": "sales",
+   "id": "SO-87423",
+   "location": "CUS-ECOM",
+   "product": "MG-750",
+   "counterparty": "DC-BHIWANDI",
+   "ordered_qty": 350,
+   "delivered_qty": 350,
+   "due_date": "2026-09-23",
+   "promised_date": "2026-09-24",
+   "first_delivery": "2026-09-21",
+   "last_delivery": "2026-09-24",
+   "closed_on": "2026-09-24"
+  }
+ ],
+ "tower": {
+  "default_owner": "Planning lead",
+  "owners": [
+   {
+    "owner": "Anita Rao (demand)",
+    "categories": [
+     "demand"
+    ]
+   },
+   {
+    "owner": "Customer service desk",
+    "categories": [
+     "delivery"
+    ]
+   },
+   {
+    "owner": "Rahul Mehta (distribution)",
+    "locations": [
+     "DC-BHIWANDI",
+     "DC-DELHI",
+     "CUS-WEST-TRADE",
+     "CUS-NORTH-TRADE",
+     "CUS-ECOM"
+    ]
+   },
+   {
+    "owner": "Priya Nair (plant)",
+    "locations": [
+     "PLT-PUNE"
+    ]
+   }
+  ]
+ }
+}

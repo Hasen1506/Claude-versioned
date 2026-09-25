@@ -1,0 +1,283 @@
+{
+ "schema_version": "1",
+ "settings": {
+  "company_name": "Single-product bottler (fictional)",
+  "currency": "INR",
+  "planning_start": "2026-09-28",
+  "horizon_days": 84,
+  "bucket": "week",
+  "wacc": 0.12,
+  "holding_spread": 0.06,
+  "default_calendar": "CAL-5D"
+ },
+ "calendars": [
+  {
+   "id": "CAL-5D",
+   "name": "Mon\u2013Fri",
+   "workdays": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "holidays": [
+    "2026-10-02"
+   ]
+  }
+ ],
+ "locations": [
+  {
+   "id": "PLANT",
+   "name": "Nashik bottling plant",
+   "type": "plant",
+   "lat": 20.0,
+   "lon": 73.79
+  },
+  {
+   "id": "SUP-PREFORM",
+   "name": "Preform supplier",
+   "type": "supplier",
+   "lat": 19.99,
+   "lon": 73.1
+  },
+  {
+   "id": "SUP-CAPS",
+   "name": "Cap & label supplier",
+   "type": "supplier",
+   "lat": 19.2,
+   "lon": 72.97
+  }
+ ],
+ "products": [
+  {
+   "id": "BTL-1L",
+   "name": "Mineral water 1 L",
+   "type": "FG",
+   "weight_kg": 1.05,
+   "volume_m3": 0.0011,
+   "price": 14,
+   "shelf_life_days": 180
+  },
+  {
+   "id": "PREFORM",
+   "name": "PET preform 1 L",
+   "type": "RM",
+   "weight_kg": 0.028
+  },
+  {
+   "id": "CAP-LABEL",
+   "name": "Cap + label kit",
+   "type": "RM",
+   "weight_kg": 0.004
+  }
+ ],
+ "location_products": [
+  {
+   "location": "PLANT",
+   "product": "BTL-1L",
+   "on_hand": 52000,
+   "safety_stock": {
+    "method": "service_level",
+    "service_level": 0.95,
+    "demand_cv": 0.2
+   },
+   "lot_sizing": {
+    "policy": "FIXED",
+    "fixed_qty": 20000
+   }
+  },
+  {
+   "location": "PLANT",
+   "product": "PREFORM",
+   "on_hand": 60000,
+   "lot_sizing": {
+    "policy": "FIXED",
+    "fixed_qty": 100000
+   },
+   "safety_stock": {
+    "method": "days_of_supply",
+    "days": 5
+   }
+  },
+  {
+   "location": "PLANT",
+   "product": "CAP-LABEL",
+   "on_hand": 80000,
+   "lot_sizing": {
+    "policy": "MIN_MAX"
+   },
+   "max_stock": 200000,
+   "safety_stock": {
+    "method": "fixed",
+    "qty": 20000
+   }
+  }
+ ],
+ "resources": [
+  {
+   "id": "BLOW-FILL",
+   "name": "Blow-fill-cap line",
+   "location": "PLANT",
+   "kind": "line",
+   "shifts_per_day": 2,
+   "hours_per_shift": 8,
+   "efficiency": 0.8,
+   "cost_per_hour": 2200,
+   "overtime_hours_per_day": 4,
+   "overtime_cost_per_hour": 3300
+  }
+ ],
+ "production_sources": [
+  {
+   "id": "PV-BTL-1L",
+   "location": "PLANT",
+   "product": "BTL-1L",
+   "components": [
+    {
+     "product": "PREFORM",
+     "qty": 1,
+     "scrap": 0.005
+    },
+    {
+     "product": "CAP-LABEL",
+     "qty": 1,
+     "scrap": 0.01
+    }
+   ],
+   "operations": [
+    {
+     "seq": 10,
+     "name": "Blow, fill, cap, label",
+     "resource": "BLOW-FILL",
+     "setup_hours": 0.5,
+     "run_hours_per_unit": 0.0002
+    }
+   ],
+   "assembly_scrap": 0.003,
+   "conversion_cost_per_unit": 0.9
+  }
+ ],
+ "purchasing_sources": [
+  {
+   "id": "PIR-PREFORM",
+   "supplier": "SUP-PREFORM",
+   "product": "PREFORM",
+   "location": "PLANT",
+   "price": 2.6,
+   "moq": 50000,
+   "lead_time_days": 6,
+   "lead_time_std_days": 1
+  },
+  {
+   "id": "PIR-CAPS",
+   "supplier": "SUP-CAPS",
+   "product": "CAP-LABEL",
+   "location": "PLANT",
+   "price": 0.55,
+   "rounding_qty": 10000,
+   "lead_time_days": 4
+  }
+ ],
+ "lanes": [],
+ "demand": [
+  {
+   "location": "PLANT",
+   "product": "BTL-1L",
+   "date": "2026-09-28",
+   "qty": 42160,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "PLANT",
+   "product": "BTL-1L",
+   "date": "2026-10-05",
+   "qty": 40648,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "PLANT",
+   "product": "BTL-1L",
+   "date": "2026-10-12",
+   "qty": 45019,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "PLANT",
+   "product": "BTL-1L",
+   "date": "2026-10-19",
+   "qty": 39963,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "PLANT",
+   "product": "BTL-1L",
+   "date": "2026-10-26",
+   "qty": 36359,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "PLANT",
+   "product": "BTL-1L",
+   "date": "2026-11-02",
+   "qty": 35130,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "PLANT",
+   "product": "BTL-1L",
+   "date": "2026-11-09",
+   "qty": 32909,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "PLANT",
+   "product": "BTL-1L",
+   "date": "2026-11-16",
+   "qty": 36154,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "PLANT",
+   "product": "BTL-1L",
+   "date": "2026-11-23",
+   "qty": 32761,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "PLANT",
+   "product": "BTL-1L",
+   "date": "2026-11-30",
+   "qty": 35621,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "PLANT",
+   "product": "BTL-1L",
+   "date": "2026-12-07",
+   "qty": 32994,
+   "kind": "forecast",
+   "period_days": 7
+  },
+  {
+   "location": "PLANT",
+   "product": "BTL-1L",
+   "date": "2026-12-14",
+   "qty": 33145,
+   "kind": "forecast",
+   "period_days": 7
+  }
+ ],
+ "receipts": [],
+ "history": []
+}
