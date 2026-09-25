@@ -38,3 +38,7 @@ def test_schema_errors_are_field_level():
 def test_rules_catalog():
     codes = {r["code"] for r in client.get("/api/rules").json()}
     assert "NO_SOURCE" in codes and "BOM_CYCLE" in codes
+
+
+def test_unknown_api_route_is_404_not_the_spa():
+    assert client.get("/api/nope").status_code == 404

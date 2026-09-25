@@ -33,3 +33,7 @@ yarn-error.log*
 scp/web/dist/
 # the web client's lockfile IS committed (reproducible builds)
 !scp/web/package-lock.json
+scp/web/openapi.json
+scp/web/test-results/
+scp/web/playwright-report/
+scp/web/*.tsbuildinfo

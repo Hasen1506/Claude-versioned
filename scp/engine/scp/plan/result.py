@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..validate import Issue
 
@@ -13,14 +13,20 @@ ReqKind = Literal["forecast", "sales_order", "dependent", "transfer"]
 SupplyKind = Literal["on_hand", "receipt", "order"]
 
 
-class Peg(BaseModel):
+class Out(BaseModel):
+    """Output model: fields with defaults are still always present in responses (exact API types)."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+
+class Peg(Out):
     supply_kind: SupplyKind
     supply_id: str
     requirement_id: str
     qty: float
 
 
-class Requirement(BaseModel):
+class Requirement(Out):
     id: str
     location: str
     product: str
@@ -33,7 +39,7 @@ class Requirement(BaseModel):
     past_due: bool = False
 
 
-class PlannedOrder(BaseModel):
+class PlannedOrder(Out):
     id: str
     kind: OrderKind
     location: str                 # receiving / producing location
@@ -56,7 +62,7 @@ class PlannedOrder(BaseModel):
     lot_excess: float = 0.0       # quantity not pegged to any requirement (lot sizing / SS)
 
 
-class ScheduledReceiptOut(BaseModel):
+class ScheduledReceiptOut(Out):
     id: str
     kind: str
     location: str
@@ -65,7 +71,7 @@ class ScheduledReceiptOut(BaseModel):
     date: dt.date
 
 
-class NodeBucket(BaseModel):
+class NodeBucket(Out):
     bucket: int
     gross_independent: float = 0.0
     gross_dependent: float = 0.0
@@ -77,7 +83,7 @@ class NodeBucket(BaseModel):
     shortage: float = 0.0            # max(0, −projected)
 
 
-class NodePlan(BaseModel):
+class NodePlan(Out):
     location: str
     product: str
     llc: int
@@ -95,14 +101,14 @@ class NodePlan(BaseModel):
     order_ids: list[str] = Field(default_factory=list)
 
 
-class BucketOut(BaseModel):
+class BucketOut(Out):
     index: int
     start: dt.date
     end: dt.date
     label: str
 
 
-class ResourceBucket(BaseModel):
+class ResourceBucket(Out):
     bucket: int
     load_hours: float
     capacity_hours: float
@@ -110,7 +116,7 @@ class ResourceBucket(BaseModel):
     utilization: float
 
 
-class ResourcePlan(BaseModel):
+class ResourcePlan(Out):
     resource: str
     location: str
     kind: str
@@ -118,7 +124,7 @@ class ResourcePlan(BaseModel):
     buckets: list[ResourceBucket]
 
 
-class PlanException(BaseModel):
+class PlanException(Out):
     code: str
     severity: Literal["error", "warning", "info"]
     message: str
@@ -130,7 +136,7 @@ class PlanException(BaseModel):
     qty: float | None = None
 
 
-class Kpis(BaseModel):
+class Kpis(Out):
     purchase_cost: float = 0.0
     production_cost: float = 0.0
     setup_cost: float = 0.0
@@ -151,7 +157,7 @@ class Kpis(BaseModel):
     max_utilization: float = 0.0
 
 
-class PlanResult(BaseModel):
+class PlanResult(Out):
     ok: bool
     currency: str
     carrying_rate: float

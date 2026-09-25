@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .. import __version__
 from ..model import Dataset
@@ -30,30 +30,34 @@ app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http
                    allow_methods=["*"], allow_headers=["*"])
 
 
-class Health(BaseModel):
+class Out(BaseModel):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+
+class Health(Out):
     status: str
     version: str
 
 
-class ExampleInfo(BaseModel):
+class ExampleInfo(Out):
     name: str
     title: str
     locations: int
     products: int
 
 
-class RuleInfo(BaseModel):
+class RuleInfo(Out):
     code: str
     severity: str
     description: str
 
 
-class ValidationResult(BaseModel):
+class ValidationResult(Out):
     issues: list[Issue]
     blocking: bool
 
 
-class NetLocation(BaseModel):
+class NetLocation(Out):
     id: str
     name: str
     type: str
@@ -66,7 +70,7 @@ class NetLocation(BaseModel):
     production_sources: list[str]
 
 
-class NetEdge(BaseModel):
+class NetEdge(Out):
     origin: str
     destination: str
     kind: str
@@ -76,20 +80,20 @@ class NetEdge(BaseModel):
     transit_days: float | None
 
 
-class NetOption(BaseModel):
+class NetOption(Out):
     kind: str
     source_id: str
     upstream: list[tuple[str, str]]
 
 
-class NetNode(BaseModel):
+class NetNode(Out):
     location: str
     product: str
     llc: int | None
     options: list[NetOption]
 
 
-class NetworkView(BaseModel):
+class NetworkView(Out):
     locations: list[NetLocation]
     edges: list[NetEdge]
     nodes: list[NetNode]
@@ -181,6 +185,8 @@ if WEB_DIST.is_dir():
 
     @app.get("/{path:path}", include_in_schema=False)
     def spa(path: str) -> FileResponse:
+        if path == "api" or path.startswith("api/"):
+            raise HTTPException(404, "unknown API route")
         f = (WEB_DIST / path).resolve()
         if path and f.is_file() and WEB_DIST in f.parents:
             return FileResponse(f)

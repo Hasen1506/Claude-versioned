@@ -1,3 +1,7 @@
+> **Rebuild in progress:** the new planning system lives in [`scp/`](scp/README.md). Its blueprint is
+> [`scp/docs/BLUEPRINT.md`](scp/docs/BLUEPRINT.md). Everything below describes the legacy app, kept for reference
+> until `scp/` covers it.
+
 # Enterprise Simulator v2.0
 
 Production-grade supply chain optimization platform. 7 MILP/LP solvers, 17 forecast models, Monte Carlo VaR/CVaR, and full financial analytics. Render-deployable.

@@ -11,7 +11,7 @@ from collections import Counter
 from datetime import timedelta
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from ..model import (
     Dataset, DemandKind, LocationType, SafetyStockMethod, Strategy,
@@ -23,6 +23,8 @@ Severity = Literal["error", "warning"]
 
 
 class Issue(BaseModel):
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     code: str
     severity: Severity
     object_type: str

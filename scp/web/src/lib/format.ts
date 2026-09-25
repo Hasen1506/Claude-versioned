@@ -1,0 +1,46 @@
+const nf0 = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
+const nf1 = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 1 });
+const nf2 = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
+
+/** Quantities: integers stay integers, small fractional values keep precision. */
+export function qty(v: number | null | undefined): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  if (Math.abs(v) < 1e-9) return "0";
+  return Math.abs(v) >= 100 ? nf0.format(v) : Math.abs(v) >= 10 ? nf1.format(v) : nf2.format(v);
+}
+
+/** Compact money: ₹1.2 Cr / ₹4.5 L / ₹12.3K for INR; K/M/B otherwise. */
+export function money(v: number | null | undefined, currency = "INR"): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  const sym = currency === "INR" ? "₹" : currency === "USD" ? "$" : currency === "EUR" ? "€" : `${currency} `;
+  const a = Math.abs(v);
+  const sign = v < 0 ? "−" : "";
+  if (currency === "INR") {
+    if (a >= 1e7) return `${sign}${sym}${nf2.format(a / 1e7)} Cr`;
+    if (a >= 1e5) return `${sign}${sym}${nf2.format(a / 1e5)} L`;
+  } else {
+    if (a >= 1e9) return `${sign}${sym}${nf1.format(a / 1e9)}B`;
+    if (a >= 1e6) return `${sign}${sym}${nf1.format(a / 1e6)}M`;
+  }
+  if (a >= 1e3) return `${sign}${sym}${nf1.format(a / 1e3)}K`;
+  return `${sign}${sym}${nf2.format(a)}`;
+}
+
+export function pct(v: number | null | undefined, digits = 1): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  if (!Number.isFinite(v)) return "∞";
+  return `${(v * 100).toFixed(digits)}%`;
+}
+
+export function day(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" });
+}
+
+export const TYPE_LABEL: Record<string, string> = {
+  plant: "Plant", dc: "Distribution centre", warehouse: "Warehouse", store: "Store",
+  supplier: "Supplier", customer: "Customer",
+};
+
+export const ORDER_LABEL: Record<string, string> = { make: "Production", buy: "Purchase", transfer: "Transfer" };
