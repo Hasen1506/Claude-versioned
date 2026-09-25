@@ -1,5 +1,5 @@
 import type {
-  Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
+  ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   SchemaError, ValidationResult,
 } from "./types";
 
@@ -53,6 +53,13 @@ export const api = {
   /** Detailed schedule; `sequence` (resource → operation keys) fixes the order on those resources. */
   schedule: (dataset: Dataset, sequence?: Record<string, string[]>) =>
     call<ScheduleResult>("/api/schedule", { method: "POST", body: JSON.stringify({ dataset, sequence: sequence ?? null }) }),
+  actuals: (dataset: Dataset, asOf?: string) =>
+    call<ActualsView>("/api/actuals", { method: "POST", body: JSON.stringify({ dataset, as_of: asOf ?? null }) }),
+  roll: (dataset: Dataset, asOf: string) =>
+    call<RollResponse>("/api/actuals/roll", { method: "POST", body: JSON.stringify({ dataset, as_of: asOf }) }),
+  /** Firm planned orders into receipts: `ids`, or everything starting within the firm zone. */
+  firm: (dataset: Dataset, ids?: string[], withinDays?: number) =>
+    call<FirmResponse>("/api/orders/firm", { method: "POST", body: JSON.stringify({ dataset, ids: ids ?? null, within_days: withinDays ?? null }) }),
   forecastModels: () => call<ForecastModels>("/api/forecast/models"),
   forecast: (ds: Dataset) => post<ForecastResult>("/api/forecast", ds),
   release: (dataset: Dataset, keys?: string[]) =>

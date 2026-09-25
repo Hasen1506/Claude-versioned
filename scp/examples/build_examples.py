@@ -338,6 +338,50 @@ def released(data: dict) -> dict:
     return {**data, "demand": fc + [d for d in data["demand"] if d["kind"] != "forecast"]}
 
 
+def with_journal(data: dict) -> dict:
+    """First week of execution for the Execution stage demo: opening balances equal to on-hand the day before
+    the planning start, then goods receipts, deliveries against sales orders and day-to-day sales dated in
+    the week ahead — rolling forward one week turns them into stock, closed orders and an accuracy record."""
+    rng = random.Random(97)
+    movs: list[dict] = []
+
+    def add(day: date, typ: str, loc: str, prod: str, qty: float, **kw) -> None:
+        movs.append({"id": f"GM-{len(movs) + 1:05d}", "date": day.isoformat(), "type": typ, "location": loc,
+                     "product": prod, "qty": qty, **kw})
+
+    bal: dict[tuple[str, str], float] = {}
+    for lp in data["location_products"]:
+        if lp.get("on_hand", 0) > 0:
+            add(START - timedelta(days=1), "opening", lp["location"], lp["product"], lp["on_hand"], note="go-live stock take")
+            bal[(lp["location"], lp["product"])] = lp["on_hand"]
+    d = lambda k: START + timedelta(days=k)  # noqa: E731
+    add(d(1), "receipt", "DC-DELHI", "KT-15", 600, reference="STO-2201", counterparty="PLT-PUNE")
+    add(d(2), "receipt", "PLT-PUNE", "MG-500", 800, reference="MO-100455")
+    add(d(2), "sale", "DC-BHIWANDI", "MG-500", 450, reference="SO-88121", counterparty="CUS-WEST-TRADE")
+    add(d(4), "sale", "DC-DELHI", "MG-500", 700, reference="SO-88190", counterparty="CUS-NORTH-TRADE")
+    add(d(3), "scrap", "DC-BHIWANDI", "MG-750", 6, note="transit damage")
+    add(d(5), "adjustment", "PLT-PUNE", "RM-SWITCH", -120, note="cycle count")
+    serve = {ln["destination"]: ln["origin"] for ln in data["lanes"]}
+    week: dict[tuple[str, str], float] = {}
+    for x in data["demand"]:
+        if x["kind"] == "forecast" and START <= date.fromisoformat(x["date"]) < START + timedelta(days=7):
+            week[(x["location"], x["product"])] = week.get((x["location"], x["product"]), 0) + x["qty"]
+    for m in movs:
+        if m["type"] == "sale":
+            bal[(m["location"], m["product"])] -= m["qty"]
+    for (cus, prod), fc in sorted(week.items()):
+        dc = serve.get(cus)
+        if dc is None:
+            continue
+        total = round(fc * rng.uniform(0.7, 1.2))
+        for k, share in ((1, 0.45), (4, 0.55)):
+            q = min(round(total * share), bal.get((dc, prod), 0))
+            if q > 0:
+                add(d(k), "sale", dc, prod, q, counterparty=cus)
+                bal[(dc, prod)] -= q
+    return {**data, "movements": movs}
+
+
 def single_product() -> dict:
     """One plant, one product sold at the factory gate — the smallest useful network."""
     rng = random.Random(7)
@@ -388,7 +432,7 @@ def single_product() -> dict:
 
 
 def main() -> None:
-    for name, build in (("kitchenware_network", lambda: released(kitchenware())),
+    for name, build in (("kitchenware_network", lambda: with_journal(released(kitchenware()))),
                         ("single_product_plant", single_product)):
         data = build()
         Dataset.model_validate(data)  # fail loudly if an example drifts from the schema

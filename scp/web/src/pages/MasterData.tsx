@@ -200,5 +200,5 @@ function SettingsEditor() {
   );
 }
 
-export const DATA_GROUPS = ["Network", "Make & buy", "Planning data", "Demand inputs"] as const;
+export const DATA_GROUPS = ["Network", "Make & buy", "Planning data", "Demand inputs", "Execution"] as const;
 export { COLLECTIONS };

@@ -330,10 +330,164 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/actuals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Actuals */
+        post: operations["post_actuals_api_actuals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/actuals/roll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Roll */
+        post: operations["post_roll_api_actuals_roll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/orders/firm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Firm */
+        post: operations["post_firm_api_orders_firm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AccuracyRecord
+         * @description Forecast against actual sales for one series over one elapsed week (written by the roll-forward).
+         */
+        AccuracyRecord: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             * @description Exclusive
+             */
+            end: string;
+            /** Forecast */
+            forecast: number;
+            /** Actual */
+            actual: number;
+        };
+        /** AccuracyReport */
+        AccuracyReport: {
+            /** Series */
+            series: components["schemas"]["AccuracySeries"][];
+            /** Forecast */
+            forecast: number;
+            /** Actual */
+            actual: number;
+            /** Wmape */
+            wmape: number | null;
+            /** Bias */
+            bias: number | null;
+            /** Accuracy */
+            accuracy: number | null;
+            /** Periods */
+            periods: number;
+        };
+        /** AccuracySeries */
+        AccuracySeries: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Forecast */
+            forecast: number;
+            /** Actual */
+            actual: number;
+            /** Abs Error */
+            abs_error: number;
+            /** Wmape */
+            wmape: number | null;
+            /** Bias */
+            bias: number | null;
+            /** Accuracy */
+            accuracy: number | null;
+            /** Weeks */
+            weeks: components["schemas"]["AccuracyWeek"][];
+        };
+        /** AccuracyWeek */
+        AccuracyWeek: {
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Forecast */
+            forecast: number;
+            /** Actual */
+            actual: number;
+        };
+        /** ActualsRequest */
+        ActualsRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** As Of */
+            as_of?: string | null;
+        };
+        /** ActualsView */
+        ActualsView: {
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Stock */
+            stock: components["schemas"]["StockRow"][];
+            /** Open Orders */
+            open_orders: components["schemas"]["OpenOrderRow"][];
+            accuracy: components["schemas"]["AccuracyReport"];
+            /** Movements */
+            movements: number;
+            /** Unmatched */
+            unmatched: string[];
+        };
         /**
          * Allocation
          * @description Product allocation (PAL): caps what can be confirmed for a product (and optionally a set of
@@ -605,6 +759,52 @@ export interface components {
             hours: number;
         };
         /**
+         * ClosedOrder
+         * @description A completed order, logged by the roll-forward: the source of OTIF and supplier reliability.
+         */
+        ClosedOrder: {
+            /** Kind */
+            kind: string;
+            /** Id */
+            id: string;
+            /**
+             * Location
+             * @description Customer (sales) or receiving location
+             */
+            location: string;
+            /** Product */
+            product: string;
+            /**
+             * Counterparty
+             * @description Shipping location, supplier or source
+             */
+            counterparty?: string | null;
+            /** Ordered Qty */
+            ordered_qty: number;
+            /** Delivered Qty */
+            delivered_qty: number;
+            /**
+             * Due Date
+             * Format: date
+             * @description Requested date (sales) or due date (receipts)
+             */
+            due_date: string;
+            /**
+             * Promised Date
+             * @description Sales: last confirmed date, if it was confirmed
+             */
+            promised_date?: string | null;
+            /** First Delivery */
+            first_delivery?: string | null;
+            /** Last Delivery */
+            last_delivery?: string | null;
+            /**
+             * Closed On
+             * Format: date
+             */
+            closed_on: string;
+        };
+        /**
          * Confirmation
          * @description A persisted schedule line: what was promised to a sales order, from where and when.
          */
@@ -724,6 +924,13 @@ export interface components {
             /** Confirmations */
             confirmations?: components["schemas"]["Confirmation"][];
             promising?: components["schemas"]["PromiseSettings"];
+            /** Movements */
+            movements?: components["schemas"]["GoodsMovement"][];
+            /** Closed Orders */
+            closed_orders?: components["schemas"]["ClosedOrder"][];
+            /** Accuracy */
+            accuracy?: components["schemas"]["AccuracyRecord"][];
+            execution?: components["schemas"]["ExecutionSettings"];
         };
         /** DdmrpRow */
         DdmrpRow: {
@@ -899,6 +1106,11 @@ export interface components {
              */
             complete_delivery: boolean;
             /**
+             * Ordered Qty
+             * @description Sales order: the originally ordered quantity; `qty` is what is still open. Set by the roll-forward on the first delivery (empty = nothing delivered yet)
+             */
+            ordered_qty?: number | null;
+            /**
              * Period Days
              * @description Forecast only: the record covers [date, date + period_days) and is spread evenly over the working days of that window (PIR splitting). Empty = the whole quantity is due on `date`.
              */
@@ -944,6 +1156,72 @@ export interface components {
             locations: number;
             /** Products */
             products: number;
+        };
+        /** ExecutionSettings */
+        ExecutionSettings: {
+            /**
+             * Firm Zone Days
+             * @description Firming converts planned orders starting within this many days of the planning start
+             * @default 14
+             */
+            firm_zone_days: number;
+            /**
+             * Delivery Tolerance
+             * @description Under-delivery still counted as in full, and that closes an order
+             * @default 0.02
+             */
+            delivery_tolerance: number;
+        };
+        /** FirmReport */
+        FirmReport: {
+            /** Ok */
+            ok: boolean;
+            /** Firmed */
+            firmed: components["schemas"]["FirmedOrder"][];
+            /** Skipped */
+            skipped: {
+                [key: string]: string;
+            };
+        };
+        /** FirmRequest */
+        FirmRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Ids */
+            ids?: string[] | null;
+            /** Within Days */
+            within_days?: number | null;
+        };
+        /** FirmResponse */
+        FirmResponse: {
+            dataset: components["schemas"]["Dataset"];
+            report: components["schemas"]["FirmReport"];
+        };
+        /** FirmedOrder */
+        FirmedOrder: {
+            /** Planned Id */
+            planned_id: string;
+            /** Receipt Id */
+            receipt_id: string;
+            /** Kind */
+            kind: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Start Date
+             * Format: date
+             */
+            start_date: string;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /** Reservations */
+            reservations: number;
         };
         /** Flow */
         Flow: {
@@ -1180,6 +1458,50 @@ export interface components {
             license: string;
             /** Detail */
             detail: string;
+        };
+        /** GoodsMovement */
+        GoodsMovement: {
+            /** Id */
+            id: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            type: components["schemas"]["MovementType"];
+            /**
+             * Location
+             * @description Stocking location whose stock changes
+             */
+            location: string;
+            /** Product */
+            product: string;
+            /**
+             * Qty
+             * @description Positive; signed only for adjustments
+             */
+            qty: number;
+            /**
+             * Reference
+             * @description Receipt or sales order id
+             */
+            reference?: string | null;
+            /**
+             * Counterparty
+             * @description Customer (sale) or supplier (receipt)
+             */
+            counterparty?: string | null;
+            /**
+             * Final
+             * @description Delivery completed: closes the referenced order even if short
+             * @default false
+             */
+            final: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1723,6 +2045,11 @@ export interface components {
             rank: number | null;
         };
         /**
+         * MovementType
+         * @enum {string}
+         */
+        MovementType: "opening" | "receipt" | "issue" | "sale" | "transfer_out" | "scrap" | "adjustment";
+        /**
          * MrpType
          * @enum {string}
          */
@@ -2011,6 +2338,42 @@ export interface components {
              */
             cannibalisation: number;
         };
+        /** OpenOrderRow */
+        OpenOrderRow: {
+            /** Kind */
+            kind: string;
+            /** Id */
+            id: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Counterparty */
+            counterparty: string | null;
+            /** Ordered */
+            ordered: number;
+            /** Delivered */
+            delivered: number;
+            /** Open */
+            open: number;
+            /**
+             * In Transit
+             * @default 0
+             */
+            in_transit: number;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /** Past Due */
+            past_due: boolean;
+            /**
+             * Reservations Open
+             * @default 0
+             */
+            reservations_open: number;
+        };
         /** Operation */
         Operation: {
             /** Seq */
@@ -2053,6 +2416,23 @@ export interface components {
              * @description Resource units one order may run on in parallel (default: all units of the resource)
              */
             parallel_units?: number | null;
+        };
+        /** OrderChange */
+        OrderChange: {
+            /** Kind */
+            kind: string;
+            /** Id */
+            id: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Open Before */
+            open_before: number;
+            /** Open After */
+            open_after: number;
+            /** Closed */
+            closed: boolean;
         };
         /** OrderPromise */
         OrderPromise: {
@@ -2696,6 +3076,32 @@ export interface components {
             past_due: boolean;
         };
         /**
+         * Reservation
+         * @description What a firm order still has to draw from stock (S/4 RESB / stock-transport requirement): a production
+         *     order's components, or a stock transfer's goods at its shipping location until they are issued.
+         */
+        Reservation: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Qty
+             * @description Still to be issued
+             */
+            qty: number;
+            /**
+             * Required Qty
+             * @description Originally required; empty = `qty` (nothing issued yet)
+             */
+            required_qty?: number | null;
+        };
+        /**
          * Resource
          * @description A work center: machine, line, labour pool or tool (≈ S/4 work center / PP-DS resource).
          */
@@ -2816,6 +3222,53 @@ export interface components {
             finite: boolean;
             /** Buckets */
             buckets: components["schemas"]["ResourceBucket"][];
+        };
+        /** RollReport */
+        RollReport: {
+            /** Ok */
+            ok: boolean;
+            /**
+             * From Date
+             * Format: date
+             */
+            from_date: string;
+            /**
+             * To Date
+             * Format: date
+             */
+            to_date: string;
+            /** Stock */
+            stock: components["schemas"]["StockChange"][];
+            /** Orders */
+            orders: components["schemas"]["OrderChange"][];
+            /** Closed */
+            closed: components["schemas"]["ClosedOrder"][];
+            /** Accuracy */
+            accuracy: components["schemas"]["AccuracyRecord"][];
+            /** Forecast Dropped */
+            forecast_dropped: number;
+            /** Forecast Prorated */
+            forecast_prorated: number;
+            /** History Added */
+            history_added: number;
+            /** Confirmations Trimmed */
+            confirmations_trimmed: number;
+            /** Warnings */
+            warnings: string[];
+        };
+        /** RollRequest */
+        RollRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+        };
+        /** RollResponse */
+        RollResponse: {
+            dataset: components["schemas"]["Dataset"];
+            report: components["schemas"]["RollReport"];
         };
         /** RuleInfo */
         RuleInfo: {
@@ -3168,18 +3621,36 @@ export interface components {
             location: string;
             /** Product */
             product: string;
-            /** Qty */
+            /**
+             * Qty
+             * @description Still to be received
+             */
             qty: number;
+            /**
+             * Ordered Qty
+             * @description Originally ordered; empty = `qty` (nothing received yet)
+             */
+            ordered_qty?: number | null;
             /**
              * Due Date
              * Format: date
              */
             due_date: string;
             /**
+             * Start Date
+             * @description Production start / shipping date (information; scheduling releases a production order from here)
+             */
+            start_date?: string | null;
+            /**
              * Source
-             * @description Supplier, source or lane id (information)
+             * @description Purchasing source, production source or lane id
              */
             source?: string | null;
+            /**
+             * Reservations
+             * @description Components (production) or goods at the origin (transfer) still to be issued; planning reserves them
+             */
+            reservations?: components["schemas"]["Reservation"][];
         };
         /** ScheduledReceiptOut */
         ScheduledReceiptOut: {
@@ -3568,6 +4039,40 @@ export interface components {
              * @default 1
              */
             capacity_factor: number;
+        };
+        /** StockChange */
+        StockChange: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Before */
+            before: number;
+            /** After */
+            after: number;
+        };
+        /** StockRow */
+        StockRow: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Master On Hand */
+            master_on_hand: number;
+            /** Movement Stock */
+            movement_stock: number | null;
+            /** Difference */
+            difference: number;
+            /** Movements */
+            movements: number;
+            /** Last Date */
+            last_date: string | null;
+            /** By Type */
+            by_type: {
+                [key: string]: number;
+            };
+            /** Negative On */
+            negative_on: string | null;
         };
         /**
          * Strategy
@@ -4283,6 +4788,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlanResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_actuals_api_actuals_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActualsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActualsView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_roll_api_actuals_roll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RollRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RollResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_firm_api_orders_firm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FirmResponse"];
                 };
             };
             /** @description Validation Error */

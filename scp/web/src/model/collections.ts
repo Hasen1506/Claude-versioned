@@ -6,7 +6,8 @@ type Obj = Record<string, unknown>;
 
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
-  | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides";
+  | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides"
+  | "movements" | "closed_orders" | "accuracy";
 
 export interface Column {
   label: string;
@@ -23,7 +24,7 @@ export interface CollectionDef {
   issueType: string;
   keyOf: (o: Obj, index: number) => string;
   columns: Column[];
-  group: "Network" | "Make & buy" | "Planning data" | "Demand inputs";
+  group: "Network" | "Make & buy" | "Planning data" | "Demand inputs" | "Execution";
   blurb: string;
 }
 
@@ -209,6 +210,36 @@ export const COLLECTIONS: CollectionDef[] = [
       { label: "Period of", get: (o) => s(o.date) },
       { label: "Change", get: (o) => (o.qty !== null && o.qty !== undefined ? `= ${o.qty}` : `${Math.round(((o.change as number) ?? 0) * 100)}%`) },
       { label: "Reason", get: (o) => s(o.reason) },
+    ],
+  },
+  {
+    key: "movements", label: "Goods movements", singular: "goods movement", defName: "GoodsMovement", issueType: "movement",
+    group: "Execution", keyOf: (o) => s(o.id),
+    blurb: "The stock journal: openings, goods receipts, component issues, sales, transfer issues, scrap and count adjustments. On-hand is the sum of these.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Date", get: (o) => s(o.date) }, { label: "Type", get: (o) => s(o.type) },
+      { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
+      { label: "Reference", get: (o) => s(o.reference) }, { label: "Qty", get: (o) => o.qty as number, num: true },
+    ],
+  },
+  {
+    key: "closed_orders", label: "Closed orders", singular: "closed order", defName: "ClosedOrder", issueType: "closed_order",
+    group: "Execution", keyOf: (o) => `${s(o.kind)}|${s(o.id)}`,
+    blurb: "Orders the roll-forward completed, with due and delivery dates: the record OTIF and supplier reliability are measured on.",
+    columns: [
+      { label: "Kind", get: (o) => s(o.kind) }, { label: "Id", get: (o) => s(o.id) }, { label: "Product", get: (o) => s(o.product) },
+      { label: "Due", get: (o) => s(o.due_date) }, { label: "Delivered", get: (o) => s(o.last_delivery) },
+      { label: "Ordered", get: (o) => o.ordered_qty as number, num: true }, { label: "Qty", get: (o) => o.delivered_qty as number, num: true },
+    ],
+  },
+  {
+    key: "accuracy", label: "Forecast accuracy log", singular: "accuracy record", defName: "AccuracyRecord", issueType: "accuracy",
+    group: "Execution", keyOf: (_o, i) => `#${i}`,
+    blurb: "Forecast against actual sales per series and elapsed week, logged by every roll-forward.",
+    columns: [
+      { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
+      { label: "Week of", get: (o) => s(o.start) }, { label: "Forecast", get: (o) => o.forecast as number, num: true },
+      { label: "Actual", get: (o) => o.actual as number, num: true },
     ],
   },
 ];

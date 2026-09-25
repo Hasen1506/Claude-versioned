@@ -184,7 +184,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .spine .lead { display: flex; flex-direction: column; justify-content: center; gap: 1px; padding: 0 14px; background: var(--ink); color: var(--surface); flex: none; }
 .spine .lead b { font-family: var(--display); font-size: 10px; font-weight: 800; letter-spacing: 0.1em; white-space: nowrap; }
 .spine .lead span { font-family: var(--mono); font-size: 9px; color: var(--ink-accent); white-space: nowrap; }
-.spine a { flex: 1; min-width: 132px; display: flex; align-items: center; gap: 9px; padding: 7px 10px; color: var(--text); border-right: 1px solid var(--border); }
+.spine a { flex: 1; min-width: 132px; overflow: hidden; display: flex; align-items: center; gap: 9px; padding: 7px 10px; color: var(--text); border-right: 1px solid var(--border); }
 .spine a:hover { background: var(--surface-3); text-decoration: none; }
 .spine a.on { background: var(--surface); box-shadow: inset 0 -3px 0 var(--hl); }
 .spine .dot { width: 9px; height: 9px; flex: none; border: 1.5px solid var(--ink); background: var(--text-3); }
@@ -192,7 +192,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .spine .dot.stale { background: var(--warning); }
 .spine .dot.blocked { background: var(--critical); }
 .spine .name { font-family: var(--display); font-size: 11px; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; white-space: nowrap; }
-.spine .val { display: block; font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--text-2); white-space: nowrap; }
+.spine .val { display: block; font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .spine .val.stale { color: var(--warning-text); }
 .pulse { animation: pulse 0.9s ease-out 1; }
 @keyframes pulse { 0% { box-shadow: inset 0 0 0 2px var(--warning); } 100% { box-shadow: inset 0 0 0 2px transparent; } }
@@ -424,3 +424,8 @@ td input.cell:focus { outline: 2px solid var(--accent); }
 .form { display: flex; flex-direction: column; gap: 2px; }
 .form .field > .label { padding-top: 7px; color: var(--text-2); font-size: 12.5px; font-weight: 600; }
 .form > .btn { margin-top: 10px; align-self: flex-start; }
+
+/* ---- execution ---- */
+table.t tr.dim td { color: var(--text-3); }
+.flowbar { display: flex; flex-direction: column; gap: 2px; width: 120px; }
+.flowbar span { display: block; height: 5px; border-radius: 0 3px 3px 0; min-width: 1px; }

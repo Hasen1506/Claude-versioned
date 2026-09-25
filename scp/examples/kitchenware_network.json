@@ -8109,5 +8109,388 @@
    "to_group": "MG",
    "hours": 2.0
   }
+ ],
+ "movements": [
+  {
+   "id": "GM-00001",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "DC-BHIWANDI",
+   "product": "MG-500",
+   "qty": 2600,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00002",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "DC-BHIWANDI",
+   "product": "MG-750",
+   "qty": 1700,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00003",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "DC-BHIWANDI",
+   "product": "KT-15",
+   "qty": 3200,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00004",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "DC-DELHI",
+   "product": "MG-500",
+   "qty": 1500,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00005",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "DC-DELHI",
+   "product": "MG-750",
+   "qty": 900,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00006",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "DC-DELHI",
+   "product": "KT-15",
+   "qty": 1500,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00007",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "MG-500",
+   "qty": 1400,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00008",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "MG-750",
+   "qty": 900,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00009",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "KT-15",
+   "qty": 1600,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00010",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "MOT-500",
+   "qty": 2600,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00011",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "MOT-750",
+   "qty": 1700,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00012",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "RM-CU-WIRE",
+   "qty": 5200,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00013",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "RM-STAMP",
+   "qty": 7500,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00014",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "RM-JARSET",
+   "qty": 6500,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00015",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "RM-BODY-MG",
+   "qty": 6000,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00016",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "RM-BODY-KT",
+   "qty": 4000,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00017",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "RM-HEATER",
+   "qty": 14000,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00018",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "RM-SWITCH",
+   "qty": 42000,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00019",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "PK-CARTON-L",
+   "qty": 6000,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00020",
+   "date": "2026-09-27",
+   "type": "opening",
+   "location": "PLT-PUNE",
+   "product": "PK-CARTON-S",
+   "qty": 5000,
+   "note": "go-live stock take"
+  },
+  {
+   "id": "GM-00021",
+   "date": "2026-09-29",
+   "type": "receipt",
+   "location": "DC-DELHI",
+   "product": "KT-15",
+   "qty": 600,
+   "reference": "STO-2201",
+   "counterparty": "PLT-PUNE"
+  },
+  {
+   "id": "GM-00022",
+   "date": "2026-09-30",
+   "type": "receipt",
+   "location": "PLT-PUNE",
+   "product": "MG-500",
+   "qty": 800,
+   "reference": "MO-100455"
+  },
+  {
+   "id": "GM-00023",
+   "date": "2026-09-30",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-500",
+   "qty": 450,
+   "reference": "SO-88121",
+   "counterparty": "CUS-WEST-TRADE"
+  },
+  {
+   "id": "GM-00024",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-DELHI",
+   "product": "MG-500",
+   "qty": 700,
+   "reference": "SO-88190",
+   "counterparty": "CUS-NORTH-TRADE"
+  },
+  {
+   "id": "GM-00025",
+   "date": "2026-10-01",
+   "type": "scrap",
+   "location": "DC-BHIWANDI",
+   "product": "MG-750",
+   "qty": 6,
+   "note": "transit damage"
+  },
+  {
+   "id": "GM-00026",
+   "date": "2026-10-03",
+   "type": "adjustment",
+   "location": "PLT-PUNE",
+   "product": "RM-SWITCH",
+   "qty": -120,
+   "note": "cycle count"
+  },
+  {
+   "id": "GM-00027",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "KT-15",
+   "qty": 166,
+   "counterparty": "CUS-ECOM"
+  },
+  {
+   "id": "GM-00028",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "KT-15",
+   "qty": 202,
+   "counterparty": "CUS-ECOM"
+  },
+  {
+   "id": "GM-00029",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-500",
+   "qty": 118,
+   "counterparty": "CUS-ECOM"
+  },
+  {
+   "id": "GM-00030",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-500",
+   "qty": 145,
+   "counterparty": "CUS-ECOM"
+  },
+  {
+   "id": "GM-00031",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-750",
+   "qty": 97,
+   "counterparty": "CUS-ECOM"
+  },
+  {
+   "id": "GM-00032",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-750",
+   "qty": 119,
+   "counterparty": "CUS-ECOM"
+  },
+  {
+   "id": "GM-00033",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-DELHI",
+   "product": "MG-500",
+   "qty": 204,
+   "counterparty": "CUS-NORTH-TRADE"
+  },
+  {
+   "id": "GM-00034",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-DELHI",
+   "product": "MG-500",
+   "qty": 250,
+   "counterparty": "CUS-NORTH-TRADE"
+  },
+  {
+   "id": "GM-00035",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-DELHI",
+   "product": "MG-750",
+   "qty": 116,
+   "counterparty": "CUS-NORTH-TRADE"
+  },
+  {
+   "id": "GM-00036",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-DELHI",
+   "product": "MG-750",
+   "qty": 141,
+   "counterparty": "CUS-NORTH-TRADE"
+  },
+  {
+   "id": "GM-00037",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "KT-15",
+   "qty": 260,
+   "counterparty": "CUS-WEST-TRADE"
+  },
+  {
+   "id": "GM-00038",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "KT-15",
+   "qty": 318,
+   "counterparty": "CUS-WEST-TRADE"
+  },
+  {
+   "id": "GM-00039",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-500",
+   "qty": 266,
+   "counterparty": "CUS-WEST-TRADE"
+  },
+  {
+   "id": "GM-00040",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-500",
+   "qty": 326,
+   "counterparty": "CUS-WEST-TRADE"
+  },
+  {
+   "id": "GM-00041",
+   "date": "2026-09-29",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-750",
+   "qty": 115,
+   "counterparty": "CUS-WEST-TRADE"
+  },
+  {
+   "id": "GM-00042",
+   "date": "2026-10-02",
+   "type": "sale",
+   "location": "DC-BHIWANDI",
+   "product": "MG-750",
+   "qty": 140,
+   "counterparty": "CUS-WEST-TRADE"
+  }
  ]
 }

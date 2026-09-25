@@ -5,6 +5,7 @@ request. Plan versions and persistence arrive in P7/P8 (see docs/BLUEPRINT.md §
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 from pathlib import Path
 from typing import Literal
@@ -14,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from .. import __version__
+from ..actuals import ActualsView, FirmReport, RollReport, actuals_view, firm_orders, roll_forward
 from ..demand import ForecastResult, ReleaseResult, release, run_forecast
 from ..demand import foundation
 from ..demand.models import SPECS
@@ -297,6 +299,53 @@ def post_promise_commit(req: PromiseCommitRequest) -> PromiseCommitResponse:
 @app.post("/api/plan", response_model=PlanResult)
 def post_plan(ds: Dataset) -> PlanResult:
     return run_mrp(ds)
+
+
+class ActualsRequest(Out):
+    dataset: Dataset
+    as_of: dt.date | None = None
+
+
+@app.post("/api/actuals", response_model=ActualsView)
+def post_actuals(req: ActualsRequest) -> ActualsView:
+    return actuals_view(req.dataset, req.as_of)
+
+
+class RollRequest(Out):
+    dataset: Dataset
+    as_of: dt.date
+
+
+class RollResponse(Out):
+    dataset: Dataset
+    report: RollReport
+
+
+@app.post("/api/actuals/roll", response_model=RollResponse)
+def post_roll(req: RollRequest) -> RollResponse:
+    new, rep = roll_forward(req.dataset, req.as_of)
+    if not rep.ok:
+        raise HTTPException(409, "; ".join(rep.warnings))
+    return RollResponse(dataset=new, report=rep)
+
+
+class FirmRequest(Out):
+    dataset: Dataset
+    ids: list[str] | None = None          # planned order ids; None = everything starting in the firm zone
+    within_days: int | None = None        # overrides the dataset's firm zone
+
+
+class FirmResponse(Out):
+    dataset: Dataset
+    report: FirmReport
+
+
+@app.post("/api/orders/firm", response_model=FirmResponse)
+def post_firm(req: FirmRequest) -> FirmResponse:
+    new, rep = firm_orders(req.dataset, run_mrp(req.dataset), req.ids, req.within_days)
+    if not rep.ok:
+        raise HTTPException(409, "the readiness gate has errors; fix them before firming orders")
+    return FirmResponse(dataset=new, report=rep)
 
 
 # --- single-page app (built web client) --------------------------------------------------------

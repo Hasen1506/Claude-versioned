@@ -100,3 +100,16 @@ def test_promise_flow():
     assert len(m["dataset"]["confirmations"]) >= 9
     b = client.post("/api/promise/bop", json=m["dataset"]).json()
     assert b["mode"] == "bop" and len(b["bop"]) == 9
+
+
+def test_actuals_flow():
+    d = example_dict("kitchenware_network")
+    v = client.post("/api/actuals", json={"dataset": d}).json()
+    assert v["movements"] > 0 and all(r["difference"] == 0 for r in v["stock"])
+    r = client.post("/api/actuals/roll", json={"dataset": d, "as_of": "2026-10-05"}).json()
+    assert r["report"]["ok"] and r["dataset"]["settings"]["planning_start"] == "2026-10-05"
+    assert {c["id"] for c in r["report"]["closed"]} >= {"SO-88121", "MO-100455", "STO-2201"}
+    assert client.post("/api/actuals/roll", json={"dataset": d, "as_of": "2026-01-01"}).status_code == 409
+    f = client.post("/api/orders/firm", json={"dataset": r["dataset"]}).json()
+    assert f["report"]["ok"] and f["report"]["firmed"]
+    assert len(f["dataset"]["receipts"]) == len(r["dataset"]["receipts"]) + len(f["report"]["firmed"])

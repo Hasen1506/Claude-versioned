@@ -1,3 +1,6 @@
+from .actuals import (
+    AccuracyRecord, ClosedOrder, ExecutionSettings, GoodsMovement, MovementType,
+)
 from .common import (
     BucketSize, DemandKind, LocationType, LotSizePolicy, MrpType, ProductType, ReceiptKind,
     ResourceKind, SafetyStockMethod, Strategy, TransportMode,
@@ -18,9 +21,10 @@ from .master import (
     ProductionSource, PurchasingSource, Resource, SafetyStockPolicy, Settings, TransportLane,
     UomConversion,
 )
-from .transactional import DemandRecord, SalesHistory, ScheduledReceipt
+from .transactional import DemandRecord, Reservation, SalesHistory, ScheduledReceipt
 
 __all__ = [
+    "AccuracyRecord", "ClosedOrder", "ExecutionSettings", "GoodsMovement", "MovementType", "Reservation",
     "DEFAULT_MODELS", "Allocation", "BopSegment", "Confirmation", "ConfirmationStrategy", "PromiseSettings", "DemandEvent", "EventKind", "ForecastModelId", "ForecastOverride", "ForecastPeriod",
     "ForecastSettings", "InventorySettings", "NpiRule", "OutlierMethod", "SelectionMetric",
     "BomItem", "BucketSize", "Calendar", "Changeover", "Dataset", "DemandKind", "DemandRecord", "LaneMode",

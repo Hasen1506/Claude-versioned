@@ -1,0 +1,190 @@
+"""Stock, open quantities and forecast accuracy from the goods-movement journal (pure functions)."""
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import date, timedelta
+
+from ..model import AccuracyRecord, Dataset, DemandKind, GoodsMovement, MovementType
+from .result import AccuracyReport, AccuracySeries, AccuracyWeek, OpenOrderRow, StockRow
+
+EPS = 1e-6
+Node = tuple[str, str]
+
+
+def before(ds: Dataset, as_of: date) -> list[GoodsMovement]:
+    return [m for m in ds.movements if m.date < as_of]
+
+
+def stock(movs: list[GoodsMovement]) -> dict[Node, float]:
+    """On-hand per node = Σ signed movements."""
+    out: dict[Node, float] = defaultdict(float)
+    for m in movs:
+        out[(m.location, m.product)] += m.signed
+    return dict(out)
+
+
+def stock_rows(ds: Dataset, as_of: date) -> list[StockRow]:
+    movs = sorted(before(ds, as_of), key=lambda m: (m.date, m.id))
+    by_node: dict[Node, list[GoodsMovement]] = defaultdict(list)
+    for m in movs:
+        by_node[(m.location, m.product)].append(m)
+    nodes = set(by_node) | {(lp.location, lp.product) for lp in ds.location_products if lp.on_hand > 0}
+    rows = []
+    for n in sorted(nodes):
+        lp = ds.location_product_by_key.get(n)
+        master = lp.on_hand if lp else 0.0
+        ms = by_node.get(n, [])
+        bal, neg = 0.0, None
+        by_type: dict[str, float] = defaultdict(float)
+        for m in ms:
+            bal += m.signed
+            by_type[m.type.value] += m.signed
+            if bal < -EPS and neg is None:
+                neg = m.date
+        rows.append(StockRow(location=n[0], product=n[1], master_on_hand=master,
+                             movement_stock=round(bal, 6) if ms else None,
+                             difference=round(max(0.0, bal) - master, 6) if ms else 0.0, movements=len(ms),
+                             last_date=ms[-1].date if ms else None, by_type=dict(by_type), negative_on=neg))
+    return rows
+
+
+def _sum(movs: list[GoodsMovement], types: set[MovementType]) -> tuple[dict, dict, dict, set]:
+    """Quantity, first and last date per (reference, location, product), and references closed as final."""
+    qty: dict[tuple[str, str, str], float] = defaultdict(float)
+    first: dict[tuple[str, str, str], date] = {}
+    last: dict[tuple[str, str, str], date] = {}
+    final: set[str] = set()
+    for m in movs:
+        if m.type not in types or not m.reference:
+            continue
+        k = (m.reference, m.location, m.product)
+        qty[k] += m.qty
+        first[k] = min(first.get(k, m.date), m.date)
+        last[k] = max(last.get(k, m.date), m.date)
+        if m.final:
+            final.add(m.reference)
+    return qty, first, last, final
+
+
+def by_ref(d: dict, ref: str, product: str, location: str | None = None) -> float:
+    return sum(v for (r, lo, p), v in d.items() if r == ref and p == product and (location is None or lo == location))
+
+
+def open_orders(ds: Dataset, as_of: date) -> list[OpenOrderRow]:
+    movs = before(ds, as_of)
+    got, *_ = _sum(movs, {MovementType.RECEIPT})
+    iss, *_ = _sum(movs, {MovementType.ISSUE, MovementType.TRANSFER_OUT})
+    sold, *_ = _sum(movs, {MovementType.SALE})
+    rows = []
+    for rc in ds.receipts:
+        ordered = rc.ordered_qty if rc.ordered_qty is not None else rc.qty
+        delivered = by_ref(got, rc.id, rc.product, rc.location)
+        open_rv = sum(max(0.0, (rv.required_qty if rv.required_qty is not None else rv.qty)
+                          - by_ref(iss, rc.id, rv.product, rv.location)) for rv in rc.reservations)
+        transit = 0.0
+        if rc.kind.value == "transfer":
+            shipped = sum(v for (r, lo, p), v in iss.items() if r == rc.id and p == rc.product and lo != rc.location)
+            transit = max(0.0, shipped - delivered)
+        rows.append(OpenOrderRow(kind=rc.kind.value, id=rc.id, location=rc.location, product=rc.product,
+                                 counterparty=counterparty(ds, rc), ordered=ordered, delivered=delivered,
+                                 open=max(0.0, ordered - delivered), in_transit=transit, due_date=rc.due_date,
+                                 past_due=rc.due_date < as_of and ordered - delivered > EPS,
+                                 reservations_open=open_rv))
+    for d in ds.demand:
+        if d.kind is not DemandKind.SALES_ORDER or not d.id:
+            continue
+        ordered = d.ordered_qty if d.ordered_qty is not None else d.qty
+        delivered = by_ref(sold, d.id, d.product)
+        ship = sorted({lo for (r, lo, p) in sold if r == d.id})
+        rows.append(OpenOrderRow(kind="sales", id=d.id, location=d.location, product=d.product,
+                                 counterparty=ship[0] if ship else None, ordered=ordered, delivered=delivered,
+                                 open=max(0.0, ordered - delivered), due_date=d.date,
+                                 past_due=d.date < as_of and ordered - delivered > EPS))
+    return rows
+
+
+def counterparty(ds: Dataset, rc) -> str | None:
+    src = rc.source or ""
+    if rc.kind.value == "purchase" and src in ds.purchasing_source_by_id:
+        return ds.purchasing_source_by_id[src].supplier
+    if rc.kind.value == "transfer" and src in ds.lane_by_id:
+        return ds.lane_by_id[src].origin
+    return rc.source
+
+
+def unmatched(ds: Dataset) -> list[str]:
+    known = {r.id for r in ds.receipts} | {d.id for d in ds.demand if d.id} | {c.id for c in ds.closed_orders}
+    return [m.id for m in ds.movements if m.reference and m.reference not in known]
+
+
+# ---- forecast accuracy -------------------------------------------------------------------------------
+def demand_keys(ds: Dataset) -> set[Node]:
+    return {(d.location, d.product) for d in ds.demand} | {(h.location, h.product) for h in ds.history}
+
+
+def sale_key(m: GoodsMovement, keys: set[Node]) -> Node:
+    """Where a sale counts as demand: the customer if demand is planned there, else the shipping location."""
+    if m.counterparty and (m.counterparty, m.product) in keys:
+        return (m.counterparty, m.product)
+    return (m.location, m.product)
+
+
+def forecast_in(ds: Dataset, start: date, end: date) -> dict[Node, float]:
+    """Forecast quantity falling in [start, end), period records spread evenly over their calendar days."""
+    out: dict[Node, float] = defaultdict(float)
+    for d in ds.demand:
+        if d.kind is not DemandKind.FORECAST:
+            continue
+        n = d.period_days or 1
+        lo, hi = max(d.date, start), min(d.date + timedelta(days=n), end)
+        if hi > lo:
+            out[(d.location, d.product)] += d.qty * (hi - lo).days / n
+    return dict(out)
+
+
+def accuracy_records(ds: Dataset, start: date, end: date) -> list[AccuracyRecord]:
+    """One record per series and elapsed week of [start, end)."""
+    keys = demand_keys(ds)
+    out: list[AccuracyRecord] = []
+    w = start
+    while w < end:
+        we = min(w + timedelta(days=7), end)
+        fc = forecast_in(ds, w, we)
+        act: dict[Node, float] = defaultdict(float)
+        for m in ds.movements:
+            if m.type is MovementType.SALE and w <= m.date < we:
+                act[sale_key(m, keys)] += m.qty
+        for n in sorted(set(fc) | set(act)):
+            out.append(AccuracyRecord(location=n[0], product=n[1], start=w, end=we, forecast=round(fc.get(n, 0.0), 6),
+                                      actual=round(act.get(n, 0.0), 6)))
+        w = we
+    return out
+
+
+def _ratios(f: float, a: float, err: float) -> tuple[float | None, float | None, float | None]:
+    if a <= EPS:
+        return None, None, None
+    wm = err / a
+    return wm, (f - a) / a, max(0.0, 1.0 - wm)
+
+
+def accuracy_report(records: list[AccuracyRecord]) -> AccuracyReport:
+    by: dict[Node, list[AccuracyRecord]] = defaultdict(list)
+    for r in records:
+        by[(r.location, r.product)].append(r)
+    series = []
+    tf = ta = te = 0.0
+    for n in sorted(by):
+        rs = sorted(by[n], key=lambda r: r.start)
+        f = sum(r.forecast for r in rs)
+        a = sum(r.actual for r in rs)
+        e = sum(abs(r.forecast - r.actual) for r in rs)
+        wm, bias, acc = _ratios(f, a, e)
+        series.append(AccuracySeries(location=n[0], product=n[1], forecast=f, actual=a, abs_error=e, wmape=wm,
+                                     bias=bias, accuracy=acc,
+                                     weeks=[AccuracyWeek(start=r.start, end=r.end, forecast=r.forecast, actual=r.actual)
+                                            for r in rs]))
+        tf, ta, te = tf + f, ta + a, te + e
+    wm, bias, acc = _ratios(tf, ta, te)
+    return AccuracyReport(series=series, forecast=tf, actual=ta, wmape=wm, bias=bias, accuracy=acc,
+                          periods=len({r.start for r in records}))

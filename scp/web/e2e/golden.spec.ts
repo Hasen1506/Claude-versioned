@@ -257,3 +257,35 @@ test("promising: check → CTP simulation → commit → supply shrinks → at r
   await page.goto("/#/promise");
   await expect(page.getByText(/promises at risk/)).toHaveCount(0);
 });
+
+test("execution: journal → stock in sync → ship → roll forward → accuracy → firm planned orders", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("Kaveri Kitchenware").click();
+  await expect(page.locator(".net .node")).toHaveCount(12);
+  await page.goto("/#/execution");
+  await page.getByRole("button", { name: "Read journal" }).click();
+  await expect(page.getByText("On-hand reconciliation")).toBeVisible();
+  await expect(page.locator(".tile", { hasText: "Out of sync" }).locator(".value")).toHaveText("0");
+
+  // deliver the rest of SO-88190 inside the coming week
+  await page.goto("/#/execution/orders");
+  await page.locator('input[id="post-date"]').fill("2026-10-03");
+  await page.getByRole("button", { name: "Ship SO-88190" }).click();
+  await expect(page.locator('.spine a[href="#/execution"] .dot')).toHaveClass(/stale/);
+
+  // roll one week: orders close, the week is measured
+  await page.goto("/#/execution/roll");
+  await page.getByRole("button", { name: "Roll forward" }).click();
+  await expect(page.getByText("Rolled from")).toBeVisible();
+  await expect(page.locator(".tile", { hasText: "Orders closed" }).locator(".value")).toHaveText("4");
+  await page.goto("/#/execution/accuracy");
+  await expect(page.getByText("Weeks measured")).toBeVisible();
+  await expect(page.locator(".tile", { hasText: "Forecast accuracy" }).locator(".value")).toContainText("%");
+
+  // firm the planned orders inside the firm zone
+  await page.goto("/#/execution/orders");
+  await page.getByRole("button", { name: "Run supply planning" }).click();
+  await page.getByRole("button", { name: /^Firm \d+ orders?$/ }).click();
+  await expect(page.getByText(/planned orders firmed/)).toBeVisible();
+  await expect(page.locator("td", { hasText: /^PRD-\d{5}$/ }).first()).toBeVisible();
+});

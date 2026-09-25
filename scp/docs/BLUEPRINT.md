@@ -355,5 +355,8 @@ profit modes, scenario levers and compare, release to MRP), then P5 (detailed sc
 sequence-dependent changeover matrix, sublots over parallel units, EDD baseline plus campaign and insertion local
 search, independent feasibility checker, manual resequencing, labour load check, planning-board Gantt), then P6
 (order promising: cumulative ATP, delivery rules, total RLT, allocations, alternative locations, multi-level CTP,
-persisted confirmations, BOP with the five strategies, all four §20.1 promising scenarios as tests). The web client adopts the legacy app's design language: Mono / Noir / Sepia themes,
+persisted confirmations, BOP with the five strategies, all four §20.1 promising scenarios as tests), then P7 (orders
+and actuals: goods-movement journal, stock derived from movements, firming with reservations, idempotent
+roll-forward, forecast-accuracy log and report, closed-order log for delivery KPIs; the journal is part of the
+dataset document, so SQLite persistence arrives with the version store in P8). The web client adopts the legacy app's design language: Mono / Noir / Sepia themes,
 numbered stages, the planning-spine freshness strip, and provenance / reading / solver-IO boxes.

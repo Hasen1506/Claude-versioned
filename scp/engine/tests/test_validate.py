@@ -165,6 +165,19 @@ def _confirmation_orphan(d):
                            "qty": 5}]
 
 
+def _stock_not_synced(d):
+    d["movements"] = [{"id": "GM1", "date": "2026-01-02", "type": "opening", "location": "P", "product": "A", "qty": 12}]
+
+
+def _negative_stock(d):
+    d["movements"] = [{"id": "GM1", "date": "2026-01-02", "type": "scrap", "location": "P", "product": "A", "qty": 3}]
+
+
+def _movement_ref(d):
+    d["movements"] = [{"id": "GM1", "date": "2026-01-02", "type": "receipt", "location": "P", "product": "A", "qty": 3,
+                       "reference": "PO-NOPE"}]
+
+
 MUTATORS = {
     "DUP_ID": _dup_id, "DUP_LOCATION_PRODUCT": _dup_lp, "REF_UNKNOWN": _ref_unknown,
     "REF_WRONG_TYPE": _ref_wrong_type, "FX_MISSING": _fx_missing, "CALENDAR_NO_WORKDAY_IN_HORIZON": _calendar,
@@ -177,7 +190,8 @@ MUTATORS = {
     "LOCATION_PRODUCT_DEFAULTED": _defaulted, "SHELF_LIFE_VS_LEAD_TIME": _shelf,
     "HISTORY_AFTER_START": _history_late, "NPI_LIKE_WITHOUT_HISTORY": _npi_like, "NPI_DUPLICATE": _npi_dup,
     "OVERRIDE_OUTSIDE_HORIZON": _override_outside, "OVERRIDE_WITHOUT_FORECAST": _override_no_fc,
-    "CONFIRMATION_ORPHAN": _confirmation_orphan,
+    "CONFIRMATION_ORPHAN": _confirmation_orphan, "STOCK_NOT_SYNCED": _stock_not_synced,
+    "NEGATIVE_STOCK": _negative_stock, "MOVEMENT_REF_UNKNOWN": _movement_ref,
 }
 
 

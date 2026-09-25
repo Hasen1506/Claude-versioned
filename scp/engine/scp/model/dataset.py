@@ -10,6 +10,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from .actuals import AccuracyRecord, ClosedOrder, ExecutionSettings, GoodsMovement
 from .common import LocationType, Model
 from .demand import DemandEvent, ForecastOverride, ForecastSettings, NpiRule
 from .inventory import InventorySettings
@@ -48,6 +49,10 @@ class Dataset(Model):
     allocations: list[Allocation] = Field(default_factory=list)
     confirmations: list[Confirmation] = Field(default_factory=list)
     promising: PromiseSettings = Field(default_factory=PromiseSettings)
+    movements: list[GoodsMovement] = Field(default_factory=list)
+    closed_orders: list[ClosedOrder] = Field(default_factory=list)
+    accuracy: list[AccuracyRecord] = Field(default_factory=list)
+    execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
 
     # ---- indices (first occurrence wins; duplicates are reported by the readiness gate) ----
     @cached_property

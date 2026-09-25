@@ -75,13 +75,13 @@ def build_instance(ds: Dataset) -> tuple[Instance, dict, int, int]:
         add(o.id, ps, o.location, o.product, o.qty, o.start_date, o.due_date, firm=False)
 
     for rc in ds.receipts:
-        # firm production orders already on the shop floor: released now, due on their due date
+        # firm production orders: released at their start date (or now), due on their due date
         if rc.kind.value != "production" or not rc.source or rc.due_date >= window_end:
             continue
         ps = ds.production_source_by_id.get(rc.source)
         if ps is None or not ps.operations:
             continue
-        add(rc.id, ps, rc.location, rc.product, rc.qty, origin, rc.due_date, firm=True)
+        add(rc.id, ps, rc.location, rc.product, rc.qty, max(rc.start_date or origin, origin), rc.due_date, firm=True)
 
     changeovers = {(c.resource, c.from_group, c.to_group): c.hours for c in ds.changeovers}
 

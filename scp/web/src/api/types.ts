@@ -83,3 +83,14 @@ export type ScheduleLine = S["ScheduleLine"];
 export type CtpStep = S["CtpStep"];
 export type BopRow = S["BopRow"];
 export type PromiseCommitResponse = S["PromiseCommitResponse"];
+
+export type ActualsView = S["ActualsView"];
+export type StockRow = S["StockRow"];
+export type OpenOrderRow = S["OpenOrderRow"];
+export type AccuracyReport = S["AccuracyReport"];
+export type AccuracySeries = S["AccuracySeries"];
+export type RollReport = S["RollReport"];
+export type RollResponse = S["RollResponse"];
+export type FirmResponse = S["FirmResponse"];
+export type GoodsMovement = S["GoodsMovement"];
+export type ClosedOrder = S["ClosedOrder"];

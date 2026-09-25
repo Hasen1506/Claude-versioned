@@ -65,6 +65,9 @@ RULES: dict[str, tuple[Severity, str]] = {
     "OVERRIDE_OUTSIDE_HORIZON": ("warning", "Consensus override outside the forecast horizon is ignored"),
     "OVERRIDE_WITHOUT_FORECAST": ("warning", "Consensus override for a series with no history or NPI rule"),
     "CONFIRMATION_ORPHAN": ("warning", "Persisted confirmation for an order that no longer exists"),
+    "STOCK_NOT_SYNCED": ("warning", "On-hand differs from the goods-movement journal"),
+    "NEGATIVE_STOCK": ("warning", "The movement journal takes stock below zero"),
+    "MOVEMENT_REF_UNKNOWN": ("warning", "Goods movement references no open or closed order"),
 }
 
 
@@ -92,6 +95,7 @@ def validate(ds: Dataset) -> list[Issue]:
     _demand(ds, c)
     _forecasting(ds, c)
     _graph(ds, c)
+    _movements(ds, c)
     order = {"error": 0, "warning": 1}
     c.issues.sort(key=lambda i: (order[i.severity], i.code, i.object_type, i.object_id))
     return c.issues
@@ -107,6 +111,7 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         "calendar": ds.calendars, "location": ds.locations, "product": ds.products,
         "resource": ds.resources, "production_source": ds.production_sources,
         "purchasing_source": ds.purchasing_sources, "lane": ds.lanes, "receipt": ds.receipts,
+        "movement": ds.movements,
     }
     for typ, items in groups.items():
         for oid, n in Counter(i.id for i in items).items():
@@ -233,6 +238,15 @@ def _references(ds: Dataset, c: _Collector) -> None:
             _loc_type(ds, c, r.location, STOCKING_LOCATION_TYPES, "receipt", r.id, "location",
                       "receipts land at stocking locations")
         _ref(ds, c, "product", r.product, "receipt", r.id, "product")
+        for rv in r.reservations:
+            _ref(ds, c, "location", rv.location, "receipt", r.id, "reservations.location")
+            _ref(ds, c, "product", rv.product, "receipt", r.id, "reservations.product")
+    for m in ds.movements:
+        if _ref(ds, c, "location", m.location, "movement", m.id, "location"):
+            _loc_type(ds, c, m.location, STOCKING_LOCATION_TYPES, "movement", m.id, "location",
+                      "stock moves at stocking locations")
+        _ref(ds, c, "product", m.product, "movement", m.id, "product")
+        _ref(ds, c, "location", m.counterparty, "movement", m.id, "counterparty")
 
 
 def _currency(ds: Dataset, c: _Collector) -> None:
@@ -439,3 +453,22 @@ def _graph(ds: Dataset, c: _Collector) -> None:
             c.add("SHELF_LIFE_VS_LEAD_TIME", "location_product", f"{node[0]}/{node[1]}",
                   f"Lead time {lt:.0f} d exceeds shelf life {prod.shelf_life_days} d",
                   "Shorten the pipeline or source closer")
+
+
+def _movements(ds: Dataset, c: _Collector) -> None:
+    if not ds.movements:
+        return
+    from ..actuals.stock import stock_rows, unmatched   # local: actuals imports the model, not the gate
+    for row in stock_rows(ds, ds.settings.planning_start):
+        oid = f"{row.location}/{row.product}"
+        if row.movement_stock is not None and abs(row.difference) > 1e-6:
+            c.add("STOCK_NOT_SYNCED", "location_product", oid,
+                  f"On-hand {row.master_on_hand:,.2f} but the journal says {row.movement_stock:,.2f}",
+                  "Roll forward (or sync stock) so on-hand is derived from the movements", "on_hand")
+        if row.negative_on is not None:
+            c.add("NEGATIVE_STOCK", "location_product", oid,
+                  f"Stock goes negative on {row.negative_on.isoformat()}",
+                  "A receipt is missing or posted late; post it, or a count adjustment")
+    for mid in unmatched(ds):
+        c.add("MOVEMENT_REF_UNKNOWN", "movement", mid, "The reference matches no receipt, sales order or closed order",
+              "Fix the reference, or leave it empty for an unplanned movement", "reference")

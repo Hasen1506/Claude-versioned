@@ -220,6 +220,10 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
         i = 0 if r.due_date < start else bk.index_of(r.due_date)
         if 0 <= i < T:
             firm[(r.location, r.product)][i] += r.qty
+        for rv in r.reservations:      # still to be issued: components, or a transfer's goods at its origin
+            j = 0 if rv.date < start else bk.index_of(rv.date)
+            if 0 <= j < T:
+                firm[(rv.location, rv.product)][j] -= rv.qty
 
     # ---- safety-stock targets (the node's configured policy, as MRP holds it) --------------------------
     horizon = demand_flows(ds, g, start, start + timedelta(days=s.horizon_days))
@@ -255,6 +259,9 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
             coef[inv[n][t]] = coef.get(inv[n][t], 0.0) - 1.0
             if t > 0:
                 coef[inv[n][t - 1]] = coef.get(inv[n][t - 1], 0.0) + 1.0
+            if firm[n][t] < -1e-9:
+                # a firm reservation the plan cannot cover: allowed, at more than a lost sale costs
+                coef[lp.var(f"rsv|{n}|{t}", max(val.unit_value.get(n, 0.0), 1.0) * cfg.lost_sale_rate * 2)] = 1.0
             rhs = -firm[n][t] - (lp_on_hand[n] if t == 0 else 0.0)
             rows.append(lp.row(f"bal|{n}|{t}", coef, rhs, rhs))
         bal_row[n] = rows

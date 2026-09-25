@@ -32,7 +32,7 @@ from ..validate import has_errors, validate
 from . import costing
 from .consumption import effective_demand
 from .leadtime import (
-    Schedule, lead_time_std_days, location_calendar, nominal_lead_time_days, resource_calendar,
+    Schedule, gr_days, lead_time_std_days, location_calendar, nominal_lead_time_days, resource_calendar,
     schedule, supplier_lane,
 )
 from .lotsize import apply_modifiers, base_lot, eoq
@@ -122,8 +122,22 @@ class _Planner:
             st = self.state.get(node)
             if st is None:
                 continue
-            d = max(rc.due_date, self.start)
+            d = self.receipt_date(rc)
             st.supplies.append(_Supply("receipt", rc.id, d, rc.qty, d))
+            # what the firm order still draws from stock: components, or goods at a transfer's origin
+            for rv in rc.reservations:
+                rn = (rv.location, rv.product)
+                if rn not in self.state or rv.qty <= EPS:
+                    continue
+                kind = "transfer" if rv.location != rc.location else "dependent"
+                self._add_req(rn, Requirement(id=f"RV:{rc.id}:{rv.location}:{rv.product}", location=rv.location,
+                                              product=rv.product, date=max(rv.date, self.start), qty=rv.qty,
+                                              kind=kind, parent_order=rc.id, past_due=rv.date < self.start))
+
+    def receipt_date(self, rc) -> date:
+        """A firm receipt is available after goods-receipt processing, like a planned order."""
+        gr = gr_days(self.ds.location_product_by_key.get((rc.location, rc.product)))
+        return max(rc.due_date + timedelta(days=math.ceil(gr - 1e-9)), self.start)
 
     def _split(self, node: Node, d: date, qty: float, period_days: int | None) -> list[tuple[date, float]]:
         """PIR splitting: spread a period forecast evenly over the working days of its window."""
@@ -467,7 +481,7 @@ class _Planner:
         for p in self.pegs:
             pegs_by_req[p.requirement_id].append(p)
         self._pegs_by_req = pegs_by_req
-        receipt_date = {rc.id: max(rc.due_date, self.start) for rc in self.ds.receipts}
+        receipt_date = {rc.id: self.receipt_date(rc) for rc in self.ds.receipts}
         eff: dict[str, date] = {}
         beyond = self.b.end + timedelta(days=3650)
 
@@ -572,7 +586,7 @@ class _Planner:
         out.orders = self.orders
         out.requirements = [r for st in self.state.values() for r in st.reqs]
         out.receipts = [ScheduledReceiptOut(id=r.id, kind=r.kind.value, location=r.location, product=r.product,
-                                            qty=r.qty, date=max(r.due_date, self.start)) for r in self.ds.receipts]
+                                            qty=r.qty, date=self.receipt_date(r)) for r in self.ds.receipts]
         out.pegs = self.pegs
         k.inventory_value_start = inv_start
         k.inventory_value_end = inv_end

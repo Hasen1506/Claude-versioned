@@ -7,6 +7,7 @@ import { href, go, useRoute } from "./lib/router";
 import { STAGES, stageById } from "./lib/stages";
 import { COLLECTIONS, items } from "./model/collections";
 import { Demand } from "./pages/Demand";
+import { Execution } from "./pages/Execution";
 import { Inventory } from "./pages/Inventory";
 import { Promising } from "./pages/Promising";
 import { Schedule } from "./pages/Schedule";
@@ -49,6 +50,7 @@ export function App() {
           : page === "plan" ? <Plan route={route} />
           : page === "schedule" ? <Schedule route={route} />
           : page === "promise" ? <Promising route={route} />
+          : page === "execution" ? <Execution route={route} />
           : <Network route={route} />}
       </main>
     </div>
@@ -146,6 +148,11 @@ function Spine({ page }: { page: string }) {
       const v = s.runs.promise.data!;
       return v.ok ? `${v.kpis.on_time_orders}/${v.kpis.orders} on time${v.kpis.at_risk_orders ? ` · ${v.kpis.at_risk_orders} at risk` : ""}` : "not checked";
     }),
+    runChip("actuals", "execution", () => {
+      const v = s.runs.actuals.data!;
+      const off = v.stock.filter((r) => Math.abs(r.difference) > 1e-6).length;
+      return `${v.movements} movements${off ? ` · ${off} out of sync` : v.accuracy.accuracy !== null ? ` · acc ${pct(v.accuracy.accuracy, 0)}` : ""}`;
+    }),
   ];
   const stale = chips.filter((c) => c.state === "stale").length;
   return (
@@ -159,7 +166,7 @@ function Spine({ page }: { page: string }) {
         return (
           // remounting a stale chip on every revision replays its pulse: the edit visibly travels the spine
           <a key={c.state === "stale" ? `${c.stage}-${s.revision}` : c.stage} href={href(c.stage)}
-            className={`${page === c.stage ? "on" : ""} ${c.state === "stale" ? "pulse" : ""}`} title={`${st.name}: ${c.state}`}>
+            className={`${page === c.stage ? "on" : ""} ${c.state === "stale" ? "pulse" : ""}`} title={`${st.name}: ${c.state} · ${c.val}`}>
             <span className={`dot ${c.state}`} aria-hidden />
             <span style={{ minWidth: 0 }}>
               <span className="name">{st.n} {st.name}</span>
