@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from .. import __version__
 from ..actuals import ActualsView, FirmReport, RollReport, actuals_view, firm_orders, roll_forward
 from ..demand import ForecastResult, ReleaseResult, release, run_forecast
+from ..finance import FinanceResult, run_finance
 from ..demand import foundation
 from ..demand.models import SPECS
 from ..demand.result import FoundationStatus
@@ -305,6 +306,12 @@ def post_promise_commit(req: PromiseCommitRequest) -> PromiseCommitResponse:
 @app.post("/api/plan", response_model=PlanResult)
 def post_plan(ds: Dataset) -> PlanResult:
     return run_mrp(ds)
+
+
+@app.post("/api/finance", response_model=FinanceResult)
+def post_finance(ds: Dataset) -> FinanceResult:
+    """The plan in money: cost reconciliation, inventory value, cost to serve, capacity investment NPV."""
+    return run_finance(ds)
 
 
 class ActualsRequest(Out):

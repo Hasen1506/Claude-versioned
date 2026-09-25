@@ -26,6 +26,13 @@ export function money(v: number | null | undefined, currency = "INR"): string {
   return `${sign}${sym}${nf2.format(a)}`;
 }
 
+/** A per-unit amount: full precision with the currency symbol (₹1,023.4), never compacted. */
+export function unitMoney(v: number | null | undefined, currency = "INR"): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  const sym = currency === "INR" ? "₹" : currency === "USD" ? "$" : currency === "EUR" ? "€" : `${currency} `;
+  return `${v < 0 ? "−" : ""}${sym}${qty(Math.abs(v))}`;
+}
+
 export function pct(v: number | null | undefined, digits = 1): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";
   if (!Number.isFinite(v)) return "∞";

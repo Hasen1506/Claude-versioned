@@ -95,6 +95,12 @@ export type FirmResponse = S["FirmResponse"];
 export type GoodsMovement = S["GoodsMovement"];
 export type ClosedOrder = S["ClosedOrder"];
 
+export type FinanceResult = S["FinanceResult"];
+export type ServeRow = S["ServeRow"];
+export type CostLine = S["CostLine"];
+export type InventoryValue = S["InventoryValue"];
+export type CapacityAppraisal = S["CapacityAppraisal"];
+
 export type VersionMeta = S["VersionMeta"];
 export type VersionDoc = S["VersionDoc"];
 export type Comparison = S["Comparison"];

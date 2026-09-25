@@ -8084,6 +8084,28 @@
    "fallback": "next_period"
   }
  ],
+ "finance": {
+  "capacity_options": [
+   {
+    "id": "CAP-L1-SHIFT3",
+    "name": "Third shift on assembly line 1",
+    "resource": "PUNE-L1",
+    "added_hours_per_week": 48,
+    "capex": 0,
+    "fixed_cost_per_year": 2400000,
+    "life_years": 3
+   },
+   {
+    "id": "CAP-WIND-M4",
+    "name": "Fourth winding machine",
+    "resource": "PUNE-WIND",
+    "added_hours_per_week": 96,
+    "capex": 3800000,
+    "fixed_cost_per_year": 350000,
+    "life_years": 8
+   }
+  ]
+ },
  "changeovers": [
   {
    "resource": "PUNE-WIND",

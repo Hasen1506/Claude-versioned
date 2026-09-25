@@ -326,3 +326,24 @@ test("versions: save base → edit → save as scenario → compare → promote;
   await expect(page.locator("tr", { hasText: "October cycle" }).getByText("superseded")).toBeVisible();
   expect(await page.locator("tr", { hasText: "October cycle" }).locator("td[title]").getAttribute("title")).toBe(baseSha);
 });
+
+test("finance: cost the plan → books close → cost to serve by region → capacity NPV → edit option → stale", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("Kaveri Kitchenware").click();
+  await expect(page.locator(".net .node")).toHaveCount(12);
+  await page.goto("/#/finance");
+  await page.getByRole("button", { name: "Cost the plan" }).click();
+  await expect(page.locator(".banner", { hasText: "Books close" })).toBeVisible();
+  await expect(page.locator('.spine a[href="#/finance"] .val')).toContainText("books close");
+
+  await page.getByRole("tab", { name: /Cost to serve & margin/ }).click();
+  await page.getByRole("button", { name: "By region" }).click();
+  await expect(page.locator("td b", { hasText: "North" })).toBeVisible();
+
+  await page.getByRole("tab", { name: /Capacity investments/ }).click();
+  await expect(page.locator("td b", { hasText: "Fourth winding machine" })).toBeVisible();
+  await expect(page.getByText("capacity is not the constraint")).toBeVisible();
+  await page.getByLabel("Discount rate").fill("9");
+  await page.getByLabel("Discount rate").blur();
+  await expect(page.locator('.spine a[href="#/finance"] .dot')).toHaveClass(/stale/);
+});

@@ -115,6 +115,12 @@ def test_actuals_flow():
     assert len(f["dataset"]["receipts"]) == len(r["dataset"]["receipts"]) + len(f["report"]["firmed"])
 
 
+def test_finance():
+    r = client.post("/api/finance", json=example_dict("kitchenware_network")).json()
+    assert r["ok"] and r["reconciliation"]["reconciled"] and r["serve"] and r["inventory"]["buckets"]
+    assert {a["id"] for a in r["capacity"]} == {"CAP-L1-SHIFT3", "CAP-WIND-M4"}
+
+
 def test_versions_flow():
     d = example_dict("single_product_plant")
     base = client.post("/api/versions", json={"dataset": d, "name": "Week 1"}).json()

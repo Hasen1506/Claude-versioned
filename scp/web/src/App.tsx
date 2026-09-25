@@ -8,6 +8,7 @@ import { STAGES, stageById } from "./lib/stages";
 import { COLLECTIONS, items } from "./model/collections";
 import { Demand } from "./pages/Demand";
 import { Execution } from "./pages/Execution";
+import { Finance } from "./pages/Finance";
 import { Versions } from "./pages/Versions";
 import { Inventory } from "./pages/Inventory";
 import { Promising } from "./pages/Promising";
@@ -52,6 +53,7 @@ export function App() {
           : page === "schedule" ? <Schedule route={route} />
           : page === "promise" ? <Promising route={route} />
           : page === "execution" ? <Execution route={route} />
+          : page === "finance" ? <Finance route={route} />
           : page === "versions" ? <Versions />
           : <Network route={route} />}
       </main>
@@ -159,6 +161,13 @@ function Spine({ page }: { page: string }) {
       const v = s.runs.actuals.data!;
       const off = v.stock.filter((r) => Math.abs(r.difference) > 1e-6).length;
       return `${v.movements} movements${off ? ` · ${off} out of sync` : v.accuracy.accuracy !== null ? ` · acc ${pct(v.accuracy.accuracy, 0)}` : ""}`;
+    }),
+    runChip("finance", "finance", () => {
+      const v = s.runs.finance.data!;
+      if (!v.ok || !v.reconciliation) return "not costed";
+      const rev = v.serve.reduce((a, r) => a + r.revenue, 0);
+      const mar = v.serve.reduce((a, r) => a + r.margin, 0);
+      return `${v.reconciliation.reconciled ? "books close" : "does not reconcile"}${rev > 0 ? ` · margin ${pct(mar / rev, 0)}` : ""}`;
     }),
   ];
   const stale = chips.filter((c) => c.state === "stale").length;

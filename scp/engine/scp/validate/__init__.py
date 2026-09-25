@@ -111,7 +111,7 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         "calendar": ds.calendars, "location": ds.locations, "product": ds.products,
         "resource": ds.resources, "production_source": ds.production_sources,
         "purchasing_source": ds.purchasing_sources, "lane": ds.lanes, "receipt": ds.receipts,
-        "movement": ds.movements,
+        "movement": ds.movements, "capacity_option": ds.finance.capacity_options,
     }
     for typ, items in groups.items():
         for oid, n in Counter(i.id for i in items).items():
@@ -247,6 +247,10 @@ def _references(ds: Dataset, c: _Collector) -> None:
                       "stock moves at stocking locations")
         _ref(ds, c, "product", m.product, "movement", m.id, "product")
         _ref(ds, c, "location", m.counterparty, "movement", m.id, "counterparty")
+    for co in ds.finance.capacity_options:
+        _ref(ds, c, "resource", co.resource, "capacity_option", co.id, "resource")
+    for rid in ds.sop.capacity_add_hours_per_week:
+        _ref(ds, c, "resource", rid, "sop", "sop", "capacity_add_hours_per_week")
 
 
 def _currency(ds: Dataset, c: _Collector) -> None:

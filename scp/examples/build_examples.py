@@ -318,6 +318,13 @@ def kitchenware() -> dict:
             {"id": "AL-ECOM-KT-NOV", "product": "KT-15", "customers": ["CUS-ECOM"], "start": "2026-11-01",
              "end": "2026-12-01", "qty": 1800, "fallback": "next_period"},
         ],
+        # capacity investments appraised against the S&OP plan (P9)
+        "finance": {"capacity_options": [
+            {"id": "CAP-L1-SHIFT3", "name": "Third shift on assembly line 1", "resource": "PUNE-L1",
+             "added_hours_per_week": 48, "capex": 0, "fixed_cost_per_year": 2400000, "life_years": 3},
+            {"id": "CAP-WIND-M4", "name": "Fourth winding machine", "resource": "PUNE-WIND",
+             "added_hours_per_week": 96, "capex": 3800000, "fixed_cost_per_year": 350000, "life_years": 8},
+        ]},
         "changeovers": [
             {"resource": "PUNE-WIND", "from_group": "W500", "to_group": "W750", "hours": 1.0},
             {"resource": "PUNE-WIND", "from_group": "W750", "to_group": "W500", "hours": 2.5},

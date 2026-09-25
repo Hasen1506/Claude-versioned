@@ -58,7 +58,8 @@ export function BucketChart({ labels, series, height = 240, unit = "", highlight
     ...marks.map((m) => m.v),
   ];
   const lo = Math.min(0, ...all);
-  const hi = niceMax(Math.max(0, ...all));
+  const top = Math.max(0, ...all);
+  const hi = top > 0 || lo >= 0 ? niceMax(top) : 0;   // all-negative data tops out at zero
   const loN = lo < 0 ? -niceMax(-lo) : 0;
   const x0 = pad.l;
   const bw = (width - pad.l - pad.r) / Math.max(1, n);

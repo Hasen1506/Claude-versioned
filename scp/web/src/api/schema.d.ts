@@ -330,6 +330,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/finance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Finance
+         * @description The plan in money: cost reconciliation, inventory value, cost to serve, capacity investment NPV.
+         */
+        post: operations["post_finance_api_finance_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/actuals": {
         parameters: {
             query?: never;
@@ -859,6 +879,23 @@ export interface components {
          * @enum {string}
          */
         BucketSize: "day" | "week" | "month";
+        /** BucketValue */
+        BucketValue: {
+            /** Bucket */
+            bucket: number;
+            /** Label */
+            label: string;
+            /** Capacity */
+            capacity: number;
+            /** Added */
+            added: number;
+            /** Shadow Price */
+            shadow_price: number;
+            /** Valid Headroom */
+            valid_headroom: number | null;
+            /** Estimate */
+            estimate: number;
+        };
         /** Calendar */
         Calendar: {
             /** Id */
@@ -875,6 +912,98 @@ export interface components {
             workdays?: number[];
             /** Holidays */
             holidays?: string[];
+        };
+        /** CapacityAppraisal */
+        CapacityAppraisal: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Resource */
+            resource: string;
+            /** Added Hours Per Week */
+            added_hours_per_week: number;
+            /** Capex */
+            capex: number;
+            /** Fixed Cost Per Year */
+            fixed_cost_per_year: number;
+            /** Life Years */
+            life_years: number;
+            /** Discount Rate */
+            discount_rate: number;
+            /** Horizon Days */
+            horizon_days: number;
+            /** Dual Estimate */
+            dual_estimate: number;
+            /** Within Range */
+            within_range: boolean;
+            /** Objective Saving */
+            objective_saving: number;
+            /** Cash Delta */
+            cash_delta: number;
+            /** Fill Rate Before */
+            fill_rate_before: number;
+            /** Fill Rate After */
+            fill_rate_after: number;
+            /** Annual Cash */
+            annual_cash: number;
+            /** Annual Net */
+            annual_net: number;
+            /** Npv */
+            npv: number;
+            /** Irr */
+            irr: number | null;
+            /** Payback Years */
+            payback_years: number | null;
+            /**
+             * Cash Flows
+             * @default []
+             */
+            cash_flows: number[];
+            /**
+             * Buckets
+             * @default []
+             */
+            buckets: components["schemas"]["BucketValue"][];
+        };
+        /**
+         * CapacityOption
+         * @description A capacity investment (a new machine, an added shift, a line upgrade) that adds regular hours to one
+         *     resource. Its value is what the S&OP plan saves with the hours; its NPV nets that against the spend.
+         */
+        CapacityOption: {
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** Resource */
+            resource: string;
+            /**
+             * Added Hours Per Week
+             * @description Extra regular hours per week the option adds
+             */
+            added_hours_per_week: number;
+            /**
+             * Capex
+             * @description One-off investment at year 0
+             * @default 0
+             */
+            capex: number;
+            /**
+             * Fixed Cost Per Year
+             * @description Running cost per year (crew, lease, upkeep)
+             * @default 0
+             */
+            fixed_cost_per_year: number;
+            /**
+             * Life Years
+             * @description Years of benefit counted in the NPV
+             * @default 5
+             */
+            life_years: number;
         };
         /**
          * Changeover
@@ -1014,6 +1143,25 @@ export interface components {
          * @enum {string}
          */
         ConfirmationStrategy: "win" | "gain" | "redistribute" | "fill" | "lose";
+        /**
+         * CostLine
+         * @description One plan cost category traced three ways: the plan KPI, the sum over its sources (orders or node
+         *     buckets), and its allocation to served demand plus what no demand absorbs.
+         */
+        CostLine: {
+            /** Category */
+            category: string;
+            /** Plan */
+            plan: number;
+            /** Sources */
+            sources: number;
+            /** Served */
+            served: number;
+            /** Unabsorbed */
+            unabsorbed: number;
+            /** Difference */
+            difference: number;
+        };
         /** CtpStep */
         CtpStep: {
             /**
@@ -1103,6 +1251,7 @@ export interface components {
             /** Accuracy */
             accuracy?: components["schemas"]["AccuracyRecord"][];
             execution?: components["schemas"]["ExecutionSettings"];
+            finance?: components["schemas"]["FinanceSettings"];
         };
         /** DatasetDiff */
         DatasetDiff: {
@@ -1361,6 +1510,47 @@ export interface components {
             a: unknown;
             /** B */
             b: unknown;
+        };
+        /** FinanceResult */
+        FinanceResult: {
+            /** Ok */
+            ok: boolean;
+            /** Currency */
+            currency: string;
+            /** Sop Mode */
+            sop_mode: string | null;
+            reconciliation: components["schemas"]["Reconciliation"] | null;
+            inventory: components["schemas"]["InventoryValue"] | null;
+            /**
+             * Serve
+             * @default []
+             */
+            serve: components["schemas"]["ServeRow"][];
+            /**
+             * Capacity
+             * @default []
+             */
+            capacity: components["schemas"]["CapacityAppraisal"][];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+            /**
+             * Issues
+             * @default []
+             */
+            issues: components["schemas"]["Issue"][];
+        };
+        /** FinanceSettings */
+        FinanceSettings: {
+            /** Capacity Options */
+            capacity_options?: components["schemas"]["CapacityOption"][];
+            /**
+             * Discount Rate
+             * @description Per year for NPV; empty = the company WACC
+             */
+            discount_rate?: number | null;
         };
         /** FirmReport */
         FirmReport: {
@@ -1862,6 +2052,39 @@ export interface components {
              */
             spike_factor: number;
         };
+        /** InventoryValue */
+        InventoryValue: {
+            /**
+             * Start
+             * @default 0
+             */
+            start: number;
+            /**
+             * End
+             * @default 0
+             */
+            end: number;
+            /**
+             * Avg
+             * @default 0
+             */
+            avg: number;
+            /**
+             * Buckets
+             * @default []
+             */
+            buckets: components["schemas"]["ValueBucket"][];
+            /**
+             * Locations
+             * @default []
+             */
+            locations: components["schemas"]["LocationValue"][];
+            /**
+             * Types
+             * @default []
+             */
+            types: string[];
+        };
         /** Issue */
         Issue: {
             /** Code */
@@ -2169,6 +2392,21 @@ export interface components {
          * @enum {string}
          */
         LocationType: "plant" | "dc" | "warehouse" | "store" | "supplier" | "customer";
+        /** LocationValue */
+        LocationValue: {
+            /** Location */
+            location: string;
+            /** Type */
+            type: string;
+            /** Start */
+            start: number;
+            /** End */
+            end: number;
+            /** Avg */
+            avg: number;
+            /** Holding */
+            holding: number;
+        };
         /** LogEntry */
         LogEntry: {
             /** At */
@@ -3269,6 +3507,41 @@ export interface components {
          * @enum {string}
          */
         ReceiptKind: "purchase" | "production" | "transfer";
+        /** Reconciliation */
+        Reconciliation: {
+            /**
+             * Lines
+             * @default []
+             */
+            lines: components["schemas"]["CostLine"][];
+            /**
+             * Total Plan
+             * @default 0
+             */
+            total_plan: number;
+            /**
+             * Total Served
+             * @default 0
+             */
+            total_served: number;
+            /**
+             * Total Unabsorbed
+             * @default 0
+             */
+            total_unabsorbed: number;
+            /**
+             * Reconciled
+             * @default true
+             */
+            reconciled: boolean;
+            /**
+             * Unabsorbed Reasons
+             * @default {}
+             */
+            unabsorbed_reasons: {
+                [key: string]: number;
+            };
+        };
         /** ReleaseRequest */
         ReleaseRequest: {
             dataset: components["schemas"]["Dataset"];
@@ -4056,6 +4329,57 @@ export interface components {
              */
             notes: string[];
         };
+        /**
+         * ServeRow
+         * @description Demand at one point (customer, or a stocking location selling directly) for one product.
+         */
+        ServeRow: {
+            /** Location */
+            location: string;
+            /** Location Type */
+            location_type: string;
+            /** Region */
+            region: string;
+            /** Product */
+            product: string;
+            /** Demand */
+            demand: number;
+            /** Served */
+            served: number;
+            /** Price */
+            price: number | null;
+            /** Revenue */
+            revenue: number;
+            /**
+             * Costs
+             * @default {}
+             */
+            costs: {
+                [key: string]: number;
+            };
+            /**
+             * Plan Cost
+             * @default 0
+             */
+            plan_cost: number;
+            /**
+             * Total Cost
+             * @default 0
+             */
+            total_cost: number;
+            /**
+             * Cost Per Unit
+             * @default 0
+             */
+            cost_per_unit: number;
+            /**
+             * Margin
+             * @default 0
+             */
+            margin: number;
+            /** Margin Pct */
+            margin_pct: number | null;
+        };
         /** Settings */
         Settings: {
             /**
@@ -4501,6 +4825,29 @@ export interface components {
             issues: components["schemas"]["Issue"][];
             /** Blocking */
             blocking: boolean;
+        };
+        /** ValueBucket */
+        ValueBucket: {
+            /** Bucket */
+            bucket: number;
+            /** Label */
+            label: string;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /** Days */
+            days: number;
+            /** Value */
+            value: number;
+            /**
+             * By Type
+             * @default {}
+             */
+            by_type: {
+                [key: string]: number;
+            };
         };
         /** VersionDoc */
         VersionDoc: {
@@ -5094,6 +5441,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlanResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_finance_api_finance_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FinanceResult"];
                 };
             };
             /** @description Validation Error */

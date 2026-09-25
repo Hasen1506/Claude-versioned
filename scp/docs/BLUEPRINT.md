@@ -360,5 +360,8 @@ and actuals: goods-movement journal, stock derived from movements, firming with 
 roll-forward, forecast-accuracy log and report, closed-order log for delivery KPIs; the journal is part of the
 dataset document, so SQLite persistence arrives with the version store in P8), then P8 (versions and scenarios: an
 SQLite store with immutable base versions guarded by a database trigger, scenario branches, discard and promote, an
-audit log, a field-level dataset diff and side-by-side plan KPIs). The web client adopts the legacy app's design language: Mono / Noir / Sepia themes,
+audit log, a field-level dataset diff and side-by-side plan KPIs), then P9 (finance overlay: plan cost reconciled
+category by category, cost to serve along the pegging with margin by customer, region and product, inventory value
+over time, and capacity investments appraised on the S&OP plan by shadow prices confirmed with a re-solve, then NPV,
+IRR and payback). The web client adopts the legacy app's design language: Mono / Noir / Sepia themes,
 numbered stages, the planning-spine freshness strip, and provenance / reading / solver-IO boxes.

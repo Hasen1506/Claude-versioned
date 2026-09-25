@@ -12,6 +12,7 @@ from pydantic import Field
 
 from .actuals import AccuracyRecord, ClosedOrder, ExecutionSettings, GoodsMovement
 from .common import LocationType, Model
+from .finance import FinanceSettings
 from .demand import DemandEvent, ForecastOverride, ForecastSettings, NpiRule
 from .inventory import InventorySettings
 from .promise import Allocation, Confirmation, PromiseSettings
@@ -53,6 +54,7 @@ class Dataset(Model):
     closed_orders: list[ClosedOrder] = Field(default_factory=list)
     accuracy: list[AccuracyRecord] = Field(default_factory=list)
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
+    finance: FinanceSettings = Field(default_factory=FinanceSettings)
 
     # ---- indices (first occurrence wins; duplicates are reported by the readiness gate) ----
     @cached_property
