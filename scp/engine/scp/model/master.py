@@ -178,6 +178,11 @@ class LocationProduct(Model):
     consumption_forward_days: float = Unit("days", default=7.0)
     holding_rate: float | None = Unit("fraction", le=2, default=None,
                                       description="Annual carrying rate override (default: WACC + spread)")
+    ddmrp_buffer: bool = Field(False, description="Strategic decoupling point: DDMRP buffer positioned here")
+    max_service_days: float | None = Unit(
+        "days", default=None,
+        description="MEIO: the longest outbound service time this node may quote (empty = no limit, or the "
+                    "customer service time where it faces demand)")
 
     @model_validator(mode="after")
     def _params(self) -> LocationProduct:

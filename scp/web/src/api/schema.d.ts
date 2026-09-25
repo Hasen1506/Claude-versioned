@@ -177,6 +177,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Inventory */
+        post: operations["post_inventory_api_inventory_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/plan": {
         parameters: {
             query?: never;
@@ -323,6 +340,73 @@ export interface components {
             npi?: components["schemas"]["NpiRule"][];
             /** Overrides */
             overrides?: components["schemas"]["ForecastOverride"][];
+            inventory?: components["schemas"]["InventorySettings"];
+        };
+        /** DdmrpRow */
+        DdmrpRow: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Positioned */
+            positioned: boolean;
+            /** Adu */
+            adu: number;
+            /** Dlt */
+            dlt: number;
+            /** Ltf */
+            ltf: number;
+            /**
+             * Lt Band
+             * @enum {string}
+             */
+            lt_band: "short" | "medium" | "long";
+            /** Vf */
+            vf: number;
+            /**
+             * Var Band
+             * @enum {string}
+             */
+            var_band: "low" | "medium" | "high";
+            /** Red Base */
+            red_base: number;
+            /** Red Safety */
+            red_safety: number;
+            /** Red */
+            red: number;
+            /** Yellow */
+            yellow: number;
+            /** Green */
+            green: number;
+            /** Tor */
+            tor: number;
+            /** Toy */
+            toy: number;
+            /** Tog */
+            tog: number;
+            /** On Hand */
+            on_hand: number;
+            /** Open Supply */
+            open_supply: number;
+            /** Qualified Demand */
+            qualified_demand: number;
+            /** Nfp */
+            nfp: number;
+            /**
+             * Zone
+             * @enum {string}
+             */
+            zone: "red" | "yellow" | "green" | "over";
+            /** Priority */
+            priority: number;
+            /** Order Qty */
+            order_qty: number;
+            /** Unit Value */
+            unit_value: number;
+            /** Average On Hand */
+            average_on_hand: number;
+            /** Average Value */
+            average_value: number;
         };
         /**
          * DemandEvent
@@ -672,6 +756,142 @@ export interface components {
              */
             events: string[];
         };
+        /** InventoryResult */
+        InventoryResult: {
+            /** Ok */
+            ok: boolean;
+            /** Currency */
+            currency: string;
+            /** Carrying Rate */
+            carrying_rate: number;
+            /**
+             * Planning Start
+             * Format: date
+             */
+            planning_start: string;
+            /** Horizon Days */
+            horizon_days: number;
+            /**
+             * Nodes
+             * @default []
+             */
+            nodes: components["schemas"]["NodeInventory"][];
+            /**
+             * Ddmrp
+             * @default []
+             */
+            ddmrp: components["schemas"]["DdmrpRow"][];
+            /**
+             * Pooling
+             * @default []
+             */
+            pooling: components["schemas"]["PoolingRow"][];
+            totals: components["schemas"]["Totals"] | null;
+            solver: components["schemas"]["SolverInfo"] | null;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+            /**
+             * Issues
+             * @default []
+             */
+            issues: components["schemas"]["Issue"][];
+        };
+        /** InventorySettings */
+        InventorySettings: {
+            /**
+             * Default Demand Cv
+             * @description Weekly forecast-error CV used where a location-product has no demand_cv
+             * @default 0.3
+             */
+            default_demand_cv: number;
+            /**
+             * Customer Service Days
+             * @description Service time promised to customers: 0 = ship from stock (MEIO outbound service limit)
+             * @default 0
+             */
+            customer_service_days: number;
+            /**
+             * Adu Window Days
+             * @description Average daily usage: forward window over requirements
+             * @default 28
+             */
+            adu_window_days: number;
+            /**
+             * Order Cycle Days
+             * @description Imposed order cycle (green-zone floor)
+             * @default 7
+             */
+            order_cycle_days: number;
+            /**
+             * Lt Short Days
+             * @description Decoupled lead time up to this is 'short'
+             * @default 14
+             */
+            lt_short_days: number;
+            /**
+             * Lt Long Days
+             * @description Decoupled lead time above this is 'long'
+             * @default 42
+             */
+            lt_long_days: number;
+            /**
+             * Ltf Short
+             * @description Lead-time factor for short DLT
+             * @default 0.7
+             */
+            ltf_short: number;
+            /**
+             * Ltf Medium
+             * @description Lead-time factor for medium DLT
+             * @default 0.5
+             */
+            ltf_medium: number;
+            /**
+             * Ltf Long
+             * @description Lead-time factor for long DLT
+             * @default 0.3
+             */
+            ltf_long: number;
+            /**
+             * Cv Low
+             * @description Weekly CV up to this is 'low' variability
+             * @default 0.3
+             */
+            cv_low: number;
+            /**
+             * Cv High
+             * @description Weekly CV above this is 'high' variability
+             * @default 0.6
+             */
+            cv_high: number;
+            /**
+             * Vf Low
+             * @description Variability factor, low
+             * @default 0.25
+             */
+            vf_low: number;
+            /**
+             * Vf Medium
+             * @description Variability factor, medium
+             * @default 0.5
+             */
+            vf_medium: number;
+            /**
+             * Vf High
+             * @description Variability factor, high
+             * @default 0.75
+             */
+            vf_high: number;
+            /**
+             * Spike Factor
+             * @description Order spike threshold as a multiple of the red zone
+             * @default 0.5
+             */
+            spike_factor: number;
+        };
         /** Issue */
         Issue: {
             /** Code */
@@ -932,6 +1152,17 @@ export interface components {
              * @description Annual carrying rate override (default: WACC + spread)
              */
             holding_rate?: number | null;
+            /**
+             * Ddmrp Buffer
+             * @description Strategic decoupling point: DDMRP buffer positioned here
+             * @default false
+             */
+            ddmrp_buffer: boolean;
+            /**
+             * Max Service Days
+             * @description MEIO: the longest outbound service time this node may quote (empty = no limit, or the customer service time where it faces demand)
+             */
+            max_service_days?: number | null;
         };
         /**
          * LocationType
@@ -1144,6 +1375,76 @@ export interface components {
              */
             shortage: number;
         };
+        /** NodeInventory */
+        NodeInventory: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "stocking" | "no_stock" | "customer";
+            /** Demand Facing */
+            demand_facing: boolean;
+            /** Upstream */
+            upstream: components["schemas"]["NodeRef"][];
+            /** Direct Mean Daily */
+            direct_mean_daily: number;
+            /** Mean Daily */
+            mean_daily: number;
+            /** Sd Daily */
+            sd_daily: number;
+            /** Cv Weekly */
+            cv_weekly: number;
+            /**
+             * Cv Source
+             * @enum {string}
+             */
+            cv_source: "policy" | "pooled" | "default" | "none";
+            /** Lead Time Days */
+            lead_time_days: number;
+            /** Lead Time Std Days */
+            lead_time_std_days: number;
+            /** Cumulative Lead Time Days */
+            cumulative_lead_time_days: number;
+            /** Unit Value */
+            unit_value: number;
+            /** Holding Rate */
+            holding_rate: number;
+            /** Service Level */
+            service_level: number;
+            /** Z */
+            z: number;
+            /** Current Method */
+            current_method: string;
+            /** Current Ss */
+            current_ss: number;
+            /** Current Cost */
+            current_cost: number;
+            /** Single Ss */
+            single_ss: number;
+            /** Single Cost */
+            single_cost: number;
+            /** Max Service Days */
+            max_service_days: number | null;
+            /** Meio Inbound Days */
+            meio_inbound_days: number;
+            /** Meio Service Days */
+            meio_service_days: number;
+            /** Meio Net Days */
+            meio_net_days: number;
+            /** Meio Ss */
+            meio_ss: number;
+            /** Meio Cost */
+            meio_cost: number;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "buffer" | "pass_through" | "no_stock" | "customer";
+        };
         /** NodePlan */
         NodePlan: {
             /** Location */
@@ -1179,6 +1480,13 @@ export interface components {
             buckets: components["schemas"]["NodeBucket"][];
             /** Order Ids */
             order_ids: string[];
+        };
+        /** NodeRef */
+        NodeRef: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
         };
         /**
          * NpiRule
@@ -1421,6 +1729,27 @@ export interface components {
              * @default 0
              */
             lot_excess: number;
+        };
+        /** PoolingRow */
+        PoolingRow: {
+            /** Product */
+            product: string;
+            /** Locations */
+            locations: string[];
+            /** Lead Time Days */
+            lead_time_days: number;
+            /** Separate Ss */
+            separate_ss: number;
+            /** Pooled Ss */
+            pooled_ss: number;
+            /** Saving Qty */
+            saving_qty: number;
+            /** Saving Value */
+            saving_value: number;
+            /** Saving Pct */
+            saving_pct: number;
+            /** Unit Value */
+            unit_value: number;
         };
         /** Product */
         Product: {
@@ -2040,6 +2369,21 @@ export interface components {
             /** Default Calendar */
             default_calendar?: string | null;
         };
+        /** SolverInfo */
+        SolverInfo: {
+            /** Status */
+            status: string;
+            /** Objective */
+            objective: number;
+            /** Variables */
+            variables: number;
+            /** Constraints */
+            constraints: number;
+            /** Seconds */
+            seconds: number;
+            /** Message */
+            message: string;
+        };
         /**
          * Strategy
          * @description Planning strategy (S/4 guide §5.2).
@@ -2082,6 +2426,31 @@ export interface components {
              * @default 0
              */
             total_final: number;
+        };
+        /** Totals */
+        Totals: {
+            /** Stocking Nodes */
+            stocking_nodes: number;
+            /** Buffers Placed */
+            buffers_placed: number;
+            /** Ddmrp Positions */
+            ddmrp_positions: number;
+            /** Current Ss Value */
+            current_ss_value: number;
+            /** Single Ss Value */
+            single_ss_value: number;
+            /** Meio Ss Value */
+            meio_ss_value: number;
+            /** Current Cost */
+            current_cost: number;
+            /** Single Cost */
+            single_cost: number;
+            /** Meio Cost */
+            meio_cost: number;
+            /** Saving Vs Single */
+            saving_vs_single: number;
+            /** Saving Vs Current */
+            saving_vs_current: number;
         };
         /** TransportLane */
         TransportLane: {
@@ -2402,6 +2771,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReleaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_inventory_api_inventory_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InventoryResult"];
                 };
             };
             /** @description Validation Error */

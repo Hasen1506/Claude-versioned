@@ -56,3 +56,8 @@ export type HistoryPoint = S["HistoryPoint"];
 export type ModelScore = S["ModelScore"];
 export type ForecastModels = S["ForecastModels"];
 export type ReleaseResponse = S["ReleaseResponse"];
+
+export type InventoryResult = S["InventoryResult"];
+export type NodeInventory = S["NodeInventory"];
+export type DdmrpRow = S["DdmrpRow"];
+export type PoolingRow = S["PoolingRow"];

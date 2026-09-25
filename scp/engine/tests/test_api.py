@@ -60,3 +60,10 @@ def test_release_refuses_a_blocked_dataset():
     d = example_dict("kitchenware_network")
     d["history"][0]["product"] = "NOPE"
     assert client.post("/api/forecast/release", json={"dataset": d}).status_code == 409
+
+
+def test_inventory():
+    r = client.post("/api/inventory", json=example_dict("kitchenware_network")).json()
+    assert r["ok"] and r["solver"]["status"] == "optimal"
+    assert r["totals"]["meio_cost"] <= r["totals"]["single_cost"]
+    assert {n["decision"] for n in r["nodes"]} >= {"buffer", "pass_through", "customer"}

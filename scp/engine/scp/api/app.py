@@ -17,6 +17,7 @@ from ..demand import ForecastResult, ReleaseResult, release, run_forecast
 from ..demand import foundation
 from ..demand.models import SPECS
 from ..demand.result import FoundationStatus
+from ..inventory import InventoryResult, run_inventory
 from ..model import Dataset, ForecastModelId
 from ..model.common import Out
 from ..network import build_graph, location_edges, location_layers
@@ -215,6 +216,11 @@ def post_release(req: ReleaseRequest) -> ReleaseResponse:
         raise HTTPException(409, "the readiness gate has errors; fix them before releasing a forecast")
     new, info = release(req.dataset, result, req.keys)
     return ReleaseResponse(dataset=new, release=info)
+
+
+@app.post("/api/inventory", response_model=InventoryResult)
+def post_inventory(ds: Dataset) -> InventoryResult:
+    return run_inventory(ds)
 
 
 @app.post("/api/plan", response_model=PlanResult)

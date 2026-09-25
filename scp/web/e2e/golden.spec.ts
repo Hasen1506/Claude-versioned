@@ -125,3 +125,31 @@ test("blank network: readiness guides the first steps", async ({ page }) => {
   await page.goto("/#/network");
   await expect(page.locator(".net .node")).toHaveCount(1);
 });
+
+test("inventory: optimise → placement → approve recommendation → policies change → stale → DDMRP position", async ({ page }) => {
+  await page.goto("/");
+  await page.getByText("Kaveri Kitchenware").click();
+  await expect(page.locator(".net .node")).toHaveCount(12);
+  await page.goto("/#/inventory");
+  await page.getByRole("button", { name: "Optimise" }).click();
+  await expect(page.getByText("Saving vs single-echelon")).toBeVisible();
+  await expect(page.locator('.spine a[href="#/inventory"] .dot')).toHaveClass(/fresh/);
+
+  await page.goto("/#/inventory/placement");
+  await expect(page.getByRole("img", { name: "Service-time placement per stage" })).toBeVisible();
+  await page.getByLabel("Select PLT-PUNE RM-SWITCH").check();
+  await page.getByRole("button", { name: /Review 1 change/ }).click();
+  await page.getByRole("button", { name: "Approve and apply" }).click();
+  await expect(page.locator('.spine a[href="#/inventory"] .dot')).toHaveClass(/stale/);
+  await page.getByRole("button", { name: "Re-run" }).click();
+  await expect(page.locator('.spine a[href="#/inventory"] .dot')).toHaveClass(/fresh/);
+  const row = page.locator("tr", { has: page.getByLabel("Select PLT-PUNE RM-SWITCH") });
+  await expect(row.locator("td").nth(10)).toContainText("fixed");
+
+  await page.goto("/#/inventory/ddmrp");
+  await page.getByLabel("Show every stocking stage").check();
+  await page.getByLabel("Position buffer at DC-DELHI MG-500").check();
+  await page.getByRole("button", { name: "Re-run" }).click();
+  await page.getByLabel("Show every stocking stage").uncheck();
+  await expect(page.getByLabel("Position buffer at DC-DELHI MG-500")).toBeChecked();
+});

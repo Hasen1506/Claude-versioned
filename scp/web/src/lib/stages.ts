@@ -12,6 +12,7 @@ export const STAGES: Stage[] = [
   { id: "network", n: "01", name: "Network", sub: "design & map" },
   { id: "readiness", n: "02", name: "Readiness", sub: "master-data gate" },
   { id: "demand", n: "03", name: "Demand", sub: "forecast & consensus" },
+  { id: "inventory", n: "04", name: "Inventory", sub: "buffer placement" },
   { id: "plan", n: "06", name: "Supply", sub: "MRP / DRP" },
 ];
 

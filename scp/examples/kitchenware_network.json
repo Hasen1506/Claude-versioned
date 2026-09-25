@@ -487,7 +487,8 @@
     "service_level": 0.99,
     "demand_cv": 0.3
    },
-   "gr_processing_days": 2
+   "gr_processing_days": 2,
+   "ddmrp_buffer": true
   },
   {
    "location": "PLT-PUNE",
@@ -502,7 +503,8 @@
     "service_level": 0.98,
     "demand_cv": 0.3
    },
-   "gr_processing_days": 2
+   "gr_processing_days": 2,
+   "ddmrp_buffer": true
   },
   {
    "location": "PLT-PUNE",

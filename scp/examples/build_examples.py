@@ -234,10 +234,12 @@ def kitchenware() -> dict:
         {"location": "PLT-PUNE", "product": "RM-BODY-KT", "on_hand": 4000},
         {"location": "PLT-PUNE", "product": "RM-HEATER", "on_hand": 14000,
          "lot_sizing": {"policy": "POQ", "periods": 4},
-         "safety_stock": {"method": "fill_rate", "service_level": 0.99, "demand_cv": 0.3}, "gr_processing_days": 2},
+         "safety_stock": {"method": "fill_rate", "service_level": 0.99, "demand_cv": 0.3}, "gr_processing_days": 2,
+         "ddmrp_buffer": True},  # long-lead import: the natural decoupling point
         {"location": "PLT-PUNE", "product": "RM-SWITCH", "on_hand": 42000,
          "lot_sizing": {"policy": "POQ", "periods": 4},
-         "safety_stock": {"method": "service_level", "service_level": 0.98, "demand_cv": 0.3}, "gr_processing_days": 2},
+         "safety_stock": {"method": "service_level", "service_level": 0.98, "demand_cv": 0.3}, "gr_processing_days": 2,
+         "ddmrp_buffer": True},
         {"location": "PLT-PUNE", "product": "PK-CARTON-L", "on_hand": 6000},
         {"location": "PLT-PUNE", "product": "PK-CARTON-S", "on_hand": 5000},
     ]
