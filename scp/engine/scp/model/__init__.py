@@ -1,5 +1,5 @@
 from .actuals import (
-    AccuracyRecord, ClosedOrder, ExecutionSettings, GoodsMovement, MovementType,
+    AccuracyRecord, ClosedOrder, ExecutionSettings, GoodsMovement, MovementType, RolledWeek,
 )
 from .common import (
     BucketSize, DemandKind, LocationType, LotSizePolicy, MrpType, ProductType, ReceiptKind,
@@ -17,7 +17,7 @@ from .promise import (
     Allocation, BopSegment, Confirmation, ConfirmationStrategy, PromiseSettings,
 )
 from .schedule import Changeover, ScheduleSettings
-from .sop import SopMode, SopSettings
+from .sop import SopMode, SopSettings, StockTarget
 from .master import (
     BomItem, Calendar, LaneMode, Location, LocationProduct, LotSizing, Operation, Product,
     ProductionSource, PurchasingSource, Resource, SafetyStockPolicy, Settings, TransportLane,
@@ -26,12 +26,12 @@ from .master import (
 from .transactional import DemandRecord, Reservation, SalesHistory, ScheduledReceipt
 
 __all__ = [
-    "AccuracyRecord", "OwnerRule", "TowerSettings", "CapacityOption", "FinanceSettings", "ClosedOrder", "ExecutionSettings", "GoodsMovement", "MovementType", "Reservation",
+    "AccuracyRecord", "OwnerRule", "TowerSettings", "CapacityOption", "FinanceSettings", "ClosedOrder", "ExecutionSettings", "GoodsMovement", "MovementType", "RolledWeek", "Reservation",
     "DEFAULT_MODELS", "Allocation", "BopSegment", "Confirmation", "ConfirmationStrategy", "PromiseSettings", "DemandEvent", "EventKind", "ForecastModelId", "ForecastOverride", "ForecastPeriod",
     "ForecastSettings", "InventorySettings", "NpiRule", "OutlierMethod", "SelectionMetric",
     "BomItem", "BucketSize", "Calendar", "Changeover", "Dataset", "DemandKind", "DemandRecord", "LaneMode",
     "Location", "LocationProduct", "LocationType", "LotSizePolicy", "LotSizing", "MrpType",
     "Operation", "Product", "ProductType", "ProductionSource", "PurchasingSource", "ReceiptKind",
     "Resource", "ResourceKind", "SafetyStockMethod", "SafetyStockPolicy", "SalesHistory",
-    "ScheduleSettings", "ScheduledReceipt", "Settings", "SopMode", "SopSettings", "Strategy", "TransportLane", "TransportMode", "UomConversion",
+    "ScheduleSettings", "ScheduledReceipt", "Settings", "SopMode", "SopSettings", "StockTarget", "Strategy", "TransportLane", "TransportMode", "UomConversion",
 ]

@@ -69,3 +69,5 @@ class SalesHistory(Model):
     qty: float = Unit("qty")
     price: float | None = Unit("money_per_unit", default=None)
     promo: bool = False
+    from_journal: bool = Field(False, description="Written by the roll-forward from sale movements, and rebuilt from "
+                                                  "the whole journal on every roll (so a late posting reaches it)")

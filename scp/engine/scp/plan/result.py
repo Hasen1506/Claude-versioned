@@ -55,7 +55,10 @@ class PlannedOrder(Out):
     shipments: int | None = None
     delay_days: float = 0.0       # projected lateness vs need incl. upstream delays; −1 = an input is uncovered
     projected_available_date: dt.date | None = None
-    lot_excess: float = 0.0       # quantity not pegged to any requirement (lot sizing / SS)
+    lot_excess: float = 0.0       # quantity not pegged to any requirement by the end of the horizon
+    # why the order is this size, as planned: qty = for requirements + for_buffer + for_lot_size
+    for_buffer: float = 0.0       # raises projected stock to the safety stock, stock target or reorder point
+    for_lot_size: float = 0.0     # beyond the shortage: the lot-size rule, minimums and rounding
 
 
 class ScheduledReceiptOut(Out):
@@ -75,9 +78,12 @@ class NodeBucket(Out):
     planned_receipts: float = 0.0
     projected_on_hand: float = 0.0   # end of bucket, physical (by available dates)
     safety_stock: float = 0.0
+    target_stock: float = 0.0        # S&OP build-ahead target on the bucket's last day (0 = none)
     below_safety: float = 0.0        # max(0, SS − projected)
     shortage: float = 0.0            # max(0, −projected)
     holding_cost: float = 0.0        # carrying cost of the projected stock over the bucket
+    at_risk: float = 0.0             # independent demand due in the bucket that its pegged supply reaches late
+                                     # (upstream delays included) or not at all: what DEMAND_AT_RISK counts
 
 
 class NodePlan(Out):

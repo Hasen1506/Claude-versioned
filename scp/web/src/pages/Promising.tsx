@@ -194,6 +194,8 @@ function OrderCard({ o, currency }: { o: OrderPromise; currency: string }) {
         <StatTile label="Order value" value={money(o.value, currency)} sub={`priority ${o.priority}`} />
         {o.allocation_capped > 0 && <StatTile label="Held back by allocation" value={qty(o.allocation_capped)} sub="on the requested date" />}
       </div>
+      {o.reason && <div className="banner warning"><Badge sev="warning">Why not</Badge>{o.reason}</div>}
+      {o.at_risk && <div className="banner error"><Badge sev="error">At risk</Badge>Supply no longer covers this confirmation: run backorder processing to re-promise it.</div>}
       <table className="t nowrap">
         <thead><tr><th>Ships from</th><th>Ship date</th><th>Delivery</th><th className="num">Qty</th><th>Method</th><th>On time</th></tr></thead>
         <tbody>

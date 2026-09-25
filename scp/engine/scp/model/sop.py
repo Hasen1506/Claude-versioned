@@ -1,11 +1,12 @@
 """S&OP (constrained supply) settings: the time-phased network LP of blueprint §6."""
 from __future__ import annotations
 
+import datetime as dt
 from enum import Enum
 
 from pydantic import Field
 
-from .common import BucketSize, Model, Unit
+from .common import BucketSize, Model, Ref, Unit
 
 
 class SopMode(str, Enum):
@@ -33,3 +34,15 @@ class SopSettings(Model):
                                   description="Scenario: scale regular and overtime hours of every resource")
     capacity_add_hours_per_week: dict[str, float] = Field(
         default_factory=dict, description="Scenario: extra regular hours per week by resource id (e.g. an added shift)")
+
+
+class StockTarget(Model):
+    """A stock level MRP plans to keep at a node on a date, on top of its safety stock: the build-ahead the
+    constrained S&OP plan decided (written by the S&OP release). Between two targets of a node the level is
+    interpolated linearly by date; before the first and after the last there is none."""
+
+    location: str = Ref("location")
+    product: str = Ref("product")
+    date: dt.date
+    qty: float = Unit("qty")
+    source: str = Field("sop", max_length=40, description="What wrote it (the S&OP release writes 'sop')")

@@ -48,14 +48,17 @@ def _entry(ds: Dataset, P: Promiser) -> list[OrderPromise]:
                              priority=d.priority, complete_delivery=d.complete_delivery, lines=lines, previous=list(lines),
                              change="kept", value=d.qty * _price(ds, d))
             out[key] = finish(r)
-    # which persisted promises does the current supply no longer cover?
+    # which persisted promises does the current supply no longer cover? Promises shipping before the first day the
+    # cumulative balance goes negative are covered (everything up to that day is); those shipping inside a
+    # negative stretch are not
     for node, s in P.series.items():
         c = s.cum()
         neg = [j for j in range(min(s.horizon, s.days)) if c[j] < -EPS]
         if not neg:
             continue
+        short = set(neg)
         for r in out.values():
-            if any((x.ship_from, r.product) == node and P.day(x.ship_date) <= neg[-1] for x in r.lines):
+            if any((x.ship_from, r.product) == node and P.day(x.ship_date) in short for x in r.lines):
                 r.at_risk = True
     for key, d in orders:
         if key not in out:

@@ -7,6 +7,8 @@ Date semantics of every planned order:
 * ``available_date``  — ``due_date`` + GR processing: usable for requirements (the netting date)
 
 Buy:      start --supplier lead_time_days--> dispatch --lane transit--> due --GR--> available
+          (the order is placed on a working day of the receiving location, whose buyers place it:
+          backward scheduling moves it earlier, so the goods can arrive before they are needed, never after)
 Transfer: start (ship at origin) --lane transit--> due --GR--> available
 Make:     start --operations (working days of the plant calendar)--> due --GR--> available
 """
@@ -163,14 +165,14 @@ def schedule_buy(ds: Dataset, src_id: str, *, available: date | None = None, sta
     gr = gr_days(ds.location_product_by_key.get((pu.location, pu.product)))
     lane = supplier_lane(ds, pu.supplier, pu.location, pu.product)
     transit = lane.planning_mode.transit_days if lane else 0.0
+    buyer = location_calendar(ds, pu.location)
     if available is not None:
-        due = available - _days(gr)
-        ship = due - _days(transit)
-        st = ship - _days(pu.lead_time_days)
+        latest = available - _days(gr) - _days(transit) - _days(pu.lead_time_days)
+        st = buyer.prev_workday(latest)
     else:
-        st = start
-        ship = st + _days(pu.lead_time_days)
-        due = ship + _days(transit)
+        st = buyer.next_workday(start)
+    ship = st + _days(pu.lead_time_days)
+    due = ship + _days(transit)
     return Schedule(st, due, due + _days(gr), [], ship_date=ship)
 
 

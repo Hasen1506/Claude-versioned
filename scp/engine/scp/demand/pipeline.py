@@ -19,7 +19,7 @@ import numpy as np
 from ..model import (
     Dataset, DemandKind, DemandRecord, ForecastModelId, ForecastPeriod, NpiRule, OutlierMethod,
 )
-from ..validate import has_errors, validate
+from ..validate import blocks_demand, validate
 from . import foundation as fm
 from .competition import Outcome, compete, origins
 from .models import INTERMITTENT_ONLY, SMOOTH_ONLY, SPECS
@@ -61,6 +61,7 @@ class _Hist:
     pattern: str = "none"
     adi: float | None = None
     cv2: float | None = None
+    outlier_adjust: float = 0.0   # Σ (cleansed − raw) over outlier periods: what ABC ranks without
 
 
 def _aggregate(ds: Dataset, period: ForecastPeriod, cutoff: date) -> dict[tuple[str, str], _Hist]:
@@ -169,14 +170,23 @@ def _cleanse(ds: Dataset, h: _Hist, ev_kind: dict[str, str]) -> None:
             for j, i in enumerate(idx):
                 if abs(z[j]) > fs.outlier_threshold:
                     y[i] = max(0.0, local[j] + np.sign(z[j]) * fs.outlier_threshold * sigma)
+                    h.outlier_adjust += float(y[i] - h.raw[i])
                     h.flags[i] = "outlier"
     h.cleaned = y
+
+
+def _ranked(h: _Hist) -> float:
+    """Revenue with the outliers cleansed away (at the series' average price), so one freak order cannot
+    promote an item. Promotions and events stay: that revenue was real and planned."""
+    units = float(h.raw.sum())
+    return max(0.0, h.revenue * (units + h.outlier_adjust) / units) if units > 0 else max(h.revenue, 0.0)
 
 
 def _abc(hists: list[_Hist], a: float, b: float) -> dict[tuple[str, str], tuple[str, float]]:
     total = sum(max(h.revenue, 0.0) for h in hists)
     use_qty = total <= 0
-    vals = {(h.location, h.product): (float(h.raw.sum()) if use_qty else max(h.revenue, 0.0)) for h in hists}
+    vals = {(h.location, h.product): (float(h.raw.sum() + h.outlier_adjust) if use_qty else _ranked(h))
+            for h in hists}
     total = sum(vals.values()) or 1.0
     out: dict[tuple[str, str], tuple[str, float]] = {}
     cum = 0.0
@@ -259,7 +269,7 @@ def run_forecast(ds: Dataset) -> ForecastResult:
     provider, status = fm.get() if ForecastModelId.TIMESFM in fs.models else (None, fm.Status(
         False, False, "", "", "Not selected in forecast settings."))
     foundation_status = FoundationStatus(**status.__dict__)
-    if has_errors(issues):
+    if blocks_demand(issues):
         return ForecastResult(ok=False, period=period.value, season_length=m, periods=[p.label for p in fut],
                               issues=issues, series=[], summary=Summary(series=0), foundation=foundation_status)
 

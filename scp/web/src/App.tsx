@@ -13,6 +13,7 @@ import { Tower } from "./pages/Tower";
 import { Versions } from "./pages/Versions";
 import { Inventory } from "./pages/Inventory";
 import { Promising } from "./pages/Promising";
+import { Proof } from "./pages/Proof";
 import { Schedule } from "./pages/Schedule";
 import { Sop } from "./pages/Sop";
 import { DATA_GROUPS, MasterData } from "./pages/MasterData";
@@ -41,10 +42,18 @@ export function App() {
   return (
     <div className="app">
       <TopBar />
-      {ds ? <Spine page={page} /> : <div />}
-      {ds ? <Sidebar page={page} sub={route[1]} ds={ds} /> : <aside className="sidebar" />}
+      {/* without a dataset the spine row stays empty but must still span both columns, or the page lands in the rail */}
+      {ds ? <Spine page={page} /> : <div style={{ gridColumn: "1 / -1" }} />}
+      {ds ? <Sidebar page={page} sub={route[1]} ds={ds} /> : (
+        <nav className="sidebar" aria-label="Main">
+          <div className="nav-section">Start</div>
+          <a className={`nav-item ${page !== "proof" ? "active" : ""}`} href="#/">Open a network</a>
+          <a className={`nav-item ${page === "proof" ? "active" : ""}`} href={href("proof")}><span className="n">✓</span>Proof</a>
+        </nav>
+      )}
       <main className="main">
-        {!ds ? <div className="content"><Welcome /></div> : page === "data" ? <MasterData route={route} />
+        {page === "proof" ? <Proof route={route} />
+          : !ds ? <div className="content"><Welcome /></div> : page === "data" ? <MasterData route={route} />
           : page === "settings" ? <MasterData route={["data", "settings"]} />
           : page === "readiness" ? <Readiness />
           : page === "demand" ? <Demand route={route} />
@@ -231,6 +240,7 @@ function Sidebar({ page, sub, ds }: { page: string; sub?: string; ds: Dataset })
       ))}
       <div className="nav-section">Company</div>
       {item(["versions"], "Versions & scenarios", page === "versions")}
+      {item(["proof"], "Proof", page === "proof", "✓")}
       {item(["settings"], "Settings", page === "settings")}
     </nav>
   );
@@ -292,6 +302,17 @@ function Welcome() {
             <button className="btn accent" onClick={blank}>Create blank network</button>
             <p className="muted small" style={{ marginTop: 16, marginBottom: 0 }}>Or import a dataset JSON exported earlier, using <b>Import JSON</b> at the top.</p>
           </div>
+        </div>
+      </div>
+      <div className="panel proof-cta" style={{ marginTop: 14 }}>
+        <div className="panel-body row wrap" style={{ gap: 14 }}>
+          <span className="stage-head" style={{ padding: 0, border: 0, background: "none" }}><span className="n" style={{ fontSize: 26 }}>QED</span></span>
+          <div style={{ flex: 1, minWidth: 260 }}>
+            <h3 style={{ fontSize: 13 }}>Can you trust the numbers?</h3>
+            <p className="muted small" style={{ margin: "4px 0 0" }}>Eight companies worked out by hand, from master data to the books. Run them and
+              see every answer the engine gives beside the one derived independently.</p>
+          </div>
+          <a className="btn accent" href={href("proof")}>See the proof</a>
         </div>
       </div>
       {examples && examples.length === 0 && <Empty title="No examples found" />}

@@ -84,6 +84,15 @@ class AccuracyRecord(Model):
     actual: float = Unit("qty")
 
 
+class RolledWeek(Model):
+    """A week the roll-forward closed (written by the roll). Its accuracy is logged per series that had forecast or
+    sales, and re-read on every later roll, so a sale posted late for it still counts, even in a week that logged
+    nothing at the time."""
+
+    start: dt.date
+    end: dt.date = Field(description="Exclusive")
+
+
 class ExecutionSettings(Model):
     firm_zone_days: int = Field(14, ge=0, le=366, description="Firming converts planned orders starting within this "
                                                                "many days of the planning start")

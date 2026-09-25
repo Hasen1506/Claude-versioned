@@ -9,6 +9,10 @@ must cover demand over the **net replenishment time** τ_j = SI_j + T_j − S_j 
 and the problem is  min Σ_j c_j √τ_j  with  c_j = h_j · z_j · σ_j  (holding cost per √day),
 subject to demand-facing stages quoting S_j ≤ their promised service time.
 
+A fill-rate target has no single z: the k that meets it depends on how much demand the buffer covers,
+so such a stage passes its cost as a function of τ (``cost_at``). The MILP below has one binary per τ
+value, so any cost curve is solved exactly.
+
 The objective is concave, so an optimum sits at an extreme point: each stage either holds a
 full buffer (S_j = 0) or passes its inbound time through (S_j = SI_j + T_j). Graves–Willems solve
 spanning trees by dynamic programming; networks where a component feeds several assemblies are
@@ -21,7 +25,7 @@ from __future__ import annotations
 import itertools
 import math
 import time
-from collections.abc import Hashable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -37,6 +41,10 @@ class Stage:
     upstream: Sequence[Hashable] = ()
     max_service: int | None = None  # upper bound on S_j (demand-facing promise, or a planner limit)
     no_stock: bool = False         # make-to-order / pass-through: τ_j is forced to 0
+    cost_at: Callable[[int], float] | None = None  # holding cost at net time τ when it is not cost·√τ
+
+    def holding(self, tau: int) -> float:
+        return self.cost_at(tau) if self.cost_at is not None else self.cost * math.sqrt(tau)
 
 
 @dataclass
@@ -116,7 +124,7 @@ def solve(stages: Sequence[Stage], *, time_limit: float = 30.0) -> Solution:
             ub[j] = 1
             integrality[j] = 1
             # tiny tie-break toward shorter net times keeps solutions deterministic when c_j = 0
-            c[j] = s.cost * math.sqrt(t) + 1e-9 * t
+            c[j] = s.holding(t) + 1e-9 * t
     rows: list[tuple[dict[int, float], float, float]] = []
     for k, s in enumerate(stages):
         for u in s.upstream:
@@ -153,7 +161,7 @@ def solve(stages: Sequence[Stage], *, time_limit: float = 30.0) -> Solution:
 
 
 def objective(stages: Sequence[Stage], net: dict[Hashable, int]) -> float:
-    return sum(s.cost * math.sqrt(net[s.id]) for s in stages)
+    return sum(s.holding(net[s.id]) for s in stages)
 
 
 def brute_force(stages: Sequence[Stage]) -> Solution:

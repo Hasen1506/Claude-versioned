@@ -13,6 +13,9 @@ factor) and VF the variability factor. Replenishment is signalled by the net flo
 
     NFP = on hand + open supply − qualified demand   (due today + spikes inside the DLT)
 
+Qualified demand counts the position's own sales orders and those of the customers it ships to, dated
+when they must leave (due date − transit).
+
 and an order of TOG − NFP is recommended whenever NFP ≤ TOY.
 """
 from __future__ import annotations
@@ -21,6 +24,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ..model import InventorySettings
+
+EPS = 1e-9   # a computed CV of 0.30000000000000004 is still 'low' at a 0.3 boundary
 
 Zone = Literal["red", "yellow", "green", "over"]
 Band = Literal["short", "medium", "long", "low", "high"]
@@ -45,17 +50,17 @@ class Buffer:
 
 
 def lead_time_factor(dlt: float, s: InventorySettings) -> tuple[float, Literal["short", "medium", "long"]]:
-    if dlt <= s.lt_short_days:
+    if dlt <= s.lt_short_days + EPS:
         return s.ltf_short, "short"
-    if dlt <= s.lt_long_days:
+    if dlt <= s.lt_long_days + EPS:
         return s.ltf_medium, "medium"
     return s.ltf_long, "long"
 
 
 def variability_factor(cv_weekly: float, s: InventorySettings) -> tuple[float, Literal["low", "medium", "high"]]:
-    if cv_weekly <= s.cv_low:
+    if cv_weekly <= s.cv_low + EPS:
         return s.vf_low, "low"
-    if cv_weekly <= s.cv_high:
+    if cv_weekly <= s.cv_high + EPS:
         return s.vf_medium, "medium"
     return s.vf_high, "high"
 

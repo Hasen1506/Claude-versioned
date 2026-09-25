@@ -186,6 +186,11 @@ function NodeDetail({ plan, node }: { plan: PlanResult; node: PlanResult["nodes"
     ["Projected on hand", (x) => x.projected_on_hand ?? 0, "emph"],
     ["Safety stock", (x) => x.safety_stock ?? 0],
   ];
+  // shown only when they carry something: the S&OP build-ahead target, and demand that supply reaches late
+  const hasTarget = b.some((x) => (x.target_stock ?? 0) > 1e-9);
+  const hasRisk = b.some((x) => (x.at_risk ?? 0) > 1e-9);
+  if (hasTarget) rows.push(["Stock target (S&OP)", (x) => x.target_stock ?? 0]);
+  if (hasRisk) rows.push(["Demand reached late", (x) => x.at_risk ?? 0, "risk"]);
   return (
     <div className="stack">
       <Panel title={<div className="context-bar"><a href={href("network", node.location)}>{node.location}</a><span>›</span><b>{node.product}</b></div>}
@@ -201,6 +206,8 @@ function NodeDetail({ plan, node }: { plan: PlanResult; node: PlanResult["nodes"
         <BucketChart labels={labels} series={[
           { name: "Safety stock", color: "var(--series-2)", values: b.map((x) => x.safety_stock ?? 0), kind: "step" },
           { name: "Projected on hand (end of bucket)", color: "var(--series-1)", values: b.map((x) => x.projected_on_hand ?? 0), kind: "line" },
+          ...(hasTarget ? [{ name: "Stock target (S&OP)", color: "var(--series-3)", values: b.map((x) => x.target_stock ?? 0), kind: "step" as const }] : []),
+          ...(hasRisk ? [{ name: "Demand reached late", color: "var(--critical)", values: b.map((x) => x.at_risk ?? 0), kind: "column" as const }] : []),
         ]} />
       </Panel>
       <Panel flush title="Stock / requirements by bucket">
@@ -215,7 +222,9 @@ function NodeDetail({ plan, node }: { plan: PlanResult; node: PlanResult["nodes"
                     const v = get(x);
                     const neg = label === "Projected on hand" && v < -1e-6;
                     const low = label === "Projected on hand" && !neg && (x.below_safety ?? 0) > 1e-6;
-                    return <td key={i} className={`num ${neg ? "neg" : low ? "warnc" : ""}`}>{Math.abs(v) < 1e-9 ? "·" : qty(v)}</td>;
+                    const late = cls === "risk" && v > 1e-6;
+                    return <td key={i} className={`num ${neg || late ? "neg" : low ? "warnc" : ""}`}
+                      title={late ? "Demand in this bucket that the plan covers only after its date" : undefined}>{Math.abs(v) < 1e-9 ? "·" : qty(v)}</td>;
                   })}
                 </tr>
               ))}
@@ -405,6 +414,8 @@ function PegTree({ plan, orderId }: { plan: PlanResult; orderId: string }) {
     );
   });
 
+  const buffer = o.for_buffer ?? 0;
+  const rounding = o.for_lot_size ?? 0;
   return (
     <div className="peg-tree stack">
       <div>
@@ -413,12 +424,16 @@ function PegTree({ plan, orderId }: { plan: PlanResult; orderId: string }) {
           {o.origin && <>from {o.origin} · </>}source {o.source_id} · start {day(o.start_date)} · due {day(o.due_date)} · available {day(o.available_date)}
           {o.projected_available_date && o.projected_available_date !== o.available_date && <> · projected {day(o.projected_available_date)}</>}
         </div>
-        <div className="muted small">Need date {day(o.need_date)} · cost {money(o.total_cost, plan.currency)}{o.shipments ? ` · ${o.shipments} shipment(s)` : ""}
-          {(o.lot_excess ?? 0) > 1e-6 && <> · {qty(o.lot_excess)} beyond requirements (lot size / safety stock)</>}</div>
+        <div className="muted small">Need date {day(o.need_date)} · cost {money(o.total_cost, plan.currency)}{o.shipments ? ` · ${o.shipments} shipment(s)` : ""}</div>
+        {(buffer > 1e-6 || rounding > 1e-6) && (
+          <div className="muted small">Sized {qty(o.qty - buffer - rounding)} for requirements
+            {buffer > 1e-6 && <> · {qty(buffer)} to restore the safety stock or stock target</>}
+            {rounding > 1e-6 && <> · {qty(rounding)} lot-size rounding</>}</div>
+        )}
       </div>
       <div>
         <h3>Serves</h3>
-        {(idx.bySupply.get(o.id) ?? []).length ? <ul>{serves(o.id, 0)}</ul> : <div className="faint small">Not pegged to a requirement (lot-size excess or safety stock replenishment).</div>}
+        {(idx.bySupply.get(o.id) ?? []).length ? <ul>{serves(o.id, 0)}</ul> : <div className="faint small">Not pegged to a requirement: it builds the buffer or is lot-size rounding.</div>}
       </div>
       <div>
         <h3>Depends on</h3>

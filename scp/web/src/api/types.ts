@@ -64,6 +64,7 @@ export type PoolingRow = S["PoolingRow"];
 
 export type SopResult = S["SopResult"];
 export type SopReleaseResponse = S["SopReleaseResponse"];
+export type PlacementResponse = S["PlacementResponse"];
 export type SopDemandLine = S["DemandLine"];
 export type SopResourceLine = S["ResourceLine"];
 export type SopBinding = S["Binding"];
@@ -112,3 +113,8 @@ export type VersionDoc = S["VersionDoc"];
 export type Comparison = S["Comparison"];
 export type DatasetDiff = S["DatasetDiff"];
 export type PlanSummary = S["PlanSummary"];
+
+export type ScenarioInfo = S["ScenarioInfo"];
+export type ScenarioReport = S["ScenarioReport"];
+export type ScenarioStep = S["StepReport"];
+export type ScenarioCheck = S["Check"];

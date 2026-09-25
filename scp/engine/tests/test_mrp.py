@@ -133,7 +133,9 @@ def test_service_level_safety_stock_formula():
     d["purchasing_sources"][0]["lead_time_std_days"] = 1.0
     r = plan(d)
     n = node(r, "P", "B")
-    mean = 80 / 28
+    # the network demand rate (scp.plan.rates): 50 A over 28 days × 2 B per A. A's opening stock is a one-off
+    # drawdown, not a lower consumption rate, so it does not shrink B's buffer
+    mean = 50 * 2 / 28
     sd = 0.2 * mean * 7 ** 0.5
     expected = 1.6448536 * ((3 * sd ** 2) + (mean * 1.0) ** 2) ** 0.5
     assert n.buckets[0].safety_stock == pytest.approx(expected, rel=1e-6)

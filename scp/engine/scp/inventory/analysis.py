@@ -1,16 +1,17 @@
 """Inventory optimisation over the planning network (blueprint §5, phase P3).
 
-1. **Demand at every node.** Direct demand (forecast or orders, whichever is larger per node) is
-   averaged per calendar day over the horizon, then flowed up the network in low-level-code order:
-   a customer passes its demand to the stocking locations that ship to it, a stocking node passes
-   its demand to its supply option (split by quota where quotas exist), and a make option passes
-   component usage × BOM factor. Variances add (independent demand streams), so the upstream CV
-   falls: that is risk pooling. A node's own ``demand_cv`` (measured forecast error) overrides the
-   modelled value; otherwise the inventory default CV applies at the demand points.
+1. **Demand at every node.** The network demand rate MRP and S&OP also use (:mod:`scp.plan.rates`):
+   forecast after consumption plus sales orders, averaged per day over the horizon and flowed up the
+   network; variances add, so the upstream CV falls (risk pooling). A node's own ``demand_cv``
+   overrides the modelled value; otherwise the inventory default CV applies at the demand points.
 2. **Single-echelon baseline.** Every stage buffers its own replenishment lead time:
    SS = z · √((L + R)·σ_d² + d̄²·σ_L²).
 3. **Multi-echelon placement.** The guaranteed-service model (:mod:`.gsm`) chooses the service
-   times; recommended SS = z · √(τ·σ_d² + d̄²·σ_L²) where the stage holds stock (τ > 0).
+   times; recommended SS = z · √((τ + R)·σ_d² + d̄²·σ_L²) where the stage holds stock (τ > 0).
+   A fill-rate target is sized the way MRP sizes it (the loss function against the node's typical
+   lot) at every candidate τ, so the placement is priced on the stock the node would really hold.
+   Service times are whole days, so a fractional lead time is rounded up in the model; a stage's
+   stock covers τ less that rounding, so buffering every stage costs exactly the single-echelon baseline.
 4. **DDMRP.** Buffer zones and the net-flow position for every stocking node (:mod:`.ddmrp`).
 5. **Pooling.** For each product, the stock needed at the demand-facing locations separately
    versus one pooled position (the square-root law).
@@ -19,16 +20,19 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from dataclasses import dataclass, field
 from datetime import date, timedelta
 from statistics import NormalDist
 
-from ..model import DemandKind, LocationType, SafetyStockMethod, Strategy
+from ..model import DemandKind, SafetyStockMethod
 from ..model.dataset import Dataset
-from ..network import NetworkGraph, Node, SupplyOption, build_graph
+from ..network import NetworkGraph, Node, build_graph
 from ..plan import costing
 from ..plan.leadtime import lead_time_std_days, nominal_lead_time_days
-from ..plan.safety import SSInputs, statistical_ss
+from ..plan.rates import (
+    SQRT7, Flow, bucket_days, demand_flows, node_role, policy_safety_stock, typical_lot, upstream_mix,
+)
+from ..plan.safety import buffer as size_buffer
+from ..time import Buckets
 from ..validate import has_errors, validate
 from . import ddmrp, gsm
 from .result import (
@@ -36,103 +40,6 @@ from .result import (
 )
 
 _N = NormalDist()
-SQRT7 = math.sqrt(7.0)
-
-
-@dataclass
-class Flow:
-    direct: dict[Node, float] = field(default_factory=dict)      # mean daily direct demand
-    mean: dict[Node, float] = field(default_factory=dict)        # mean daily total demand
-    var: dict[Node, float] = field(default_factory=dict)         # variance of daily demand
-    cv_source: dict[Node, str] = field(default_factory=dict)
-
-
-def _overlap(rec_start: date, rec_days: int, lo: date, hi: date) -> float:
-    """Fraction of a record's window [start, start + days) that falls inside [lo, hi)."""
-    end = rec_start + timedelta(days=rec_days)
-    inside = (min(end, hi) - max(rec_start, lo)).days
-    return max(0, inside) / rec_days
-
-
-def _direct(ds: Dataset, lo: date, hi: date) -> dict[Node, float]:
-    fc: dict[Node, float] = defaultdict(float)
-    so: dict[Node, float] = defaultdict(float)
-    for d in ds.demand:
-        days = d.period_days or 1
-        share = _overlap(d.date, days, lo, hi)
-        if share <= 0:
-            continue
-        (fc if d.kind is DemandKind.FORECAST else so)[(d.location, d.product)] += d.qty * share
-    span = max(1, (hi - lo).days)
-    return {n: max(fc.get(n, 0.0), so.get(n, 0.0)) / span for n in set(fc) | set(so)}
-
-
-def upstream_mix(ds: Dataset, g: NetworkGraph, node: Node) -> list[tuple[Node, float]]:
-    """(upstream node, units per unit of this node's demand) for the planned sourcing mix."""
-    opts: list[SupplyOption] = g.options.get(node) or []
-    if not opts:
-        return []
-    quota = [o for o in opts if o.quota]
-    mix = [(o, o.quota / sum(q.quota for q in quota)) for o in quota] if quota else [(opts[0], 1.0)]
-    out: list[tuple[Node, float]] = []
-    for o, w in mix:
-        if o.kind == "buy":
-            continue  # suppliers are outside the planned network
-        if o.kind == "transfer":
-            out.append((o.upstream[0], w))
-        else:
-            for up in o.upstream:
-                out.append((up, w * costing.component_factor(ds, o.source_id, up[1])))
-    return out
-
-
-def demand_flows(ds: Dataset, g: NetworkGraph, lo: date, hi: date) -> Flow:
-    f = Flow(direct=_direct(ds, lo, hi))
-    default_cv = ds.inventory.default_demand_cv
-    inflow_mean: dict[Node, float] = defaultdict(float)
-    inflow_var: dict[Node, float] = defaultdict(float)
-    for node in g.order:  # ascending LLC: all consumers of a node come before it
-        lp = ds.location_product_by_key.get(node)
-        cv = lp.safety_stock.demand_cv if lp else None
-        mu_d = f.direct.get(node, 0.0)
-        mean = mu_d + inflow_mean[node]
-        if cv is not None:
-            var, src = (cv * mean * SQRT7) ** 2, "policy"
-        else:
-            var = (default_cv * mu_d * SQRT7) ** 2 + inflow_var[node]
-            src = "pooled" if inflow_var[node] > 0 else ("default" if mu_d > 0 else "none")
-        f.mean[node], f.var[node], f.cv_source[node] = mean, var, src
-        for up, k in upstream_mix(ds, g, node):
-            inflow_mean[up] += k * mean
-            inflow_var[up] += (k * k) * var
-    return f
-
-
-def node_role(ds: Dataset, node: Node) -> str:
-    if ds.location_type(node[0]) is LocationType.CUSTOMER:
-        return "customer"
-    lp = ds.location_product_by_key.get(node)
-    if lp and lp.strategy is Strategy.MTO:
-        return "no_stock"
-    return "stocking"
-
-
-def policy_safety_stock(ds: Dataset, node: Node, role: str, mean: float, lt: float, lt_sd: float) -> tuple[str, float]:
-    lp = ds.location_product_by_key.get(node)
-    if lp is None or role != "stocking":
-        return ("none", 0.0)
-    pol = lp.safety_stock
-    m = pol.method
-    if m is SafetyStockMethod.NONE:
-        return ("none", 0.0)
-    if m is SafetyStockMethod.FIXED:
-        return ("fixed", pol.qty or 0.0)
-    if m is SafetyStockMethod.DAYS_OF_SUPPLY:
-        return ("days_of_supply", mean * (pol.days or 0.0))
-    sl = pol.service_level or ds.settings.default_service_level
-    ls = lp.lot_sizing
-    q = ls.fixed_qty or max(ls.min_qty, mean * 7.0)
-    return (m.value, statistical_ss(pol, SSInputs(mean, lt, lt_sd, sl, q)).qty)
 
 
 def _ref(n: Node) -> NodeRef:
@@ -152,6 +59,7 @@ def run_inventory(ds: Dataset, *, time_limit: float = 30.0) -> InventoryResult:
     start = s.planning_start
     flow = demand_flows(ds, g, start, start + timedelta(days=s.horizon_days))
     inv = ds.inventory
+    per_bucket = bucket_days(ds, len(Buckets(s)))
 
     # ---- per-node inputs ---------------------------------------------------------------
     role = {n: node_role(ds, n) for n in g.order}
@@ -181,6 +89,29 @@ def run_inventory(ds: Dataset, *, time_limit: float = 30.0) -> InventoryResult:
         lp = ds.location_product_by_key.get(n)
         return lp.holding_rate if lp and lp.holding_rate is not None else s.carrying_rate
 
+    def review(n: Node) -> float:
+        lp = ds.location_product_by_key.get(n)
+        return lp.safety_stock.review_period_days if lp else 0.0
+
+    # a fill-rate target is measured against the lot the node orders (as in MRP); None: a z target
+    lot: dict[Node, float | None] = {}
+    for n in g.order:
+        lp = ds.location_product_by_key.get(n)
+        fr = lp is not None and lp.safety_stock.method is SafetyStockMethod.FILL_RATE
+        lot[n] = typical_lot(ds, g, n, flow.mean[n], val.unit_value.get(n, 0.0), per_bucket) if fr else None
+
+    def buffer(n: Node, days: float, lt_std: float) -> float:
+        """The stock n's service target needs to cover ``days`` of demand plus lead-time variability."""
+        sigma = math.sqrt(max(0.0, days) * flow.var[n] + (flow.mean[n] * lt_std) ** 2)
+        return size_buffer(lot[n] is not None, service_level(n), sigma, lot[n] or 0.0)
+
+    def whole_days(n: Node) -> int:
+        return int(math.ceil(lt[n] - 1e-9))
+
+    def exposure(n: Node, tau: int) -> float:
+        """Days of demand a stage covers at net time τ (whole days): τ less the rounding up of its lead time."""
+        return max(0.0, tau - max(0.0, whole_days(n) - lt[n]))
+
     # ---- guaranteed-service placement --------------------------------------------------
     stages: list[gsm.Stage] = []
     max_service: dict[Node, int | None] = {}
@@ -192,11 +123,14 @@ def run_inventory(ds: Dataset, *, time_limit: float = 30.0) -> InventoryResult:
         if n in demand_facing:
             bound = inv.customer_service_days if bound is None else min(bound, inv.customer_service_days)
         max_service[n] = None if bound is None else int(math.floor(bound + 1e-9))
-        z = _N.inv_cdf(service_level(n))
-        sd = math.sqrt(flow.var[n])
-        cost = val.unit_value.get(n, 0.0) * rate(n) * max(z, 0.0) * sd
-        stages.append(gsm.Stage(n, int(math.ceil(lt[n] - 1e-9)), cost, stock_up[n], max_service[n],
-                                no_stock=role[n] == "no_stock"))
+        h = val.unit_value.get(n, 0.0) * rate(n)
+        cost = h * max(_N.inv_cdf(service_level(n)), 0.0) * math.sqrt(flow.var[n])
+        # demand variability over τ, plus the review period once the stage holds stock; σ_L is added after.
+        # The model counts whole days, so a lead time is rounded up; the stage is charged for the demand it
+        # really covers, τ less that rounding, so buffering at every stage costs what single-echelon does
+        curve = lambda t, n=n, h=h: h * buffer(n, exposure(n, t) + review(n), 0.0) if t > 0 else 0.0  # noqa: E731
+        stages.append(gsm.Stage(n, whole_days(n), cost, stock_up[n], max_service[n],
+                                no_stock=role[n] == "no_stock", cost_at=curve))
     sol = gsm.solve(stages, time_limit=time_limit)
     cum_real: dict[Node, float] = {}
     for n in reversed(g.order):  # suppliers first (descending LLC)
@@ -210,20 +144,19 @@ def run_inventory(ds: Dataset, *, time_limit: float = 30.0) -> InventoryResult:
         mean, var = flow.mean[n], flow.var[n]
         sd = math.sqrt(var)
         sl = service_level(n)
-        z = _N.inv_cdf(sl)
         uv = val.unit_value.get(n, 0.0)
         r = rate(n)
-        lp = ds.location_product_by_key.get(n)
-        review = lp.safety_stock.review_period_days if lp else 0.0
-        method, cur = policy_safety_stock(ds, n, role[n], mean, lt[n], lt_sd[n])
-        if role[n] == "stocking":
-            single = max(0.0, z) * math.sqrt((lt[n] + review) * var + (mean * lt_sd[n]) ** 2)
-        else:
-            single = 0.0
+        own = math.sqrt((lt[n] + review(n)) * var + (mean * lt_sd[n]) ** 2)
+        pol = policy_safety_stock(ds, g, n, mean_daily=mean, lead_time=lt[n], lead_time_std=lt_sd[n],
+                                  unit_value=uv, days_per_bucket=per_bucket)
+        method, cur = pol.method, pol.qty
+        single = buffer(n, lt[n] + review(n), lt_sd[n]) if role[n] == "stocking" else 0.0
+        # z for a service level; for a fill rate, the k it takes over the node's own lead time
+        z = _N.inv_cdf(sl) if lot[n] is None else (single / own if own > 0 else 0.0)
         si = sol.inbound.get(n, 0)
         so = sol.service.get(n, 0)
         tau = sol.net.get(n, 0)
-        meio = max(0.0, z) * math.sqrt(tau * var + (mean * lt_sd[n]) ** 2) if role[n] == "stocking" and tau > 0 else 0.0
+        meio = buffer(n, exposure(n, tau) + review(n), lt_sd[n]) if role[n] == "stocking" and tau > 0 else 0.0
         decision = ("customer" if role[n] == "customer" else "no_stock" if role[n] == "no_stock"
                     else "buffer" if tau > 0 else "pass_through")
         nodes.append(NodeInventory(
@@ -256,8 +189,10 @@ def run_inventory(ds: Dataset, *, time_limit: float = 30.0) -> InventoryResult:
     tot.saving_vs_single = tot.single_cost - tot.meio_cost
     tot.saving_vs_current = tot.current_cost - tot.meio_cost
     notes = [
-        f"Demand is averaged over the {s.horizon_days}-day horizon; the larger of forecast and sales orders "
-        "counts per node. Variability flows upstream as independent streams (variances add).",
+        f"Demand is averaged over the {s.horizon_days}-day horizon: forecast after consumption by sales orders, "
+        "plus the orders. Variability flows upstream as independent streams (variances add).",
+        "A fill-rate target is sized with the normal loss function against the node's typical lot, at every "
+        "net replenishment time the placement considers; z shows the equivalent factor over its own lead time.",
         f"Nodes without a measured demand_cv use the default weekly CV {inv.default_demand_cv:g} at the demand point.",
         f"Customers are promised {inv.customer_service_days:g} day(s) service: demand-facing stages must quote "
         "at most that (a location-product's max_service_days can tighten it).",
@@ -287,6 +222,19 @@ def _ddmrp(ds: Dataset, g: NetworkGraph, role: dict[Node, str], stock_up: dict[N
         if role[n] == "customer":
             continue
         dlt[n] = lt[n] + max((dlt.get(u, 0.0) for u in stock_up[n] if u not in positioned), default=0.0)
+    # Sales orders by the stocking node that ships them: its own, and those of the customers it serves,
+    # dated when they must leave (due date − the customer lane's transit), split by quota where quotas exist.
+    orders: dict[Node, list[tuple[date, float]]] = defaultdict(list)
+    for d in ds.demand:
+        if d.kind is DemandKind.FORECAST:
+            continue
+        node = (d.location, d.product)
+        if role.get(node) != "customer":
+            orders[node].append((d.date, d.qty))
+            continue
+        ship = d.date - timedelta(days=math.ceil(lt.get(node, 0.0) - 1e-9))
+        for up, k in upstream_mix(ds, g, node):
+            orders[up].append((ship, d.qty * k))
     open_supply: dict[Node, float] = defaultdict(float)
     for r in ds.receipts:
         open_supply[(r.location, r.product)] += r.qty
@@ -302,11 +250,9 @@ def _ddmrp(ds: Dataset, g: NetworkGraph, role: dict[Node, str], stock_up: dict[N
         b = ddmrp.size(adu_flow.mean[n], dlt[n], cv, moq, inv)
         spike_end = start + timedelta(days=max(1, math.ceil(dlt[n])))
         qualified = 0.0
-        for d in ds.demand:
-            if (d.location, d.product) != n or d.kind is DemandKind.FORECAST:
-                continue
-            if d.date <= start or (d.date < spike_end and d.qty > inv.spike_factor * b.tor):
-                qualified += d.qty
+        for ship, qty in orders.get(n, ()):
+            if ship <= start or (ship < spike_end and qty > inv.spike_factor * b.tor):
+                qualified += qty
         on_hand = lp.on_hand if lp else 0.0
         nfp = on_hand + open_supply[n] - qualified
         uv = unit_value.get(n, 0.0)
@@ -345,4 +291,4 @@ def _pooling(ds: Dataset, nodes: list[NodeInventory], facing: set[Node], service
     return rows
 
 
-__all__ = ["run_inventory"]
+__all__ = ["demand_flows", "node_role", "run_inventory", "upstream_mix"]

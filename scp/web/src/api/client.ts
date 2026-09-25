@@ -1,6 +1,6 @@
 import type {
-  Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
-  SchemaError, ValidationResult,
+  Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
+  ScenarioInfo, ScenarioReport, SchemaError, ValidationResult,
 } from "./types";
 
 /** Thrown when the engine rejects the dataset shape (HTTP 422). Carries field-level errors. */
@@ -44,6 +44,9 @@ export const api = {
   sop: (ds: Dataset) => post<SopResult>("/api/sop", ds),
   sopRelease: (ds: Dataset) => post<SopReleaseResponse>("/api/sop/release", ds),
   inventory: (ds: Dataset) => post<InventoryResult>("/api/inventory", ds),
+  /** Write the multi-echelon recommendation as fixed policies; keys "location|product", null = every stage that differs. */
+  applyPlacement: (dataset: Dataset, keys: string[] | null) =>
+    call<PlacementResponse>("/api/inventory/apply", { method: "POST", body: JSON.stringify({ dataset, keys }) }),
   promise: (ds: Dataset) => post<PromiseResult>("/api/promise", ds),
   bop: (ds: Dataset) => post<PromiseResult>("/api/promise/bop", ds),
   promiseCheck: (dataset: Dataset, order: DemandRecord) =>
@@ -84,6 +87,10 @@ export const api = {
   forecast: (ds: Dataset) => post<ForecastResult>("/api/forecast", ds),
   release: (dataset: Dataset, keys?: string[]) =>
     call<ReleaseResponse>("/api/forecast/release", { method: "POST", body: JSON.stringify({ dataset, keys: keys ?? null }) }),
+  /** Proof: end-to-end scenarios with hand-derived answers, run against an isolated in-memory store. */
+  scenarios: () => call<ScenarioInfo[]>("/api/scenarios"),
+  scenarioDataset: (id: string) => call<Dataset>(`/api/scenarios/${encodeURIComponent(id)}/dataset`),
+  runScenario: (id: string) => call<ScenarioReport>(`/api/scenarios/${encodeURIComponent(id)}/run`, { method: "POST" }),
 };
 
 // Minimal JSON-schema shape used by the form generator.

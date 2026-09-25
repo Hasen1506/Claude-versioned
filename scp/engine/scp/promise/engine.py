@@ -25,7 +25,7 @@ from ..model import (
     Dataset, DemandKind, DemandRecord, LocationType,
 )
 from ..model.promise import Allocation, BopSegment, Confirmation
-from ..network import NetworkGraph, Node, build_graph
+from ..network import NetworkGraph, Node, build_graph, supply_options
 from ..plan import PlanResult
 from ..plan.costing import component_factor
 from ..plan.leadtime import (
@@ -146,7 +146,9 @@ class Promiser:
         node = (d.location, d.product)
         if self.ds.location_type(d.location) is not LocationType.CUSTOMER:
             return [Ship(node, None)]
-        out = [Ship(o.upstream[0], o.source_id) for o in self.g.options.get(node, []) if o.kind == "transfer"]
+        # a customer's first order has no node in the plan's network yet: its lanes still say who can ship
+        opts = self.g.options[node] if node in self.g.options else supply_options(self.ds, node)
+        out = [Ship(o.upstream[0], o.source_id) for o in opts if o.kind == "transfer"]
         return out if self.cfg.alternative_locations else out[:1]
 
     def ship_day(self, sh: Ship, product: str, delivery: date) -> int:
@@ -183,7 +185,8 @@ class Promiser:
         a = self.alloc_period(allocs, ship_day) if allocs else None
         if a:
             self.alloc_used[a.id] += qty
-        deliv = self.delivery(sh, d.product, ship_day)
+        # goods that can arrive early (the ship date snaps back to a working day) are delivered on the requested date
+        deliv = max(self.delivery(sh, d.product, ship_day), requested)
         return ScheduleLine(ship_from=sh.node[0], ship_date=self.date(ship_day), date=deliv, qty=qty, method=method,
                             on_time=deliv <= max(requested, self.origin))
 
@@ -223,6 +226,8 @@ class Promiser:
         res = OrderPromise(order=key, location=d.location, product=d.product, qty=d.qty, requested=d.date,
                            priority=d.priority, complete_delivery=d.complete_delivery, value=d.qty * price)
         ships = self.ships(d)
+        if not ships:
+            res.reason = f"No stocking location ships {d.product} to {d.location}: add a lane that carries it"
         if not ships or q <= EPS:
             return finish(res)
         allocs = self.allocations(d)
@@ -267,7 +272,13 @@ class Promiser:
             self.restore(snap)
             late = self._late(d, sh, i0, remaining, allocs)
         res.lines.extend(late)
-        return finish(res)
+        finish(res)
+        if res.unconfirmed > EPS:
+            res.reason = (f"{res.unconfirmed:g} not available from {sh.node[0]} within the horizon"
+                          + ("; no capable-to-promise route either" if self.cfg.ctp else "")
+                          + ". ATP promises stock and receipts to orders, never the forecast: firm or plan more "
+                            "supply to confirm more")
+        return res
 
     def _late(self, d: DemandRecord, sh: Ship, i0: int, qty: float, allocs: list[Allocation]) -> list[ScheduleLine]:
         s = self.series_for(sh.node)

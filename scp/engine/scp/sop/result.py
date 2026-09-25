@@ -141,3 +141,4 @@ class SopRelease(Out):
     replaced: int
     constrained_qty: float
     unconstrained_qty: float
+    target_nodes: int = 0           # stocking nodes given a build-ahead stock target

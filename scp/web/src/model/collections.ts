@@ -7,7 +7,7 @@ type Obj = Record<string, unknown>;
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
   | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides"
-  | "movements" | "closed_orders" | "accuracy";
+  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks";
 
 export interface Column {
   label: string;
@@ -241,6 +241,12 @@ export const COLLECTIONS: CollectionDef[] = [
       { label: "Week of", get: (o) => s(o.start) }, { label: "Forecast", get: (o) => o.forecast as number, num: true },
       { label: "Actual", get: (o) => o.actual as number, num: true },
     ],
+  },
+  {
+    key: "rolled_weeks", label: "Rolled weeks", singular: "rolled week", defName: "RolledWeek", issueType: "rolled_week",
+    group: "Execution", keyOf: (_o, i) => `#${i}`,
+    blurb: "The weeks the roll-forward has closed. Each later roll re-reads their actuals from the journal, so a late posting still counts.",
+    columns: [{ label: "From", get: (o) => s(o.start) }, { label: "To (exclusive)", get: (o) => s(o.end) }],
   },
 ];
 

@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from .actuals import AccuracyRecord, ClosedOrder, ExecutionSettings, GoodsMovement
+from .actuals import AccuracyRecord, ClosedOrder, ExecutionSettings, GoodsMovement, RolledWeek
 from .common import LocationType, Model
 from .finance import FinanceSettings
 from .tower import TowerSettings
@@ -18,7 +18,7 @@ from .demand import DemandEvent, ForecastOverride, ForecastSettings, NpiRule
 from .inventory import InventorySettings
 from .promise import Allocation, Confirmation, PromiseSettings
 from .schedule import Changeover, ScheduleSettings
-from .sop import SopSettings
+from .sop import SopSettings, StockTarget
 from .master import (
     Calendar, Location, LocationProduct, Product, ProductionSource, PurchasingSource, Resource,
     Settings, TransportLane,
@@ -46,6 +46,7 @@ class Dataset(Model):
     overrides: list[ForecastOverride] = Field(default_factory=list)
     inventory: InventorySettings = Field(default_factory=InventorySettings)
     sop: SopSettings = Field(default_factory=SopSettings)
+    stock_targets: list[StockTarget] = Field(default_factory=list)
     changeovers: list[Changeover] = Field(default_factory=list)
     scheduling: ScheduleSettings = Field(default_factory=ScheduleSettings)
     allocations: list[Allocation] = Field(default_factory=list)
@@ -54,6 +55,7 @@ class Dataset(Model):
     movements: list[GoodsMovement] = Field(default_factory=list)
     closed_orders: list[ClosedOrder] = Field(default_factory=list)
     accuracy: list[AccuracyRecord] = Field(default_factory=list)
+    rolled_weeks: list[RolledWeek] = Field(default_factory=list)
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
     finance: FinanceSettings = Field(default_factory=FinanceSettings)
     tower: TowerSettings = Field(default_factory=TowerSettings)
