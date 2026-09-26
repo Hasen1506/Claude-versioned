@@ -365,3 +365,19 @@ test("control tower: KPIs graded → drill into OTIF → worklist → assign & a
   await expect(page.locator(".tile", { hasText: "Acknowledged" }).locator(".value")).toHaveText("1");
   await expect(page.locator('input[value="Asha Kulkarni"]')).toHaveCount(1);
 });
+
+test("phone: the menu opens the pages, each page answers first, nothing scrolls sideways", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openExample(page, "Kaveri Kitchenware");
+  await expect(page.locator("#main-nav")).toBeHidden();
+  await page.getByRole("button", { name: "☰ Menu" }).click();
+  await expect(page.locator("#main-nav")).toBeVisible();
+  await page.locator("#main-nav").getByRole("link", { name: "Orders", exact: true }).click();
+  await expect(page.locator("#main-nav")).toBeHidden();                 // picking a page closes the menu
+  await expect(page.locator(".stage-head .answer")).toContainText("customer orders can ship in full");
+  for (const hash of ["#/", "#/plan", "#/promise", "#/finance", "#/tower", "#/data"]) {
+    await page.goto(`/${hash}`);
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), hash).toBeLessThanOrEqual(390);
+  }
+});

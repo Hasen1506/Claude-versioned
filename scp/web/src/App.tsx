@@ -52,11 +52,14 @@ export function App() {
   const page = route[0] || "home";
   useEffect(() => { if (ds) markVisited(page); }, [page, ds]);
   const item = ds ? navItemFor(page) : undefined;
+  const [navOpen, setNavOpen] = useState(false);   // phones: the rail opens over the page from the Menu button
+  useEffect(() => setNavOpen(false), [route.join("/")]);
   return (
-    <div className="app">
-      <TopBar />
+    <div className={`app ${navOpen ? "nav-open" : ""}`}>
+      <TopBar navOpen={navOpen} onNav={() => setNavOpen((o) => !o)} />
+      {navOpen && <div className="nav-scrim" onClick={() => setNavOpen(false)} aria-hidden />}
       {ds ? <Rail page={page} /> : (
-        <nav className="rail" aria-label="Main">
+        <nav className="rail" id="main-nav" aria-label="Main">
           <div className="rail-group">
             <a className={`rail-item ${page !== "proof" ? "active" : ""}`} href="#/">Start</a>
             <a className={`rail-item ${page === "proof" ? "active" : ""}`} href={href("proof")}>Proof</a>
@@ -124,7 +127,7 @@ function Menu({ children, label }: { children: React.ReactNode; label: string })
   );
 }
 
-function TopBar() {
+function TopBar({ navOpen, onNav }: { navOpen: boolean; onNav: () => void }) {
   const ds = useStore((s) => s.dataset);
   const canUndo = useStore((s) => s.canUndo);
   const canRedo = useStore((s) => s.canRedo);
@@ -146,6 +149,7 @@ function TopBar() {
 
   return (
     <header className="topbar">
+      <button className="btn ghost nav-toggle" aria-expanded={navOpen} aria-controls="main-nav" onClick={onNav}>{navOpen ? "✕ Close" : "☰ Menu"}</button>
       <a className="brand" href={ds ? href("home") : "#/"} aria-label="Home"><span className="brand-mark">S</span><span className="brand-name">SCP</span></a>
       {ds && <span className="company" title={ds.settings.company_name}>{ds.settings.company_name}</span>}
       {ds && <a className="version-chip" href={href("versions")} title="Versions and what-ifs: save, branch and compare">
@@ -205,7 +209,7 @@ function Rail({ page }: { page: string }) {
       <span className="sr">{f === "stale" ? "out of date" : "not calculated"}</span></span>;
   };
   return (
-    <nav className="rail" aria-label="Main">
+    <nav className="rail" id="main-nav" aria-label="Main">
       {NAV.map((g, i) => (
         <div className="rail-group" key={g.label ?? i}>
           {g.label && <div className="rail-label">{g.label}</div>}
