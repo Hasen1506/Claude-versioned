@@ -1,8 +1,9 @@
 // The client owns the planning dataset (one JSON document). Every edit goes through `update`,
 // which bumps the revision, records undo history, persists locally, and schedules a
 // re-validation against the engine. Every engine run (forecast, plan, …) remembers the revision it
-// was computed on, so the UI can show "stale" the moment any input changes — the legacy STALE
-// cascade, done by construction instead of by a dependency table.
+// was computed on, so the UI can show "stale" the moment any input it reads changes — the legacy STALE
+// cascade, done by construction: every result reads the whole dataset except the parts only the shop floor
+// schedule reads (its settings and the changeover matrix), which leave the other results fresh.
 import { useSyncExternalStore } from "react";
 import { api, SchemaRejected, setPlanningView } from "../api/client";
 import type { ActualsView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
@@ -41,6 +42,7 @@ export interface State {
   dataset: Dataset | null;
   version: WorkingVersion | null;
   revision: number;
+  touched: Record<string, number>;   // part of the dataset → the revision it last changed at (see isStale)
   validation: ValidationResult | null;
   schemaErrors: SchemaError[];
   network: NetworkView | null;
@@ -86,7 +88,7 @@ const emptyRun = <T>(): Run<T> => ({ data: null, revision: null, running: false,
 const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), inventory: emptyRun(), sop: emptyRun(), plan: emptyRun(), schedule: emptyRun(), promise: emptyRun(), actuals: emptyRun(), finance: emptyRun(), tower: emptyRun() });
 
 let state: State = {
-  dataset: null, version: null, revision: 0, validation: null, schemaErrors: [], network: null, runs: emptyRuns(),
+  dataset: null, version: null, revision: 0, touched: {}, validation: null, schemaErrors: [], network: null, runs: emptyRuns(),
   checking: false, engineError: null, canUndo: false, canRedo: false, planning: null,
 };
 const listeners = new Set<() => void>();
@@ -182,13 +184,33 @@ async function check() {
   }
 }
 
+/** Parts of the dataset only the shop floor schedule reads (the day start hour is read by the plan and promising too). */
+const SCHEDULE_ONLY = new Set(["scheduling", "changeovers"]);
+
+/** The parts of the dataset an edit changed: top-level collections, with the day start hour on its own. */
+function changedParts(a: Dataset | null, b: Dataset): string[] {
+  if (!a) return ["*"];
+  const x = a as unknown as Record<string, unknown>, y = b as unknown as Record<string, unknown>;
+  const out = [...new Set([...Object.keys(x), ...Object.keys(y)])].filter((k) => x[k] !== y[k] && JSON.stringify(x[k]) !== JSON.stringify(y[k]));
+  if (a.scheduling?.day_start_hour !== b.scheduling?.day_start_hour) out.push("scheduling.day_start_hour");
+  return out;
+}
+
+/** Move to another dataset: bump the revision and note which parts changed at it. */
+function advance(next: Dataset) {
+  const rev = state.revision + 1;
+  const touched = { ...state.touched };
+  for (const k of changedParts(state.dataset, next)) touched[k] = rev;
+  set({ dataset: next, revision: rev, touched });
+}
+
 function commit(next: Dataset) {
   past.push(state.dataset!);
   if (past.length > HISTORY) past.shift();
   future.length = 0;
   persist(next);
   if (state.version) persistVersion(state.version, true);
-  set({ dataset: next, revision: state.revision + 1 });
+  advance(next);
   scheduleCheck();
 }
 
@@ -251,7 +273,7 @@ export const store = {
     if (!prev || !state.dataset) return;
     future.push(state.dataset);
     persist(prev);
-    set({ dataset: prev, revision: state.revision + 1 });
+    advance(prev);
     scheduleCheck();
   },
 
@@ -260,7 +282,7 @@ export const store = {
     if (!next || !state.dataset) return;
     past.push(state.dataset);
     persist(next);
-    set({ dataset: next, revision: state.revision + 1 });
+    advance(next);
     scheduleCheck();
   },
 
@@ -331,8 +353,13 @@ export function useStore<T>(select: (s: State) => T): T {
   return useSyncExternalStore(store.subscribe, () => select(state));
 }
 
-/** A result exists but the dataset changed after it was computed. */
-export const isStale = (s: State, key: RunKey) => s.runs[key].data !== null && s.runs[key].revision !== s.revision;
+/** A result exists but a part of the dataset it reads changed after it was computed. */
+export function isStale(s: State, key: RunKey): boolean {
+  const run = s.runs[key];
+  if (run.data === null || run.revision === s.revision) return false;
+  const since = run.revision ?? -1;
+  return Object.entries(s.touched).some(([part, rev]) => rev > since && (key === "schedule" || !SCHEDULE_ONLY.has(part)));
+}
 
 /** Where a result stands: up to date, out of date (the data changed after it ran), or not calculated. */
 export type Freshness = "fresh" | "stale" | "none";

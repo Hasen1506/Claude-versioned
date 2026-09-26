@@ -264,9 +264,9 @@ test("scheduling: schedule → select order → resequence → reset → edit se
   await page.locator('.gantt svg g[data-order="MO-00024"]').first().dispatchEvent("click");
   await expect(page.getByText("MO-00024 · MG-500")).toBeVisible();
   await page.getByRole("button", { name: "later ▶" }).first().click();
-  await expect(page.getByText("Manual sequence")).toBeVisible();
+  await expect(page.getByText("Your sequence")).toBeVisible();
   await page.getByRole("button", { name: "Undo my changes to the order" }).click();
-  await expect(page.getByText("Manual sequence")).toHaveCount(0);
+  await expect(page.getByText("Your sequence")).toHaveCount(0);
 
   await page.goto("/#/schedule/orders");
   await expect(page.locator("td", { hasText: "MO-100455" })).toBeVisible();
@@ -280,6 +280,44 @@ test("scheduling: schedule → select order → resequence → reset → edit se
   await expect(freshness(page, "schedule")).toHaveAttribute("data-fresh", "stale");
   await page.goto("/#/data/changeovers");
   await expect(page.locator("td", { hasText: /^3$/ }).first()).toBeVisible();
+});
+
+test("shop floor methods: compare every method → pick a profile → drag a step on the board → undo", async ({ page }) => {
+  await openExample(page, "Kaveri Kitchenware");
+  await page.goto("/#/schedule/methods");
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
+  await expect(page.getByRole("button", { name: /Balanced/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("cell", { name: "Campaigns by setup group" })).toBeVisible();   // the catalogue
+
+  // every method on the same orders; the optimiser starts from the local search, so it is never worse
+  await page.getByRole("button", { name: "Compare all methods" }).click();
+  const cmp = page.locator("section.panel", { hasText: "Compare the methods" });
+  const row = (name: string) => cmp.locator("tr", { has: page.getByText(name, { exact: true }) });
+  await expect(row("Optimiser (constraint solver)")).toBeVisible({ timeout: 60_000 });
+  await expect(cmp.locator("tbody tr .badge", { hasText: "best" })).toHaveCount(1);
+  const score = async (name: string) => Number(await row(name).locator("td").nth(5).innerText());
+  expect(await score("Optimiser (constraint solver)")).toBeLessThanOrEqual(await score("Local search"));
+
+  // a profile is one click; the board says how the schedule was found; Undo puts the settings back
+  await page.getByRole("button", { name: /Best possible \(optimiser\)/ }).click();
+  await expect(page.getByRole("button", { name: /Best possible/ })).toHaveAttribute("aria-pressed", "true", { timeout: 60_000 });
+  await expect(freshness(page, "schedule")).toHaveAttribute("data-fresh", "fresh", { timeout: 60_000 });
+  await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "fresh");   // only the shop floor reads its settings
+  await page.getByRole("tab", { name: "Planning board" }).click();
+  await expect(page.locator(".tile", { hasText: "Sequence" })).toContainText(/Optimiser|Local search/);
+
+  // drag a step along its row: the schedule is re-timed with it there
+  const bar = page.locator('.gantt svg g[data-order] rect').nth(3);
+  const box = (await bar.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2, { steps: 6 });
+  await page.mouse.move(box.x + box.width / 2 + 160, box.y + box.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.getByText("Your sequence")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/step \d+ moved.*Late orders \d+ → \d+/)).toBeVisible();
+  await page.getByRole("button", { name: "Undo my changes to the order" }).click();
+  await expect(page.getByText("Your sequence")).toHaveCount(0, { timeout: 60_000 });
 });
 
 test("promising: check → CTP simulation → commit → supply shrinks → at risk → BOP → commit", async ({ page }) => {
@@ -429,7 +467,7 @@ test("phone: the menu opens the pages, each page answers first, nothing scrolls 
   await page.locator("#main-nav").getByRole("link", { name: "Orders", exact: true }).click();
   await expect(page.locator("#main-nav")).toBeHidden();                 // picking a page closes the menu
   await expect(page.locator(".stage-head .answer")).toContainText("customer orders can ship in full");
-  for (const hash of ["#/", "#/plan", "#/promise", "#/finance", "#/tower", "#/data", "#/capacity", "#/schedule/orders"]) {
+  for (const hash of ["#/", "#/plan", "#/promise", "#/finance", "#/tower", "#/data", "#/capacity", "#/schedule/orders", "#/schedule/methods"]) {
     await page.goto(`/${hash}`);
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => document.documentElement.scrollWidth), hash).toBeLessThanOrEqual(390);

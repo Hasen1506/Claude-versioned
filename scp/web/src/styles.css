@@ -417,6 +417,9 @@ td input.cell:focus { outline: 2px solid var(--accent); }
 .tile .label { font: 500 13px var(--font); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile .value { font: 700 22px/1.05 var(--display); letter-spacing: -0.5px; margin-top: 4px; font-variant-numeric: tabular-nums; }
 .tile .sub { font: 12px/1.35 var(--font); color: var(--text-3); margin-top: 4px; }
+button.tile.choice { font: inherit; color: var(--text); border: 1px solid var(--border); background: var(--surface); }
+button.tile.choice:hover:not(:disabled) { border-color: var(--text-2); }
+button.tile.choice.on { border: 1px solid var(--ink); box-shadow: inset 4px 0 0 var(--hl); background: color-mix(in srgb, var(--hl) 16%, var(--surface)); }
 .tile.hl { background: color-mix(in srgb, var(--hl) 28%, var(--surface)); border: 1px solid var(--ink); box-shadow: inset 4px 0 0 var(--hl); }
 .tile.hl .label, .tile.hl .sub { color: var(--text); }
 

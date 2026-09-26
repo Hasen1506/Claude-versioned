@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
-import type { Changeover, Dataset, ScheduledOp, ScheduleResource, ScheduleResult } from "../api/types";
+import type {
+  Changeover, CompareRow, Dataset, ScheduleCatalogue, ScheduleComparison, ScheduledOp, ScheduleResource, ScheduleResult,
+} from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
   Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, useTooltip, RunButton, Term,
@@ -11,7 +13,15 @@ import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
 
-type View = "board" | "orders" | "resources" | "setups" | "settings";
+type View = "board" | "methods" | "orders" | "resources" | "setups" | "settings";
+type Seqs = Record<string, string[]>;
+
+/** The schedule on the page as the engine takes it back: every machine's sequence (realised order and machine). */
+const sequences = (res: ScheduleResult): Seqs => Object.fromEntries(res.resources.map((r) => [r.id, r.sequence]));
+
+const RULE_NAME: Record<string, string> = {
+  edd: "Earliest due date", spt: "Shortest job first", slack: "Least slack", campaign: "Campaigns", backward: "Backward (just in time)",
+};
 
 // ---- time helpers: engine times are clock hours from the origin (planning start, 00:00) -----------
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -54,8 +64,8 @@ export function Schedule({ route }: { route: string[] }) {
     setBusy(true);
     setErr(null);
     try {
-      const seq = res.search.mode === "manual" ? Object.fromEntries(res.resources.map((r) => [r.id, r.sequence])) : undefined;
-      const out = await api.applySchedule(ds, seq);
+      // exactly the schedule on the page: the optimiser need not find the same one twice
+      const out = await api.applySchedule(ds, sequences(res), undefined, res.holds);
       store.replace(out.dataset);
       const made = out.report.applied.filter((a) => a.new).length;
       const moved = out.report.applied.filter((a) => !a.new && (a.due_date !== a.was_due || a.start_date !== a.was_start)).length;
@@ -70,15 +80,26 @@ export function Schedule({ route }: { route: string[] }) {
     }
   };
 
-  /** Re-decode with a hand-edited sequence on one resource (every other resource keeps its order). */
-  const resequence = async (resource: string, seq: string[]) => {
+  const [moved, setMoved] = useState<string | null>(null);
+  /** Re-time the schedule with a step moved: `key` goes onto `to`, before `before` (null = last). Every other step keeps
+   *  its machine and place; the not-before times the schedule had stay. */
+  const move = async (key: string, to: string, before: string | null) => {
     if (!res) return;
+    const all = sequences(res);
+    const from = res.resources.find((r) => r.sequence.includes(key))?.id;
+    for (const r of Object.keys(all)) all[r] = all[r].filter((k) => k !== key);
+    const seq = all[to] ?? [];
+    const at = before ? seq.indexOf(before) : -1;
+    all[to] = at < 0 ? [...seq, key] : [...seq.slice(0, at), key, ...seq.slice(at)];
     setBusy(true);
     setErr(null);
     try {
-      const all = Object.fromEntries(res.resources.map((r) => [r.id, r.sequence]));
-      all[resource] = seq;
-      store.put("schedule", await api.schedule(ds, all), rev);
+      const next = await api.schedule(ds, all, res.holds);
+      store.put("schedule", next, rev);
+      const [order, step] = key.split(/:(?=[^:]*$)/);
+      const k0 = res.kpis, k1 = next.kpis;
+      setMoved(`${order} step ${step} ${from !== to ? `moved to ${to}` : "moved"}${before ? `, before ${before.split(/:(?=[^:]*$)/)[0]}` : ", last"}. `
+        + `Late orders ${k0.late_orders} → ${k1.late_orders}, changeovers ${k0.changeovers} → ${k1.changeovers}, weighted score ${k0.objective.toFixed(0)} → ${k1.objective.toFixed(0)}.`);
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -89,8 +110,9 @@ export function Schedule({ route }: { route: string[] }) {
   const head = (
     <StageHeader title="Shop floor" kicker="In what order each machine and line should run its jobs, hour by hour, so orders finish on time with the fewest changeovers."
       how={<>Production orders are sequenced on each machine and line in clock time on its shift calendar, with
-        <Term t="Changeover"> changeovers</Term> that depend on what ran before, parallel units and queue times. It starts from
-        earliest-due-date order, then groups products that share a setup into campaigns without letting any order slip further.</>}
+        <Term t="Changeover"> changeovers</Term> that depend on what ran before, parallel units, alternative machines and queue times.
+        A profile picks how: a start rule (due date, shortest first, least slack, campaigns or backward from the due date), a local
+        search, and optionally a constraint solver, all scored by the same weights. Drag a step on the board to change it by hand.</>}
       answer={res && (res.kpis.orders ? <>{res.kpis.late_orders ? <>{res.kpis.late_orders} of {plural(res.kpis.orders, "production order")} finish late,
         the worst by {hours(res.kpis.max_lateness_hours)}.</> : <>All {plural(res.kpis.orders, "production order")} finish on time.</>}{" "}
         {plural(res.kpis.changeovers, "changeover")} take {hours(res.kpis.setup_hours)}.
@@ -105,6 +127,7 @@ export function Schedule({ route }: { route: string[] }) {
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   if (view === "settings") return body(<><Nav view={view} res={res} /><SettingsView ds={ds} /></>);
+  if (view === "methods") return body(<><Nav view={view} res={res} /><Methods ds={ds} res={res} running={run.running} /></>);
   if (view === "setups") return body(<><Nav view={view} res={res} /><SetupMatrix ds={ds} res={res} /></>);
   if (run.error) return body(<div className="banner error"><Badge sev="error">Scheduling failed</Badge>{run.error}</div>);
   if (!res) {
@@ -132,11 +155,12 @@ export function Schedule({ route }: { route: string[] }) {
       <div className="banner error"><Badge sev="error">{res.violations.length} feasibility violations</Badge>{res.violations.slice(0, 3).join(" · ")}</div>
     )}
     {res.search.mode === "manual" && (
-      <div className="banner info"><Badge sev="info">Manual sequence</Badge>
-        <span>You changed the order on a resource; the schedule was re-timed with your sequence. Undo is “Reset to optimised”.</span></div>
+      <div className="banner info"><Badge sev="info">Your sequence</Badge>
+        <span>{moved ?? "You changed the order or machine of a step; the schedule was re-timed with your sequence."} “Undo my changes to the order” schedules again from the profile.</span>
+        {moved && <><span className="spacer" /><button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMoved(null)}>✕</button></>}</div>
     )}
     <Nav view={view} res={res} />
-    {view === "board" && <Board res={res} sel={route[2]} busy={busy} onResequence={resequence} />}
+    {view === "board" && <Board res={res} sel={route[2]} busy={busy} onMove={move} />}
     {view === "orders" && <Orders res={res} />}
     {view === "resources" && <Resources res={res} />}
   </>);
@@ -164,6 +188,7 @@ function Nav({ view, res }: { view: View; res: ScheduleResult | null }) {
   return (
     <Tabs<View> value={view} onChange={(v) => go("schedule", v)} tabs={[
       { id: "board", label: "Planning board" },
+      { id: "methods", label: "Methods & profiles" },
       { id: "orders", label: "Orders", count: res?.orders.length },
       { id: "resources", label: "Resources & labour", count: res?.resources.length },
       { id: "setups", label: "Setup matrix" },
@@ -190,20 +215,39 @@ function Kpis({ res }: { res: ScheduleResult }) {
         tone={k.waiting_for_parts ? "hl" : undefined} />
       <StatTile label="Changeover time" value={hours(k.setup_hours)} sub={`${k.changeovers} changeovers · ${delta(k.setup_hours, b.setup_hours, hours)}`} />
       {busiest && <StatTile label="Busiest resource" value={pct(busiest.utilization, 0)} sub={`${busiest.id} over the window`} />}
-      <StatTile label="Sequencer" value={res.search.mode !== "improved" ? res.search.mode.toUpperCase()
-        : res.search.moves_accepted ? `${res.search.moves_accepted} moves` : "EDD kept"}
-        sub={res.search.mode === "manual" ? "your sequence, re-timed" : res.search.mode === "edd" ? "local search off"
-          : res.search.moves_accepted ? `${res.search.moves_tried} tried · ${res.search.seconds.toFixed(2)} s · ${res.search.stopped.replace("_", " ")}`
-          : `no improving move in ${res.search.moves_tried} tried`} />
+      {k.earliness_hours > 0.05 && <StatTile label="Finished early" value={hours(k.earliness_hours)}
+        sub={`order hours before due${(res.kpis.orders && Object.keys(res.holds).length) ? ` · ${plural(Object.keys(res.holds).length, "order")} held back` : ""}`} />}
+      <Sequencer res={res} />
     </div>
   );
+}
+
+/** How the schedule was found: the profile, the start rule, the local search and the optimiser. */
+function Sequencer({ res }: { res: ScheduleResult }) {
+  const s = res.search;
+  const opt = s.optimizer;
+  const rule = RULE_NAME[s.start_rule] ?? s.start_rule;
+  const profile = res.profile && res.profile !== "custom" ? `${res.profile.replace(/_/g, " ")} profile · ` : "";
+  if (s.mode === "manual") return <StatTile label="Sequence" value="Yours" sub="your order and machines, re-timed" />;
+  if (s.mode === "optimized" && opt) {
+    return <StatTile label="Sequence" value={opt.kept ? "Optimiser" : "Local search"}
+      sub={opt.kept ? `${profile}${opt.status}${opt.machines_changed ? ` · ${plural(opt.machines_changed, "step")} on another machine` : ""} · ${opt.seconds.toFixed(1)} s`
+        : `${profile}${opt.note || "the solver found nothing better"}`} />;
+  }
+  if (s.mode === "improved") {
+    return <StatTile label="Sequence" value={s.moves_accepted ? `${rule} + ${s.moves_accepted} moves` : rule}
+      sub={`${profile}local search: ${s.moves_accepted ? `${s.moves_tried} tried · ${s.seconds.toFixed(2)} s` : `no better move in ${s.moves_tried} tried`}`} />;
+  }
+  return <StatTile label="Sequence" value={rule} sub={`${profile}local search off`} />;
 }
 
 // ------------------------------------------------------------------------------------------------
 const ZOOMS: [string, number][] = [["Month", 1.2], ["2 weeks", 2.6], ["Week", 5.2], ["Days", 12]];
 
-function Board({ res, sel, busy, onResequence }: {
-  res: ScheduleResult; sel?: string; busy: boolean; onResequence: (resource: string, seq: string[]) => void;
+type Move = (key: string, to: string, before: string | null) => void;
+
+function Board({ res, sel, busy, onMove }: {
+  res: ScheduleResult; sel?: string; busy: boolean; onMove: Move;
 }) {
   const [zoom, setZoom] = useState(2.6);
   const order = res.orders.find((o) => o.id === sel) ?? null;
@@ -215,20 +259,23 @@ function Board({ res, sel, busy, onResequence }: {
         <div className="row">
           {ZOOMS.map(([l, z]) => <button key={l} className={`btn sm ${zoom === z ? "primary" : ""}`} onClick={() => setZoom(z)}>{l}</button>)}
         </div>}>
-        <Gantt res={res} pxh={zoom} sel={order?.id ?? null} colors={colors} />
+        <Gantt res={res} pxh={zoom} sel={order?.id ?? null} colors={colors} busy={busy} onMove={onMove} />
         <div className="legend" style={{ padding: "8px 12px" }}>
           {Object.entries(colors).map(([g, c]) => <span key={g}><span className="key box" style={{ background: c }} />{g}</span>)}
           <span><span className="key box gantt-setup-key" />changeover</span>
           <span><span className="key box gantt-off-key" />off shift</span>
           <span><span className="key box" style={{ background: "transparent", outline: "2px solid var(--critical)" }} />late order</span>
+          {res.orders.some((o) => o.frozen) && <span><span className="key box" style={{ background: "transparent", outline: "2px dashed var(--ink)" }} />frozen (stays put)</span>}
         </div>
       </Panel>
-      {order ? <OrderDetail res={res} id={order.id} busy={busy} onResequence={onResequence} />
-        : <p className="faint small" style={{ margin: 0 }}>Click an operation to follow its order across resources, see its due date and move it in the sequence.</p>}
+      {order ? <OrderDetail res={res} id={order.id} busy={busy} onMove={onMove} />
+        : <p className="faint small" style={{ margin: 0 }}>Drag a step along its row to run it earlier or later, or onto another machine's row that can run it
+          (an alternative); the schedule is re-timed at once. Click a step to follow its order across machines.</p>}
       <Reading formula={<>Each resource works its sequence in order; an operation starts at max(order release or predecessor end + queue, unit free),
         sets up (nothing before → full setup; same product → 0; same group → minor setup; other group → setup matrix), then runs
-        work ÷ OEE clock hours inside shift windows. Objective = w<sub>T</sub>·Σ tardiness + w<sub>S</sub>·Σ setup hours; the improver pulls operations
-        behind the nearest same-group operation (campaigns) and swaps neighbours, keeping only changes that lower the objective.</>}
+        work ÷ OEE clock hours inside shift windows. Weighted score = w<sub>late</sub>·Σ hours late + w<sub>setup</sub>·Σ changeover hours
+        + w<sub>early</sub>·Σ hours early + w<sub>span</sub>·hours to clear the window. A dragged step keeps its new machine and place; every
+        other step keeps its machine and order, and frozen orders keep theirs.</>}
         soWhat={<>Late orders here are ones the supply plan did not see: it plans machines by the day, the schedule by the hour and with parts arriving.
           Change the order, add a shift or overtime, or use these dates in the plan so promises quote them. To plan within capacity
           from the start, see <a href={href("capacity")}>Capacity levelling</a>.</>} />
@@ -250,8 +297,14 @@ function segments(a: number, b: number, windows: number[][]): [number, number][]
   return out;
 }
 
-function Gantt({ res, pxh, sel, colors }: { res: ScheduleResult; pxh: number; sel: string | null; colors: Record<string, string> }) {
+type Drag = { op: ScheduledOp; lane: number; px: number; py: number; dx: number; dy: number; moved: boolean };
+
+function Gantt({ res, pxh, sel, colors, busy, onMove }: {
+  res: ScheduleResult; pxh: number; sel: string | null; colors: Record<string, string>; busy: boolean; onMove: Move;
+}) {
   const tip = useTooltip();
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const dragged = useRef(false);
   const origin = res.origin!;
   const lanes: Lane[] = useMemo(() => res.resources.flatMap((r) => {
     const units = r.finite ? r.units : Math.max(1, new Set(res.ops.filter((o) => o.resource === r.id).map((o) => o.unit)).size);
@@ -285,6 +338,22 @@ function Gantt({ res, pxh, sel, colors }: { res: ScheduleResult; pxh: number; se
     if (focus !== null && scroller.current) scroller.current.scrollTo({ left: Math.max(0, focus * pxh - 60), behavior: "smooth" });
   }, [focus, pxh]);
   const dayLabel = pxh * 24 >= 44;
+  /** Where a drag would drop: the lane under the pointer, whether that machine can run the step, the time, and the step
+   *  it would go before. */
+  const target = (d: Drag) => {
+    const li = Math.max(0, Math.min(lanes.length - 1, d.lane + Math.round(d.dy / RH)));
+    const to = lanes[li].resource.id;
+    const machines = d.op.machines?.length ? d.op.machines : [d.op.resource];
+    const t = d.op.setup_start + d.dx / pxh;
+    const starts = new Map<string, number>();
+    for (const o of res.ops) {
+      if (o.resource === to && o.key !== d.op.key) starts.set(o.key, Math.min(starts.get(o.key) ?? Infinity, o.setup_start));
+    }
+    const seq = (res.resources.find((r) => r.id === to)?.sequence ?? []).filter((k) => k !== d.op.key);
+    const before = seq.find((k) => (starts.get(k) ?? Infinity) > t) ?? null;
+    return { li, to, ok: machines.includes(to), t, before };
+  };
+  const drop = drag?.moved ? target(drag) : null;
   return (
     <div className="gantt">
       <div className="gantt-labels" style={{ width: LABEL }}>
@@ -333,6 +402,7 @@ function Gantt({ res, pxh, sel, colors }: { res: ScheduleResult; pxh: number; se
             <line x1={x(selOrder.due)} x2={x(selOrder.due)} y1={TOP} y2={H} stroke={selOrder.tardy ? "var(--critical)" : "var(--good)"} strokeDasharray="5 3" strokeWidth={2} />
             <text x={x(selOrder.due) + 4} y={H - 6} style={{ fill: "var(--text)" }}>due {selOrder.id}</text>
           </>}
+          {drop && <rect x={0} y={TOP + drop.li * RH} width={W} height={RH} fill={drop.ok ? "var(--good)" : "var(--critical)"} opacity={0.14} pointerEvents="none" />}
           {/* operations */}
           {res.ops.map((op) => {
             const li = laneOf(op);
@@ -340,9 +410,11 @@ function Gantt({ res, pxh, sel, colors }: { res: ScheduleResult; pxh: number; se
             const y = TOP + li * RH + 3;
             const h = RH - 6;
             const wins = lanes[li].resource.windows;
-            const dim = sel && op.order !== sel ? 0.22 : 1;
+            const dim = drag?.moved && drag.op.id === op.id ? 0.35 : sel && op.order !== sel ? 0.22 : 1;
             const c = colors[op.group];
             const ord = orderById[op.order];
+            const locked = !!ord?.frozen;
+            const alts = (op.machines ?? []).filter((m) => m !== op.resource);
             const show = (e: React.MouseEvent) => tip.show(e, <div>
               <b>{op.order}</b> · {op.product} {ord?.firm && <Badge>firm</Badge>}
               <div className="faint small">{op.resource} unit {op.unit + 1} · operation {op.seq}{op.sub > 0 || res.ops.some((o) => o.key === op.key && o.sub > 0) ? ` · sublot ${op.sub + 1}` : ""}</div>
@@ -350,17 +422,44 @@ function Gantt({ res, pxh, sel, colors }: { res: ScheduleResult; pxh: number; se
               {op.setup_hours > 0 && <div className="small">Setup {hours(op.setup_hours)} {op.setup_from ? `(${op.setup_from} → ${op.group})` : "(first on unit)"}</div>}
               <div className="small">Run {hours(op.run_hours)} · {when(origin, op.run_start)} → {when(origin, op.end)}</div>
               {ord && <div className="small">Order due {when(origin, ord.due)} · {ord.tardy ? <b style={{ color: "var(--critical)" }}>late {hours(ord.lateness_hours)}</b> : `${hours(-ord.lateness_hours)} early`}</div>}
+              {ord?.hold != null && <div className="small">Held back until {when(origin, ord.hold)} (so it isn't built early)</div>}
+              <div className="faint small">{locked ? "Frozen: already dated inside the frozen zone, it keeps its place and machine."
+                : `Drag to move${alts.length ? `; can also run on ${alts.join(", ")}` : ""}.`}</div>
             </div>);
             const run = segments(op.run_start, op.end, wins);
             return (
-              <g key={op.id} data-order={op.order} opacity={dim} style={{ cursor: "pointer" }} onClick={() => go("schedule", "board", op.order === sel ? undefined : op.order)}
-                onMouseMove={show} onMouseLeave={tip.hide}>
+              <g key={op.id} data-order={op.order} data-op={op.key} opacity={dim} style={{ cursor: locked ? "pointer" : busy ? "progress" : "grab" }}
+                onClick={() => { if (dragged.current) { dragged.current = false; return; } go("schedule", "board", op.order === sel ? undefined : op.order); }}
+                onMouseMove={drag ? undefined : show} onMouseLeave={tip.hide}
+                onPointerDown={(e) => {
+                  // mouse and pen drag; on a touch screen a drag scrolls the board and a tap selects
+                  if (locked || busy || e.pointerType === "touch" || e.button !== 0) return;
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  setDrag({ op, lane: li, px: e.clientX, py: e.clientY, dx: 0, dy: 0, moved: false });
+                }}
+                onPointerMove={(e) => {
+                  if (!drag || drag.op.id !== op.id) return;
+                  const dx = e.clientX - drag.px, dy = e.clientY - drag.py;
+                  if (!drag.moved && Math.hypot(dx, dy) < 5) return;
+                  tip.hide();
+                  setDrag({ ...drag, dx, dy, moved: true });
+                }}
+                onPointerUp={() => {
+                  if (!drag || drag.op.id !== op.id) return;
+                  setDrag(null);
+                  if (!drag.moved) return;
+                  dragged.current = true;
+                  const d = target(drag);
+                  if (d.ok) onMove(op.key, d.to, d.before);
+                }}
+                onPointerCancel={() => setDrag(null)}>
                 {segments(op.setup_start, op.run_start, wins).map(([a, b]) => (
                   <rect key={`s${a}`} x={x(a)} y={y} width={Math.max(1, x(b) - x(a))} height={h} fill="url(#gantt-setup)" stroke="var(--surface)" strokeWidth={1} />
                 ))}
                 {run.map(([a, b]) => (
                   <rect key={`r${a}`} x={x(a)} y={y} width={Math.max(1.5, x(b) - x(a))} height={h} fill={c}
-                    stroke={op.late ? "var(--critical)" : "var(--surface)"} strokeWidth={op.late ? 2 : 1} />
+                    stroke={op.late ? "var(--critical)" : locked ? "var(--ink)" : "var(--surface)"} strokeWidth={op.late || locked ? 2 : 1}
+                    strokeDasharray={locked && !op.late ? "3 2" : undefined} />
                 ))}
                 {run.length > 0 && x(run[0][1]) - x(run[0][0]) > 46 && (
                   <text x={x(run[0][0]) + 4} y={y + h / 2 + 3.5} style={{ fill: "var(--surface)", fontWeight: 700, pointerEvents: "none" }}>{op.order.replace(/^MO-0*/, "")}</text>
@@ -368,6 +467,15 @@ function Gantt({ res, pxh, sel, colors }: { res: ScheduleResult; pxh: number; se
               </g>
             );
           })}
+          {drag?.moved && drop && (
+            <g pointerEvents="none">
+              <rect x={x(drag.op.setup_start) + drag.dx} y={TOP + drop.li * RH + 3} width={Math.max(4, x(drag.op.end) - x(drag.op.setup_start))} height={RH - 6}
+                fill={colors[drag.op.group]} opacity={0.75} stroke={drop.ok ? "var(--ink)" : "var(--critical)"} strokeWidth={2} strokeDasharray="4 3" />
+              <text x={x(drag.op.setup_start) + drag.dx} y={TOP + drop.li * RH - 3} style={{ fill: "var(--text)", fontWeight: 600 }}>
+                {drop.ok ? `${drop.to}${drop.before ? `, before ${drop.before.split(/:(?=[^:]*$)/)[0]}` : ", last"}` : `${drop.to} can't run this step`}
+              </text>
+            </g>
+          )}
         </svg>
       </div>
       {tip.node}
@@ -375,21 +483,28 @@ function Gantt({ res, pxh, sel, colors }: { res: ScheduleResult; pxh: number; se
   );
 }
 
-function OrderDetail({ res, id, busy, onResequence }: {
-  res: ScheduleResult; id: string; busy: boolean; onResequence: (resource: string, seq: string[]) => void;
+function OrderDetail({ res, id, busy, onMove }: {
+  res: ScheduleResult; id: string; busy: boolean; onMove: Move;
 }) {
   const o = res.orders.find((x) => x.id === id)!;
   const origin = res.origin!;
   const ops = res.ops.filter((x) => x.order === id).sort((a, b) => a.seq - b.seq || a.sub - b.sub);
   const keys = [...new Set(ops.map((x) => x.key))];
-  const move = (key: string, dir: -1 | 1) => {
+  /** One place earlier or later on its machine. */
+  const step = (key: string, dir: -1 | 1) => {
     const r = res.resources.find((x) => x.sequence.includes(key))!;
-    const seq = [...r.sequence];
-    const i = seq.indexOf(key);
-    const j = i + dir;
-    if (j < 0 || j >= seq.length) return;
-    [seq[i], seq[j]] = [seq[j], seq[i]];
-    onResequence(r.id, seq);
+    const seq = r.sequence.filter((k) => k !== key);
+    const i = r.sequence.indexOf(key) + dir;
+    if (i < 0 || i > seq.length) return;
+    onMove(key, r.id, seq[i] ?? null);
+  };
+  /** Onto another machine that can run it, where its current start time falls in that machine's sequence. */
+  const onto = (key: string, to: string) => {
+    const at = Math.min(...ops.filter((x) => x.key === key).map((x) => x.setup_start));
+    const starts = new Map<string, number>();
+    for (const x of res.ops) if (x.resource === to) starts.set(x.key, Math.min(starts.get(x.key) ?? Infinity, x.setup_start));
+    const seq = res.resources.find((r) => r.id === to)?.sequence ?? [];
+    onMove(key, to, seq.find((k) => (starts.get(k) ?? Infinity) > at) ?? null);
   };
   return (
     <Panel title={`${o.id} · ${o.product} · ${qty(o.qty)} units`} actions={<button className="btn sm ghost" onClick={() => go("schedule", "board")}>Close</button>}>
@@ -400,7 +515,10 @@ function OrderDetail({ res, id, busy, onResequence }: {
         <StatTile label="Usable from" value={o.available_date ? day(o.available_date) : "—"} sub={o.days_late ? `${plural(o.days_late, "day")} after the plan's date` : "as the plan expects"}
           tone={o.days_late ? "hl" : undefined} />
         <StatTile label="vs EDD sequence" value={hours(o.completion - o.baseline_completion)} sub={o.completion < o.baseline_completion - 1e-6 ? "earlier" : o.completion > o.baseline_completion + 1e-6 ? "later" : "unchanged"} />
+        {o.hold != null && <StatTile label="Held back until" value={when(origin, o.hold)} sub="not started earlier, so stock isn't built ahead of need" />}
       </div>
+      {o.frozen && <p className="small" style={{ marginTop: 0 }}><Badge>frozen</Badge> Dated by an earlier schedule and starting inside the frozen zone
+        (Settings → Frozen zone): it keeps its place and machine whatever else moves.</p>}
       <Parts res={res} id={id} />
       <table className="t nowrap">
         <thead><tr><th>Op</th><th>Resource</th><th className="num">Position</th><th>Start</th><th>End</th><th className="num">Setup</th><th className="num">Run</th><th>Sequence</th></tr></thead>
@@ -412,15 +530,19 @@ function OrderDetail({ res, id, busy, onResequence }: {
             return (
               <tr key={k}>
                 <td className="num">{parts[0].seq}{parts.length > 1 && <span className="faint small"> ×{parts.length}</span>}</td>
-                <td>{parts[0].resource}</td>
+                <td>{(parts[0].machines ?? []).length > 1 && !o.frozen
+                  ? <select aria-label={`Machine for step ${parts[0].seq}`} value={parts[0].resource} disabled={busy} onChange={(e) => onto(k, e.target.value)}>
+                    {(parts[0].machines ?? []).map((m) => <option key={m} value={m}>{m}{m !== parts[0].machines![0] ? " (alternative)" : ""}</option>)}
+                  </select>
+                  : parts[0].resource}</td>
                 <td className="num">{pos + 1} / {r?.sequence.length}</td>
                 <td>{when(origin, Math.min(...parts.map((p) => p.setup_start)))}</td>
                 <td>{when(origin, Math.max(...parts.map((p) => p.end)))}</td>
                 <td className="num">{hours(parts.reduce((a, p) => a + p.setup_hours, 0))}</td>
                 <td className="num">{hours(parts.reduce((a, p) => a + p.run_hours, 0))}</td>
                 <td>
-                  <button className="btn sm" disabled={busy || pos <= 0} onClick={() => move(k, -1)} title="Swap with the operation before it">◀ earlier</button>{" "}
-                  <button className="btn sm" disabled={busy || !r || pos >= r.sequence.length - 1} onClick={() => move(k, 1)} title="Swap with the operation after it">later ▶</button>
+                  <button className="btn sm" disabled={busy || o.frozen || pos <= 0} onClick={() => step(k, -1)} title="Swap with the operation before it">◀ earlier</button>{" "}
+                  <button className="btn sm" disabled={busy || o.frozen || !r || pos >= r.sequence.length - 1} onClick={() => step(k, 1)} title="Swap with the operation after it">later ▶</button>
                 </td>
               </tr>
             );
@@ -634,6 +756,104 @@ function SetupMatrix({ ds, res }: { ds: Dataset; res: ScheduleResult | null }) {
   );
 }
 
+// ------------------------------------------------------------------------------------------------
+/** The settings a method (a row of the comparison) runs with. */
+function methodSettings(m: string): Record<string, unknown> {
+  if (m === "optimize") return { optimizer: true, improve: true };
+  if (m === "improve") return { optimizer: false, improve: true };
+  return { start_rule: m, improve: false, optimizer: false };
+}
+
+/** Profiles (how to schedule, in one click), the comparison of every method on this window, and what each does. */
+function Methods({ ds, res, running }: { ds: Dataset; res: ScheduleResult | null; running: boolean }) {
+  const [cat, setCat] = useState<ScheduleCatalogue | null>(null);
+  const [cmp, setCmp] = useState<ScheduleComparison | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const rev = useStore((s) => s.revision);
+  const [cmpRev, setCmpRev] = useState(-1);
+  useEffect(() => { api.scheduleCatalogue().then(setCat, (e) => setErr(String(e))); }, []);
+  const cfg = (ds.scheduling ?? {}) as unknown as Record<string, unknown>;
+  const current = String(cfg.profile ?? "balanced");
+  const pick = async (patch: Record<string, unknown>, profile: string) => {
+    store.update((d) => { d.scheduling = { ...(d.scheduling ?? {}), ...patch, profile } as unknown as Dataset["scheduling"]; });
+    await store.run("schedule");
+  };
+  const compare = async () => {
+    setBusy(true); setErr(null);
+    try { setCmp(await api.compareSchedules(ds)); setCmpRev(rev); } catch (e) { setErr(String(e)); } finally { setBusy(false); }
+  };
+  const name = (m: string) => cat?.heuristics.find((h) => h.id === m)?.name ?? m;
+  const rows = cmp?.rows ?? [];
+  const worst = Math.max(1, ...rows.map((r) => r.kpis.objective));
+  const cmpStale = cmp !== null && cmpRev !== rev;
+  const inUse = (r: CompareRow) => {
+    if (r.method === "optimize") return !!cfg.optimizer;
+    if (r.method === "improve") return !cfg.optimizer && cfg.improve !== false;
+    return !cfg.optimizer && cfg.improve === false && (cfg.start_rule ?? "edd") === r.method;
+  };
+  return (
+    <div className="stack">
+      {err && <div className="banner error"><Badge sev="error">That didn't work</Badge>{err}</div>}
+      <Panel title="How to schedule" actions={res && <span className="small muted">now: <b>{current === "custom" ? "your own settings" : cat?.profiles.find((p) => p.id === current)?.name ?? current}</b></span>}>
+        <p className="small" style={{ marginTop: 0 }}>A profile sets the start rule, the search and what the score weighs, together. Picking one schedules again; Undo puts
+          the settings back. Change any field in Settings to make your own.</p>
+        <div className="grid-auto">
+          {(cat?.profiles ?? []).map((p) => {
+            const on = current === p.id;
+            return (
+              <button key={p.id} className={`panel tile choice ${on ? "on" : ""}`} aria-pressed={on} disabled={running}
+                onClick={() => pick(p.settings as Record<string, unknown>, p.id)} style={{ textAlign: "left", cursor: "pointer" }}>
+                <div className="label">{on ? "✓ in use" : "profile"}</div>
+                <div style={{ fontWeight: 650, margin: "2px 0 4px" }}>{p.name}</div>
+                <div className="small muted">{p.what}</div>
+              </button>
+            );
+          })}
+        </div>
+      </Panel>
+      <Panel flush title="Compare the methods on these orders" actions={<button className="btn sm accent" onClick={compare} disabled={busy}>
+        {busy ? "Scheduling every way…" : cmp ? "Compare again" : "Compare all methods"}</button>}>
+        {!cmp ? <p className="small muted" style={{ padding: "0 14px 12px", margin: 0 }}>Schedules the same orders with every start rule, the local search and the optimiser,
+          all scored with your current weights, so you can see which suits this week. Takes a few seconds.</p> : <>
+          {cmpStale && <p className="small" style={{ padding: "0 14px", margin: 0 }}><Badge sev="warning">out of date</Badge> The data or settings changed since; compare again.</p>}
+          <div className="table-wrap"><table className="t nowrap">
+            <thead><tr><th>Method</th><th className="num">Late orders</th><th className="num">Hours late</th><th className="num">Changeovers</th>
+              <th className="num">Hours early</th><th className="num">Weighted score</th><th style={{ width: 160 }}>lower is better</th><th className="num">Time</th><th /></tr></thead>
+            <tbody>{rows.map((r) => (
+              <tr key={r.method}>
+                <td><b>{name(r.method)}</b> {r.best && <Badge sev="ok">best</Badge>} {inUse(r) && <Badge>in use</Badge>}</td>
+                <td className="num">{r.kpis.late_orders} / {r.kpis.orders}</td>
+                <td className="num">{hours(r.kpis.tardiness_hours)}</td>
+                <td className="num">{r.kpis.changeovers} <span className="faint small">{hours(r.kpis.setup_hours)}</span></td>
+                <td className="num">{hours(r.kpis.earliness_hours)}</td>
+                <td className="num"><b>{r.kpis.objective.toFixed(0)}</b></td>
+                <td><div className="bar-track"><div className="bar-fill" style={{ width: `${(r.kpis.objective / worst) * 100}%`,
+                  background: r.best ? "var(--good)" : "var(--series-1)" }} /></div></td>
+                <td className="num small">{r.seconds < 0.05 ? "<0.1 s" : `${r.seconds.toFixed(1)} s`}</td>
+                <td>{!inUse(r) && <button className="btn sm" disabled={running} onClick={() => pick(methodSettings(r.method), "custom")}>Use this</button>}</td>
+              </tr>))}</tbody>
+          </table></div>
+          <p className="small muted" style={{ padding: "8px 14px 12px", margin: 0 }}>Score = {Object.entries(cmp.weights).filter(([, v]) => v > 0)
+            .map(([k, v]) => `${v} × ${k === "tardiness" ? "hours late" : k === "setup" ? "changeover hours" : k === "earliness" ? "hours early" : "hours to clear the window"}`).join(" + ")}.
+            The local search starts from the start rule in Settings; the optimiser starts from the local search's answer, so it is never worse.</p>
+        </>}
+      </Panel>
+      <Panel flush title="What each method does">
+        <div className="table-wrap"><table className="t">
+          <thead><tr><th>Method</th><th>What it does</th><th>Good for</th><th>In SAP PP/DS</th></tr></thead>
+          <tbody>{(cat?.heuristics ?? []).map((h) => (
+            <tr key={h.id}><td style={{ minWidth: 150 }}><b>{h.name}</b></td><td className="small">{h.what}</td><td className="small">{h.good_for}</td><td className="small muted">{h.sap}</td></tr>))}</tbody>
+        </table></div>
+      </Panel>
+      <Reading formula="Every method builds a sequence per machine and runs it through the same timing on the shift calendars (parts, queues, parallel units), so the scores compare like with like. Start rules are one pass; the local search tries moves and keeps those that lower the score; the optimiser (a constraint solver) chooses machines and order together, then its answer is timed exactly and kept only if it scores better."
+        soWhat="If campaigns or the optimiser win clearly, make that your profile. If the start rules all score about the same, the capacity, not the sequence, is what makes orders late: look at Capacity levelling." />
+    </div>
+  );
+}
+
+const PROFILE_FIELDS = ["tardiness_weight", "setup_weight", "earliness_weight", "makespan_weight", "start_rule", "improve", "optimizer"];
+
 function SettingsView({ ds }: { ds: Dataset }) {
   const schemaErrors = useStore((s) => s.schemaErrors);
   const errors: Record<string, string> = {};
@@ -645,10 +865,15 @@ function SettingsView({ ds }: { ds: Dataset }) {
     <div className="grid-2" style={{ alignItems: "start" }}>
       <Panel title="Scheduling rules">
         <SchemaForm defName="ScheduleSettings" value={(ds.scheduling ?? {}) as unknown as Obj} errors={errors}
-          onChange={(next) => store.update((d) => { d.scheduling = next as unknown as Dataset["scheduling"]; })} />
+          onChange={(next) => store.update((d) => {
+            // changing what a profile sets makes the settings your own
+            const was = (d.scheduling ?? {}) as unknown as Obj;
+            const own = PROFILE_FIELDS.some((k) => next[k] !== was[k]);
+            d.scheduling = { ...next, ...(own ? { profile: "custom" } : {}) } as unknown as Dataset["scheduling"];
+          })} />
       </Panel>
-      <Reading formula="The window picks which MRP orders are sequenced (by planned start). Weights trade tardiness hours against changeover hours in the improver's objective."
-        soWhat="Raise the setup weight to favour longer campaigns; raise the tardiness weight to protect due dates. Turn the improver off to see the pure EDD sequence." />
+      <Reading formula="The window picks which MRP orders are sequenced (by planned start). The weights score every schedule: hours late, changeover hours, hours early and hours to clear the window. A profile (Methods & profiles) sets the start rule, the search and the weights together; changing a field here makes it your own."
+        soWhat="Raise the setup weight to favour longer campaigns; raise the tardiness weight to protect due dates; an earliness weight keeps stock from being built ahead. A frozen zone stops re-scheduling from moving orders about to start." />
     </div>
   );
 }

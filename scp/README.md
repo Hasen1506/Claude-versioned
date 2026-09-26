@@ -71,6 +71,22 @@ network, or import a dataset JSON. The dataset is saved in your browser and can 
   order on its own machine if the days have room, else on an alternative machine, else earlier, else later
   (reported). Released orders load their machines first and are never moved.
 
+## Scheduling like PP/DS (Phase D)
+
+- **Profiles.** *Shop floor → Methods & profiles* sets how to schedule in one click: balanced, protect due dates,
+  fewest changeovers, just in time, finish everything soonest, or best possible (the optimiser). A profile sets the
+  start rule, the search and what the score weighs (hours late, changeover hours, hours early, hours to clear the
+  window); editing any of those in Settings makes them your own.
+- **Heuristics and a comparison.** Earliest due date, shortest job first, least slack, campaigns by setup group and
+  backward from the due date, then a local search, then a constraint solver (CP-SAT) that chooses each step's
+  machine (own or alternative) and every machine's order. *Compare all methods* schedules the same orders every way
+  and scores them alike; the optimiser starts from the local search's answer, so it is never worse.
+- **The board.** Drag a step along its row to run it earlier or later, or onto another machine that can run it; the
+  schedule is re-timed at once and the page says what changed. Orders inside the **frozen zone** (a setting) keep
+  their place and machine. *Use these dates in the plan* writes exactly the schedule on screen.
+- **Levelling** can prefer finishing later to building ahead, with a limit on days ahead; **promising** books
+  machine hours on the days a step runs, on its own machine or an alternative.
+
 What real use turned up, and what was done about it, is logged in [docs/USABILITY_LOG.md](docs/USABILITY_LOG.md).
 
 ## What is here (P0–P10)
