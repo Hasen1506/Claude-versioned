@@ -84,6 +84,38 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
           actions: [{ label: "See incoming orders", to: href("data", "receipts") }],
         };
         break;
+      case "SCHEDULE_LATE":
+        s = {
+          title: `${plural(l.length, "production order")} the shop floor schedule finishes late`,
+          why: "These orders carry the schedule's dates. The schedule already puts them as early as the machines and parts allow, so the plan counts them where they're needed and shows the delay instead of adding another order.",
+          items: l.map((e) => ({ label: `${e.order_id}: ${n(e.qty)} ${where(e)}`, detail: `needed ${d(e.date)}${iso(e.message, /for (\d{4}-\d{2}-\d{2})/) ? `, ready ${d(iso(e.message, /for (\d{4}-\d{2}-\d{2})/))}` : ""}`, to: node(e) })),
+          actions: [{ label: "Open the shop floor schedule", to: href("schedule", "orders") }],
+        };
+        break;
+      case "CAPACITY_EARLIER":
+        s = {
+          title: `${plural(l.length, "production run")} start earlier to fit the machines`,
+          why: "Planning within capacity found their machines full on the days they'd normally run, so they start earlier and the goods wait in stock.",
+          items: l.map((e) => ({ label: `${e.order_id}: ${n(e.qty)} ${where(e)}`, detail: `needed ${d(e.date)}`, to: e.order_id ? href("plan", "orders", e.order_id) : undefined })),
+          actions: [{ label: "See the load day by day", to: href("capacity") }],
+        };
+        break;
+      case "CAPACITY_LATE":
+        s = {
+          title: `${plural(l.length, "production run")} only fit the machines later`,
+          why: "Planning within capacity found no room early enough, even starting today, so these finish later than they're needed. Add a shift or overtime, use another machine, or promise the later date.",
+          items: l.map((e) => ({ label: `${e.order_id}: ${n(e.qty)} ${where(e)}`, detail: `needed ${d(e.date)}`, to: e.order_id ? href("plan", "orders", e.order_id) : undefined })),
+          actions: [{ label: "See the load day by day", to: href("capacity") }],
+        };
+        break;
+      case "ALTERNATIVE_MACHINE":
+        s = {
+          title: `${plural(l.length, "step")} moved to an alternative machine`,
+          why: "Their own machine is full on those days, and the routing allows another one.",
+          items: l.map((e) => ({ label: `${e.order_id}: ${where(e)}`, detail: `on ${e.resource}`, to: e.order_id ? href("plan", "orders", e.order_id) : undefined })),
+          actions: [{ label: "See the load day by day", to: href("capacity") }],
+        };
+        break;
       case "NO_VALID_SOURCE":
         s = {
           title: `${plural(l.length, "product and place", "products and places")} can't be supplied at all`,
@@ -182,7 +214,8 @@ const CODE_LABEL: Record<string, string> = {
   RESCHEDULE_IN: "Incoming order needed sooner", NO_VALID_SOURCE: "No way to supply", BELOW_SAFETY_STOCK: "Below safety stock",
   EXCESS_STOCK: "Above maximum stock", SHELF_LIFE_RISK: "May expire", CAPACITY_OVERLOAD: "Over capacity",
   CAPACITY_OVERTIME: "Overtime needed", SUPPLIER_CAPACITY: "Supplier over capacity", LANE_CAPACITY: "Lane over capacity",
-  EOQ_FALLBACK: "No economic lot size", STOCKOUT: "Stock runs out",
+  EOQ_FALLBACK: "No economic lot size", STOCKOUT: "Stock runs out", SCHEDULE_LATE: "Scheduled to finish late",
+  CAPACITY_EARLIER: "Started earlier to fit", CAPACITY_LATE: "Only fits later", ALTERNATIVE_MACHINE: "On an alternative machine",
 };
 export function codeLabel(code: string): string {
   if (CODE_LABEL[code]) return CODE_LABEL[code];

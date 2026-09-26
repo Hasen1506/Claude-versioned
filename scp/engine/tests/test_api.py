@@ -88,6 +88,15 @@ def test_schedule():
     m = client.post("/api/schedule", json={"dataset": d, "sequence": {"PUNE-L1": seq}}).json()
     assert m["search"]["mode"] == "manual"
     assert next(x for x in m["resources"] if x["id"] == "PUNE-L1")["sequence"] == seq
+    # the manual sequence's dates go back into the plan: every scheduled order becomes a dated production order
+    a = client.post("/api/schedule/apply", json={"dataset": d, "sequence": {"PUNE-L1": seq}}).json()
+    assert len(a["report"]["applied"]) == len(m["orders"]) and a["report"]["skipped"] == {}
+    dated = {x["receipt"]: x for x in a["report"]["applied"]}
+    for rc in a["dataset"]["receipts"]:
+        if rc["id"] in dated:
+            assert rc["scheduled"] and rc["due_date"] == dated[rc["id"]]["due_date"]
+    bad = {**d, "changeovers": [{"resource": "NOPE", "from_group": "A", "to_group": "B", "hours": 1}]}
+    assert client.post("/api/schedule/apply", json={"dataset": bad}).status_code == 409
 
 
 def test_promise_flow():

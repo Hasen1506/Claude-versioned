@@ -58,6 +58,12 @@ class ScheduledReceipt(Model):
     reservations: list[Reservation] = Field(default_factory=list,
                                             description="Components (production) or goods at the origin (transfer) "
                                                         "still to be issued; planning reserves them")
+    step_resources: dict[int, str] = Field(default_factory=dict,
+                                           description="Production: steps (by number) to run on one of their alternative "
+                                                       "machines instead of their own")
+    scheduled: bool = Field(False, description="Dates set by the detailed schedule: when it finishes later than "
+                                               "needed, planning counts it where it is needed and reports the delay "
+                                               "instead of adding an order in front of it")
 
 
 class SalesHistory(Model):

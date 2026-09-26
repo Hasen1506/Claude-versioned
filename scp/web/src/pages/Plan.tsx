@@ -362,7 +362,9 @@ function OrderTable({ plan, orders, sel, onSelect, compact }: {
             <td className="small">{o.origin ?? o.source_id}</td>
             <td className="num">{qty(o.qty)}</td>
             <td className="small">{day(o.start_date)}{o.start_in_past && <> <Badge sev="warning">past</Badge></>}</td>
-            <td className="small">{day(o.available_date)}{o.fence_shifted && <> <Badge sev="info">fence</Badge></>}</td>
+            <td className="small">{day(o.available_date)}{o.fence_shifted && <> <Badge sev="info">fence</Badge></>}
+              {o.capacity_shift_days !== 0 && <> <Badge sev={o.capacity_shift_days > 0 ? "warning" : "info"}>{o.capacity_shift_days > 0 ? `+${o.capacity_shift_days}` : o.capacity_shift_days} d to fit</Badge></>}
+              {Object.keys(o.step_resources ?? {}).length > 0 && <> <Badge sev="info">alt. machine</Badge></>}</td>
             <td className="num">{o.delay_days === -1 ? <Badge sev="error">uncovered</Badge> : (o.delay_days ?? 0) > 0 ? <><Badge sev="warning">{o.delay_days} d</Badge>{partOnTime(o) && <div className="faint small">{qty(o.projected_on_time_qty ?? 0)} on time</div>}</> : "·"}</td>
             <td className="num">{money(o.total_cost, plan.currency)}</td>
           </tr>

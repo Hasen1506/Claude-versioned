@@ -32,6 +32,9 @@ class Settings(Model):
                                  description="Storage + insurance + obsolescence on top of WACC, per year")
     default_service_level: float = Unit("fraction", gt=0, lt=1, default=0.95)
     default_calendar: str | None = Ref("calendar", default=None)
+    capacity_constrained: bool = Field(
+        False, description="Plan make orders within the capacity of finite machines and labour: an order that does "
+                           "not fit uses an alternative machine, else starts earlier, else finishes later (reported)")
 
     @property
     def carrying_rate(self) -> float:

@@ -10,6 +10,7 @@ export interface Series {
   values: (number | null)[];     // null = no value in that bucket (the line breaks)
   kind?: "line" | "step" | "column" | "dots";
   dash?: boolean;                // dashed line: a forecast / projection rather than an actual
+  colorAt?: (i: number) => string | undefined;   // columns: a bucket's own colour (e.g. over capacity)
 }
 
 export interface Band {
@@ -42,10 +43,11 @@ function niceMax(v: number): number {
 const finite = (v: number | null | undefined): v is number => v !== null && v !== undefined && Number.isFinite(v);
 
 export function BucketChart({ labels, series, height = 240, unit = "", highlight, format = qty, band, divider, dividerLabel,
-  spans = [], marks = [] }: {
+  spans = [], marks = [], onPick, picked }: {
   labels: string[]; series: Series[]; height?: number; unit?: string;
   highlight?: (i: number) => ReactNode; format?: (v: number) => string;
   band?: Band; divider?: number; dividerLabel?: string; spans?: Span[]; marks?: Mark[];
+  onPick?: (i: number) => void; picked?: number | null;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
@@ -125,12 +127,13 @@ export function BucketChart({ labels, series, height = 240, unit = "", highlight
       )}
       <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={series.map((s) => s.name).join(", ")}
         onMouseLeave={() => setHover(null)}
+        onClick={() => { if (onPick && hover !== null) onPick(hover); }}
         onMouseMove={(e) => {
           const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
           const px = ((e.clientX - r.left) / r.width) * width;
           const i = Math.floor((px - x0) / bw);
           setHover(i >= 0 && i < n ? i : null);
-        }} style={{ width: "100%", height: "auto" }}>
+        }} style={{ width: "100%", height: "auto", cursor: onPick ? "pointer" : undefined }}>
         {spans.map((sp, k) => (
           <rect key={`span-${k}`} className="event-span" x={x0 + bw * sp.from} width={bw * (sp.to - sp.from + 1)}
             y={pad.t} height={height - pad.t - pad.b} />
@@ -145,6 +148,7 @@ export function BucketChart({ labels, series, height = 240, unit = "", highlight
         {labels.map((l, i) => (i % labelEvery === 0 ? (
           <text key={i} x={cx(i)} y={height - 8} textAnchor="middle">{l}</text>
         ) : null))}
+        {picked != null && picked >= 0 && picked < n && <rect x={x0 + bw * picked} y={pad.t} width={bw} height={height - pad.t - pad.b} fill="var(--accent-soft)" />}
         {hover !== null && <rect x={x0 + bw * hover} y={pad.t} width={bw} height={height - pad.t - pad.b} fill="var(--surface-3)" opacity={0.6} />}
         {band && <path d={bandPath(band)} fill={band.color} className="band" />}
         {divider !== undefined && divider > 0 && divider < n && (
@@ -161,7 +165,7 @@ export function BucketChart({ labels, series, height = 240, unit = "", highlight
           const h = Math.max(0, base - top);
           const r = Math.min(4, h, (colW - 2) / 2);
           return h > 0 ? (
-            <path key={`${si}-${i}`} fill={s.color}
+            <path key={`${si}-${i}`} fill={s.colorAt?.(i) ?? s.color}
               d={`M${x},${base} V${top + r} Q${x},${top} ${x + r},${top} H${x + colW - 2 - r} Q${x + colW - 2},${top} ${x + colW - 2},${top + r} V${base} Z`} />
           ) : null;
         }))}
@@ -183,7 +187,9 @@ export function BucketChart({ labels, series, height = 240, unit = "", highlight
       </svg>
       {hover !== null && (
         <div className="tooltip" style={{
-          position: "absolute", left: `${Math.min(78, (cx(hover) / width) * 100)}%`, top: 24,
+          // anchored on the side away from the edge, so it never pushes the page wider on a phone
+          position: "absolute", top: 24, maxWidth: "50%",
+          ...(cx(hover) / width > 0.5 ? { right: `${Math.max(0, 100 - (cx(hover) / width) * 100)}%` } : { left: `${(cx(hover) / width) * 100}%` }),
         }}>
           <div style={{ fontWeight: 700, marginBottom: 4, fontFamily: "var(--display)" }}>{labels[hover]}</div>
           {series.filter((s) => finite(s.values[hover])).map((s) => (

@@ -28,9 +28,10 @@ from ..model import Dataset, DemandRecord, ForecastModelId
 from ..model.common import Out
 from ..network import build_graph, location_edges, location_layers
 from ..plan import PlanResult, run_mrp
+from ..plan.level import LevelPreview, level_preview
 from ..promise import PromiseResult, check_order, commit, run_bop, run_promise
 from ..scenarios import BY_ID as SCENARIOS, EngineClient, ScenarioInfo, ScenarioReport
-from ..schedule import ScheduleResult, run_schedule
+from ..schedule import ApplyReport, ScheduleResult, apply_schedule, run_schedule
 from ..sop import SopRelease, SopResult, release_sop, run_sop
 from ..validate import RULES, Issue, validate
 from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, plain_errors
@@ -321,6 +322,24 @@ def post_schedule(req: ScheduleRequest) -> ScheduleResult:
     return run_schedule(req.dataset, req.sequence)
 
 
+class ScheduleApplyRequest(ScheduleRequest):
+    ids: list[str] | None = None       # scheduled orders to date; None = every order on the schedule
+
+
+class ScheduleApplyResponse(Out):
+    dataset: Dataset
+    report: ApplyReport
+
+
+@app.post("/api/schedule/apply", response_model=ScheduleApplyResponse)
+def post_schedule_apply(req: ScheduleApplyRequest) -> ScheduleApplyResponse:
+    """Fix the schedule's dates on its orders: planned ones become production orders, released ones are re-dated."""
+    new, rep = apply_schedule(req.dataset, req.sequence, req.ids)
+    if not rep.ok:
+        raise HTTPException(409, "the readiness gate has errors; fix them before using the schedule's dates")
+    return ScheduleApplyResponse(dataset=new, report=rep)
+
+
 @app.post("/api/promise", response_model=PromiseResult)
 def post_promise(ds: Dataset) -> PromiseResult:
     return run_promise(ds)
@@ -362,6 +381,12 @@ def post_promise_commit(req: PromiseCommitRequest) -> PromiseCommitResponse:
 @app.post("/api/plan", response_model=PlanResult)
 def post_plan(ds: Dataset) -> PlanResult:
     return run_mrp(ds)
+
+
+@app.post("/api/capacity/level", response_model=LevelPreview)
+def post_level(ds: Dataset) -> LevelPreview:
+    """What planning within machine capacity moves: earlier, onto alternative machines, or later."""
+    return level_preview(ds)
 
 
 @app.post("/api/finance", response_model=FinanceResult)

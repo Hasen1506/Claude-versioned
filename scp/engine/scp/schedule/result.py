@@ -30,6 +30,13 @@ class ScheduledOp(Out):
     late: bool
 
 
+class PartSupply(Out):
+    supply: str                      # order or receipt the parts come from
+    product: str
+    available: float                 # clock hour they are there
+    scheduled: bool                  # made by an order in this schedule (its finish moves with the sequence)
+
+
 class ScheduledOrder(Out):
     id: str
     location: str
@@ -45,6 +52,13 @@ class ScheduledOrder(Out):
     mrp_start_date: dt.date
     mrp_due_date: dt.date
     firm: bool                       # a production order already released (scheduled receipt)
+    parts_ready: float = 0.0         # when the last part it uses is there (0 = from stock now)
+    held_for_parts: float = 0.0      # hours its steps waited for parts after they could otherwise start
+    parts_from: list[PartSupply] = Field(default_factory=list)   # supplies arriving after its release
+    missing_parts: list[str] = Field(default_factory=list)       # parts no supply covers
+    finish_date: dt.date | None = None       # day the last step ends
+    available_date: dt.date | None = None    # finish plus goods-receipt days: when the plan can use it
+    days_late: int = 0                       # available date after the MRP due/available date
 
 
 class ScheduleResource(Out):
@@ -75,6 +89,7 @@ class ScheduleKpis(Out):
     orders: int = 0
     operations: int = 0
     late_orders: int = 0
+    waiting_for_parts: int = 0       # orders with a step that waited for parts
     tardiness_hours: float = 0.0
     max_lateness_hours: float = 0.0
     setup_hours: float = 0.0

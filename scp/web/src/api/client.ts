@@ -1,6 +1,6 @@
 import type {
   Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
-  ScenarioInfo, ScenarioReport, SchemaError, ValidationResult,
+  ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview,
 } from "./types";
 
 /** Thrown when the engine rejects the dataset shape (HTTP 422). Carries field-level errors. */
@@ -94,6 +94,11 @@ export const api = {
   /** Detailed schedule; `sequence` (resource → operation keys) fixes the order on those resources. */
   schedule: (dataset: Dataset, sequence?: Record<string, string[]>) =>
     withDataset<ScheduleResult>("/api/schedule", dataset, { sequence: sequence ?? null }),
+  /** Fix the schedule's dates on its orders (planned ones become dated production orders); `ids` = only these. */
+  applySchedule: (dataset: Dataset, sequence?: Record<string, string[]>, ids?: string[]) =>
+    write<ScheduleApplyResponse>("/api/schedule/apply", dataset, { sequence: sequence ?? null, ids: ids ?? null }),
+  /** What planning within machine capacity would move (runs the plan both ways; changes nothing). */
+  level: (ds: Dataset) => planPost<LevelPreview>("/api/capacity/level", ds),
   actuals: (dataset: Dataset, asOf?: string) =>
     withDataset<ActualsView>("/api/actuals", dataset, { as_of: asOf ?? null }),
   roll: (dataset: Dataset, asOf: string) =>

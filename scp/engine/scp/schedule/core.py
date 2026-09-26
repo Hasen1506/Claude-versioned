@@ -57,6 +57,9 @@ class OpSpec:
     labor_hours: float = 0.0
     alternatives: list[str] = field(default_factory=list)   # other resources that can run it, same times
     send_ahead: float | None = None     # overlap: the next step may start once this many units are done
+    parts_ready: float = 0.0             # parts it consumes from stock, receipts or orders outside the schedule
+    waits_on: list[tuple[str, float]] = field(default_factory=list)   # (order made in this schedule, receiving
+                                                                      # workdays): parts it consumes from that order
 
 
 @dataclass
@@ -71,6 +74,11 @@ class Job:
 
 SetupFn = Callable[[str, tuple[str, str] | None, OpSpec], float]
 QueueFn = Callable[[OpSpec, float], float]
+ReceiveFn = Callable[[str, float, float], float]   # (supplying order, its completion, receiving workdays) -> available
+
+
+def _receive_now(order: str, t: float, workdays: float) -> float:
+    return t
 
 
 @dataclass
@@ -81,6 +89,15 @@ class Instance:
     after: QueueFn           # (op, end) -> earliest start of the next op of the order
     tardiness_weight: float = 1.0
     setup_weight: float = 1.0
+    receive: ReceiveFn = _receive_now
+
+    def parts_at(self, o: OpSpec, completion: dict[str, float]) -> float:
+        """When every part the operation consumes is available, given the completion of the orders it waits on."""
+        t = o.parts_ready
+        for j, lag in o.waits_on:
+            if j in completion:
+                t = max(t, self.receive(j, completion[j], lag))
+        return t
 
     def op(self, key: str) -> OpSpec:
         order, seq = key.rsplit(":", 1)
@@ -124,6 +141,8 @@ class Decoded:
     op_end: dict[str, float]
     completion: dict[str, float]
     realized: dict[str, list[str]]
+    parts: dict[str, float] = field(default_factory=dict)   # operation -> when its parts were available
+    held: dict[str, float] = field(default_factory=dict)    # operation -> hours it waited for them
     tardiness: float = 0.0
     setup_hours: float = 0.0
     changeovers: int = 0
@@ -176,10 +195,16 @@ def decode(inst: Instance, seqs: dict[str, list[str]]) -> Decoded:
     op_end: dict[str, float] = {}
     blocks: list[Block] = []
     realized: dict[str, list[str]] = {r: [] for r in inst.resources}
+    last_key = {j.id: j.ops[-1].key for j in inst.jobs.values() if j.ops}
+    done: dict[str, float] = {}      # order -> completion, once its last operation is placed
+    parts: dict[str, float] = {}
+    held: dict[str, float] = {}      # operation -> hours it waited for parts after it could otherwise start
 
     def ready(k: str) -> bool:
         p = prev_of[k]
-        return p is None or p in op_end
+        if p is not None and p not in op_end:
+            return False
+        return all(j in done or j not in last_key for j, _ in ops[k].waits_on)
 
     def trial(o: OpSpec, rid: str, res: Res, t0: float, n: int) -> list[tuple]:
         """Greedy placement of ``n`` equal sublots, each on the unit that finishes it first."""
@@ -209,6 +234,10 @@ def decode(inst: Instance, seqs: dict[str, list[str]]) -> Decoded:
         job = inst.jobs[o.order]
         p = prev_of[k]
         t0 = job.release if p is None else ready_at[p]
+        parts[k] = inst.parts_at(o, done)
+        if parts[k] > t0 + EPS:
+            held[k] = parts[k] - t0
+        t0 = max(t0, parts[k])
         must = must_end.get(k, 0.0)
 
         # split over parallel units only when the elapsed time saved exceeds the setup time added
@@ -254,6 +283,8 @@ def decode(inst: Instance, seqs: dict[str, list[str]]) -> Decoded:
         ready_at[k], m = handoff(inst, o, blocks[-n:], nxt)
         if nxt is not None and m:
             must_end[nxt.key] = m
+        if last_key.get(o.order) == k:
+            done[o.order] = ready_at[k]
         realized[rid].append(k)
 
     while any(pending.values()):
@@ -272,7 +303,7 @@ def decode(inst: Instance, seqs: dict[str, list[str]]) -> Decoded:
         i, r = best
         place(pending[r].pop(i))
 
-    d = Decoded(blocks, op_end, {}, realized)
+    d = Decoded(blocks, op_end, {}, realized, parts, held)
     lateness: list[float] = []
     for j in inst.jobs.values():
         if not j.ops:
@@ -428,6 +459,8 @@ def check(inst: Instance, d: Decoded) -> list[str]:
                 continue
             if bl and min(b.setup_start for b in bl) < prev_ready - 1e-6:
                 v.append(f"{o.key}: starts before its order release / predecessor")
+            if bl and min(b.setup_start for b in bl) < inst.parts_at(o, d.completion) - 1e-6:
+                v.append(f"{o.key}: starts before the parts it consumes are available")
             if bl and prev_must and max(b.end for b in bl) < prev_must - 1e-6:
                 v.append(f"{o.key}: ends before the overlapped step before it can hand over its last batch")
             if o.resource != (bl[0].resource if bl else o.resource) and bl[0].resource not in o.alternatives:

@@ -60,6 +60,9 @@ class PlannedOrder(Out):
     # why the order is this size, as planned: qty = for requirements + for_buffer + for_lot_size
     for_buffer: float = 0.0       # raises projected stock to the safety stock, stock target or reorder point
     for_lot_size: float = 0.0     # beyond the shortage: the lot-size rule, minimums and rounding
+    # capacity-constrained planning: workdays moved to fit (negative = earlier) and steps on an alternative machine
+    capacity_shift_days: int = 0
+    step_resources: dict[int, str] = {}
 
 
 class ScheduledReceiptOut(Out):
@@ -120,12 +123,21 @@ class ResourceBucket(Out):
     utilization: float
 
 
+class OrderLoad(Out):
+    order: str                       # planned order or released production order
+    product: str
+    firm: bool
+    hours: dict[dt.date, float]      # by working day (work before today on day 0)
+
+
 class ResourcePlan(Out):
     resource: str
     location: str
     kind: str
     finite: bool
     buckets: list[ResourceBucket]
+    daily_load: dict[dt.date, float] = Field(default_factory=dict)   # hours by working day (work before today on day 0)
+    orders: list[OrderLoad] = Field(default_factory=list)             # what makes up the load
 
 
 class PlanException(Out):

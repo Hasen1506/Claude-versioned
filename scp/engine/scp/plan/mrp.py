@@ -31,18 +31,18 @@ from ..model import (
 )
 from ..network import NetworkGraph, Node, SupplyOption, build_graph
 from ..time import Buckets
-from ..time.capacity import hours_between, overtime_between
+from ..time.capacity import day_capacity, hours_between, overtime_between
 from ..validate import has_errors, validate
 from . import costing, rates
 from .consumption import effective_demand
 from .leadtime import (
     Schedule, gr_days, lead_time_std_days, location_calendar, nominal_lead_time_days, resource_calendar,
-    schedule, supplier_lane,
+    schedule, schedule_make, supplier_lane,
 )
 from .lotsize import apply_modifiers, base_lot
 from .structure import co_output, needs
 from .result import (
-    BucketOut, Kpis, NodeBucket, NodePlan, Peg, PlanException, PlannedOrder, PlanResult,
+    BucketOut, Kpis, NodeBucket, NodePlan, OrderLoad, Peg, PlanException, PlannedOrder, PlanResult,
     Requirement, ResourceBucket, ResourcePlan, ScheduledReceiptOut,
 )
 
@@ -57,6 +57,7 @@ class _Supply:
     date: date      # netting date
     qty: float
     avail_date: date  # physical availability
+    fixed: bool = False   # a receipt dated by the detailed schedule
 
 
 @dataclass
@@ -89,6 +90,8 @@ class _Planner:
         self.counters: dict[str, int] = defaultdict(int)
         self.quota_alloc: dict[tuple[Node, str], float] = defaultdict(float)
         self.res_daily: dict[str, dict[date, float]] = defaultdict(lambda: defaultdict(float))
+        self.res_orders: dict[str, dict[tuple[str, str, bool], dict[date, float]]] = defaultdict(dict)
+        self._caps: dict[tuple[str, date], float] = {}
         self.supplier_load: dict[str, list[float]] = defaultdict(lambda: [0.0] * len(self.b))
         self.lane_load: dict[str, list[float]] = defaultdict(lambda: [0.0] * len(self.b))
         self.kpi = Kpis()
@@ -133,7 +136,8 @@ class _Planner:
             if st is None:
                 continue
             d = self.receipt_date(rc)
-            st.supplies.append(_Supply("receipt", rc.id, d, rc.qty, d))
+            st.supplies.append(_Supply("receipt", rc.id, d, rc.qty, d, rc.scheduled))
+            self._firm_load(rc)
             # what the firm order still draws from stock: components, or goods at a transfer's origin
             for rv in rc.reservations:
                 rn = (rv.location, rv.product)
@@ -143,6 +147,25 @@ class _Planner:
                 self._add_req(rn, Requirement(id=f"RV:{rc.id}:{rv.location}:{rv.product}", location=rv.location,
                                               product=rv.product, date=max(rv.date, self.start), qty=rv.qty,
                                               kind=kind, parent_order=rc.id, past_due=rv.date < self.start))
+
+    def _firm_load(self, rc) -> None:
+        """A released production order still to finish occupies its machines like a planned order would: forward from
+        its start date when that is today or later (a date the shop floor schedule set, or the planner), else backward
+        from its due date (work already overdue lands in the first bucket)."""
+        ps = self.ds.production_source_by_id.get(rc.source or "")
+        if rc.kind.value != "production" or ps is None or ps.location != rc.location or ps.product != rc.product:
+            return
+        if rc.start_date is not None and rc.start_date >= self.start:
+            sch = schedule_make(self.ds, ps, rc.qty, start=rc.start_date)
+        else:
+            sch = schedule_make(self.ds, ps, rc.qty, available=self.receipt_date(rc))
+        who = (rc.id, rc.product, True)
+        for w in sch.ops:
+            if w.resource is None:
+                continue
+            self._load(rc.step_resources.get(w.seq, w.resource), w.start, w.end, w.machine_hours, who)
+            if w.labor_resource and w.labor_hours > 0:
+                self._load(w.labor_resource, w.start, w.end, w.labor_hours, who)
 
     def receipt_date(self, rc) -> date:
         """A firm receipt is available after goods-receipt processing, like a planned order."""
@@ -297,11 +320,27 @@ class _Planner:
     def _reschedule_in(self, node: Node, st: _NodeState, receipts: list[_Supply], rec_on: dict[date, float],
                        d: date, short: float, lot: float) -> float:
         """Pull later firm receipts forward to ``d`` (for netting) while a new order of ``lot`` could not arrive
-        before them. Their physical date is kept, so the projection and the pegging still show the delay."""
+        before them. Their physical date is kept, so the projection and the pegging still show the delay.
+
+        A receipt dated by the detailed schedule is always counted where it is needed: the schedule already put it
+        as early as the machines allow, and a new order planned at unlimited capacity would only look faster."""
+        got = 0.0
+        for s in receipts:
+            if got >= short - EPS:
+                return got
+            if not s.fixed or s.date <= d:
+                continue
+            rec_on[s.date] -= s.qty
+            self._exc("SCHEDULE_LATE", "warning",
+                      f"{s.id}: the schedule finishes it for {s.date.isoformat()}, {(s.date - d).days} d after it is "
+                      f"needed on {d.isoformat()}", node=node, order=s.id, when=d, qty=s.qty)
+            s.date = d
+            got += s.qty
+        if got >= short - EPS:
+            return got
         earliest = self._earliest_new(node, st, d, lot)
         if earliest is None or earliest <= d:
-            return 0.0
-        got = 0.0
+            return got
         for s in receipts:
             if got >= short - EPS:
                 break
@@ -394,6 +433,11 @@ class _Planner:
         past = sch.start_date < self.start
         if past:
             sch = schedule(ds, opt, qty, start=self.start)
+        placed: dict[int, str] | None = None
+        base_avail = sch.available_date
+        if opt.kind == "make" and self.s.capacity_constrained:
+            sch, placed = self._fit(opt, qty, target, sch)
+            past = past and sch.start_date <= self.start
         oid = self._next_id(opt.kind)
         loc, prod = node
         origin = None
@@ -404,6 +448,9 @@ class _Planner:
         order = PlannedOrder(id=oid, kind=opt.kind, location=loc, product=prod, qty=qty, source_id=opt.source_id,
                              origin=origin, need_date=need, start_date=sch.start_date, due_date=sch.due_date,
                              available_date=sch.available_date, start_in_past=past, fence_shifted=fenced)
+        if placed is not None:
+            order.capacity_shift_days = (sch.available_date - base_avail).days
+            order.step_resources = {seq: r for seq, r in placed.items() if r != self._primary(opt.source_id, seq)}
         self._cost(order, opt, qty)
         self.orders.append(order)
         self.order_by_id[oid] = order
@@ -413,6 +460,8 @@ class _Planner:
             self._exc("START_IN_PAST", "warning",
                       f"{order.kind} {oid}: start would be before today; earliest availability "
                       f"{sch.available_date.isoformat()} ({late} d after need)", node=node, order=oid, when=need, qty=qty)
+        if placed is not None:
+            self._capacity_notes(order, sch, base_avail, need, node)
         if fenced:
             self._exc("FENCE_SHIFT", "info", f"{oid} moved to the planning time fence end {fence_end.isoformat()}",
                       node=node, order=oid, when=need, qty=qty)
@@ -433,12 +482,13 @@ class _Planner:
                 cst = self.state.get((loc, co))
                 if cst is not None and cq > EPS:
                     cst.supplies.append(_Supply("co_product", oid, sch.available_date, cq, sch.available_date))
+            who = (oid, prod, False)
             for w in sch.ops:
                 if w.resource is None:
                     continue   # done outside by a supplier
-                self._load(w.resource, w.start, w.end, w.machine_hours)
+                self._load((placed or {}).get(w.seq, w.resource), w.start, w.end, w.machine_hours, who)
                 if w.labor_resource and w.labor_hours > 0:
-                    self._load(w.labor_resource, w.start, w.end, w.labor_hours)
+                    self._load(w.labor_resource, w.start, w.end, w.labor_hours, who)
         elif opt.kind == "transfer":
             ln = ds.lane_by_id[opt.source_id]
             req = Requirement(id=f"T:{oid}", location=ln.origin, product=prod, date=max(self.start, sch.start_date),
@@ -458,9 +508,10 @@ class _Planner:
         self._add_req(node, req)
         self.order_inputs[parent].append(req.id)
 
-    def _load(self, resource: str, start: date, end: date, hours: float) -> None:
+    def _spread(self, resource: str, start: date, end: date, hours: float) -> list[tuple[date, float]]:
+        """An operation's hours spread evenly over the working days of its window."""
         if hours <= 0:
-            return
+            return []
         cal = resource_calendar(self.ds, resource)
         days = []
         d = start
@@ -470,8 +521,116 @@ class _Planner:
             d += timedelta(days=1)
         if not days:
             days = [start]
-        for d in days:
-            self.res_daily[resource][d] += hours / len(days)
+        return [(d, hours / len(days)) for d in days]
+
+    def _load(self, resource: str, start: date, end: date, hours: float, owner: tuple[str, str, bool]) -> None:
+        by = self.res_orders[resource].setdefault(owner, defaultdict(float))
+        for d, h in self._spread(resource, start, end, hours):
+            self.res_daily[resource][d] += h
+            by[d] += h
+
+    # ------------------------------------------------------------------ capacity-constrained planning
+    def _cap(self, resource: str, d: date) -> float:
+        key = (resource, d)
+        if key not in self._caps:
+            r = self.ds.resource_by_id[resource]
+            self._caps[key] = day_capacity(r, resource_calendar(self.ds, resource), d,
+                                           self.ds.scheduling.day_start_hour).productive_hours
+        return self._caps[key]
+
+    def _primary(self, source_id: str, seq: int) -> str | None:
+        ps = self.ds.production_source_by_id[source_id]
+        return next((op.resource for op in ps.operations if op.seq == seq), None)
+
+    def _placement(self, opt: SupplyOption, sch: Schedule) -> dict[int, str] | None:
+        """The machine each step runs on so every finite machine and labour pool stays within its daily capacity
+        (the step's own machine first, then its alternatives in order), or None when a step fits nowhere."""
+        ps = self.ds.production_source_by_id[opt.source_id]
+        ops = {op.seq: op for op in ps.operations}
+        extra: dict[tuple[str, date], float] = defaultdict(float)
+        choice: dict[int, str] = {}
+
+        def fits(rid: str, spread: list[tuple[date, float]]) -> bool:
+            if not self.ds.resource_by_id[rid].finite:
+                return True
+            return all(self.res_daily[rid].get(d, 0.0) + extra[(rid, d)] + h <= self._cap(rid, d) + 1e-6
+                       for d, h in spread)
+
+        for w in sch.ops:
+            if w.resource is None:
+                continue
+            got = None
+            for rid in [w.resource, *ops[w.seq].alternatives]:
+                if rid not in self.ds.resource_by_id:
+                    continue
+                spread = self._spread(rid, w.start, w.end, w.machine_hours)
+                if fits(rid, spread):
+                    got = rid
+                    break
+            if got is None:
+                return None
+            if w.labor_resource and w.labor_hours > 0 and w.labor_resource in self.ds.resource_by_id:
+                lab = self._spread(w.labor_resource, w.start, w.end, w.labor_hours)
+                if not fits(w.labor_resource, lab):
+                    return None
+                for d, h in lab:
+                    extra[(w.labor_resource, d)] += h
+            for d, h in spread:
+                extra[(got, d)] += h
+            choice[w.seq] = got
+        return choice
+
+    def _fit(self, opt: SupplyOption, qty: float, target: date, sch: Schedule) -> tuple[Schedule, dict[int, str] | None]:
+        """Where a make order fits the machines: as planned; else finishing a day earlier at a time (never starting
+        before today); else a day later at a time, up to a month past the horizon. None: it fits nowhere, and stays
+        as planned (the capacity check reports the overload)."""
+        got = self._placement(opt, sch)
+        if got is not None:
+            return sch, got
+        ds = self.ds
+        cal = location_calendar(ds, opt.node[0])
+        if sch.start_date > self.start:
+            d = min(target, sch.available_date)
+            while True:
+                d -= timedelta(days=1)
+                s = schedule(ds, opt, qty, available=d)
+                if s.start_date < self.start:
+                    break
+                if not cal.is_workday(s.start_date):
+                    continue
+                got = self._placement(opt, s)
+                if got is not None:
+                    return s, got
+        last = self.b.end + timedelta(days=31)
+        d = sch.start_date
+        while True:
+            d += timedelta(days=1)
+            if not cal.is_workday(d):
+                continue
+            s = schedule(ds, opt, qty, start=d)
+            if s.available_date > last:
+                return sch, None
+            got = self._placement(opt, s)
+            if got is not None:
+                return s, got
+
+    def _capacity_notes(self, order: PlannedOrder, sch: Schedule, base_avail: date, need: date, node: Node) -> None:
+        moved = (sch.available_date - base_avail).days
+        oid = order.id
+        if moved < 0:
+            self._exc("CAPACITY_EARLIER", "info",
+                      f"{oid} starts {sch.start_date.isoformat()}, {-moved} d earlier than it would, to fit the machines",
+                      node=node, order=oid, when=need, qty=order.qty)
+        elif moved > 0:
+            late = (sch.available_date - need).days
+            self._exc("CAPACITY_LATE", "warning" if late > 0 else "info",
+                      f"{oid} fits the machines only {moved} d later: available {sch.available_date.isoformat()}"
+                      + (f", {late} d after it is needed" if late > 0 else ""),
+                      node=node, order=oid, when=need, qty=order.qty)
+        for seq, rid in order.step_resources.items():
+            self._exc("ALTERNATIVE_MACHINE", "info",
+                      f"{oid} step {seq} runs on {rid} instead of {self._primary(order.source_id, seq)}, which is full",
+                      node=node, order=oid, resource=rid, when=need, qty=order.qty)
 
     def _cost(self, order: PlannedOrder, opt: SupplyOption, qty: float) -> None:
         ds, k = self.ds, self.kpi
@@ -801,7 +960,20 @@ class _Planner:
                 bks[0].load_hours += before
                 cap0 = bks[0].capacity_hours
                 bks[0].utilization = bks[0].load_hours / cap0 if cap0 > 0 else math.inf
-            out.append(ResourcePlan(resource=r.id, location=r.location, kind=r.kind.value, finite=r.finite, buckets=bks))
+            daily: dict[date, float] = defaultdict(float)
+            for d, h in loads.items():
+                if h > 0 and d < self.b.end:
+                    daily[max(d, self.b.start)] += h
+            per = []
+            for (oid, prod, firm), by in self.res_orders.get(r.id, {}).items():
+                hrs: dict[date, float] = defaultdict(float)
+                for d, h in by.items():
+                    if h > 0 and d < self.b.end:
+                        hrs[max(d, self.b.start)] += h
+                if hrs:
+                    per.append(OrderLoad(order=oid, product=prod, firm=firm, hours=dict(sorted(hrs.items()))))
+            out.append(ResourcePlan(resource=r.id, location=r.location, kind=r.kind.value, finite=r.finite, buckets=bks,
+                                    daily_load=dict(sorted(daily.items())), orders=per))
         self._resource_plans = out
         return out
 

@@ -8,19 +8,21 @@ are not sequenced; their daily load is reported against headcount so overloads a
 from __future__ import annotations
 
 import datetime as dt
+import math
 from collections import defaultdict
 from datetime import timedelta
 
 from ..model import Dataset
 from ..plan import run_mrp
-from ..plan.leadtime import location_calendar, resource_calendar
-from ..plan.structure import entering
+from ..plan.leadtime import gr_days, location_calendar, resource_calendar
+from ..plan.result import PlanResult
+from ..plan.structure import entering, needs
 from ..time.capacity import day_capacity, max_units
 from ..validate import has_errors, validate
 from .clock import ResourceClock, after_queue
 from .core import Decoded, Instance, is_changeover, Job, OpSpec, Res, check, complete, decode, edd, improve, setup_rule
 from .result import (
-    LabourDay, ScheduledOp, ScheduledOrder, ScheduleKpis, ScheduleResource, ScheduleResult, SearchInfo,
+    LabourDay, PartSupply, ScheduledOp, ScheduledOrder, ScheduleKpis, ScheduleResource, ScheduleResult, SearchInfo,
 )
 
 
@@ -48,11 +50,11 @@ def resource_clocks(ds: Dataset, rid: str) -> Res:
     return Res(rid, n, clocks[0] if clocks else unit_clock(0), r.finite, clocks)
 
 
-def build_instance(ds: Dataset) -> tuple[Instance, dict, int, int]:
+def build_instance(ds: Dataset, plan: PlanResult | None = None) -> tuple[Instance, dict, int, int]:
     s = ds.settings
     cfg = ds.scheduling
     origin = s.planning_start
-    plan = run_mrp(ds)
+    plan = plan or run_mrp(ds)
     window_end = origin + timedelta(days=cfg.horizon_days)
     resources: dict[str, Res] = {}
 
@@ -65,7 +67,7 @@ def build_instance(ds: Dataset) -> tuple[Instance, dict, int, int]:
     meta: dict[str, dict] = {}
     beyond = no_routing = 0
     def add(oid: str, ps, location: str, product: str, qty: float, start: dt.date, due: dt.date,
-            firm: bool) -> None:
+            firm: bool, steps: dict[int, str]) -> None:
         enter = entering(ps)
         grp = group_of(ds, product)
         cal = location_calendar(ds, location)
@@ -82,11 +84,14 @@ def build_instance(ds: Dataset) -> tuple[Instance, dict, int, int]:
                     lead_out += wait
                 continue
             q = qty * enter[op.seq]
-            ops.append(OpSpec(key=f"{oid}:{op.seq}", order=oid, seq=op.seq, resource=op.resource, product=product,
+            # the plan may have put the step on one of its alternatives: start from that one, keep its own as an option
+            rid = steps.get(op.seq, op.resource) if steps.get(op.seq) in ds.resource_by_id else op.resource
+            alts = [a for a in [op.resource, *op.alternatives] if a != rid]
+            ops.append(OpSpec(key=f"{oid}:{op.seq}", order=oid, seq=op.seq, resource=rid, product=product,
                               group=grp, qty=q, setup=op.setup_hours, run=op.run_hours_per_unit * q,
                               queue_workdays=op.queue_workdays, parallel=op.parallel_units,
                               labor_resource=op.labor_resource, labor_hours=op.labor_hours_per_unit * q,
-                              alternatives=list(op.alternatives), send_ahead=op.send_ahead_qty))
+                              alternatives=alts, send_ahead=op.send_ahead_qty))
         if lead_out:
             release = after_queue(cal, origin, release, lead_out)
         for op in ops:
@@ -96,7 +101,7 @@ def build_instance(ds: Dataset) -> tuple[Instance, dict, int, int]:
                     res(alt)
         jobs[oid] = Job(oid, product, release, (due - origin).days * 24.0, ops)
         meta[oid] = {"location": location, "qty": qty, "start": max(start, origin), "due": due, "firm": firm,
-                     "cal": cal}
+                     "cal": cal, "ps": ps, "product": product, "missing": set(), "from": {}}
 
     for o in plan.orders:
         if o.kind != "make":
@@ -108,30 +113,113 @@ def build_instance(ds: Dataset) -> tuple[Instance, dict, int, int]:
         if ps is None or not any(op.resource for op in ps.operations):
             no_routing += 1
             continue
-        add(o.id, ps, o.location, o.product, o.qty, o.start_date, o.due_date, firm=False)
+        add(o.id, ps, o.location, o.product, o.qty, o.start_date, o.due_date, firm=False, steps=o.step_resources)
 
+    need = _need_dates(ds, plan)
     for rc in ds.receipts:
-        # firm production orders: released at their start date (or now), due on their due date
-        if rc.kind.value != "production" or not rc.source or rc.due_date >= window_end:
+        # firm production orders starting in the window: released at their start date (or now), due on their due
+        # date or, when what they are pegged to needs them sooner, by then
+        if rc.kind.value != "production" or not rc.source:
             continue
+        if (rc.start_date or rc.due_date) >= window_end and not rc.scheduled:
+            continue   # an order dated by an earlier schedule stays on it
         ps = ds.production_source_by_id.get(rc.source)
         if ps is None or not any(op.resource for op in ps.operations):
             continue
-        add(rc.id, ps, rc.location, rc.product, rc.qty, max(rc.start_date or origin, origin), rc.due_date, firm=True)
+        due = rc.due_date
+        if rc.id in need:
+            gr = math.ceil(gr_days(ds.location_product_by_key.get((rc.location, rc.product))) - 1e-9)
+            due = min(due, max(origin, need[rc.id] - timedelta(days=gr)))
+        add(rc.id, ps, rc.location, rc.product, rc.qty, max(rc.start_date or origin, origin), due, firm=True,
+            steps=rc.step_resources)
+
+    if cfg.wait_for_parts:
+        _parts(ds, plan, jobs, meta)
 
     changeovers = {(c.resource, c.from_group, c.to_group): c.hours for c in ds.changeovers}
 
     def after(op: OpSpec, t: float) -> float:
         return after_queue(meta[op.order]["cal"], origin, t, op.queue_workdays)
 
+    def receive(order: str, t: float, workdays: float) -> float:
+        return after_queue(meta[order]["cal"], origin, t, workdays)
+
     inst = Instance(resources, jobs, setup_rule(changeovers, cfg.minor_setup_factor), after,
-                    cfg.tardiness_weight, cfg.setup_weight)
+                    cfg.tardiness_weight, cfg.setup_weight, receive)
     return inst, meta, beyond, no_routing
+
+
+def _need_dates(ds: Dataset, plan: PlanResult) -> dict[str, dt.date]:
+    """The earliest date anything pegged to each firm receipt needs it."""
+    reqs = {r.id: r.date for r in plan.requirements}
+    out: dict[str, dt.date] = {}
+    for p in plan.pegs:
+        if p.supply_kind == "receipt" and p.requirement_id in reqs:
+            d = reqs[p.requirement_id]
+            out[p.supply_id] = min(out.get(p.supply_id, d), d)
+    return out
+
+
+def _parts(ds: Dataset, plan: PlanResult, jobs: dict[str, Job], meta: dict) -> None:
+    """Material-aware scheduling along the pegging: each step may start only once the parts it consumes are there.
+    A part from stock is there now; from a receipt, or an order the schedule does not sequence, on its (projected)
+    available day; from an order the schedule sequences, when that order finishes plus its goods-receipt days. What
+    no supply covers is reported as missing and does not hold the step (the plan shows the shortage)."""
+    origin = ds.settings.planning_start
+    hours = lambda d: max(0, (d - origin).days) * 24.0   # noqa: E731
+    orders = {o.id: o for o in plan.orders}
+    rec_date = {r.id: r.date for r in plan.receipts}
+    pegs: dict[str, list] = defaultdict(list)
+    for p in plan.pegs:
+        pegs[p.requirement_id].append(p)
+    by_parent: dict[str, list] = defaultdict(list)
+    for r in plan.requirements:
+        if r.parent_order in jobs and r.kind == "dependent":
+            by_parent[r.parent_order].append(r)
+
+    def lag(order: str) -> float:
+        m = meta[order]
+        return gr_days(ds.location_product_by_key.get((m["location"], m["product"])))
+
+    for oid, job in jobs.items():
+        m = meta[oid]
+        if not job.ops:
+            continue
+        step = {n.product: n.operation for n in needs(ds, m["ps"], m["start"])}
+        for r in by_parent.get(oid, []):
+            seq = step.get(r.product)
+            op = next((o for o in job.ops if seq is None or o.seq >= seq), job.ops[-1])
+            got = 0.0
+            for p in pegs.get(r.id, []):
+                got += p.qty
+                sid = p.supply_id
+                if p.supply_kind == "on_hand":
+                    continue
+                if sid in jobs and sid != oid:
+                    op.waits_on.append((sid, lag(sid)))
+                    m["from"].setdefault(sid, (r.product, None))
+                    continue
+                if p.supply_kind == "receipt":
+                    t = hours(rec_date.get(sid, origin))
+                else:
+                    o = orders.get(sid)
+                    if o is not None and o.delay_days < 0:
+                        m["missing"].add(r.product)   # that order's own inputs are not covered
+                    t = hours((o.projected_available_date or o.available_date) if o else origin)
+                if t > op.parts_ready:
+                    op.parts_ready = t
+                if t > job.release + 1e-9:
+                    m["from"][sid] = (r.product, t)
+            if r.qty - got > 1e-6 * max(1.0, r.qty):
+                m["missing"].add(r.product)
+        for o in job.ops:
+            o.waits_on = list(dict.fromkeys(o.waits_on))
 
 
 def _kpis(inst: Instance, d: Decoded) -> ScheduleKpis:
     return ScheduleKpis(orders=len(d.completion), operations=sum(len(j.ops) for j in inst.jobs.values()),
-                        late_orders=d.late_jobs, tardiness_hours=d.tardiness, max_lateness_hours=d.max_lateness,
+                        late_orders=d.late_jobs, waiting_for_parts=len({k.rsplit(":", 1)[0] for k in d.held}),
+                        tardiness_hours=d.tardiness, max_lateness_hours=d.max_lateness,
                         setup_hours=d.setup_hours, changeovers=d.changeovers, makespan_hours=d.makespan,
                         objective=d.objective)
 
@@ -164,14 +252,15 @@ def _labour(ds: Dataset, inst: Instance, d: Decoded) -> list[LabourDay]:
     return out
 
 
-def run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None) -> ScheduleResult:
+def run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None,
+                 plan: PlanResult | None = None) -> ScheduleResult:
     s = ds.settings
     cfg = ds.scheduling
     out = ScheduleResult(ok=False, day_start_hour=cfg.day_start_hour)
     out.issues = validate(ds)
     if has_errors(out.issues):
         return out
-    inst, meta, out.beyond_horizon, out.without_routing = build_instance(ds)
+    inst, meta, out.beyond_horizon, out.without_routing = build_instance(ds, plan)
     out.origin = dt.datetime.combine(s.planning_start, dt.time())
 
     base_seq = edd(inst)
@@ -202,11 +291,24 @@ def run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None) -> S
     for j in sorted(inst.jobs.values(), key=lambda j: (j.due, j.id)):
         m = meta[j.id]
         c = final.completion[j.id]
+        gr = math.ceil(gr_days(ds.location_product_by_key.get((m["location"], j.product))) - 1e-9)
+        done_day = math.ceil(c / 24.0 - 1e-9)
+        avail = s.planning_start + timedelta(days=done_day + gr)
+        ready = max((final.parts.get(o.key, 0.0) for o in j.ops), default=0.0)
+        came = []
+        for sid, (prod, t) in m["from"].items():
+            if t is None:
+                t = inst.receive(sid, final.completion[sid], _gr(ds, meta[sid]))
+            came.append(PartSupply(supply=sid, product=prod, available=t, scheduled=sid in inst.jobs))
         out.orders.append(ScheduledOrder(
             id=j.id, location=m["location"], product=j.product, group=j.ops[0].group, qty=m["qty"],
             release=j.release, due=j.due, completion=c, lateness_hours=c - j.due, tardy=j.id in late_orders,
             baseline_completion=base.completion[j.id], mrp_start_date=m["start"], mrp_due_date=m["due"],
-            firm=m["firm"]))
+            firm=m["firm"], parts_ready=ready, held_for_parts=sum(final.held.get(o.key, 0.0) for o in j.ops),
+            parts_from=sorted((p for p in came if p.available > j.release + 1e-6), key=lambda p: -p.available),
+            missing_parts=sorted(m["missing"]),
+            finish_date=s.planning_start + timedelta(days=max(0, math.floor((c - 1e-9) / 24.0))),
+            available_date=avail, days_late=max(0, done_day - int(j.due // 24))))
 
     span = max([cfg.horizon_days * 24.0, final.makespan, *(b.end for b in final.blocks)])
     out.span_hours = span
@@ -233,3 +335,7 @@ def run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None) -> S
 def _gaps(clk: ResourceClock, a: float, b: float) -> float:
     """Clock hours inside [a, b] that are outside shift windows (a job paused overnight or for a break)."""
     return (b - a) - clk.open_between(a, b)
+
+
+def _gr(ds: Dataset, m: dict) -> float:
+    return gr_days(ds.location_product_by_key.get((m["location"], m["product"])))

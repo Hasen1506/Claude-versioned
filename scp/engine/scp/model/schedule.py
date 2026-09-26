@@ -38,6 +38,8 @@ class ScheduleSettings(Model):
                                                "(4 = an hour late costs as much as four hours of changeover)")
     setup_weight: float = Unit("ratio", le=1000, default=1.0,
                                description="Objective weight per hour of changeover")
+    wait_for_parts: bool = Field(True, description="A step starts only once the parts it uses are there: from stock, "
+                                                   "a receipt, or the order that makes them (along the pegging)")
     improve: bool = Field(True, description="Improve the EDD sequence by campaign / swap local search")
     time_limit_seconds: float = Unit("seconds", gt=0, le=120, default=4.0,
                                      description="Local-search time budget")

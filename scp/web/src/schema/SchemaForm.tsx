@@ -57,6 +57,8 @@ const TITLE: Record<string, string> = {
   send_ahead_qty: "Overlap: send ahead quantity", co_products: "Co-products and by-products", capacity_changes: "Capacity changes",
   fixed_qty: "Fixed quantity per run", change: "Engineering change", subcontract: "Done outside by a supplier",
   alternatives: "Alternative machines", break_minutes: "Break (minutes)", cost_share: "Share of the run's cost",
+  capacity_constrained: "Plan within machine capacity", wait_for_parts: "Wait for parts", step_resources: "Steps on an alternative machine",
+  scheduled: "Dated by the shop floor schedule",
 };
 
 /** Plain words for enum values; the stored value stays the code. */

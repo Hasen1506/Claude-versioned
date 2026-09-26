@@ -32,6 +32,7 @@ export const NAV: NavGroup[] = [
       supply,
       { id: "inventory", label: "Buffers", question: "Where should safety stock sit, and how much?", run: "inventory", optional: true },
       { id: "sop", label: "Capacity plan", question: "Can the plants and suppliers keep up, month by month?", run: "sop", optional: true },
+      { id: "capacity", label: "Levelling", question: "Which machines are asked for too much day by day, and what would levelling move?", run: "plan", optional: true },
       { id: "schedule", label: "Shop floor", question: "In what order should each machine run its jobs?", run: "schedule", optional: true },
     ] },
   ] },

@@ -23,6 +23,7 @@ import { Readiness } from "./pages/Readiness";
 import { Setup } from "./pages/Setup";
 import { Material } from "./pages/Material";
 import { Machines } from "./pages/Machines";
+import { Capacity } from "./pages/Capacity";
 import { freshness, isModified, planFreshness, store, useStore, NO_ISSUES } from "./state/store";
 
 /** Open a dataset and calculate everything, so no page opens empty. */
@@ -79,6 +80,7 @@ export function App() {
           : page === "setup" ? <Setup route={route} />
           : page === "material" ? <Material route={route} />
           : page === "machines" ? <Machines route={route} />
+          : page === "capacity" ? <Capacity route={route} />
           : page === "network" ? <Network route={route} />
           : page === "demand" ? <Demand route={route} />
           : page === "inventory" ? <Inventory route={route} />

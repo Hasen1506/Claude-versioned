@@ -429,7 +429,7 @@ test("phone: the menu opens the pages, each page answers first, nothing scrolls 
   await page.locator("#main-nav").getByRole("link", { name: "Orders", exact: true }).click();
   await expect(page.locator("#main-nav")).toBeHidden();                 // picking a page closes the menu
   await expect(page.locator(".stage-head .answer")).toContainText("customer orders can ship in full");
-  for (const hash of ["#/", "#/plan", "#/promise", "#/finance", "#/tower", "#/data"]) {
+  for (const hash of ["#/", "#/plan", "#/promise", "#/finance", "#/tower", "#/data", "#/capacity", "#/schedule/orders"]) {
     await page.goto(`/${hash}`);
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => document.documentElement.scrollWidth), hash).toBeLessThanOrEqual(390);
@@ -489,4 +489,50 @@ test("products at places: MRP views, the structure explorer and the stock/requir
   await page.goto("/#/material");
   await page.getByLabel("Planned by").selectOption("Asha");
   await expect(page.locator("tbody tr")).toHaveCount(1);
+});
+
+test("capacity levelling: daily overloads the weeks hide → preview → plan within capacity → keep the dates", async ({ page }) => {
+  await openExample(page, "Kaveri Kitchenware");
+  await page.goto("/#/capacity");
+  await expect(page.locator(".stage-head .answer")).toContainText(/asked for more than they have on \d+ days/);
+  await page.getByRole("button", { name: "Show what levelling moves" }).click();
+  await expect(page.getByText(/Levelling moves \d+ orders/)).toBeVisible({ timeout: 30_000 });
+  // every machine goes from overloaded days to none
+  await expect(page.getByRole("row", { name: /Assembly line 1/ })).toContainText(/→ 0/);
+  // a day's orders, from the chart
+  await page.getByRole("tab", { name: /Assembly line 1/ }).click();
+  const chart = page.locator("svg.chart").first();
+  const box = (await chart.boundingBox())!;
+  await chart.hover({ position: { x: box.width * 0.5, y: box.height * 0.6 } });
+  await chart.click({ position: { x: box.width * 0.5, y: box.height * 0.6 } });
+  await expect(page.getByRole("heading", { name: /Orders on Assembly line 1/ })).toBeVisible();
+  // switch it on: the plan recalculates within capacity and no day is over
+  await page.getByRole("button", { name: "Plan within capacity" }).click();
+  await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "fresh", { timeout: 45_000 });
+  await expect(page.locator(".stage-head .answer")).toContainText("because the plan keeps within capacity");
+  await page.getByRole("button", { name: "Keep these dates" }).click();
+  await page.getByRole("button", { name: "Keep the dates" }).click();
+  await expect(page.getByText(/kept at their levelled dates as production orders/)).toBeVisible({ timeout: 45_000 });
+});
+
+test("shop floor: steps wait for parts, and the schedule's dates go back into the plan", async ({ page }) => {
+  await openExample(page, "Kaveri Kitchenware");
+  await page.goto("/#/schedule/orders");
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
+  await expect(page.getByText("Waiting for parts")).toBeVisible({ timeout: 45_000 });
+  const waited = page.locator("tr.clickable", { hasText: "waited" }).first();
+  await waited.click();
+  await expect(page.getByText(/Waited .* for parts/)).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Comes from" })).toBeVisible();
+  await page.getByRole("button", { name: "Use these dates in the plan" }).click();
+  await expect(page.getByRole("alertdialog", { name: "Use the schedule's dates" })).toBeVisible();
+  await page.getByRole("button", { name: "Use the dates" }).click();
+  await expect(page.getByText(/became production orders with the schedule's dates/)).toBeVisible({ timeout: 45_000 });
+  await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "fresh", { timeout: 45_000 });
+  // the plan now shows the late ones as late, not as new orders
+  await page.goto("/#/plan");
+  await expect(page.getByText(/production orders? the shop floor schedule finishes late/)).toBeVisible();
+  // undo puts the planned orders back
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "stale");
 });

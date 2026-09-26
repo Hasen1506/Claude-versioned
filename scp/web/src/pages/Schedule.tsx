@@ -5,7 +5,7 @@ import { BucketChart } from "../components/charts";
 import {
   Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, useTooltip, RunButton, Term,
 } from "../components/ui";
-import { pct, plural, qty } from "../lib/format";
+import { day, pct, plural, qty } from "../lib/format";
 import { Prod } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
@@ -41,12 +41,34 @@ export function Schedule({ route }: { route: string[] }) {
   const rev = useStore((s) => s.revision);
   const stale = useStore((s) => isStale(s, "schedule"));
   const blocking = useStore((s) => s.validation?.blocking ?? false);
-  // the sequencer does not check material (yet): say so when the supply plan has late inbound supply
-  const partsLate = useStore((s) => (s.runs.plan.data?.exceptions ?? []).filter((e) => e.code === "START_IN_PAST" || e.code === "RESCHEDULE_IN")
-    .filter((e) => { const o = s.runs.plan.data?.orders.find((x) => x.id === e.order_id); return !o || o.kind !== "make"; }).length);
+  const partsCheck = ds.scheduling?.wait_for_parts ?? true;
   const view = ((route[1] as View) || "board") as View;
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [applied, setApplied] = useState<string | null>(null);
+
+  /** Fix the schedule's dates on its orders: planned ones become production orders, released ones are re-dated. */
+  const useDates = async () => {
+    if (!res) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const seq = res.search.mode === "manual" ? Object.fromEntries(res.resources.map((r) => [r.id, r.sequence])) : undefined;
+      const out = await api.applySchedule(ds, seq);
+      store.replace(out.dataset);
+      const made = out.report.applied.filter((a) => a.new).length;
+      const moved = out.report.applied.filter((a) => !a.new && (a.due_date !== a.was_due || a.start_date !== a.was_start)).length;
+      setApplied(`${plural(made, "planned order")} became production orders with the schedule's dates${moved ? `, and ${plural(moved, "released order")} got new dates` : ""}. `
+        + "The supply plan, promises and money now use these dates; an order the schedule finishes late shows up there as late, not as a new order.");
+      setAsking(false);
+      await Promise.all([store.run("plan"), store.run("schedule")]);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   /** Re-decode with a hand-edited sequence on one resource (every other resource keeps its order). */
   const resequence = async (resource: string, seq: string[]) => {
@@ -72,10 +94,12 @@ export function Schedule({ route }: { route: string[] }) {
       answer={res && (res.kpis.orders ? <>{res.kpis.late_orders ? <>{res.kpis.late_orders} of {plural(res.kpis.orders, "production order")} finish late,
         the worst by {hours(res.kpis.max_lateness_hours)}.</> : <>All {plural(res.kpis.orders, "production order")} finish on time.</>}{" "}
         {plural(res.kpis.changeovers, "changeover")} take {hours(res.kpis.setup_hours)}.
-        {partsLate > 0 && <> This assumes their parts are there: the supply plan has {plural(partsLate, "purchase or shipment")} arriving late,
-          so some runs can't start as sequenced.</>}</> : <>No production orders fall in the window.</>)}
+        {partsCheck ? (res.kpis.waiting_for_parts > 0 && <> {plural(res.kpis.waiting_for_parts, "order")} wait for parts before a step can start.</>)
+          : <> Parts are assumed to be there (the parts check is off in Settings).</>}</> : <>No production orders fall in the window.</>)}
       right={<>
       {res && <Provenance kind="solved" at={run.at} stale={stale} />}
+      {res?.ok && res.orders.length > 0 && <button className="btn" onClick={() => setAsking(true)} disabled={busy || stale || run.running}
+        title={stale ? "Schedule again first" : "Give the orders on this schedule its dates, so the supply plan and promises use them"}>Use these dates in the plan</button>}
       {res?.search.mode === "manual" && <button className="btn" onClick={() => store.run("schedule")} disabled={run.running}>Undo my changes to the order</button>}
       <RunButton running={run.running} has={!!res} onClick={() => store.run("schedule")} disabled={blocking} /></>} />
   );
@@ -100,7 +124,10 @@ export function Schedule({ route }: { route: string[] }) {
   }
   return body(<>
     {stale && <StaleMark what="schedule" onRerun={() => store.run("schedule")} busy={run.running} />}
-    {err && <div className="banner error"><Badge sev="error">Re-sequencing failed</Badge>{err}</div>}
+    {err && <div className="banner error"><Badge sev="error">That didn't work</Badge>{err}</div>}
+    {asking && <UseDates res={res} busy={busy} onYes={useDates} onNo={() => setAsking(false)} />}
+    {applied && <div className="banner info"><Badge sev="ok">Dates in the plan</Badge><span>{applied} <a href={href("plan")}>Open the supply plan</a></span>
+      <span className="spacer" /><button className="btn sm ghost" aria-label="Dismiss" onClick={() => setApplied(null)}>✕</button></div>}
     {res.violations.length > 0 && (
       <div className="banner error"><Badge sev="error">{res.violations.length} feasibility violations</Badge>{res.violations.slice(0, 3).join(" · ")}</div>
     )}
@@ -113,6 +140,24 @@ export function Schedule({ route }: { route: string[] }) {
     {view === "orders" && <Orders res={res} />}
     {view === "resources" && <Resources res={res} />}
   </>);
+}
+
+/** The confirmation step for writing the schedule's dates into the data (the viewer never shows browser dialogs). */
+function UseDates({ res, busy, onYes, onNo }: { res: ScheduleResult; busy: boolean; onYes: () => void; onNo: () => void }) {
+  const planned = res.orders.filter((o) => !o.firm).length;
+  const firm = res.orders.length - planned;
+  const late = res.orders.filter((o) => o.days_late > 0).length;
+  return (
+    <div className="banner warning" role="alertdialog" aria-label="Use the schedule's dates">
+      <Badge sev="warning">Check</Badge>
+      <span>This makes {plural(planned, "planned order")} firm production orders{firm ? ` and re-dates ${plural(firm, "released order")}` : ""},
+        each starting and finishing when this schedule says{late ? `; ${plural(late, "order")} will then show as late in the supply plan` : ""}.
+        Undo reverts it.</span>
+      <span className="spacer" />
+      <button className="btn sm accent" onClick={onYes} disabled={busy}>{busy ? "Saving…" : "Use the dates"}</button>
+      <button className="btn sm ghost" onClick={onNo} disabled={busy}>Cancel</button>
+    </div>
+  );
 }
 
 function Nav({ view, res }: { view: View; res: ScheduleResult | null }) {
@@ -140,6 +185,9 @@ function Kpis({ res }: { res: ScheduleResult }) {
       <StatTile label="Orders scheduled" value={qty(k.orders)} sub={`${k.operations} operations${firm ? ` · ${firm} firm` : ""}${res.beyond_horizon ? ` · ${res.beyond_horizon} later` : ""}`} />
       <StatTile label="Late orders" value={`${k.late_orders} / ${k.orders}`} sub={delta(k.late_orders, b.late_orders, (v) => `${v}`)} tone={k.late_orders ? "hl" : undefined} />
       <StatTile label="Tardiness" value={hours(k.tardiness_hours)} sub={`${delta(k.tardiness_hours, b.tardiness_hours, hours)} · worst ${hours(Math.max(0, k.max_lateness_hours))}`} />
+      <StatTile label="Waiting for parts" value={`${k.waiting_for_parts} / ${k.orders}`}
+        sub={k.waiting_for_parts ? `${hours(res.orders.reduce((a, o) => a + o.held_for_parts, 0))} held in total` : "every step had its parts"}
+        tone={k.waiting_for_parts ? "hl" : undefined} />
       <StatTile label="Changeover time" value={hours(k.setup_hours)} sub={`${k.changeovers} changeovers · ${delta(k.setup_hours, b.setup_hours, hours)}`} />
       {busiest && <StatTile label="Busiest resource" value={pct(busiest.utilization, 0)} sub={`${busiest.id} over the window`} />}
       <StatTile label="Sequencer" value={res.search.mode !== "improved" ? res.search.mode.toUpperCase()
@@ -181,7 +229,9 @@ function Board({ res, sel, busy, onResequence }: {
         sets up (nothing before → full setup; same product → 0; same group → minor setup; other group → setup matrix), then runs
         work ÷ OEE clock hours inside shift windows. Objective = w<sub>T</sub>·Σ tardiness + w<sub>S</sub>·Σ setup hours; the improver pulls operations
         behind the nearest same-group operation (campaigns) and swaps neighbours, keeping only changes that lower the objective.</>}
-        soWhat="Late orders here are ones the supply plan could not see, because it assumes every machine has room. Change the order, add a shift or overtime, or promise the customer the later date." />
+        soWhat={<>Late orders here are ones the supply plan did not see: it plans machines by the day, the schedule by the hour and with parts arriving.
+          Change the order, add a shift or overtime, or use these dates in the plan so promises quote them. To plan within capacity
+          from the start, see <a href={href("capacity")}>Capacity levelling</a>.</>} />
     </div>
   );
 }
@@ -276,6 +326,9 @@ function Gantt({ res, pxh, sel, colors }: { res: ScheduleResult; pxh: number; se
             </g>
           ))}
           {selOrder && <>
+            {selOrder.parts_ready > selOrder.release + 1e-6 && <>
+              <line x1={x(selOrder.parts_ready)} x2={x(selOrder.parts_ready)} y1={TOP} y2={H} stroke="var(--warning)" strokeDasharray="1 3" strokeWidth={2} />
+              <text x={x(selOrder.parts_ready) + 4} y={H - 18} style={{ fill: "var(--text)" }}>last parts</text></>}
             <line x1={x(selOrder.release)} x2={x(selOrder.release)} y1={TOP} y2={H} stroke="var(--text-2)" strokeDasharray="2 3" strokeWidth={1.5} />
             <line x1={x(selOrder.due)} x2={x(selOrder.due)} y1={TOP} y2={H} stroke={selOrder.tardy ? "var(--critical)" : "var(--good)"} strokeDasharray="5 3" strokeWidth={2} />
             <text x={x(selOrder.due) + 4} y={H - 6} style={{ fill: "var(--text)" }}>due {selOrder.id}</text>
@@ -344,8 +397,11 @@ function OrderDetail({ res, id, busy, onResequence }: {
         <StatTile label="Released" value={when(origin, o.release)} sub={o.firm ? "firm production order" : `MRP start ${o.mrp_start_date}`} />
         <StatTile label="Due" value={when(origin, o.due)} sub={`MRP due ${o.mrp_due_date}`} />
         <StatTile label="Finishes" value={when(origin, o.completion)} sub={o.tardy ? `late by ${hours(o.lateness_hours)}` : `${hours(-o.lateness_hours)} to spare`} />
+        <StatTile label="Usable from" value={o.available_date ? day(o.available_date) : "—"} sub={o.days_late ? `${plural(o.days_late, "day")} after the plan's date` : "as the plan expects"}
+          tone={o.days_late ? "hl" : undefined} />
         <StatTile label="vs EDD sequence" value={hours(o.completion - o.baseline_completion)} sub={o.completion < o.baseline_completion - 1e-6 ? "earlier" : o.completion > o.baseline_completion + 1e-6 ? "later" : "unchanged"} />
       </div>
+      <Parts res={res} id={id} />
       <table className="t nowrap">
         <thead><tr><th>Op</th><th>Resource</th><th className="num">Position</th><th>Start</th><th>End</th><th className="num">Setup</th><th className="num">Run</th><th>Sequence</th></tr></thead>
         <tbody>
@@ -375,6 +431,34 @@ function OrderDetail({ res, id, busy, onResequence }: {
   );
 }
 
+/** Where an order's parts come from, when they are there, and how long its steps waited for them. */
+function Parts({ res, id }: { res: ScheduleResult; id: string }) {
+  const o = res.orders.find((x) => x.id === id)!;
+  const origin = res.origin!;
+  if (!o.parts_from.length && !o.missing_parts.length) {
+    return <p className="small muted" style={{ marginTop: 0 }}>Parts: all there when each step can start (from stock or earlier arrivals).</p>;
+  }
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <p className="small" style={{ marginTop: 0 }}>
+        {o.held_for_parts > 0 ? <><b>Waited {hours(o.held_for_parts)} for parts.</b> </> : <>Parts arrive after it is released, but in time for the step that uses them. </>}
+        {o.missing_parts.length > 0 && <Badge sev="error">no supply for {o.missing_parts.join(", ")}</Badge>}
+      </p>
+      {o.parts_from.length > 0 && <div className="table-wrap"><table className="t nowrap">
+        <thead><tr><th>Part</th><th>Comes from</th><th>There from</th></tr></thead>
+        <tbody>{o.parts_from.map((p) => (
+          <tr key={`${p.supply}-${p.product}`}>
+            <td><Prod id={p.product} /></td>
+            <td>{p.scheduled ? <a href={href("schedule", "board", p.supply)}>{p.supply}</a> : p.supply}
+              <span className="faint small"> {p.scheduled ? "made on this schedule" : "incoming (purchase, transfer or order outside the window)"}</span></td>
+            <td>{when(origin, p.available)}</td>
+          </tr>))}
+        </tbody>
+      </table></div>}
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------------------------------------
 function Orders({ res }: { res: ScheduleResult }) {
   const origin = res.origin!;
@@ -385,7 +469,7 @@ function Orders({ res }: { res: ScheduleResult }) {
       <Panel flush title="Orders by due date">
         <div className="table-wrap" style={{ maxHeight: 620 }}>
           <table className="t nowrap">
-            <thead><tr><th>Order</th><th>Product</th><th className="num">Qty</th><th>Released</th><th>Due</th><th>Finishes</th>
+            <thead><tr><th>Order</th><th>Product</th><th className="num">Qty</th><th>Released</th><th>Parts</th><th>Due</th><th>Finishes</th>
               <th className="num">Lateness</th><th style={{ width: 200 }}>early ◀ │ ▶ late</th><th className="num">vs EDD</th></tr></thead>
             <tbody>
               {res.orders.map((o) => {
@@ -393,7 +477,9 @@ function Orders({ res }: { res: ScheduleResult }) {
                 return (
                   <tr key={o.id} className="clickable" onClick={() => go("schedule", "board", o.id)}>
                     <td><b>{o.id}</b> {o.firm && <Badge>firm</Badge>}</td><td><Prod id={o.product} /></td><td className="num">{qty(o.qty)}</td>
-                    <td>{when(origin, o.release)}</td><td>{when(origin, o.due)}</td><td>{when(origin, o.completion)}</td>
+                    <td>{when(origin, o.release)}</td>
+                    <td>{o.missing_parts.length ? <Badge sev="error">missing</Badge> : o.held_for_parts > 0 ? <Badge sev="warning">waited {hours(o.held_for_parts)}</Badge> : <span className="faint">·</span>}</td>
+                    <td>{when(origin, o.due)}</td><td>{when(origin, o.completion)}</td>
                     <td className="num">{o.tardy ? <Badge sev="error">{hours(o.lateness_hours)}</Badge> : <span className="muted">{hours(o.lateness_hours)}</span>}</td>
                     <td>
                       <div style={{ position: "relative", height: 10 }}>
@@ -410,8 +496,8 @@ function Orders({ res }: { res: ScheduleResult }) {
           </table>
         </div>
       </Panel>
-      <Reading formula="Lateness = finish (last operation end + its queue time) − MRP due date; negative = time to spare."
-        soWhat="MRP dates assume infinite capacity. A late order here is a real conflict on the shop floor: move it up the sequence, add capacity, or re-promise." />
+      <Reading formula="Lateness = finish (last operation end + its queue time) − MRP due date; negative = time to spare. Parts: a step starts once the parts it uses are there (from stock, an incoming order, or the order on this schedule that makes them)."
+        soWhat="A late order here is a real conflict on the shop floor or in the parts: move it up the sequence, add capacity, chase the part, or re-promise." />
     </div>
   );
 }

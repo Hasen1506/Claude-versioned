@@ -30,7 +30,7 @@ function windowsOf(s: Shift): [number, number][] {
 const runsOn = (s: Shift, wd: number) => !s.weekdays?.length || s.weekdays.includes(wd);
 
 /** The resource's calendar: its own, else its place's, else the company default, else Monday to Friday. */
-function calendarOf(ds: Dataset, r: Resource) {
+export function calendarOf(ds: Dataset, r: Resource) {
   const loc = (ds.locations ?? []).find((l) => l.id === r.location);
   const id = r.calendar || loc?.calendar || ds.settings.default_calendar;
   const cal = (ds.calendars ?? []).find((c) => c.id === id);
@@ -47,7 +47,7 @@ function changeOn(r: Resource, t: number): Change | undefined {
 }
 
 /** One day's working windows (clock hours from midnight), units and efficiency — as the engine computes them. */
-function dayCap(r: Resource, isWork: (t: number) => boolean, t: number, dayStart: number) {
+export function dayCap(r: Resource, isWork: (t: number) => boolean, t: number, dayStart: number) {
   const ch = changeOn(r, t);
   const units = ch?.units ?? r.units ?? 1;
   const eff = ch?.efficiency ?? r.efficiency ?? 0.85;
@@ -64,7 +64,7 @@ function dayCap(r: Resource, isWork: (t: number) => boolean, t: number, dayStart
   }
   return { wins: merged, units, eff, ch };
 }
-const hoursOf = (c: ReturnType<typeof dayCap>) => c.wins.reduce((a, [x, y]) => a + y - x, 0) * c.eff * c.units;
+export const hoursOf = (c: ReturnType<typeof dayCap>) => c.wins.reduce((a, [x, y]) => a + y - x, 0) * c.eff * c.units;
 
 export function Machines({ route }: { route: string[] }) {
   const ds = useStore((s) => s.dataset);
@@ -161,10 +161,12 @@ function ResourceDetail({ ds, r }: { ds: Dataset; r: Resource }) {
   }, [r, ds, start, cal, dayStart]);
   const max = Math.max(1, ...weeks.map((w) => w.hours));
   const rp = plan?.resources.find((x) => x.resource === r.id);
+  // the plan's load by day, summed over the week (whatever bucket the plan reports in)
   const loadOf = (t: number) => {
-    if (!rp || !plan) return null;
-    const b = plan.buckets.findIndex((bk) => toT(bk.start) <= t + 6 * DAY && t < toT(bk.end));
-    return b >= 0 && plan.buckets[b].end && (toT(plan.buckets[b].end) - toT(plan.buckets[b].start)) <= 7 * DAY ? rp.buckets[b]?.load_hours ?? null : null;
+    if (!rp) return null;
+    let h = 0;
+    for (const [d, v] of Object.entries(rp.daily_load ?? {})) { const x = toT(d); if (x >= t && x < t + 7 * DAY) h += v; }
+    return h;
   };
 
   return (
