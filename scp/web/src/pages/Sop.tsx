@@ -3,7 +3,7 @@ import { api } from "../api/client";
 import type { Dataset, SopResult } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs,
+  Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
 } from "../components/ui";
 import { money, pct, qty } from "../lib/format";
 import { go, href } from "../lib/router";
@@ -44,16 +44,17 @@ export function Sop({ route }: { route: string[] }) {
   };
 
   const head = (
-    <StageHeader n="05" title="Sales & operations planning" kicker={<>One linear programme over the whole network and horizon:
-      what to make, buy and move each {ds.sop?.bucket ?? "month"} within capacity, supplier and lane limits, at least cost or most
-      profit. Shadow prices say what each limit is costing you.</>} right={<>
+    <StageHeader title="Capacity plan" kicker={<>Can the plants, suppliers and lanes keep up, {ds.sop?.bucket ?? "month"} by {ds.sop?.bucket ?? "month"}? If not, what to build ahead, and what each limit costs you.</>}
+      how={<><Term t="S&OP" /> as one linear programme over the whole network and horizon: what to make, buy and move each
+        {" "}{ds.sop?.bucket ?? "month"} within capacity, supplier and lane limits, at the least cost or the most profit.
+        {" "}<Term t="Shadow price">Shadow prices</Term> say what one more unit of each limit would be worth. Using the plan in the
+        supply plan replaces the forecast demand with what can actually be supplied, and sets stock targets for building ahead.</>}
+      right={<>
       {res && <Provenance kind="solved" at={run.at} stale={stale} />}
       {res?.ok && <button className="btn" onClick={release} disabled={releasing || stale}
-        title={stale ? "Re-solve first: the plan is stale" : "Replace forecast demand with the constrained plan"}>
-        {releasing ? "Releasing…" : "Release to MRP"}</button>}
-      <button className="btn accent" onClick={() => store.run("sop")} disabled={run.running || blocking}>
-        {run.running ? "Solving…" : res ? "Re-solve" : "Solve"}
-      </button></>} />
+        title={stale ? "Recalculate first: the data changed" : "Replaces the forecast demand in your data with this plan's constrained demand and stock targets. Undo reverts it."}>
+        {releasing ? "Saving…" : "Use this plan in the supply plan"}</button>}
+      <RunButton running={run.running} has={!!res} onClick={() => store.run("sop")} disabled={blocking} /></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   const banners = <>

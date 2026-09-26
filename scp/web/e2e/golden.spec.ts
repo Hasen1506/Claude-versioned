@@ -48,9 +48,9 @@ test("golden path: example opens planned → home → network → data check →
   // plan (already calculated on opening); re-planning keeps it current
   await page.locator('.rail a[href="#/plan"]').click();
   await expect(page.getByText("Total plan cost")).toBeVisible();
-  await page.getByRole("button", { name: "Re-plan" }).click();
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
   await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "fresh");
-  await expect(page.locator(".tile .value").nth(1)).toContainText("%");
+  await expect(page.locator(".tile .value").nth(0)).toContainText("%");
 
   // node drill-down and pegging
   await page.goto("/#/plan/node/DC-DELHI/MG-750");
@@ -70,8 +70,8 @@ test("golden path: example opens planned → home → network → data check →
   await onHand.press("Enter");
   await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "stale");
   await page.goto("/#/plan");
-  await expect(page.getByText("⚠ STALE")).toBeVisible();
-  await page.getByRole("button", { name: "Re-plan" }).click();
+  await expect(page.getByText("⚠ Out of date")).toBeVisible();
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
   await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "fresh");
 
   // undo restores the previous value
@@ -83,7 +83,7 @@ test("golden path: example opens planned → home → network → data check →
 test("demand planning: forecast → workbench → consensus override → release → plan stale → undo", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/demand");
-  await page.getByRole("button", { name: "Re-forecast" }).click();
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
   await expect(page.getByText("Backtest WAPE")).toBeVisible();
   await expect(freshness(page, "demand")).toHaveAttribute("data-fresh", "fresh");
 
@@ -101,7 +101,7 @@ test("demand planning: forecast → workbench → consensus override → release
   await expect(page.locator("td.edit input[value='777']")).toBeVisible();
 
   // release writes the consensus into forecast demand; undo reverts it
-  await page.getByRole("button", { name: "Release to plan" }).click();
+  await page.getByRole("button", { name: "Use this forecast in the supply plan" }).click();
   await expect(page.getByText(/forecast records for 9 series/)).toBeVisible();
   await page.goto("/#/data/demand");
   await page.getByLabel("Search").fill("KT-15");
@@ -142,7 +142,7 @@ test("blank network: readiness guides the first steps", async ({ page }) => {
 test("inventory: optimise → placement → approve recommendation → policies change → stale → DDMRP position", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/inventory");
-  await page.getByRole("button", { name: "Re-optimise" }).click();
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
   await expect(page.getByText("Saving vs single-echelon")).toBeVisible();
   await expect(freshness(page, "inventory")).toHaveAttribute("data-fresh", "fresh");
 
@@ -150,9 +150,9 @@ test("inventory: optimise → placement → approve recommendation → policies 
   await expect(page.getByRole("img", { name: "Service-time placement per stage" })).toBeVisible();
   await page.getByLabel("Select PLT-PUNE RM-SWITCH").check();
   await page.getByRole("button", { name: /Review 1 change/ }).click();
-  await page.getByRole("button", { name: "Approve and apply" }).click();
+  await page.getByRole("button", { name: "Use these buffers in the plan" }).click();
   await expect(freshness(page, "inventory")).toHaveAttribute("data-fresh", "stale");
-  await page.getByRole("button", { name: "Re-run" }).click();
+  await page.getByRole("button", { name: "Recalculate now" }).click();
   await expect(freshness(page, "inventory")).toHaveAttribute("data-fresh", "fresh");
   const row = page.locator("tr", { has: page.getByLabel("Select PLT-PUNE RM-SWITCH") });
   await expect(row.locator("td").nth(10)).toContainText("fixed");
@@ -160,7 +160,7 @@ test("inventory: optimise → placement → approve recommendation → policies 
   await page.goto("/#/inventory/ddmrp");
   await page.getByLabel("Show every stocking stage").check();
   await page.getByLabel("Position buffer at DC-DELHI MG-500").check();
-  await page.getByRole("button", { name: "Re-run" }).click();
+  await page.getByRole("button", { name: "Recalculate now" }).click();
   await page.getByLabel("Show every stocking stage").uncheck();
   await expect(page.getByLabel("Position buffer at DC-DELHI MG-500")).toBeChecked();
 });
@@ -168,7 +168,7 @@ test("inventory: optimise → placement → approve recommendation → policies 
 test("S&OP: solve → pin → cut capacity → shadow prices → release to MRP → undo", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/sop");
-  await page.getByRole("button", { name: "Re-solve" }).click();
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
   await expect(page.getByText("Demand served")).toBeVisible();
   await page.getByRole("button", { name: "Pin this plan as baseline" }).click();
 
@@ -179,7 +179,7 @@ test("S&OP: solve → pin → cut capacity → shadow prices → release to MRP 
   await factor.press("Enter");
   await expect(freshness(page, "sop")).toHaveAttribute("data-fresh", "stale");
   await page.goto("/#/sop");
-  await page.getByRole("button", { name: "Re-run" }).click();
+  await page.getByRole("button", { name: "Recalculate now" }).click();
   await expect(freshness(page, "sop")).toHaveAttribute("data-fresh", "fresh");
   await expect(page.getByText(/vs .* plan pinned/).first()).toBeVisible();
   await page.goto("/#/sop/prices");
@@ -189,7 +189,7 @@ test("S&OP: solve → pin → cut capacity → shadow prices → release to MRP 
 
   // release the constrained plan: forecast demand is replaced, MRP becomes stale; undo restores it
   await page.goto("/#/sop");
-  await page.getByRole("button", { name: "Release to MRP" }).click();
+  await page.getByRole("button", { name: "Use this plan in the supply plan" }).click();
   await expect(page.getByText(/constrained demand records/)).toBeVisible();
   await page.goto("/#/data/demand");
   await page.getByLabel("Search").fill("SOP-");
@@ -201,7 +201,7 @@ test("S&OP: solve → pin → cut capacity → shadow prices → release to MRP 
 test("scheduling: schedule → select order → resequence → reset → edit setup matrix → stale", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/schedule");
-  await page.getByRole("button", { name: "Re-schedule", exact: true }).click();
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
   await expect(page.getByText("Orders scheduled")).toBeVisible();
   await expect(freshness(page, "schedule")).toHaveAttribute("data-fresh", "fresh");
   await expect(page.locator(".gantt svg g[data-order]").first()).toBeVisible();
@@ -211,7 +211,7 @@ test("scheduling: schedule → select order → resequence → reset → edit se
   await expect(page.getByText("MO-00024 · MG-500")).toBeVisible();
   await page.getByRole("button", { name: "later ▶" }).first().click();
   await expect(page.getByText("Manual sequence")).toBeVisible();
-  await page.getByRole("button", { name: "Reset to optimised" }).click();
+  await page.getByRole("button", { name: "Undo my changes to the order" }).click();
   await expect(page.getByText("Manual sequence")).toHaveCount(0);
 
   await page.goto("/#/schedule/orders");
@@ -231,7 +231,7 @@ test("scheduling: schedule → select order → resequence → reset → edit se
 test("promising: check → CTP simulation → commit → supply shrinks → at risk → BOP → commit", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/promise");
-  await page.getByRole("button", { name: "Re-check" }).click();
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
   await expect(page.getByText("Orders on time")).toBeVisible();
   await expect(page.locator("tr", { hasText: "SO-88221" }).locator(".badge", { hasText: "late" })).toBeVisible();   // allocation pushes 200 out
 
@@ -245,19 +245,19 @@ test("promising: check → CTP simulation → commit → supply shrinks → at r
 
   // commit, then take planned receipts out of the scope: committed promises are no longer covered
   await page.goto("/#/promise");
-  await page.getByRole("button", { name: "Commit promises" }).click();
+  await page.getByRole("button", { name: "Save these promised dates" }).click();
   await expect(page.getByText(/schedule lines committed/)).toBeVisible();
   await page.goto("/#/promise/settings");
   await page.locator('input[id="include_planned_orders"]').uncheck();
   await expect(freshness(page, "promise")).toHaveAttribute("data-fresh", "stale");
   await page.goto("/#/promise");
-  await page.getByRole("button", { name: "Re-run" }).click();
+  await page.getByRole("button", { name: "Recalculate now" }).click();
   await expect(page.getByText(/promises at risk/)).toBeVisible();
 
   await page.getByRole("link", { name: "Open BOP" }).click();
-  await page.getByRole("button", { name: "Simulate BOP" }).click();
+  await page.getByRole("button", { name: "Re-decide who gets scarce stock" }).click();
   await expect(page.locator("td .badge", { hasText: "lost" }).first()).toBeVisible();
-  await page.getByRole("button", { name: "Commit BOP result" }).click();
+  await page.getByRole("button", { name: "Save these new promised dates" }).click();
   await expect(page.getByText(/schedule lines committed/)).toBeVisible();
   await page.goto("/#/promise");
   await expect(page.getByText(/promises at risk/)).toHaveCount(0);
@@ -266,7 +266,7 @@ test("promising: check → CTP simulation → commit → supply shrinks → at r
 test("execution: journal → stock in sync → ship → roll forward → accuracy → firm planned orders", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/execution");
-  await page.getByRole("button", { name: "Refresh" }).click();
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
   await expect(page.getByText("On-hand reconciliation")).toBeVisible();
   await expect(page.locator(".tile", { hasText: "Out of sync" }).locator(".value")).toHaveText("0");
 
@@ -278,7 +278,7 @@ test("execution: journal → stock in sync → ship → roll forward → accurac
 
   // roll one week: orders close, the week is measured
   await page.goto("/#/execution/roll");
-  await page.getByRole("button", { name: "Roll forward" }).click();
+  await page.getByRole("button", { name: "Move the plan to this date" }).click();
   await expect(page.getByText("Rolled from")).toBeVisible();
   await expect(page.locator(".tile", { hasText: "Orders closed" }).locator(".value")).toHaveText("4");
   await page.goto("/#/execution/accuracy");
@@ -287,8 +287,8 @@ test("execution: journal → stock in sync → ship → roll forward → accurac
 
   // firm the planned orders inside the firm zone
   await page.goto("/#/execution/orders");
-  await page.getByRole("button", { name: /^(Re-plan|Run supply planning)$/ }).click();
-  await page.getByRole("button", { name: /^Firm \d+ orders?$/ }).click();
+  await page.getByRole("button", { name: /^(Recalculate the supply plan|Calculate the supply plan)$/ }).click();
+  await page.getByRole("button", { name: /^Make \d+ orders? firm$/ }).click();
   await expect(page.getByText(/planned orders firmed/)).toBeVisible();
   await expect(page.locator("td", { hasText: /^PRD-\d{5}$/ }).first()).toBeVisible();
 });
@@ -331,7 +331,7 @@ test("versions: save base → edit → save as scenario → compare → promote;
 test("finance: cost the plan → books close → cost to serve by region → capacity NPV → edit option → stale", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/finance");
-  await page.getByRole("button", { name: "Re-cost" }).click();
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
   await expect(page.locator(".banner", { hasText: "Books close" })).toBeVisible();
 
   await page.getByRole("tab", { name: /Cost to serve & margin/ }).click();
@@ -349,7 +349,7 @@ test("finance: cost the plan → books close → cost to serve by region → cap
 test("control tower: KPIs graded → drill into OTIF → worklist → assign & acknowledge → survives refresh", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/tower");
-  await page.getByRole("button", { name: "Refresh" }).click();
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
   await expect(page.locator(".kpi-card")).toHaveCount(13);
   await page.getByRole("button", { name: /^OTIF to requested date:/ }).click();
   await expect(page.locator(".section-band h2", { hasText: "OTIF to requested date" })).toBeVisible();
@@ -361,7 +361,7 @@ test("control tower: KPIs graded → drill into OTIF → worklist → assign & a
   await owner.press("Enter");
   await page.getByRole("button", { name: /^Ack DEMAND_AT_RISK|^Acknowledge DEMAND_AT_RISK/ }).first().click();
   await expect(page.locator(".tile", { hasText: "Acknowledged" }).locator(".value")).toHaveText("1");
-  await page.getByRole("button", { name: "Refresh" }).click();
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
   await expect(page.locator(".tile", { hasText: "Acknowledged" }).locator(".value")).toHaveText("1");
   await expect(page.locator('input[value="Asha Kulkarni"]')).toHaveCount(1);
 });

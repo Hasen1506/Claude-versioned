@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import type { RuleInfo } from "../api/types";
 import { Badge, Panel, StageHeader } from "../components/ui";
 import { byKey, issueRoute, type CollectionKey } from "../model/collections";
+import { humanize } from "../lib/format";
 import { href } from "../lib/router";
 import { useStore } from "../state/store";
 
@@ -25,9 +26,11 @@ export function Readiness() {
 
   return (
     <div>
-      <StageHeader n="02" title="Readiness" kicker={<>Master-data checks that run before any plan, like the SAP readiness gate: most
-        "the system planned it wrong" problems are data defects. Errors block planning; warnings are planned around and shown
-        with the plan.</>} right={checking ? <Badge sev="info">Checking…</Badge> : schemaErrors.length ? <Badge sev="error">Cannot read dataset</Badge>
+      <StageHeader title="Data check" kicker={<>Is the data complete enough to plan? Most "the system planned it wrong" problems are
+        really data problems. <b>Errors</b> stop planning until they're fixed; <b>warnings</b> are planned around.</>}
+        how={<>A set of rules runs on every change, before any plan, like SAP's readiness checks. Each finding names the record and
+          field, so it opens straight in master data. An error in demand's own inputs blocks the forecast; any error blocks supply planning.</>}
+        right={checking ? <Badge sev="info">Checking…</Badge> : schemaErrors.length ? <Badge sev="error">Cannot read dataset</Badge>
           : errors ? <Badge sev="error">{errors} blocking</Badge> : <Badge sev="ok">Ready to plan</Badge>} />
       <div className="content">
 
@@ -73,7 +76,7 @@ export function Readiness() {
                         <td><Badge sev={i.severity === "error" ? "error" : "warning"} /></td>
                         <td><code>{i.code}</code></td>
                         <td>{r ? <a href={href(...r)}>{i.object_type} {i.object_id}</a> : `${i.object_type} ${i.object_id}`}</td>
-                        <td>{i.message}</td>
+                        <td>{humanize(i.message)}</td>
                         <td className="muted">{i.hint}</td>
                       </tr>
                     );

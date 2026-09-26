@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { Dataset, Issue } from "../api/types";
 import { Badge, Empty, Panel, StageHeader } from "../components/ui";
 import { byKey, COLLECTIONS, items, whereUsed, type CollectionKey } from "../model/collections";
+import { humanize } from "../lib/format";
 import { go, href } from "../lib/router";
 import { defaults, SchemaForm, useSchema, type FieldErrors } from "../schema/SchemaForm";
 import { store, useStore, NO_ISSUES } from "../state/store";
@@ -189,7 +190,7 @@ function Editor({ ds, ckey, index, obj, errors, issues }: {
           {issues.map((i, n) => (
             <div key={n} className={`banner ${i.severity === "error" ? "error" : "warning"}`} style={{ margin: 0 }}>
               <Badge sev={i.severity === "error" ? "error" : "warning"}>{i.code}</Badge>
-              <div><div>{i.message}</div>{i.hint && <div className="small">{i.hint}</div>}</div>
+              <div><div>{humanize(i.message)}</div>{i.hint && <div className="small">{i.hint}</div>}</div>
             </div>
           ))}
         </div>

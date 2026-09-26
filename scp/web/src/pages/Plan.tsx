@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react";
-import type { PlanResult, PlannedOrder, Requirement } from "../api/types";
+import type { Dataset, PlanResult, PlannedOrder, Requirement } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, cols, Empty, Panel, Provenance, SolverIO, StageHeader, StaleMark, StatTile, Tabs, type Severity,
+  Badge, cols, Empty, Panel, Provenance, RunButton, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term, type Severity,
 } from "../components/ui";
-import { day, money, ORDER_LABEL, pct, qty } from "../lib/format";
+import { Situations } from "../components/Situations";
+import { situations } from "../lib/situations";
+import { day, humanize, money, ORDER_LABEL, pct, qty } from "../lib/format";
 import { go, href } from "../lib/router";
 import { isStale, store, useStore } from "../state/store";
 
@@ -19,15 +21,16 @@ export function Plan({ route }: { route: string[] }) {
   const stale = useStore((s) => isStale(s, "plan"));
   const blocking = useStore((s) => s.validation?.blocking ?? false);
   const view = ((route[1] as View) || "overview") as View;
+  const ds = useStore((s) => s.dataset);
 
   const head = (
-    <StageHeader n="06" title="Supply plan" kicker={<>Network MRP/DRP. Requirements are netted per location and product in low-level-code
-      order, lot-sized, sourced, scheduled on working days and exploded through BOMs and lanes. Every order is pegged to
-      the demand it serves.</>} right={<>
+    <StageHeader title="Supply plan" kicker="What to make, buy and move, and when, so every customer's demand is covered."
+      how={<><Term t="MRP" /> and <Term t="DRP" /> across the network: each location's needs are netted against its stock and incoming
+        supply, level by level through the bills of material and transport lanes (low-level-code order), then lot-sized, sourced
+        and scheduled on working days. Every order is linked to the demand it serves (<Term t="Pegging">pegging</Term>).</>}
+      right={<>
       {plan && <Provenance kind="solved" at={run.at} stale={stale} />}
-      <button className="btn accent" onClick={() => store.run("plan")} disabled={run.running || blocking}>
-        {run.running ? "Planning…" : plan ? "Re-plan" : "Run plan"}
-      </button></>} />
+      <RunButton running={run.running} has={!!plan} onClick={() => store.run("plan")} disabled={blocking} /></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   if (run.error) return body(<div className="banner error"><Badge sev="error">Plan failed</Badge>{run.error}</div>);
@@ -52,7 +55,7 @@ export function Plan({ route }: { route: string[] }) {
       { id: "capacity", label: "Capacity", count: plan.resources.length },
       { id: "orders", label: "Orders", count: plan.orders.length },
     ]} />
-    {view === "overview" && <Overview plan={plan} />}
+    {view === "overview" && <Overview plan={plan} ds={ds!} />}
     {view === "node" && <NodeView plan={plan} loc={route[2]} prod={route[3]} />}
     {view === "capacity" && <CapacityView plan={plan} res={route[2]} />}
     {view === "orders" && <OrdersView plan={plan} sel={route[2]} />}
@@ -60,7 +63,7 @@ export function Plan({ route }: { route: string[] }) {
 }
 
 // ------------------------------------------------------------------------------------------------
-function Overview({ plan }: { plan: PlanResult }) {
+function Overview({ plan, ds }: { plan: PlanResult; ds: Dataset }) {
   const k = plan.kpis;
   const c = plan.currency;
   const [sev, setSev] = useState<"" | "error" | "warning" | "info">("");
@@ -73,18 +76,20 @@ function Overview({ plan }: { plan: PlanResult }) {
   const ex = plan.exceptions.filter((e) => !sev || e.severity === sev);
   const counts = { error: 0, warning: 0, info: 0 } as Record<string, number>;
   plan.exceptions.forEach((e) => counts[e.severity]++);
+  const sits = useMemo(() => situations(plan, ds), [plan, ds]);
   return (
     <div className="stack">
       <div className="grid-auto">
-        <StatTile label="Total plan cost" value={money(k.total_cost, c)} sub={`over ${plan.buckets.length} buckets`} />
-        <StatTile label="Demand on time (projected)" value={pct(k.on_time_fill_rate)} sub={`${qty(k.on_time_qty)} of ${qty(k.independent_demand)} units`} />
-        <StatTile label="Average inventory value" value={money(k.inventory_value_avg, c)} sub={`start ${money(k.inventory_value_start, c)} → end ${money(k.inventory_value_end, c)}`} />
-        <StatTile label="Peak resource load" value={pct(k.max_utilization, 0)} sub="of regular capacity" />
+        <StatTile label="Demand on time" value={pct(k.on_time_fill_rate)} sub={`${qty(k.on_time_qty)} of ${qty(k.independent_demand)} units`} />
         <StatTile label="Planned orders" value={qty((k.orders_make ?? 0) + (k.orders_buy ?? 0) + (k.orders_transfer ?? 0))}
           sub={`${k.orders_make} make · ${k.orders_buy} buy · ${k.orders_transfer} move`} />
+        <StatTile label="Total plan cost" value={money(k.total_cost, c)} sub={`over ${plan.buckets.length} weeks`} />
+        <StatTile label="Average stock value" value={money(k.inventory_value_avg, c)} sub={`start ${money(k.inventory_value_start, c)} → end ${money(k.inventory_value_end, c)}`} />
+        <StatTile label="Busiest machine's load" value={pct(k.max_utilization, 0)} sub="of its regular capacity" />
       </div>
+      <Situations list={sits} />
       <div className="grid-2">
-        <Panel title="Cost build-up">
+        <Panel title="Where the cost comes from">
           <div className="bar-list">
             {costs.map(([label, v]) => (
               <div key={label} className="bar-row">
@@ -94,20 +99,24 @@ function Overview({ plan }: { plan: PlanResult }) {
               </div>
             ))}
           </div>
-          <p className="faint small" style={{ marginBottom: 0 }}>Holding cost uses the carrying rate {pct(plan.carrying_rate)} per year (WACC + holding spread) on projected stock × unit value.</p>
+          <p className="faint small" style={{ marginBottom: 0 }}>Holding cost is {pct(plan.carrying_rate)} a year (the cost of money, <Term t="WACC" />, plus
+            storage) on the value of the stock the plan projects.</p>
         </Panel>
-        <Panel title="Exceptions" actions={
-          <div className="row">
-            {(["", "error", "warning", "info"] as const).map((s) => (
-              <button key={s || "all"} className={`btn sm ${sev === s ? "primary" : ""}`} onClick={() => setSev(s)}>
-                {s ? `${s} (${counts[s]})` : `all (${plan.exceptions.length})`}
-              </button>
-            ))}
-          </div>}>
-          <div className="table-wrap" style={{ maxHeight: 360 }}>
-            <ExceptionTable rows={ex} />
+        <details className="panel fold" style={{ alignSelf: "start" }}>
+          <summary className="panel-head"><h3>The engine's messages ({plan.exceptions.length})</h3></summary>
+          <div className="panel-body">
+            <div className="row" style={{ marginBottom: 8 }}>
+              {(["", "error", "warning", "info"] as const).map((s) => (
+                <button key={s || "all"} className={`btn sm ${sev === s ? "primary" : ""}`} onClick={() => setSev(s)}>
+                  {s ? `${s} (${counts[s]})` : `all (${plan.exceptions.length})`}
+                </button>
+              ))}
+            </div>
+            <div className="table-wrap" style={{ maxHeight: 360 }}>
+              <ExceptionTable rows={ex} />
+            </div>
           </div>
-        </Panel>
+        </details>
       </div>
     </div>
   );
@@ -126,7 +135,7 @@ function ExceptionTable({ rows }: { rows: PlanResult["exceptions"] }) {
             <tr key={i}>
               <td><Badge sev={e.severity as Severity}>{e.code}</Badge></td>
               <td className="small">{where ? <a href={where}>{e.resource ?? `${e.product} @ ${e.location}`}</a> : "—"}</td>
-              <td className="small">{e.message}</td>
+              <td className="small">{humanize(e.message)}</td>
             </tr>
           );
         })}
@@ -216,7 +225,7 @@ function NodeDetail({ plan, node }: { plan: PlanResult; node: PlanResult["nodes"
       <Panel flush title="Stock / requirements by bucket">
         <div className="table-wrap">
           <table className="t">
-            <thead><tr><th className="stub">Row</th>{plan.buckets.map((bk) => <th key={bk.index} className="num" title={`${bk.start} – ${bk.end}`}>{bk.label.replace(/^W\d+ /, "")}</th>)}</tr></thead>
+            <thead><tr><th className="stub">Row</th>{plan.buckets.map((bk) => <th key={bk.index} className="num" title={`${day(bk.start)} – ${day(bk.end)}`}>{bk.label.replace(/^W\d+ /, "")}</th>)}</tr></thead>
             <tbody>
               {rows.map(([label, get, cls]) => (
                 <tr key={label} className={cls}>

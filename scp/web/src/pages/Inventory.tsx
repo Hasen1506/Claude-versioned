@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { Dataset, DdmrpRow, InventoryResult, NodeInventory, PoolingRow } from "../api/types";
 import {
-  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs,
+  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
 } from "../components/ui";
 import { money, pct, qty } from "../lib/format";
 import { go, href } from "../lib/router";
@@ -22,13 +22,13 @@ export function Inventory({ route }: { route: string[] }) {
   const view = ((route[1] as View) || "overview") as View;
 
   const head = (
-    <StageHeader n="04" title="Inventory optimisation" kicker={<>Where to hold safety stock across the network, and how much. The
-      guaranteed-service model places buffers where they are cheapest to hold for the service promised to customers; DDMRP
-      sizes decoupling buffers; pooling shows what consolidating stock would save.</>} right={<>
+    <StageHeader title="Buffers" kicker="Where to hold safety stock across the network, and how much, for the service you promise customers."
+      how={<>The guaranteed-service model (<Term t="MEIO" />) tries every placement of buffers along each product's path and keeps the one
+        that is cheapest to hold for the <Term t="Service level">service level</Term> promised to customers. <Term t="DDMRP" /> sizes
+        decoupling buffers with red, yellow and green zones. Pooling shows what holding stock in fewer places would save.</>}
+      right={<>
       {res && <Provenance kind="solved" at={run.at} stale={stale} />}
-      <button className="btn accent" onClick={() => store.run("inventory")} disabled={run.running || blocking}>
-        {run.running ? "Optimising…" : res ? "Re-optimise" : "Optimise"}
-      </button></>} />
+      <RunButton running={run.running} has={!!res} onClick={() => store.run("inventory")} disabled={blocking} /></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   if (view === "settings") return body(<><Nav view={view} res={res} /><SettingsView ds={ds} /></>);
@@ -210,7 +210,7 @@ function Placement({ res, ds }: { res: InventoryResult; ds: Dataset }) {
           <span>Set {changes.length} safety-stock polic{changes.length === 1 ? "y" : "ies"} to the multi-echelon recommendation as a fixed quantity
             ({changes.filter((n) => target(n) === 0).length} to none). Safety-stock value changes by <b>{money(delta, c)}</b>. The supply plan becomes stale; undo reverts it.</span>
           <span className="spacer" />
-          <button className="btn sm accent" onClick={apply} disabled={applying}>{applying ? "Applying…" : "Approve and apply"}</button>
+          <button className="btn sm accent" onClick={apply} disabled={applying}>{applying ? "Saving…" : "Use these buffers in the plan"}</button>
           <button className="btn sm ghost" onClick={() => setConfirm(false)}>Cancel</button>
         </div>
       )}

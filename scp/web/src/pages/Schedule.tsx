@@ -3,7 +3,7 @@ import { api } from "../api/client";
 import type { Changeover, Dataset, ScheduledOp, ScheduleResource, ScheduleResult } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, useTooltip,
+  Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, useTooltip, RunButton, Term,
 } from "../components/ui";
 import { pct, qty } from "../lib/format";
 import { go, href } from "../lib/router";
@@ -61,14 +61,14 @@ export function Schedule({ route }: { route: string[] }) {
   };
 
   const head = (
-    <StageHeader n="07" title="Detailed scheduling" kicker={<>Finite sequencing of the released production orders on each machine
-      and line, in clock time on the shift calendar: sequence-dependent changeovers, parallel units, queue times. The improver
-      groups setup families into campaigns without letting orders slip further.</>} right={<>
+    <StageHeader title="Shop floor" kicker="In what order each machine and line should run its jobs, hour by hour, so orders finish on time with the fewest changeovers."
+      how={<>Production orders are sequenced on each machine and line in clock time on its shift calendar, with
+        <Term t="Changeover"> changeovers</Term> that depend on what ran before, parallel units and queue times. It starts from
+        earliest-due-date order, then groups products that share a setup into campaigns without letting any order slip further.</>}
+      right={<>
       {res && <Provenance kind="solved" at={run.at} stale={stale} />}
-      {res?.search.mode === "manual" && <button className="btn" onClick={() => store.run("schedule")} disabled={run.running}>Reset to optimised</button>}
-      <button className="btn accent" onClick={() => store.run("schedule")} disabled={run.running || blocking}>
-        {run.running ? "Scheduling…" : res ? "Re-schedule" : "Schedule"}
-      </button></>} />
+      {res?.search.mode === "manual" && <button className="btn" onClick={() => store.run("schedule")} disabled={run.running}>Undo my changes to the order</button>}
+      <RunButton running={run.running} has={!!res} onClick={() => store.run("schedule")} disabled={blocking} /></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   if (view === "settings") return body(<><Nav view={view} res={res} /><SettingsView ds={ds} /></>);

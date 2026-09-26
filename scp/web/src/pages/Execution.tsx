@@ -3,7 +3,7 @@ import { api } from "../api/client";
 import type { AccuracySeries, ActualsView, Dataset, GoodsMovement, OpenOrderRow, PlannedOrder, RollReport, StockRow } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs,
+  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
 } from "../components/ui";
 import { day, pct, qty } from "../lib/format";
 import { go, href } from "../lib/router";
@@ -47,13 +47,13 @@ export function Execution({ route }: { route: string[] }) {
   const start = ds.settings.planning_start;
 
   const head = (
-    <StageHeader n="09" title="Orders & actuals" kicker={<>What really happened: the goods-movement journal (receipts, issues,
-      deliveries, scrap, counts) becomes stock, firm orders are received and closed, elapsed forecast is measured against actual sales,
-      and the plan rolls forward to a new start date. Planned orders inside the firm zone are converted into firm orders.</>} right={<>
+    <StageHeader title="Actuals" kicker="What actually happened: goods received, used and shipped, stock on hand, and how the forecast compared with real sales."
+      how={<>Every goods movement (receipts, issues, deliveries, scrap, counts) is added up into stock; firm orders are received and
+        closed as their goods arrive; past forecast is measured against actual sales. Moving the plan to a new start date recomputes
+        all of it from the full journal. Planned orders inside the <Term t="Firm zone">firm zone</Term> can be turned into firm orders.</>}
+      right={<>
       {res && <Provenance kind="derived" at={run.at} stale={stale} />}
-      <button className="btn accent" onClick={() => store.run("actuals")} disabled={run.running}>
-        {run.running ? "Reading…" : res ? "Refresh" : "Read journal"}
-      </button></>} />
+      <RunButton running={run.running} has={!!res} onClick={() => store.run("actuals")} /></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   const nav = <Nav view={view} res={res} ds={ds} />;
@@ -85,7 +85,7 @@ function Nav({ view, res, ds }: { view: View; res: ActualsView | null; ds: Datas
       { id: "stock", label: "Stock from movements", count: res?.stock.length },
       { id: "orders", label: "Open orders & firming", count: res?.open_orders.length },
       { id: "journal", label: "Movement journal", count: ds.movements?.length ?? 0 },
-      { id: "roll", label: "Roll forward" },
+      { id: "roll", label: "Start a new week" },
       { id: "accuracy", label: "Forecast accuracy", count: res?.accuracy.series.length },
     ]} />
   );
@@ -295,13 +295,13 @@ function Firming({ ds }: { ds: Dataset }) {
   return (
     <Panel flush title={`Firm zone: planned orders starting before ${day(limit)} (${zone} days)`} actions={
       plan.data ? <button className="btn sm accent" disabled={busy || planStale || chosen.size === 0} onClick={firm}
-        title={planStale ? "Re-run supply planning first" : "Convert into firm purchase, production and transfer orders"}>
-        {busy ? "Firming…" : `Firm ${chosen.size} order${chosen.size === 1 ? "" : "s"}`}</button> : null}>
+        title={planStale ? "Recalculate the supply plan first" : "Turns these planned orders into firm purchase, production and transfer orders in your data. Undo reverts it."}>
+        {busy ? "Saving…" : `Make ${chosen.size} order${chosen.size === 1 ? "" : "s"} firm`}</button> : null}>
       {msg && <div className="banner info" style={{ margin: 12 }}><Badge sev="ok">Firmed</Badge><span>{msg}</span><span className="spacer" />
         <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
       {err && <div className="banner error" style={{ margin: 12 }}><Badge sev="error">Firming failed</Badge>{err}</div>}
-      {!plan.data ? <Empty title="No supply plan yet"><button className="btn" onClick={() => store.run("plan")} disabled={plan.running}>Run supply planning</button></Empty>
-        : planStale ? <Empty title="The supply plan is stale"><button className="btn" onClick={() => store.run("plan")} disabled={plan.running}>{plan.running ? "Planning…" : "Re-plan"}</button></Empty>
+      {!plan.data ? <Empty title="No supply plan yet"><button className="btn" onClick={() => store.run("plan")} disabled={plan.running}>Calculate the supply plan</button></Empty>
+        : planStale ? <Empty title="The supply plan is out of date"><button className="btn" onClick={() => store.run("plan")} disabled={plan.running}>{plan.running ? "Calculating…" : "Recalculate the supply plan"}</button></Empty>
         : cands.length === 0 ? <Empty title="Nothing to firm">No convertible planned order starts inside the firm zone.</Empty> : (
           <div className="table-wrap" style={{ maxHeight: 320 }}>
             <table className="t">
@@ -409,7 +409,7 @@ function Roll({ ds }: { ds: Dataset }) {
         <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
           <span className="muted">From <b>{day(start)}</b> to</span>
           <input type="date" className="input" style={{ width: 170 }} value={to} min={start} onChange={(e) => setTo(e.target.value)} aria-label="Roll forward to" />
-          <button className="btn accent" onClick={roll} disabled={busy || to < start}>{busy ? "Rolling…" : "Roll forward"}</button>
+          <button className="btn accent" onClick={roll} disabled={busy || to < start}>{busy ? "Moving…" : "Move the plan to this date"}</button>
           <span className="faint small">{pending.length} movement{pending.length === 1 ? "" : "s"} fall in this window. Undo reverts the roll.</span>
         </div>
         {err && <div className="banner error" style={{ marginTop: 10 }}><Badge sev="error">Roll failed</Badge>{err}</div>}
@@ -464,8 +464,8 @@ function Accuracy({ res, sel }: { res: ActualsView; sel?: string }) {
   const key = (s: AccuracySeries) => `${s.location}|${s.product}`;
   const cur = a.series.find((s) => key(s) === sel) ?? a.series[0];
   if (a.series.length === 0) {
-    return <Panel><Empty title="No elapsed weeks yet">Roll forward past a week with posted sales; each elapsed week is logged as forecast against actual.
-      <div style={{ marginTop: 10 }}><a className="btn" href={href("execution", "roll")}>Roll forward</a></div></Empty></Panel>;
+    return <Panel><Empty title="No elapsed weeks yet">Move the plan past a week with posted sales; each elapsed week is logged as forecast against actual.
+      <div style={{ marginTop: 10 }}><a className="btn" href={href("execution", "roll")}>Start a new week</a></div></Empty></Panel>;
   }
   const sevOf = (acc: number | null) => (acc === null ? undefined : acc >= 0.8 ? "ok" : acc >= 0.6 ? "warning" : "error");
   return (

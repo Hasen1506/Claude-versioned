@@ -132,7 +132,7 @@ export function Network({ route }: { route: string[] }) {
 
   return (
     <div>
-      <StageHeader n="01" title="Network" kicker="Your supply network from suppliers to customers. Pick a product to trace its path, including its components, through every location that stocks, makes, buys or moves it." right={<>
+      <StageHeader title="Network" kicker="Your supply network, from suppliers to customers. Pick a product to trace its path, with its components, through every place that stocks, makes, buys or moves it." right={<>
           <select className="select" value={product} onChange={(e) => setProduct(e.target.value)} style={{ width: 220 }} aria-label="Trace product">
             <option value="">All products</option>
             {products.map((p) => <option key={p} value={p}>{p}</option>)}

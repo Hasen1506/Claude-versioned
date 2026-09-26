@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { Dataset, Kpi, TowerResult, WorkItem, WorkItemEntry } from "../api/types";
 import {
-  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, type Severity,
+  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, type Severity, RunButton,
 } from "../components/ui";
-import { day, money, pct, qty, unitMoney } from "../lib/format";
+import { codeLabel } from "../lib/situations";
+import { day, humanize, money, pct, qty, unitMoney } from "../lib/format";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -47,13 +48,13 @@ export function Tower({ route }: { route: string[] }) {
   const cur = ds.settings.currency;
 
   const head = (
-    <StageHeader n="11" title="Control tower" kicker={<>How the supply chain is performing and what needs a planner now. The KPI set
-      of the S/4 guide §18.2, each with its definition, source and target; one worklist of exceptions from every stage with an owner,
-      an age on the planning clock and an SLA, kept across runs; master-data defects in their own data-quality view.</>} right={<>
+    <StageHeader title="Performance" kicker="Are you hitting your targets? And a follow-up list of every problem, with who owns it and how long it has been open."
+      how={<>A standard set of supply-chain measures (as in SAP's S/4HANA planning guide, §18.2), each with its definition, where
+        its numbers come from and its target. The follow-up list gathers exceptions from every page, gives each an owner by rule,
+        and ages it on the planning clock against a time limit; it is kept across recalculations. Data problems have their own view.</>}
+      right={<>
       {res && <Provenance kind="derived" at={run.at} stale={stale} />}
-      <button className="btn accent" onClick={() => store.run("tower")} disabled={run.running}>
-        {run.running ? "Refreshing…" : res ? "Refresh" : "Refresh tower"}
-      </button></>} />
+      <RunButton running={run.running} has={!!res} onClick={() => store.run("tower")} /></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   const live = res?.worklist.filter((w) => w.status === "open" || w.status === "acknowledged") ?? [];
@@ -282,7 +283,7 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
                 <tr key={w.id} className={`${sel?.id === w.id ? "selected" : ""} ${w.status === "resolved" ? "dim" : ""}`}>
                   <td><Badge sev={ITEM_SEV[w.severity]} /></td>
                   <td><a href={href(...(CAT_LINK[w.category] ?? ["plan"]))}>{w.category}</a></td>
-                  <td><b className="mono small">{w.code}</b><div className="small">{w.message}</div></td>
+                  <td><b>{codeLabel(w.code)}</b> <span className="mono faint small">{w.code}</span><div className="small clamp2" title={humanize(w.message)}>{humanize(w.message)}</div></td>
                   <td className="small nowrap">{[w.location, w.product].filter(Boolean).join(" · ") || w.resource}{w.order_id && <div className="faint">{w.order_id}</div>}</td>
                   <td>
                     <input className="input" list="tower-owners" aria-label={`Owner of ${w.code} ${w.location ?? ""} ${w.product ?? ""}`.trim()} defaultValue={w.owner}
@@ -300,7 +301,7 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
                   <td className="nowrap">
                     <span className="small">{w.status}</span>
                     <div className="row" style={{ gap: 4, marginTop: 3 }}>
-                      {w.status === "open" && <button className="btn sm" onClick={() => patch(w, { status: "acknowledged" })} aria-label={`Acknowledge ${w.code} ${w.location ?? ""} ${w.product ?? ""}`.trim()}>Ack</button>}
+                      {w.status === "open" && <button className="btn sm" onClick={() => patch(w, { status: "acknowledged" })} aria-label={`Acknowledge ${w.code} ${w.location ?? ""} ${w.product ?? ""}`.trim()}>Seen</button>}
                       {w.status !== "resolved" && <button className="btn sm" onClick={() => patch(w, { status: "resolved" })} aria-label={`Resolve ${w.code} ${w.location ?? ""} ${w.product ?? ""}`.trim()}>Resolve</button>}
                       {w.status === "resolved" && <button className="btn sm ghost" onClick={() => patch(w, { status: "open" })}>Reopen</button>}
                     </div>
@@ -321,7 +322,7 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
             <table className="t">
               <thead><tr><th>Exception</th><th>Where</th><th>Owner</th><th className="num">Was open</th></tr></thead>
               <tbody>{res.cleared.map((w) => (
-                <tr key={w.id}><td><b className="mono small">{w.code}</b> <span className="small">{w.message}</span></td>
+                <tr key={w.id}><td><b>{codeLabel(w.code)}</b> <span className="mono faint small">{w.code}</span> <span className="small">{humanize(w.message)}</span></td>
                   <td className="small">{[w.location, w.product].filter(Boolean).join(" · ") || w.resource}</td><td>{w.owner}</td><td className="num">{w.age_days} d</td></tr>
               ))}</tbody>
             </table>
@@ -343,8 +344,8 @@ function ItemDetail({ w, onNote }: { w: WorkItem; onNote: (note: string) => void
   }, [w.id, w.note, w.status, w.owner]);
   return (
     <div className="grid-2" style={{ alignItems: "start" }}>
-      <Panel title={`${w.code} · ${[w.location, w.product].filter(Boolean).join(" · ") || w.resource || ""}`}>
-        <p style={{ marginTop: 0 }}>{w.message}</p>
+      <Panel title={`${codeLabel(w.code)} · ${[w.location, w.product].filter(Boolean).join(" · ") || w.resource || ""}`}>
+        <p style={{ marginTop: 0 }}>{humanize(w.message)}</p>
         <div className="small faint" style={{ marginBottom: 8 }}>
           {w.date && <>Date {day(w.date)} · </>}{w.qty !== null && <>qty {qty(w.qty)} · </>}first seen {day(w.first_seen)} · last seen {day(w.last_seen)}
         </div>
@@ -369,7 +370,7 @@ function Quality({ res }: { res: TowerResult }) {
   const total = res.data_quality.reduce((a, r) => a + r.count, 0);
   return (
     <div className="stack">
-      <div className="banner info"><Badge sev="info">Kept apart</Badge>Master-data defects go to data owners, not into planner worklists (S/4 guide §8.6). Fix them in Readiness.</div>
+      <div className="banner info"><Badge sev="info">Kept apart</Badge>Master-data defects go to data owners, not into planner worklists (S/4 guide §8.6). Fix them in the data check (Setup → Network → Data check).</div>
       {total === 0 ? <Panel><Empty title="No data-quality findings"><p>Every readiness check passes.</p></Empty></Panel> : (
         <Panel flush title={`${total} findings by rule`}>
           <div className="table-wrap">

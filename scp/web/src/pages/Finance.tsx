@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { CapacityAppraisal, Dataset, FinanceResult, ServeRow } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs,
+  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
 } from "../components/ui";
 import { money, pct, qty, unitMoney } from "../lib/format";
 import { go } from "../lib/router";
@@ -34,13 +34,14 @@ export function Finance({ route }: { route: string[] }) {
   const cur = ds.settings.currency;
 
   const head = (
-    <StageHeader n="10" title="Finance" kicker={<>The plan in money. Every plan cost is traced to the demand it serves along the
-      pegging, with what no demand absorbs kept separate, so the books close category by category. Inventory is valued
-      bucket by bucket, and capacity investments are appraised on the S&OP plan: shadow prices first, confirmed by a re-solve, then NPV.</>} right={<>
+    <StageHeader title="Money" kicker="What the plan costs, what each customer and product earns, what the stock is worth, and whether extra capacity would pay."
+      how={<>Every cost in the supply plan is traced to the demand it serves along the <Term t="Pegging">pegging</Term>; what no demand
+        absorbs is kept separate, so the totals reconcile category by category. Stock is valued week by week. Capacity investments
+        are appraised on the capacity plan: <Term t="Shadow price">shadow prices</Term> first, confirmed by solving again with the
+        extra capacity, then <Term t="NPV" />.</>}
+      right={<>
       {res && <Provenance kind="derived" at={run.at} stale={stale} />}
-      <button className="btn accent" onClick={() => store.run("finance")} disabled={run.running}>
-        {run.running ? "Costing…" : res ? "Re-cost" : "Cost the plan"}
-      </button></>} />
+      <RunButton running={run.running} has={!!res} onClick={() => store.run("finance")} /></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   const nav = (

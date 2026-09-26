@@ -5,6 +5,7 @@ import { useState, type ReactNode } from "react";
 import type { Dataset, Kpi, PlannedOrder } from "../api/types";
 import { addDays, dayName, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { href } from "../lib/router";
+import { earliestArrival } from "../lib/situations";
 import { freshness, planFreshness, store, useStore, type RunKey } from "../state/store";
 
 // ---- first-run guide: remembers which pages this browser has visited --------------------------------
@@ -156,11 +157,14 @@ export function Home({ ds }: { ds: Dataset }) {
     const risk = plan.exceptions.filter((e) => e.code === "DEMAND_AT_RISK").sort((a, b) => (b.qty ?? 0) - (a.qty ?? 0));
     serveAttn = late >= 0.5;
     const first = risk.map((e) => e.date).filter((d): d is string => !!d).sort()[0];
+    const early = risk.map(earliestArrival).filter((d): d is string => !!d).sort()[0];
     serve = late < 0.5 ? (
       <p className="answer">Yes. All {qty(k.independent_demand)} units of demand are covered on time.</p>
     ) : (<>
       <p className="answer">{pct(k.on_time_fill_rate, 1)} on time. <em>{qty(late)} units</em> may arrive late or short.</p>
       <p className="muted">{first && <>The first is due {dayName(first, year)}. </>}
+        {early && <>Nothing started today reaches these customers before {dayName(early, year)}, so earlier demand needs stock already
+          there or on its way. </>}
         {risk.length > 0 && <>The largest: </>}</p>
       {risk.length > 0 && <ul className="plain">
         {risk.slice(0, 3).map((e, i) => <li key={i}><b>{qty(Math.round(e.qty ?? 0))}</b> {prodName[e.product ?? ""] ?? e.product} for {locName[e.location ?? ""] ?? e.location}</li>)}

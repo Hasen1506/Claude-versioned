@@ -3,8 +3,7 @@ import { api } from "../api/client";
 import type { AtpNode, CtpStep, Dataset, DemandRecord, OrderPromise, PromiseResult, ScheduleLine } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, useTooltip,
-  type Severity,
+  Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, useTooltip, type Severity, RunButton, Term,
 } from "../components/ui";
 import { day, money, pct, qty } from "../lib/format";
 import { go, href } from "../lib/router";
@@ -52,15 +51,16 @@ export function Promising({ route }: { route: string[] }) {
   };
 
   const head = (
-    <StageHeader n="08" title="Order promising" kicker={<>What can be promised to each sales order, from where and when: cumulative ATP
-      over stock and receipts, delivery rules, replenishment lead time, product allocation, alternative shipping locations, and
-      capable-to-promise through transfers, production and purchasing. Backorder processing re-prioritises after a shortage.</>} right={<>
+    <StageHeader title="Customer orders" kicker="What you can promise each customer order, how much, from where and when. Check a new order before you accept it."
+      how={<>Each order is checked against <Term t="ATP" /> (stock and incoming supply not yet promised), in priority order, with its
+        delivery rules, product allocations and alternative shipping locations. What stock can't cover is checked for <Term t="CTP" />:
+        could it be moved, made or bought in time? Beyond the <Term t="RLT">replenishment lead time</Term> anything can be promised.
+        {" "}<Term t="BOP" /> re-decides who gets scarce stock after a shortage.</>}
+      right={<>
       {res && <Provenance kind="solved" at={run.at} stale={stale} />}
       {res?.ok && <button className="btn" onClick={() => commitPromises("entry")} disabled={busy || stale}
-        title={stale ? "Re-check first" : "Persist every schedule line as a confirmation"}>Commit promises</button>}
-      <button className="btn accent" onClick={() => store.run("promise")} disabled={run.running || blocking}>
-        {run.running ? "Checking…" : res ? "Re-check" : "Check orders"}
-      </button></>} />
+        title={stale ? "Recalculate first" : "Saves every promised date and quantity on the orders in your data, so later checks keep them. Undo reverts it."}>Save these promised dates</button>}
+      <RunButton running={run.running} has={!!res} onClick={() => store.run("promise")} disabled={blocking} /></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   const banners = <>
@@ -120,7 +120,7 @@ function Nav({ view, res }: { view: View; res: PromiseResult | null }) {
 // ------------------------------------------------------------------------------------------------
 function LineChip({ l }: { l: ScheduleLine }) {
   return (
-    <span className="chip" title={`ships ${l.ship_date} from ${l.ship_from} · delivers ${l.date}`}>
+    <span className="chip" title={`ships ${day(l.ship_date)} from ${l.ship_from} · delivers ${day(l.date)}`}>
       <b>{qty(l.qty)}</b>&nbsp;{day(l.date)}&nbsp;<span className="faint">{l.ship_from}</span>
       {l.method !== "atp" && <>&nbsp;<Badge sev={l.method === "ctp" ? "info" : "warning"}>{l.method.toUpperCase()}</Badge></>}
       {!l.on_time && <>&nbsp;<span style={{ color: "var(--warning-text)" }}>late</span></>}
@@ -403,7 +403,7 @@ function Bop({ ds, busy, onCommit }: { ds: Dataset; busy: boolean; onCommit: () 
         feeds="New confirmations (on commit) and the list of customers to call." />
       <Panel title="Segment cascade — processed top to bottom, earlier segments claim supply first" actions={
         <div className="row"><a className="btn sm ghost" href={href("promise", "settings")}>Edit segments</a>
-          <button className="btn sm accent" onClick={simulate} disabled={running}>{running ? "Simulating…" : "Simulate BOP"}</button></div>}>
+          <button className="btn sm accent" onClick={simulate} disabled={running}>{running ? "Working…" : "Re-decide who gets scarce stock"}</button></div>}>
         <div className="row wrap">
           <span className="chip">orders no segment selects · keep their confirmations</span>
           {segs.map((s, i) => (
@@ -420,7 +420,7 @@ function Bop({ ds, busy, onCommit }: { ds: Dataset; busy: boolean; onCommit: () 
           <StatTile label="Lost" value={qty(cur.bop.filter((b) => b.outcome === "lost").length)} sub="orders to call" />
           <StatTile label="On time after BOP" value={`${cur.kpis.on_time_orders} / ${cur.kpis.orders}`} sub={pct(cur.kpis.qty ? cur.kpis.on_time_qty / cur.kpis.qty : 1)} />
         </div>
-        <Panel flush title="Gain / loss log" actions={<button className="btn sm accent" onClick={onCommit} disabled={busy}>Commit BOP result</button>}>
+        <Panel flush title="Gain / loss log" actions={<button className="btn sm accent" onClick={onCommit} disabled={busy} title="Saves the new promised dates on the orders in your data. Undo reverts it.">Save these new promised dates</button>}>
           <div className="table-wrap" style={{ maxHeight: 520 }}>
             <table className="t nowrap">
               <thead><tr><th>Order</th><th>Customer</th><th>Product</th><th className="num">Prio</th><th>Segment</th><th>Strategy</th>

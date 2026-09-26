@@ -5,7 +5,7 @@ import { api } from "../api/client";
 import type { Dataset, ForecastModels, ForecastPoint, ForecastResult, ForecastSeries } from "../api/types";
 import { BucketChart, type Mark, type Span } from "../components/charts";
 import {
-  Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs,
+  Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
 } from "../components/ui";
 import { day, pct, qty } from "../lib/format";
 import { go, href } from "../lib/router";
@@ -47,16 +47,17 @@ export function Demand({ route }: { route: string[] }) {
   };
 
   const head = (
-    <StageHeader n="03" title="Demand" kicker={<>Statistical forecast per location and product, chosen by backtest from a model
-      competition, cleansed of promotions and outliers, lifted by events, extended to new products, adjusted by consensus,
-      then released to supply planning as forecast demand.</>} right={<>
+    <StageHeader title="Demand" kicker="What customers will order, week by week, forecast from past sales. The supply plan uses it once you say so."
+      how={<>For each location and product the engine backtests a set of forecasting models on past sales and keeps the best
+        (lowest <Term t="WAPE" />). History is first cleansed of promotions and outliers; demand events lift the forecast, new products
+        borrow a similar product's history, and consensus overrides adjust it. Using the forecast in the supply plan writes it into
+        your demand data as forecast records (undoable).</>}
+      right={<>
       {fc && <Provenance kind="solved" at={run.at} stale={stale} />}
-      <button className="btn accent" onClick={() => store.run("forecast")} disabled={run.running || blocking}>
-        {run.running ? "Forecasting…" : fc ? "Re-forecast" : "Run forecast"}
-      </button>
+      <RunButton running={run.running} has={!!fc} onClick={() => store.run("forecast")} disabled={blocking} />
       <button className="btn primary" onClick={release} disabled={!fc || !fc.ok || stale || releasing || run.running}
-        title={stale ? "Re-forecast first: the inputs changed" : "Write the consensus forecast into demand (undoable)"}>
-        {releasing ? "Releasing…" : "Release to plan"}
+        title={stale ? "Recalculate first: the data changed" : "Writes this forecast into your demand data, replacing the forecast records there. Undo reverts it."}>
+        {releasing ? "Saving…" : "Use this forecast in the supply plan"}
       </button></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
@@ -114,7 +115,7 @@ function ReleaseBanner({ info, ds, onClose }: { info: ReleaseInfo; ds: Dataset; 
       <span>{info.records} forecast records for {info.series} series written to demand at {info.at} (replaced {info.replaced}).
         The supply plan is now stale. Undo reverts the release.</span>
       <span className="spacer" />
-      {applicable.length > 0 && <button className="btn sm" onClick={apply}>Apply forecast-error CV to {applicable.length} safety-stock polic{applicable.length === 1 ? "y" : "ies"}</button>}
+      {applicable.length > 0 && <button className="btn sm" onClick={apply}>Size safety stock from forecast error ({applicable.length} item{applicable.length === 1 ? "" : "s"})</button>}
       <a className="btn sm" href={href("plan")}>Open supply plan</a>
       <button className="btn sm ghost" onClick={onClose} aria-label="Dismiss">✕</button>
     </div>

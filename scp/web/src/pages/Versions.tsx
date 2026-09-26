@@ -58,9 +58,9 @@ export function Versions() {
       setBusy(false);
     }
   };
-  const label = name.trim() || (current ? `Scenario of ${current.id}` : `Plan of ${ds.settings.planning_start}`);
+  const label = name.trim() || (current ? `Scenario of ${current.id}` : `Plan of ${day(ds.settings.planning_start)}`);
   const saveBase = () => act(async () => {
-    const m = await api.saveBase(ds, name.trim() || `Plan of ${ds.settings.planning_start}`);
+    const m = await api.saveBase(ds, name.trim() || `Plan of ${day(ds.settings.planning_start)}`);
     store.saved(m);
     setName("");
   });
@@ -123,9 +123,10 @@ export function Versions() {
 
   return (
     <div>
-      <StageHeader n="V" title="Versions & scenarios" kicker={<>Save the working plan as an immutable <b>base version</b>, branch
-        <b> scenarios</b> from it to try changes, compare any two side by side (data and plan), then discard the scenario or promote it
-        to be the next base. A base never changes after it is written.</>} />
+      <StageHeader title="Versions and what-ifs" kicker={<>Save today's data as a <b>base version</b>. To try a change, save it as a
+        {" "}<b>scenario</b> of that base, then compare the two side by side, data and plan. Keep the scenario as the next base, or drop it.</>}
+        how={<>A saved version never changes: its content is stored with a fingerprint (SHA-256 of the data), which the table shows.
+          Promoting a scenario writes a new base and marks the old one superseded, byte for byte as it was.</>} />
       <div className="content">
         {err && <div className="banner error"><Badge sev="error">Version store</Badge>{err}</div>}
         <Panel title="Working copy">

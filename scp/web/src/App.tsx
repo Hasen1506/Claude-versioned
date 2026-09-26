@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api/client";
 import type { Dataset, ExampleInfo } from "./api/types";
 import { Badge, Empty, ThemeSwitch } from "./components/ui";
+import { setPlanYear } from "./lib/format";
 import { href, go, useRoute } from "./lib/router";
 import { NAV, navItemFor, type NavItem } from "./lib/nav";
 import { Demand } from "./pages/Demand";
@@ -47,6 +48,7 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  setPlanYear(ds?.settings.planning_start);   // idempotent: dates print their year only outside the planning year
   const page = route[0] || "home";
   useEffect(() => { if (ds) markVisited(page); }, [page, ds]);
   const item = ds ? navItemFor(page) : undefined;
