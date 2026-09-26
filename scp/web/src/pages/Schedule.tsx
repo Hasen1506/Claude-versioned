@@ -5,7 +5,8 @@ import { BucketChart } from "../components/charts";
 import {
   Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, useTooltip, RunButton, Term,
 } from "../components/ui";
-import { pct, qty } from "../lib/format";
+import { pct, plural, qty } from "../lib/format";
+import { Prod } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -65,6 +66,9 @@ export function Schedule({ route }: { route: string[] }) {
       how={<>Production orders are sequenced on each machine and line in clock time on its shift calendar, with
         <Term t="Changeover"> changeovers</Term> that depend on what ran before, parallel units and queue times. It starts from
         earliest-due-date order, then groups products that share a setup into campaigns without letting any order slip further.</>}
+      answer={res && (res.kpis.orders ? <>{res.kpis.late_orders ? <>{res.kpis.late_orders} of {plural(res.kpis.orders, "production order")} finish late,
+        the worst by {hours(res.kpis.max_lateness_hours)}.</> : <>All {plural(res.kpis.orders, "production order")} finish on time.</>}{" "}
+        {plural(res.kpis.changeovers, "changeover")} take {hours(res.kpis.setup_hours)}.</> : <>No production orders fall in the window.</>)}
       right={<>
       {res && <Provenance kind="solved" at={run.at} stale={stale} />}
       {res?.search.mode === "manual" && <button className="btn" onClick={() => store.run("schedule")} disabled={run.running}>Undo my changes to the order</button>}
@@ -129,7 +133,7 @@ function Kpis({ res }: { res: ScheduleResult }) {
   return (
     <div className="grid-auto">
       <StatTile label="Orders scheduled" value={qty(k.orders)} sub={`${k.operations} operations${firm ? ` · ${firm} firm` : ""}${res.beyond_horizon ? ` · ${res.beyond_horizon} later` : ""}`} />
-      <StatTile label="Late orders" value={`${k.late_orders} / ${k.orders}`} sub={delta(k.late_orders, b.late_orders, (v) => `${v}`)} tone={k.late_orders ? undefined : "hl"} />
+      <StatTile label="Late orders" value={`${k.late_orders} / ${k.orders}`} sub={delta(k.late_orders, b.late_orders, (v) => `${v}`)} tone={k.late_orders ? "hl" : undefined} />
       <StatTile label="Tardiness" value={hours(k.tardiness_hours)} sub={`${delta(k.tardiness_hours, b.tardiness_hours, hours)} · worst ${hours(Math.max(0, k.max_lateness_hours))}`} />
       <StatTile label="Changeover time" value={hours(k.setup_hours)} sub={`${k.changeovers} changeovers · ${delta(k.setup_hours, b.setup_hours, hours)}`} />
       {busiest && <StatTile label="Busiest resource" value={pct(busiest.utilization, 0)} sub={`${busiest.id} over the window`} />}
@@ -168,12 +172,11 @@ function Board({ res, sel, busy, onResequence }: {
       </Panel>
       {order ? <OrderDetail res={res} id={order.id} busy={busy} onResequence={onResequence} />
         : <p className="faint small" style={{ margin: 0 }}>Click an operation to follow its order across resources, see its due date and move it in the sequence.</p>}
-      <SectionBand step="ƒ" title="How it is computed" />
       <Reading formula={<>Each resource works its sequence in order; an operation starts at max(order release or predecessor end + queue, unit free),
         sets up (nothing before → full setup; same product → 0; same group → minor setup; other group → setup matrix), then runs
         work ÷ OEE clock hours inside shift windows. Objective = w<sub>T</sub>·Σ tardiness + w<sub>S</sub>·Σ setup hours; the improver pulls operations
         behind the nearest same-group operation (campaigns) and swaps neighbours, keeping only changes that lower the objective.</>}
-        soWhat="Late orders here are the ones infinite-capacity MRP could not see: either resequence, add a shift or overtime, or let promising (ATP/CTP) quote the later date." />
+        soWhat="Late orders here are ones the supply plan could not see, because it assumes every machine has room. Change the order, add a shift or overtime, or promise the customer the later date." />
     </div>
   );
 }
@@ -384,7 +387,7 @@ function Orders({ res }: { res: ScheduleResult }) {
                 const w = (Math.abs(o.lateness_hours) / maxAbs) * 50;
                 return (
                   <tr key={o.id} className="clickable" onClick={() => go("schedule", "board", o.id)}>
-                    <td><b>{o.id}</b> {o.firm && <Badge>firm</Badge>}</td><td>{o.product}</td><td className="num">{qty(o.qty)}</td>
+                    <td><b>{o.id}</b> {o.firm && <Badge>firm</Badge>}</td><td><Prod id={o.product} /></td><td className="num">{qty(o.qty)}</td>
                     <td>{when(origin, o.release)}</td><td>{when(origin, o.due)}</td><td>{when(origin, o.completion)}</td>
                     <td className="num">{o.tardy ? <Badge sev="error">{hours(o.lateness_hours)}</Badge> : <span className="muted">{hours(o.lateness_hours)}</span>}</td>
                     <td>

@@ -332,7 +332,7 @@ test("finance: cost the plan → books close → cost to serve by region → cap
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/finance");
   await page.getByRole("button", { name: "Recalculate", exact: true }).click();
-  await expect(page.locator(".banner", { hasText: "Books close" })).toBeVisible();
+  await expect(page.locator(".banner", { hasText: "Books balance" })).toBeVisible();
 
   await page.getByRole("tab", { name: /Cost to serve & margin/ }).click();
   await page.getByRole("button", { name: "By region" }).click();

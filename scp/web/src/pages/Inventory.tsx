@@ -2,9 +2,10 @@ import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { Dataset, DdmrpRow, InventoryResult, NodeInventory, PoolingRow } from "../api/types";
 import {
-  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
+  Badge, Empty, Panel, Provenance, Reading, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
 } from "../components/ui";
 import { money, pct, qty } from "../lib/format";
+import { Loc, Prod } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -26,6 +27,7 @@ export function Inventory({ route }: { route: string[] }) {
       how={<>The guaranteed-service model (<Term t="MEIO" />) tries every placement of buffers along each product's path and keeps the one
         that is cheapest to hold for the <Term t="Service level">service level</Term> promised to customers. <Term t="DDMRP" /> sizes
         decoupling buffers with red, yellow and green zones. Pooling shows what holding stock in fewer places would save.</>}
+      answer={res?.totals && bufferAnswer(res)}
       right={<>
       {res && <Provenance kind="solved" at={run.at} stale={stale} />}
       <RunButton running={run.running} has={!!res} onClick={() => store.run("inventory")} disabled={blocking} /></>} />
@@ -71,6 +73,16 @@ function Nav({ view, res }: { view: View; res: InventoryResult | null }) {
   );
 }
 
+function bufferAnswer(res: InventoryResult) {
+  const t = res.totals!, c = res.currency;
+  const where = `${t.buffers_placed} of ${t.stocking_nodes} places`;
+  if (t.saving_vs_current > 0.5)
+    return <>Safety stock worth {money(t.current_ss_value, c)} today could be {money(t.meio_ss_value, c)} held at {where},
+      saving {money(t.saving_vs_current, c)} a year to carry.</>;
+  return <>The service you promise needs {money(t.meio_ss_value, c)} of safety stock held at {where},
+    {t.saving_vs_current < -0.5 ? <> {money(-t.saving_vs_current, c)} a year more to carry than today's.</> : <> about what you hold today.</>}</>;
+}
+
 // ------------------------------------------------------------------------------------------------
 function Overview({ res }: { res: InventoryResult }) {
   const t = res.totals!;
@@ -86,7 +98,7 @@ function Overview({ res }: { res: InventoryResult }) {
       <div className="grid-auto">
         <StatTile label="Safety stock today" value={money(t.current_ss_value, c)} sub={`${money(t.current_cost, c)} / year to carry`} />
         <StatTile label="Single-echelon" value={money(t.single_ss_value, c)} sub="every stage buffers its own lead time" />
-        <StatTile label="Multi-echelon" value={money(t.meio_ss_value, c)} sub={`${t.buffers_placed} of ${t.stocking_nodes} stages hold stock`} tone="hl" />
+        <StatTile label="Multi-echelon" value={money(t.meio_ss_value, c)} sub={`${t.buffers_placed} of ${t.stocking_nodes} stages hold stock`} />
         <StatTile label="Saving vs single-echelon" value={money(t.saving_vs_single, c)}
           sub={`${pct(t.single_cost ? t.saving_vs_single / t.single_cost : 0)} of carrying cost per year`} />
         <StatTile label="Change vs today" value={money(-t.saving_vs_current, c)} sub="carrying cost per year (negative = saving)" />
@@ -116,14 +128,12 @@ function Overview({ res }: { res: InventoryResult }) {
           </table>
         </Panel>
       </div>
-      <SectionBand step="ƒ" title="How it is computed" />
       <Reading formula={<>SS<sub>j</sub> = z · √(τ<sub>j</sub>·σ<sub>d</sub>² + d̄²·σ<sub>L</sub>²), τ<sub>j</sub> = SI<sub>j</sub> + T<sub>j</sub> − S<sub>j</sub>.
         The solver picks the outbound service times S that minimise Σ h·z·σ·√τ, with demand-facing stages quoting at most the customer service time.</>}
-        soWhat={<>Stages whose τ is 0 pass their inbound time through and need no stock; the buffer sits where holding it is cheapest.
+        soWhat={<>Places that need no stock pass their suppliers' lead time straight on; stock sits where it is cheapest to hold.
           Nothing changes in the plan until you approve a recommendation under <a href={href("inventory", "placement")}>Multi-echelon placement</a>.</>} />
-      <ul className="small muted" style={{ margin: 0, paddingLeft: 18 }}>
-        {res.notes.map((n) => <li key={n}>{n}</li>)}
-      </ul>
+      {res.notes.length > 0 && <details className="how"><summary>Assumptions ({res.notes.length})</summary><div>
+        <ul style={{ margin: 0, paddingLeft: 18 }}>{res.notes.map((n) => <li key={n}>{n}</li>)}</ul></div></details>}
     </div>
   );
 }
@@ -232,7 +242,7 @@ function Placement({ res, ds }: { res: InventoryResult; ds: Dataset }) {
                   <tr key={k} className={sel.has(k) ? "selected" : ""}>
                     <td>{n.role === "stocking" && <input type="checkbox" aria-label={`Select ${n.location} ${n.product}`} checked={sel.has(k)} onChange={() => toggle(k)} />}</td>
                     <td>{n.location}{n.demand_facing && <span className="faint small"> · faces demand</span>}</td>
-                    <td><b>{n.product}</b>{!lpExists && <span className="faint small"> · no policy yet</span>}</td>
+                    <td><b><Prod id={n.product} /></b>{!lpExists && <span className="faint small"> · no policy yet</span>}</td>
                     <td>{n.decision === "buffer" ? <Badge sev="ok">buffer</Badge> : n.decision === "no_stock" ? <Badge>make to order</Badge> : <Badge>pass through</Badge>}</td>
                     <td className="num">{qty(n.mean_daily)}</td>
                     <td className="num" title={`source: ${n.cv_source}`}>{n.cv_weekly.toFixed(2)}<span className="faint small"> {n.cv_source === "policy" ? "measured" : n.cv_source}</span></td>
@@ -311,7 +321,7 @@ function Ddmrp({ res, ds }: { res: InventoryResult; ds: Dataset }) {
               {rows.map((r) => (
                 <tr key={key(r)}>
                   <td><input type="checkbox" aria-label={`Position buffer at ${r.location} ${r.product}`} checked={isPos(r)} onChange={(e) => setPos(r, e.target.checked)} /></td>
-                  <td>{r.location}</td><td><b>{r.product}</b></td>
+                  <td><Loc id={r.location} /></td><td><b><Prod id={r.product} /></b></td>
                   <td className="num">{qty(r.adu)}</td>
                   <td className="num">{days(r.dlt)}</td>
                   <td className="small">{r.ltf} ({r.lt_band}) · {r.vf} ({r.var_band})</td>
@@ -346,7 +356,7 @@ function Pooling({ res }: { res: InventoryResult }) {
           <tbody>
             {res.pooling.map((p: PoolingRow) => (
               <tr key={p.product}>
-                <td><b>{p.product}</b></td><td className="small">{p.locations.join(", ")}</td>
+                <td><b><Prod id={p.product} /></b></td><td className="small">{p.locations.join(", ")}</td>
                 <td className="num">{days(p.lead_time_days)}</td>
                 <td className="num">{qty(p.separate_ss)}</td><td className="num">{qty(p.pooled_ss)}</td>
                 <td style={{ width: "28%" }}>

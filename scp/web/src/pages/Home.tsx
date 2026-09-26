@@ -235,9 +235,10 @@ export function Home({ ds }: { ds: Dataset }) {
     const scored = tow.kpis.filter((k) => k.status !== "none");
     const bad = scored.filter((k) => k.status === "critical" || k.status === "warning")
       .sort((a, b) => (a.status === b.status ? 0 : a.status === "critical" ? -1 : 1));
+    const off = bad.filter((k) => k.status === "critical").length;
     const open = tow.worklist.filter((w) => w.status === "open" || w.status === "acknowledged").length;
     track = (<>
-      <p className="answer">{bad.length === 0 ? `All ${scored.length} measures on target.` : <><em>{bad.length} of {scored.length}</em> measures below target.</>}</p>
+      <p className="answer">{bad.length === 0 ? `All ${scored.length} measures on target.` : <>{off ? <><em>{off} of {scored.length}</em> measures off target</> : "None off target"}{bad.length > off && `, ${bad.length - off} near it`}.</>}</p>
       {bad.length > 0 && <ul className="plain meters">
         {bad.slice(0, 4).map((k) => (
           <li key={k.id}><span className={`sq ${k.status}`} aria-hidden />{k.name}

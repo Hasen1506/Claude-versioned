@@ -271,6 +271,7 @@ dl.kv dd { margin: 0; text-align: right; font-family: var(--mono); font-weight: 
 .stage-head { display: flex; align-items: flex-end; gap: 14px; padding: 14px 22px 12px; border-bottom: var(--rule) solid var(--ink); background: var(--surface); flex-wrap: wrap; }
 .stage-head .n { font-family: var(--display); font-size: 30px; font-weight: 900; color: var(--hl); line-height: 0.9; letter-spacing: -1px; -webkit-text-stroke: 1px var(--ink); }
 .stage-head .title { font-family: var(--font); font-size: 22px; font-weight: 800; letter-spacing: -0.01em; text-transform: none; line-height: 1.15; }
+.stage-head .answer { margin: 8px 0 0; max-width: 780px; font: 600 16px/1.45 var(--font); color: var(--text); }
 .stage-head .kicker { margin-top: 5px; max-width: 780px; font: 14px/1.5 var(--font); color: var(--text-2); letter-spacing: 0; }
 details.how { margin-top: 6px; max-width: 780px; font-size: 13px; color: var(--text-2); }
 details.how summary { cursor: pointer; font-weight: 600; color: var(--accent-text); width: fit-content; }
@@ -358,11 +359,12 @@ abbr.term { text-decoration: underline dotted; text-underline-offset: 3px; curso
 .prov.solved .i { color: var(--good-text); }
 .prov.stale { border-color: var(--warning); background: var(--warning-soft); }
 .prov .when { font-weight: 400; color: var(--text-3); text-transform: none; letter-spacing: 0; }
-.reading { margin-top: 10px; border: 1.5px solid var(--border); border-left: 4px solid var(--hl); background: var(--surface-2); padding: 7px 10px; }
-.reading .f { font: 11px/1.5 var(--mono); color: var(--text-2); }
-.reading .f::before { content: "ƒ "; color: var(--text-3); font-weight: 700; }
-.reading .so { font-size: 12.5px; font-weight: 600; margin-top: 4px; line-height: 1.4; }
-.reading .so::before { content: "→ "; }
+.reading { margin-top: 10px; border-left: 3px solid var(--border); padding: 4px 12px; }
+.reading .f { font-size: 12px; color: var(--text-2); }
+.reading .so + .f { margin-top: 4px; }
+.reading .f summary { cursor: pointer; font-weight: 600; color: var(--accent-text); width: fit-content; }
+.reading .f > div { margin-top: 4px; font: 11px/1.5 var(--mono); }
+.reading .so { font-size: 13px; line-height: 1.45; }
 .solver-io { display: flex; flex-wrap: wrap; border: var(--rule) solid var(--ink); font: 10.5px var(--mono); background: var(--surface); }
 .solver-io > div { flex: 1 1 30%; min-width: 150px; padding: 6px 9px; border-right: 1px solid var(--border); }
 .solver-io > div:last-child { border-right: 0; }

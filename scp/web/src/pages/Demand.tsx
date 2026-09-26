@@ -7,7 +7,8 @@ import { BucketChart, type Mark, type Span } from "../components/charts";
 import {
   Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
 } from "../components/ui";
-import { day, pct, qty } from "../lib/format";
+import { day, pct, plural, qty } from "../lib/format";
+import { Loc, Prod } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -52,6 +53,9 @@ export function Demand({ route }: { route: string[] }) {
         (lowest <Term t="WAPE" />). History is first cleansed of promotions and outliers; demand events lift the forecast, new products
         borrow a similar product's history, and consensus overrides adjust it. Using the forecast in the supply plan writes it into
         your demand data as forecast records (undoable).</>}
+      answer={fc?.ok && fc.summary && <>Customers are expected to order {qty(Math.round(fc.summary.total_final))} units over the next {plural(fc.periods.length, fc.period)},
+        across {plural(fc.summary.series, "product and place", "products and places")}.{fc.summary.wape !== null && <> Tested on past sales it misses by about {pct(fc.summary.wape, 0)}
+        {fc.summary.bias !== null && Math.abs(fc.summary.bias) >= 0.05 ? <> and runs {fc.summary.bias > 0 ? "high" : "low"} by {pct(Math.abs(fc.summary.bias), 0)}</> : null}.</>}</>}
       right={<>
       {fc && <Provenance kind="solved" at={run.at} stale={stale} />}
       <RunButton running={run.running} has={!!fc} onClick={() => store.run("forecast")} disabled={blocking} />
@@ -91,7 +95,7 @@ export function Demand({ route }: { route: string[] }) {
     {view === "overview" && <Overview fc={fc} />}
     {view === "series" && <Workbench fc={fc} sel={route[2]} />}
     {view === "consensus" && <Consensus fc={fc} ds={ds} />}
-    {view === "settings" && <ForecastSettingsPanel ds={ds} />}
+    {view === "settings" && <div className="stack"><ForecastSettingsPanel ds={ds} /><FoundationPanel fc={fc} /></div>}
   </>);
 }
 
@@ -139,7 +143,7 @@ function Overview({ fc }: { fc: ForecastResult }) {
     <div className="stack">
       <div className="grid-auto">
         <StatTile label="Series" value={s.series} sub={`${fc.periods.length} ${fc.period}s ahead`} />
-        <StatTile label="Backtest WAPE" value={pct(s.wape)} sub="volume-weighted, champions" tone="hl" />
+        <StatTile label="Backtest WAPE" value={pct(s.wape)} sub="volume-weighted, champions" />
         <StatTile label="Bias" value={pct(s.bias)} sub={s.bias !== null && s.bias > 0 ? "over-forecast" : "under-forecast"} />
         <StatTile label="Value added vs naïve" value={s.fva === null ? "—" : `${(s.fva * 100).toFixed(1)} pts`} sub="WAPE points saved" />
         <StatTile label="Forecast volume" value={qty(s.total_final)} sub="units in horizon (released)" />
@@ -187,7 +191,6 @@ function Overview({ fc }: { fc: ForecastResult }) {
           <div className="small muted" style={{ marginTop: 8 }}>Demand patterns: {Object.entries(s.patterns).map(([p, n]) => `${n} ${p}`).join(" · ")}</div>
         </Panel>
       </div>
-      <FoundationPanel fc={fc} />
       <Panel flush title={<h3>{cell ? `Series in ${cell}` : "All series"}</h3>} actions={cell && <button className="btn sm" onClick={() => setCell(null)}>Clear filter</button>}>
         <SeriesTable series={filtered} />
       </Panel>
@@ -226,7 +229,7 @@ function SeriesTable({ series }: { series: ForecastSeries[] }) {
             const next = s.forecast.slice(0, 4).reduce((a, p) => a + p.final, 0);
             return (
               <tr key={s.key} className="clickable" onClick={() => go("demand", "series", s.key)}>
-                <td>{s.location}</td><td><b>{s.product}</b></td>
+                <td><Loc id={s.location} /></td><td><b><Prod id={s.product} /></b></td>
                 <td><Badge>{s.segment.abc}</Badge></td><td><Badge>{s.segment.xyz}</Badge></td>
                 <td title={PATTERN_HELP[s.segment.pattern]}>{s.segment.pattern}{s.segment.lifecycle !== "mature" && <> · <span className="faint">{s.segment.lifecycle}</span></>}</td>
                 <td>{s.champion_label}</td>
@@ -257,7 +260,7 @@ function Workbench({ fc, sel }: { fc: ForecastResult; sel?: string }) {
             <tbody>
               {list.map((s) => (
                 <tr key={s.key} className={`clickable ${s.key === current.key ? "selected" : ""}`} onClick={() => go("demand", "series", s.key)}>
-                  <td><b>{s.product}</b><div className="faint small">{s.location}</div></td>
+                  <td><b><Prod id={s.product} /></b><div className="faint small">{s.location}</div></td>
                   <td className="num"><Badge>{s.segment.abc}{s.segment.xyz}</Badge></td>
                 </tr>
               ))}

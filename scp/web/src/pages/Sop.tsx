@@ -3,9 +3,10 @@ import { api } from "../api/client";
 import type { Dataset, SopResult } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
+  Badge, cols, Empty, Panel, Provenance, Reading, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
 } from "../components/ui";
 import { money, pct, qty } from "../lib/format";
+import { Loc, Prod } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -49,6 +50,10 @@ export function Sop({ route }: { route: string[] }) {
         {" "}{ds.sop?.bucket ?? "month"} within capacity, supplier and lane limits, at the least cost or the most profit.
         {" "}<Term t="Shadow price">Shadow prices</Term> say what one more unit of each limit would be worth. Using the plan in the
         supply plan replaces the forecast demand with what can actually be supplied, and sets stock targets for building ahead.</>}
+      answer={res?.ok && res.kpis && <>The network can supply {res.kpis.fill_rate >= 0.9995 ? "all" : pct(res.kpis.fill_rate)} of demand
+        {res.kpis.lost > 0.5 ? <>, losing {qty(Math.round(res.kpis.lost))} units</> : null}.{" "}
+        {res.binding[0] ? <>The tightest limit is {res.binding[0].label}{res.binding.length > 1 ? <>, one of {res.binding.length}</> : null}.</>
+          : <>No limit holds it back.</>}</>}
       right={<>
       {res && <Provenance kind="solved" at={run.at} stale={stale} />}
       {res?.ok && <button className="btn" onClick={release} disabled={releasing || stale}
@@ -132,7 +137,7 @@ function Overview({ res }: { res: SopResult }) {
   return (
     <div className="stack">
       <div className="grid-auto">
-        <StatTile label="Demand served" value={pct(k.fill_rate)} sub={delta(k.fill_rate * 100, base ? base.res.kpis!.fill_rate * 100 : undefined, (v) => `${v.toFixed(1)} pts`) ?? `${qty(k.sales)} of ${qty(k.demand)} units`} tone="hl" />
+        <StatTile label="Demand served" value={pct(k.fill_rate)} sub={delta(k.fill_rate * 100, base ? base.res.kpis!.fill_rate * 100 : undefined, (v) => `${v.toFixed(1)} pts`) ?? `${qty(k.sales)} of ${qty(k.demand)} units`} />
         <StatTile label="On time" value={pct(k.on_time_rate)} sub={`${qty(k.backlog_end)} still open at the end`} />
         <StatTile label={res.mode === "profit" ? "Profit" : "Total cost"} value={money(res.mode === "profit" ? e.profit : e.total_cost, c)}
           sub={delta(res.mode === "profit" ? e.profit : e.total_cost, base ? (res.mode === "profit" ? base.res.economics!.profit : base.res.economics!.total_cost) : undefined, (v) => money(v, c)) ?? `revenue ${money(e.revenue, c)}`} />
@@ -178,11 +183,11 @@ function Overview({ res }: { res: SopResult }) {
               <tr><td>Overtime hours</td><td className="num">{qty(otHours(pinned.res))}</td><td className="num">{qty(otHours(res))}</td></tr>
             </tbody></table>}
       </Panel>
-      <SectionBand step="ƒ" title="How to read it" />
       <Reading formula="min Σ cost·flow + holding + overtime + penalties  s.t.  stock balance per node and bucket, demand balance (served, late, lost), hours ≤ regular + overtime, supplier / lane / storage / shelf-life limits."
         soWhat={<>A shadow price is the change in the objective from one more unit of a limit, valid within the range shown. Release the plan to make MRP
           plan against what the network can supply; the unconstrained demand stays here for gap analysis.</>} />
-      <ul className="small muted" style={{ margin: 0, paddingLeft: 18 }}>{res.notes.map((n) => <li key={n}>{n}</li>)}</ul>
+      {res.notes.length > 0 && <details className="how"><summary>Assumptions ({res.notes.length})</summary><div>
+        <ul style={{ margin: 0, paddingLeft: 18 }}>{res.notes.map((n) => <li key={n}>{n}</li>)}</ul></div></details>}
     </div>
   );
 }
@@ -212,7 +217,7 @@ function DemandView({ res, sel }: { res: SopResult; sel?: string }) {
                 const got = d.sales.reduce((a, v) => a + v, 0);
                 return (
                   <tr key={key(d)} className={`clickable ${key(d) === key(cur) ? "selected" : ""}`} onClick={() => go("sop", "demand", key(d))}>
-                    <td><b>{d.product}</b><div className="faint small">{d.location}</div></td>
+                    <td><b><Prod id={d.product} /></b><div className="faint small">{d.location}</div></td>
                     <td className="num">{got < dem - 0.5 ? <Badge sev="warning">{pct(got / dem, 0)}</Badge> : pct(dem ? got / dem : 1, 0)}</td>
                   </tr>
                 );
@@ -349,7 +354,7 @@ function SupplyView({ res }: { res: SopResult }) {
             {flows.map((f) => (
               <tr key={`${f.kind}-${f.source_id}-${f.product}`}>
                 <td>{f.kind}</td><td>{f.source_id}{f.origin && <div className="faint small">from {f.origin}</div>}</td>
-                <td>{f.location}</td><td><b>{f.product}</b></td><td className="num">{f.lead_buckets}</td>
+                <td><Loc id={f.location} /></td><td><b><Prod id={f.product} /></b></td><td className="num">{f.lead_buckets}</td>
                 {f.qty.map((q, t) => <td key={t} className="num">{q > 1e-6 ? qty(q) : <span className="faint">·</span>}</td>)}
                 <td className="num">{money(f.unit_cost, c)}</td>
               </tr>

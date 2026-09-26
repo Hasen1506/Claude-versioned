@@ -115,7 +115,7 @@ export function Proof({ route }: { route: Route }) {
         <div className="grid-auto">
           <StatTile label="Scenarios" value={infos.length} sub={generated ? `${byHand} worked by hand · ${generated} generated` : "companies, end to end"} />
           <StatTile label="Checkpoints" value={done.length ? `${passed}/${passed + failed}` : "—"}
-            sub={done.length ? `${done.length} of ${infos.length} scenarios run` : "run to verify"} tone={done.length === infos.length && !failed ? "hl" : undefined} />
+            sub={done.length ? `${done.length} of ${infos.length} scenarios run` : "run to verify"} tone={failed ? "hl" : undefined} />
           <StatTile label="Stages proven" value={done.length ? `${count(proven)}/${STAGES.length}` : "—"}
             sub={done.length ? `by the passing runs · ${count(declared)} in the suite` : `${count(declared)} in the suite · run to prove`} />
           <StatTile label="Defects caught" value={caught} sub="each fixed, each with a regression test" />

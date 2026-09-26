@@ -6,7 +6,8 @@ import {
 } from "../components/ui";
 import { Situations } from "../components/Situations";
 import { situations } from "../lib/situations";
-import { day, humanize, money, ORDER_LABEL, pct, qty } from "../lib/format";
+import { day, humanize, money, ORDER_LABEL, pct, plural, qty } from "../lib/format";
+import { Loc, Prod } from "../lib/names";
 import { go, href } from "../lib/router";
 import { isStale, store, useStore } from "../state/store";
 
@@ -28,6 +29,8 @@ export function Plan({ route }: { route: string[] }) {
       how={<><Term t="MRP" /> and <Term t="DRP" /> across the network: each location's needs are netted against its stock and incoming
         supply, level by level through the bills of material and transport lanes (low-level-code order), then lot-sized, sourced
         and scheduled on working days. Every order is linked to the demand it serves (<Term t="Pegging">pegging</Term>).</>}
+      answer={plan && <>{pct(plan.kpis.on_time_fill_rate)} of demand is covered on time, with {qty((plan.kpis.orders_make ?? 0) + (plan.kpis.orders_buy ?? 0) + (plan.kpis.orders_transfer ?? 0))} orders
+        to make, buy and move costing {money(plan.kpis.total_cost, plan.currency)} over {plural(plan.buckets.length, "week")}.</>}
       right={<>
       {plan && <Provenance kind="solved" at={run.at} stale={stale} />}
       <RunButton running={run.running} has={!!plan} onClick={() => store.run("plan")} disabled={blocking} /></>} />
@@ -171,7 +174,7 @@ function NodeView({ plan, loc, prod }: { plan: PlanResult; loc?: string; prod?: 
                 return (
                   <tr key={`${n.location}|${n.product}`} className={`clickable ${node === n ? "selected" : ""}`}
                     onClick={() => go("plan", "node", n.location, n.product)}>
-                    <td>{n.location}</td><td>{n.product}</td><td className="num">{n.llc}</td>
+                    <td><Loc id={n.location} /></td><td><Prod id={n.product} /></td><td className="num">{n.llc}</td>
                     <td>{x ? <Badge sev={x.error ? "error" : "warning"}>{x.n}</Badge> : null}</td>
                   </tr>
                 );
@@ -354,8 +357,8 @@ function OrderTable({ plan, orders, sel, onSelect, compact }: {
           <tr key={o.id} className={`clickable ${sel === o.id ? "selected" : ""}`} onClick={() => onSelect(o.id)}>
             <td><span className="mono">{o.id}</span> <span className="faint small">{ORDER_LABEL[o.kind]}</span>
               {!o.convertible && <> <Badge>ATO</Badge></>}</td>
-            {!compact && <td>{o.product}</td>}
-            {!compact && <td>{o.location}</td>}
+            {!compact && <td><Prod id={o.product} /></td>}
+            {!compact && <td><Loc id={o.location} /></td>}
             <td className="small">{o.origin ?? o.source_id}</td>
             <td className="num">{qty(o.qty)}</td>
             <td className="small">{day(o.start_date)}{o.start_in_past && <> <Badge sev="warning">past</Badge></>}</td>

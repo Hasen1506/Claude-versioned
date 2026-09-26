@@ -206,7 +206,7 @@ function CompareView({ c, currency }: { c: Comparison; currency: string }) {
     <>
       <SectionBand step="Δ" title={`${c.a} → ${c.b}`} />
       <div className="grid-auto">
-        <StatTile label="Data changes" value={qty(c.diff.changes)} sub={c.diff.identical ? "identical" : `${c.diff.collections.length} object types`} tone={c.diff.identical ? "hl" : undefined} />
+        <StatTile label="Data changes" value={qty(c.diff.changes)} sub={c.diff.identical ? "identical" : `${c.diff.collections.length} object types`} />
         <StatTile label="Plan cost Δ" value={money(c.plan_b.total_cost - c.plan_a.total_cost, currency)} sub={`${c.a} → ${c.b}`} />
         <StatTile label="Fill rate Δ" value={`${c.plan_b.fill_rate >= c.plan_a.fill_rate ? "+" : ""}${pct(c.plan_b.fill_rate - c.plan_a.fill_rate, 1)}`} sub="on-time, independent demand" />
       </div>

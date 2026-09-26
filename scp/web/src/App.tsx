@@ -193,11 +193,11 @@ function Rail({ page }: { page: string }) {
   const issues = s.validation?.issues ?? NO_ISSUES;
   const errors = issues.filter((i) => i.severity === "error").length + s.schemaErrors.length;
   const tower = s.runs.tower.data;
-  const offTrack = tower?.ok ? tower.kpis.filter((k) => k.status === "critical" || k.status === "warning").length : 0;
+  const offTrack = tower?.ok ? tower.kpis.filter((k) => k.status === "critical").length : 0;
   const active = navItemFor(page);
   const right = (it: NavItem) => {
     if (it.id === "network" && errors) return <Badge sev="error">{errors}</Badge>;
-    if (it.id === "tower" && offTrack && freshness(s, "tower") !== "none") return <span className="rail-count" title={`${offTrack} measures below target`}>{offTrack}</span>;
+    if (it.id === "tower" && offTrack && freshness(s, "tower") !== "none") return <span className="rail-count" title={`${offTrack} measures off target`}>{offTrack}</span>;
     if (!it.run || s.planning || !s.dataset?.locations?.length) return null;
     const f = freshness(s, it.run);
     if (f === "fresh") return null;

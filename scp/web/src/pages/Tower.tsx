@@ -5,7 +5,7 @@ import {
   Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, type Severity, RunButton,
 } from "../components/ui";
 import { codeLabel } from "../lib/situations";
-import { day, humanize, money, pct, qty, unitMoney } from "../lib/format";
+import { day, humanize, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -39,6 +39,16 @@ function targetText(k: Kpi, cur: string): string {
   return k.direction === "up" ? `target ≥ ${t}` : k.direction === "down" ? `target ≤ ${t}` : `target within ±${t}`;
 }
 
+function towerAnswer(res: TowerResult) {
+  const graded = res.kpis.filter((k) => k.status !== "none");
+  const off = res.kpis.filter((k) => k.status === "critical");
+  const live = res.worklist.filter((w) => w.status === "open" || w.status === "acknowledged");
+  const late = live.filter((w) => w.breached).length;
+  return <>{graded.length ? <>{graded.length - off.length} of {plural(graded.length, "measure")} {graded.length - off.length === 1 ? "is" : "are"} on or near target
+    {off.length ? <>; off target: {off.slice(0, 3).map((k) => k.name).join(", ")}{off.length > 3 ? ` and ${off.length - 3} more` : ""}.</> : "."}</> : "No measure has data yet."}
+    {" "}{live.length ? <>{plural(live.length, "problem")} {live.length === 1 ? "is" : "are"} open{late ? <>, {late} past {late === 1 ? "its" : "their"} time limit</> : null}.</> : <>No problems are open.</>}</>;
+}
+
 export function Tower({ route }: { route: string[] }) {
   const run = useStore((s) => s.runs.tower);
   const res = run.data;
@@ -52,6 +62,7 @@ export function Tower({ route }: { route: string[] }) {
       how={<>A standard set of supply-chain measures (as in SAP's S/4HANA planning guide, §18.2), each with its definition, where
         its numbers come from and its target. The follow-up list gathers exceptions from every page, gives each an owner by rule,
         and ages it on the planning clock against a time limit; it is kept across recalculations. Data problems have their own view.</>}
+      answer={res && towerAnswer(res)}
       right={<>
       {res && <Provenance kind="derived" at={run.at} stale={stale} />}
       <RunButton running={run.running} has={!!res} onClick={() => store.run("tower")} /></>} />

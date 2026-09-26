@@ -112,12 +112,15 @@ export function cols(template: string, extra?: CSSProperties): CSSProperties {
 
 /** Page header: the page's question in plain words, a one-line answer to "what is this", its actions, and
  *  "How this is calculated" folded away for anyone who wants the method. (`n` was the old stage number.) */
-export function StageHeader({ title, kicker, how, right }: { n?: string; title: string; kicker?: ReactNode; how?: ReactNode; right?: ReactNode }) {
+export function StageHeader({ title, kicker, answer, how, right }: {
+  n?: string; title: string; kicker?: ReactNode; answer?: ReactNode; how?: ReactNode; right?: ReactNode;
+}) {
   return (
     <header className="stage-head">
       <div className="grow">
         <h1 className="title">{title}</h1>
         {kicker && <div className="kicker">{kicker}</div>}
+        {answer && <p className="answer">{answer}</p>}
         {how && <details className="how"><summary>How this is calculated</summary><div>{how}</div></details>}
       </div>
       {right && <div className="row wrap">{right}</div>}
@@ -154,12 +157,12 @@ export function SectionBand({ step, title, right }: { step?: string | number; ti
   );
 }
 
-/** How a number is computed, and what it means for the planner (legacy Reading). */
+/** What a number means for the planner, in plain words, with the formula folded away for anyone who wants it. */
 export function Reading({ formula, soWhat }: { formula?: ReactNode; soWhat?: ReactNode }) {
   return (
     <div className="reading">
-      {formula && <div className="f">{formula}</div>}
       {soWhat && <div className="so">{soWhat}</div>}
+      {formula && <details className="f"><summary>How this is calculated</summary><div>{formula}</div></details>}
     </div>
   );
 }
