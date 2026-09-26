@@ -8,9 +8,10 @@ from __future__ import annotations
 import datetime as dt
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,11 +28,19 @@ from ..model import Dataset, DemandRecord, ForecastModelId
 from ..model.common import Out
 from ..network import build_graph, location_edges, location_layers
 from ..plan import PlanResult, run_mrp
+from ..plan.level import LevelPreview, level_preview
+from ..purchasing import PurchasingError, act as purchasing_act, create_purchase_orders, purchasing_view
+from ..purchasing.result import ActionReport, CreateReport, PurchasingView
 from ..promise import PromiseResult, check_order, commit, run_bop, run_promise
 from ..scenarios import BY_ID as SCENARIOS, EngineClient, ScenarioInfo, ScenarioReport
-from ..schedule import ScheduleResult, run_schedule
+from ..schedule import (
+    HEURISTICS, PROFILES, ApplyReport, Heuristic, Profile, ScheduleComparison, ScheduleResult, apply_schedule,
+    compare_schedules, run_schedule,
+)
 from ..sop import SopRelease, SopResult, release_sop, run_sop
 from ..validate import RULES, Issue, validate
+from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, plain_errors
+from ..validate.setup import SetupItem, checklist
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
 
 ROOT = Path(__file__).resolve().parents[3]          # scp/
@@ -42,6 +51,17 @@ app = FastAPI(title="SCP — Supply Chain Planning", version=__version__,
               description="Typed network master data, readiness gate, demand planning, network MRP/DRP.")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "https://hasen1506.github.io"],
                    allow_methods=["*"], allow_headers=["*"])
+
+
+@app.exception_handler(RequestValidationError)
+def _request_invalid(_request, exc: RequestValidationError) -> JSONResponse:
+    """422 with each field's problem in plain words (``loc`` still points at the field for the forms)."""
+    return JSONResponse(status_code=422, content={"detail": plain_errors(list(exc.errors()))})
+
+
+@app.exception_handler(DatasetRejected)
+def _dataset_rejected(_request, exc: DatasetRejected) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"detail": exc.errors})
 
 
 @app.exception_handler(VersionError)
@@ -67,9 +87,15 @@ class RuleInfo(Out):
     description: str
 
 
+# A dataset as the client holds it, possibly with unfinished records (see validate.lenient).
+RawDataset = Annotated[dict[str, Any], Body()]
+
+
 class ValidationResult(Out):
     issues: list[Issue]
     blocking: bool
+    set_aside: list[SetAside] = []
+    setup: list[SetupItem] = []   # what is still missing, in the order a planner sets a company up
 
 
 class NetLocation(Out):
@@ -140,7 +166,10 @@ def example(name: str) -> Dataset:
 
 @app.get("/api/rules", response_model=list[RuleInfo])
 def rules() -> list[RuleInfo]:
-    return [RuleInfo(code=k, severity=v[0], description=v[1]) for k, v in RULES.items()]
+    out = [RuleInfo(code=k, severity=v[0], description=v[1]) for k, v in RULES.items()]
+    # raised while reading the dataset (validate.lenient), before the readiness gate runs
+    return out + [RuleInfo(code="SET_ASIDE", severity="warning",
+                           description="An unfinished record is left out of planning until it is fixed")]
 
 
 @app.get("/api/schema")
@@ -150,13 +179,22 @@ def schema() -> dict:
 
 
 @app.post("/api/validate", response_model=ValidationResult)
-def post_validate(ds: Dataset) -> ValidationResult:
-    issues = validate(ds)
-    return ValidationResult(issues=issues, blocking=any(i.severity == "error" for i in issues))
+def post_validate(raw: RawDataset) -> ValidationResult:
+    """The readiness gate on everything that can be planned; unfinished records are set aside and listed,
+    each also as a SET_ASIDE warning, instead of making the whole dataset unreadable."""
+    ds, aside = lenient(raw)
+    issues = [Issue(code="SET_ASIDE", severity="warning", object_type=a.object_type, object_id=a.object_id,
+                    message=f"{SINGULAR[a.collection]} {a.label} is left out of planning until it is fixed: {a.reason}",
+                    hint="Fix it or delete it; it comes back into the plan as soon as it is complete", field=a.field)
+              for a in aside]
+    issues += validate(ds)
+    return ValidationResult(issues=issues, blocking=any(i.severity == "error" for i in issues), set_aside=aside,
+                            setup=checklist(ds, aside))
 
 
 @app.post("/api/network", response_model=NetworkView)
-def post_network(ds: Dataset) -> NetworkView:
+def post_network(raw: RawDataset) -> NetworkView:
+    ds, _ = lenient(raw)
     g = build_graph(ds)
     layers = location_layers(ds)
     prods: dict[str, set[str]] = {}
@@ -281,12 +319,49 @@ def post_sop_release(ds: Dataset) -> SopReleaseResponse:
 
 class ScheduleRequest(Out):
     dataset: Dataset
-    sequence: dict[str, list[str]] | None = None   # resource → operation keys; None = EDD + local search
+    sequence: dict[str, list[str]] | None = None   # resource → operation keys, each run where it is listed;
+                                                   # None = the start rule, local search and optimiser per settings
+    hold: dict[str, float] | None = None           # order → not-before clock hour (the result's holds)
 
 
 @app.post("/api/schedule", response_model=ScheduleResult)
 def post_schedule(req: ScheduleRequest) -> ScheduleResult:
-    return run_schedule(req.dataset, req.sequence)
+    return run_schedule(req.dataset, req.sequence, hold=req.hold)
+
+
+class ScheduleCatalogue(Out):
+    heuristics: list[Heuristic]
+    profiles: list[Profile]
+
+
+@app.get("/api/schedule/catalogue", response_model=ScheduleCatalogue)
+def get_schedule_catalogue() -> ScheduleCatalogue:
+    """The scheduling heuristics and the profiles that bundle a start rule, the search and the objective weights."""
+    return ScheduleCatalogue(heuristics=HEURISTICS, profiles=PROFILES)
+
+
+@app.post("/api/schedule/compare", response_model=ScheduleComparison)
+def post_schedule_compare(ds: Dataset) -> ScheduleComparison:
+    """Every start rule, the local search and the optimiser on the same window, scored with the current weights."""
+    return compare_schedules(ds)
+
+
+class ScheduleApplyRequest(ScheduleRequest):
+    ids: list[str] | None = None       # scheduled orders to date; None = every order on the schedule
+
+
+class ScheduleApplyResponse(Out):
+    dataset: Dataset
+    report: ApplyReport
+
+
+@app.post("/api/schedule/apply", response_model=ScheduleApplyResponse)
+def post_schedule_apply(req: ScheduleApplyRequest) -> ScheduleApplyResponse:
+    """Fix the schedule's dates on its orders: planned ones become production orders, released ones are re-dated."""
+    new, rep = apply_schedule(req.dataset, req.sequence, req.ids, req.hold)
+    if not rep.ok:
+        raise HTTPException(409, "the readiness gate has errors; fix them before using the schedule's dates")
+    return ScheduleApplyResponse(dataset=new, report=rep)
 
 
 @app.post("/api/promise", response_model=PromiseResult)
@@ -330,6 +405,12 @@ def post_promise_commit(req: PromiseCommitRequest) -> PromiseCommitResponse:
 @app.post("/api/plan", response_model=PlanResult)
 def post_plan(ds: Dataset) -> PlanResult:
     return run_mrp(ds)
+
+
+@app.post("/api/capacity/level", response_model=LevelPreview)
+def post_level(ds: Dataset) -> LevelPreview:
+    """What planning within machine capacity moves: earlier, onto alternative machines, or later."""
+    return level_preview(ds)
 
 
 @app.post("/api/finance", response_model=FinanceResult)
@@ -383,6 +464,74 @@ def post_firm(req: FirmRequest) -> FirmResponse:
     if not rep.ok:
         raise HTTPException(409, "the readiness gate has errors; fix them before firming orders")
     return FirmResponse(dataset=new, report=rep)
+
+
+# --- procure-to-pay (Phase E) --------------------------------------------------------------------
+@app.post("/api/purchasing", response_model=PurchasingView)
+def post_purchasing(ds: Dataset) -> PurchasingView:
+    """Requisitions from the supply plan, every purchase order with its lines' status, and the supplier scorecard."""
+    return purchasing_view(ds, run_mrp(ds))
+
+
+class RequisitionPick(Out):
+    id: str
+    source_id: str | None = None
+    qty: float | None = None
+
+
+class CreatePoRequest(Out):
+    dataset: Dataset
+    lines: list[RequisitionPick] | None = None      # None = every requisition due now, on its planned source
+    order_date: dt.date | None = None
+
+
+class CreatePoResponse(Out):
+    dataset: Dataset
+    report: CreateReport
+
+
+@app.post("/api/purchasing/create", response_model=CreatePoResponse)
+def post_create_pos(req: CreatePoRequest) -> CreatePoResponse:
+    plan = run_mrp(req.dataset)
+    lines = None if req.lines is None else [x.model_dump(exclude_none=True) for x in req.lines]
+    new, rep = create_purchase_orders(req.dataset, plan, lines, req.order_date)
+    if not rep.ok:
+        raise HTTPException(409, "the readiness gate has errors; fix them before ordering")
+    return CreatePoResponse(dataset=new, report=rep)
+
+
+class PoLineInput(Out):
+    id: str
+    qty: float | None = None
+    date: dt.date | None = None
+    price: float | None = None
+    final: bool = False
+
+
+class PoActionRequest(Out):
+    dataset: Dataset
+    action: Literal["approve", "send", "confirm", "receive", "change", "cancel"]
+    po: str
+    lines: list[PoLineInput] | None = None          # None = every open line, as ordered
+    date: dt.date | None = None                     # sent on / received on (default: the planning start)
+    reference: str = ""                             # the supplier's confirmation number
+    note: str = ""                                  # delivery note on a goods receipt
+
+
+class PoActionResponse(Out):
+    dataset: Dataset
+    report: ActionReport
+
+
+@app.post("/api/purchasing/act", response_model=PoActionResponse)
+def post_po_action(req: PoActionRequest) -> PoActionResponse:
+    lines = None if req.lines is None else [x.model_dump(exclude_none=True) for x in req.lines]
+    try:
+        new, rep = purchasing_act(req.dataset, req.action, req.po, lines=lines, on=req.date, reference=req.reference,
+                                  note=req.note)
+    except PurchasingError as e:
+        raise HTTPException(409, str(e)) from e
+    return PoActionResponse(dataset=new, report=rep)
 
 
 # --- versions & scenarios (P8) -------------------------------------------------------------------

@@ -1,22 +1,55 @@
 import { useMemo, useState } from "react";
-import type { Dataset, Issue } from "../api/types";
+import type { Dataset, Issue, ValidationResult } from "../api/types";
 import { Badge, Empty, Panel, StageHeader } from "../components/ui";
 import { byKey, COLLECTIONS, items, whereUsed, type CollectionKey } from "../model/collections";
+import { ImportPanel } from "../components/Import";
+import { checkTitle } from "../lib/checks";
+import { humanize } from "../lib/format";
 import { go, href } from "../lib/router";
 import { defaults, SchemaForm, useSchema, type FieldErrors } from "../schema/SchemaForm";
 import { store, useStore, NO_ISSUES } from "../state/store";
 
 type Obj = Record<string, unknown>;
+const NO_ASIDE: NonNullable<ValidationResult["set_aside"]> = [];
 
 export function MasterData({ route }: { route: string[] }) {
   const ds = useStore((s) => s.dataset);
   const issues = useStore((s) => s.validation?.issues ?? NO_ISSUES);
   const key = (route[1] as CollectionKey) || "locations";
   if (!ds) return null;
-  if (key === ("settings" as CollectionKey)) return <SettingsEditor />;
   const def = byKey[key];
-  if (!def) return <Empty title="Unknown data type" />;
-  return <CollectionView key={key} ds={ds} ckey={key} selected={route[2]} issues={issues} />;
+  const body = key === ("settings" as CollectionKey) ? <SettingsEditor />
+    : !def ? <Empty title="Unknown data type" />
+    : <CollectionView key={key} ds={ds} ckey={key} selected={route[2]} issues={issues} />;
+  return <div className="md-layout"><DataIndex ds={ds} current={key} issues={issues} /><div className="md-main">{body}</div></div>;
+}
+
+/** Every table of master data, grouped, with its row count and any data-check problems. A select on a phone. */
+function DataIndex({ ds, current, issues }: { ds: Dataset; current: string; issues: Issue[] }) {
+  const problems = (type: string) => issues.filter((i) => i.object_type === type).length;
+  return (
+    <nav className="md-index" aria-label="Master data tables">
+      <select className="select md-select" value={current} aria-label="Table" onChange={(e) => go("data", e.target.value)}>
+        <option value="settings">Company settings</option>
+        {DATA_GROUPS.map((g) => <optgroup key={g} label={g}>
+          {COLLECTIONS.filter((c) => c.group === g).map((c) => <option key={c.key} value={c.key}>{c.label} ({items(ds, c.key).length})</option>)}
+        </optgroup>)}
+      </select>
+      <div className="md-list">
+        <a className={current === "settings" ? "on" : ""} href={href("data", "settings")}>Company settings</a>
+        {DATA_GROUPS.map((g) => (
+          <div key={g}>
+            <div className="md-group">{g}</div>
+            {COLLECTIONS.filter((c) => c.group === g).map((c) => {
+              const n = problems(c.issueType);
+              return <a key={c.key} className={current === c.key ? "on" : ""} href={href("data", c.key)}>
+                <span>{c.label}</span>{n > 0 ? <Badge sev="warning">{n}</Badge> : <span className="faint">{items(ds, c.key).length}</span>}</a>;
+            })}
+          </div>
+        ))}
+      </div>
+    </nav>
+  );
 }
 
 function issuesFor(issues: Issue[], type: string, id: string) {
@@ -30,6 +63,7 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
   const schema = useSchema();
   const schemaErrors = useStore((s) => s.schemaErrors);
   const [q, setQ] = useState("");
+  const [upload, setUpload] = useState(false);
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return list.map((o, i) => ({ o, i, k: def.keyOf(o, i) })).filter(({ o }) =>
@@ -39,8 +73,11 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
   const selIndex = selected !== undefined ? list.findIndex((o, i) => def.keyOf(o, i) === selected) : -1;
   const sel = selIndex >= 0 ? list[selIndex] : null;
 
+  const aside = useStore((s) => s.validation?.set_aside ?? NO_ASIDE);
   const errFor = (index: number): FieldErrors => {
     const out: FieldErrors = {};
+    // a record the data check set aside: show why on the field to fix
+    for (const a of aside) if (a.collection === ckey && a.index === index) out[a.field ?? ""] = a.reason;
     for (const e of schemaErrors) {
       const loc = e.loc[0] === "body" ? e.loc.slice(1) : e.loc;
       if (loc[0] === ckey && loc[1] === index) out[loc.slice(2).join(".")] = e.msg;
@@ -69,6 +106,23 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
       seed.date = d.toISOString().slice(0, 10);
     }
     if (ckey === "overrides") seed.change = 0;
+    // start valid: a lane needs a transport mode, and a reference with only one sensible choice is filled in
+    if (ckey === "lanes") seed.modes = [{ mode: "truck_ftl", transit_days: 1 }];
+    const only = (types: string[]) => {
+      const c = (ds.locations ?? []).filter((l) => types.includes(l.type));
+      return c.length === 1 ? c[0].id : "";
+    };
+    const onlyProduct = (types: string[]) => {
+      const c = (ds.products ?? []).filter((p) => types.includes(p.type));
+      return c.length === 1 ? c[0].id : (ds.products ?? []).length === 1 ? ds.products![0].id : "";
+    };
+    if (ckey === "resources" || ckey === "production_sources") seed.location = only(["plant"]);
+    if (ckey === "production_sources") seed.product = onlyProduct(["FG", "SFG"]);
+    if (ckey === "purchasing_sources") { seed.supplier = only(["supplier"]); seed.product = onlyProduct(["RM", "PKG"]); }
+    if (ckey === "demand" || ckey === "history") {
+      seed.location = only(["dc", "customer", "store", "warehouse"]) || only(["plant"]);
+      seed.product = onlyProduct(["FG"]);
+    }
     const obj = defaults(schema, def.defName, seed);
     store.update((d) => { items(d, ckey).push(obj); });
     go("data", ckey, def.keyOf(obj, list.length));
@@ -78,12 +132,16 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
     <div>
       <StageHeader n="MD" title={def.label} kicker={def.blurb} />
       <div className="content">
+      {upload && <div style={{ marginBottom: 14 }}><ImportPanel ds={ds} ckey={ckey} onClose={() => setUpload(false)}
+        kinds={ckey === "production_sources" ? ["bom", "routing", "records"] : undefined} /></div>}
       <div className="split">
         <Panel flush title={<div className="row" style={{ flex: 1 }}>
           <input className="input" placeholder={`Search ${def.label.toLowerCase()}…`} value={q}
-            onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 280 }} aria-label="Search" />
-          <span className="faint small">{rows.length} of {list.length}</span>
-        </div>} actions={<button className="btn primary" onClick={add} disabled={!schema}>+ New {def.singular}</button>}>
+            onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 280, minWidth: 140 }} aria-label="Search" />
+          <span className="faint small nowrap">{rows.length === list.length ? list.length : `${rows.length} of ${list.length}`}</span>
+        </div>} actions={<>
+          <button className="btn" onClick={() => setUpload(!upload)} aria-expanded={upload}>Upload CSV / Excel</button>
+          <button className="btn primary" onClick={add} disabled={!schema}>+ New {def.singular}</button></>}>
           <div className="table-wrap" style={{ maxHeight: "calc(100vh - 230px)" }}>
             <table className="t">
               <thead><tr>{def.columns.map((c) => <th key={c.label} className={c.num ? "num" : ""}>{c.label}</th>)}<th /></tr></thead>
@@ -102,7 +160,8 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
               </tbody>
             </table>
             {rows.length > shown.length && <div className="faint small" style={{ padding: 10 }}>Showing the first 500 — refine the search.</div>}
-            {!list.length && <Empty title={`No ${def.label.toLowerCase()} yet`}><p>Create the first {def.singular}.</p></Empty>}
+            {!list.length && <Empty title={`No ${def.label.toLowerCase()} yet`}><p>Create the first {def.singular}, or upload them from a spreadsheet.</p>
+              <button className="btn" onClick={() => setUpload(true)}>Upload CSV / Excel</button></Empty>}
           </div>
         </Panel>
         <div className="editor">
@@ -152,6 +211,9 @@ function Editor({ ds, ckey, index, obj, errors, issues }: {
   return (
     <Panel title={<div className="context-bar"><a href={href("data", ckey)}>{def.label}</a><span>›</span><b>{k}</b></div>}
       actions={<>
+        {ckey === "resources" && <a className="btn sm" href={href("machines", String(obj.id))}>Shifts and capacity</a>}
+        {ckey === "location_products" && <a className="btn sm" href={href("material", String(obj.product), String(obj.location))}>Open as MRP 1–4</a>}
+        {ckey === "production_sources" && <a className="btn sm" href={href("material", String(obj.product), String(obj.location), "mrp4")}>See the structure</a>}
         <button className="btn sm" onClick={duplicate}>Duplicate</button>
         <button className="btn sm danger" onClick={remove}>Delete</button>
       </>}>
@@ -159,8 +221,8 @@ function Editor({ ds, ckey, index, obj, errors, issues }: {
         <div className="stack" style={{ gap: 6, marginBottom: 10 }}>
           {issues.map((i, n) => (
             <div key={n} className={`banner ${i.severity === "error" ? "error" : "warning"}`} style={{ margin: 0 }}>
-              <Badge sev={i.severity === "error" ? "error" : "warning"}>{i.code}</Badge>
-              <div><div>{i.message}</div>{i.hint && <div className="small">{i.hint}</div>}</div>
+              <Badge sev={i.severity === "error" ? "error" : "warning"}>{checkTitle(i.code)}</Badge>
+              <div><div>{humanize(i.message)}</div>{i.hint && <div className="small">{i.hint}</div>}</div>
             </div>
           ))}
         </div>

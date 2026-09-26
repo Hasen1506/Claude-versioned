@@ -94,7 +94,7 @@ nothing imposes a minimum lot.
 
 ## Semantics the scenarios settled
 
-The scenarios found twenty-eight defects (listed on the Proof page and in `tests/test_regressions.py`). Several
+Twenty-nine defects are listed on the Proof page and pinned in `tests/test_regressions.py`: twenty-eight the scenarios found, one an outside test found (S1 now shows it). Several
 were two modules disagreeing about a definition. These are now one definition each:
 
 - **Independent demand** (`plan/rates.py`): forecast after consumption by sales orders plus the orders, by
@@ -108,6 +108,10 @@ were two modules disagreeing about a definition. These are now one definition ea
   typical lot (EOQ, fixed, periodic, or a bucket of demand), over the lead time plus the review period. The
   placement's cost curve per stage carries that `k` at each net replenishment time, charged on the demand
   the stage really covers (whole-day service times round a lead time up; the stock does not).
+- **Lateness is a quantity, not an order**: MRP's projected availability says how much of each order is
+  available by when. When an input is only partly late, the share its on-time inputs cover stays on time and
+  only the rest slips, which is what promising confirms for the same demand. (Found by an outside test,
+  Meridian Filters: a 50-unit shipment with 35 in stock was all reported late; promising confirmed 35 on time.)
 - **Placement is applied, not retyped**: `POST /api/inventory/apply` writes the recommended buffers as fixed
   safety stock, and MRP then holds exactly them.
 - **S&OP release** writes the constrained demand *and* stock targets; MRP nets against the targets as a
@@ -138,7 +142,7 @@ def run(ctx: Ctx, c: Client, ds: Dataset):
     with ctx.step("Run MRP", "plan", "POST /api/plan", "The first import cannot arrive in time."):
         plan = c.plan(ds)
         risk = [e for e in plan.exceptions if e.code == "DEMAND_AT_RISK"]
-        ctx.near("demand at risk (bags)", sum(e.qty or 0 for e in risk), 550, 1e-6, "200 + 100 + 250 = 550.")
+        ctx.near("demand at risk (bags)", sum(e.qty or 0 for e in risk), 100, 1e-6, "Of the 2 Feb order's 350, 150 are on time; 100 of the rest reach 2 Feb late.")
         ctx.eq("exceptions", sorted((e.code, e.product) for e in plan.exceptions),
                [("DEMAND_AT_RISK", "FG-BAG"), ("START_IN_PAST", "RM-GREEN"), ("STOCKOUT", "RM-GREEN")])
     with ctx.step("Reconcile the plan in money", "finance", "POST /api/finance"):

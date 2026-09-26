@@ -39,10 +39,15 @@ export function pct(v: number | null | undefined, digits = 1): string {
   return `${(v * 100).toFixed(digits)}%`;
 }
 
+/** The year dates are read in: set from the open dataset's planning start, so only other years print theirs. */
+let planYear = new Date().getFullYear();
+export function setPlanYear(planningStart: string | null | undefined) {
+  if (planningStart) planYear = new Date(planningStart + "T00:00:00").getFullYear();
+}
+
+/** A date in tables and text: "Mon 28 Sep", with the year when it isn't the planning year. */
 export function day(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso + "T00:00:00");
-  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" });
+  return dayName(iso, planYear);
 }
 
 export const TYPE_LABEL: Record<string, string> = {
@@ -51,3 +56,29 @@ export const TYPE_LABEL: Record<string, string> = {
 };
 
 export const ORDER_LABEL: Record<string, string> = { make: "Production", buy: "Purchase", transfer: "Transfer" };
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** The one date style for plain-language text: "Mon 28 Sep" (the year only when it is not the planning year). */
+export function dayName(iso: string | null | undefined, year?: number): string {
+  if (!iso) return "—";
+  const d = new Date(iso + "T00:00:00");
+  const s = `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  return year !== undefined && d.getFullYear() !== year ? `${s} ${d.getFullYear()}` : s;
+}
+
+/** ISO date plus whole days. */
+export function addDays(iso: string, n: number): string {
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** "1 order" / "3 orders". */
+export const plural = (n: number, one: string, many = `${one}s`) => `${qty(n)} ${n === 1 ? one : many}`;
+
+/** An engine message made readable: ISO dates become "Mon 28 Sep", and "1,234.0 units" loses its ".0". */
+export function humanize(message: string): string {
+  return message.replace(/\b(\d{4}-\d{2}-\d{2})\b/g, (_, iso: string) => day(iso)).replace(/(\d)\.0\b/g, "$1");
+}

@@ -12,7 +12,8 @@ from dataclasses import dataclass
 
 from ..model import Dataset, LaneMode, TransportLane
 from ..network import NetworkGraph, Node, SupplyOption
-from .leadtime import started_qty, supplier_lane
+from .leadtime import supplier_lane
+from .structure import entering, main_share, needs, typical_lot, unit_need
 
 
 def fx(ds: Dataset, currency: str | None) -> float:
@@ -52,34 +53,37 @@ def landed_unit_cost(ds: Dataset, src_id: str) -> float:
 
 
 def conversion_unit_cost(ds: Dataset, src_id: str) -> float:
-    """Variable make cost per good unit excluding materials: resource run cost + conversion."""
+    """Variable make cost per good unit excluding materials: resource run cost, outside processing and
+    conversion, each step for the units entering it (step scrap makes earlier steps handle more)."""
     ps = ds.production_source_by_id[src_id]
-    per_start = 0.0
+    enter = entering(ps)
+    total = 0.0
     for op in ps.operations:
-        r = ds.resource_by_id.get(op.resource)
-        per_start += op.run_hours_per_unit * (r.cost_per_hour if r else 0.0)
+        per_unit = 0.0
+        if op.subcontract is not None:
+            per_unit += op.subcontract.cost_per_unit
+        r = ds.resource_by_id.get(op.resource) if op.resource else None
+        per_unit += op.run_hours_per_unit * (r.cost_per_hour if r else 0.0)
         if op.labor_resource:
             lr = ds.resource_by_id.get(op.labor_resource)
-            per_start += op.labor_hours_per_unit * (lr.cost_per_hour if lr else 0.0)
-    return started_qty(ps, 1.0) * per_start + ps.conversion_cost_per_unit
+            per_unit += op.labor_hours_per_unit * (lr.cost_per_hour if lr else 0.0)
+        total += enter[op.seq] * per_unit
+    return total + ps.conversion_cost_per_unit
 
 
 def setup_cost(ds: Dataset, src_id: str) -> float:
     ps = ds.production_source_by_id[src_id]
     total = 0.0
     for op in ps.operations:
-        r = ds.resource_by_id.get(op.resource)
+        r = ds.resource_by_id.get(op.resource) if op.resource else None
         total += op.setup_hours * (r.cost_per_hour if r else 0.0)
     return total
 
 
 def component_factor(ds: Dataset, src_id: str, component: str) -> float:
-    """Issued component quantity per good unit of output."""
-    ps = ds.production_source_by_id[src_id]
-    for c in ps.components:
-        if c.product == component:
-            return started_qty(ps, 1.0) * (c.qty / ps.output_qty) / (1.0 - c.scrap)
-    raise KeyError(component)
+    """Issued component quantity per good unit of output (phantoms passed through; a fixed-quantity part
+    spread over a typical lot)."""
+    return unit_need(ds, ds.production_source_by_id[src_id], component)
 
 
 @dataclass
@@ -107,7 +111,24 @@ def roll_up(ds: Dataset, g: NetworkGraph) -> Valuation:
             value[node], basis[node] = 0.0, "no source: unvalued"
             continue
         value[node], basis[node] = option_unit_cost(ds, opts[0], value), f"roll-up via {opts[0].kind} {opts[0].source_id}"
+        if opts[0].kind == "make":
+            # co- and by-products of the run are valued at their share of its cost, unless valued otherwise
+            ps = ds.production_source_by_id[opts[0].source_id]
+            run = _run_cost(ds, ps, value)
+            for co in ps.co_products:
+                cn = (loc, co.product)
+                if cn in g.llc and basis.get(cn, "").startswith("no source"):
+                    per = co.qty / ps.output_qty
+                    value[cn] = run * co.cost_share / per if per > 0 else 0.0
+                    basis[cn] = f"co-product of {ps.id}"
     return Valuation(value, basis)
+
+
+def _run_cost(ds: Dataset, ps, value: dict[Node, float]) -> float:
+    """Materials and conversion of a run, per good unit of the main product."""
+    lot = typical_lot(ps)
+    mat = sum(value.get((ps.location, n.product), 0.0) * (n.per_unit + n.per_order / lot) for n in needs(ds, ps))
+    return mat + conversion_unit_cost(ds, ps.id)
 
 
 def option_unit_cost(ds: Dataset, opt: SupplyOption, value: dict[Node, float]) -> float:
@@ -118,5 +139,4 @@ def option_unit_cost(ds: Dataset, opt: SupplyOption, value: dict[Node, float]) -
         ln: TransportLane = ds.lane_by_id[opt.source_id]
         return value.get((ln.origin, prod), 0.0) + freight_per_unit(ds, ln.planning_mode, prod) + handling(ds, loc)
     ps = ds.production_source_by_id[opt.source_id]
-    mat = sum(value.get((loc, c.product), 0.0) * component_factor(ds, ps.id, c.product) for c in ps.components)
-    return mat + conversion_unit_cost(ds, ps.id)
+    return _run_cost(ds, ps, value) * main_share(ps)

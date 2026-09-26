@@ -1,12 +1,18 @@
 import { useMemo, useState } from "react";
-import type { PlanResult, PlannedOrder, Requirement } from "../api/types";
+import type { Dataset, PlanResult, PlannedOrder, Requirement } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, cols, Empty, Panel, Provenance, SolverIO, StageHeader, StaleMark, StatTile, Tabs, type Severity,
+  Badge, cols, Empty, Panel, Provenance, RunButton, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term, type Severity,
 } from "../components/ui";
-import { day, money, ORDER_LABEL, pct, qty } from "../lib/format";
+import { Situations } from "../components/Situations";
+import { situations, codeLabel } from "../lib/situations";
+import { day, humanize, money, ORDER_LABEL, pct, plural, qty } from "../lib/format";
+import { Loc, Prod } from "../lib/names";
 import { go, href } from "../lib/router";
 import { isStale, store, useStore } from "../state/store";
+
+/** Part of a late order is still on time: its inputs are only partly late (the part in stock ships as planned). */
+const partOnTime = (o: PlannedOrder) => (o.projected_on_time_qty ?? 0) > 1e-9 && (o.projected_on_time_qty ?? 0) < o.qty - 1e-9;
 
 type View = "overview" | "node" | "capacity" | "orders";
 
@@ -16,15 +22,18 @@ export function Plan({ route }: { route: string[] }) {
   const stale = useStore((s) => isStale(s, "plan"));
   const blocking = useStore((s) => s.validation?.blocking ?? false);
   const view = ((route[1] as View) || "overview") as View;
+  const ds = useStore((s) => s.dataset);
 
   const head = (
-    <StageHeader n="06" title="Supply plan" kicker={<>Network MRP/DRP. Requirements are netted per location and product in low-level-code
-      order, lot-sized, sourced, scheduled on working days and exploded through BOMs and lanes. Every order is pegged to
-      the demand it serves.</>} right={<>
+    <StageHeader title="Supply plan" kicker="What to make, buy and move, and when, so every customer's demand is covered."
+      how={<><Term t="MRP" /> and <Term t="DRP" /> across the network: each location's needs are netted against its stock and incoming
+        supply, level by level through the bills of material and transport lanes (low-level-code order), then lot-sized, sourced
+        and scheduled on working days. Every order is linked to the demand it serves (<Term t="Pegging">pegging</Term>).</>}
+      answer={plan && <>{pct(plan.kpis.on_time_fill_rate)} of demand is covered on time, with {qty((plan.kpis.orders_make ?? 0) + (plan.kpis.orders_buy ?? 0) + (plan.kpis.orders_transfer ?? 0))} orders
+        to make, buy and move costing {money(plan.kpis.total_cost, plan.currency)} over {plural(plan.buckets.length, "week")}.</>}
+      right={<>
       {plan && <Provenance kind="solved" at={run.at} stale={stale} />}
-      <button className="btn accent" onClick={() => store.run("plan")} disabled={run.running || blocking}>
-        {run.running ? "Planning…" : plan ? "Re-plan" : "Run plan"}
-      </button></>} />
+      <RunButton running={run.running} has={!!plan} onClick={() => store.run("plan")} disabled={blocking} /></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   if (run.error) return body(<div className="banner error"><Badge sev="error">Plan failed</Badge>{run.error}</div>);
@@ -49,7 +58,7 @@ export function Plan({ route }: { route: string[] }) {
       { id: "capacity", label: "Capacity", count: plan.resources.length },
       { id: "orders", label: "Orders", count: plan.orders.length },
     ]} />
-    {view === "overview" && <Overview plan={plan} />}
+    {view === "overview" && <Overview plan={plan} ds={ds!} />}
     {view === "node" && <NodeView plan={plan} loc={route[2]} prod={route[3]} />}
     {view === "capacity" && <CapacityView plan={plan} res={route[2]} />}
     {view === "orders" && <OrdersView plan={plan} sel={route[2]} />}
@@ -57,7 +66,7 @@ export function Plan({ route }: { route: string[] }) {
 }
 
 // ------------------------------------------------------------------------------------------------
-function Overview({ plan }: { plan: PlanResult }) {
+function Overview({ plan, ds }: { plan: PlanResult; ds: Dataset }) {
   const k = plan.kpis;
   const c = plan.currency;
   const [sev, setSev] = useState<"" | "error" | "warning" | "info">("");
@@ -70,18 +79,20 @@ function Overview({ plan }: { plan: PlanResult }) {
   const ex = plan.exceptions.filter((e) => !sev || e.severity === sev);
   const counts = { error: 0, warning: 0, info: 0 } as Record<string, number>;
   plan.exceptions.forEach((e) => counts[e.severity]++);
+  const sits = useMemo(() => situations(plan, ds), [plan, ds]);
   return (
     <div className="stack">
       <div className="grid-auto">
-        <StatTile label="Total plan cost" value={money(k.total_cost, c)} sub={`over ${plan.buckets.length} buckets`} />
-        <StatTile label="Demand on time (projected)" value={pct(k.on_time_fill_rate)} sub={`${qty(k.on_time_qty)} of ${qty(k.independent_demand)} units`} />
-        <StatTile label="Average inventory value" value={money(k.inventory_value_avg, c)} sub={`start ${money(k.inventory_value_start, c)} → end ${money(k.inventory_value_end, c)}`} />
-        <StatTile label="Peak resource load" value={pct(k.max_utilization, 0)} sub="of regular capacity" />
+        <StatTile label="Demand on time" value={pct(k.on_time_fill_rate)} sub={`${qty(k.on_time_qty)} of ${qty(k.independent_demand)} units`} />
         <StatTile label="Planned orders" value={qty((k.orders_make ?? 0) + (k.orders_buy ?? 0) + (k.orders_transfer ?? 0))}
           sub={`${k.orders_make} make · ${k.orders_buy} buy · ${k.orders_transfer} move`} />
+        <StatTile label="Total plan cost" value={money(k.total_cost, c)} sub={`over ${plan.buckets.length} weeks`} />
+        <StatTile label="Average stock value" value={money(k.inventory_value_avg, c)} sub={`start ${money(k.inventory_value_start, c)} → end ${money(k.inventory_value_end, c)}`} />
+        <StatTile label="Busiest machine's load" value={pct(k.max_utilization, 0)} sub="of its regular capacity" />
       </div>
+      <Situations list={sits} />
       <div className="grid-2">
-        <Panel title="Cost build-up">
+        <Panel title="Where the cost comes from">
           <div className="bar-list">
             {costs.map(([label, v]) => (
               <div key={label} className="bar-row">
@@ -91,20 +102,24 @@ function Overview({ plan }: { plan: PlanResult }) {
               </div>
             ))}
           </div>
-          <p className="faint small" style={{ marginBottom: 0 }}>Holding cost uses the carrying rate {pct(plan.carrying_rate)} per year (WACC + holding spread) on projected stock × unit value.</p>
+          <p className="faint small" style={{ marginBottom: 0 }}>Holding cost is {pct(plan.carrying_rate)} a year (the cost of money, <Term t="WACC" />, plus
+            storage) on the value of the stock the plan projects.</p>
         </Panel>
-        <Panel title="Exceptions" actions={
-          <div className="row">
-            {(["", "error", "warning", "info"] as const).map((s) => (
-              <button key={s || "all"} className={`btn sm ${sev === s ? "primary" : ""}`} onClick={() => setSev(s)}>
-                {s ? `${s} (${counts[s]})` : `all (${plan.exceptions.length})`}
-              </button>
-            ))}
-          </div>}>
-          <div className="table-wrap" style={{ maxHeight: 360 }}>
-            <ExceptionTable rows={ex} />
+        <details className="panel fold" style={{ alignSelf: "start" }}>
+          <summary className="panel-head"><h3>The engine's messages ({plan.exceptions.length})</h3></summary>
+          <div className="panel-body">
+            <div className="row" style={{ marginBottom: 8 }}>
+              {(["", "error", "warning", "info"] as const).map((s) => (
+                <button key={s || "all"} className={`btn sm ${sev === s ? "primary" : ""}`} onClick={() => setSev(s)}>
+                  {s ? `${s} (${counts[s]})` : `all (${plan.exceptions.length})`}
+                </button>
+              ))}
+            </div>
+            <div className="table-wrap" style={{ maxHeight: 360 }}>
+              <ExceptionTable rows={ex} />
+            </div>
           </div>
-        </Panel>
+        </details>
       </div>
     </div>
   );
@@ -121,9 +136,9 @@ function ExceptionTable({ rows }: { rows: PlanResult["exceptions"] }) {
             : e.location && e.product ? href("plan", "node", e.location, e.product) : null;
           return (
             <tr key={i}>
-              <td><Badge sev={e.severity as Severity}>{e.code}</Badge></td>
+              <td><Badge sev={e.severity as Severity}>{codeLabel(e.code)}</Badge></td>
               <td className="small">{where ? <a href={where}>{e.resource ?? `${e.product} @ ${e.location}`}</a> : "—"}</td>
-              <td className="small">{e.message}</td>
+              <td className="small">{humanize(e.message)}</td>
             </tr>
           );
         })}
@@ -159,7 +174,7 @@ function NodeView({ plan, loc, prod }: { plan: PlanResult; loc?: string; prod?: 
                 return (
                   <tr key={`${n.location}|${n.product}`} className={`clickable ${node === n ? "selected" : ""}`}
                     onClick={() => go("plan", "node", n.location, n.product)}>
-                    <td>{n.location}</td><td>{n.product}</td><td className="num">{n.llc}</td>
+                    <td><Loc id={n.location} /></td><td><Prod id={n.product} /></td><td className="num">{n.llc}</td>
                     <td>{x ? <Badge sev={x.error ? "error" : "warning"}>{x.n}</Badge> : null}</td>
                   </tr>
                 );
@@ -194,7 +209,7 @@ function NodeDetail({ plan, node }: { plan: PlanResult; node: PlanResult["nodes"
   return (
     <div className="stack">
       <Panel title={<div className="context-bar"><a href={href("network", node.location)}>{node.location}</a><span>›</span><b>{node.product}</b></div>}
-        actions={<a className="btn sm" href={href("data", "location_products", `${node.location}|${node.product}`)}>Edit policy</a>}>
+        actions={<a className="btn sm" href={href("material", node.product, node.location, "mrp1")}>Planning settings</a>}>
         <div className="grid-auto small" style={{ marginBottom: 12 }}>
           <div><div className="faint">Strategy · MRP type</div>{node.strategy} · {node.mrp_type}</div>
           <div><div className="faint">Lot sizing</div>{node.lot_policy}</div>
@@ -213,7 +228,7 @@ function NodeDetail({ plan, node }: { plan: PlanResult; node: PlanResult["nodes"
       <Panel flush title="Stock / requirements by bucket">
         <div className="table-wrap">
           <table className="t">
-            <thead><tr><th className="stub">Row</th>{plan.buckets.map((bk) => <th key={bk.index} className="num" title={`${bk.start} – ${bk.end}`}>{bk.label.replace(/^W\d+ /, "")}</th>)}</tr></thead>
+            <thead><tr><th className="stub">Row</th>{plan.buckets.map((bk) => <th key={bk.index} className="num" title={`${day(bk.start)} – ${day(bk.end)}`}>{bk.label.replace(/^W\d+ /, "")}</th>)}</tr></thead>
             <tbody>
               {rows.map(([label, get, cls]) => (
                 <tr key={label} className={cls}>
@@ -342,13 +357,15 @@ function OrderTable({ plan, orders, sel, onSelect, compact }: {
           <tr key={o.id} className={`clickable ${sel === o.id ? "selected" : ""}`} onClick={() => onSelect(o.id)}>
             <td><span className="mono">{o.id}</span> <span className="faint small">{ORDER_LABEL[o.kind]}</span>
               {!o.convertible && <> <Badge>ATO</Badge></>}</td>
-            {!compact && <td>{o.product}</td>}
-            {!compact && <td>{o.location}</td>}
+            {!compact && <td><Prod id={o.product} /></td>}
+            {!compact && <td><Loc id={o.location} /></td>}
             <td className="small">{o.origin ?? o.source_id}</td>
             <td className="num">{qty(o.qty)}</td>
             <td className="small">{day(o.start_date)}{o.start_in_past && <> <Badge sev="warning">past</Badge></>}</td>
-            <td className="small">{day(o.available_date)}{o.fence_shifted && <> <Badge sev="info">fence</Badge></>}</td>
-            <td className="num">{o.delay_days === -1 ? <Badge sev="error">uncovered</Badge> : (o.delay_days ?? 0) > 0 ? <Badge sev="warning">{o.delay_days} d</Badge> : "·"}</td>
+            <td className="small">{day(o.available_date)}{o.fence_shifted && <> <Badge sev="info">fence</Badge></>}
+              {o.capacity_shift_days !== 0 && <> <Badge sev={o.capacity_shift_days > 0 ? "warning" : "info"}>{o.capacity_shift_days > 0 ? `+${o.capacity_shift_days}` : o.capacity_shift_days} d to fit</Badge></>}
+              {Object.keys(o.step_resources ?? {}).length > 0 && <> <Badge sev="info">alt. machine</Badge></>}</td>
+            <td className="num">{o.delay_days === -1 ? <Badge sev="error">uncovered</Badge> : (o.delay_days ?? 0) > 0 ? <><Badge sev="warning">{o.delay_days} d</Badge>{partOnTime(o) && <div className="faint small">{qty(o.projected_on_time_qty ?? 0)} on time</div>}</> : "·"}</td>
             <td className="num">{money(o.total_cost, plan.currency)}</td>
           </tr>
         ))}
@@ -422,7 +439,8 @@ function PegTree({ plan, orderId }: { plan: PlanResult; orderId: string }) {
         <div style={{ fontWeight: 600 }}>{ORDER_LABEL[o.kind]} of {qty(o.qty)} {o.product} at {o.location}</div>
         <div className="muted small">
           {o.origin && <>from {o.origin} · </>}source {o.source_id} · start {day(o.start_date)} · due {day(o.due_date)} · available {day(o.available_date)}
-          {o.projected_available_date && o.projected_available_date !== o.available_date && <> · projected {day(o.projected_available_date)}</>}
+          {o.projected_available_date && o.projected_available_date !== o.available_date && <> · projected {partOnTime(o)
+            ? <>{qty(o.projected_on_time_qty ?? 0)} on time, the rest by {day(o.projected_available_date)}</> : day(o.projected_available_date)}</>}
         </div>
         <div className="muted small">Need date {day(o.need_date)} · cost {money(o.total_cost, plan.currency)}{o.shipments ? ` · ${o.shipments} shipment(s)` : ""}</div>
         {(buffer > 1e-6 || rounding > 1e-6) && (

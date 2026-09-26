@@ -294,8 +294,10 @@ The four legacy gates exist because the architecture let solvers disagree. The n
    hand and driven through the API as a planner would, run in-process and over HTTP, every checkpoint carrying its
    derivation. They settled definitions two modules had disagreed on: the demand rate and safety stock above, the
    release's stock targets, a sale dated when the customer receives it, a delivery never confirmed before the date
-   asked, and readiness blocking demand planning only for errors in demand's own inputs. The app's Proof page runs
-   them.
+   asked, and readiness blocking demand planning only for errors in demand's own inputs. A ninth runs the same
+   whole flow over randomly generated companies, holding each run to invariants, agreements between modules and
+   metamorphic relations (the same company reordered, started later, firmed and replanned, rolled in steps, posted
+   late). The app's Proof page runs them all.
 
 ---
 

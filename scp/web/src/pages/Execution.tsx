@@ -3,9 +3,10 @@ import { api } from "../api/client";
 import type { AccuracySeries, ActualsView, Dataset, GoodsMovement, OpenOrderRow, PlannedOrder, RollReport, StockRow } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs,
+  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
 } from "../components/ui";
-import { day, pct, qty } from "../lib/format";
+import { day, pct, plural, qty } from "../lib/format";
+import { Loc, Prod } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -47,13 +48,14 @@ export function Execution({ route }: { route: string[] }) {
   const start = ds.settings.planning_start;
 
   const head = (
-    <StageHeader n="09" title="Orders & actuals" kicker={<>What really happened: the goods-movement journal (receipts, issues,
-      deliveries, scrap, counts) becomes stock, firm orders are received and closed, elapsed forecast is measured against actual sales,
-      and the plan rolls forward to a new start date. Planned orders inside the firm zone are converted into firm orders.</>} right={<>
+    <StageHeader title="Actuals" kicker="What actually happened: goods received, used and shipped, stock on hand, and how the forecast compared with real sales."
+      how={<>Every goods movement (receipts, issues, deliveries, scrap, counts) is added up into stock; firm orders are received and
+        closed as their goods arrive; past forecast is measured against actual sales. Moving the plan to a new start date recomputes
+        all of it from the full journal. Planned orders inside the <Term t="Firm zone">firm zone</Term> can be turned into firm orders.</>}
+      answer={res && actualsAnswer(res)}
+      right={<>
       {res && <Provenance kind="derived" at={run.at} stale={stale} />}
-      <button className="btn accent" onClick={() => store.run("actuals")} disabled={run.running}>
-        {run.running ? "Reading…" : res ? "Refresh" : "Read journal"}
-      </button></>} />
+      <RunButton running={run.running} has={!!res} onClick={() => store.run("actuals")} /></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   const nav = <Nav view={view} res={res} ds={ds} />;
@@ -85,13 +87,23 @@ function Nav({ view, res, ds }: { view: View; res: ActualsView | null; ds: Datas
       { id: "stock", label: "Stock from movements", count: res?.stock.length },
       { id: "orders", label: "Open orders & firming", count: res?.open_orders.length },
       { id: "journal", label: "Movement journal", count: ds.movements?.length ?? 0 },
-      { id: "roll", label: "Roll forward" },
+      { id: "roll", label: "Start a new week" },
       { id: "accuracy", label: "Forecast accuracy", count: res?.accuracy.series.length },
     ]} />
   );
 }
 
 // ------------------------------------------------------------------------------------------------
+function actualsAnswer(res: ActualsView) {
+  const off = res.stock.filter((r) => Math.abs(r.difference) > 1e-6).length;
+  const neg = res.stock.filter((r) => r.negative_on).length;
+  const acc = res.accuracy && res.accuracy.periods > 0 ? res.accuracy.accuracy : null;
+  const books = !res.movements ? "No goods movements are recorded yet."
+    : off || neg ? `${plural(res.movements, "goods movement")} recorded up to ${day(res.as_of)}; ${[off && `${plural(off, "place")} ${off === 1 ? "has" : "have"} stock that doesn't match them`, neg && `${plural(neg, "place")} would go negative`].filter(Boolean).join(" and ")}.`
+    : `${plural(res.movements, "goods movement")} recorded up to ${day(res.as_of)}, and stock matches them everywhere.`;
+  return <>{books}{acc !== null && <> The forecast was {pct(acc, 0)} accurate against real sales.</>}</>;
+}
+
 function Stock({ res, ds }: { res: ActualsView; ds: Dataset }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -116,7 +128,7 @@ function Stock({ res, ds }: { res: ActualsView; ds: Dataset }) {
       <div className="grid-auto">
         <StatTile label="Movements" value={qty(res.movements)} sub={`${qty(res.stock.reduce((a, r) => a + r.movements, 0))} before ${day(res.as_of)} are in stock`} />
         <StatTile label="Nodes in the journal" value={qty(res.stock.filter((r) => r.movements > 0).length)} sub={`of ${res.stock.length} holding stock`} />
-        <StatTile label="Out of sync" value={qty(off.length)} sub="on-hand ≠ Σ movements" tone={off.length ? undefined : "hl"} />
+        <StatTile label="Out of sync" value={qty(off.length)} sub="on-hand ≠ Σ movements" tone={off.length ? "hl" : undefined} />
         <StatTile label="Negative stock" value={qty(neg.length)} sub="a receipt missing or late" />
         <StatTile label="Unmatched references" value={qty(res.unmatched.length)} sub="no open or closed order" />
       </div>
@@ -149,7 +161,7 @@ function StockLine({ r }: { r: StockRow }) {
   const scale = Math.max(inflow, outflow, 1);
   return (
     <tr>
-      <td>{r.location}</td><td>{r.product}</td><td className="num">{qty(r.master_on_hand)}</td>
+      <td><Loc id={r.location} /></td><td><Prod id={r.product} /></td><td className="num">{qty(r.master_on_hand)}</td>
       <td className="num">{r.movement_stock === null ? <span className="faint">—</span> : qty(r.movement_stock)}</td>
       <td className="num">{Math.abs(r.difference) > 1e-6 ? <Badge sev="warning">{r.difference > 0 ? "+" : ""}{qty(r.difference)}</Badge> : <span className="faint">0</span>}
         {r.negative_on && <> <Badge sev="error">negative {day(r.negative_on)}</Badge></>}</td>
@@ -203,7 +215,7 @@ function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
               <tbody>
                 {receipts.map((o) => (
                   <tr key={o.id}>
-                    <td><b>{o.id}</b></td><td>{o.kind}</td><td>{o.location}</td><td>{o.product}</td><td>{o.counterparty ?? ""}</td>
+                    <td><b>{o.id}</b></td><td>{o.kind}</td><td><Loc id={o.location} /></td><td><Prod id={o.product} /></td><td>{o.counterparty ?? ""}</td>
                     <td className="num">{qty(o.ordered)}</td><td className="num">{o.delivered ? qty(o.delivered) : ""}</td><td className="num">{qty(o.open)}</td>
                     <td className="num">{o.in_transit ? qty(o.in_transit) : ""}</td><td className="num">{o.reservations_open ? qty(o.reservations_open) : ""}</td>
                     <td>{day(o.due_date)} {o.past_due && <Badge sev="warning">past due</Badge>}</td>
@@ -224,7 +236,7 @@ function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
               <tbody>
                 {sales.map((o) => (
                   <tr key={o.id}>
-                    <td><b>{o.id}</b></td><td>{o.location}</td><td>{o.product}</td><td className="num">{qty(o.ordered)}</td>
+                    <td><b>{o.id}</b></td><td><Loc id={o.location} /></td><td><Prod id={o.product} /></td><td className="num">{qty(o.ordered)}</td>
                     <td className="num">{o.delivered ? qty(o.delivered) : ""}</td><td className="num">{qty(o.open)}</td>
                     <td>{day(o.due_date)} {o.past_due && <Badge sev="warning">past due</Badge>}</td>
                     <td><button className="btn sm" onClick={() => ship(o)} disabled={o.open <= 1e-6 || !shipFrom(ds, o.location, o.id)} aria-label={`Ship ${o.id}`}>Ship</button></td>
@@ -245,7 +257,7 @@ function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
                   const onTime = !!c.last_delivery && c.last_delivery <= c.due_date;
                   const inFull = c.delivered_qty >= c.ordered_qty * (1 - (ds.execution?.delivery_tolerance ?? 0.02)) - 1e-6;
                   return (
-                    <tr key={`${c.kind}|${c.id}`}><td><b>{c.id}</b></td><td>{c.kind}</td><td>{c.product}</td><td className="num">{qty(c.ordered_qty)}</td>
+                    <tr key={`${c.kind}|${c.id}`}><td><b>{c.id}</b></td><td>{c.kind}</td><td><Prod id={c.product} /></td><td className="num">{qty(c.ordered_qty)}</td>
                       <td className="num">{qty(c.delivered_qty)}</td><td>{day(c.due_date)}</td><td>{c.last_delivery ? day(c.last_delivery) : "—"}</td>
                       <td>{onTime && inFull ? <Badge sev="ok">OTIF</Badge> : <Badge sev="warning">{!onTime ? "late" : ""}{!onTime && !inFull ? " · " : ""}{!inFull ? "short" : ""}</Badge>}</td></tr>
                   );
@@ -295,13 +307,13 @@ function Firming({ ds }: { ds: Dataset }) {
   return (
     <Panel flush title={`Firm zone: planned orders starting before ${day(limit)} (${zone} days)`} actions={
       plan.data ? <button className="btn sm accent" disabled={busy || planStale || chosen.size === 0} onClick={firm}
-        title={planStale ? "Re-run supply planning first" : "Convert into firm purchase, production and transfer orders"}>
-        {busy ? "Firming…" : `Firm ${chosen.size} order${chosen.size === 1 ? "" : "s"}`}</button> : null}>
+        title={planStale ? "Recalculate the supply plan first" : "Turns these planned orders into firm purchase, production and transfer orders in your data. Undo reverts it."}>
+        {busy ? "Saving…" : `Make ${chosen.size} order${chosen.size === 1 ? "" : "s"} firm`}</button> : null}>
       {msg && <div className="banner info" style={{ margin: 12 }}><Badge sev="ok">Firmed</Badge><span>{msg}</span><span className="spacer" />
         <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
       {err && <div className="banner error" style={{ margin: 12 }}><Badge sev="error">Firming failed</Badge>{err}</div>}
-      {!plan.data ? <Empty title="No supply plan yet"><button className="btn" onClick={() => store.run("plan")} disabled={plan.running}>Run supply planning</button></Empty>
-        : planStale ? <Empty title="The supply plan is stale"><button className="btn" onClick={() => store.run("plan")} disabled={plan.running}>{plan.running ? "Planning…" : "Re-plan"}</button></Empty>
+      {!plan.data ? <Empty title="No supply plan yet"><button className="btn" onClick={() => store.run("plan")} disabled={plan.running}>Calculate the supply plan</button></Empty>
+        : planStale ? <Empty title="The supply plan is out of date"><button className="btn" onClick={() => store.run("plan")} disabled={plan.running}>{plan.running ? "Calculating…" : "Recalculate the supply plan"}</button></Empty>
         : cands.length === 0 ? <Empty title="Nothing to firm">No convertible planned order starts inside the firm zone.</Empty> : (
           <div className="table-wrap" style={{ maxHeight: 320 }}>
             <table className="t">
@@ -311,7 +323,7 @@ function Firming({ ds }: { ds: Dataset }) {
                   <tr key={o.id} className="clickable" onClick={() => toggle(o)}>
                     <td><input type="checkbox" checked={chosen.has(o.id)} onChange={() => toggle(o)} onClick={(e) => e.stopPropagation()} aria-label={`Firm ${o.id}`} /></td>
                     <td><b>{o.id}</b></td><td>{o.kind === "make" ? "production order" : o.kind === "buy" ? "purchase order" : "stock transfer"}</td>
-                    <td>{o.location}</td><td>{o.product}</td><td>{o.origin ?? o.source_id}</td><td className="num">{qty(o.qty)}</td>
+                    <td><Loc id={o.location} /></td><td><Prod id={o.product} /></td><td>{o.origin ?? o.source_id}</td><td className="num">{qty(o.qty)}</td>
                     <td>{day(o.start_date)} {o.start_in_past && <Badge sev="warning">late start</Badge>}</td><td>{day(o.due_date)}</td>
                   </tr>
                 ))}
@@ -355,7 +367,7 @@ function Journal({ ds }: { ds: Dataset }) {
                   return (
                     <tr key={m.id} className={m.date >= ds.settings.planning_start ? "" : "dim"}>
                       <td className="faint">{m.id}</td><td>{day(m.date)}</td><td>{m.type.replace("_", " ")}{m.final && <> <Badge sev="info">final</Badge></>}</td>
-                      <td>{m.location}</td><td>{m.product}</td>
+                      <td><Loc id={m.location} /></td><td><Prod id={m.product} /></td>
                       <td className="num" style={{ color: signed < 0 ? "var(--warning-text)" : undefined }}>{signed > 0 ? "+" : ""}{qty(signed)}</td>
                       <td>{m.reference ?? ""}</td><td>{m.counterparty ?? ""}</td>
                     </tr>
@@ -409,7 +421,7 @@ function Roll({ ds }: { ds: Dataset }) {
         <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
           <span className="muted">From <b>{day(start)}</b> to</span>
           <input type="date" className="input" style={{ width: 170 }} value={to} min={start} onChange={(e) => setTo(e.target.value)} aria-label="Roll forward to" />
-          <button className="btn accent" onClick={roll} disabled={busy || to < start}>{busy ? "Rolling…" : "Roll forward"}</button>
+          <button className="btn accent" onClick={roll} disabled={busy || to < start}>{busy ? "Moving…" : "Move the plan to this date"}</button>
           <span className="faint small">{pending.length} movement{pending.length === 1 ? "" : "s"} fall in this window. Undo reverts the roll.</span>
         </div>
         {err && <div className="banner error" style={{ marginTop: 10 }}><Badge sev="error">Roll failed</Badge>{err}</div>}
@@ -438,7 +450,7 @@ function RollResult({ rep }: { rep: RollReport }) {
           {rep.stock.length === 0 ? <Empty title="No stock changes" /> : (
             <div className="table-wrap" style={{ maxHeight: 360 }}>
               <table className="t"><thead><tr><th>Location</th><th>Product</th><th className="num">Before</th><th className="num">After</th><th className="num">Δ</th></tr></thead>
-                <tbody>{rep.stock.map((s) => <tr key={`${s.location}|${s.product}`}><td>{s.location}</td><td>{s.product}</td><td className="num">{qty(s.before)}</td>
+                <tbody>{rep.stock.map((s) => <tr key={`${s.location}|${s.product}`}><td><Loc id={s.location} /></td><td><Prod id={s.product} /></td><td className="num">{qty(s.before)}</td>
                   <td className="num">{qty(s.after)}</td><td className="num">{s.after - s.before > 0 ? "+" : ""}{qty(s.after - s.before)}</td></tr>)}</tbody></table>
             </div>
           )}
@@ -447,7 +459,7 @@ function RollResult({ rep }: { rep: RollReport }) {
           {rep.orders.length === 0 ? <Empty title="No deliveries in the window" /> : (
             <div className="table-wrap" style={{ maxHeight: 360 }}>
               <table className="t"><thead><tr><th>Order</th><th>Kind</th><th>Product</th><th className="num">Open before</th><th className="num">Open after</th><th /></tr></thead>
-                <tbody>{rep.orders.map((o) => <tr key={`${o.kind}|${o.id}`}><td><b>{o.id}</b></td><td>{o.kind}</td><td>{o.product}</td>
+                <tbody>{rep.orders.map((o) => <tr key={`${o.kind}|${o.id}`}><td><b>{o.id}</b></td><td>{o.kind}</td><td><Prod id={o.product} /></td>
                   <td className="num">{qty(o.open_before)}</td><td className="num">{qty(o.open_after)}</td>
                   <td>{o.closed ? <Badge sev="ok">closed</Badge> : <Badge sev="info">partial</Badge>}</td></tr>)}</tbody></table>
             </div>
@@ -464,14 +476,14 @@ function Accuracy({ res, sel }: { res: ActualsView; sel?: string }) {
   const key = (s: AccuracySeries) => `${s.location}|${s.product}`;
   const cur = a.series.find((s) => key(s) === sel) ?? a.series[0];
   if (a.series.length === 0) {
-    return <Panel><Empty title="No elapsed weeks yet">Roll forward past a week with posted sales; each elapsed week is logged as forecast against actual.
-      <div style={{ marginTop: 10 }}><a className="btn" href={href("execution", "roll")}>Roll forward</a></div></Empty></Panel>;
+    return <Panel><Empty title="No elapsed weeks yet">Move the plan past a week with posted sales; each elapsed week is logged as forecast against actual.
+      <div style={{ marginTop: 10 }}><a className="btn" href={href("execution", "roll")}>Start a new week</a></div></Empty></Panel>;
   }
   const sevOf = (acc: number | null) => (acc === null ? undefined : acc >= 0.8 ? "ok" : acc >= 0.6 ? "warning" : "error");
   return (
     <div className="stack">
       <div className="grid-auto">
-        <StatTile label="Forecast accuracy" value={pct(a.accuracy, 0)} sub="1 − WMAPE over every series-week" tone="hl" />
+        <StatTile label="Forecast accuracy" value={pct(a.accuracy, 0)} sub="1 − WMAPE over every series-week" />
         <StatTile label="WMAPE" value={pct(a.wmape, 1)} sub="Σ|F − A| / ΣA" />
         <StatTile label="Bias" value={a.bias === null ? "—" : `${a.bias > 0 ? "+" : ""}${pct(a.bias, 1)}`} sub={a.bias === null ? "" : a.bias > 0 ? "over-forecast" : "under-forecast"} />
         <StatTile label="Weeks measured" value={qty(a.periods)} sub={`${qty(a.actual)} units sold vs ${qty(a.forecast)} forecast`} />
@@ -492,7 +504,7 @@ function Accuracy({ res, sel }: { res: ActualsView; sel?: string }) {
             <tbody>
               {a.series.map((s) => (
                 <tr key={key(s)} className={`clickable ${cur && key(cur) === key(s) ? "selected" : ""}`} onClick={() => go("execution", "accuracy", key(s))}>
-                  <td>{s.location}</td><td>{s.product}</td><td className="num">{qty(s.forecast)}</td><td className="num">{qty(s.actual)}</td>
+                  <td><Loc id={s.location} /></td><td><Prod id={s.product} /></td><td className="num">{qty(s.forecast)}</td><td className="num">{qty(s.actual)}</td>
                   <td className="num">{qty(s.abs_error)}</td><td className="num">{pct(s.wmape, 1)}</td>
                   <td className="num">{s.bias === null ? "—" : `${s.bias > 0 ? "+" : ""}${pct(s.bias, 1)}`}</td>
                   <td>{s.accuracy === null ? <span className="faint">no sales</span> : <Badge sev={sevOf(s.accuracy)}>{pct(s.accuracy, 0)}</Badge>}</td>

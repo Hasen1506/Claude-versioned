@@ -28,25 +28,107 @@ Start from an example (a fictional multi-echelon appliance maker with two years 
 one-product plant), create a blank
 network, or import a dataset JSON. The dataset is saved in your browser and can be exported at any time.
 
+## Getting your own company in
+
+- **Set up** builds a company the way a planner describes it: places, and the routes between them (click two places
+  on the map); products; and for each product at each place how it gets there: made here from these parts on this
+  line, bought from a supplier, or shipped from another place, with stock and ordering rules.
+- **Every table uploads from a spreadsheet**: CSV, Excel (.xlsx) or cells pasted from one, with a template to
+  download, loose column names ("Qty", "Quantity", "Item"), places and products by id or name, and a preview of
+  which rows are added, updated or skipped, and why. Bills of material and routings upload as one row per
+  component or step.
+- **Demand → Demand plan** is the demand the supply plan works to, product × place × week, typed in place or
+  uploaded; the forecast is one way to fill it.
+- **The data check** starts with a "What's missing" checklist in setup order, each line with the button that fixes
+  it. A record you haven't finished (a lane with no places chosen yet) is set aside with its reason and the rest
+  keeps planning; it never locks the company.
+
+## Master-data depth (Phase B)
+
+- **Products at places** is the material master at plant level: MRP 1 (ordering, MRP controller), MRP 2 (procurement
+  type, phantom, lead times, scheduling margin), MRP 3 (strategy, consumption, safety stock) and MRP 4 (production
+  versions, a multi-level BOM explorer on any date, where used), with the stock/requirements list (every receipt
+  and requirement by date, and the stock after it) on the same page. The index filters by who plans each product.
+- **Machines & shifts**: named shifts with clock times, breaks and weekdays; capacity changes for a period (a
+  shutdown, a second shift from a date, more machines, a slower run-in); a week drawn as clock bars and the hours
+  week by week beside the plan's load. MRP, the capacity plan, lead times and the shop floor schedule all read the
+  same day-by-day hours (`engine/scp/time/capacity.py`).
+- **BOMs and routings**: date-effective lines (engineering change), fixed-quantity parts, phantom assemblies, co-
+  and by-products with cost shares, step scrap, overlapping steps, steps done outside by a supplier, and
+  alternative machines. One module applies the rules for every planner (`engine/scp/plan/structure.py`).
+
+## Capacity and material together (Phase C)
+
+- **The shop floor waits for parts.** Each step of a production order starts only once the parts it uses are there,
+  following the pegging: from stock, from a purchase or transfer on its arrival day, or from the order on the same
+  schedule that makes them, when that order finishes (plus goods-receipt days). Each order shows what it waited for.
+- **The schedule's dates go back into the plan.** *Use these dates in the plan* makes the scheduled orders
+  production orders dated by the schedule, with each part reserved for the day its step starts. The supply plan,
+  promises and money then read those dates, and a late one is reported as late (`SCHEDULE_LATE`) instead of being
+  covered by a duplicate order.
+- **Levelling.** Each machine and crew day by day: hours asked for against hours it has, the orders on any day,
+  and what planning within capacity would move. **Planning within capacity** (a company setting) places each make
+  order on its own machine if the days have room, else on an alternative machine, else earlier, else later
+  (reported). Released orders load their machines first and are never moved.
+
+## Scheduling like PP/DS (Phase D)
+
+- **Profiles.** *Shop floor → Methods & profiles* sets how to schedule in one click: balanced, protect due dates,
+  fewest changeovers, just in time, finish everything soonest, or best possible (the optimiser). A profile sets the
+  start rule, the search and what the score weighs (hours late, changeover hours, hours early, hours to clear the
+  window); editing any of those in Settings makes them your own.
+- **Heuristics and a comparison.** Earliest due date, shortest job first, least slack, campaigns by setup group and
+  backward from the due date, then a local search, then a constraint solver (CP-SAT) that chooses each step's
+  machine (own or alternative) and every machine's order. *Compare all methods* schedules the same orders every way
+  and scores them alike; the optimiser starts from the local search's answer, so it is never worse.
+- **The board.** Drag a step along its row to run it earlier or later, or onto another machine that can run it; the
+  schedule is re-timed at once and the page says what changed. Orders inside the **frozen zone** (a setting) keep
+  their place and machine. *Use these dates in the plan* writes exactly the schedule on screen.
+- **Levelling** can prefer finishing later to building ahead, with a limit on days ahead; **promising** books
+  machine hours on the days a step runs, on its own machine or an alternative.
+
+## Buying: procure to pay (Phase E)
+
+- **Suppliers and sources.** Each supplier can have purchasing data: contact, payment terms, whether they confirm
+  orders and how soon, how much more or less than ordered a delivery may be, a minimum order value and a
+  **purchasing block**. A purchasing source is the info record and source-list entry: price with **price scales**
+  (quantity breaks), lead time, validity, **fixed** (planning uses it first, after any quota) and **blocked**. The
+  supply plan never uses a blocked supplier or source, and prices each purchase from its scale.
+- **To order.** *Buying* lists the supply plan's purchases as requisitions, due now or later, each with every source
+  that could fill it: price for that quantity, when it would arrive and whether that is in time. Pick lines,
+  change a line's supplier if you want (its minimum, pack size and lead time apply), and create purchase orders:
+  one per supplier and receiving place. Orders worth more than the **approval limit** wait for approval.
+- **Purchase orders.** Approve, mark as sent, record the supplier's **confirmation** (date and quantity), receive
+  goods in parts or at once (the supplier's over-delivery tolerance is enforced, a delivery within their
+  short-delivery tolerance closes the line), change a line, or cancel lines nothing has been received for. The plan
+  expects a confirmed line on its confirmed date and counts no more than confirmed, and says when a supplier
+  confirms late, confirms less, or hasn't confirmed in time. Firming a purchase from *Actuals* gives it an order
+  document too.
+- **Suppliers.** A scorecard from the closed-order log (on time, in full, average days late) and each supplier's
+  sources with their price scales, one click from blocking the supplier.
+
+What real use turned up, and what was done about it, is logged in [docs/USABILITY_LOG.md](docs/USABILITY_LOG.md).
+
 ## What is here (P0–P10)
 
 | Area | Where | What it does |
 |---|---|---|
 | Data model | `engine/scp/model` | Typed master and transactional data. Fractions are 0–1, and quantities are in base UoM. Units are enforced by the schema, not by convention. |
-| Readiness gate | `engine/scp/validate` | 33 coded master-data and execution-data checks with fix hints. Errors block planning. |
+| Readiness gate | `engine/scp/validate` | 37 coded master-data and execution-data checks with fix hints. Errors block planning. Unfinished records (a schema error, or a reference left empty) are set aside with a plain reason instead of rejecting the dataset (`lenient.py`), and a setup checklist says what is still missing, in setup order (`setup.py`). |
 | Network | `engine/scp/network` | Supply options per (location, product), low-level codes across BOM and transport edges, cycle detection. |
 | Supply planning | `engine/scp/plan` | Network MRP/DRP: forecast consumption by strategy, PIR splitting, safety stock (fixed / coverage / α / β), lot sizing (L4L / FIXED / EOQ / POQ / MIN_MAX + MOQ / rounding / max split), quota sourcing, working-day scheduling, firming fence, BOM explosion with scrap, capacity / supplier / lane load, pegging, delay propagation, exceptions, cost KPIs. |
 | Demand planning | `engine/scp/demand` | History to periods, cleansing (event baseline, robust outliers), ABC/XYZ and demand-pattern segmentation, a 12-model competition on a rolling backtest (MASE / WAPE / bias / value added), prediction ranges, events with measured lifts, NPI like-modelling with ramp and cannibalisation, consensus overrides, and release as forecast demand. Google TimesFM is an optional candidate model ([docs/TIMESFM.md](docs/TIMESFM.md)). |
 | Inventory optimisation | `engine/scp/inventory` | Demand and its variability flowed up the network (risk pooling), the single-echelon α baseline with lead-time variance, multi-echelon placement with the Graves–Willems guaranteed-service model solved exactly as a MILP (HiGHS), DDMRP buffer zones and net-flow position, and a pooling (square-root law) analysis. Recommendations reach the plan only after the planner approves them. |
 | S&OP | `engine/scp/sop` | A time-phased network LP over the same master data (HiGHS): production, purchases, transfers, stock, late and lost demand, overtime; limits on resource hours, overtime, suppliers, lanes, storage and shelf life; cost or profit mode; shadow prices with their validity ranges; demand and capacity scenario levers; release of the constrained volumes to MRP. |
-| Detailed scheduling | `engine/scp/schedule` | Finite sequencing of the MRP make orders inside a scheduling window, plus firm production orders, in clock time on each resource's shift windows (OEE, parallel units with sublots, queue times). Setups depend on sequence: a changeover matrix per resource, minor setups inside a setup group, and none for the same product. An EDD baseline is improved by campaign and insertion moves on a weighted tardiness + changeover objective, and an independent feasibility checker verifies every schedule. Planners can also give their own sequence. Labour pools are load-checked per day. |
+| Detailed scheduling | `engine/scp/schedule` | Finite sequencing of the MRP make orders inside a scheduling window, plus firm production orders, in clock time on each resource's shift windows (OEE, parallel units with sublots, queue times). Setups depend on sequence: a changeover matrix per resource, minor setups inside a setup group, and none for the same product. An EDD baseline is improved by campaign and insertion moves on a weighted tardiness + changeover objective, and an independent feasibility checker verifies every schedule. Planners can also give their own sequence. Steps wait for their parts along the pegging, and the schedule's dates can be written back as dated production orders. Labour pools are load-checked per day. |
 | Order promising | `engine/scp/promise` | aATP-style promising: cumulative ATP with look-ahead over stock, firm and (optionally) MRP planned receipts net of MRP dependent demand and earlier promises; complete or partial delivery with split schedule lines; total replenishment lead time with unconditional confirmation beyond it (or backorders); product allocations per period and customer group with next-period or reject fallback; alternative shipping locations; multi-level capable-to-promise through transfers, production (components and finite free capacity) and purchasing; persisted confirmations with at-risk detection; backorder processing by segment with Win / Gain / Redistribute / Fill / Lose and a gain/loss log. |
+| Purchasing | `engine/scp/purchasing` | Requisitions from the supply plan with every source's price (scales), arrival and lateness; purchase orders grouped by supplier, receiving place and currency, with an approval limit; approve, send, confirm (date and quantity, which planning then uses), receive against the supplier's tolerances, change and cancel; the order view with each line's status and a supplier scorecard from the closed-order log. |
 | Orders & actuals | `engine/scp/actuals` | A goods-movement journal (opening, receipt, component issue, sale, transfer issue, scrap, count adjustment) from which on-hand is derived; firm receipts that keep their original quantity and their reservations (production components, or a transfer's goods at its origin); firming of planned orders in a firm zone into production, purchase and stock-transfer orders; an idempotent roll-forward to a new planning start that reduces and closes orders, trims confirmations, drops elapsed forecast, appends sales to history and logs forecast vs actual per series-week; forecast accuracy (WMAPE, bias) and a closed-order log with due and delivery dates. |
 | Versions & scenarios | `engine/scp/versions` | An SQLite store (`$SCP_DB`, default `~/.scp/scp.sqlite`) of immutable base versions, each kept as canonical JSON with its SHA-256 (the database refuses updates to a base), and mutable scenario branches that can be saved, discarded or promoted into a new base, with an audit log; a dataset diff keyed by object identity down to the field; side-by-side MRP KPIs for any two versions or the working copy. |
 | Finance | `engine/scp/finance` | Plan cost by category, reconciled three ways (the KPI, Σ order costs and node holding, served + unabsorbed); cost to serve that follows the pegging upstream (an order's full cost includes its inputs, demand carries the pegged share, holding goes by quantity × days held, opening stock and firm receipts consumed at unit value) with revenue and margin by customer, region or product; inventory value per bucket, product type and location; capacity investment appraisal on the S&OP plan: the shadow-price estimate within its valid range, confirmed by a re-solve with the hours added, then annual cash, NPV, IRR and payback. |
 | Control tower | `engine/scp/tower` | The KPI set of the S/4 guide §18.2, each with its definition, source, numerator and denominator, a breakdown and a graded target: forecast accuracy and bias, confirmation on the requested date, OTIF to the confirmed and to the requested date, perfect order (its delivery part), supplier reliability, schedule adherence, days of supply, excess & obsolete, plan stability against the previous base version, exception ageing, and cost to serve. A KPI with no data says so and is not graded. One exception worklist from the supply plan, promising, overdue orders, forecast bias and stock with no demand, with owners from rules or by hand, an SLA per category, and a life cycle (open, acknowledged, resolved, cleared, reopened) kept in the version store and aged on the planning clock. Master-data defects go to a separate data-quality view. |
-| End-to-end proof | `engine/scp/scenarios` | Eight fictional companies worked out by hand and driven through the API from master data to the books: 212 checkpoints, each with its expected value, the engine's and the derivation, checked against independent oracles (closed forms, full enumeration, brute force, a second LP, hand ledgers). Run with `python -m scp.scenarios`, or in the app on the Proof page. See [docs/SCENARIOS.md](docs/SCENARIOS.md). |
-| API | `engine/scp/api` | `examples`, `schema`, `rules`, `validate`, `network`, `forecast`, `forecast/release`, `inventory`, `inventory/apply`, `sop`, `sop/release`, `plan`, `schedule`, `promise`, `promise/check`, `promise/bop`, `promise/commit`, `actuals`, `actuals/roll`, `orders/firm`, `versions` (list, save, get, save scenario, branch, discard, promote, compare), `compare`, `finance`, `tower`, `tower/items` (assign, acknowledge, resolve, note, history), `scenarios` (list, dataset, run) |
+| End-to-end proof | `engine/scp/scenarios` | Nine scenarios driven through the API from master data to the books, 251 checkpoints in all. Eight are fictional companies worked out by hand, each checkpoint with its expected value, the engine's and the derivation, checked against independent oracles (closed forms, full enumeration, brute force, a second LP, hand ledgers). The ninth runs the whole flow over randomly generated companies and holds each run to invariants, agreements between modules and metamorphic relations. Run with `python -m scp.scenarios`, or in the app on the Proof page. See [docs/SCENARIOS.md](docs/SCENARIOS.md). |
+| API | `engine/scp/api` | `examples`, `schema`, `rules`, `validate`, `network`, `forecast`, `forecast/release`, `inventory`, `inventory/apply`, `sop`, `sop/release`, `plan`, `schedule`, `promise`, `promise/check`, `promise/bop`, `promise/commit`, `actuals`, `actuals/roll`, `orders/firm`, `purchasing`, `purchasing/create`, `purchasing/act`, `versions` (list, save, get, save scenario, branch, discard, promote, compare), `compare`, `finance`, `tower`, `tower/items` (assign, acknowledge, resolve, note, history), `scenarios` (list, dataset, run) |
 | Web | `web/src` | The legacy app's brutalist design language (Mono / Noir / Sepia themes, numbered stages, a planning-spine freshness strip, provenance and "reading" boxes), a network map with product trace, schema-generated editors with undo/redo, readiness, the demand workspace (leaderboards, cleansing log, consensus grid, release), the inventory workspace (service-time placement chart, approve-to-apply recommendations, DDMRP zone bars, pooling), the S&OP workspace (demand vs constrained supply, capacity with the value of an hour, shadow prices, scenario pin-and-compare, release), the plan workspace (KPIs, stock/requirements, capacity, orders with a pegging tree), and the scheduling workspace (a planning board Gantt with shift windows, changeover hatching and late flags, click-to-follow orders and move them in the sequence, the setup-matrix editor, labour load), and the promising workspace (order book with schedule-line chips, the ATP picture per shipping location, a new-order check with the CTP chain as a timeline, the BOP segment cascade with its gain/loss log, allocation consumption), and the execution workspace (stock reconciliation against the journal, open orders with quick receive / ship posts, firming from the plan, the movement journal with a posting form, roll-forward with its report, forecast accuracy by series), and the finance workspace (cost reconciliation with the books-close check, cost to serve and margin with a cost-composition bar per customer, region or product, inventory value by product type over time, capacity options with dual vs re-solve, NPV, IRR, payback and cash flows), and the control tower (KPI cards graded against target with an icon and label, a drill-down per KPI with its definition and breakdown, the worklist with owner, age against SLA, acknowledge / resolve, notes and item history, ageing and owner summaries, the data-quality view, and the owner-rule, SLA and target settings), and the Proof page (the end-to-end scenarios by stage, run in the app, with every checkpoint's derivation and each scenario's starting data one click away), and the versions workspace (the version tree, save as base or scenario, open, branch, discard, promote, and a compare view with plan KPIs side by side and a field-level diff), with the working copy's version and unsaved state shown in the top bar. |
 
 ## How correctness is checked
@@ -64,7 +146,6 @@ cd scp/engine && python -m scp.scenarios s9-generated --seeds 500   # the genera
 - **One flow, many companies:** the whole workflow over randomly generated companies, each run held to invariants,
   agreements between modules and metamorphic relations (same company reordered or shifted in time, firm-and-replan,
   roll twice, post late) instead of hand-worked values.
-
 - **Types:** invalid values cannot be constructed. The API answers 422 and names the field.
 - **Readiness rules:** each rule has a test that makes it fire and a clean dataset that passes.
 - **Golden scenarios:** hand-computed MRP cases, covering netting, lot sizing, scrap, working days, fences,

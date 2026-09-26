@@ -12,12 +12,14 @@ dependencies = [
   "numpy>=1.26",
   "scipy>=1.12",
   "highspy>=1.7",
+  "ortools>=9.10",   # CP-SAT: the detailed-scheduling optimiser
   "fastapi>=0.110",
   "uvicorn[standard]>=0.29",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.6"]
+# httpx2 is what starlette's TestClient runs on; httpx is the client `python -m scp.scenarios --url` uses
+dev = ["pytest>=8", "httpx2>=2.0", "httpx>=0.27", "ruff>=0.6"]
 # Google's TimesFM foundation model as an optional forecast candidate (see scp/demand/foundation.py)
 timesfm = ["timesfm[torch]>=2.0"]
 

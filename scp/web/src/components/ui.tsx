@@ -1,3 +1,4 @@
+import { GLOSSARY } from "../lib/glossary";
 import { useState, type CSSProperties, type ReactNode } from "react";
 
 export type Severity = "error" | "warning" | "info" | "ok";
@@ -109,18 +110,39 @@ export function cols(template: string, extra?: CSSProperties): CSSProperties {
 
 // ---- legacy design language: stage header, section band, trust layer ----------------------------
 
-/** Numbered page header (legacy StageHeader): big yellow number, uppercase title, one-line kicker. */
-export function StageHeader({ n, title, kicker, right }: { n: string; title: string; kicker?: ReactNode; right?: ReactNode }) {
+/** Page header: the page's question in plain words, a one-line answer to "what is this", its actions, and
+ *  "How this is calculated" folded away for anyone who wants the method. (`n` was the old stage number.) */
+export function StageHeader({ title, kicker, answer, how, right }: {
+  n?: string; title: string; kicker?: ReactNode; answer?: ReactNode; how?: ReactNode; right?: ReactNode;
+}) {
   return (
     <header className="stage-head">
-      <div className="n" aria-hidden>{n}</div>
       <div className="grow">
         <h1 className="title">{title}</h1>
         {kicker && <div className="kicker">{kicker}</div>}
+        {answer && <p className="answer">{answer}</p>}
+        {how && <details className="how"><summary>How this is calculated</summary><div>{how}</div></details>}
       </div>
       {right && <div className="row wrap">{right}</div>}
     </header>
   );
+}
+
+/** Recalculate one page's result. "Plan everything" in the top bar does every page; this is for one. */
+export function RunButton({ running, has, onClick, disabled }: { running: boolean; has: boolean; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button className="btn" onClick={onClick} disabled={running || disabled}
+      title="Recalculate this page from the current data. Plan everything, top right, recalculates every page.">
+      {running ? "Calculating…" : has ? "Recalculate" : "Calculate"}
+    </button>
+  );
+}
+
+/** A term of art with its plain meaning on hover (see lib/glossary). */
+export function Term({ t, children }: { t: string; children?: ReactNode }) {
+  const def = GLOSSARY[t];
+  if (!def) return <>{children ?? t}</>;
+  return <abbr className="term" title={def}>{children ?? t}</abbr>;
 }
 
 /** Numbered section band inside a page (legacy StageSection). */
@@ -135,20 +157,20 @@ export function SectionBand({ step, title, right }: { step?: string | number; ti
   );
 }
 
-/** How a number is computed, and what it means for the planner (legacy Reading). */
+/** What a number means for the planner, in plain words, with the formula folded away for anyone who wants it. */
 export function Reading({ formula, soWhat }: { formula?: ReactNode; soWhat?: ReactNode }) {
   return (
     <div className="reading">
-      {formula && <div className="f">{formula}</div>}
       {soWhat && <div className="so">{soWhat}</div>}
+      {formula && <details className="f"><summary>How this is calculated</summary><div>{formula}</div></details>}
     </div>
   );
 }
 
 const PROV = {
-  input: { i: "⌨", label: "Input", title: "Entered by you or imported" },
-  derived: { i: "ƒ", label: "Derived", title: "Computed from other fields" },
-  solved: { i: "⚙", label: "Solved", title: "Output of an engine run" },
+  input: { i: "⌨", label: "Your data", title: "Entered by you or imported" },
+  derived: { i: "ƒ", label: "Calculated", title: "Calculated from your data" },
+  solved: { i: "⚙", label: "Calculated", title: "Calculated from your data by the planning engine" },
 } as const;
 
 /** Where a figure comes from, when, and whether its inputs changed since (legacy Provenance). */
@@ -157,8 +179,8 @@ export function Provenance({ kind, at, stale }: { kind: keyof typeof PROV; at?: 
   return (
     <span className={`prov ${kind} ${stale ? "stale" : ""}`} title={p.title}>
       <span className="i" aria-hidden>{p.i}</span>{p.label}
-      {at && <span className="when">· {at}</span>}
-      {stale && <span style={{ color: "var(--warning-text)" }}>· stale</span>}
+      {at && <span className="when">{at.slice(0, 5)}</span>}
+      {stale && <span style={{ color: "var(--warning-text)" }}>· out of date</span>}
     </span>
   );
 }
@@ -167,9 +189,9 @@ export function Provenance({ kind, at, stale }: { kind: keyof typeof PROV; at?: 
 export function StaleMark({ what, onRerun, busy }: { what: string; onRerun?: () => void; busy?: boolean }) {
   return (
     <div className="stale-mark" role="status">
-      <b>⚠ STALE</b>
-      <span className="spacer">Inputs changed since this {what} was computed. Re-run to trust these numbers.</span>
-      {onRerun && <button className="btn sm" onClick={onRerun} disabled={busy}>{busy ? "Running…" : "Re-run"}</button>}
+      <b>⚠ Out of date</b>
+      <span className="spacer">You changed the data after this {what} was calculated, so these numbers may be wrong.</span>
+      {onRerun && <button className="btn sm" onClick={onRerun} disabled={busy}>{busy ? "Calculating…" : "Recalculate now"}</button>}
     </div>
   );
 }
@@ -178,9 +200,9 @@ export function StaleMark({ what, onRerun, busy }: { what: string; onRerun?: () 
 export function SolverIO({ answers, from, feeds }: { answers: ReactNode; from: ReactNode; feeds: ReactNode }) {
   return (
     <div className="solver-io">
-      <div><div className="k">ANSWERS</div><div className="v">{answers}</div></div>
-      <div><div className="k">FROM</div><div className="v">{from}</div></div>
-      <div><div className="k">FEEDS →</div><div className="v feeds">{feeds}</div></div>
+      <div><div className="k">WHAT IT TELLS YOU</div><div className="v">{answers}</div></div>
+      <div><div className="k">WHAT IT USES</div><div className="v">{from}</div></div>
+      <div><div className="k">WHAT USES IT →</div><div className="v feeds">{feeds}</div></div>
     </div>
   );
 }

@@ -237,7 +237,7 @@ def _ddmrp(ds: Dataset, g: NetworkGraph, role: dict[Node, str], stock_up: dict[N
             orders[up].append((ship, d.qty * k))
     open_supply: dict[Node, float] = defaultdict(float)
     for r in ds.receipts:
-        open_supply[(r.location, r.product)] += r.qty
+        open_supply[(r.location, r.product)] += r.expected_qty
     rows: list[DdmrpRow] = []
     for n in g.order:
         if role[n] != "stocking":

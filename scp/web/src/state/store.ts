@@ -1,11 +1,12 @@
 // The client owns the planning dataset (one JSON document). Every edit goes through `update`,
 // which bumps the revision, records undo history, persists locally, and schedules a
 // re-validation against the engine. Every engine run (forecast, plan, …) remembers the revision it
-// was computed on, so the UI can show "stale" the moment any input changes — the legacy STALE
-// cascade, done by construction instead of by a dependency table.
+// was computed on, so the UI can show "stale" the moment any input it reads changes — the legacy STALE
+// cascade, done by construction: every result reads the whole dataset except the parts only the shop floor
+// schedule reads (its settings and the changeover matrix), which leave the other results fresh.
 import { useSyncExternalStore } from "react";
-import { api, SchemaRejected } from "../api/client";
-import type { ActualsView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
+import { api, SchemaRejected, setPlanningView } from "../api/client";
+import type { ActualsView, PurchasingView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
 
 export interface RunResults {
   forecast: ForecastResult;
@@ -15,6 +16,7 @@ export interface RunResults {
   schedule: ScheduleResult;
   promise: PromiseResult;
   actuals: ActualsView;
+  purchasing: PurchasingView;
   finance: FinanceResult;
   tower: TowerResult;
 }
@@ -41,6 +43,7 @@ export interface State {
   dataset: Dataset | null;
   version: WorkingVersion | null;
   revision: number;
+  touched: Record<string, number>;   // part of the dataset → the revision it last changed at (see isStale)
   validation: ValidationResult | null;
   schemaErrors: SchemaError[];
   network: NetworkView | null;
@@ -49,7 +52,23 @@ export interface State {
   engineError: string | null;
   canUndo: boolean;
   canRedo: boolean;
+  /** "Plan everything" in progress: which step of how many, and what it is doing now. */
+  planning: { done: number; of: number; label: string } | null;
 }
+
+/** What "Plan everything" calculates, in order. Every step only reads the dataset; none changes it. */
+export const PLAN_STEPS: { key: RunKey; label: string }[] = [
+  { key: "forecast", label: "Forecasting demand" },
+  { key: "plan", label: "Planning supply" },
+  { key: "promise", label: "Checking customer orders" },
+  { key: "inventory", label: "Sizing safety stock" },
+  { key: "sop", label: "Balancing capacity" },
+  { key: "schedule", label: "Sequencing the shop floor" },
+  { key: "purchasing", label: "Listing what to buy" },
+  { key: "actuals", label: "Reading actuals" },
+  { key: "finance", label: "Costing the plan" },
+  { key: "tower", label: "Measuring performance" },
+];
 
 const RUNNERS: { [K in RunKey]: (ds: Dataset) => Promise<RunResults[K]> } = {
   forecast: api.forecast,
@@ -59,6 +78,7 @@ const RUNNERS: { [K in RunKey]: (ds: Dataset) => Promise<RunResults[K]> } = {
   schedule: (ds) => api.schedule(ds),
   promise: api.promise,
   actuals: (ds) => api.actuals(ds),
+  purchasing: api.purchasing,
   finance: api.finance,
   tower: api.tower,
 };
@@ -68,16 +88,47 @@ const VERSION_KEY = "scp.version.v1";
 const HISTORY = 100;
 
 const emptyRun = <T>(): Run<T> => ({ data: null, revision: null, running: false, error: null, at: null });
-const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), inventory: emptyRun(), sop: emptyRun(), plan: emptyRun(), schedule: emptyRun(), promise: emptyRun(), actuals: emptyRun(), finance: emptyRun(), tower: emptyRun() });
+const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), inventory: emptyRun(), sop: emptyRun(), plan: emptyRun(), schedule: emptyRun(), promise: emptyRun(), actuals: emptyRun(), purchasing: emptyRun(), finance: emptyRun(), tower: emptyRun() });
 
 let state: State = {
-  dataset: null, version: null, revision: 0, validation: null, schemaErrors: [], network: null, runs: emptyRuns(),
-  checking: false, engineError: null, canUndo: false, canRedo: false,
+  dataset: null, version: null, revision: 0, touched: {}, validation: null, schemaErrors: [], network: null, runs: emptyRuns(),
+  checking: false, engineError: null, canUndo: false, canRedo: false, planning: null,
 };
 const listeners = new Set<() => void>();
 const past: Dataset[] = [];
 const future: Dataset[] = [];
 let timer: ReturnType<typeof setTimeout> | undefined;
+/** Revision the last data check answered for (validation and set-aside records are current at it). */
+let checkedRevision = -1;
+/** Unfinished records the last data check set aside, by collection, as their JSON text: matched by content, so
+ *  an edit elsewhere (which shifts row positions) never un-sets or wrongly sets aside a record. */
+let setAside: Map<string, Set<string>> = new Map();
+
+type Coll = Record<string, unknown[] | undefined>;
+
+setPlanningView((ds) => {
+  if (!setAside.size) return { clean: ds, restore: (x) => x };
+  const clean = { ...ds } as unknown as Coll;
+  const dropped: [string, unknown[]][] = [];
+  for (const [coll, texts] of setAside) {
+    const list = clean[coll];
+    if (!list) continue;
+    const out = list.filter((r) => !texts.has(JSON.stringify(r)));
+    if (out.length !== list.length) {
+      dropped.push([coll, list.filter((r) => texts.has(JSON.stringify(r)))]);
+      clean[coll] = out;
+    }
+  }
+  return {
+    clean: clean as unknown as Dataset,
+    restore: (next) => {
+      if (!dropped.length) return next;
+      const back = { ...next } as unknown as Coll;
+      for (const [coll, recs] of dropped) back[coll] = [...(back[coll] ?? []), ...recs];
+      return back as unknown as Dataset;
+    },
+  };
+});
 
 function set(patch: Partial<State>) {
   state = { ...state, ...patch, canUndo: past.length > 0, canRedo: future.length > 0 };
@@ -119,6 +170,15 @@ async function check() {
   try {
     const [validation, network] = await Promise.all([api.validate(ds), api.network(ds)]);
     if (rev !== state.revision) return; // superseded by a newer edit
+    const aside = new Map<string, Set<string>>();
+    for (const a of validation.set_aside ?? []) {
+      const rec = (ds as unknown as Coll)[a.collection]?.[a.index];
+      if (rec === undefined) continue;
+      if (!aside.has(a.collection)) aside.set(a.collection, new Set());
+      aside.get(a.collection)!.add(JSON.stringify(rec));
+    }
+    setAside = aside;
+    checkedRevision = rev;
     set({ validation, network, schemaErrors: [], engineError: null, checking: false });
   } catch (e) {
     if (rev !== state.revision) return;
@@ -127,13 +187,33 @@ async function check() {
   }
 }
 
+/** Parts of the dataset only the shop floor schedule reads (the day start hour is read by the plan and promising too). */
+const SCHEDULE_ONLY = new Set(["scheduling", "changeovers"]);
+
+/** The parts of the dataset an edit changed: top-level collections, with the day start hour on its own. */
+function changedParts(a: Dataset | null, b: Dataset): string[] {
+  if (!a) return ["*"];
+  const x = a as unknown as Record<string, unknown>, y = b as unknown as Record<string, unknown>;
+  const out = [...new Set([...Object.keys(x), ...Object.keys(y)])].filter((k) => x[k] !== y[k] && JSON.stringify(x[k]) !== JSON.stringify(y[k]));
+  if (a.scheduling?.day_start_hour !== b.scheduling?.day_start_hour) out.push("scheduling.day_start_hour");
+  return out;
+}
+
+/** Move to another dataset: bump the revision and note which parts changed at it. */
+function advance(next: Dataset) {
+  const rev = state.revision + 1;
+  const touched = { ...state.touched };
+  for (const k of changedParts(state.dataset, next)) touched[k] = rev;
+  set({ dataset: next, revision: rev, touched });
+}
+
 function commit(next: Dataset) {
   past.push(state.dataset!);
   if (past.length > HISTORY) past.shift();
   future.length = 0;
   persist(next);
   if (state.version) persistVersion(state.version, true);
-  set({ dataset: next, revision: state.revision + 1 });
+  advance(next);
   scheduleCheck();
 }
 
@@ -153,6 +233,7 @@ export const store = {
     const rev = state.revision + 1;
     const v = version ? { ...version, savedRevision: rev } : null;
     persistVersion(v, false);
+    setAside = new Map();
     set({ dataset: ds, version: v, revision: rev, runs: emptyRuns(), validation: null, network: null });
     scheduleCheck();
   },
@@ -165,6 +246,7 @@ export const store = {
   },
 
   clear() {
+    setAside = new Map();
     past.length = 0;
     future.length = 0;
     persist(null);
@@ -194,7 +276,7 @@ export const store = {
     if (!prev || !state.dataset) return;
     future.push(state.dataset);
     persist(prev);
-    set({ dataset: prev, revision: state.revision + 1 });
+    advance(prev);
     scheduleCheck();
   },
 
@@ -203,11 +285,14 @@ export const store = {
     if (!next || !state.dataset) return;
     past.push(state.dataset);
     persist(next);
-    set({ dataset: next, revision: state.revision + 1 });
+    advance(next);
     scheduleCheck();
   },
 
   async run<K extends RunKey>(key: K) {
+    if (!state.dataset) return;
+    // plan on what the data check has seen, so unfinished records are set aside and not sent to the engine
+    if (checkedRevision !== state.revision) { clearTimeout(timer); await check(); }
     const ds = state.dataset;
     if (!ds) return;
     const rev = state.revision;
@@ -221,6 +306,26 @@ export const store = {
         setRun(key, { running: false, error: "The dataset has invalid values." });
       } else setRun(key, { running: false, error: String(e) });
     }
+  },
+
+  /** "Plan everything": check the data, then calculate every result in order. Stops at the data check
+   *  when something blocks planning; nothing it does changes the dataset. */
+  async planAll() {
+    if (!state.dataset || state.planning) return;
+    const of = PLAN_STEPS.length + 1;
+    set({ planning: { done: 0, of, label: "Checking your data" } });
+    clearTimeout(timer);
+    await check();
+    if (!state.dataset || state.engineError || state.schemaErrors.length || !state.validation || state.validation.blocking) {
+      set({ planning: null });
+      return;
+    }
+    for (const [i, st] of PLAN_STEPS.entries()) {
+      if (!state.dataset) break;
+      set({ planning: { done: i + 1, of, label: st.label } });
+      await store.run(st.key);
+    }
+    set({ planning: null });
   },
 
   /** Store a result computed outside `run` (e.g. a schedule with a hand-edited sequence). */
@@ -251,8 +356,24 @@ export function useStore<T>(select: (s: State) => T): T {
   return useSyncExternalStore(store.subscribe, () => select(state));
 }
 
-/** A result exists but the dataset changed after it was computed. */
-export const isStale = (s: State, key: RunKey) => s.runs[key].data !== null && s.runs[key].revision !== s.revision;
+/** A result exists but a part of the dataset it reads changed after it was computed. */
+export function isStale(s: State, key: RunKey): boolean {
+  const run = s.runs[key];
+  if (run.data === null || run.revision === s.revision) return false;
+  const since = run.revision ?? -1;
+  return Object.entries(s.touched).some(([part, rev]) => rev > since && (key === "schedule" || !SCHEDULE_ONLY.has(part)));
+}
+
+/** Where a result stands: up to date, out of date (the data changed after it ran), or not calculated. */
+export type Freshness = "fresh" | "stale" | "none";
+export const freshness = (s: State, key: RunKey): Freshness => !s.runs[key].data ? "none" : isStale(s, key) ? "stale" : "fresh";
+
+/** The whole plan's state, for the top bar: "none" until something ran, "stale" when any result is out of date. */
+export function planFreshness(s: State): Freshness {
+  const f = PLAN_STEPS.map((p) => freshness(s, p.key));
+  if (f.every((x) => x === "none")) return "none";
+  return f.some((x) => x !== "fresh") ? "stale" : "fresh";
+}
 
 /** Stable empty values for selectors: a fresh `[]` per call would re-render forever. */
 export const NO_ISSUES: NonNullable<State["validation"]>["issues"] = [];

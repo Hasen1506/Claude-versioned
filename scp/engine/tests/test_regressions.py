@@ -15,7 +15,7 @@ from scp.model import Dataset, DemandRecord, InventorySettings
 from scp.network import build_graph
 from scp.plan import run_mrp
 from scp.plan.safety import SSInputs, statistical_ss
-from scp.promise import check_order
+from scp.promise import check_order, run_promise
 from scp.sop import release_sop, run_sop
 from scp.validate import blocks_demand, validate
 
@@ -450,3 +450,63 @@ def test_a_period_lot_is_not_duplicated_when_firmed():
     assert [(o.qty, o.start_in_past) for o in plan.orders if o.product == "A"] == [(500, True)]
     firmed, _ = firm_orders(ds(d), plan, None, 28)
     assert [o for o in run_mrp(firmed).orders if o.product == "A"] == []
+
+
+def _meridian(start: str = "2026-05-11") -> dict:
+    """A warehouse with 35 filters that buys more in 5 days and ships to a customer in 1 (an outside test's
+    Meridian Filters case after its roll-forward)."""
+    return {
+        "settings": {"company_name": "Meridian Filters", "currency": "USD", "planning_start": start,
+                     "horizon_days": 28, "bucket": "week", "default_calendar": "CAL-7"},
+        "calendars": [{"id": "CAL-7", "workdays": [0, 1, 2, 3, 4, 5, 6]}],
+        "locations": [{"id": "WH", "type": "warehouse"}, {"id": "SUP", "type": "supplier"},
+                      {"id": "CUST", "type": "customer"}],
+        "products": [{"id": "FILTER", "type": "FG", "price": 100}],
+        "location_products": [{"location": "WH", "product": "FILTER", "on_hand": 35}],
+        "purchasing_sources": [{"id": "PU", "supplier": "SUP", "product": "FILTER", "location": "WH", "price": 40,
+                                "lead_time_days": 5}],
+        "lanes": [{"id": "L-WC", "origin": "WH", "destination": "CUST", "modes": [{"transit_days": 1}]}],
+        "demand": [{"location": "CUST", "product": "FILTER", "date": day, "qty": 50}
+                   for day in ("2026-05-13", "2026-05-20", "2026-05-27")],
+    }
+
+
+def test_an_order_partly_covered_from_stock_is_late_only_for_the_rest():
+    """Outside test (Meridian Filters): 35 of a 50-unit transfer ship from stock, 15 wait for a purchase that lands
+    in 5 days. MRP called all 50 late, while promising the same demand confirms 35 on time and 15 late."""
+    d = _meridian()
+    r = run_mrp(Dataset.model_validate(d))
+    to = next(o for o in r.orders if o.kind == "transfer" and o.need_date == D("2026-05-13"))
+    assert (to.qty, to.projected_on_time_qty, to.projected_available_date) == (50, 35, D("2026-05-17"))
+    assert _node(r, "CUST", "FILTER").buckets[0].at_risk == pytest.approx(15)
+    assert [(e.qty, e.date) for e in r.exceptions if e.code == "DEMAND_AT_RISK"] == [(pytest.approx(15), D("2026-05-13"))]
+    assert r.kpis.on_time_fill_rate == pytest.approx(135 / 150)
+
+    d["demand"].append({"id": "SO-C", "kind": "sales_order", "location": "CUST", "product": "FILTER",
+                        "date": "2026-05-13", "qty": 50})
+    so = next(o for o in run_promise(Dataset.model_validate(d)).orders if o.order == "SO-C")
+    late = sum(ln.qty for ln in so.lines if not ln.on_time)
+    assert (so.on_time, late) == (pytest.approx(35), pytest.approx(15))
+    assert max(ln.date for ln in so.lines) == to.projected_available_date
+
+
+def test_an_order_is_as_ready_as_its_scarcest_input():
+    """A make order waits for the share of each component that is late: with 80 % of one component and 50 % of the
+    other on hand, half the order is on time and the rest waits for the later of the two purchases."""
+    d = _meridian()
+    d["locations"][0]["type"] = "plant"
+    d["products"] += [{"id": "A", "type": "RM"}, {"id": "B", "type": "RM"}]
+    d["location_products"] = [{"location": "WH", "product": "FILTER"},
+                              {"location": "WH", "product": "A", "on_hand": 40},
+                              {"location": "WH", "product": "B", "on_hand": 25}]
+    d["production_sources"] = [{"id": "PV", "location": "WH", "product": "FILTER", "fixed_lead_time_workdays": 1,
+                                "components": [{"product": "A", "qty": 1}, {"product": "B", "qty": 1}]}]
+    d["purchasing_sources"] = [
+        {"id": "PU-A", "supplier": "SUP", "product": "A", "location": "WH", "price": 1, "lead_time_days": 3},
+        {"id": "PU-B", "supplier": "SUP", "product": "B", "location": "WH", "price": 1, "lead_time_days": 6}]
+    d["demand"] = d["demand"][:1]
+    r = run_mrp(Dataset.model_validate(d))
+    mo = next(o for o in r.orders if o.kind == "make")
+    assert mo.projected_on_time_qty == pytest.approx(25)
+    assert (mo.projected_available_date, mo.delay_days) == (D("2026-05-18"), 6.0)  # B lands 17 May, 6 d after the 11 May start
+    assert _node(r, "CUST", "FILTER").buckets[0].at_risk == pytest.approx(25)

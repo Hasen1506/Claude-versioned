@@ -95,6 +95,14 @@ class MrpType(str, Enum):
     NONE = "none"                     # SAP ND — projected, never replenished
 
 
+class ProcurementType(str, Enum):
+    """Procurement type (S/4 MRP 2): which sources MRP may use."""
+
+    ANY = "any"            # SAP X: made here or got from outside
+    MAKE = "make"          # SAP E: in-house production only
+    EXTERNAL = "external"  # SAP F: bought, or transferred from another place
+
+
 class LotSizePolicy(str, Enum):
     L4L = "L4L"          # lot-for-lot (SAP EX)
     FIXED = "FIXED"      # fixed lot, repeated until covered (SAP FX)

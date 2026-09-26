@@ -21,6 +21,8 @@ from datetime import date, timedelta
 from ..model import Calendar, Dataset, LocationProduct, ProductionSource, TransportLane
 from ..network import SupplyOption
 from ..time import WorkCalendar
+from ..time.capacity import day_capacity
+from .structure import entering, needs, started_factor
 
 DEFAULT_CALENDAR = Calendar(id="SYS-MON-FRI", name="Mon–Fri", workdays=[0, 1, 2, 3, 4])
 
@@ -57,7 +59,7 @@ def _days(x: float) -> timedelta:
 @dataclass
 class OpWindow:
     seq: int
-    resource: str
+    resource: str | None     # None: done outside by a supplier
     labor_resource: str | None
     start: date          # first working day of the operation
     end: date            # exclusive
@@ -76,88 +78,196 @@ class Schedule:
 
 
 def started_qty(ps: ProductionSource, good_qty: float) -> float:
-    return good_qty / (1.0 - ps.assembly_scrap)
+    """Units an order starts to end with ``good_qty`` good ones (step scrap and whole-order scrap)."""
+    return good_qty * started_factor(ps)
 
 
-def _op_workdays(ds: Dataset, ps: ProductionSource, qty_started: float) -> list[tuple[int, float, float, float]]:
-    """(seq, duration in workdays, machine hours, labor hours) per operation."""
+def _op_workdays(ds: Dataset, ps: ProductionSource, good_qty: float) -> list[tuple[int, float, float, float]]:
+    """(seq, duration in workdays, machine hours, labor hours) per operation, each step sized for the units
+    entering it. A step done outside by a supplier takes its agreed working days and loads nothing here."""
+    enter = entering(ps)
     out = []
     for op in ps.operations:
-        res = ds.resource_by_id.get(op.resource)
-        hours = op.setup_hours + op.run_hours_per_unit * qty_started
+        q = good_qty * enter[op.seq]
+        if op.subcontract is not None:
+            out.append((op.seq, op.subcontract.workdays, 0.0, 0.0))
+            continue
+        res = ds.resource_by_id.get(op.resource or "")
+        hours = op.setup_hours + op.run_hours_per_unit * q
         units = min(op.parallel_units or res.units, res.units) if res else 1
         rate = res.hours_per_workday_per_unit * units if res else 8.0
-        out.append((op.seq, hours / rate if rate > 0 else 0.0, hours, op.labor_hours_per_unit * qty_started))
+        out.append((op.seq, hours / rate if rate > 0 else 0.0, hours, op.labor_hours_per_unit * q))
     return out
 
 
+def _shaped(ds: Dataset, rid: str | None) -> bool:
+    r = ds.resource_by_id.get(rid) if rid else None
+    return bool(r and (r.shifts or r.capacity_changes))
+
+
+def _span(ds: Dataset, op, d: float, hours: float, cal: WorkCalendar, day: date, forward: bool) -> int:
+    """Working days of ``cal`` an operation occupies, from ``day`` forward (or ending on ``day`` backward). A
+    resource with the same capacity every working day takes ceil(duration); one with named shifts or capacity
+    changes is walked day by day, so a shutdown week or a Saturday half shift lengthens or shortens the
+    operation where it falls."""
+    if op.subcontract is not None or not _shaped(ds, op.resource):
+        return math.ceil(d - 1e-9)
+    if hours <= 1e-9:
+        return 0
+    res = ds.resource_by_id[op.resource]
+    rcal = resource_calendar(ds, op.resource)
+    left, n, cur = hours, 0, day
+    for _ in range(3660):
+        if cal.is_workday(cur):
+            n += 1
+            dc = day_capacity(res, rcal, cur)
+            units = min(op.parallel_units or dc.units, dc.units)
+            left -= dc.clock_hours * dc.efficiency * units
+            if left <= 1e-9:
+                return n
+        cur += timedelta(days=1 if forward else -1)
+    return n
+
+
+def _margins(ds: Dataset, ps: ProductionSource) -> tuple[float, float]:
+    lp = ds.location_product_by_key.get((ps.location, ps.product))
+    return (lp.float_before_workdays, lp.float_after_workdays) if lp else (0.0, 0.0)
+
+
 def production_workdays(ds: Dataset, ps: ProductionSource, good_qty: float) -> float:
+    before, after = _margins(ds, ps)
     if ps.fixed_lead_time_workdays is not None:
-        return ps.fixed_lead_time_workdays
-    q = started_qty(ps, good_qty)
-    return sum(math.ceil(d - 1e-9) + op.queue_workdays
-               for (_, d, _, _), op in zip(_op_workdays(ds, ps, q), ps.operations, strict=True))
+        return ps.fixed_lead_time_workdays + before + after
+    durs = _op_workdays(ds, ps, good_qty)
+    days = [math.ceil(d - 1e-9) for _, d, _, _ in durs]
+    total = 0.0
+    for i, op in enumerate(ps.operations):
+        nxt = ps.operations[i + 1] if i + 1 < len(ps.operations) else None
+        if op.send_ahead_qty and nxt is not None:
+            # overlapped: the next step starts after the send-ahead batch; it still ends after this step
+            share = _share(op, good_qty, ps)
+            total += max(math.ceil(durs[i][1] * share - 1e-9), days[i] - days[i + 1]) + op.queue_workdays
+        else:
+            total += days[i] + op.queue_workdays
+    return total + before + after
+
+
+def _share(op, good_qty: float, ps: ProductionSource) -> float:
+    q = good_qty * entering(ps)[op.seq]
+    return min(1.0, op.send_ahead_qty / q) if op.send_ahead_qty and q > 0 else 1.0
+
+
+def _forward(ds: Dataset, ps: ProductionSource, good_qty: float, cal: WorkCalendar, st: date,
+             durs: list[tuple[int, float, float, float]]) -> tuple[list[OpWindow], date]:
+    """Operations one after the other from ``st``; an overlapped step lets the next one start once its
+    send-ahead batch (and the queue after it) is through, but the next one never ends before it does."""
+    windows: list[OpWindow] = []
+    cursor = st
+    prev: tuple | None = None    # (op, start, d)
+    for (seq, d, mh, lh), op in zip(durs, ps.operations, strict=True):
+        n = _span(ds, op, d, mh, cal, cal.next_workday(cursor), True)
+        op_start = cal.next_workday(cursor)
+        min_end = None
+        if prev is not None and prev[0].send_ahead_qty:
+            pop, pstart, pd = prev
+            share = _share(pop, good_qty, ps)
+            batch = cal.add_workdays(pstart, math.ceil(pd * share - 1e-9))
+            early = cal.add_workdays(cal.next_workday(batch), pop.queue_workdays) if pop.queue_workdays else batch
+            op_start = min(op_start, cal.next_workday(early))
+            n = _span(ds, op, d, mh, cal, op_start, True)
+            tail = math.ceil(d * share - 1e-9)
+            min_end = cal.add_workdays(cal.next_workday(cursor), tail - 1) + timedelta(days=1) if tail > 0 else cursor
+        op_end = cal.add_workdays(op_start, n - 1) + timedelta(days=1) if n > 0 else op_start
+        if min_end is not None and min_end > op_end:
+            op_end = min_end
+        windows.append(OpWindow(seq, op.resource, op.labor_resource, op_start, op_end, mh, lh))
+        cursor = cal.add_workdays(cal.next_workday(op_end), op.queue_workdays) if op.queue_workdays else op_end
+        prev = (op, op_start, d)
+    return windows, cursor
+
+
+def _backward(ds: Dataset, ps: ProductionSource, cal: WorkCalendar, due: date,
+              durs: list[tuple[int, float, float, float]]) -> list[OpWindow]:
+    windows: list[OpWindow] = []
+    cursor = due
+    ops_by_seq = {op.seq: op for op in ps.operations}
+    for (seq, d, mh, lh) in reversed(durs):
+        op = ops_by_seq[seq]
+        op_end = cal.add_workdays(cursor, -op.queue_workdays) if op.queue_workdays else cursor
+        n = _span(ds, op, d, mh, cal, cal.prev_workday(op_end - timedelta(days=1)), False)
+        op_start = cal.add_workdays(cal.prev_workday(op_end - timedelta(days=1)), -(n - 1)) if n > 0 else op_end
+        windows.append(OpWindow(seq, op.resource, op.labor_resource, op_start, op_end, mh, lh))
+        cursor = op_start
+    windows.reverse()
+    return windows
 
 
 def schedule_make(ds: Dataset, ps: ProductionSource, good_qty: float, *, available: date | None = None,
                   start: date | None = None) -> Schedule:
-    """Backward from ``available`` or forward from ``start`` (exactly one must be given)."""
+    """Backward from ``available`` or forward from ``start`` (exactly one must be given).
+
+    The order's start is its release: the scheduling margin's float before production comes first, then the
+    operations, then the float after production, then goods-receipt processing. Components are needed when
+    the step that consumes them starts."""
     cal = location_calendar(ds, ps.location)
     gr = gr_days(ds.location_product_by_key.get((ps.location, ps.product)))
-    q = started_qty(ps, good_qty)
-    durs = _op_workdays(ds, ps, q)
+    before, after = _margins(ds, ps)
+    durs = _op_workdays(ds, ps, good_qty)
     ops_by_seq = {op.seq: op for op in ps.operations}
     windows: list[OpWindow] = []
     if ps.fixed_lead_time_workdays is not None or not ps.operations:
-        lt = production_workdays(ds, ps, good_qty)
+        lt = ps.fixed_lead_time_workdays or 0.0
         if available is not None:
             due = available - _days(gr)
-            st = cal.add_workdays(cal.prev_workday(due), -lt) if lt > 0 else due
+            end = cal.add_workdays(due, -after) if after else due
+            prod = cal.add_workdays(cal.prev_workday(end), -lt) if lt > 0 else end
+            st = cal.add_workdays(prod, -before) if before else prod
         else:
             st = cal.next_workday(start)
-            due = cal.add_workdays(st, lt) if lt > 0 else st
+            prod = cal.add_workdays(st, before) if before else st
+            end = cal.add_workdays(prod, lt) if lt > 0 else prod
+            due = cal.add_workdays(end, after) if after else end
         # routing present but lead time fixed: spread operations evenly over the fixed window
         if ps.operations:
-            span = max(1, cal.workdays_between(st, due))
-            cur = st
+            span = max(1, cal.workdays_between(prod, end))
+            cur = prod
             per = span / len(ps.operations)
             for i, (seq, _, mh, lh) in enumerate(durs):
-                nxt = cal.add_workdays(st, round(per * (i + 1))) if i < len(durs) - 1 else due
+                nxt = cal.add_workdays(prod, round(per * (i + 1))) if i < len(durs) - 1 else end
                 op = ops_by_seq[seq]
                 windows.append(OpWindow(seq, op.resource, op.labor_resource, cur, max(nxt, cur), mh, lh))
                 cur = max(nxt, cur)
         return Schedule(st, due, due + _days(gr), windows,
-                        component_dates=_component_dates(ps, windows, st))
+                        component_dates=_component_dates(ds, ps, windows, prod))
+    overlapped = any(op.send_ahead_qty for op in ps.operations[:-1])
     if available is not None:
         due = available - _days(gr)
-        cursor = due
-        for (seq, d, mh, lh) in reversed(durs):
-            op = ops_by_seq[seq]
-            op_end = cal.add_workdays(cursor, -op.queue_workdays) if op.queue_workdays else cursor
-            n = math.ceil(d - 1e-9)
-            op_start = cal.add_workdays(cal.prev_workday(op_end - timedelta(days=1)), -(n - 1)) if n > 0 else op_end
-            windows.append(OpWindow(seq, op.resource, op.labor_resource, op_start, op_end, mh, lh))
-            cursor = op_start
-        windows.reverse()
-        st = windows[0].start
+        end = cal.add_workdays(due, -after) if after else due
+        windows = _backward(ds, ps, cal, end, durs)
+        if overlapped:
+            # overlap only shortens: from the plain backward start, move later while the order still ends in time
+            st0 = windows[0].start
+            for _ in range(400):
+                nxt = cal.add_workdays(st0, 1)
+                w2, e2 = _forward(ds, ps, good_qty, cal, nxt, durs)
+                if e2 > end:
+                    break
+                st0 = nxt
+            windows, _ = _forward(ds, ps, good_qty, cal, st0, durs)
+        prod = windows[0].start
+        st = cal.add_workdays(prod, -before) if before else prod
     else:
         st = cal.next_workday(start)
-        cursor = st
-        for (seq, d, mh, lh) in durs:
-            op = ops_by_seq[seq]
-            n = math.ceil(d - 1e-9)
-            op_start = cal.next_workday(cursor)
-            op_end = cal.add_workdays(op_start, n - 1) + timedelta(days=1) if n > 0 else op_start
-            windows.append(OpWindow(seq, op.resource, op.labor_resource, op_start, op_end, mh, lh))
-            cursor = cal.add_workdays(cal.next_workday(op_end), op.queue_workdays) if op.queue_workdays else op_end
-        due = cursor
-    return Schedule(st, due, due + _days(gr), windows, component_dates=_component_dates(ps, windows, st))
+        prod = cal.add_workdays(st, before) if before else st
+        windows, end = _forward(ds, ps, good_qty, cal, prod, durs)
+        due = cal.add_workdays(cal.next_workday(end), after) if after else end
+    return Schedule(st, due, due + _days(gr), windows, component_dates=_component_dates(ds, ps, windows, prod))
 
 
-def _component_dates(ps: ProductionSource, windows: list[OpWindow], start: date) -> dict[str, date]:
+def _component_dates(ds: Dataset, ps: ProductionSource, windows: list[OpWindow], start: date) -> dict[str, date]:
     by_seq = {w.seq: w.start for w in windows}
     first = windows[0].start if windows else start
-    return {c.product: by_seq.get(c.operation, first) if c.operation else first for c in ps.components}
+    return {n.product: by_seq.get(n.operation, first) if n.operation else first for n in needs(ds, ps)}
 
 
 def schedule_buy(ds: Dataset, src_id: str, *, available: date | None = None, start: date | None = None) -> Schedule:

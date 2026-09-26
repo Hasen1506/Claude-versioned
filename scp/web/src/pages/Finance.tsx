@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { CapacityAppraisal, Dataset, FinanceResult, ServeRow } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs,
+  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
 } from "../components/ui";
 import { money, pct, qty, unitMoney } from "../lib/format";
 import { go } from "../lib/router";
@@ -34,18 +34,20 @@ export function Finance({ route }: { route: string[] }) {
   const cur = ds.settings.currency;
 
   const head = (
-    <StageHeader n="10" title="Finance" kicker={<>The plan in money. Every plan cost is traced to the demand it serves along the
-      pegging, with what no demand absorbs kept separate, so the books close category by category. Inventory is valued
-      bucket by bucket, and capacity investments are appraised on the S&OP plan: shadow prices first, confirmed by a re-solve, then NPV.</>} right={<>
+    <StageHeader title="Money" kicker="What the plan costs, what each customer and product earns, what the stock is worth, and whether extra capacity would pay."
+      how={<>Every cost in the supply plan is traced to the demand it serves along the <Term t="Pegging">pegging</Term>; what no demand
+        absorbs is kept separate, so the totals reconcile category by category. Stock is valued week by week. Capacity investments
+        are appraised on the capacity plan: <Term t="Shadow price">shadow prices</Term> first, confirmed by solving again with the
+        extra capacity, then <Term t="NPV" />.</>}
+      answer={res?.reconciliation && moneyAnswer(res, cur, ds.settings.horizon_days)}
+      right={<>
       {res && <Provenance kind="derived" at={run.at} stale={stale} />}
-      <button className="btn accent" onClick={() => store.run("finance")} disabled={run.running}>
-        {run.running ? "Costing…" : res ? "Re-cost" : "Cost the plan"}
-      </button></>} />
+      <RunButton running={run.running} has={!!res} onClick={() => store.run("finance")} /></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   const nav = (
     <Tabs<View> value={view} onChange={(v) => go("finance", v)} tabs={[
-      { id: "overview", label: "Cost reconciliation" },
+      { id: "overview", label: "Summary" },
       { id: "serve", label: "Cost to serve & margin", count: res?.serve.length },
       { id: "inventory", label: "Inventory value", count: res?.inventory?.locations.length },
       { id: "capacity", label: "Capacity investments", count: ds.finance?.capacity_options?.length ?? 0 },
@@ -76,6 +78,14 @@ export function Finance({ route }: { route: string[] }) {
   </>);
 }
 
+function moneyAnswer(res: FinanceResult, cur: string, days: number) {
+  const revenue = res.serve.reduce((a, r) => a + r.revenue, 0);
+  const margin = res.serve.reduce((a, r) => a + r.margin, 0);
+  return <>The plan costs {money(res.reconciliation!.total_plan, cur)} over {days} days.{revenue > 0
+    ? <> The demand it serves brings in {money(revenue, cur)}, leaving a margin of {money(margin, cur)} ({pct(margin / revenue, 0)}).</>
+    : <> Set selling prices on products to see revenue and margin.</>}</>;
+}
+
 // ------------------------------------------------------------------------------------------------
 function Overview({ res, cur, ds }: { res: FinanceResult; cur: string; ds: Dataset }) {
   const rec = res.reconciliation!;
@@ -93,11 +103,11 @@ function Overview({ res, cur, ds }: { res: FinanceResult; cur: string; ds: Datas
         <StatTile label="Serves demand" value={money(rec.total_served, cur)} sub={`${pct(rec.total_plan ? rec.total_served / rec.total_plan : 0, 1)} of plan cost`} />
         <StatTile label="Unabsorbed" value={money(rec.total_unabsorbed, cur)} sub="no demand pegged to it" />
         <StatTile label="Revenue served" value={money(revenue, cur)} sub={`${res.serve.length} demand points`} />
-        <StatTile label="Margin" value={money(margin, cur)} sub={revenue > 0 ? `${pct(margin / revenue, 1)} of revenue` : "no prices set"} tone="hl" />
+        <StatTile label="Margin" value={money(margin, cur)} sub={revenue > 0 ? `${pct(margin / revenue, 1)} of revenue` : "no prices set"} />
         <StatTile label="Avg inventory value" value={money(inv.avg, cur)} sub={turns !== null ? `${turns.toFixed(1)} turns a year` : "—"} />
       </div>
       {rec.reconciled
-        ? <div className="banner ok"><Badge sev="ok">Books close</Badge>Every category: plan KPI = Σ sources = served + unabsorbed, to rounding.</div>
+        ? <div className="banner ok"><Badge sev="ok">Books balance</Badge>Every cost in the plan is accounted for, either against the demand it serves or as unabsorbed.</div>
         : <div className="banner error"><Badge sev="error">Does not reconcile</Badge>A category's allocation differs from the plan. This is an engine defect: report it with the dataset.</div>}
       <div className="grid-2" style={{ alignItems: "start" }}>
         <Panel flush title="Cost reconciliation">
@@ -199,7 +209,7 @@ function Serve({ res, cur }: { res: FinanceResult; cur: string }) {
       <div className="grid-auto">
         <StatTile label="Revenue served" value={money(revenue, cur)} />
         <StatTile label="Cost to serve" value={money(groups.reduce((a, g) => a + g.total, 0), cur)} sub="plan cost + stock & firm consumed" />
-        <StatTile label="Margin" value={money(margin, cur)} sub={revenue > 0 ? pct(margin / revenue, 1) : "—"} tone="hl" />
+        <StatTile label="Margin" value={money(margin, cur)} sub={revenue > 0 ? pct(margin / revenue, 1) : "—"} />
         {worst && <StatTile label={`Thinnest ${by}`} value={worst.key} sub={worst.revenue > 0 ? `margin ${pct(worst.margin / worst.revenue, 1)}` : "no revenue"} />}
       </div>
       <SectionBand title="Cost to serve and margin" right={
@@ -340,7 +350,7 @@ function OptionDetail({ o, cur }: { o: CapacityAppraisal; cur: string }) {
         <StatTile label="Dual vs re-solve" value={Math.abs(o.dual_estimate - o.objective_saving) <= 1e-6 * Math.max(1, Math.abs(o.objective_saving)) ? "agree" : "differ"}
           sub={o.within_range ? "hours inside the valid range" : "hours beyond the valid range"} />
         <StatTile label="Fill rate" value={`${pct(o.fill_rate_before, 1)} → ${pct(o.fill_rate_after, 1)}`} sub="S&OP, before → after" />
-        <StatTile label="NPV" value={money(o.npv, cur)} tone={o.npv > 0 ? "hl" : undefined} sub={o.irr !== null ? `IRR ${pct(o.irr, 1)}` : undefined} />
+        <StatTile label="NPV" value={money(o.npv, cur)} sub={o.irr !== null ? `IRR ${pct(o.irr, 1)}` : undefined} />
       </div>
       <Panel title="Net cash flow by year (year 0 = the investment)">
         <BucketChart labels={o.cash_flows.map((_, y) => `Year ${y}`)} format={(v) => money(v, cur)} height={200}

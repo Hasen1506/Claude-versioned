@@ -1,8 +1,9 @@
 """Firming (S/4 conversion of planned orders): planned orders become firm receipts that MRP keeps.
 
 A make order becomes a production order that reserves its components; a transfer becomes a stock
-transport order that reserves the goods at its origin until they are issued; a buy becomes a purchase
-order. Re-planning after firming everything therefore reproduces the same projection with no new orders.
+transport order that reserves the goods at its origin until they are issued; a buy becomes a one-line purchase
+order with its order document (priced from the source's price scales, unapproved above the approval limit), so
+Buying can approve, send, confirm and receive it. Re-planning after firming everything therefore reproduces the same projection with no new orders.
 """
 from __future__ import annotations
 
@@ -10,7 +11,8 @@ import re
 from collections import defaultdict
 from datetime import timedelta
 
-from ..model import Dataset, LocationType, ReceiptKind, Reservation, ScheduledReceipt
+from ..model import Dataset, LocationType, PurchaseOrder, ReceiptKind, Reservation, ScheduledReceipt
+from ..plan.costing import fx
 from ..plan import PlanResult
 from .result import FirmedOrder, FirmReport
 
@@ -20,7 +22,7 @@ PREFIX = {"make": ("PRD", ReceiptKind.PRODUCTION), "buy": ("PO", ReceiptKind.PUR
 
 def _next_numbers(ds: Dataset) -> dict[str, int]:
     out: dict[str, int] = defaultdict(int)
-    for oid in [r.id for r in ds.receipts] + [c.id for c in ds.closed_orders]:
+    for oid in [r.id for r in ds.receipts] + [c.id for c in ds.closed_orders] + [p.id for p in ds.purchase_orders]:
         m = re.fullmatch(r"(PRD|PO|STO)-(\d+)", oid)
         if m:
             out[m.group(1)] = max(out[m.group(1)], int(m.group(2)))
@@ -41,6 +43,7 @@ def firm_orders(ds: Dataset, plan: PlanResult, ids: list[str] | None = None,
             reqs[rq.parent_order].append(rq)
     num = _next_numbers(ds)
     receipts = list(ds.receipts)
+    headers = list(ds.purchase_orders)
     for o in plan.orders:
         if wanted is not None:
             if o.id not in wanted:
@@ -57,9 +60,19 @@ def firm_orders(ds: Dataset, plan: PlanResult, ids: list[str] | None = None,
         num[prefix] += 1
         rid = f"{prefix}-{num[prefix]:05d}"
         rvs = [Reservation(location=r.location, product=r.product, date=r.date, qty=r.qty) for r in reqs.get(o.id, [])]
+        po = price = None
+        if kind is ReceiptKind.PURCHASE:
+            pu = ds.purchasing_source_by_id[o.source_id]
+            price = pu.price_for(o.qty)
+            limit = ds.purchasing.approval_limit
+            po = rid
+            headers.append(PurchaseOrder(id=rid, supplier=pu.supplier, location=o.location,
+                                         order_date=ds.settings.planning_start, currency=pu.currency,
+                                         approved=limit is None or o.qty * price * fx(ds, pu.currency) <= limit))
         receipts.append(ScheduledReceipt(id=rid, kind=kind, location=o.location, product=o.product, qty=o.qty,
                                          due_date=o.due_date, start_date=o.start_date, source=o.source_id,
-                                         reservations=rvs))
+                                         reservations=rvs, step_resources=dict(o.step_resources), po=po,
+                                         price=price))
         rep.firmed.append(FirmedOrder(planned_id=o.id, receipt_id=rid, kind=kind.value, location=o.location,
                                       product=o.product, qty=o.qty, start_date=o.start_date, due_date=o.due_date,
                                       reservations=len(rvs)))
@@ -67,4 +80,4 @@ def firm_orders(ds: Dataset, plan: PlanResult, ids: list[str] | None = None,
         for oid in sorted(wanted - {f.planned_id for f in rep.firmed} - set(rep.skipped)):
             rep.skipped[oid] = "not in the current plan (re-run supply planning)"
     rep.ok = True
-    return ds.model_copy(update={"receipts": receipts}), rep
+    return ds.model_copy(update={"receipts": receipts, "purchase_orders": headers}), rep

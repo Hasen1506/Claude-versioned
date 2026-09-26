@@ -7,7 +7,6 @@ from ..model.common import Out
 from ..validate import Issue
 
 PLAN_COSTS = ("purchase", "production", "setup", "ordering", "transport", "handling", "holding")
-VALUE_COSTS = ("stock", "firm")   # opening stock and firm receipts consumed, at unit value (already committed)
 
 
 class CostLine(Out):

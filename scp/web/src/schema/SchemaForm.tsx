@@ -26,7 +26,7 @@ export function deref(schema: JsonSchema, node: JsonSchemaNode): JsonSchemaNode 
 }
 
 /** Unwrap `anyOf: [X, null]` → X, remembering that null is allowed. */
-function unwrap(schema: JsonSchema, node: JsonSchemaNode): { node: JsonSchemaNode; nullable: boolean } {
+export function unwrap(schema: JsonSchema, node: JsonSchemaNode): { node: JsonSchemaNode; nullable: boolean } {
   if (node.anyOf) {
     const nonNull = node.anyOf.filter((n) => n.type !== "null");
     const nullable = nonNull.length < node.anyOf.length;
@@ -50,8 +50,47 @@ const ACRONYM: Record<string, string> = {
   lon: "Longitude", qty: "quantity", cv: "CV",
 };
 
+/** Fields whose name alone reads badly. */
+const TITLE: Record<string, string> = {
+  float_before_workdays: "Float before production (working days)", float_after_workdays: "Float after production (working days)",
+  mrp_controller: "MRP controller (who plans it)", procurement: "Procurement type", phantom: "Phantom assembly",
+  send_ahead_qty: "Overlap: send ahead quantity", co_products: "Co-products and by-products", capacity_changes: "Capacity changes",
+  fixed_qty: "Fixed quantity per run", change: "Engineering change", subcontract: "Done outside by a supplier",
+  alternatives: "Alternative machines", break_minutes: "Break (minutes)", cost_share: "Share of the run's cost",
+  capacity_constrained: "Plan within machine capacity", wait_for_parts: "Wait for parts", step_resources: "Steps on an alternative machine",
+  scheduled: "Dated by the shop floor schedule",
+  capacity_direction: "When a day is full, first try", capacity_max_early_days: "Build at most this many days ahead",
+  earliness_weight: "Weight: an hour early", makespan_weight: "Weight: an hour to clear the window", start_rule: "Start rule",
+  optimizer: "Use the optimiser (constraint solver)", backward_buffer_days: "Backward: buffer before the due date (days)",
+  frozen_days: "Frozen zone (days)", profile: "Scheduling profile", hold: "Not before",
+  price_scales: "Price scales (quantity breaks)", from_qty: "From quantity", fixed: "Fixed source (planning uses it first)",
+  blocked: "Blocked", vendor_material: "Supplier's part number", payment_terms_days: "Payment terms (days)",
+  confirmation_required: "Supplier confirms each order", confirmation_days: "Confirmation expected within (days)",
+  over_delivery_tolerance: "Over-delivery allowed", under_delivery_tolerance: "Short delivery that still closes the line",
+  min_order_value: "Minimum order value", approval_limit: "Orders above this need approval",
+  release_window_days: "Show as due to order within (days)", sent_on: "Sent on", vendor_reference: "Supplier's confirmation number",
+  po: "Purchase order", confirmed_date: "Confirmed delivery date", confirmed_qty: "Confirmed quantity",
+  block_reason: "Why blocked", incoterms: "Delivery terms (Incoterms)",
+};
+
+/** Plain words for enum values; the stored value stays the code. */
+const ENUM_LABEL: Record<string, string> = {
+  any: "Made here or got from outside", make: "Made here only (in-house)", external: "Bought or shipped in only (external)",
+  deterministic: "Plan to requirements (PD)", reorder_point: "Reorder point (VB)", none: "None",
+  MTS: "Make to stock, orders don't consume the forecast (10)", MTS_CONSUME: "Make to stock, orders consume the forecast (40)",
+  MTO: "Make to order (20)", ATO: "Assemble to order (50)",
+  L4L: "Lot for lot: exactly what is needed", FIXED: "Fixed lot size", EOQ: "Economic order quantity",
+  POQ: "Cover a number of periods", MIN_MAX: "Replenish up to the maximum stock",
+  fixed: "A fixed quantity", days_of_supply: "Days of cover", service_level: "Service level (chance of no stockout)",
+  fill_rate: "Fill rate (share of demand served from stock)",
+  earlier: "Start earlier (build ahead)", later: "Finish later (delay)",
+  edd: "Earliest due date first", spt: "Shortest job first", slack: "Least slack first",
+  campaign: "Campaigns by setup group", backward: "Backward from the due date (just in time)",
+};
+
 /** Sentence-case label from a field name: `gr_processing_days` → "GR processing days". */
 export function humanize(name: string): string {
+  if (TITLE[name]) return TITLE[name];
   const words = name.split("_").map((w) => ACRONYM[w] ?? w);
   const out = words.join(" ");
   return out.charAt(0).toUpperCase() + out.slice(1);
@@ -107,17 +146,21 @@ function refOptions(ds: Dataset | null, kind: string): { id: string; label: stri
 }
 
 // ------------------------------------------------------------------------------------------------
-export function SchemaForm({ defName, value, onChange, errors = {}, path = "", hide = [], compact }: {
+export function SchemaForm({ defName, value, onChange, errors = {}, path = "", hide = [], only, compact }: {
   defName: string; value: Obj; onChange: (next: Obj) => void; errors?: FieldErrors; path?: string;
   hide?: string[]; compact?: boolean;
+  /** Show only these fields, in this order (a tab of a larger record). */
+  only?: string[];
 }) {
   const schema = useSchema();
   if (!schema) return <div className="faint small">Loading form…</div>;
   const def = schema.$defs[defName];
   if (!def) return <div className="faint">Unknown object type {defName}</div>;
+  const props = def.properties ?? {};
+  const entries = only ? only.filter((k) => k in props).map((k) => [k, props[k]] as const) : Object.entries(props);
   return (
     <div className={compact ? "form compact" : "form"}>
-      {Object.entries(def.properties ?? {}).filter(([k]) => !hide.includes(k)).map(([key, raw]) => (
+      {entries.filter(([k]) => !hide.includes(k)).map(([key, raw]) => (
         <FieldFor key={key} schema={schema} name={key} raw={raw} required={!!def.required?.includes(key)}
           value={value[key]} errors={errors} path={path ? `${path}.${key}` : key}
           onChange={(v) => {
@@ -230,7 +273,7 @@ function Widget({ id, name, node, nullable, value, onChange, currency, invalid }
       <select id={id} className="select" value={(value as string) ?? ""}
         onChange={(e) => onChange(e.target.value === "" ? (nullable ? null : undefined) : e.target.value)}>
         {nullable && <option value="">—</option>}
-        {node.enum.map((v) => <option key={v} value={v}>{v}</option>)}
+        {node.enum.map((v) => <option key={v} value={v}>{ENUM_LABEL[v] ?? v}</option>)}
       </select>
     );
   }

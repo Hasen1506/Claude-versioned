@@ -11,7 +11,7 @@ from ..validate import Issue
 
 OrderKind = Literal["make", "buy", "transfer"]
 ReqKind = Literal["forecast", "sales_order", "dependent", "transfer"]
-SupplyKind = Literal["on_hand", "receipt", "order"]
+SupplyKind = Literal["on_hand", "receipt", "co_product", "order"]
 
 
 class Peg(Out):
@@ -54,11 +54,15 @@ class PlannedOrder(Out):
     costs: dict[str, float] = {}  # total_cost by category (purchase, production, setup, ordering, transport, handling)
     shipments: int | None = None
     delay_days: float = 0.0       # projected lateness vs need incl. upstream delays; −1 = an input is uncovered
-    projected_available_date: dt.date | None = None
+    projected_available_date: dt.date | None = None  # when all of it is projected available
+    projected_on_time_qty: float | None = None       # how much is projected available by the need date
     lot_excess: float = 0.0       # quantity not pegged to any requirement by the end of the horizon
     # why the order is this size, as planned: qty = for requirements + for_buffer + for_lot_size
     for_buffer: float = 0.0       # raises projected stock to the safety stock, stock target or reorder point
     for_lot_size: float = 0.0     # beyond the shortage: the lot-size rule, minimums and rounding
+    # capacity-constrained planning: workdays moved to fit (negative = earlier) and steps on an alternative machine
+    capacity_shift_days: int = 0
+    step_resources: dict[int, str] = {}
 
 
 class ScheduledReceiptOut(Out):
@@ -119,12 +123,21 @@ class ResourceBucket(Out):
     utilization: float
 
 
+class OrderLoad(Out):
+    order: str                       # planned order or released production order
+    product: str
+    firm: bool
+    hours: dict[dt.date, float]      # by working day (work before today on day 0)
+
+
 class ResourcePlan(Out):
     resource: str
     location: str
     kind: str
     finite: bool
     buckets: list[ResourceBucket]
+    daily_load: dict[dt.date, float] = Field(default_factory=dict)   # hours by working day (work before today on day 0)
+    orders: list[OrderLoad] = Field(default_factory=list)             # what makes up the load
 
 
 class PlanException(Out):

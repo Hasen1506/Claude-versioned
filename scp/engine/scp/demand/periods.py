@@ -24,12 +24,6 @@ def next_start(start: date, period: ForecastPeriod) -> date:
     return date(start.year + 1, 1, 1) if start.month == 12 else date(start.year, start.month + 1, 1)
 
 
-def prev_start(start: date, period: ForecastPeriod) -> date:
-    if period is ForecastPeriod.WEEK:
-        return start - timedelta(days=7)
-    return date(start.year - 1, 12, 1) if start.month == 1 else date(start.year, start.month - 1, 1)
-
-
 def label(start: date, period: ForecastPeriod) -> str:
     if period is ForecastPeriod.WEEK:
         return f"W{start.isocalendar().week:02d} {start.strftime('%d %b %Y')}"

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api/client";
+import { api, RUN_TIMEOUT_MS } from "../api/client";
 import type { ScenarioCheck, ScenarioInfo, ScenarioReport, ScenarioStep } from "../api/types";
 import { Badge, Empty, Panel, SectionBand, SevIcon, StageHeader, StatTile } from "../components/ui";
 import { go, href, type Route } from "../lib/router";
@@ -29,6 +29,10 @@ export function show(v: unknown, depth = 0): string {
 
 const stagesOf = (step: ScenarioStep) => step.stage.split("+");
 
+const WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve"];
+const word = (n: number) => WORDS[n] ?? String(n);
+const clock = (s: number) => (s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`);
+
 function perStage(r: ScenarioReport | undefined) {
   const out: Record<string, { passed: number; failed: number }> = {};
   for (const s of r?.steps ?? [])
@@ -44,11 +48,21 @@ export function Proof({ route }: { route: Route }) {
   const [infos, setInfos] = useState<ScenarioInfo[] | null>(null);
   const [reports, setReports] = useState<Record<string, ScenarioReport>>(() => ({ ...cache }));
   const [running, setRunning] = useState<string | null>(null);
+  const [started, setStarted] = useState(0);
+  const [now, setNow] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => { api.scenarios().then(setInfos).catch((e) => setErr(String(e))); }, []);
+  // a run answers only when it is done, so show how long it has been going
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [running]);
 
   const run = async (id: string) => {
     setRunning(id);
+    setStarted(Date.now());
+    setNow(Date.now());
     setErr(null);
     try {
       const r = await api.runScenario(id);
@@ -69,25 +83,41 @@ export function Proof({ route }: { route: Route }) {
   const done = infos.filter((s) => reports[s.id]);
   const passed = done.reduce((a, s) => a + reports[s.id].passed, 0);
   const failed = done.reduce((a, s) => a + reports[s.id].failed, 0);
-  const covered = new Set(infos.flatMap((s) => s.stages));
+  const declared = new Set(infos.flatMap((s) => s.stages));
+  const proven = new Set(done.filter((s) => reports[s.id].ok).flatMap((s) => s.stages));
+  const count = (set: Set<string>) => STAGES.filter((s) => set.has(s.id)).length;
   const caught = infos.reduce((a, s) => a + (s.found?.length ?? 0), 0);
+  const generated = infos.filter((s) => s.generated).length;
+  const byHand = infos.length - generated;
+  const elapsed = running ? clock(Math.max(0, Math.round((now - started) / 1000))) : "";
+  const current = infos.find((s) => s.id === running);
+  const name = current ? (current.generated ? current.title : current.company) : running;
+  const last = running ? cache[running]?.seconds : undefined;
 
   return (
     <div>
-      <StageHeader n="QED" title="Proof" kicker={<>Eight fictional companies, each worked out by hand before the engine ran. Every
+      <StageHeader n="QED" title="Proof" kicker={<>{word(byHand)} fictional companies, each worked out by hand before the engine ran: every
         checkpoint sets the engine's answer beside one derived independently (a closed form, a full enumeration, a brute-force
-        search or a second solver) with the arithmetic in between. Runs use a private in-memory store: your data is never touched.</>}
+        search or a second solver) with the arithmetic in between.{generated > 0 && <> {generated === 1 ? "One more runs" : `${word(generated)} more run`} the
+        same flow over generated companies and {generated === 1 ? "checks" : "check"} what must hold for any plan.</>} Runs use a private
+        in-memory store: your data is never touched.</>}
         right={<>
           {done.length > 0 && (failed ? <Badge sev="error">{failed} failed</Badge> : <Badge sev="ok">{passed} checkpoints hold</Badge>)}
-          <button className="btn accent" disabled={!!running} onClick={runAll}>{running ? `Running ${running}…` : `Run all ${infos.length}`}</button>
+          <button className="btn accent" disabled={!!running} onClick={runAll}>{running ? `Running ${name}… ${elapsed}` : `Run all ${infos.length}`}</button>
         </>} />
       <div className="content stack">
         {err && <div className="banner error">{err}</div>}
+        {running && <div className="banner info" role="status">
+          <span><b>{name}</b> has been running for {elapsed}.{last !== undefined && <> Its last run here took {clock(Math.round(last))}.</>}
+            {current?.generated && <> It plans and checks many generated companies, so it takes the longest.</>} The engine answers once the whole run is
+            done; the page waits up to {Math.round(RUN_TIMEOUT_MS / 60_000)} minutes before it gives up.</span>
+        </div>}
         <div className="grid-auto">
-          <StatTile label="Scenarios" value={infos.length} sub="companies, end to end" />
+          <StatTile label="Scenarios" value={infos.length} sub={generated ? `${byHand} worked by hand · ${generated} generated` : "companies, end to end"} />
           <StatTile label="Checkpoints" value={done.length ? `${passed}/${passed + failed}` : "—"}
-            sub={done.length ? `${done.length} of ${infos.length} scenarios run` : "run to verify"} tone={done.length === infos.length && !failed ? "hl" : undefined} />
-          <StatTile label="Stages covered" value={`${STAGES.filter((s) => covered.has(s.id)).length}/${STAGES.length}`} sub="plus versions" />
+            sub={done.length ? `${done.length} of ${infos.length} scenarios run` : "run to verify"} tone={failed ? "hl" : undefined} />
+          <StatTile label="Stages proven" value={done.length ? `${count(proven)}/${STAGES.length}` : "—"}
+            sub={done.length ? `by the passing runs · ${count(declared)} in the suite` : `${count(declared)} in the suite · run to prove`} />
           <StatTile label="Defects caught" value={caught} sub="each fixed, each with a regression test" />
         </div>
 
@@ -123,7 +153,7 @@ export function Proof({ route }: { route: Route }) {
                         );
                       })}
                       <td className="num">
-                        {running === s.id ? <span className="faint">running…</span>
+                        {running === s.id ? <span className="faint">running… {elapsed}</span>
                           : r ? <Badge sev={r.ok ? "ok" : "error"}>{r.passed}/{r.passed + r.failed}</Badge>
                           : <button className="btn sm" disabled={!!running} onClick={(e) => { e.stopPropagation(); run(s.id); }}>Run</button>}
                       </td>
@@ -136,14 +166,14 @@ export function Proof({ route }: { route: Route }) {
         </Panel>
 
         <Scenario info={selected} n={infos.indexOf(selected) + 1} report={reports[selected.id]}
-          running={running === selected.id} busy={!!running} onRun={() => run(selected.id)} />
+          running={running === selected.id ? elapsed : null} busy={!!running} onRun={() => run(selected.id)} />
       </div>
     </div>
   );
 }
 
 function Scenario({ info, n, report, running, busy, onRun }: {
-  info: ScenarioInfo; n: number; report?: ScenarioReport; running: boolean; busy: boolean; onRun: () => void;
+  info: ScenarioInfo; n: number; report?: ScenarioReport; running: string | null; busy: boolean; onRun: () => void;
 }) {
   const open = useStore((s) => s.dataset);
   const [only, setOnly] = useState(false);
@@ -151,13 +181,14 @@ function Scenario({ info, n, report, running, busy, onRun }: {
     if (open && !window.confirm(`Replace the open dataset with ${info.company}'s starting data? Export it first if you want to keep it.`)) return;
     store.load(await api.scenarioDataset(info.id));
     go(info.stages.find((s) => stageById[s]) ?? "network");
+    void store.planAll();
   };
   const steps = report?.steps.filter((s) => !only || s.error || s.checks.some((c) => !c.passed)) ?? [];
   return (
     <>
       <SectionBand step={`S${n}`} title={`${info.company} · ${info.title}`} right={<div className="row wrap">
         <button className="btn" onClick={openData} title="Load this scenario's starting dataset and follow the workflow yourself">Open starting data</button>
-        <button className="btn primary" disabled={busy} onClick={onRun}>{running ? "Running…" : report ? "Run again" : "Run"}</button>
+        <button className="btn primary" disabled={busy} onClick={onRun}>{running !== null ? `Running… ${running}` : report ? "Run again" : "Run"}</button>
       </div>} />
       <p className="story">{info.story}</p>
       <div className="grid-2">
@@ -175,7 +206,7 @@ function Scenario({ info, n, report, running, busy, onRun }: {
         <Panel><Empty title="Not run yet">
           <p className="muted">Run it to see every step: the API call it makes, what should happen and why, and each checkpoint's
             hand-derived value beside the engine's.</p>
-          <button className="btn accent" disabled={busy} onClick={onRun}>{running ? "Running…" : "Run this scenario"}</button>
+          <button className="btn accent" disabled={busy} onClick={onRun}>{running !== null ? `Running… ${running}` : "Run this scenario"}</button>
         </Empty></Panel>
       ) : (
         <>

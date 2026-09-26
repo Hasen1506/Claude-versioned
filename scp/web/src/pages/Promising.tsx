@@ -3,10 +3,10 @@ import { api } from "../api/client";
 import type { AtpNode, CtpStep, Dataset, DemandRecord, OrderPromise, PromiseResult, ScheduleLine } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, useTooltip,
-  type Severity,
+  Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, useTooltip, type Severity, RunButton, Term,
 } from "../components/ui";
-import { day, money, pct, qty } from "../lib/format";
+import { day, money, pct, plural, qty } from "../lib/format";
+import { Loc, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -52,15 +52,19 @@ export function Promising({ route }: { route: string[] }) {
   };
 
   const head = (
-    <StageHeader n="08" title="Order promising" kicker={<>What can be promised to each sales order, from where and when: cumulative ATP
-      over stock and receipts, delivery rules, replenishment lead time, product allocation, alternative shipping locations, and
-      capable-to-promise through transfers, production and purchasing. Backorder processing re-prioritises after a shortage.</>} right={<>
+    <StageHeader title="Customer orders" kicker="What you can promise each customer order, how much, from where and when. Check a new order before you accept it."
+      how={<>Each order is checked against <Term t="ATP" /> (stock and incoming supply not yet promised), in priority order, with its
+        delivery rules, product allocations and alternative shipping locations. What stock can't cover is checked for <Term t="CTP" />:
+        could it be moved, made or bought in time? Beyond the <Term t="RLT">replenishment lead time</Term> anything can be promised.
+        {" "}<Term t="BOP" /> re-decides who gets scarce stock after a shortage.</>}
+      answer={res?.kpis && (res.kpis.orders ? <>{res.kpis.on_time_orders === res.kpis.orders ? "All" : res.kpis.on_time_orders} of {plural(res.kpis.orders, "customer order")} can
+        ship in full on the date asked.{res.kpis.unconfirmed_qty > 0.5 && <> {qty(Math.round(res.kpis.unconfirmed_qty))} units worth {money(res.kpis.value_unconfirmed, res.currency)} can't be confirmed yet.</>}
+        {res.kpis.at_risk_orders > 0 && <> {plural(res.kpis.at_risk_orders, "earlier promise")} {res.kpis.at_risk_orders === 1 ? "is" : "are"} now at risk.</>}</> : <>There are no open customer orders.</>)}
+      right={<>
       {res && <Provenance kind="solved" at={run.at} stale={stale} />}
       {res?.ok && <button className="btn" onClick={() => commitPromises("entry")} disabled={busy || stale}
-        title={stale ? "Re-check first" : "Persist every schedule line as a confirmation"}>Commit promises</button>}
-      <button className="btn accent" onClick={() => store.run("promise")} disabled={run.running || blocking}>
-        {run.running ? "Checking…" : res ? "Re-check" : "Check orders"}
-      </button></>} />
+        title={stale ? "Recalculate first" : "Saves every promised date and quantity on the orders in your data, so later checks keep them. Undo reverts it."}>Save these promised dates</button>}
+      <RunButton running={run.running} has={!!res} onClick={() => store.run("promise")} disabled={blocking} /></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   const banners = <>
@@ -119,9 +123,10 @@ function Nav({ view, res }: { view: View; res: PromiseResult | null }) {
 
 // ------------------------------------------------------------------------------------------------
 function LineChip({ l }: { l: ScheduleLine }) {
+  const from = useNames().loc(l.ship_from);
   return (
-    <span className="chip" title={`ships ${l.ship_date} from ${l.ship_from} · delivers ${l.date}`}>
-      <b>{qty(l.qty)}</b>&nbsp;{day(l.date)}&nbsp;<span className="faint">{l.ship_from}</span>
+    <span className="chip" title={`ships ${day(l.ship_date)} from ${from} · delivers ${day(l.date)}`}>
+      <b>{qty(l.qty)}</b>&nbsp;{day(l.date)}&nbsp;<span className="faint">{from}</span>
       {l.method !== "atp" && <>&nbsp;<Badge sev={l.method === "ctp" ? "info" : "warning"}>{l.method.toUpperCase()}</Badge></>}
       {!l.on_time && <>&nbsp;<span style={{ color: "var(--warning-text)" }}>late</span></>}
     </span>
@@ -132,7 +137,7 @@ function Kpis({ res }: { res: PromiseResult }) {
   const k = res.kpis;
   return (
     <div className="grid-auto">
-      <StatTile label="Orders on time" value={`${k.on_time_orders} / ${k.orders}`} sub={`${pct(k.qty ? k.on_time_qty / k.qty : 1)} of the quantity on the requested date`} tone={k.on_time_orders === k.orders ? "hl" : undefined} />
+      <StatTile label="Orders on time" value={`${k.on_time_orders} / ${k.orders}`} sub={`${pct(k.qty ? k.on_time_qty / k.qty : 1)} of the quantity on the requested date`} tone={k.on_time_orders < k.orders ? "hl" : undefined} />
       <StatTile label="Confirmed" value={pct(k.qty ? k.confirmed_qty / k.qty : 1)} sub={`${qty(k.confirmed_qty)} of ${qty(k.qty)} units`} />
       <StatTile label="Unconfirmed" value={qty(k.unconfirmed_qty)} sub={`${money(k.value_unconfirmed, res.currency)} of sales on backorder`} />
       <StatTile label="Beyond RLT" value={qty(k.rlt_lines)} sub="lines confirmed without supply behind them" />
@@ -143,6 +148,7 @@ function Kpis({ res }: { res: PromiseResult }) {
 }
 
 function Orders({ res, sel }: { res: PromiseResult; sel?: string }) {
+  const n = useNames();
   const [filter, setFilter] = useState<"all" | "issues">("all");
   const rows = res.orders.filter((o) => filter === "all" || o.status !== "on_time" || o.at_risk);
   const cur = res.orders.find((o) => o.order === sel);
@@ -164,7 +170,7 @@ function Orders({ res, sel }: { res: PromiseResult; sel?: string }) {
                 return (
                   <tr key={o.order} className={`clickable ${o.order === sel ? "selected" : ""}`} onClick={() => go("promise", "orders", o.order === sel ? undefined : o.order)}>
                     <td><b>{o.order}</b>{o.complete_delivery && <div className="faint small">complete delivery</div>}</td>
-                    <td>{o.location}</td><td>{o.product}</td><td className="num">{o.priority}</td><td className="num">{qty(o.qty)}</td>
+                    <td title={o.location}>{n.loc(o.location)}</td><td title={o.product}>{n.prod(o.product)}</td><td className="num">{o.priority}</td><td className="num">{qty(o.qty)}</td>
                     <td>{day(o.requested)}</td>
                     <td><Badge sev={sev}>{label}</Badge> {o.at_risk && <Badge sev="error">at risk</Badge>}
                       {CHANGE[o.change] && o.change !== "new" && <> <Badge sev={CHANGE[o.change]}>{o.change}</Badge></>}</td>
@@ -271,7 +277,7 @@ function Atp({ res, sel }: { res: PromiseResult; sel?: string }) {
             <tbody>
               {res.nodes.map((x) => (
                 <tr key={key(x)} className={`clickable ${key(x) === key(cur) ? "selected" : ""}`} onClick={() => go("promise", "atp", key(x))}>
-                  <td><b>{x.product}</b><div className="faint small">{x.location}</div></td>
+                  <td><b><Prod id={x.product} /></b><div className="faint small"><Loc id={x.location} /></div></td>
                   <td className="num">{x.shortage_date ? <Badge sev="error">short</Badge> : <span className="muted">{qty(x.available[0] ?? 0)}</span>}</td>
                 </tr>
               ))}
@@ -363,7 +369,7 @@ function Simulate({ ds }: { ds: Dataset }) {
         {!c ? <Panel><Empty title="Enter an order and check it">The answer shows what can ship on the requested date, when the rest follows, and — when ATP falls short — the
           capable-to-promise chain behind a quoted date.</Empty></Panel> : <>
           <div className="grid-auto">
-            <StatTile label="Answer" value={STATUS[c.status][1]} sub={`${qty(c.on_time)} on ${day(c.requested)}`} tone={c.status === "on_time" ? "hl" : undefined} />
+            <StatTile label="Answer" value={STATUS[c.status][1]} sub={`${qty(c.on_time)} on ${day(c.requested)}`} tone={c.status === "on_time" ? undefined : "hl"} />
             <StatTile label="Confirmed" value={qty(c.confirmed)} sub={c.unconfirmed > 1e-6 ? `${qty(c.unconfirmed)} cannot be promised` : "full quantity"} />
             <StatTile label="Last delivery" value={c.lines.length ? day(c.lines[c.lines.length - 1].date) : "—"} sub={c.lines.length > 1 ? `${c.lines.length} schedule lines` : "one line"} />
             {c.allocation_capped > 0 && <StatTile label="Allocation withheld" value={qty(c.allocation_capped)} sub="on the requested date" />}
@@ -403,7 +409,7 @@ function Bop({ ds, busy, onCommit }: { ds: Dataset; busy: boolean; onCommit: () 
         feeds="New confirmations (on commit) and the list of customers to call." />
       <Panel title="Segment cascade — processed top to bottom, earlier segments claim supply first" actions={
         <div className="row"><a className="btn sm ghost" href={href("promise", "settings")}>Edit segments</a>
-          <button className="btn sm accent" onClick={simulate} disabled={running}>{running ? "Simulating…" : "Simulate BOP"}</button></div>}>
+          <button className="btn sm accent" onClick={simulate} disabled={running}>{running ? "Working…" : "Re-decide who gets scarce stock"}</button></div>}>
         <div className="row wrap">
           <span className="chip">orders no segment selects · keep their confirmations</span>
           {segs.map((s, i) => (
@@ -420,7 +426,7 @@ function Bop({ ds, busy, onCommit }: { ds: Dataset; busy: boolean; onCommit: () 
           <StatTile label="Lost" value={qty(cur.bop.filter((b) => b.outcome === "lost").length)} sub="orders to call" />
           <StatTile label="On time after BOP" value={`${cur.kpis.on_time_orders} / ${cur.kpis.orders}`} sub={pct(cur.kpis.qty ? cur.kpis.on_time_qty / cur.kpis.qty : 1)} />
         </div>
-        <Panel flush title="Gain / loss log" actions={<button className="btn sm accent" onClick={onCommit} disabled={busy}>Commit BOP result</button>}>
+        <Panel flush title="Gain / loss log" actions={<button className="btn sm accent" onClick={onCommit} disabled={busy} title="Saves the new promised dates on the orders in your data. Undo reverts it.">Save these new promised dates</button>}>
           <div className="table-wrap" style={{ maxHeight: 520 }}>
             <table className="t nowrap">
               <thead><tr><th>Order</th><th>Customer</th><th>Product</th><th className="num">Prio</th><th>Segment</th><th>Strategy</th>
@@ -428,7 +434,7 @@ function Bop({ ds, busy, onCommit }: { ds: Dataset; busy: boolean; onCommit: () 
               <tbody>
                 {cur.bop.map((b) => (
                   <tr key={b.order} className="clickable" onClick={() => go("promise", "orders", b.order)}>
-                    <td><b>{b.order}</b></td><td>{b.location}</td><td>{b.product}</td><td className="num">{b.priority}</td>
+                    <td><b>{b.order}</b></td><td><Loc id={b.location} /></td><td><Prod id={b.product} /></td><td className="num">{b.priority}</td>
                     <td>{b.segment ?? <span className="faint">—</span>}</td><td>{b.strategy ?? <span className="faint">keep</span>}</td>
                     <td className="num">{qty(b.before_on_time)} → <b>{qty(b.after_on_time)}</b></td>
                     <td className="num">{qty(b.before_confirmed)} → <b>{qty(b.after_confirmed)}</b></td>
@@ -459,7 +465,7 @@ function Allocations({ res }: { res: PromiseResult }) {
           <tbody>
             {res.allocations.map((a) => (
               <tr key={a.id}>
-                <td><b>{a.id}</b></td><td>{a.product}</td><td>{a.customers.join(", ") || "all"}</td><td>{day(a.start)} – {day(a.end)}</td>
+                <td><b>{a.id}</b></td><td><Prod id={a.product} /></td><td>{a.customers.join(", ") || "all"}</td><td>{day(a.start)} – {day(a.end)}</td>
                 <td><div className="row"><div className="bar-track" style={{ flex: 1, minWidth: 90 }}><div className="bar-fill" style={{ width: `${Math.min(100, (a.used / Math.max(a.qty, 1e-9)) * 100)}%`,
                   background: a.used >= a.qty - 1e-6 ? "var(--warning)" : "var(--series-1)" }} /></div><span className="num small">{qty(a.used)} / {qty(a.qty)}</span></div></td>
                 <td className="num">{qty(Math.max(0, a.qty - a.used))}</td><td>{a.fallback === "next_period" ? "next period" : "reject the rest"}</td>

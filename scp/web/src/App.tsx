@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api/client";
 import type { Dataset, ExampleInfo } from "./api/types";
 import { Badge, Empty, ThemeSwitch } from "./components/ui";
-import { pct } from "./lib/format";
+import { setPlanYear } from "./lib/format";
 import { href, go, useRoute } from "./lib/router";
-import { STAGES, stageById } from "./lib/stages";
-import { COLLECTIONS, items } from "./model/collections";
+import { NAV, navItemFor, type NavItem } from "./lib/nav";
 import { Demand } from "./pages/Demand";
+import { Buying } from "./pages/Buying";
 import { Execution } from "./pages/Execution";
 import { Finance } from "./pages/Finance";
+import { Home, markVisited } from "./pages/Home";
 import { Tower } from "./pages/Tower";
 import { Versions } from "./pages/Versions";
 import { Inventory } from "./pages/Inventory";
@@ -16,16 +17,30 @@ import { Promising } from "./pages/Promising";
 import { Proof } from "./pages/Proof";
 import { Schedule } from "./pages/Schedule";
 import { Sop } from "./pages/Sop";
-import { DATA_GROUPS, MasterData } from "./pages/MasterData";
+import { MasterData } from "./pages/MasterData";
 import { Network } from "./pages/Network";
 import { Plan } from "./pages/Plan";
 import { Readiness } from "./pages/Readiness";
-import { isModified, isStale, store, useStore, NO_ISSUES, type RunKey } from "./state/store";
+import { Setup } from "./pages/Setup";
+import { Material } from "./pages/Material";
+import { Machines } from "./pages/Machines";
+import { Capacity } from "./pages/Capacity";
+import { freshness, isModified, planFreshness, store, useStore, NO_ISSUES } from "./state/store";
+
+/** Open a dataset and calculate everything, so no page opens empty. */
+function openAndPlan(ds: Dataset) {
+  store.load(ds);
+  go("home");
+  void store.planAll();
+}
 
 export function App() {
   const route = useRoute();
   const ds = useStore((s) => s.dataset);
-  useEffect(() => store.restore(), []);
+  useEffect(() => {
+    store.restore();
+    if (store.get().dataset) void store.planAll();
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
@@ -38,24 +53,36 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const page = route[0] ?? "network";
+  setPlanYear(ds?.settings.planning_start);   // idempotent: dates print their year only outside the planning year
+  const page = route[0] || "home";
+  useEffect(() => { if (ds) markVisited(page); }, [page, ds]);
+  const item = ds ? navItemFor(page) : undefined;
+  const [navOpen, setNavOpen] = useState(false);   // phones: the rail opens over the page from the Menu button
+  useEffect(() => setNavOpen(false), [route.join("/")]);
   return (
-    <div className="app">
-      <TopBar />
-      {/* without a dataset the spine row stays empty but must still span both columns, or the page lands in the rail */}
-      {ds ? <Spine page={page} /> : <div style={{ gridColumn: "1 / -1" }} />}
-      {ds ? <Sidebar page={page} sub={route[1]} ds={ds} /> : (
-        <nav className="sidebar" aria-label="Main">
-          <div className="nav-section">Start</div>
-          <a className={`nav-item ${page !== "proof" ? "active" : ""}`} href="#/">Open a network</a>
-          <a className={`nav-item ${page === "proof" ? "active" : ""}`} href={href("proof")}><span className="n">✓</span>Proof</a>
+    <div className={`app ${navOpen ? "nav-open" : ""}`}>
+      <TopBar navOpen={navOpen} onNav={() => setNavOpen((o) => !o)} />
+      {navOpen && <div className="nav-scrim" onClick={() => setNavOpen(false)} aria-hidden />}
+      {ds ? <Rail page={page} /> : (
+        <nav className="rail" id="main-nav" aria-label="Main">
+          <div className="rail-group">
+            <a className={`rail-item ${page !== "proof" ? "active" : ""}`} href="#/">Start</a>
+            <a className={`rail-item ${page === "proof" ? "active" : ""}`} href={href("proof")}>Proof</a>
+          </div>
         </nav>
       )}
       <main className="main">
+        {item?.tabs && <SectionTabs item={item} page={page} />}
         {page === "proof" ? <Proof route={route} />
-          : !ds ? <div className="content"><Welcome /></div> : page === "data" ? <MasterData route={route} />
+          : !ds ? <div className="content"><Welcome /></div>
+          : page === "data" ? <MasterData route={route} />
           : page === "settings" ? <MasterData route={["data", "settings"]} />
           : page === "readiness" ? <Readiness />
+          : page === "setup" ? <Setup route={route} />
+          : page === "material" ? <Material route={route} />
+          : page === "machines" ? <Machines route={route} />
+          : page === "capacity" ? <Capacity route={route} />
+          : page === "network" ? <Network route={route} />
           : page === "demand" ? <Demand route={route} />
           : page === "inventory" ? <Inventory route={route} />
           : page === "sop" ? <Sop route={route} />
@@ -63,16 +90,55 @@ export function App() {
           : page === "schedule" ? <Schedule route={route} />
           : page === "promise" ? <Promising route={route} />
           : page === "execution" ? <Execution route={route} />
+          : page === "buying" ? <Buying route={route} />
           : page === "finance" ? <Finance route={route} />
           : page === "tower" ? <Tower route={route} />
           : page === "versions" ? <Versions />
-          : <Network route={route} />}
+          : <div className="content"><Home ds={ds} /></div>}
       </main>
     </div>
   );
 }
 
-function TopBar() {
+/** The one button that calculates everything. Yellow only when something needs calculating. */
+function PlanButton() {
+  const planning = useStore((s) => s.planning);
+  const f = useStore(planFreshness);
+  const blocked = useStore((s) => !!s.validation?.blocking || s.schemaErrors.length > 0);
+  // nothing worth calculating yet: no places, or the checklist still has things to do (e.g. no demand at all)
+  const empty = useStore((s) => !s.dataset?.locations?.length || (s.validation?.setup ?? []).some((i) => i.status === "todo"));
+  if (planning) {
+    return <button className="btn plan-btn" disabled aria-live="polite">
+      <span className="spin" aria-hidden />Planning… {planning.done + 1}/{planning.of}</button>;
+  }
+  return (
+    <button className={`btn plan-btn ${f !== "fresh" && !blocked && !empty ? "accent" : ""}`} onClick={() => store.planAll()}
+      title={blocked ? "Fix the data problems first (Setup → Data check)" : empty ? "Your company isn't fully set up yet: see the Data check" : "Calculate every result from the current data. Your data is not changed."}>
+      {f === "stale" ? "Plan everything again" : "Plan everything"}
+    </button>
+  );
+}
+
+function Menu({ children, label }: { children: React.ReactNode; label: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const off = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", off);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", off); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  return (
+    <div className="menu-wrap" ref={ref}>
+      <button className="btn ghost icon-btn" aria-label={label} aria-expanded={open} title={label} onClick={() => setOpen(!open)}>⋯</button>
+      {open && <div className="menu" role="menu" onClick={(e) => { if ((e.target as HTMLElement).closest("[data-close]")) setOpen(false); }}>{children}</div>}
+    </div>
+  );
+}
+
+function TopBar({ navOpen, onNav }: { navOpen: boolean; onNav: () => void }) {
   const ds = useStore((s) => s.dataset);
   const canUndo = useStore((s) => s.canUndo);
   const canRedo = useStore((s) => s.canRedo);
@@ -94,30 +160,40 @@ function TopBar() {
 
   return (
     <header className="topbar">
-      <div className="brand"><span className="brand-mark">S</span>SCP</div>
+      <button className="btn ghost nav-toggle" aria-expanded={navOpen} aria-controls="main-nav" onClick={onNav}>{navOpen ? "✕ Close" : "☰ Menu"}</button>
+      <a className="brand" href={ds ? href("home") : "#/"} aria-label="Home"><span className="brand-mark">S</span><span className="brand-name">SCP</span></a>
       {ds && <span className="company" title={ds.settings.company_name}>{ds.settings.company_name}</span>}
-      {ds && <a className="version-chip" href={href("versions")} title="Versions & scenarios">
-        {version ? <><b>{version.id}</b> {version.kind} · {version.name}</> : <>unsaved working copy</>}
-        {version && modified && <span className="mod"> · modified</span>}</a>}
-      {ds && engineError && <Badge sev="error">Engine unreachable</Badge>}
+      {ds && <a className="version-chip" href={href("versions")} title="Versions and what-ifs: save, branch and compare">
+        {version ? <>{version.name} · {version.kind}{modified && <span className="mod"> · unsaved changes</span>}</> : <>working copy, not saved</>}</a>}
+      {ds && engineError && <Badge sev="error">Engine not answering</Badge>}
       {ds && !engineError && schemaBad && <a href={href("readiness")}><Badge sev="error">Invalid values</Badge></a>}
       <span className="spacer" />
-      <ThemeSwitch />
       {ds && <>
+        <PlanButton />
         <button className="btn ghost icon-btn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!canUndo} onClick={() => store.undo()}>↶</button>
         <button className="btn ghost icon-btn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled={!canRedo} onClick={() => store.redo()}>↷</button>
-        <button className="btn" onClick={() => file.current?.click()}>Import</button>
-        <button className="btn" onClick={exportJson}>Export</button>
-        <button className="btn ghost" onClick={() => { if (window.confirm("Close this dataset? Export it first if you want to keep it.")) { store.clear(); go(); } }}>Close</button>
       </>}
-      {!ds && <button className="btn" onClick={() => file.current?.click()}>Import JSON</button>}
+      {!ds && <button className="btn" onClick={() => file.current?.click()}>Import a file</button>}
+      <Menu label="More">
+        {ds && <>
+          <button role="menuitem" data-close onClick={() => file.current?.click()}>Import a dataset file…</button>
+          <button role="menuitem" data-close onClick={exportJson}>Export this dataset</button>
+          <a role="menuitem" data-close href={href("versions")}>Versions and what-ifs</a>
+          <a role="menuitem" data-close href={href("proof")}>Proof: check the numbers</a>
+          <hr />
+        </>}
+        <div className="menu-row"><span>Theme</span><ThemeSwitch /></div>
+        {ds && <>
+          <hr />
+          <button role="menuitem" data-close onClick={() => { if (window.confirm("Close this dataset? Export it first if you want to keep it.")) { store.clear(); go(); } }}>Close dataset</button>
+        </>}
+      </Menu>
       <input ref={file} type="file" accept="application/json,.json" hidden onChange={async (e) => {
         const f = e.target.files?.[0];
         e.target.value = "";
         if (!f) return;
         try {
-          store.load(JSON.parse(await f.text()) as Dataset);
-          go("network");
+          openAndPlan(JSON.parse(await f.text()) as Dataset);
         } catch {
           window.alert("That file is not valid JSON.");
         }
@@ -126,122 +202,59 @@ function TopBar() {
   );
 }
 
-/** Freshness strip over the planning spine (legacy pipeline ribbon): one chip per stage with its
- *  state — fresh, stale (inputs changed since it ran), blocked, or not run — and its headline number. */
-function Spine({ page }: { page: string }) {
+/** The rail: one link per question, grouped. A dot marks a result that is out of date or not calculated. */
+function Rail({ page }: { page: string }) {
   const s = useStore((x) => x);
-  const errors = s.validation?.issues.filter((i) => i.severity === "error").length ?? 0;
-  const blocked = s.validation?.blocking || s.schemaErrors.length > 0;
-  type Chip = { stage: string; state: "fresh" | "stale" | "blocked" | "idle"; val: string };
-  const runChip = (key: RunKey, stage: string, val: () => string): Chip => {
-    const r = s.runs[key];
-    if (blocked && !r.data) return { stage, state: "blocked", val: "blocked by readiness" };
-    if (!r.data) return { stage, state: "idle", val: r.running ? "running…" : "not run" };
-    return { stage, state: isStale(s, key) ? "stale" : "fresh", val: val() };
+  const issues = s.validation?.issues ?? NO_ISSUES;
+  const errors = issues.filter((i) => i.severity === "error").length + s.schemaErrors.length;
+  const tower = s.runs.tower.data;
+  const offTrack = tower?.ok ? tower.kpis.filter((k) => k.status === "critical").length : 0;
+  const active = navItemFor(page);
+  const right = (it: NavItem) => {
+    if (it.id === "network" && errors) return <Badge sev="error">{errors}</Badge>;
+    if (it.id === "tower" && offTrack && freshness(s, "tower") !== "none") return <span className="rail-count" title={`${offTrack} measures off target`}>{offTrack}</span>;
+    if (!it.run || s.planning || !s.dataset?.locations?.length) return null;
+    const f = freshness(s, it.run);
+    if (f === "fresh") return null;
+    return <span className={`rail-dot ${f}`} title={f === "stale" ? "Out of date: the data changed after this was calculated" : "Not calculated yet"}>
+      <span className="sr">{f === "stale" ? "out of date" : "not calculated"}</span></span>;
   };
-  const chips: Chip[] = [
-    { stage: "network", state: s.network ? "fresh" : "idle",
-      val: s.network ? `${s.network.locations.length} locations · ${s.network.nodes.length} nodes` : "building…" },
-    { stage: "readiness", state: blocked ? "blocked" : s.validation ? "fresh" : "idle",
-      val: s.schemaErrors.length ? "invalid values" : errors ? `${errors} blocking` : s.validation ? `${s.validation.issues.length} warnings` : "checking…" },
-    runChip("forecast", "demand", () => {
-      const f = s.runs.forecast.data!;
-      return `${f.series.length} series · WAPE ${pct(f.summary.wape, 0)}`;
-    }),
-    runChip("inventory", "inventory", () => {
-      const v = s.runs.inventory.data!;
-      return v.ok && v.totals ? `${v.totals.buffers_placed}/${v.totals.stocking_nodes} buffered · −${pct(v.totals.single_cost ? v.totals.saving_vs_single / v.totals.single_cost : 0, 0)}` : "not optimised";
-    }),
-    runChip("sop", "sop", () => {
-      const v = s.runs.sop.data!;
-      return v.ok && v.kpis ? `fill ${pct(v.kpis.fill_rate, 1)} · ${v.binding.length} binding` : "not solved";
-    }),
-    runChip("plan", "plan", () => {
-      const p = s.runs.plan.data!;
-      return p.ok ? `fill ${pct(p.kpis.on_time_fill_rate, 1)} · ${p.orders.length} orders` : "not planned";
-    }),
-    runChip("schedule", "schedule", () => {
-      const v = s.runs.schedule.data!;
-      return v.ok ? `${v.kpis.late_orders}/${v.kpis.orders} late · ${v.kpis.changeovers} changeovers` : "not scheduled";
-    }),
-    runChip("promise", "promise", () => {
-      const v = s.runs.promise.data!;
-      return v.ok ? `${v.kpis.on_time_orders}/${v.kpis.orders} on time${v.kpis.at_risk_orders ? ` · ${v.kpis.at_risk_orders} at risk` : ""}` : "not checked";
-    }),
-    runChip("actuals", "execution", () => {
-      const v = s.runs.actuals.data!;
-      const off = v.stock.filter((r) => Math.abs(r.difference) > 1e-6).length;
-      return `${v.movements} movements${off ? ` · ${off} out of sync` : v.accuracy.accuracy !== null ? ` · acc ${pct(v.accuracy.accuracy, 0)}` : ""}`;
-    }),
-    runChip("finance", "finance", () => {
-      const v = s.runs.finance.data!;
-      if (!v.ok || !v.reconciliation) return "not costed";
-      const rev = v.serve.reduce((a, r) => a + r.revenue, 0);
-      const mar = v.serve.reduce((a, r) => a + r.margin, 0);
-      return `${v.reconciliation.reconciled ? "books close" : "does not reconcile"}${rev > 0 ? ` · margin ${pct(mar / rev, 0)}` : ""}`;
-    }),
-    runChip("tower", "tower", () => {
-      const v = s.runs.tower.data!;
-      const live = v.worklist.filter((w) => w.status === "open" || w.status === "acknowledged");
-      const late = live.filter((w) => w.breached).length;
-      const red = v.kpis.filter((k) => k.status === "critical").length;
-      return `${live.length} open${late ? ` · ${late} past SLA` : ""} · ${red} KPI${red === 1 ? "" : "s"} red`;
-    }),
-  ];
-  const stale = chips.filter((c) => c.state === "stale").length;
   return (
-    <nav className="spine" aria-label="Planning spine">
-      <div className="lead">
-        <b>PLANNING SPINE</b>
-        <span>{stale ? `${stale} stale — re-run` : "status of every stage"}</span>
+    <nav className="rail" id="main-nav" aria-label="Main">
+      {NAV.map((g, i) => (
+        <div className="rail-group" key={g.label ?? i}>
+          {g.label && <div className="rail-label">{g.label}</div>}
+          {g.items.map((it) => (
+            <a key={it.id} className={`rail-item ${active?.id === it.id ? "active" : ""}`} href={href(it.id)} title={it.question}
+              aria-current={active?.id === it.id ? "page" : undefined} data-fresh={it.run ? freshness(s, it.run) : undefined}>
+              <span className="rail-text">{it.label}</span>{right(it)}
+            </a>
+          ))}
+        </div>
+      ))}
+      <div className="rail-foot">
+        <a className={page === "versions" ? "active" : ""} href={href("versions")}>Versions and what-ifs</a>
+        <a className={page === "proof" ? "active" : ""} href={href("proof")}>Proof</a>
       </div>
-      {chips.map((c) => {
-        const st = stageById[c.stage];
-        return (
-          // remounting a stale chip on every revision replays its pulse: the edit visibly travels the spine
-          <a key={c.state === "stale" ? `${c.stage}-${s.revision}` : c.stage} href={href(c.stage)}
-            className={`${page === c.stage ? "on" : ""} ${c.state === "stale" ? "pulse" : ""}`} title={`${st.name}: ${c.state} · ${c.val}`}>
-            <span className={`dot ${c.state}`} aria-hidden />
-            <span style={{ minWidth: 0 }}>
-              <span className="name">{st.n} {st.name}</span>
-              <span className={`val ${c.state === "stale" ? "stale" : ""}`}>{c.state === "stale" ? `stale · ${c.val}` : c.val}</span>
-            </span>
-          </a>
-        );
-      })}
     </nav>
   );
 }
 
-function Sidebar({ page, sub, ds }: { page: string; sub?: string; ds: Dataset }) {
-  const issues = useStore((s) => s.validation?.issues ?? NO_ISSUES);
-  const errors = issues.filter((i) => i.severity === "error").length;
-  const plan = useStore((s) => s.runs.plan.data);
-  const planErr = plan?.exceptions.filter((e) => e.severity === "error").length ?? 0;
-  const counts: Record<string, React.ReactNode> = {
-    readiness: errors ? <Badge sev="error">{errors}</Badge> : issues.length ? <Badge sev="warning">{issues.length}</Badge> : <Badge sev="ok">{" "}</Badge>,
-    plan: planErr ? <Badge sev="error">{planErr}</Badge> : null,
-  };
-  const item = (to: string[], label: string, active: boolean, n?: string, right?: React.ReactNode) => (
-    <a key={to.join("/")} className={`nav-item ${active ? "active" : ""}`} href={href(...to)}>
-      {n && <span className="n">{n}</span>}{label}<span className="count">{right}</span>
-    </a>
-  );
+/** Tabs across the top of a section with more than one page (Supply, Network). */
+function SectionTabs({ item, page }: { item: NavItem; page: string }) {
+  const s = useStore((x) => x);
   return (
-    <nav className="sidebar" aria-label="Main">
-      <div className="nav-section">Planning spine</div>
-      {STAGES.map((st) => item([st.id], st.name, page === st.id, st.n, counts[st.id]))}
-      {DATA_GROUPS.map((g) => (
-        <div key={g}>
-          <div className="nav-section">{g}</div>
-          {COLLECTIONS.filter((c) => c.group === g).map((c) =>
-            item(["data", c.key], c.label, page === "data" && sub === c.key, undefined, <span className="faint">{items(ds, c.key).length}</span>))}
-        </div>
-      ))}
-      <div className="nav-section">Company</div>
-      {item(["versions"], "Versions & scenarios", page === "versions")}
-      {item(["proof"], "Proof", page === "proof", "✓")}
-      {item(["settings"], "Settings", page === "settings")}
+    <nav className="section-tabs" aria-label={`${item.label} pages`}>
+      {item.tabs!.map((t) => {
+        const f = t.run ? freshness(s, t.run) : undefined;
+        return (
+          <a key={t.id} href={href(t.id)} className={t.id === page ? "on" : ""} aria-current={t.id === page ? "page" : undefined}
+            title={t.question} data-fresh={f}>
+            {t.label}{t.optional && <span className="opt">optional</span>}
+            {f === "stale" && !s.planning && <span className="rail-dot stale" title="Out of date: the data changed after this was calculated"><span className="sr">out of date</span></span>}
+          </a>
+        );
+      })}
     </nav>
   );
 }
@@ -263,59 +276,45 @@ function Welcome() {
       locations: [], products: [], location_products: [], resources: [], production_sources: [],
       purchasing_sources: [], lanes: [], demand: [], receipts: [], history: [], events: [], npi: [], overrides: [],
     } as unknown as Dataset);
-    go("data", "locations");
+    go("home");
   };
   return (
-    <div style={{ maxWidth: 980, margin: "12px auto" }} className="animate-in">
-      <div className="row" style={{ alignItems: "flex-end", gap: 16, marginBottom: 6 }}>
-        <span className="stage-head" style={{ padding: 0, border: 0, background: "none" }}><span className="n" style={{ fontSize: 44 }}>00</span></span>
-        <h1 style={{ fontSize: 26 }}>Plan your supply chain, end to end</h1>
-      </div>
-      <p className="muted" style={{ fontSize: 15, maxWidth: 760 }}>
-        Model your own network: locations, products, bills of material, routings on machines and labour, suppliers
-        and transport lanes. Check it for data defects, forecast demand from history, then plan supply: net requirements
-        across every echelon, lot-size, source, schedule on working days, and see capacity, stock and exceptions, with
-        every order pegged to the demand it serves.
-      </p>
-      <div className="grid-2" style={{ marginTop: 20 }}>
-        <div className="panel">
-          <div className="panel-head"><h3>Start from an example</h3></div>
-          <div className="panel-body stack" style={{ gap: 8 }}>
-            <p className="muted small" style={{ margin: 0 }}>Fictional companies that exercise every feature. Edit them freely.</p>
-            {err && <div className="banner error">Engine unreachable: {err}. Start it with <code>uvicorn scp.api.app:app</code>.</div>}
-            {!examples && !err && <div className="faint">Loading…</div>}
+    <div className="welcome animate-in">
+      <h1>Plan your supply chain, from forecast to delivery</h1>
+      <p className="lede">Tell it your plants, warehouses, suppliers, products and customers. It works out what to make, buy and
+        move each day, and tells you whether customers will get their orders, what to do this week, what it costs and
+        what's off track.</p>
+      <ul className="welcome-points">
+        <li><b>For planners:</b> every page opens with the answer and what needs you.</li>
+        <li><b>For managers:</b> Home sums up service, cost and performance on one screen.</li>
+        <li><b>For analysts and students:</b> the method and formulas behind every number are one click away.</li>
+      </ul>
+      <div className="welcome-grid">
+        <section className="hcard">
+          <h2 className="q">Try an example</h2>
+          <p className="muted">A fictional company, fully set up. It opens planned, so you can look around straight away. Change anything you like.</p>
+          {err && <div className="banner error">The planning engine isn't answering: {err}. Start it with <code>uvicorn scp.api.app:app</code>.</div>}
+          {!examples && !err && <div className="faint">Loading…</div>}
+          <div className="stack" style={{ gap: 8 }}>
             {examples?.map((x) => (
-              <button key={x.name} className="btn" style={{ height: "auto", padding: "10px 12px", justifyContent: "flex-start",
-                textAlign: "left", whiteSpace: "normal", textTransform: "none", letterSpacing: 0 }}
-                onClick={async () => { store.load(await api.example(x.name)); go("network"); }}>
-                <div><div style={{ fontSize: 13 }}>{x.title}</div>
-                  <div className="faint small" style={{ fontFamily: "var(--mono)", fontWeight: 400 }}>{x.locations} locations · {x.products} products</div></div>
+              <button key={x.name} className="example" onClick={async () => openAndPlan(await api.example(x.name))}>
+                <b>{x.title}</b>
+                <span className="faint small">{x.locations} locations · {x.products} products</span>
               </button>
             ))}
           </div>
-        </div>
-        <div className="panel">
-          <div className="panel-head"><h3>Start your own network</h3></div>
-          <div className="panel-body">
-            <p className="muted small" style={{ marginTop: 0 }}>An empty dataset with a Mon–Sat calendar. Add locations first, then products,
-              sources and lanes; readiness checks guide you.</p>
-            <button className="btn accent" onClick={blank}>Create blank network</button>
-            <p className="muted small" style={{ marginTop: 16, marginBottom: 0 }}>Or import a dataset JSON exported earlier, using <b>Import JSON</b> at the top.</p>
-          </div>
-        </div>
+          {examples && examples.length === 0 && <Empty title="No examples found" />}
+        </section>
+        <section className="hcard">
+          <h2 className="q">Start your own</h2>
+          <p className="muted">An empty company with a Monday-to-Saturday calendar. Home shows what to fill in first, and the data
+            check tells you what's still missing.</p>
+          <div><button className="btn" onClick={blank}>Start with an empty company</button></div>
+          <p className="muted small">Or open a file you exported earlier with <b>Import a file</b>, top right.</p>
+        </section>
       </div>
-      <div className="panel proof-cta" style={{ marginTop: 14 }}>
-        <div className="panel-body row wrap" style={{ gap: 14 }}>
-          <span className="stage-head" style={{ padding: 0, border: 0, background: "none" }}><span className="n" style={{ fontSize: 26 }}>QED</span></span>
-          <div style={{ flex: 1, minWidth: 260 }}>
-            <h3 style={{ fontSize: 13 }}>Can you trust the numbers?</h3>
-            <p className="muted small" style={{ margin: "4px 0 0" }}>Eight companies worked out by hand, from master data to the books. Run them and
-              see every answer the engine gives beside the one derived independently.</p>
-          </div>
-          <a className="btn accent" href={href("proof")}>See the proof</a>
-        </div>
-      </div>
-      {examples && examples.length === 0 && <Empty title="No examples found" />}
+      <p className="welcome-proof">Can you trust the numbers? Eight companies were worked out by hand and checked against the engine
+        step by step, and one more flow runs over many generated companies. <a href={href("proof")}>See the proof</a></p>
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { api } from "../api/client";
 import type { Comparison, Dataset, PlanSummary, VersionMeta } from "../api/types";
 import { Badge, Empty, Panel, Reading, SectionBand, StageHeader, StatTile } from "../components/ui";
 import { day, money, pct, qty } from "../lib/format";
-import { go } from "../lib/router";
+import { go, href } from "../lib/router";
 import { isModified, store, useStore } from "../state/store";
 
 const STATUS_SEV: Record<string, "ok" | "info" | "warning" | undefined> = {
@@ -38,6 +38,8 @@ export function Versions() {
   const [list, setList] = useState<VersionMeta[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // a version is a complete, valid company: unfinished records must be finished (or deleted) first
+  const unfinished = useStore((s) => s.validation?.set_aside?.length ?? 0);
   const [name, setName] = useState("");
   const [pick, setPick] = useState<[string | null, string | null]>([null, null]);
   const [cmp, setCmp] = useState<Comparison | null>(null);
@@ -58,9 +60,9 @@ export function Versions() {
       setBusy(false);
     }
   };
-  const label = name.trim() || (current ? `Scenario of ${current.id}` : `Plan of ${ds.settings.planning_start}`);
+  const label = name.trim() || (current ? `Scenario of ${current.id}` : `Plan of ${day(ds.settings.planning_start)}`);
   const saveBase = () => act(async () => {
-    const m = await api.saveBase(ds, name.trim() || `Plan of ${ds.settings.planning_start}`);
+    const m = await api.saveBase(ds, name.trim() || `Plan of ${day(ds.settings.planning_start)}`);
     store.saved(m);
     setName("");
   });
@@ -123,9 +125,10 @@ export function Versions() {
 
   return (
     <div>
-      <StageHeader n="V" title="Versions & scenarios" kicker={<>Save the working plan as an immutable <b>base version</b>, branch
-        <b> scenarios</b> from it to try changes, compare any two side by side (data and plan), then discard the scenario or promote it
-        to be the next base. A base never changes after it is written.</>} />
+      <StageHeader title="Versions and what-ifs" kicker={<>Save today's data as a <b>base version</b>. To try a change, save it as a
+        {" "}<b>scenario</b> of that base, then compare the two side by side, data and plan. Keep the scenario as the next base, or drop it.</>}
+        how={<>A saved version never changes: its content is stored with a fingerprint (SHA-256 of the data), which the table shows.
+          Promoting a scenario writes a new base and marks the old one superseded, byte for byte as it was.</>} />
       <div className="content">
         {err && <div className="banner error"><Badge sev="error">Version store</Badge>{err}</div>}
         <Panel title="Working copy">
@@ -135,10 +138,13 @@ export function Versions() {
             {current && current.status !== "active" && <Badge sev="info">{current.status}</Badge>}
             <span className="spacer" />
             <input className="input" style={{ width: 260 }} placeholder={label} value={name} onChange={(e) => setName(e.target.value)} aria-label="Version name" />
-            <button className="btn accent" disabled={busy} onClick={saveBase}>Save as base version</button>
-            {current && <button className="btn" disabled={busy} onClick={saveAsScenario}>Save as new scenario of {current.id}</button>}
-            {canSave && <button className="btn" disabled={busy || !modified} onClick={saveScenario}>Save to {current!.id}</button>}
+            <button className="btn accent" disabled={busy || unfinished > 0} onClick={saveBase}>Save as base version</button>
+            {current && <button className="btn" disabled={busy || unfinished > 0} onClick={saveAsScenario}>Save as new scenario of {current.id}</button>}
+            {canSave && <button className="btn" disabled={busy || unfinished > 0 || !modified} onClick={saveScenario}>Save to {current!.id}</button>}
           </div>
+          {unfinished > 0 && <p className="small" style={{ marginBottom: 0 }}><Badge sev="warning">Can't save yet</Badge>{" "}
+            {unfinished === 1 ? "One record is" : `${unfinished} records are`} not finished, and a saved version must be complete.{" "}
+            <a href={href("readiness")}>Finish or delete {unfinished === 1 ? "it" : "them"}</a>.</p>}
           {current?.kind === "base" && modified && <p className="small muted" style={{ marginBottom: 0 }}>{current.id} is a base version and stays as it is:
             save your edits as a new scenario of it, or as a new base.</p>}
         </Panel>
@@ -205,7 +211,7 @@ function CompareView({ c, currency }: { c: Comparison; currency: string }) {
     <>
       <SectionBand step="Δ" title={`${c.a} → ${c.b}`} />
       <div className="grid-auto">
-        <StatTile label="Data changes" value={qty(c.diff.changes)} sub={c.diff.identical ? "identical" : `${c.diff.collections.length} object types`} tone={c.diff.identical ? "hl" : undefined} />
+        <StatTile label="Data changes" value={qty(c.diff.changes)} sub={c.diff.identical ? "identical" : `${c.diff.collections.length} object types`} />
         <StatTile label="Plan cost Δ" value={money(c.plan_b.total_cost - c.plan_a.total_cost, currency)} sub={`${c.a} → ${c.b}`} />
         <StatTile label="Fill rate Δ" value={`${c.plan_b.fill_rate >= c.plan_a.fill_rate ? "+" : ""}${pct(c.plan_b.fill_rate - c.plan_a.fill_rate, 1)}`} sub="on-time, independent demand" />
       </div>

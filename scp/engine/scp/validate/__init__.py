@@ -8,7 +8,7 @@ docs can enumerate them, and each one has a positive and negative test.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -68,6 +68,10 @@ RULES: dict[str, tuple[Severity, str]] = {
     "STOCK_NOT_SYNCED": ("warning", "On-hand differs from the goods-movement journal"),
     "NEGATIVE_STOCK": ("warning", "The movement journal takes stock below zero"),
     "MOVEMENT_REF_UNKNOWN": ("warning", "Goods movement references no open or closed order"),
+    "PHANTOM_NOT_MADE": ("warning", "Phantom assembly that is not made at that plant"),
+    "PO_LINE_MISMATCH": ("error", "Purchase order line that does not match its order"),
+    "FIXED_SOURCE_TWICE": ("warning", "More than one fixed source for a product at a place"),
+    "OPEN_PO_BLOCKED_SUPPLIER": ("warning", "Open purchase order with a blocked supplier"),
 }
 
 
@@ -123,11 +127,16 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         "resource": ds.resources, "production_source": ds.production_sources,
         "purchasing_source": ds.purchasing_sources, "lane": ds.lanes, "receipt": ds.receipts,
         "movement": ds.movements, "capacity_option": ds.finance.capacity_options,
+        "purchase_order": ds.purchase_orders,
     }
     for typ, items in groups.items():
         for oid, n in Counter(i.id for i in items).items():
             if n > 1:
                 c.add("DUP_ID", typ, oid, f"{typ} id '{oid}' is used {n} times", "Ids must be unique per type")
+    for sup, n in Counter(v.supplier for v in ds.vendors).items():
+        if n > 1:
+            c.add("DUP_ID", "vendor", sup, f"supplier '{sup}' has {n} purchasing records; the first is used",
+                  "Keep one record per supplier")
     for (loc, prod), n in Counter((lp.location, lp.product) for lp in ds.location_products).items():
         if n > 1:
             c.add("DUP_LOCATION_PRODUCT", "location_product", f"{loc}/{prod}",
@@ -181,10 +190,18 @@ def _references(ds: Dataset, c: _Collector) -> None:
         _ref(ds, c, "product", ps.product, "production_source", ps.id, "product")
         for comp in ps.components:
             _ref(ds, c, "product", comp.product, "production_source", ps.id, "components.product")
+        for co in ps.co_products:
+            _ref(ds, c, "product", co.product, "production_source", ps.id, "co_products.product")
         for op in ps.operations:
             _ref(ds, c, "resource", op.resource, "production_source", ps.id, f"operations[{op.seq}].resource")
             _ref(ds, c, "resource", op.labor_resource, "production_source", ps.id,
                  f"operations[{op.seq}].labor_resource")
+            for alt in op.alternatives:
+                _ref(ds, c, "resource", alt, "production_source", ps.id, f"operations[{op.seq}].alternatives")
+            if op.subcontract is not None and _ref(ds, c, "location", op.subcontract.supplier, "production_source",
+                                                   ps.id, f"operations[{op.seq}].subcontract.supplier"):
+                _loc_type(ds, c, op.subcontract.supplier, {LocationType.SUPPLIER}, "production_source", ps.id,
+                          f"operations[{op.seq}].subcontract.supplier", "work done outside needs a supplier")
     for pu in ds.purchasing_sources:
         if _ref(ds, c, "location", pu.supplier, "purchasing_source", pu.id, "supplier"):
             _loc_type(ds, c, pu.supplier, {LocationType.SUPPLIER}, "purchasing_source", pu.id, "supplier",
@@ -253,6 +270,17 @@ def _references(ds: Dataset, c: _Collector) -> None:
         for rv in r.reservations:
             _ref(ds, c, "location", rv.location, "receipt", r.id, "reservations.location")
             _ref(ds, c, "product", rv.product, "receipt", r.id, "reservations.product")
+    for v in ds.vendors:
+        if _ref(ds, c, "location", v.supplier, "vendor", v.supplier, "supplier"):
+            _loc_type(ds, c, v.supplier, {LocationType.SUPPLIER}, "vendor", v.supplier, "supplier",
+                      "purchasing data belongs to a supplier location")
+    for po in ds.purchase_orders:
+        if _ref(ds, c, "location", po.supplier, "purchase_order", po.id, "supplier"):
+            _loc_type(ds, c, po.supplier, {LocationType.SUPPLIER}, "purchase_order", po.id, "supplier",
+                      "a purchase order goes to a supplier")
+        if _ref(ds, c, "location", po.location, "purchase_order", po.id, "location"):
+            _loc_type(ds, c, po.location, STOCKING_LOCATION_TYPES, "purchase_order", po.id, "location",
+                      "goods must be received at a stocking location")
     for m in ds.movements:
         if _ref(ds, c, "location", m.location, "movement", m.id, "location"):
             _loc_type(ds, c, m.location, STOCKING_LOCATION_TYPES, "movement", m.id, "location",
@@ -287,7 +315,7 @@ def _calendars(ds: Dataset, c: _Collector) -> None:
         wc = WorkCalendar(cal)
         if wc.workdays_between(s.planning_start, s.planning_start + timedelta(days=s.horizon_days)) == 0:
             c.add("CALENDAR_NO_WORKDAY_IN_HORIZON", "calendar", cal.id,
-                  "No working day inside the planning horizon", "Check weekdays and holidays")
+                  "No working day inside the plan's dates", "Check its working weekdays and holidays")
 
 
 def _covers(valid_from, valid_to, start, end) -> bool:
@@ -307,10 +335,8 @@ def _production(ds: Dataset, c: _Collector) -> None:
                 c.add("PRODUCTION_NO_LEAD_TIME", "production_source", ps.id,
                       "Production lead time will be 0 days", "Add operations or fixed_lead_time_workdays")
         for op in ps.operations:
-            used.add(op.resource)
-            if op.labor_resource:
-                used.add(op.labor_resource)
-            for rid in (op.resource, op.labor_resource):
+            used.update(x for x in (op.resource, op.labor_resource, *op.alternatives) if x)
+            for rid in (op.resource, op.labor_resource, *op.alternatives):
                 r = ds.resource_by_id.get(rid) if rid else None
                 if r is not None and r.location != ps.location:
                     c.add("RESOURCE_WRONG_LOCATION", "production_source", ps.id,
@@ -318,8 +344,15 @@ def _production(ds: Dataset, c: _Collector) -> None:
                           "Use a resource of the producing plant", f"operations[{op.seq}]")
         if not _covers(ps.valid_from, ps.valid_to, s.planning_start, end):
             c.add("SOURCE_NOT_VALID_IN_HORIZON", "production_source", ps.id,
-                  "Validity dates do not cover the whole horizon; requirements outside are unsourced",
+                  "Its valid-from and valid-to dates don't cover the whole plan; outside them it is not used",
                   "Extend valid_from/valid_to or add another source")
+    made = {(ps.location, ps.product) for ps in ds.production_sources}
+    for lp in ds.location_products:
+        if lp.phantom and (lp.location, lp.product) not in made:
+            c.add("PHANTOM_NOT_MADE", "location_product", f"{lp.location}/{lp.product}",
+                  "Marked as a phantom assembly, but it is not made here, so its parts can't be passed through; "
+                  "it is planned as an ordinary part",
+                  "Add how it is made here, or clear the phantom mark", "phantom")
     for r in ds.resources:
         if r.id not in used:
             c.add("RESOURCE_UNUSED", "resource", r.id, "No operation uses this resource",
@@ -338,7 +371,56 @@ def _purchasing(ds: Dataset, c: _Collector) -> None:
                       "Supplier lead time is 0 and there is no transit lane", "Enter the planned delivery time")
         if not _covers(pu.valid_from, pu.valid_to, s.planning_start, end):
             c.add("SOURCE_NOT_VALID_IN_HORIZON", "purchasing_source", pu.id,
-                  "Validity dates do not cover the whole horizon", "Extend validity or add another source")
+                  "Its valid-from and valid-to dates don't cover the whole plan", "Extend the dates or add another source")
+
+
+    fixed: dict[tuple[str, str], list] = {}
+    for pu in ds.purchasing_sources:
+        if pu.fixed and not ds.source_blocked(pu):
+            fixed.setdefault((pu.location, pu.product), []).append(pu)
+    for (loc, prod), pus in fixed.items():
+        for i, a in enumerate(pus):
+            for b in pus[i + 1:]:
+                if _overlap(a, b):
+                    c.add("FIXED_SOURCE_TWICE", "purchasing_source", b.id,
+                          f"{prod} at {loc} has two fixed sources at the same time ({a.id} and {b.id}); "
+                          f"planning uses {min(a, b, key=lambda x: (x.priority, x.id)).id}",
+                          "Keep one fixed source per period, or give them dates that do not overlap", "fixed")
+    _purchase_orders(ds, c)
+
+
+def _overlap(a, b) -> bool:
+    lo = max(a.valid_from or date.min, b.valid_from or date.min)
+    hi = min(a.valid_to or date.max, b.valid_to or date.max)
+    return lo <= hi
+
+
+def _purchase_orders(ds: Dataset, c: _Collector) -> None:
+    open_on: dict[str, int] = Counter()
+    for r in ds.receipts:
+        if r.po is None:
+            continue
+        po = ds.purchase_order_by_id.get(r.po)
+        if po is None:
+            c.add("REF_UNKNOWN", "receipt", r.id, f"po refers to unknown purchase order '{r.po}'",
+                  f"Create purchase order '{r.po}' or clear the reference", "po")
+            continue
+        src = ds.purchasing_source_by_id.get(r.source or "")
+        why = ("it is not a purchase" if r.kind.value != "purchase"
+               else f"it is received at {r.location}, the order at {po.location}" if r.location != po.location
+               else f"its source {src.id} is bought from {src.supplier}, the order goes to {po.supplier}"
+               if src is not None and src.supplier != po.supplier else None)
+        if why:
+            c.add("PO_LINE_MISMATCH", "receipt", r.id, f"Line {r.id} is on purchase order {po.id} but {why}",
+                  "Move the line to a matching order, or fix it", "po")
+        open_on[po.supplier] += 1
+    for pu_sup, n in open_on.items():
+        v = ds.vendor_by_supplier.get(pu_sup)
+        if v is not None and v.blocked:
+            c.add("OPEN_PO_BLOCKED_SUPPLIER", "vendor", pu_sup,
+                  f"{n} open purchase order line{'s' if n != 1 else ''} with {pu_sup}, which is blocked for purchasing"
+                  + (f" ({v.block_reason})" if v.block_reason else ""),
+                  "Receive or cancel them, or lift the block; planning still counts them")
 
 
 def _lanes(ds: Dataset, c: _Collector) -> None:
@@ -398,8 +480,8 @@ def _demand(ds: Dataset, c: _Collector) -> None:
         c.add("DEMAND_PAST_DUE", "demand", "*", f"{past} demand records are before planning start",
               "They are planned as backlog due today")
     if outside:
-        c.add("DEMAND_OUTSIDE_HORIZON", "demand", "*", f"{outside} demand records are beyond the horizon",
-              "Extend the horizon to plan them")
+        c.add("DEMAND_OUTSIDE_HORIZON", "demand", "*", f"{outside} demand records are after the end of the plan",
+              "Lengthen the plan (Company settings → horizon days) to plan them")
     for loc, prod in sorted(mto_fc):
         c.add("MTO_WITH_FORECAST", "location_product", f"{loc}/{prod}",
               "Forecast exists but the strategy is MTO", "Use MTS_CONSUME or ATO to pre-plan")
@@ -417,7 +499,7 @@ def _forecasting(ds: Dataset, c: _Collector) -> None:
     for (loc, prod), k in npi_keys.items():
         if k > 1:
             c.add("NPI_DUPLICATE", "npi", f"{loc}/{prod}", f"{k} NPI rules for {prod} at {loc}; the last one wins",
-                  "Keep one rule per location-product")
+                  "Keep one rule per product and place")
     for n in ds.npi:
         like = (n.like_location or n.location, n.like_product)
         if like not in with_history:
@@ -427,8 +509,8 @@ def _forecasting(ds: Dataset, c: _Collector) -> None:
     for o in ds.overrides:
         oid = f"{o.location}/{o.product}@{o.date.isoformat()}"
         if not s.planning_start <= o.date < end:
-            c.add("OVERRIDE_OUTSIDE_HORIZON", "override", oid, "The override date is outside the horizon",
-                  "Move it into the planning horizon or delete it", "date")
+            c.add("OVERRIDE_OUTSIDE_HORIZON", "override", oid, "The override date is outside the plan's dates",
+                  "Move it inside the plan or delete it", "date")
         elif (o.location, o.product) not in with_history and (o.location, o.product) not in npi_keys:
             c.add("OVERRIDE_WITHOUT_FORECAST", "override", oid,
                   f"No history or NPI rule for {o.product} at {o.location}, so there is no forecast to adjust",
@@ -444,6 +526,8 @@ def _graph(ds: Dataset, c: _Collector) -> None:
     # which nodes will receive requirements?
     has_req = {(d.location, d.product) for d in ds.demand}
     has_req |= {node for node in g.nodes if g.consumers.get(node)}
+    # a co-product comes out of another product's run: that is its supply, even with no source of its own
+    co_made = {(ps.location, co.product) for ps in ds.production_sources for co in ps.co_products}
     for node in g.nodes:
         loc, prod = node
         if ds.location_type(loc) not in STOCKING_LOCATION_TYPES | {LocationType.CUSTOMER}:
@@ -453,14 +537,22 @@ def _graph(ds: Dataset, c: _Collector) -> None:
             continue
         if lp is None and ds.location_type(loc) is not LocationType.CUSTOMER:
             c.add("LOCATION_PRODUCT_DEFAULTED", "location_product", f"{loc}/{prod}",
-                  "No planning record: L4L, no safety stock, zero stock assumed",
-                  "Maintain a location-product for this node")
-        if not g.options.get(node):
+                  "No stock or ordering rules here yet: ordered exactly as needed, with no safety stock and nothing on hand",
+                  "Enter its stock and ordering rules (Set up → the product, or Planning policies)")
+        if not g.options.get(node) and node not in co_made:
             onhand = lp.on_hand if lp else 0.0
+            proc = lp.procurement.value if lp else "any"
+            limited = {"make": " Its procurement type allows only making it here.",
+                       "external": " Its procurement type allows only buying it or shipping it in."}.get(proc, "")
+            blocked = sorted(pu.id for pu in ds.purchasing_sources
+                             if pu.location == loc and pu.product == prod and ds.source_blocked(pu))
             c.add("NO_SOURCE", "location_product", f"{loc}/{prod}",
-                  f"{prod} at {loc} has requirements but no production, purchasing or lane source"
-                  + (f" (only {onhand:g} on hand)" if onhand else ""),
-                  "Add a production source, purchasing source or inbound lane")
+                  (f"{prod} at {loc} is needed but its only purchasing sources are blocked ({', '.join(blocked)})"
+                   if blocked else
+                   f"{prod} at {loc} is needed but has no way to be supplied: it is not made, bought or shipped there")
+                  + (f" (only {onhand:g} on hand)" if onhand else "") + ("." + limited if limited else ""),
+                  "Say how it gets there: made there, bought from a supplier, or shipped from another place (Set up → the product)"
+                  + ("; or change its procurement type" if limited else ""))
     # quotas
     for node, opts in g.options.items():
         q = [o.quota for o in opts if o.quota is not None]

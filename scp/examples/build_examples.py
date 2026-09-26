@@ -167,9 +167,10 @@ def kitchenware() -> dict:
     purchasing = [
         {"id": "PIR-CU", "supplier": "SUP-COPPER", "product": "RM-CU-WIRE", "location": "PLT-PUNE", "price": 905,
          "ordering_cost": 2500, "moq": 500, "rounding_qty": 250, "lead_time_days": 7, "lead_time_std_days": 1.5,
-         "capacity_per_week": 6000},
+         "capacity_per_week": 6000, "price_scales": [{"from_qty": 2000, "price": 890}, {"from_qty": 5000, "price": 875}]},
         {"id": "PIR-STAMP", "supplier": "SUP-STAMP", "product": "RM-STAMP", "location": "PLT-PUNE", "price": 118,
-         "moq": 1000, "rounding_qty": 500, "lead_time_days": 5, "lead_time_std_days": 1},
+         "moq": 1000, "rounding_qty": 500, "lead_time_days": 5, "lead_time_std_days": 1,
+         "price_scales": [{"from_qty": 5000, "price": 112}]},
         {"id": "PIR-JARS", "supplier": "SUP-JARS", "product": "RM-JARSET", "location": "PLT-PUNE", "price": 410,
          "moq": 500, "rounding_qty": 100, "lead_time_days": 10, "lead_time_std_days": 2},
         {"id": "PIR-BODY-MG", "supplier": "SUP-MOULD", "product": "RM-BODY-MG", "location": "PLT-PUNE", "price": 96,
@@ -178,7 +179,7 @@ def kitchenware() -> dict:
          "rounding_qty": 200, "lead_time_days": 6},
         {"id": "PIR-HEATER", "supplier": "SUP-SHENZHEN", "product": "RM-HEATER", "location": "PLT-PUNE", "price": 1.35,
          "currency": "USD", "duty_rate": 0.20, "ordering_cost": 18000, "moq": 5000, "rounding_qty": 1000,
-         "lead_time_days": 14, "lead_time_std_days": 3},
+         "lead_time_days": 14, "lead_time_std_days": 3, "vendor_material": "HT-220-1K2"},
         {"id": "PIR-SWITCH", "supplier": "SUP-SHENZHEN", "product": "RM-SWITCH", "location": "PLT-PUNE", "price": 0.62,
          "currency": "USD", "duty_rate": 0.20, "ordering_cost": 18000, "moq": 10000, "rounding_qty": 2000,
          "lead_time_days": 14, "lead_time_std_days": 3},
@@ -299,6 +300,15 @@ def kitchenware() -> dict:
         {"id": "STO-2201", "kind": "transfer", "location": "DC-DELHI", "product": "KT-15", "qty": 600,
          "due_date": "2026-09-29", "source": "LN-PUNE-DEL"},
     ]
+    # purchasing view of the suppliers that need more than the defaults (Phase E)
+    vendors = [
+        {"supplier": "SUP-SHENZHEN", "contact": "Li Wei (export desk)", "email": "export@example.com",
+         "currency": "USD", "payment_terms_days": 60, "incoterms": "FOB Shenzhen", "confirmation_required": True,
+         "confirmation_days": 3, "over_delivery_tolerance": 0.05},
+        {"supplier": "SUP-COPPER", "contact": "Sales office Silvassa", "payment_terms_days": 45,
+         "confirmation_required": True, "confirmation_days": 2},
+        {"supplier": "SUP-PACK", "payment_terms_days": 30, "min_order_value": 5000, "under_delivery_tolerance": 0.02},
+    ]
     return {
         "schema_version": "1",
         "settings": {"company_name": "Kaveri Kitchenware Pvt Ltd (fictional)", "currency": "INR",
@@ -307,7 +317,9 @@ def kitchenware() -> dict:
                      "default_service_level": 0.95, "default_calendar": "CAL-IN-6D"},
         "calendars": cal, "locations": locations, "products": products, "location_products": lps,
         "resources": resources, "production_sources": production_sources, "purchasing_sources": purchasing,
-        "lanes": lanes, "demand": demand, "receipts": receipts, "history": history, "events": events, "npi": npi,
+        "lanes": lanes, "vendors": vendors, "purchase_orders": [],
+        "purchasing": {"approval_limit": 1000000, "release_window_days": 7},
+        "demand": demand, "receipts": receipts, "history": history, "events": events, "npi": npi,
         "overrides": overrides,
         # sequence-dependent setups: winding gauge change (thick→thin needs re-tensioning) and
         # test-bench fixture swaps between grinders and kettles

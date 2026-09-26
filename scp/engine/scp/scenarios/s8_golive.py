@@ -35,6 +35,7 @@ def build() -> dict:
             {"id": "CUST", "name": "Grocery chain", "type": "customer"},
             {"id": "SUP-F", "name": "Fruit farm (US)", "type": "supplier"},
             {"id": "SUP-J", "name": "Jar & sugar merchant", "type": "supplier"},
+            {"id": "SUP-OLD", "name": "Former fruit supplier", "type": "supplier"},
         ],
         "products": [
             {"id": "JAM", "name": "Strawberry jam", "type": "FG", "weight_kg": 0.45, "price": 4},
@@ -49,7 +50,7 @@ def build() -> dict:
              "safety_time_days": 2},
             {"location": "PLANT", "product": "FRUIT", "on_hand": 250,
              "safety_stock": {"method": "service_level", "service_level": 0.95}},
-            {"location": "PLANT", "product": "SUGAR"},
+            {"location": "PLANT", "product": "SUGAR", "phantom": True},                        # bought, not made
             {"location": "DC", "product": "JAM", "on_hand": 40},
             {"location": "DC", "product": "JAM", "on_hand": 50, "strategy": "MTO"},              # maintained twice
             {"location": "DC", "product": "GIFT"},
@@ -73,9 +74,9 @@ def build() -> dict:
             {"id": "PU-JAR", "supplier": "SUP-J", "product": "JAR", "location": "PLANT", "price": 0.3,
              "lead_time_days": 5, "valid_to": (START + dt.timedelta(days=14)).isoformat()},
             {"id": "PU-SUGAR", "supplier": "SUP-J", "product": "SUGAR", "location": "PLANT", "price": 0.8,
-             "lead_time_days": 0, "quota": 0.5},
+             "lead_time_days": 0, "quota": 0.5, "fixed": True},
             {"id": "PU-SUGAR-2", "supplier": "SUP-F", "product": "SUGAR", "location": "PLANT", "price": 0.7,
-             "lead_time_days": 3, "quota": 0.3},
+             "lead_time_days": 3, "quota": 0.3, "fixed": True},
         ],
         "lanes": [
             {"id": "L-PD", "origin": "PLANT", "destination": "DC", "products": ["JAM"], "modes": [{"transit_days": 2}]},
@@ -100,7 +101,14 @@ def build() -> dict:
         "confirmations": [{"order": "SO-GONE", "ship_from": "DC", "ship_date": "2026-07-07", "date": "2026-07-08",
                            "qty": 5}],
         "receipts": [{"id": "PO-77", "kind": "purchase", "location": "CUST", "product": "JAM", "qty": 10,
-                      "due_date": "2026-07-10"}],
+                      "due_date": "2026-07-10"},
+                     {"id": "PO-100-10", "kind": "purchase", "location": "PLANT", "product": "SUGAR", "qty": 40,
+                      "due_date": "2026-07-09", "source": "PU-SUGAR", "po": "PO-100"},
+                     {"id": "PO-200-10", "kind": "purchase", "location": "PLANT", "product": "FRUIT", "qty": 20,
+                      "due_date": "2026-07-09", "po": "PO-200"}],
+        "vendors": [{"supplier": "SUP-OLD", "blocked": True, "block_reason": "replaced by SUP-F"}],
+        "purchase_orders": [{"id": "PO-100", "supplier": "SUP-F", "location": "PLANT", "order_date": "2026-07-01"},
+                            {"id": "PO-200", "supplier": "SUP-OLD", "location": "PLANT", "order_date": "2026-06-20"}],
         "movements": [
             {"id": "GM-1", "date": "2026-07-01", "type": "opening", "location": "PLANT", "product": "FRUIT", "qty": 300},
             {"id": "GM-2", "date": "2026-07-02", "type": "issue", "location": "PLANT", "product": "JAR", "qty": 50,
@@ -119,6 +127,7 @@ ERRORS = {
     ("NO_SOURCE", "location_product", "DC/GIFT"): "Gift boxes are sold from the DC; nothing supplies the DC.",
     ("REF_UNKNOWN", "demand", "SO-9"): "SO-9 is for JAM-XL, which does not exist.",
     ("REF_WRONG_TYPE", "receipt", "PO-77"): "A purchase order is due at the customer.",
+    ("PO_LINE_MISMATCH", "receipt", "PO-100-10"): "A line on the order to SUP-F buys sugar from SUP-J.",
     ("RESOURCE_WRONG_LOCATION", "production_source", "PV-JAM"): "The kitchen's routing uses the co-packer's filler.",
     ("SS_NO_VARIABILITY", "location_product", "PLANT/FRUIT"): "A service-level policy with no demand CV.",
 }
@@ -130,9 +139,11 @@ WARNINGS = {
     ("NPI_DUPLICATE", "npi", "CUST/GIFT"), ("NPI_LIKE_WITHOUT_HISTORY", "npi", "CUST/GIFT"),
     ("OVERRIDE_OUTSIDE_HORIZON", "override", "CUST/JAM@2026-09-01"),
     ("OVERRIDE_WITHOUT_FORECAST", "override", "DC/JAM@2026-07-15"),
+    ("PHANTOM_NOT_MADE", "location_product", "PLANT/SUGAR"),
     ("PRODUCTION_NO_LEAD_TIME", "production_source", "PV-LABEL"),
     ("PRODUCTION_NO_OPERATIONS", "production_source", "PV-LABEL"),
-    ("PURCHASE_ZERO_LEAD_TIME", "purchasing_source", "PU-SUGAR"), ("QUOTA_SUM", "location_product", "PLANT/SUGAR"),
+    ("PURCHASE_ZERO_LEAD_TIME", "purchasing_source", "PU-SUGAR"),
+    ("FIXED_SOURCE_TWICE", "purchasing_source", "PU-SUGAR-2"), ("OPEN_PO_BLOCKED_SUPPLIER", "vendor", "SUP-OLD"), ("QUOTA_SUM", "location_product", "PLANT/SUGAR"),
     ("RESOURCE_UNUSED", "resource", "OLD-OVEN"), ("SHELF_LIFE_VS_LEAD_TIME", "location_product", "PLANT/FRUIT"),
     ("SOURCE_NOT_VALID_IN_HORIZON", "purchasing_source", "PU-JAR"),
     ("SS_AND_SAFETY_TIME", "location_product", "PLANT/JAM"), ("STOCK_AT_CUSTOMER", "location_product", "CUST/JAM"),
@@ -169,6 +180,7 @@ def _fix_supply(raw: dict) -> None:
     raw["location_products"].append({"location": "PLANT", "product": "GIFT"})
     raw["lanes"][0]["products"] = ["JAM", "GIFT"]
     raw["receipts"][0]["location"] = "DC"
+    raw["receipts"][1]["source"] = "PU-SUGAR-2"
     raw["resources"] = [r for r in raw["resources"] if r["id"] != "FILLER-2"] + [{"id": "FILLER", "location": "PLANT"}]
     raw["production_sources"][0]["operations"][1]["resource"] = "FILLER"
     next(lp for lp in raw["location_products"] if lp["product"] == "FRUIT")["safety_stock"]["demand_cv"] = 0.25
@@ -209,7 +221,8 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
     with ctx.step("Fix the supply side", "readiness+plan", "POST /api/validate → POST /api/plan",
                   "Drop the return lane, clear the shutdown holidays, remove the duplicate kettle and DC record, add "
                   "the USD rate, weigh the gift box and pack it at the kitchen, re-address PO-77 to the DC, give the "
-                  "kitchen its own filler (retiring the co-packer's) and the fruit a demand CV."):
+                  "kitchen its own filler (retiring the co-packer's), the fruit a demand CV, and buy PO-100's sugar "
+                  "from the supplier the order goes to."):
         ds = _edit(ds, _fix_supply)
         issues = c.validate(ds)
         ctx.eq("no errors", sorted(_found(issues, "error")), [])

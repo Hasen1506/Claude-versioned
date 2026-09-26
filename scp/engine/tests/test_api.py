@@ -19,7 +19,8 @@ def test_health_and_examples():
 def test_validate_network_plan_round_trip():
     d = example_dict("kitchenware_network")
     v = client.post("/api/validate", json=d).json()
-    assert v == {"issues": [], "blocking": False}
+    assert v["issues"] == [] and v["blocking"] is False and v["set_aside"] == []
+    assert all(i["status"] != "todo" for i in v["setup"])
     net = client.post("/api/network", json=d).json()
     assert {loc["id"] for loc in net["locations"]} >= {"PLT-PUNE", "DC-DELHI", "SUP-SHENZHEN"}
     assert any(e["kind"] == "purchase" and e["origin"] == "SUP-SHENZHEN" for e in net["edges"])
@@ -87,6 +88,31 @@ def test_schedule():
     m = client.post("/api/schedule", json={"dataset": d, "sequence": {"PUNE-L1": seq}}).json()
     assert m["search"]["mode"] == "manual"
     assert next(x for x in m["resources"] if x["id"] == "PUNE-L1")["sequence"] == seq
+    # the manual sequence's dates go back into the plan: every scheduled order becomes a dated production order
+    a = client.post("/api/schedule/apply", json={"dataset": d, "sequence": {"PUNE-L1": seq}}).json()
+    assert len(a["report"]["applied"]) == len(m["orders"]) and a["report"]["skipped"] == {}
+    dated = {x["receipt"]: x for x in a["report"]["applied"]}
+    for rc in a["dataset"]["receipts"]:
+        if rc["id"] in dated:
+            assert rc["scheduled"] and rc["due_date"] == dated[rc["id"]]["due_date"]
+    bad = {**d, "changeovers": [{"resource": "NOPE", "from_group": "A", "to_group": "B", "hours": 1}]}
+    assert client.post("/api/schedule/apply", json={"dataset": bad}).status_code == 409
+
+
+def test_schedule_catalogue_compare_and_holds():
+    cat = client.get("/api/schedule/catalogue").json()
+    assert {h["id"] for h in cat["heuristics"]} >= {"edd", "campaign", "backward", "optimize"}
+    jit = next(p for p in cat["profiles"] if p["id"] == "just_in_time")
+    d = example_dict("kitchenware_network")
+    d["scheduling"] = {**d.get("scheduling", {}), **jit["settings"], "profile": "just_in_time",
+                       "time_limit_seconds": 1.0}
+    r = client.post("/api/schedule", json={"dataset": d}).json()
+    assert r["ok"] and r["violations"] == [] and r["profile"] == "just_in_time" and r["holds"]
+    seqs = {x["id"]: x["sequence"] for x in r["resources"]}
+    m = client.post("/api/schedule", json={"dataset": d, "sequence": seqs, "hold": r["holds"]}).json()
+    assert abs(m["kpis"]["objective"] - r["kpis"]["objective"]) < 1e-6
+    c = client.post("/api/schedule/compare", json=d).json()
+    assert c["ok"] and len(c["rows"]) == 7 and any(x["best"] for x in c["rows"])
 
 
 def test_promise_flow():
