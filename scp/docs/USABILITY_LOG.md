@@ -5,7 +5,8 @@ screens (not by opening the prepared examples). Each entry: what happened, why i
 Open items name the roadmap phase that addresses them.
 
 Phases: **A** get your own company in · **B** master-data depth · **C** capacity and material together ·
-**D** PP/DS-class scheduling · **E** procure-to-pay.
+**D** PP/DS-class scheduling · **E** procure-to-pay. Proposed after the second reality check: **F** execution you
+can trust · **G** order to cash · **H** defaults and onboarding · **I** a real place to keep the company · **J** polish.
 
 ## Found in the reality check (before Phase A)
 
@@ -86,6 +87,61 @@ Phases: **A** get your own company in · **B** master-data depth · **C** capaci
 | N38 | A goods receipt posted today shows on the purchase order at once, but stock only changes when the plan moves past that day. | By design | Stock is derived from movements before the planning start, so today's plan already expects the order; the receipt's message says where stock updates (*Actuals → Start a new week*). |
 | N39 | Refusals (receiving more than the supplier's tolerance) come back as an HTTP 409 that the browser also logs as a failed request. | Minor | The page shows the reason; the end-to-end tests accept a 409 as they already did a 422. |
 | N40 | A supplier's order currency is recorded but not applied: a purchase order is priced in its source's currency. | Minor | Open. Keep a source's price in the currency the supplier invoices in. |
+
+## Found in the second reality check (after Phase E)
+
+A new company built from an empty start through the screens only: a paint maker with one plant, a distribution
+centre, a depot, three suppliers (one importing), two customer channels, three finished goods, one bulk
+intermediate, four raw materials and three packs. Demand came in as a monthly spreadsheet, stock as an upload. Then
+one full cycle: plan everything, create and send purchase orders, record a late confirmation, firm the next two
+weeks, post the week's production, transfers and sales, move the plan forward a week, re-plan, and read every page,
+on a desktop and at phone width. Phases F–J are the proposal at the end of this section.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| Q1 | Stock typed in during setup (the product wizard's *On hand today*, or an upload of stock) never becomes an opening movement. As soon as a place gets its first movement, its stock is recomputed from the journal alone: after one transfer arrived, the Mumbai warehouse went from 900 tins to 25.9, and after the week's sales every stocked place read negative. | Critical | Open (**F**). Setup stock should post an opening balance on the planning start (go-live), so both paths agree. |
+| Q2 | *Receive* on a stock transfer posts only its arrival: nothing takes the goods out of the sending place, and there is no *Ship* button for a transfer. The same tins then sit in the plant and the warehouse at once. | Critical | Open (**F**). One action posts both sides (or dispatch now, arrival later, in transit between). |
+| Q3 | *Receive* on a production order adds the product but never issues its parts: resin, pigment and tins stay at their opening stock however much is made, unless each issue is posted by hand in the journal. | Critical | Open (**F**). Confirming a production order issues its parts (backflush, S/4 style), with the option to post actual usage instead. |
+| Q4 | The goods-movement upload refuses a file without an *id* column, which no dispatch register or stock report has. | Critical | Open (**F**). Number new movements automatically, as the journal form does. |
+| Q5 | There is no way to take a customer order. *Check a new order* is a simulation ("Nothing is saved"); an order has to be typed into *Master data → Demand* with its kind set to sales order. | Critical | Open (**G**). Accept a checked order as a sales order; an order list to change, cancel and deliver. |
+| Q6 | Products counted in each are planned in fractions: production orders for 25.9 tins, a transfer of 2.22 pails, 203.23 pails a week in the demand grid. | Serious | Open (**H**). Whole units for products counted in each (or any unit marked as whole), everywhere quantities are planned. |
+| Q7 | The default lot size is exactly what's needed, day by day: 2,032 planned orders over 26 weeks for four products (573 production runs, 1,184 shipments), four batches of base in four days, 61 orders to start in one week. | Serious | Open (**H**). A sensible default (a week's need per order) and a setup question about it. |
+| Q8 | A process plant cannot be described: a batch of paint is mixed in fixed batches (e.g. 2,000 L in 3 hours whatever the fill), but a step only takes minutes per unit and setup hours. | Serious | Open (**H**). Batch size and time per batch on a step, and batch multiples on the order. |
+| Q9 | Two roads to a purchase order disagree. *Buying* groups lines per supplier and applies approval and minimum order value; *Actuals → firm zone* firms each purchase as its own order and skips both. Firming "everything" there also re-ordered 200 kg of pigment already on order (the confirmed-late line), without saying so. | Serious | Open (**F**). The firm zone hands purchases to Buying's requisitions (or groups them the same way) and marks lines that duplicate an open order. |
+| Q10 | *Capacity plan* reports revenue of ₹4.01 Cr when no selling price is set (it values each sale at its cost), while *Money* says revenue ₹0 and a margin of −₹4.19 Cr. | Serious | Open (**G**). Without prices, show no revenue or margin anywhere; say which products need a price. |
+| Q11 | The demand upload does not read the columns a sales spreadsheet has: *Customer* is not taken as the place, *Month* is not taken as the date, and "Oct 2026" is "not a date". A monthly forecast needs an ISO date plus a *period_days* column that nothing mentions. | Serious | Open (**H**). Month values become a month-long forecast bucket; more column names recognised. |
+| Q12 | An empty company never asks its name, currency, planning start or working week (the header says "My Company", Monday to Saturday is imposed), and setup never asks for selling prices or costs. | Serious | Open (**H**). A first step for the company itself, and prices and costs in the product setup. |
+| Q13 | *Enter stock on hand* opens an empty planning-policy table (the side list shows a warning count of 15 next to it). Stock can only be typed once a policy row exists for each product and place. | Serious | Open (**F**). A stock grid of every product at every place it is kept, which posts the opening balance (Q1). |
+| Q14 | The working company exists only in this browser's local storage: no sign-in, nothing shared with a colleague, gone if site data is cleared. A real company with a year of history will outgrow the browser's roughly 5 MB, and a failed save is swallowed without a word. | Serious | Open (**I**). Companies stored on the server, with sign-in, autosave and an audit trail. |
+| Q15 | A late posting goes nowhere visible. Sales posted after the week was rolled are dated before the new start, so forecast accuracy still reads "0 units sold vs 2,732 forecast" and nothing asks for a re-roll. Home kept saying 98% on time while four places disagreed with the journal; the data check calls that a warning. | Serious | Open (**F**). Offer the re-roll when postings land in a rolled week; Home leads with stock that disagrees with the journal. |
+| Q16 | The buy form takes a price only in the company currency, so the importer's USD pigment has to be converted by hand. | Minor | Open (**H**, with N40). |
+| Q17 | Raw ids are still on screen: the data check's problem text ("EMULSION-WHITE-20-L at VAPI-PAINT-PLANT is needed…"), the shop-floor board's rows, legend and busiest-resource tile, *Buying*'s "PO-00001 to PIGMENT-IMPORTER", the firm zone's *From* column (truncated source ids), and the new-order drop-downs, which lead with the id. | Minor | Open (**J**). |
+| Q18 | An import preview marks every row "added" while a required column is missing and the import button is disabled; the reason is one line above the table. | Minor | Open (**J**). |
+| Q19 | *Machines & shifts* at phone width: the detail panel stays beside the list, one word per line. | Minor | Open (**J**). |
+| Q20 | *Performance* shows "Days of supply 9.28 d" graded "No data". | Minor | Open (**J**). |
+| Q21 | Three pages give three utilisations with no word on why: the supply plan's busiest machine 65%, the capacity plan's peak 15%, the shop floor's 29%. | Minor | Open (**J**). Name the measure on each (day vs month, regular hours vs window). |
+| Q22 | Planned-order numbers are handed out again on every plan (PR-00006 was later a different requisition), and firming renames them (MO-00430 became PRD-00008), so the shop-floor board, the firm zone and *Actuals* don't match up. | Minor | Open (**J**). Show "was MO-00430" on firm orders; say planned numbers are temporary. |
+| Q23 | *Mark as sent* only records a date: there is no purchase order document to download, print or send. | Minor | Open (**J**). |
+| Q24 | A late requisition shows "Order by Mon 28 Sep · late", which is today, not the date it should have been ordered. | Minor | Open (**J**). |
+| Q25 | The new-route form keeps the previous route's days in transit. | Minor | Open (**J**). |
+
+What held up: the network builder, product wizard, stock and demand uploads (once the columns matched), the
+checklist, plan everything, requisitions to a purchase order with a late confirmation that planning used at once, the
+roll-forward report, and every page at phone width except *Machines & shifts* (no page scrolls sideways).
+
+### Proposed next phases
+
+- **F: execution you can trust** (Q1–Q4, Q9, Q13, Q15). Setup stock becomes the opening balance. A production
+  order confirms with its parts issued. A transfer ships and arrives, with stock in transit between. Movements
+  upload without ids. There is one road to a purchase order. Late postings offer a re-roll. Home leads with stock
+  that disagrees with the journal.
+- **G: order to cash, first steps** (Q5, Q10). Accept a checked order. A sales-order list to change, cancel and
+  deliver from. Customer prices and terms. Revenue and margin appear only where prices exist.
+- **H: sensible defaults and a second onboarding pass** (Q6–Q8, Q11, Q12, Q16, N40). The company's own settings
+  come first. Whole units. A weekly default lot size. Batch steps. Monthly demand upload. Prices and costs in
+  setup. Supplier currency.
+- **I: a real place to keep the company** (Q14). Server-side storage, sign-in and roles, autosave, an audit trail.
+- **J: polish sweep** (Q17–Q25, N8, N31).
 
 ## Gaps against SAP recorded for later phases
 
