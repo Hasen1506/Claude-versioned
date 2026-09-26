@@ -40,7 +40,7 @@ WEB_DIST = ROOT / "web" / "dist"
 
 app = FastAPI(title="SCP — Supply Chain Planning", version=__version__,
               description="Typed network master data, readiness gate, demand planning, network MRP/DRP.")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "https://hasen1506.github.io"],
                    allow_methods=["*"], allow_headers=["*"])
 
 
