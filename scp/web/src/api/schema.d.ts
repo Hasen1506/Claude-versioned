@@ -5026,6 +5026,13 @@ export interface components {
              */
             reservations?: components["schemas"]["Reservation"][];
             /**
+             * Step Resources
+             * @description Production: steps (by number) to run on one of their alternative machines instead of their own
+             */
+            step_resources?: {
+                [key: string]: string;
+            };
+            /**
              * Scheduled
              * @description Dates set by the detailed schedule: when it finishes later than needed, planning counts it where it is needed and reports the delay instead of adding an order in front of it
              * @default false
