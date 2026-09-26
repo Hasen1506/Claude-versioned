@@ -19,7 +19,8 @@ def test_health_and_examples():
 def test_validate_network_plan_round_trip():
     d = example_dict("kitchenware_network")
     v = client.post("/api/validate", json=d).json()
-    assert v == {"issues": [], "blocking": False}
+    assert v["issues"] == [] and v["blocking"] is False and v["set_aside"] == []
+    assert all(i["status"] != "todo" for i in v["setup"])
     net = client.post("/api/network", json=d).json()
     assert {loc["id"] for loc in net["locations"]} >= {"PLT-PUNE", "DC-DELHI", "SUP-SHENZHEN"}
     assert any(e["kind"] == "purchase" and e["origin"] == "SUP-SHENZHEN" for e in net["edges"])

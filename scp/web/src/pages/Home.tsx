@@ -6,6 +6,7 @@ import type { Dataset, Kpi, PlannedOrder } from "../api/types";
 import { addDays, dayName, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { href } from "../lib/router";
 import { earliestArrival } from "../lib/situations";
+import { Checklist, setupTodo } from "../components/Checklist";
 import { freshness, planFreshness, store, useStore, type RunKey } from "../state/store";
 
 // ---- first-run guide: remembers which pages this browser has visited --------------------------------
@@ -138,9 +139,14 @@ export function Home({ ds }: { ds: Dataset }) {
 
   const issues = s.validation?.issues ?? [];
   const errors = issues.filter((i) => i.severity === "error").length;
+  const warnings = issues.length - errors;
   const blocked = !!s.validation?.blocking || s.schemaErrors.length > 0;
+  const todo = setupTodo(s.validation);
+  // still setting up and nothing calculated: show what's missing instead of empty answer cards
+  const settingUp = (todo.length > 0 || blocked) && planned === "none";
 
   const plan = s.runs.plan.data?.ok ? s.runs.plan.data : null;
+  const noStock = !(ds.location_products ?? []).some((x) => (x.on_hand ?? 0) > 0) && !(ds.movements ?? []).length;
   const prom = s.runs.promise.data?.ok ? s.runs.promise.data : null;
   const fin = s.runs.finance.data?.ok ? s.runs.finance.data : null;
   const inv = s.runs.inventory.data?.ok ? s.runs.inventory.data : null;
@@ -207,7 +213,8 @@ export function Home({ ds }: { ds: Dataset }) {
             {kind !== "transfer" && at.length <= 2 && <span className="faint"> at {at.join(" and ")}</span>}</li>;
         })}
       </ul>
-      {past.length > 0 && <p className="muted"><em>{qty(past.length)} of them should already have started.</em> Starting them today loses the least time.</p>}
+      {past.length > 0 && <p className="muted"><em>{qty(past.length)} of them should already have started.</em> Starting them today loses the least time.
+        {noStock && <> No stock on hand has been entered, so the plan starts every place from zero; <a href={href("data", "location_products")}>enter today's stock</a> for a realistic first plan.</>}</p>}
     </>);
   }
 
@@ -238,7 +245,7 @@ export function Home({ ds }: { ds: Dataset }) {
     const off = bad.filter((k) => k.status === "critical").length;
     const open = tow.worklist.filter((w) => w.status === "open" || w.status === "acknowledged").length;
     track = (<>
-      <p className="answer">{bad.length === 0 ? `All ${scored.length} measures on target.` : <>{off ? <><em>{off} of {scored.length}</em> measures off target</> : "None off target"}{bad.length > off && `, ${bad.length - off} near it`}.</>}</p>
+      <p className="answer">{bad.length === 0 ? (scored.length === 0 ? "Nothing to measure yet." : scored.length === 1 ? "The one measure with data is on target." : `All ${scored.length} measures on target.`) : <>{off ? <><em>{off} of {scored.length}</em> measures off target</> : "None off target"}{bad.length > off && `, ${bad.length - off} near it`}.</>}</p>
       {bad.length > 0 && <ul className="plain meters">
         {bad.slice(0, 4).map((k) => (
           <li key={k.id}><span className={`sq ${k.status}`} aria-hidden />{k.name}
@@ -252,11 +259,14 @@ export function Home({ ds }: { ds: Dataset }) {
   // --- data check
   const dataCard = (
     <Card q="Is the data good enough to plan?" attn={blocked} loading={!s.validation && !s.schemaErrors.length}
-      links={[{ to: href("readiness"), label: errors || issues.length ? "See the problems" : "See the data check" }]}>
+      links={[{ to: href("readiness"), label: errors || todo.length ? "See what's missing" : issues.length ? "See the warnings" : "See the data check" }]}>
       {s.schemaErrors.length ? <p className="answer"><em>No.</em> {plural(s.schemaErrors.length, "value")} can't be read.</p>
         : errors ? <p className="answer"><em>Not yet.</em> {plural(errors, "problem")} stop planning.</p>
-        : <p className="answer">Yes.{issues.length ? ` ${plural(issues.length, "warning")} worth a look.` : " No problems found."}</p>}
-      {fc && <p className="muted">The forecast is {pct(1 - (fc.summary.wape ?? 0), 0)} accurate on past weeks
+        : todo.length ? <p className="answer"><em>Not yet.</em> {plural(todo.length, "thing")} still to set up.</p>
+        : <p className="answer">Yes.{warnings ? ` ${plural(warnings, "warning")} worth a look.` : " No problems found."}</p>}
+      {(s.validation?.set_aside?.length ?? 0) > 0 && <p className="muted">{plural(s.validation!.set_aside!.length, "unfinished record")} {s.validation!.set_aside!.length === 1 ? "is" : "are"} left
+        out of the plan until {s.validation!.set_aside!.length === 1 ? "it is" : "they are"} finished.</p>}
+      {fc && fc.summary.wape !== null && (ds.history ?? []).length > 0 && <p className="muted">The forecast is {pct(1 - fc.summary.wape, 0)} accurate on past weeks
         {fc.summary.bias !== null && Math.abs(fc.summary.bias) >= 0.005 ? `, ${pct(Math.abs(fc.summary.bias), 0)} on the ${fc.summary.bias > 0 ? "high" : "low"} side` : ""}.</p>}
     </Card>
   );
@@ -273,15 +283,25 @@ export function Home({ ds }: { ds: Dataset }) {
       </header>
 
       <Status />
-      {locations.length > 0 && <Guide planned={planned !== "none"} />}
+      {locations.length > 0 && !settingUp && <Guide planned={planned !== "none"} />}
 
       {locations.length === 0 ? (
         <section className="hcard attn">
           <h2 className="q">Your network is empty</h2>
           <p>Start with the places goods move between: plants, warehouses, suppliers and customers. Then add products,
-            how each is made or bought, and the demand to plan for. The data check tells you what is still missing.</p>
-          <div className="links"><a href={href("data", "locations")}>Add locations</a><a href={href("readiness")}>See what's missing</a></div>
+            how each is made or bought, and the demand to plan for. A checklist here tells you what is still missing.</p>
+          <p className="muted">Already have this in spreadsheets? Every table can be uploaded from CSV or Excel.</p>
+          <div className="links"><a href={href("setup", "network")}>Set up the network</a><a href={href("data", "locations")}>Upload places from a spreadsheet</a></div>
         </section>
+      ) : settingUp ? (
+        <div className="stack">
+          <section className="hcard attn" aria-label="Finish setting up">
+            <h2 className="q">Finish setting up</h2>
+            <p className="answer">{todo.length ? `${plural(todo.length, "thing")} to do before the plan means something.` : "Fix the data problems first."}</p>
+            <Checklist items={s.validation?.setup ?? []} compact />
+          </section>
+          {dataCard}
+        </div>
       ) : (
         <div className="hgrid">
           <Card q="Will customers get what they need?" attn={serveAttn} loading={loading("plan")}
@@ -330,6 +350,11 @@ function Status() {
   if (blocked) return (
     <div className="status bad" role="status">Planning is blocked until the data problems below are fixed.
       <a href={href("readiness")}>Open the data check</a></div>
+  );
+  const todo = setupTodo(s.validation);
+  if (f === "none" && todo.length) return (
+    <div className="status" role="status">Not ready to plan yet: {plural(todo.length, "thing")} still to set up.
+      <a href={href("readiness")}>Open the checklist</a></div>
   );
   if (f === "none") return (
     <div className="status" role="status">Nothing calculated yet.

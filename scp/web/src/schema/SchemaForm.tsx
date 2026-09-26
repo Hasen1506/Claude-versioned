@@ -26,7 +26,7 @@ export function deref(schema: JsonSchema, node: JsonSchemaNode): JsonSchemaNode 
 }
 
 /** Unwrap `anyOf: [X, null]` → X, remembering that null is allowed. */
-function unwrap(schema: JsonSchema, node: JsonSchemaNode): { node: JsonSchemaNode; nullable: boolean } {
+export function unwrap(schema: JsonSchema, node: JsonSchemaNode): { node: JsonSchemaNode; nullable: boolean } {
   if (node.anyOf) {
     const nonNull = node.anyOf.filter((n) => n.type !== "null");
     const nullable = nonNull.length < node.anyOf.length;

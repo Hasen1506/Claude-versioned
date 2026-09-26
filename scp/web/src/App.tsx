@@ -20,6 +20,7 @@ import { MasterData } from "./pages/MasterData";
 import { Network } from "./pages/Network";
 import { Plan } from "./pages/Plan";
 import { Readiness } from "./pages/Readiness";
+import { Setup } from "./pages/Setup";
 import { freshness, isModified, planFreshness, store, useStore, NO_ISSUES } from "./state/store";
 
 /** Open a dataset and calculate everything, so no page opens empty. */
@@ -73,6 +74,7 @@ export function App() {
           : page === "data" ? <MasterData route={route} />
           : page === "settings" ? <MasterData route={["data", "settings"]} />
           : page === "readiness" ? <Readiness />
+          : page === "setup" ? <Setup route={route} />
           : page === "network" ? <Network route={route} />
           : page === "demand" ? <Demand route={route} />
           : page === "inventory" ? <Inventory route={route} />
@@ -95,14 +97,15 @@ function PlanButton() {
   const planning = useStore((s) => s.planning);
   const f = useStore(planFreshness);
   const blocked = useStore((s) => !!s.validation?.blocking || s.schemaErrors.length > 0);
-  const empty = useStore((s) => !s.dataset?.locations?.length);
+  // nothing worth calculating yet: no places, or the checklist still has things to do (e.g. no demand at all)
+  const empty = useStore((s) => !s.dataset?.locations?.length || (s.validation?.setup ?? []).some((i) => i.status === "todo"));
   if (planning) {
     return <button className="btn plan-btn" disabled aria-live="polite">
       <span className="spin" aria-hidden />Planning… {planning.done + 1}/{planning.of}</button>;
   }
   return (
     <button className={`btn plan-btn ${f !== "fresh" && !blocked && !empty ? "accent" : ""}`} onClick={() => store.planAll()}
-      title={blocked ? "Fix the data problems first (Setup → Network → Data check)" : "Calculate every result from the current data. Your data is not changed."}>
+      title={blocked ? "Fix the data problems first (Setup → Data check)" : empty ? "Your company isn't fully set up yet: see the Data check" : "Calculate every result from the current data. Your data is not changed."}>
       {f === "stale" ? "Plan everything again" : "Plan everything"}
     </button>
   );

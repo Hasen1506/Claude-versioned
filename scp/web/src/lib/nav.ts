@@ -44,6 +44,7 @@ export const NAV: NavGroup[] = [
     { id: "tower", label: "Performance", question: "Are we hitting our targets, and what needs following up?", run: "tower" },
   ] },
   { label: "Setup", items: [
+    { id: "setup", label: "Set up", question: "What is my company made of, and what's still missing?" },
     { ...network, label: "Network", tabs: [
       network,
       { id: "readiness", label: "Data check", question: "Is the data complete enough to plan?" },

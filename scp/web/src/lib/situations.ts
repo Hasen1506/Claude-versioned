@@ -92,6 +92,17 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
           actions: [{ label: "Open the data check", to: href("readiness") }],
         };
         break;
+      case "STOCKOUT": {
+        const parts = l.filter((e) => (ds.products ?? []).find((p) => p.id === e.product)?.type !== "FG");
+        s = {
+          title: `Stock runs out at ${plural(l.length, "product and place", "products and places")}`,
+          why: `More is needed than is on hand or can arrive in time, so projected stock goes below zero.${parts.length
+            ? " For a part, production that needs it can't start as planned until it arrives." : ""}`,
+          items: l.map((e) => ({ label: where(e), detail: `from ${d(e.date)}, up to ${n(e.qty)} short`, to: node(e) })),
+          actions: [],
+        };
+        break;
+      }
       case "BELOW_SAFETY_STOCK":
         s = {
           title: `Stock drops below safety stock at ${plural(l.length, "place")}`,
@@ -157,7 +168,7 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
         };
         break;
       default:
-        s = { title: `${code} (${list.length})`, why: "", items: l.map((e) => ({ label: e.message, to: node(e) })), actions: [] };
+        s = { title: `${codeLabel(code)} (${list.length})`, why: "", items: l.map((e) => ({ label: e.message, to: node(e) })), actions: [] };
     }
     out.push({ code, severity: sev, ...s });
   }
@@ -171,7 +182,7 @@ const CODE_LABEL: Record<string, string> = {
   RESCHEDULE_IN: "Incoming order needed sooner", NO_VALID_SOURCE: "No way to supply", BELOW_SAFETY_STOCK: "Below safety stock",
   EXCESS_STOCK: "Above maximum stock", SHELF_LIFE_RISK: "May expire", CAPACITY_OVERLOAD: "Over capacity",
   CAPACITY_OVERTIME: "Overtime needed", SUPPLIER_CAPACITY: "Supplier over capacity", LANE_CAPACITY: "Lane over capacity",
-  EOQ_FALLBACK: "No economic lot size",
+  EOQ_FALLBACK: "No economic lot size", STOCKOUT: "Stock runs out",
 };
 export function codeLabel(code: string): string {
   if (CODE_LABEL[code]) return CODE_LABEL[code];

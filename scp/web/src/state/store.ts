@@ -4,7 +4,7 @@
 // was computed on, so the UI can show "stale" the moment any input changes — the legacy STALE
 // cascade, done by construction instead of by a dependency table.
 import { useSyncExternalStore } from "react";
-import { api, SchemaRejected } from "../api/client";
+import { api, SchemaRejected, setPlanningView } from "../api/client";
 import type { ActualsView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
 
 export interface RunResults {
@@ -93,6 +93,37 @@ const listeners = new Set<() => void>();
 const past: Dataset[] = [];
 const future: Dataset[] = [];
 let timer: ReturnType<typeof setTimeout> | undefined;
+/** Revision the last data check answered for (validation and set-aside records are current at it). */
+let checkedRevision = -1;
+/** Unfinished records the last data check set aside, by collection, as their JSON text: matched by content, so
+ *  an edit elsewhere (which shifts row positions) never un-sets or wrongly sets aside a record. */
+let setAside: Map<string, Set<string>> = new Map();
+
+type Coll = Record<string, unknown[] | undefined>;
+
+setPlanningView((ds) => {
+  if (!setAside.size) return { clean: ds, restore: (x) => x };
+  const clean = { ...ds } as unknown as Coll;
+  const dropped: [string, unknown[]][] = [];
+  for (const [coll, texts] of setAside) {
+    const list = clean[coll];
+    if (!list) continue;
+    const out = list.filter((r) => !texts.has(JSON.stringify(r)));
+    if (out.length !== list.length) {
+      dropped.push([coll, list.filter((r) => texts.has(JSON.stringify(r)))]);
+      clean[coll] = out;
+    }
+  }
+  return {
+    clean: clean as unknown as Dataset,
+    restore: (next) => {
+      if (!dropped.length) return next;
+      const back = { ...next } as unknown as Coll;
+      for (const [coll, recs] of dropped) back[coll] = [...(back[coll] ?? []), ...recs];
+      return back as unknown as Dataset;
+    },
+  };
+});
 
 function set(patch: Partial<State>) {
   state = { ...state, ...patch, canUndo: past.length > 0, canRedo: future.length > 0 };
@@ -134,6 +165,15 @@ async function check() {
   try {
     const [validation, network] = await Promise.all([api.validate(ds), api.network(ds)]);
     if (rev !== state.revision) return; // superseded by a newer edit
+    const aside = new Map<string, Set<string>>();
+    for (const a of validation.set_aside ?? []) {
+      const rec = (ds as unknown as Coll)[a.collection]?.[a.index];
+      if (rec === undefined) continue;
+      if (!aside.has(a.collection)) aside.set(a.collection, new Set());
+      aside.get(a.collection)!.add(JSON.stringify(rec));
+    }
+    setAside = aside;
+    checkedRevision = rev;
     set({ validation, network, schemaErrors: [], engineError: null, checking: false });
   } catch (e) {
     if (rev !== state.revision) return;
@@ -168,6 +208,7 @@ export const store = {
     const rev = state.revision + 1;
     const v = version ? { ...version, savedRevision: rev } : null;
     persistVersion(v, false);
+    setAside = new Map();
     set({ dataset: ds, version: v, revision: rev, runs: emptyRuns(), validation: null, network: null });
     scheduleCheck();
   },
@@ -180,6 +221,7 @@ export const store = {
   },
 
   clear() {
+    setAside = new Map();
     past.length = 0;
     future.length = 0;
     persist(null);
@@ -223,6 +265,9 @@ export const store = {
   },
 
   async run<K extends RunKey>(key: K) {
+    if (!state.dataset) return;
+    // plan on what the data check has seen, so unfinished records are set aside and not sent to the engine
+    if (checkedRevision !== state.revision) { clearTimeout(timer); await check(); }
     const ds = state.dataset;
     if (!ds) return;
     const rev = state.revision;

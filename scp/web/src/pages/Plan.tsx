@@ -5,7 +5,7 @@ import {
   Badge, cols, Empty, Panel, Provenance, RunButton, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term, type Severity,
 } from "../components/ui";
 import { Situations } from "../components/Situations";
-import { situations } from "../lib/situations";
+import { situations, codeLabel } from "../lib/situations";
 import { day, humanize, money, ORDER_LABEL, pct, plural, qty } from "../lib/format";
 import { Loc, Prod } from "../lib/names";
 import { go, href } from "../lib/router";
@@ -136,7 +136,7 @@ function ExceptionTable({ rows }: { rows: PlanResult["exceptions"] }) {
             : e.location && e.product ? href("plan", "node", e.location, e.product) : null;
           return (
             <tr key={i}>
-              <td><Badge sev={e.severity as Severity}>{e.code}</Badge></td>
+              <td><Badge sev={e.severity as Severity}>{codeLabel(e.code)}</Badge></td>
               <td className="small">{where ? <a href={where}>{e.resource ?? `${e.product} @ ${e.location}`}</a> : "—"}</td>
               <td className="small">{humanize(e.message)}</td>
             </tr>

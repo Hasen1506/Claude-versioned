@@ -41,6 +41,9 @@ export function Schedule({ route }: { route: string[] }) {
   const rev = useStore((s) => s.revision);
   const stale = useStore((s) => isStale(s, "schedule"));
   const blocking = useStore((s) => s.validation?.blocking ?? false);
+  // the sequencer does not check material (yet): say so when the supply plan has late inbound supply
+  const partsLate = useStore((s) => (s.runs.plan.data?.exceptions ?? []).filter((e) => e.code === "START_IN_PAST" || e.code === "RESCHEDULE_IN")
+    .filter((e) => { const o = s.runs.plan.data?.orders.find((x) => x.id === e.order_id); return !o || o.kind !== "make"; }).length);
   const view = ((route[1] as View) || "board") as View;
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -68,7 +71,9 @@ export function Schedule({ route }: { route: string[] }) {
         earliest-due-date order, then groups products that share a setup into campaigns without letting any order slip further.</>}
       answer={res && (res.kpis.orders ? <>{res.kpis.late_orders ? <>{res.kpis.late_orders} of {plural(res.kpis.orders, "production order")} finish late,
         the worst by {hours(res.kpis.max_lateness_hours)}.</> : <>All {plural(res.kpis.orders, "production order")} finish on time.</>}{" "}
-        {plural(res.kpis.changeovers, "changeover")} take {hours(res.kpis.setup_hours)}.</> : <>No production orders fall in the window.</>)}
+        {plural(res.kpis.changeovers, "changeover")} take {hours(res.kpis.setup_hours)}.
+        {partsLate > 0 && <> This assumes their parts are there: the supply plan has {plural(partsLate, "purchase or shipment")} arriving late,
+          so some runs can't start as sequenced.</>}</> : <>No production orders fall in the window.</>)}
       right={<>
       {res && <Provenance kind="solved" at={run.at} stale={stale} />}
       {res?.search.mode === "manual" && <button className="btn" onClick={() => store.run("schedule")} disabled={run.running}>Undo my changes to the order</button>}

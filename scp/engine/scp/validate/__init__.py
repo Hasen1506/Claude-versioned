@@ -287,7 +287,7 @@ def _calendars(ds: Dataset, c: _Collector) -> None:
         wc = WorkCalendar(cal)
         if wc.workdays_between(s.planning_start, s.planning_start + timedelta(days=s.horizon_days)) == 0:
             c.add("CALENDAR_NO_WORKDAY_IN_HORIZON", "calendar", cal.id,
-                  "No working day inside the planning horizon", "Check weekdays and holidays")
+                  "No working day inside the plan's dates", "Check its working weekdays and holidays")
 
 
 def _covers(valid_from, valid_to, start, end) -> bool:
@@ -318,7 +318,7 @@ def _production(ds: Dataset, c: _Collector) -> None:
                           "Use a resource of the producing plant", f"operations[{op.seq}]")
         if not _covers(ps.valid_from, ps.valid_to, s.planning_start, end):
             c.add("SOURCE_NOT_VALID_IN_HORIZON", "production_source", ps.id,
-                  "Validity dates do not cover the whole horizon; requirements outside are unsourced",
+                  "Its valid-from and valid-to dates don't cover the whole plan; outside them it is not used",
                   "Extend valid_from/valid_to or add another source")
     for r in ds.resources:
         if r.id not in used:
@@ -338,7 +338,7 @@ def _purchasing(ds: Dataset, c: _Collector) -> None:
                       "Supplier lead time is 0 and there is no transit lane", "Enter the planned delivery time")
         if not _covers(pu.valid_from, pu.valid_to, s.planning_start, end):
             c.add("SOURCE_NOT_VALID_IN_HORIZON", "purchasing_source", pu.id,
-                  "Validity dates do not cover the whole horizon", "Extend validity or add another source")
+                  "Its valid-from and valid-to dates don't cover the whole plan", "Extend the dates or add another source")
 
 
 def _lanes(ds: Dataset, c: _Collector) -> None:
@@ -398,8 +398,8 @@ def _demand(ds: Dataset, c: _Collector) -> None:
         c.add("DEMAND_PAST_DUE", "demand", "*", f"{past} demand records are before planning start",
               "They are planned as backlog due today")
     if outside:
-        c.add("DEMAND_OUTSIDE_HORIZON", "demand", "*", f"{outside} demand records are beyond the horizon",
-              "Extend the horizon to plan them")
+        c.add("DEMAND_OUTSIDE_HORIZON", "demand", "*", f"{outside} demand records are after the end of the plan",
+              "Lengthen the plan (Company settings → horizon days) to plan them")
     for loc, prod in sorted(mto_fc):
         c.add("MTO_WITH_FORECAST", "location_product", f"{loc}/{prod}",
               "Forecast exists but the strategy is MTO", "Use MTS_CONSUME or ATO to pre-plan")
@@ -417,7 +417,7 @@ def _forecasting(ds: Dataset, c: _Collector) -> None:
     for (loc, prod), k in npi_keys.items():
         if k > 1:
             c.add("NPI_DUPLICATE", "npi", f"{loc}/{prod}", f"{k} NPI rules for {prod} at {loc}; the last one wins",
-                  "Keep one rule per location-product")
+                  "Keep one rule per product and place")
     for n in ds.npi:
         like = (n.like_location or n.location, n.like_product)
         if like not in with_history:
@@ -427,8 +427,8 @@ def _forecasting(ds: Dataset, c: _Collector) -> None:
     for o in ds.overrides:
         oid = f"{o.location}/{o.product}@{o.date.isoformat()}"
         if not s.planning_start <= o.date < end:
-            c.add("OVERRIDE_OUTSIDE_HORIZON", "override", oid, "The override date is outside the horizon",
-                  "Move it into the planning horizon or delete it", "date")
+            c.add("OVERRIDE_OUTSIDE_HORIZON", "override", oid, "The override date is outside the plan's dates",
+                  "Move it inside the plan or delete it", "date")
         elif (o.location, o.product) not in with_history and (o.location, o.product) not in npi_keys:
             c.add("OVERRIDE_WITHOUT_FORECAST", "override", oid,
                   f"No history or NPI rule for {o.product} at {o.location}, so there is no forecast to adjust",
@@ -453,14 +453,14 @@ def _graph(ds: Dataset, c: _Collector) -> None:
             continue
         if lp is None and ds.location_type(loc) is not LocationType.CUSTOMER:
             c.add("LOCATION_PRODUCT_DEFAULTED", "location_product", f"{loc}/{prod}",
-                  "No planning record: L4L, no safety stock, zero stock assumed",
-                  "Maintain a location-product for this node")
+                  "No stock or ordering rules here yet: ordered exactly as needed, with no safety stock and nothing on hand",
+                  "Enter its stock and ordering rules (Set up → the product, or Planning policies)")
         if not g.options.get(node):
             onhand = lp.on_hand if lp else 0.0
             c.add("NO_SOURCE", "location_product", f"{loc}/{prod}",
-                  f"{prod} at {loc} has requirements but no production, purchasing or lane source"
+                  f"{prod} at {loc} is needed but has no way to be supplied: it is not made, bought or shipped there"
                   + (f" (only {onhand:g} on hand)" if onhand else ""),
-                  "Add a production source, purchasing source or inbound lane")
+                  "Say how it gets there: made there, bought from a supplier, or shipped from another place (Set up → the product)")
     # quotas
     for node, opts in g.options.items():
         q = [o.quota for o in opts if o.quota is not None]

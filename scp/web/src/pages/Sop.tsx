@@ -20,6 +20,7 @@ let pinned: { label: string; res: SopResult } | null = null;
 export function Sop({ route }: { route: string[] }) {
   const run = useStore((s) => s.runs.sop);
   const res = run.data;
+  const planOnTime = useStore((s) => (s.runs.plan.data?.ok ? s.runs.plan.data.kpis.on_time_fill_rate : null));
   const ds = useStore((s) => s.dataset)!;
   const stale = useStore((s) => isStale(s, "sop"));
   const blocking = useStore((s) => s.validation?.blocking ?? false);
@@ -50,10 +51,12 @@ export function Sop({ route }: { route: string[] }) {
         {" "}{ds.sop?.bucket ?? "month"} within capacity, supplier and lane limits, at the least cost or the most profit.
         {" "}<Term t="Shadow price">Shadow prices</Term> say what one more unit of each limit would be worth. Using the plan in the
         supply plan replaces the forecast demand with what can actually be supplied, and sets stock targets for building ahead.</>}
-      answer={res?.ok && res.kpis && <>The network can supply {res.kpis.fill_rate >= 0.9995 ? "all" : pct(res.kpis.fill_rate)} of demand
+      answer={res?.ok && res.kpis && <>{(ds.sop?.bucket ?? "month") === "month" ? "Month by month, the" : "Week by week, the"} network can supply {res.kpis.fill_rate >= 0.9995 ? "all" : pct(res.kpis.fill_rate)} of demand
         {res.kpis.lost > 0.5 ? <>, losing {qty(Math.round(res.kpis.lost))} units</> : null}.{" "}
         {res.binding[0] ? <>The tightest limit is {res.binding[0].label}{res.binding.length > 1 ? <>, one of {res.binding.length}</> : null}.</>
-          : <>No limit holds it back.</>}</>}
+          : <>No limit holds it back.</>}
+        {planOnTime !== null && planOnTime < res.kpis.fill_rate - 0.01 && <> Day by day, with lead times, the supply plan has only {pct(planOnTime)} on time:
+          the difference is timing inside the month, not capacity.</>}</>}
       right={<>
       {res && <Provenance kind="solved" at={run.at} stale={stale} />}
       {res?.ok && <button className="btn" onClick={release} disabled={releasing || stale}

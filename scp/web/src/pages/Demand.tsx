@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { Dataset, ForecastModels, ForecastPoint, ForecastResult, ForecastSeries } from "../api/types";
 import { BucketChart, type Mark, type Span } from "../components/charts";
+import { DemandPlan } from "./DemandPlan";
 import {
   Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
 } from "../components/ui";
@@ -13,7 +14,7 @@ import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
 
-type View = "overview" | "series" | "consensus" | "settings";
+type View = "plan" | "overview" | "series" | "consensus" | "settings";
 
 const PATTERN_HELP: Record<string, string> = {
   smooth: "Regular demand, low size variation",
@@ -29,7 +30,7 @@ export function Demand({ route }: { route: string[] }) {
   const stale = useStore((s) => isStale(s, "forecast"));
   const blocking = useStore((s) => s.validation?.blocking ?? false);
   const ds = useStore((s) => s.dataset)!;
-  const view = ((route[1] as View) || "overview") as View;
+  const view = ((route[1] as View) || "plan") as View;
   const [released, setReleased] = useState<ReleaseInfo | null>(null);
   const [releasing, setReleasing] = useState(false);
 
@@ -48,34 +49,43 @@ export function Demand({ route }: { route: string[] }) {
   };
 
   const head = (
-    <StageHeader title="Demand" kicker="What customers will order, week by week, forecast from past sales. The supply plan uses it once you say so."
+    <StageHeader title="Demand" kicker={view === "plan" ? "What customers will order, week by week: the demand the supply plan works to. Type it in, upload it, or forecast it from past sales."
+      : "A forecast of what customers will order, from past sales. The supply plan uses it once you say so."}
       how={<>For each location and product the engine backtests a set of forecasting models on past sales and keeps the best
         (lowest <Term t="WAPE" />). History is first cleansed of promotions and outliers; demand events lift the forecast, new products
         borrow a similar product's history, and consensus overrides adjust it. Using the forecast in the supply plan writes it into
         your demand data as forecast records (undoable).</>}
-      answer={fc?.ok && fc.summary && <>Customers are expected to order {qty(Math.round(fc.summary.total_final))} units over the next {plural(fc.periods.length, fc.period)},
+      answer={view !== "plan" && fc?.ok && fc.series.length > 0 && fc.summary && <>Customers are expected to order {qty(Math.round(fc.summary.total_final))} units over the next {plural(fc.periods.length, fc.period)},
         across {plural(fc.summary.series, "product and place", "products and places")}.{fc.summary.wape !== null && <> Tested on past sales it misses by about {pct(fc.summary.wape, 0)}
         {fc.summary.bias !== null && Math.abs(fc.summary.bias) >= 0.05 ? <> and runs {fc.summary.bias > 0 ? "high" : "low"} by {pct(Math.abs(fc.summary.bias), 0)}</> : null}.</>}</>}
-      right={<>
+      right={view === "plan" ? undefined : <>
       {fc && <Provenance kind="solved" at={run.at} stale={stale} />}
       <RunButton running={run.running} has={!!fc} onClick={() => store.run("forecast")} disabled={blocking} />
-      <button className="btn primary" onClick={release} disabled={!fc || !fc.ok || stale || releasing || run.running}
+      <button className="btn primary" onClick={release} disabled={!fc || !fc.ok || !fc.series.length || stale || releasing || run.running}
         title={stale ? "Recalculate first: the data changed" : "Writes this forecast into your demand data, replacing the forecast records there. Undo reverts it."}>
         {releasing ? "Saving…" : "Use this forecast in the supply plan"}
       </button></>} />
   );
-  const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
+  const tabs = <Tabs<View> value={view} onChange={(v) => go("demand", v)} tabs={[
+    { id: "plan", label: "Demand plan" },
+    { id: "overview", label: "Forecast" },
+    ...(fc?.ok && fc.series.length ? [{ id: "series" as View, label: "Series workbench", count: fc.series.length }, { id: "consensus" as View, label: "Consensus grid" }] : []),
+    { id: "settings", label: "Forecast settings" },
+  ]} />;
+  const body = (children: React.ReactNode) => <div>{head}<div className="content">{tabs}{children}</div></div>;
+  if (view === "plan") return body(<>{released && <ReleaseBanner info={released} ds={ds} onClose={() => setReleased(null)} />}<DemandPlan ds={ds} /></>);
 
   if (run.error) return body(<div className="banner error"><Badge sev="error">Forecast failed</Badge>{run.error}</div>);
-  if (!fc) {
+  if (!fc || (fc.ok && fc.series.length === 0)) {
     return body(<div className="stack">
       <SolverIO answers="How much each customer or location will want, per week or month, with a range and a reason for every number."
         from="Sales history, demand events, NPI rules, consensus overrides, forecast settings."
         feeds="Forecast demand (PIRs) for supply planning, and forecast-error σ for safety stock." />
       <Panel><Empty title={blocking ? "Fix blocking readiness issues first" : (ds.history?.length ?? 0) === 0 ? "No sales history yet" : "No forecast yet"}>
         {blocking ? <a className="btn" href={href("readiness")}>Open readiness</a>
-          : (ds.history?.length ?? 0) === 0 ? <><p>Add sales history (location, product, date, quantity) or NPI rules to forecast from.</p>
-            <a className="btn" href={href("data", "history")}>Add history</a></>
+          : (ds.history?.length ?? 0) === 0 ? <><p>A forecast needs past sales: one row per place, product, date and quantity sold. Upload them in
+            Sales history, or skip the forecast and <a href={href("demand", "plan")}>enter the demand plan directly</a>.</p>
+            <a className="btn" href={href("data", "history")}>Upload sales history</a></>
           : <p>Run the forecast to see every series' leaderboard, cleansed history, forecast range and consensus grid.</p>}
       </Empty></Panel>
       <ForecastSettingsPanel ds={ds} />
@@ -86,12 +96,6 @@ export function Demand({ route }: { route: string[] }) {
   return body(<>
     {stale && <StaleMark what="forecast" onRerun={() => store.run("forecast")} busy={run.running} />}
     {released && <ReleaseBanner info={released} ds={ds} onClose={() => setReleased(null)} />}
-    <Tabs<View> value={view} onChange={(v) => go("demand", v)} tabs={[
-      { id: "overview", label: "Overview" },
-      { id: "series", label: "Series workbench", count: fc.series.length },
-      { id: "consensus", label: "Consensus grid" },
-      { id: "settings", label: "Forecast settings" },
-    ]} />
     {view === "overview" && <Overview fc={fc} />}
     {view === "series" && <Workbench fc={fc} sel={route[2]} />}
     {view === "consensus" && <Consensus fc={fc} ds={ds} />}
@@ -151,6 +155,7 @@ function Overview({ fc }: { fc: ForecastResult }) {
       <Reading formula={<>WAPE = Σ|forecast − actual| ÷ Σ actual over rolling backtest origins; bias = Σ(forecast − actual) ÷ Σ actual;
         value added = naïve WAPE − champion WAPE.</>}
         soWhat={s.fva !== null && s.fva > 0 ? `The chosen models beat a naïve forecast by ${(s.fva * 100).toFixed(1)} WAPE points: the statistics are earning their keep.`
+          : s.fva === null ? "There isn't enough history to test the models against a naïve forecast yet."
           : "The models do not beat a naïve forecast on this history. Check for structural breaks, or rely on consensus input."} />
       <div className="grid-2">
         <Panel title="ABC × XYZ segmentation">

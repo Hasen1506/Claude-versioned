@@ -28,12 +28,29 @@ Start from an example (a fictional multi-echelon appliance maker with two years 
 one-product plant), create a blank
 network, or import a dataset JSON. The dataset is saved in your browser and can be exported at any time.
 
+## Getting your own company in
+
+- **Set up** builds a company the way a planner describes it: places, and the routes between them (click two places
+  on the map); products; and for each product at each place how it gets there: made here from these parts on this
+  line, bought from a supplier, or shipped from another place, with stock and ordering rules.
+- **Every table uploads from a spreadsheet**: CSV, Excel (.xlsx) or cells pasted from one, with a template to
+  download, loose column names ("Qty", "Quantity", "Item"), places and products by id or name, and a preview of
+  which rows are added, updated or skipped, and why. Bills of material and routings upload as one row per
+  component or step.
+- **Demand → Demand plan** is the demand the supply plan works to, product × place × week, typed in place or
+  uploaded; the forecast is one way to fill it.
+- **The data check** starts with a "What's missing" checklist in setup order, each line with the button that fixes
+  it. A record you haven't finished (a lane with no places chosen yet) is set aside with its reason and the rest
+  keeps planning; it never locks the company.
+
+What real use turned up, and what was done about it, is logged in [docs/USABILITY_LOG.md](docs/USABILITY_LOG.md).
+
 ## What is here (P0–P10)
 
 | Area | Where | What it does |
 |---|---|---|
 | Data model | `engine/scp/model` | Typed master and transactional data. Fractions are 0–1, and quantities are in base UoM. Units are enforced by the schema, not by convention. |
-| Readiness gate | `engine/scp/validate` | 33 coded master-data and execution-data checks with fix hints. Errors block planning. |
+| Readiness gate | `engine/scp/validate` | 33 coded master-data and execution-data checks with fix hints. Errors block planning. Unfinished records (a schema error, or a reference left empty) are set aside with a plain reason instead of rejecting the dataset (`lenient.py`), and a setup checklist says what is still missing, in setup order (`setup.py`). |
 | Network | `engine/scp/network` | Supply options per (location, product), low-level codes across BOM and transport edges, cycle detection. |
 | Supply planning | `engine/scp/plan` | Network MRP/DRP: forecast consumption by strategy, PIR splitting, safety stock (fixed / coverage / α / β), lot sizing (L4L / FIXED / EOQ / POQ / MIN_MAX + MOQ / rounding / max split), quota sourcing, working-day scheduling, firming fence, BOM explosion with scrap, capacity / supplier / lane load, pegging, delay propagation, exceptions, cost KPIs. |
 | Demand planning | `engine/scp/demand` | History to periods, cleansing (event baseline, robust outliers), ABC/XYZ and demand-pattern segmentation, a 12-model competition on a rolling backtest (MASE / WAPE / bias / value added), prediction ranges, events with measured lifts, NPI like-modelling with ramp and cannibalisation, consensus overrides, and release as forecast demand. Google TimesFM is an optional candidate model ([docs/TIMESFM.md](docs/TIMESFM.md)). |

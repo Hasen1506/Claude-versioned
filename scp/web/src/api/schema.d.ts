@@ -101,7 +101,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Post Validate */
+        /**
+         * Post Validate
+         * @description The readiness gate on everything that can be planned; unfinished records are set aside and listed,
+         *     each also as a SET_ASIDE warning, instead of making the whole dataset unreadable.
+         */
         post: operations["post_validate_api_validate_post"];
         delete?: never;
         options?: never;
@@ -4785,6 +4789,26 @@ export interface components {
             /** Margin Pct */
             margin_pct: number | null;
         };
+        /**
+         * SetAside
+         * @description A record left out of planning until it is fixed.
+         */
+        SetAside: {
+            /** Collection */
+            collection: string;
+            /** Index */
+            index: number;
+            /** Object Type */
+            object_type: string;
+            /** Object Id */
+            object_id: string;
+            /** Label */
+            label: string;
+            /** Field */
+            field: string | null;
+            /** Reason */
+            reason: string;
+        };
         /** Settings */
         Settings: {
             /**
@@ -4847,6 +4871,26 @@ export interface components {
             default_service_level: number;
             /** Default Calendar */
             default_calendar?: string | null;
+        };
+        /** SetupAction */
+        SetupAction: {
+            /** Label */
+            label: string;
+            /** Route */
+            route: string[];
+        };
+        /** SetupItem */
+        SetupItem: {
+            /** Step */
+            step: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "done" | "todo" | "check" | "info";
+            /** Text */
+            text: string;
+            action?: components["schemas"]["SetupAction"] | null;
         };
         /** SolverInfo */
         SolverInfo: {
@@ -5375,6 +5419,16 @@ export interface components {
             issues: components["schemas"]["Issue"][];
             /** Blocking */
             blocking: boolean;
+            /**
+             * Set Aside
+             * @default []
+             */
+            set_aside: components["schemas"]["SetAside"][];
+            /**
+             * Setup
+             * @default []
+             */
+            setup: components["schemas"]["SetupItem"][];
         };
         /** ValueBucket */
         ValueBucket: {
@@ -5668,7 +5722,9 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["Dataset"];
+                "application/json": {
+                    [key: string]: unknown;
+                };
             };
         };
         responses: {
@@ -5701,7 +5757,9 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["Dataset"];
+                "application/json": {
+                    [key: string]: unknown;
+                };
             };
         };
         responses: {

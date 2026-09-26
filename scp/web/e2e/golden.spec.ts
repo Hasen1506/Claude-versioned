@@ -82,7 +82,7 @@ test("golden path: example opens planned → home → network → data check →
 
 test("demand planning: forecast → workbench → consensus override → release → plan stale → undo", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
-  await page.goto("/#/demand");
+  await page.goto("/#/demand/overview");
   await page.getByRole("button", { name: "Recalculate", exact: true }).click();
   await expect(page.getByText("Backtest WAPE")).toBeVisible();
   await expect(freshness(page, "demand")).toHaveAttribute("data-fresh", "fresh");
@@ -120,23 +120,77 @@ test("typed inputs: a percent typed as a fraction is rejected with the field nam
   await wacc.press("Enter");
   await expect(page.getByText("Invalid values", { exact: true })).toBeVisible();
   await page.goto("/#/readiness");
-  await expect(page.getByText("settings › wacc")).toBeVisible();
+  await expect(page.getByText("WACC must be 100% or less")).toBeVisible();
   await page.goto("/#/settings");
   await page.locator('input[id="wacc"]').fill("12");
   await page.locator('input[id="wacc"]').press("Enter");
   await expect(page.getByText("Invalid values", { exact: true })).toHaveCount(0);
 });
 
-test("blank network: readiness guides the first steps", async ({ page }) => {
+test("blank network: the checklist and guided setup take a planner from nothing to a plan", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Start with an empty company" }).click();
   await expect(page.getByText("Nothing to plan yet: the network is empty.")).toBeVisible();
-  await page.getByRole("link", { name: "Add locations" }).click();
-  await expect(page.getByRole("heading", { name: "Locations", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: /New location/ }).click();
-  await expect(page.locator('input[id="id"]')).toHaveValue(/L-\d+/);
+  await page.getByRole("link", { name: "Set up the network" }).click();
+  await expect(page.getByRole("heading", { name: "Places and routes" })).toBeVisible();
+  const place = async (name: string, type: string) => {
+    await page.getByPlaceholder("e.g. Pune plant").fill(name);
+    await page.locator("label.qf", { hasText: "What it is" }).locator("select").selectOption(type);
+    await page.getByRole("button", { name: "Add place" }).click();
+  };
+  await place("Supplier A", "supplier");
+  await place("Pune plant", "plant");
+  await place("Mumbai DC", "dc");
+  // connect two places on the map
+  await page.getByRole("button", { name: "Pune plant (Plant)" }).click();
+  await page.getByRole("button", { name: "Mumbai DC (Distribution centre)" }).click();
+  await page.getByRole("button", { name: "Add route" }).click();
+  await expect(page.getByLabel("Days from Pune plant to Mumbai DC")).toHaveValue("2");
+
+  // a product, made at the plant from a new part on a new line; the part bought from the supplier
+  await page.goto("/#/setup/products");
+  await page.getByPlaceholder("e.g. Oil filter").fill("Oil filter");
+  await page.getByRole("button", { name: "Add product" }).click();
+  await page.goto("/#/setup/product/OIL-FILTER/PUNE-PLANT");
+  await page.getByRole("button", { name: "Make it here" }).click();
+  await page.getByRole("button", { name: "+ Add a part" }).click();
+  const make = page.locator(".wz-card.attn .wz-form").first();
+  await make.locator("label.qf", { hasText: "Part" }).first().locator("select").selectOption("+new");
+  await make.locator("label.qf", { hasText: "New part's name" }).locator("input").fill("Filter media");
+  await make.locator("label.qf", { hasText: "Quantity per unit" }).locator("input").fill("2");
+  await page.getByRole("button", { name: "+ Add a step" }).click();
+  await make.locator("label.qf", { hasText: "Its name" }).locator("input").fill("Line 1");
+  await make.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("link", { name: "Set it up" }).click();
+  await page.getByRole("button", { name: "Buy it" }).click();
+  const buy = page.locator(".wz-card.attn .wz-form").first();
+  await buy.locator("label.qf", { hasText: "Price per unit" }).locator("input").fill("40");
+  await buy.getByRole("button", { name: "Save" }).click();
+
+  // the checklist now asks only for demand; typing it into the demand plan makes the company ready
+  await page.goto("/#/readiness");
+  await expect(page.getByText("Nothing to plan yet: no product has any demand.")).toBeVisible();
+  await page.goto("/#/demand");
+  await page.getByLabel("Product", { exact: true }).selectOption({ label: "Oil filter" });
+  await page.getByLabel("Place", { exact: true }).selectOption({ label: "Pune plant" });
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  const week = page.locator("input.dp-in").nth(1);
+  await week.fill("500");
+  await week.press("Enter");
+  await page.goto("/#/readiness");
+  await expect(page.getByText("Ready to plan")).toBeVisible();
   await page.goto("/#/network");
-  await expect(page.locator(".net .node")).toHaveCount(1);
+  await expect(page.locator(".net .node")).toHaveCount(3);
+});
+
+test("an unfinished record is set aside, not a lock on the whole company", async ({ page }) => {
+  await openExample(page, "Single-product bottler");
+  await page.goto("/#/data/lanes");
+  await page.getByRole("button", { name: /New lane/ }).click();
+  await expect(page.getByText(/is left out of planning until it is fixed: from is not filled in/)).toBeVisible();
+  await page.goto("/#/plan");
+  await page.getByRole("button", { name: /Recalculate|Calculate/ }).first().click();
+  await expect(page.getByText(/of demand is covered on time/)).toBeVisible();
 });
 
 test("inventory: optimise → placement → approve recommendation → policies change → stale → DDMRP position", async ({ page }) => {
@@ -380,4 +434,20 @@ test("phone: the menu opens the pages, each page answers first, nothing scrolls 
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => document.documentElement.scrollWidth), hash).toBeLessThanOrEqual(390);
   }
+});
+
+test("upload: demand pasted from a spreadsheet, by name, with a preview of what is added and what can't be read", async ({ page }) => {
+  await openExample(page, "Single-product bottler");
+  await page.goto("/#/demand");
+  await page.getByRole("button", { name: "Upload CSV / Excel" }).click();
+  await page.getByText("…or paste from a spreadsheet").click();
+  await page.getByLabel("Paste rows").fill("Place\tItem\tWeek of\tQty\nPLANT\tBTL-1L\t05/10/2026\t1,000\nNOWHERE\tBTL-1L\t05/10/2026\t5\n");
+  await page.getByRole("button", { name: "Read the pasted rows" }).click();
+  await expect(page.getByText("1 new")).toBeVisible();
+  await expect(page.getByText(/there is no location “NOWHERE”/)).toBeVisible();
+  await page.getByRole("button", { name: "Import 1 row" }).click();
+  await expect(page.getByText(/1 row imported; 1 skipped/)).toBeVisible();
+  await page.goto("/#/data/demand");
+  await expect(page.locator("td", { hasText: /^2026-10-05$/ })).toHaveCount(2);
+  await expect(page.locator("td", { hasText: /^1000$/ })).toHaveCount(1);
 });

@@ -50,6 +50,23 @@ async function call<T>(path: string, init?: RequestInit, timeoutMs?: number): Pr
 
 const post = <T>(path: string, ds: Dataset) => call<T>(path, { method: "POST", body: JSON.stringify(ds) });
 
+/** What the engine plans: the dataset without the unfinished records the data check set aside, and a way to put
+ *  them back into a dataset the engine returns (a released forecast, committed promises, …), so an engine write
+ *  never loses a record the planner is still filling in. The store installs this. */
+export interface PlanningView { clean: Dataset; restore: (next: Dataset) => Dataset }
+let planningViewOf: (ds: Dataset) => PlanningView = (ds) => ({ clean: ds, restore: (x) => x });
+export function setPlanningView(fn: (ds: Dataset) => PlanningView) { planningViewOf = fn; }
+const clean = (ds: Dataset) => planningViewOf(ds).clean;
+const planPost = <T>(path: string, ds: Dataset) => post<T>(path, clean(ds));
+/** POST `{ dataset, ...extra }` and put the set-aside records back into the dataset that comes back. */
+async function write<T extends { dataset: Dataset }>(path: string, dataset: Dataset, extra: Record<string, unknown> = {}): Promise<T> {
+  const v = planningViewOf(dataset);
+  const out = await call<T>(path, { method: "POST", body: JSON.stringify({ dataset: v.clean, ...extra }) });
+  return { ...out, dataset: v.restore(out.dataset) };
+}
+const withDataset = <T>(path: string, dataset: Dataset, extra: Record<string, unknown> = {}) =>
+  call<T>(path, { method: "POST", body: JSON.stringify({ dataset: clean(dataset), ...extra }) });
+
 export const api = {
   examples: () => call<ExampleInfo[]>("/api/examples"),
   example: (name: string) => call<Dataset>(`/api/examples/${encodeURIComponent(name)}`),
@@ -57,29 +74,33 @@ export const api = {
   rules: () => call<RuleInfo[]>("/api/rules"),
   validate: (ds: Dataset) => post<ValidationResult>("/api/validate", ds),
   network: (ds: Dataset) => post<NetworkView>("/api/network", ds),
-  plan: (ds: Dataset) => post<PlanResult>("/api/plan", ds),
-  sop: (ds: Dataset) => post<SopResult>("/api/sop", ds),
-  sopRelease: (ds: Dataset) => post<SopReleaseResponse>("/api/sop/release", ds),
-  inventory: (ds: Dataset) => post<InventoryResult>("/api/inventory", ds),
+  plan: (ds: Dataset) => planPost<PlanResult>("/api/plan", ds),
+  sop: (ds: Dataset) => planPost<SopResult>("/api/sop", ds),
+  sopRelease: async (ds: Dataset) => {
+    const v = planningViewOf(ds);
+    const out = await post<SopReleaseResponse>("/api/sop/release", v.clean);
+    return { ...out, dataset: v.restore(out.dataset) };
+  },
+  inventory: (ds: Dataset) => planPost<InventoryResult>("/api/inventory", ds),
   /** Write the multi-echelon recommendation as fixed policies; keys "location|product", null = every stage that differs. */
   applyPlacement: (dataset: Dataset, keys: string[] | null) =>
-    call<PlacementResponse>("/api/inventory/apply", { method: "POST", body: JSON.stringify({ dataset, keys }) }),
-  promise: (ds: Dataset) => post<PromiseResult>("/api/promise", ds),
-  bop: (ds: Dataset) => post<PromiseResult>("/api/promise/bop", ds),
+    write<PlacementResponse>("/api/inventory/apply", dataset, { keys }),
+  promise: (ds: Dataset) => planPost<PromiseResult>("/api/promise", ds),
+  bop: (ds: Dataset) => planPost<PromiseResult>("/api/promise/bop", ds),
   promiseCheck: (dataset: Dataset, order: DemandRecord) =>
-    call<PromiseResult>("/api/promise/check", { method: "POST", body: JSON.stringify({ dataset, order }) }),
+    withDataset<PromiseResult>("/api/promise/check", dataset, { order }),
   promiseCommit: (dataset: Dataset, mode: "entry" | "bop") =>
-    call<PromiseCommitResponse>("/api/promise/commit", { method: "POST", body: JSON.stringify({ dataset, mode }) }),
+    write<PromiseCommitResponse>("/api/promise/commit", dataset, { mode }),
   /** Detailed schedule; `sequence` (resource → operation keys) fixes the order on those resources. */
   schedule: (dataset: Dataset, sequence?: Record<string, string[]>) =>
-    call<ScheduleResult>("/api/schedule", { method: "POST", body: JSON.stringify({ dataset, sequence: sequence ?? null }) }),
+    withDataset<ScheduleResult>("/api/schedule", dataset, { sequence: sequence ?? null }),
   actuals: (dataset: Dataset, asOf?: string) =>
-    call<ActualsView>("/api/actuals", { method: "POST", body: JSON.stringify({ dataset, as_of: asOf ?? null }) }),
+    withDataset<ActualsView>("/api/actuals", dataset, { as_of: asOf ?? null }),
   roll: (dataset: Dataset, asOf: string) =>
-    call<RollResponse>("/api/actuals/roll", { method: "POST", body: JSON.stringify({ dataset, as_of: asOf }) }),
+    write<RollResponse>("/api/actuals/roll", dataset, { as_of: asOf }),
   /** Firm planned orders into receipts: `ids`, or everything starting within the firm zone. */
   firm: (dataset: Dataset, ids?: string[], withinDays?: number) =>
-    call<FirmResponse>("/api/orders/firm", { method: "POST", body: JSON.stringify({ dataset, ids: ids ?? null, within_days: withinDays ?? null }) }),
+    write<FirmResponse>("/api/orders/firm", dataset, { ids: ids ?? null, within_days: withinDays ?? null }),
   versions: () => call<VersionMeta[]>("/api/versions"),
   version: (id: string) => call<VersionDoc>(`/api/versions/${encodeURIComponent(id)}`),
   saveBase: (dataset: Dataset, name: string, note = "") =>
@@ -93,17 +114,17 @@ export const api = {
     call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/promote`, { method: "POST", body: JSON.stringify({ name: name ?? null }) }),
   compareVersions: (a: string, b: string) => call<Comparison>(`/api/versions/${encodeURIComponent(a)}/compare/${encodeURIComponent(b)}`),
   compare: (a: Dataset, b: Dataset, labelA: string, labelB: string) =>
-    call<Comparison>("/api/compare", { method: "POST", body: JSON.stringify({ a, b, label_a: labelA, label_b: labelB }) }),
-  finance: (ds: Dataset) => post<FinanceResult>("/api/finance", ds),
-  tower: (ds: Dataset) => post<TowerResult>("/api/tower", ds),
+    call<Comparison>("/api/compare", { method: "POST", body: JSON.stringify({ a: clean(a), b: clean(b), label_a: labelA, label_b: labelB }) }),
+  finance: (ds: Dataset) => planPost<FinanceResult>("/api/finance", ds),
+  tower: (ds: Dataset) => planPost<TowerResult>("/api/tower", ds),
   /** Assign (owner "" = back to the rules), acknowledge / resolve / reopen, or annotate a worklist item. */
   towerItem: (id: string, patch: { owner?: string; status?: "open" | "acknowledged" | "resolved"; note?: string; sla_days?: Record<string, number> }) =>
     call<WorkItem>(`/api/tower/items/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(patch) }),
   towerHistory: (id: string) => call<WorkItemEntry[]>(`/api/tower/items/${encodeURIComponent(id)}/history`),
   forecastModels: () => call<ForecastModels>("/api/forecast/models"),
-  forecast: (ds: Dataset) => post<ForecastResult>("/api/forecast", ds),
+  forecast: (ds: Dataset) => planPost<ForecastResult>("/api/forecast", ds),
   release: (dataset: Dataset, keys?: string[]) =>
-    call<ReleaseResponse>("/api/forecast/release", { method: "POST", body: JSON.stringify({ dataset, keys: keys ?? null }) }),
+    write<ReleaseResponse>("/api/forecast/release", dataset, { keys: keys ?? null }),
   /** Proof: end-to-end scenarios with hand-derived answers, run against an isolated in-memory store. */
   scenarios: () => call<ScenarioInfo[]>("/api/scenarios"),
   scenarioDataset: (id: string) => call<Dataset>(`/api/scenarios/${encodeURIComponent(id)}/dataset`),

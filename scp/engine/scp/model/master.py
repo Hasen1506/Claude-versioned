@@ -129,11 +129,11 @@ class LotSizing(Model):
     @model_validator(mode="after")
     def _params(self) -> LotSizing:
         if self.policy is LotSizePolicy.FIXED and self.fixed_qty is None:
-            raise ValueError("FIXED lot sizing needs fixed_qty")
+            raise ValueError("fixed batches need a batch size (fixed qty)")
         if self.policy is LotSizePolicy.POQ and self.periods is None:
-            raise ValueError("POQ lot sizing needs periods")
+            raise ValueError("periodic ordering needs the number of periods each order covers")
         if self.max_qty is not None and self.max_qty < self.min_qty:
-            raise ValueError("max_qty must be ≥ min_qty")
+            raise ValueError("the maximum lot must be at least the minimum lot")
         return self
 
 
@@ -151,9 +151,9 @@ class SafetyStockPolicy(Model):
     def _params(self) -> SafetyStockPolicy:
         m = self.method
         if m is SafetyStockMethod.FIXED and self.qty is None:
-            raise ValueError("fixed safety stock needs qty")
+            raise ValueError("a fixed safety stock needs its quantity")
         if m is SafetyStockMethod.DAYS_OF_SUPPLY and not self.days:
-            raise ValueError("days_of_supply safety stock needs days > 0")
+            raise ValueError("safety stock in days of cover needs the number of days")
         return self
 
 
@@ -187,9 +187,9 @@ class LocationProduct(Model):
     @model_validator(mode="after")
     def _params(self) -> LocationProduct:
         if self.mrp_type is MrpType.REORDER_POINT and self.reorder_point is None:
-            raise ValueError("reorder_point MRP type needs reorder_point")
+            raise ValueError("reorder-point planning needs the reorder point")
         if self.lot_sizing.policy is LotSizePolicy.MIN_MAX and self.max_stock is None:
-            raise ValueError("MIN_MAX lot sizing needs max_stock")
+            raise ValueError("min–max ordering needs the maximum stock")
         return self
 
 
@@ -253,7 +253,7 @@ class Operation(Model):
     @model_validator(mode="after")
     def _labor(self) -> Operation:
         if self.labor_hours_per_unit > 0 and not self.labor_resource:
-            raise ValueError("labor_hours_per_unit needs a labor_resource")
+            raise ValueError("labour hours per unit need a labour resource")
         return self
 
 
@@ -357,7 +357,7 @@ class TransportLane(Model):
     @model_validator(mode="after")
     def _ends(self) -> TransportLane:
         if self.origin == self.destination:
-            raise ValueError("lane origin and destination are the same")
+            raise ValueError("from and to are the same place")
         if sum(1 for m in self.modes if m.default) > 1:
             raise ValueError("at most one default mode per lane")
         return self

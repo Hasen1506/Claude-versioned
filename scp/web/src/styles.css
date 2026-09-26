@@ -612,3 +612,61 @@ details.fold > summary h3::before { content: "▸ "; }
 details.fold[open] > summary h3::before { content: "▾ "; }
 details.fold:not([open]) > summary { border-bottom: 0; }
 .clamp2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* ---- setup checklist (what's missing) ---- */
+.checklist { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.checklist .cl-step { display: grid; gap: 6px; }
+.checklist .cl-title { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.checklist .cl-title .sev-icon { width: 16px; height: 16px; flex: none; }
+.checklist .cl-word { font: 600 11.5px var(--font); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.05em; margin-left: auto; }
+.checklist .cl-step.todo .cl-word { color: var(--critical-text); }
+.checklist .cl-step.check .cl-word { color: var(--warning-text); }
+.checklist ul { list-style: none; margin: 0; padding: 0 0 0 24px; display: grid; gap: 6px; }
+.checklist ul li { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; font-size: 13.5px; line-height: 1.45; color: var(--text-2); }
+.checklist ul li.todo { color: var(--text); }
+.checklist ul li .btn { flex: none; }
+.checklist.compact { gap: 10px; }
+@media (max-width: 640px) { .checklist ul li { flex-direction: column; gap: 4px; } .checklist ul { padding-left: 0; } }
+
+/* ---- guided setup ---- */
+.setup-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.setup-card { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); color: var(--text); text-decoration: none; }
+.setup-card:hover { border-color: var(--ink); box-shadow: inset 4px 0 0 var(--hl); }
+.setup-card b { font-size: 15px; }
+.setup-card span { font-size: 13px; color: var(--text-2); line-height: 1.45; }
+.qrow { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; margin: 4px 0 10px; }
+.qf { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.qf-l { font: 600 12px var(--font); color: var(--text-2); }
+.qf-h { font-size: 11.5px; color: var(--text-3); max-width: 200px; }
+.qf .select { max-width: 320px; }
+.wz-card.attn { border: var(--rule) solid var(--ink); box-shadow: inset 5px 0 0 var(--hl); }
+button.linkish.wz-head { text-decoration: none; color: var(--text); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; text-align: left; font-size: 14.5px; }
+.wz-opts { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.wz-opts li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; }
+.wz-form { border-top: 1px dashed var(--border); padding-top: 10px; }
+.wz-form h4 { font-size: 13px; margin: 6px 0 4px; }
+.wz-n { font: 700 12px var(--mono); width: 22px; height: 22px; display: grid; place-items: center; border: 1.5px solid var(--ink); align-self: center; }
+.wz-parts { display: grid; gap: 6px; }
+.net .edge.pending { stroke: var(--ink); stroke-width: 2.5; stroke-dasharray: 6 5; }
+@media (max-width: 900px) { .setup-net { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---- upload ---- */
+.banner.ok { background: var(--good-soft); color: var(--good-text); border-color: var(--good); }
+table.t tr.bad td { background: var(--critical-soft); }
+.err-text { color: var(--critical-text); font-weight: 600; }
+.import .chip { margin: 2px 4px 2px 0; }
+.import-help { display: grid; gap: 6px; }
+.import-help p { margin: 0; max-width: 80ch; }
+label.btn { cursor: pointer; }
+
+/* ---- demand plan grid ---- */
+.dp-wrap { max-height: 70vh; }
+table.dp th, table.dp td { padding: 4px 6px; }
+table.dp .dp-stub { position: sticky; left: 0; background: var(--surface); z-index: 1; min-width: 220px; white-space: nowrap; }
+table.dp thead th { position: sticky; top: 0; background: var(--surface-2); z-index: 2; }
+table.dp thead th.dp-stub { z-index: 3; }
+table.dp .dp-cell { padding: 2px; }
+.dp-in { width: 64px; border: 1px solid transparent; background: transparent; font: inherit; font-family: var(--mono); text-align: right; padding: 3px 4px; color: var(--text); }
+.dp-in:hover { border-color: var(--border); }
+.dp-in:focus { outline: 2px solid var(--accent); background: var(--surface); }
+table.dp tr.dp-so td { border-top: 0; color: var(--text-2); }
