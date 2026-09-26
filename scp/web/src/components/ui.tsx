@@ -109,11 +109,11 @@ export function cols(template: string, extra?: CSSProperties): CSSProperties {
 
 // ---- legacy design language: stage header, section band, trust layer ----------------------------
 
-/** Numbered page header (legacy StageHeader): big yellow number, uppercase title, one-line kicker. */
-export function StageHeader({ n, title, kicker, right }: { n: string; title: string; kicker?: ReactNode; right?: ReactNode }) {
+/** Page header: title, one-line kicker, actions. (`n` is the old stage number, no longer shown: the
+ *  pages are grouped by question now, not numbered in engine order.) */
+export function StageHeader({ title, kicker, right }: { n?: string; title: string; kicker?: ReactNode; right?: ReactNode }) {
   return (
     <header className="stage-head">
-      <div className="n" aria-hidden>{n}</div>
       <div className="grow">
         <h1 className="title">{title}</h1>
         {kicker && <div className="kicker">{kicker}</div>}

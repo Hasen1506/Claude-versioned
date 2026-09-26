@@ -13,10 +13,39 @@ export function MasterData({ route }: { route: string[] }) {
   const issues = useStore((s) => s.validation?.issues ?? NO_ISSUES);
   const key = (route[1] as CollectionKey) || "locations";
   if (!ds) return null;
-  if (key === ("settings" as CollectionKey)) return <SettingsEditor />;
   const def = byKey[key];
-  if (!def) return <Empty title="Unknown data type" />;
-  return <CollectionView key={key} ds={ds} ckey={key} selected={route[2]} issues={issues} />;
+  const body = key === ("settings" as CollectionKey) ? <SettingsEditor />
+    : !def ? <Empty title="Unknown data type" />
+    : <CollectionView key={key} ds={ds} ckey={key} selected={route[2]} issues={issues} />;
+  return <div className="md-layout"><DataIndex ds={ds} current={key} issues={issues} /><div className="md-main">{body}</div></div>;
+}
+
+/** Every table of master data, grouped, with its row count and any data-check problems. A select on a phone. */
+function DataIndex({ ds, current, issues }: { ds: Dataset; current: string; issues: Issue[] }) {
+  const problems = (type: string) => issues.filter((i) => i.object_type === type).length;
+  return (
+    <nav className="md-index" aria-label="Master data tables">
+      <select className="select md-select" value={current} aria-label="Table" onChange={(e) => go("data", e.target.value)}>
+        <option value="settings">Company settings</option>
+        {DATA_GROUPS.map((g) => <optgroup key={g} label={g}>
+          {COLLECTIONS.filter((c) => c.group === g).map((c) => <option key={c.key} value={c.key}>{c.label} ({items(ds, c.key).length})</option>)}
+        </optgroup>)}
+      </select>
+      <div className="md-list">
+        <a className={current === "settings" ? "on" : ""} href={href("data", "settings")}>Company settings</a>
+        {DATA_GROUPS.map((g) => (
+          <div key={g}>
+            <div className="md-group">{g}</div>
+            {COLLECTIONS.filter((c) => c.group === g).map((c) => {
+              const n = problems(c.issueType);
+              return <a key={c.key} className={current === c.key ? "on" : ""} href={href("data", c.key)}>
+                <span>{c.label}</span>{n > 0 ? <Badge sev="warning">{n}</Badge> : <span className="faint">{items(ds, c.key).length}</span>}</a>;
+            })}
+          </div>
+        ))}
+      </div>
+    </nav>
+  );
 }
 
 function issuesFor(issues: Issue[], type: string, id: string) {

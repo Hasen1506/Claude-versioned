@@ -181,6 +181,7 @@ function Scenario({ info, n, report, running, busy, onRun }: {
     if (open && !window.confirm(`Replace the open dataset with ${info.company}'s starting data? Export it first if you want to keep it.`)) return;
     store.load(await api.scenarioDataset(info.id));
     go(info.stages.find((s) => stageById[s]) ?? "network");
+    void store.planAll();
   };
   const steps = report?.steps.filter((s) => !only || s.error || s.checks.some((c) => !c.passed)) ?? [];
   return (

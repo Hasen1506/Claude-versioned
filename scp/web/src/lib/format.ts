@@ -51,3 +51,24 @@ export const TYPE_LABEL: Record<string, string> = {
 };
 
 export const ORDER_LABEL: Record<string, string> = { make: "Production", buy: "Purchase", transfer: "Transfer" };
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** The one date style for plain-language text: "Mon 28 Sep" (the year only when it is not the planning year). */
+export function dayName(iso: string | null | undefined, year?: number): string {
+  if (!iso) return "—";
+  const d = new Date(iso + "T00:00:00");
+  const s = `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  return year !== undefined && d.getFullYear() !== year ? `${s} ${d.getFullYear()}` : s;
+}
+
+/** ISO date plus whole days. */
+export function addDays(iso: string, n: number): string {
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** "1 order" / "3 orders". */
+export const plural = (n: number, one: string, many = `${one}s`) => `${qty(n)} ${n === 1 ? one : many}`;

@@ -49,7 +49,22 @@ export interface State {
   engineError: string | null;
   canUndo: boolean;
   canRedo: boolean;
+  /** "Plan everything" in progress: which step of how many, and what it is doing now. */
+  planning: { done: number; of: number; label: string } | null;
 }
+
+/** What "Plan everything" calculates, in order. Every step only reads the dataset; none changes it. */
+export const PLAN_STEPS: { key: RunKey; label: string }[] = [
+  { key: "forecast", label: "Forecasting demand" },
+  { key: "plan", label: "Planning supply" },
+  { key: "promise", label: "Checking customer orders" },
+  { key: "inventory", label: "Sizing safety stock" },
+  { key: "sop", label: "Balancing capacity" },
+  { key: "schedule", label: "Sequencing the shop floor" },
+  { key: "actuals", label: "Reading actuals" },
+  { key: "finance", label: "Costing the plan" },
+  { key: "tower", label: "Measuring performance" },
+];
 
 const RUNNERS: { [K in RunKey]: (ds: Dataset) => Promise<RunResults[K]> } = {
   forecast: api.forecast,
@@ -72,7 +87,7 @@ const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), inventory: empty
 
 let state: State = {
   dataset: null, version: null, revision: 0, validation: null, schemaErrors: [], network: null, runs: emptyRuns(),
-  checking: false, engineError: null, canUndo: false, canRedo: false,
+  checking: false, engineError: null, canUndo: false, canRedo: false, planning: null,
 };
 const listeners = new Set<() => void>();
 const past: Dataset[] = [];
@@ -223,6 +238,26 @@ export const store = {
     }
   },
 
+  /** "Plan everything": check the data, then calculate every result in order. Stops at the data check
+   *  when something blocks planning; nothing it does changes the dataset. */
+  async planAll() {
+    if (!state.dataset || state.planning) return;
+    const of = PLAN_STEPS.length + 1;
+    set({ planning: { done: 0, of, label: "Checking your data" } });
+    clearTimeout(timer);
+    await check();
+    if (!state.dataset || state.engineError || state.schemaErrors.length || !state.validation || state.validation.blocking) {
+      set({ planning: null });
+      return;
+    }
+    for (const [i, st] of PLAN_STEPS.entries()) {
+      if (!state.dataset) break;
+      set({ planning: { done: i + 1, of, label: st.label } });
+      await store.run(st.key);
+    }
+    set({ planning: null });
+  },
+
   /** Store a result computed outside `run` (e.g. a schedule with a hand-edited sequence). */
   put<K extends RunKey>(key: K, data: RunResults[K], rev: number) {
     setRun(key, { data, revision: rev, running: false, error: null, at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
@@ -253,6 +288,17 @@ export function useStore<T>(select: (s: State) => T): T {
 
 /** A result exists but the dataset changed after it was computed. */
 export const isStale = (s: State, key: RunKey) => s.runs[key].data !== null && s.runs[key].revision !== s.revision;
+
+/** Where a result stands: up to date, out of date (the data changed after it ran), or not calculated. */
+export type Freshness = "fresh" | "stale" | "none";
+export const freshness = (s: State, key: RunKey): Freshness => !s.runs[key].data ? "none" : isStale(s, key) ? "stale" : "fresh";
+
+/** The whole plan's state, for the top bar: "none" until something ran, "stale" when any result is out of date. */
+export function planFreshness(s: State): Freshness {
+  const f = PLAN_STEPS.map((p) => freshness(s, p.key));
+  if (f.every((x) => x === "none")) return "none";
+  return f.some((x) => x !== "fresh") ? "stale" : "fresh";
+}
 
 /** Stable empty values for selectors: a fresh `[]` per call would re-render forever. */
 export const NO_ISSUES: NonNullable<State["validation"]>["issues"] = [];
