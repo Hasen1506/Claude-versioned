@@ -266,6 +266,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/schedule/catalogue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Schedule Catalogue
+         * @description The scheduling heuristics and the profiles that bundle a start rule, the search and the objective weights.
+         */
+        get: operations["get_schedule_catalogue_api_schedule_catalogue_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schedule/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Schedule Compare
+         * @description Every start rule, the local search and the optimiser on the same window, scored with the current weights.
+         */
+        post: operations["post_schedule_compare_api_schedule_compare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/schedule/apply": {
         parameters: {
             query?: never;
@@ -1414,6 +1454,21 @@ export interface components {
              */
             label_b: string;
         };
+        /** CompareRow */
+        CompareRow: {
+            /** Method */
+            method: string;
+            /** Name */
+            name: string;
+            kpis: components["schemas"]["ScheduleKpis"];
+            /** Seconds */
+            seconds: number;
+            /**
+             * Best
+             * @default false
+             */
+            best: boolean;
+        };
         /** Comparison */
         Comparison: {
             /** A */
@@ -2234,6 +2289,19 @@ export interface components {
             status: string;
             /** Version */
             version: string;
+        };
+        /** Heuristic */
+        Heuristic: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** What */
+            what: string;
+            /** Good For */
+            good_for: string;
+            /** Sap */
+            sap: string;
         };
         /** HistoryPoint */
         HistoryPoint: {
@@ -3448,6 +3516,43 @@ export interface components {
             /** @description Done outside by a supplier instead of on a resource */
             subcontract?: components["schemas"]["Subcontract"] | null;
         };
+        /** OptimizerInfo */
+        OptimizerInfo: {
+            /**
+             * Status
+             * @default not run
+             */
+            status: string;
+            /**
+             * Seconds
+             * @default 0
+             */
+            seconds: number;
+            /** Model Objective */
+            model_objective: number | null;
+            /** Model Bound */
+            model_bound: number | null;
+            /**
+             * Steps
+             * @default 0
+             */
+            steps: number;
+            /**
+             * Machines Changed
+             * @default 0
+             */
+            machines_changed: number;
+            /**
+             * Kept
+             * @default false
+             */
+            kept: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
         /** OrderChange */
         OrderChange: {
             /** Kind */
@@ -3974,6 +4079,19 @@ export interface components {
             valid_from?: string | null;
             /** Valid To */
             valid_to?: string | null;
+        };
+        /** Profile */
+        Profile: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** What */
+            what: string;
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
         };
         /** PromiseCheckRequest */
         PromiseCheckRequest: {
@@ -4671,6 +4789,10 @@ export interface components {
             sequence?: {
                 [key: string]: string[];
             } | null;
+            /** Hold */
+            hold?: {
+                [key: string]: number;
+            } | null;
             /** Ids */
             ids?: string[] | null;
         };
@@ -4678,6 +4800,26 @@ export interface components {
         ScheduleApplyResponse: {
             dataset: components["schemas"]["Dataset"];
             report: components["schemas"]["ApplyReport"];
+        };
+        /** ScheduleCatalogue */
+        ScheduleCatalogue: {
+            /** Heuristics */
+            heuristics: components["schemas"]["Heuristic"][];
+            /** Profiles */
+            profiles: components["schemas"]["Profile"][];
+        };
+        /** ScheduleComparison */
+        ScheduleComparison: {
+            /** Ok */
+            ok: boolean;
+            /** Weights */
+            weights: {
+                [key: string]: number;
+            };
+            /** Rows */
+            rows: components["schemas"]["CompareRow"][];
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
         };
         /** ScheduleKpis */
         ScheduleKpis: {
@@ -4706,6 +4848,11 @@ export interface components {
              * @default 0
              */
             tardiness_hours: number;
+            /**
+             * Earliness Hours
+             * @default 0
+             */
+            earliness_hours: number;
             /**
              * Max Lateness Hours
              * @default 0
@@ -4762,6 +4909,10 @@ export interface components {
             /** Sequence */
             sequence?: {
                 [key: string]: string[];
+            } | null;
+            /** Hold */
+            hold?: {
+                [key: string]: number;
             } | null;
         };
         /** ScheduleResource */
@@ -4820,6 +4971,15 @@ export interface components {
             baseline: components["schemas"]["ScheduleKpis"];
             kpis: components["schemas"]["ScheduleKpis"];
             search: components["schemas"]["SearchInfo"];
+            /**
+             * Profile
+             * @default balanced
+             */
+            profile: string;
+            /** Holds */
+            holds: {
+                [key: string]: number;
+            };
             /** Violations */
             violations: string[];
             /**
@@ -4868,6 +5028,49 @@ export interface components {
              */
             setup_weight: number;
             /**
+             * Earliness Weight
+             * @description Objective weight per hour an order finishes before it is due (stock built early); above 0, orders may be held back to start just in time
+             * @default 0
+             */
+            earliness_weight: number;
+            /**
+             * Makespan Weight
+             * @description Objective weight per hour until the last order in the window finishes
+             * @default 0
+             */
+            makespan_weight: number;
+            /**
+             * Profile
+             * @description The scheduling profile these settings came from (a label; the settings rule)
+             * @default balanced
+             */
+            profile: string;
+            /**
+             * Start Rule
+             * @description How the first sequence is built: earliest due date, shortest job first, least slack, campaigns by setup group, or backward from the due date (just in time)
+             * @default edd
+             * @enum {string}
+             */
+            start_rule: "edd" | "spt" | "slack" | "campaign" | "backward";
+            /**
+             * Optimizer
+             * @description Search for a better machine choice and sequence with a constraint solver (CP-SAT), then time it on the shift calendar; never worse than the dispatching rule and local search
+             * @default false
+             */
+            optimizer: boolean;
+            /**
+             * Backward Buffer Days
+             * @description Backward (just in time): start this many days before the latest start, as a buffer against queues on shared machines
+             * @default 1
+             */
+            backward_buffer_days: number;
+            /**
+             * Frozen Days
+             * @description Frozen zone: orders already dated by the schedule that start within this many days keep their place and machine; only later orders are resequenced
+             * @default 0
+             */
+            frozen_days: number;
+            /**
              * Wait For Parts
              * @description A step starts only once the parts it uses are there: from stock, a receipt, or the order that makes them (along the pegging)
              * @default true
@@ -4875,13 +5078,13 @@ export interface components {
             wait_for_parts: boolean;
             /**
              * Improve
-             * @description Improve the EDD sequence by campaign / swap local search
+             * @description Improve the first sequence by campaign / swap local search
              * @default true
              */
             improve: boolean;
             /**
              * Time Limit Seconds
-             * @description Local-search time budget
+             * @description Search time budget: the local search gets this much, and the optimiser as much again
              * @default 4
              */
             time_limit_seconds: number;
@@ -4922,6 +5125,11 @@ export interface components {
             setup_from: string | null;
             /** Late */
             late: boolean;
+            /**
+             * Machines
+             * @default []
+             */
+            machines: string[];
         };
         /** ScheduledOrder */
         ScheduledOrder: {
@@ -4982,6 +5190,13 @@ export interface components {
              * @default 0
              */
             days_late: number;
+            /**
+             * Frozen
+             * @default false
+             */
+            frozen: boolean;
+            /** Hold */
+            hold: number | null;
         };
         /**
          * ScheduledReceipt
@@ -5063,7 +5278,12 @@ export interface components {
              * Mode
              * @enum {string}
              */
-            mode: "improved" | "edd" | "manual";
+            mode: "improved" | "edd" | "rule" | "manual" | "optimized";
+            /**
+             * Start Rule
+             * @default edd
+             */
+            start_rule: string;
             /**
              * Moves Tried
              * @default 0
@@ -5092,6 +5312,7 @@ export interface components {
             stopped: "converged" | "time_limit" | "off";
             /** Trace */
             trace: number[];
+            optimizer: components["schemas"]["OptimizerInfo"] | null;
         };
         /** Segment */
         Segment: {
@@ -5317,6 +5538,18 @@ export interface components {
              * @default false
              */
             capacity_constrained: boolean;
+            /**
+             * Capacity Direction
+             * @description Levelling: an order that does not fit first tries earlier days (builds ahead, stock) or later days (accepts a delay, reported), then the other way
+             * @default earlier
+             * @enum {string}
+             */
+            capacity_direction: "earlier" | "later";
+            /**
+             * Capacity Max Early Days
+             * @description Levelling: move an order at most this many days earlier to fit; empty = as far as today
+             */
+            capacity_max_early_days?: number | null;
         };
         /** SetupAction */
         SetupAction: {
@@ -6527,6 +6760,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScheduleResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_schedule_catalogue_api_schedule_catalogue_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleCatalogue"];
+                };
+            };
+        };
+    };
+    post_schedule_compare_api_schedule_compare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleComparison"];
                 };
             };
             /** @description Validation Error */

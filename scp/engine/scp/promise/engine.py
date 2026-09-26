@@ -29,8 +29,9 @@ from ..network import NetworkGraph, Node, build_graph, supply_options
 from ..plan import PlanResult
 from ..plan.structure import entering, needs
 from ..plan.leadtime import (
-    gr_days, nominal_lead_time_days, schedule_buy, schedule_make, schedule_transfer,
+    gr_days, nominal_lead_time_days, resource_calendar, schedule_buy, schedule_make, schedule_transfer,
 )
+from ..time.capacity import day_capacity
 from .atp import EPS, AtpSeries
 from .result import AtpNode, CtpStep, OrderPromise, ScheduleLine
 
@@ -77,12 +78,19 @@ class Promiser:
         self.alloc_used: dict[str, float] = defaultdict(float)
         self.orders_by_id = {o.id: o for o in plan.orders}
         self._rlt: dict[Node, float] = {}
-        # free finite capacity per resource and plan bucket (hours), for CTP
-        self.bucket_days = [((b.start - self.origin).days, (b.end - self.origin).days) for b in plan.buckets]
+        # free finite capacity per resource and day over the plan horizon (productive hours less the plan's load
+        # that day), for CTP: a machine free that week but not on the days an order needs it does not confirm it
+        end = max((b.end for b in plan.buckets), default=self.origin)
+        start_hour = ds.scheduling.day_start_hour
         self.free: dict[str, list[float]] = {}
         for rp in plan.resources:
             if rp.finite:
-                self.free[rp.resource] = [max(0.0, b.capacity_hours - b.load_hours) for b in rp.buckets]
+                r = ds.resource_by_id[rp.resource]
+                cal = resource_calendar(ds, r.id)
+                self.free[rp.resource] = [
+                    max(0.0, day_capacity(r, cal, self.date(i), start_hour).productive_hours
+                        - rp.daily_load.get(self.date(i), 0.0))
+                    for i in range((end - self.origin).days)]
 
     # ---- time -----------------------------------------------------------------------------------
     def day(self, d: date) -> int:
@@ -371,22 +379,31 @@ class Promiser:
                 steps += sub.steps
                 actions += sub.actions
             start = max(start, k)
-        # finite capacity: every operation's hours must fit into free bucket capacity from the start
+        # finite capacity: step by step, each in the free hours of its machine (or the alternative that finishes it
+        # first) from the day the step before finishes
         enter = entering(ps)
-        hours: dict[str, float] = defaultdict(float)
-        for op in ps.operations:
-            if op.resource and op.resource in self.free:
-                hours[op.resource] += op.setup_hours + op.run_hours_per_unit * qty * enter[op.seq]
-        finish = start
-        for rid, h in hours.items():
-            got = self._capacity(rid, start, h)
-            if got is None:
+        finish = t = start
+        for op in sorted(ps.operations, key=lambda o: o.seq):
+            if not op.resource or op.subcontract is not None:
+                continue
+            h = op.setup_hours + op.run_hours_per_unit * qty * enter[op.seq]
+            machines = [m for m in (op.resource, *op.alternatives) if m in ds.resource_by_id]
+            if any(m not in self.free for m in machines):
+                continue                          # a machine without a capacity limit can run it
+            best = None
+            for m in machines:
+                got = self._capacity(m, t, h)
+                if got is not None and (best is None or got[0] < best[1][0]):
+                    best = (m, got)
+            if best is None:
                 return None
-            end, takes = got
-            finish = max(finish, end)
+            rid, (last, takes) = best
             actions += [Action("cap", rid, b, x) for b, x in takes]
-            steps.append(CtpStep(kind="capacity", location=loc, product=prod, qty=h, start=self.date(start),
-                                 end=self.date(end), note=f"{h:.1f} h on {rid}"))
+            steps.append(CtpStep(kind="capacity", location=loc, product=prod, qty=h, start=self.date(t),
+                                 end=self.date(last + 1), note=f"step {op.seq}: {h:.1f} h on {rid}"
+                                 + (f" (alternative to {op.resource})" if rid != op.resource else "")))
+            t = last
+            finish = max(finish, last + 1)
         sched = schedule_make(ds, ps, qty, start=self.date(start))
         done = max(self.day(sched.available_date), finish + math.ceil(gr_days(ds.location_product_by_key.get(node)) - 1e-9))
         steps.append(CtpStep(kind="make", location=loc, product=prod, qty=qty, start=self.date(start), end=self.date(done),
@@ -394,23 +411,19 @@ class Promiser:
         return CtpPlan(done, steps, actions)
 
     def _capacity(self, rid: str, start: int, hours: float) -> tuple[int, list[tuple[int, float]]] | None:
+        """The free hours a step takes on a machine from ``start``, day by day: (the day it finishes, the takes), or
+        None when the plan horizon has not enough."""
         free = self.free[rid]
         need = hours
         takes: list[tuple[int, float]] = []
-        for b, (s0, e0) in enumerate(self.bucket_days):
-            if e0 <= start:
+        for i in range(max(0, start), len(free)):
+            if free[i] <= EPS:
                 continue
-            span = e0 - s0
-            share = (e0 - max(s0, start)) / span if span else 0.0
-            avail = free[b] * share
-            if avail <= EPS:
-                continue
-            take = min(avail, need)
-            takes.append((b, take))
+            take = min(free[i], need)
+            takes.append((i, take))
             need -= take
             if need <= EPS:
-                used = take / free[b] * span if free[b] > 0 else span
-                return max(s0, start) + math.ceil(used - 1e-9), takes
+                return i, takes
         return None
 
     def _apply(self, act: Action) -> None:

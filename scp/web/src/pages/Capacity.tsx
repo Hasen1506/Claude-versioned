@@ -199,6 +199,12 @@ function Levelling({ ds, plan, on, stale }: { ds: Dataset; plan: PlanResult; on:
     setPreview(null);
     await store.run("plan");
   };
+  /** A levelling rule changed: forget the preview and re-plan when levelling is on. */
+  const setting = async (patch: Partial<Dataset["settings"]>) => {
+    store.update((d) => { Object.assign(d.settings, patch); });
+    setPreview(null);
+    if (on) await store.run("plan");
+  };
   const keep = async () => {
     setBusy(true); setErr(null);
     try {
@@ -225,6 +231,19 @@ function Levelling({ ds, plan, on, stale }: { ds: Dataset; plan: PlanResult; on:
           (never before today), else finishes later and is reported. {moved.length ? <>{plural(moved.length, "order")} moved in this plan.</> : "Nothing had to move."}</>
         : <>The supply plan now assumes unlimited capacity: each order goes where its dates say, even onto a full machine; the shop floor schedule then
           finds out. Planning within capacity moves orders to where they fit instead.</>}</p>
+      <div className="row wrap small" style={{ gap: 16, marginBottom: 8 }}>
+        <label className="row" style={{ gap: 6 }}>When a machine's day is full, first try
+          <select aria-label="Levelling direction" value={ds.settings.capacity_direction ?? "earlier"}
+            onChange={(e) => setting({ capacity_direction: e.target.value as "earlier" | "later" })}>
+            <option value="earlier">starting earlier (build ahead)</option>
+            <option value="later">finishing later (delay)</option>
+          </select></label>
+        <label className="row" style={{ gap: 6 }}>Build at most
+          <input className="cell" style={{ width: 56 }} type="number" min={0} aria-label="Most days to build ahead"
+            defaultValue={ds.settings.capacity_max_early_days ?? ""} key={String(ds.settings.capacity_max_early_days ?? "")} placeholder="any"
+            onBlur={(e) => { const v = e.target.value.trim(); if (v === "" || Number(v) >= 0) setting({ capacity_max_early_days: v === "" ? null : Math.round(Number(v)) }); }}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} /> days ahead</label>
+      </div>
       {err && <div className="banner error"><Badge sev="error">That didn't work</Badge>{err}</div>}
       {msg && <div className="banner ok"><span>{msg}</span><span className="spacer" /><button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
       {asking && <div className="banner warning" role="alertdialog" aria-label="Keep the levelled dates">
@@ -260,8 +279,8 @@ function Levelling({ ds, plan, on, stale }: { ds: Dataset; plan: PlanResult; on:
             </tr>))}</tbody>
         </table></div>}
       </>}
-      <Reading formula="Levelling places orders one at a time in planning order (finished goods first, released orders before planned ones): on the step's own machine if the days it needs have room, else on its first alternative that does, else a day earlier at a time, else a day later at a time."
-        soWhat="Earlier means stock is built ahead (holding cost); later means a customer date is at risk. Adding a shift or overtime on the busiest machine is often cheaper than either." />
+      <Reading formula="Levelling places orders one at a time in planning order (finished goods first, released orders before planned ones): on the step's own machine if the days it needs have room, else on its first alternative that does, else a day at a time in the direction you pick (earlier: never before today nor more than the days-ahead limit), else the other way."
+        soWhat="Earlier means stock is built ahead (holding cost); later means a customer date is at risk. A days-ahead limit stops an order being built weeks before it is needed; past it, the order goes later instead. Adding a shift or overtime on the busiest machine is often cheaper than either." />
     </Panel>
   );
 }

@@ -1,6 +1,6 @@
 import type {
   Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
-  ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview,
+  ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
 } from "./types";
 
 /** Thrown when the engine rejects the dataset shape (HTTP 422). Carries field-level errors. */
@@ -91,12 +91,18 @@ export const api = {
     withDataset<PromiseResult>("/api/promise/check", dataset, { order }),
   promiseCommit: (dataset: Dataset, mode: "entry" | "bop") =>
     write<PromiseCommitResponse>("/api/promise/commit", dataset, { mode }),
-  /** Detailed schedule; `sequence` (resource → operation keys) fixes the order on those resources. */
-  schedule: (dataset: Dataset, sequence?: Record<string, string[]>) =>
-    withDataset<ScheduleResult>("/api/schedule", dataset, { sequence: sequence ?? null }),
-  /** Fix the schedule's dates on its orders (planned ones become dated production orders); `ids` = only these. */
-  applySchedule: (dataset: Dataset, sequence?: Record<string, string[]>, ids?: string[]) =>
-    write<ScheduleApplyResponse>("/api/schedule/apply", dataset, { sequence: sequence ?? null, ids: ids ?? null }),
+  /** Detailed schedule; `sequence` (resource → operation keys) fixes the order on those resources and puts a step
+   *  listed on an alternative machine there; `hold` = not-before times (clock hours) per order. */
+  schedule: (dataset: Dataset, sequence?: Record<string, string[]>, hold?: Record<string, number>) =>
+    withDataset<ScheduleResult>("/api/schedule", dataset, { sequence: sequence ?? null, hold: hold ?? null }),
+  /** Fix the schedule's dates on its orders (planned ones become dated production orders); `ids` = only these.
+   *  Send the shown schedule's sequences and holds: the optimiser may not give the same answer twice. */
+  applySchedule: (dataset: Dataset, sequence?: Record<string, string[]>, ids?: string[], hold?: Record<string, number>) =>
+    write<ScheduleApplyResponse>("/api/schedule/apply", dataset, { sequence: sequence ?? null, ids: ids ?? null, hold: hold ?? null }),
+  /** The scheduling heuristics and profiles (what each does, when to use it). */
+  scheduleCatalogue: () => call<ScheduleCatalogue>("/api/schedule/catalogue"),
+  /** Every start rule, the local search and the optimiser on the same orders and weights. */
+  compareSchedules: (ds: Dataset) => planPost<ScheduleComparison>("/api/schedule/compare", ds),
   /** What planning within machine capacity would move (runs the plan both ways; changes nothing). */
   level: (ds: Dataset) => planPost<LevelPreview>("/api/capacity/level", ds),
   actuals: (dataset: Dataset, asOf?: string) =>

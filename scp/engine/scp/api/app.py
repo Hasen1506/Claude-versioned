@@ -31,7 +31,10 @@ from ..plan import PlanResult, run_mrp
 from ..plan.level import LevelPreview, level_preview
 from ..promise import PromiseResult, check_order, commit, run_bop, run_promise
 from ..scenarios import BY_ID as SCENARIOS, EngineClient, ScenarioInfo, ScenarioReport
-from ..schedule import ApplyReport, ScheduleResult, apply_schedule, run_schedule
+from ..schedule import (
+    HEURISTICS, PROFILES, ApplyReport, Heuristic, Profile, ScheduleComparison, ScheduleResult, apply_schedule,
+    compare_schedules, run_schedule,
+)
 from ..sop import SopRelease, SopResult, release_sop, run_sop
 from ..validate import RULES, Issue, validate
 from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, plain_errors
@@ -314,12 +317,31 @@ def post_sop_release(ds: Dataset) -> SopReleaseResponse:
 
 class ScheduleRequest(Out):
     dataset: Dataset
-    sequence: dict[str, list[str]] | None = None   # resource → operation keys; None = EDD + local search
+    sequence: dict[str, list[str]] | None = None   # resource → operation keys, each run where it is listed;
+                                                   # None = the start rule, local search and optimiser per settings
+    hold: dict[str, float] | None = None           # order → not-before clock hour (the result's holds)
 
 
 @app.post("/api/schedule", response_model=ScheduleResult)
 def post_schedule(req: ScheduleRequest) -> ScheduleResult:
-    return run_schedule(req.dataset, req.sequence)
+    return run_schedule(req.dataset, req.sequence, hold=req.hold)
+
+
+class ScheduleCatalogue(Out):
+    heuristics: list[Heuristic]
+    profiles: list[Profile]
+
+
+@app.get("/api/schedule/catalogue", response_model=ScheduleCatalogue)
+def get_schedule_catalogue() -> ScheduleCatalogue:
+    """The scheduling heuristics and the profiles that bundle a start rule, the search and the objective weights."""
+    return ScheduleCatalogue(heuristics=HEURISTICS, profiles=PROFILES)
+
+
+@app.post("/api/schedule/compare", response_model=ScheduleComparison)
+def post_schedule_compare(ds: Dataset) -> ScheduleComparison:
+    """Every start rule, the local search and the optimiser on the same window, scored with the current weights."""
+    return compare_schedules(ds)
 
 
 class ScheduleApplyRequest(ScheduleRequest):
@@ -334,7 +356,7 @@ class ScheduleApplyResponse(Out):
 @app.post("/api/schedule/apply", response_model=ScheduleApplyResponse)
 def post_schedule_apply(req: ScheduleApplyRequest) -> ScheduleApplyResponse:
     """Fix the schedule's dates on its orders: planned ones become production orders, released ones are re-dated."""
-    new, rep = apply_schedule(req.dataset, req.sequence, req.ids)
+    new, rep = apply_schedule(req.dataset, req.sequence, req.ids, req.hold)
     if not rep.ok:
         raise HTTPException(409, "the readiness gate has errors; fix them before using the schedule's dates")
     return ScheduleApplyResponse(dataset=new, report=rep)

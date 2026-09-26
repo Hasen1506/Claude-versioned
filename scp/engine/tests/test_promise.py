@@ -168,6 +168,38 @@ def test_ctp_uses_source_stock_before_building():
     assert lines(o) == [("D", "2026-01-07", "2026-01-08", 25, "ctp")]   # stock at P arrives at D in time
 
 
+def _busy_machine(alt: bool = False) -> dict:
+    """M1 (8 h a day) is full Monday to Thursday with a released order for another product, though the week has 17 h
+    free; A needs 7 h on M1 from Tuesday."""
+    d = net(ctp=True)
+    lp(d, "P", "A")["on_hand"] = 0
+    d["products"].append({"id": "D", "type": "FG"})
+    lp(d, "P", "D")["on_hand"] = 1000
+    d["production_sources"].append({"id": "PV-D", "location": "P", "product": "D", "fixed_lead_time_workdays": 4,
+                                    "operations": [{"seq": 10, "resource": "M1", "run_hours_per_unit": 1}]})
+    d["receipts"] = [{"id": "PRD-1", "kind": "production", "location": "P", "product": "D", "qty": 32,
+                      "due_date": "2026-01-09", "start_date": "2026-01-05", "source": "PV-D"}]
+    if alt:
+        d["resources"].append({"id": "M2", "location": "P", "efficiency": 1.0, "hours_per_shift": 8})
+        d["production_sources"][0]["operations"][0]["alternatives"] = ["M2"]
+    d["demand"] = [so("C1", 10, "2026-01-08", "SO1")]
+    return d
+
+
+def test_ctp_needs_free_hours_on_the_days_not_the_week():
+    o = run_promise(ds(_busy_machine())).orders[0]
+    cap = next(s for s in o.ctp if s.kind == "capacity")
+    assert cap.end == date(2026, 1, 10) and "on M1" in cap.note          # Friday, the first free day
+    assert lines(o) == [("D", "2026-01-12", "2026-01-13", 10, "ctp")]   # two days later than on an empty machine
+
+
+def test_ctp_takes_the_alternative_machine_that_finishes_first():
+    o = run_promise(ds(_busy_machine(alt=True))).orders[0]
+    cap = next(s for s in o.ctp if s.kind == "capacity")
+    assert cap.note == "step 10: 7.0 h on M2 (alternative to M1)"
+    assert lines(o) == [("D", "2026-01-10", "2026-01-11", 10, "ctp")]
+
+
 # ---- commit, risk and §20.1 scenario 5: BOP after a shortage ---------------------------------------
 def _bop_case() -> dict:
     d = net()

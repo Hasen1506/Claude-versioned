@@ -581,26 +581,43 @@ class _Planner:
         return choice
 
     def _fit(self, opt: SupplyOption, qty: float, target: date, sch: Schedule) -> tuple[Schedule, dict[int, str] | None]:
-        """Where a make order fits the machines: as planned; else finishing a day earlier at a time (never starting
-        before today); else a day later at a time, up to a month past the horizon. None: it fits nowhere, and stays
-        as planned (the capacity check reports the overload)."""
+        """Where a make order fits the machines: as planned; else, by the levelling direction, finishing a day earlier
+        at a time (never starting before today, at most ``capacity_max_early_days``) or a day later at a time (up to a
+        month past the horizon), the other way round when that finds nothing. None: it fits nowhere, and stays as
+        planned (the capacity check reports the overload)."""
         got = self._placement(opt, sch)
         if got is not None:
             return sch, got
+        ways = (self._earlier, self._later) if self.s.capacity_direction == "earlier" else (self._later, self._earlier)
+        for way in ways:
+            found = way(opt, qty, target, sch)
+            if found is not None:
+                return found
+        return sch, None
+
+    def _earlier(self, opt: SupplyOption, qty: float, target: date, sch: Schedule):
         ds = self.ds
         cal = location_calendar(ds, opt.node[0])
-        if sch.start_date > self.start:
-            d = min(target, sch.available_date)
-            while True:
-                d -= timedelta(days=1)
-                s = schedule(ds, opt, qty, available=d)
-                if s.start_date < self.start:
-                    break
-                if not cal.is_workday(s.start_date):
-                    continue
-                got = self._placement(opt, s)
-                if got is not None:
-                    return s, got
+        limit = self.s.capacity_max_early_days
+        if sch.start_date <= self.start:
+            return None
+        d = min(target, sch.available_date)
+        while True:
+            d -= timedelta(days=1)
+            if limit is not None and (sch.available_date - d).days > limit:
+                return None
+            s = schedule(ds, opt, qty, available=d)
+            if s.start_date < self.start:
+                return None
+            if not cal.is_workday(s.start_date):
+                continue
+            got = self._placement(opt, s)
+            if got is not None:
+                return s, got
+
+    def _later(self, opt: SupplyOption, qty: float, target: date, sch: Schedule):
+        ds = self.ds
+        cal = location_calendar(ds, opt.node[0])
         last = self.b.end + timedelta(days=31)
         d = sch.start_date
         while True:
@@ -609,7 +626,7 @@ class _Planner:
                 continue
             s = schedule(ds, opt, qty, start=d)
             if s.available_date > last:
-                return sch, None
+                return None
             got = self._placement(opt, s)
             if got is not None:
                 return s, got

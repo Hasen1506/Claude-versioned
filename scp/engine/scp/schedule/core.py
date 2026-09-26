@@ -15,6 +15,13 @@ The decoder turns it into a semi-active schedule:
 Each resource takes the operations in its sequence order. When the head of a sequence is not
 ready and no other resource can move, the earliest-ranked *ready* operation is taken instead, so a
 sequence produced by the local search can never deadlock.
+
+Machine choice: an operation listed in the sequence of one of its *alternative* resources runs there. One listed
+on its own resource runs on whichever of its own and its alternatives finishes it first (``pin=False``, what the
+dispatching rules use) or on its own (``pin=True``, what a sequence handed back from a schedule, the board or the
+optimiser uses, so the machines it shows are the machines it gets). An order may also be held until a not-before
+time (``hold``: just-in-time starts). Orders in the frozen zone keep their place: they are first on their machines,
+in the order they were scheduled, not before their scheduled start.
 """
 from __future__ import annotations
 
@@ -90,6 +97,9 @@ class Instance:
     tardiness_weight: float = 1.0
     setup_weight: float = 1.0
     receive: ReceiveFn = _receive_now
+    earliness_weight: float = 0.0     # per hour an order finishes before it is due (stock built early)
+    makespan_weight: float = 0.0      # per hour until the last order finishes
+    frozen: dict[str, float] = field(default_factory=dict)   # order -> scheduled start (clock hours): keeps its place
 
     def parts_at(self, o: OpSpec, completion: dict[str, float]) -> float:
         """When every part the operation consumes is available, given the completion of the orders it waits on."""
@@ -144,6 +154,7 @@ class Decoded:
     parts: dict[str, float] = field(default_factory=dict)   # operation -> when its parts were available
     held: dict[str, float] = field(default_factory=dict)    # operation -> hours it waited for them
     tardiness: float = 0.0
+    earliness: float = 0.0
     setup_hours: float = 0.0
     changeovers: int = 0
     late_jobs: int = 0
@@ -176,8 +187,17 @@ def is_changeover(b: Block, o: OpSpec) -> bool:
     return b.prev is not None and b.prev[1] != o.group and b.setup_work > EPS
 
 
-def decode(inst: Instance, seqs: dict[str, list[str]]) -> Decoded:
+def decode(inst: Instance, seqs: dict[str, list[str]], hold: dict[str, float] | None = None,
+           pin: bool = False) -> Decoded:
     ops = {o.key: o for j in inst.jobs.values() for o in j.ops}
+    hold = {**(hold or {}), **inst.frozen}
+    machine: dict[str, str] = {}      # operation -> the resource it must run on
+    for r, s in seqs.items():
+        for k in s:
+            o = ops.get(k)
+            if o is not None and k not in machine and r in inst.resources and (r == o.resource or r in o.alternatives):
+                if pin or r != o.resource or o.order in inst.frozen:
+                    machine[k] = r
     prev_of: dict[str, str | None] = {}
     next_of: dict[str, OpSpec | None] = {}
     for j in inst.jobs.values():
@@ -188,7 +208,11 @@ def decode(inst: Instance, seqs: dict[str, list[str]]) -> Decoded:
         if j.ops:
             next_of[j.ops[-1].key] = None
     must_end: dict[str, float] = {}
-    pending = {r: [k for k in s if k in ops] for r, s in seqs.items()}
+    pending = {r: list(dict.fromkeys(k for k in s if k in ops)) for r, s in seqs.items()}
+    if inst.frozen:
+        for r, q in pending.items():
+            first = sorted((k for k in q if ops[k].order in inst.frozen), key=lambda k: (inst.frozen[ops[k].order], ops[k].order, ops[k].seq))
+            pending[r] = first + [k for k in q if ops[k].order not in inst.frozen]
     free = {r: [0.0] * (res.units if res.finite else 0) for r, res in inst.resources.items()}
     state: dict[str, list[tuple[str, str] | None]] = {r: [None] * len(free[r]) for r in free}
     ready_at: dict[str, float] = {}
@@ -233,7 +257,7 @@ def decode(inst: Instance, seqs: dict[str, list[str]]) -> Decoded:
         o = ops[k]
         job = inst.jobs[o.order]
         p = prev_of[k]
-        t0 = job.release if p is None else ready_at[p]
+        t0 = max(job.release, hold.get(o.order, 0.0)) if p is None else ready_at[p]
         parts[k] = inst.parts_at(o, done)
         if parts[k] > t0 + EPS:
             held[k] = parts[k] - t0
@@ -256,7 +280,8 @@ def decode(inst: Instance, seqs: dict[str, list[str]]) -> Decoded:
             return plan
 
         best: tuple | None = None
-        for rank, rid in enumerate([o.resource, *(a for a in o.alternatives if a in inst.resources)]):
+        options = [machine[k]] if k in machine else [o.resource, *(a for a in o.alternatives if a in inst.resources)]
+        for rank, rid in enumerate(options):
             start = t0
             plan = split(rid, start)
             for _ in range(6):   # overlapped: do not finish before the step before can hand over its last batch
@@ -313,6 +338,7 @@ def decode(inst: Instance, seqs: dict[str, list[str]]) -> Decoded:
         d.completion[j.id] = c
         late = c - j.due
         d.tardiness += j.weight * max(0.0, late)
+        d.earliness += j.weight * max(0.0, -late)
         if late > EPS:
             d.late_jobs += 1
         lateness.append(late)
@@ -322,8 +348,13 @@ def decode(inst: Instance, seqs: dict[str, list[str]]) -> Decoded:
         d.setup_hours += b.setup_work
         if is_changeover(b, ops[b.key]):
             d.changeovers += 1
-    d.objective = inst.tardiness_weight * d.tardiness + inst.setup_weight * d.setup_hours
+    d.objective = objective(inst, d)
     return d
+
+
+def objective(inst: Instance, d: Decoded) -> float:
+    return (inst.tardiness_weight * d.tardiness + inst.setup_weight * d.setup_hours
+            + inst.earliness_weight * d.earliness + inst.makespan_weight * d.makespan)
 
 
 def edd(inst: Instance) -> dict[str, list[str]]:
@@ -336,13 +367,22 @@ def edd(inst: Instance) -> dict[str, list[str]]:
 
 
 def complete(inst: Instance, manual: dict[str, list[str]]) -> dict[str, list[str]]:
-    """A user sequence: known keys in the given order, then anything left out in EDD order."""
-    base = edd(inst)
-    out: dict[str, list[str]] = {}
-    for r, keys in base.items():
-        given = [k for k in manual.get(r, []) if k in set(keys)]
-        seen = set(given)
-        out[r] = list(dict.fromkeys(given)) + [k for k in keys if k not in seen]
+    """A user sequence: known keys in the given order, each on the resource it is listed on when that resource can
+    run it (its own or an alternative), then anything left out on its own resource in EDD order."""
+    ops = {o.key: o for j in inst.jobs.values() for o in j.ops}
+    out: dict[str, list[str]] = {r: [] for r in inst.resources}
+    placed: set[str] = set()
+    for r, keys in manual.items():
+        if r not in inst.resources:
+            continue
+        for k in keys:
+            o = ops.get(k)
+            if o is None or k in placed or (r != o.resource and r not in o.alternatives):
+                continue
+            out[r].append(k)
+            placed.add(k)
+    for r, keys in edd(inst).items():
+        out[r] += [k for k in keys if k not in placed]
     return out
 
 
@@ -385,13 +425,14 @@ def _moves(inst: Instance, seq: list[str], reach: int = 4) -> list[list[str]]:
 
 
 def improve(inst: Instance, seqs: dict[str, list[str]], *, time_limit: float = 4.0,
-            max_passes: int = 200) -> tuple[dict[str, list[str]], Decoded, SearchStats]:
+            max_passes: int = 200, hold: dict[str, float] | None = None,
+            pin: bool = False) -> tuple[dict[str, list[str]], Decoded, SearchStats]:
     """First-improvement local search on the weighted objective. Never returns a sequence worse
     than the one it started from."""
     t0 = time.perf_counter()
     st = SearchStats()
     cur = {r: list(s) for r, s in seqs.items()}
-    best = decode(inst, cur)
+    best = decode(inst, cur, hold, pin)
     st.trace.append(best.objective)
     while st.passes < max_passes:
         st.passes += 1
@@ -405,7 +446,7 @@ def improve(inst: Instance, seqs: dict[str, list[str]], *, time_limit: float = 4
                 st.tried += 1
                 trial = dict(cur)
                 trial[r] = cand
-                d = decode(inst, trial)
+                d = decode(inst, trial, hold, pin)
                 if d.objective < best.objective - 1e-7:
                     cur, best = trial, d
                     st.accepted += 1

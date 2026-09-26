@@ -46,10 +46,12 @@ def _day(origin: date, hours: float, *, up: bool) -> date:
     return origin + timedelta(days=max(0, days))
 
 
-def apply_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None,
-                   ids: list[str] | None = None) -> tuple[Dataset, ApplyReport]:
+def apply_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None, ids: list[str] | None = None,
+                   hold: dict[str, float] | None = None) -> tuple[Dataset, ApplyReport]:
+    """Date the orders by the schedule. Pass the sequence (and holds) the schedule shows to fix exactly that schedule;
+    without them the schedule is run again under the settings."""
     plan = run_mrp(ds)
-    sch = run_schedule(ds, sequence, plan)
+    sch = run_schedule(ds, sequence, plan, hold)
     rep = ApplyReport(ok=False)
     if not plan.ok or not sch.ok:
         return ds, rep

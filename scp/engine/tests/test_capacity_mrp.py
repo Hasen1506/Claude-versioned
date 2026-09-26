@@ -70,6 +70,19 @@ def test_an_order_that_does_not_fit_starts_earlier():
     _within_capacity(p, dset)
 
 
+@pytest.mark.parametrize("setting", [{"capacity_direction": "later"}, {"capacity_max_early_days": 0}])
+def test_levelling_can_prefer_a_delay_to_building_ahead(setting):
+    """Later first, or no day earlier allowed: D finishes a day later (and late) instead of a day earlier."""
+    d = _constrained(_two_products())
+    d["settings"].update(setting)
+    dset = ds(d)
+    p = run_mrp(dset)
+    made = {o.product: o for o in p.orders if o.kind == "make"}
+    assert made["A"].capacity_shift_days == 0 and made["D"].capacity_shift_days == 1
+    assert [e.order_id for e in p.exceptions if e.code == "CAPACITY_LATE"] == [made["D"].id]
+    _within_capacity(p, dset)
+
+
 def test_an_alternative_machine_comes_before_moving():
     d = _constrained(_two_products())
     d["resources"].append({"id": "M2", "location": "P", "efficiency": 1.0, "hours_per_shift": 8})

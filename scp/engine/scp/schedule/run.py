@@ -21,8 +21,11 @@ from ..time.capacity import day_capacity, max_units
 from ..validate import has_errors, validate
 from .clock import ResourceClock, after_queue
 from .core import Decoded, Instance, is_changeover, Job, OpSpec, Res, check, complete, decode, edd, improve, setup_rule
+from .heuristics import HEURISTICS, start
+from .optimize import optimize
 from .result import (
-    LabourDay, PartSupply, ScheduledOp, ScheduledOrder, ScheduleKpis, ScheduleResource, ScheduleResult, SearchInfo,
+    CompareRow, LabourDay, OptimizerInfo, PartSupply, ScheduleComparison, ScheduledOp, ScheduledOrder, ScheduleKpis,
+    ScheduleResource, ScheduleResult, SearchInfo,
 )
 
 
@@ -65,6 +68,8 @@ def build_instance(ds: Dataset, plan: PlanResult | None = None) -> tuple[Instanc
 
     jobs: dict[str, Job] = {}
     meta: dict[str, dict] = {}
+    frozen: dict[str, float] = {}
+    frozen_end = origin + timedelta(days=cfg.frozen_days)
     beyond = no_routing = 0
     def add(oid: str, ps, location: str, product: str, qty: float, start: dt.date, due: dt.date,
             firm: bool, steps: dict[int, str]) -> None:
@@ -132,6 +137,8 @@ def build_instance(ds: Dataset, plan: PlanResult | None = None) -> tuple[Instanc
             due = min(due, max(origin, need[rc.id] - timedelta(days=gr)))
         add(rc.id, ps, rc.location, rc.product, rc.qty, max(rc.start_date or origin, origin), due, firm=True,
             steps=rc.step_resources)
+        if cfg.frozen_days and rc.scheduled and (rc.start_date or origin) < frozen_end:
+            frozen[rc.id] = jobs[rc.id].release
 
     if cfg.wait_for_parts:
         _parts(ds, plan, jobs, meta)
@@ -145,7 +152,7 @@ def build_instance(ds: Dataset, plan: PlanResult | None = None) -> tuple[Instanc
         return after_queue(meta[order]["cal"], origin, t, workdays)
 
     inst = Instance(resources, jobs, setup_rule(changeovers, cfg.minor_setup_factor), after,
-                    cfg.tardiness_weight, cfg.setup_weight, receive)
+                    cfg.tardiness_weight, cfg.setup_weight, receive, cfg.earliness_weight, cfg.makespan_weight, frozen)
     return inst, meta, beyond, no_routing
 
 
@@ -219,7 +226,7 @@ def _parts(ds: Dataset, plan: PlanResult, jobs: dict[str, Job], meta: dict) -> N
 def _kpis(inst: Instance, d: Decoded) -> ScheduleKpis:
     return ScheduleKpis(orders=len(d.completion), operations=sum(len(j.ops) for j in inst.jobs.values()),
                         late_orders=d.late_jobs, waiting_for_parts=len({k.rsplit(":", 1)[0] for k in d.held}),
-                        tardiness_hours=d.tardiness, max_lateness_hours=d.max_lateness,
+                        tardiness_hours=d.tardiness, earliness_hours=d.earliness, max_lateness_hours=d.max_lateness,
                         setup_hours=d.setup_hours, changeovers=d.changeovers, makespan_hours=d.makespan,
                         objective=d.objective)
 
@@ -253,10 +260,13 @@ def _labour(ds: Dataset, inst: Instance, d: Decoded) -> list[LabourDay]:
 
 
 def run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None,
-                 plan: PlanResult | None = None) -> ScheduleResult:
+                 plan: PlanResult | None = None, hold: dict[str, float] | None = None) -> ScheduleResult:
+    """Schedule the window. With ``sequence`` (per resource, e.g. handed back from the board) every listed step runs
+    on the resource it is listed on, in that order; ``hold`` gives not-before times per order (default: the start
+    rule's)."""
     s = ds.settings
     cfg = ds.scheduling
-    out = ScheduleResult(ok=False, day_start_hour=cfg.day_start_hour)
+    out = ScheduleResult(ok=False, day_start_hour=cfg.day_start_hour, profile=cfg.profile)
     out.issues = validate(ds)
     if has_errors(out.issues):
         return out
@@ -266,16 +276,30 @@ def run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None,
     base_seq = edd(inst)
     base = decode(inst, base_seq)
     out.baseline = _kpis(inst, base)
+    seq0, rule_hold = start(inst, cfg.start_rule, cfg.backward_buffer_days)
+    rule = cfg.start_rule
     if sequence:
         seqs = complete(inst, sequence)
-        final = decode(inst, seqs)
-        out.search = SearchInfo(mode="manual")
+        holds = rule_hold if hold is None else {k: v for k, v in hold.items() if k in inst.jobs}
+        final = decode(inst, seqs, holds, pin=True)
+        out.search = SearchInfo(mode="manual", start_rule=rule)
+    elif cfg.optimizer:
+        seqs, final, holds, _, info = optimize(inst, seq0, rule_hold, cfg.time_limit_seconds)
+        out.search = SearchInfo(mode="optimized", start_rule=rule, seconds=info.seconds, stopped="time_limit",
+                                trace=info.trace, optimizer=OptimizerInfo(
+                                    status=info.status, seconds=info.seconds, model_objective=info.model_objective,
+                                    model_bound=info.model_bound, steps=info.steps,
+                                    machines_changed=info.machines_changed, kept=info.kept, note=info.note))
     elif cfg.improve:
-        seqs, final, st = improve(inst, base_seq, time_limit=cfg.time_limit_seconds)
-        out.search = SearchInfo(mode="improved", moves_tried=st.tried, moves_accepted=st.accepted,
+        seqs, final, st = improve(inst, seq0, time_limit=cfg.time_limit_seconds, hold=rule_hold)
+        holds = rule_hold
+        out.search = SearchInfo(mode="improved", start_rule=rule, moves_tried=st.tried, moves_accepted=st.accepted,
                                 passes=st.passes, seconds=st.seconds, stopped=st.stopped, trace=st.trace)
     else:
-        seqs, final = base_seq, base
+        seqs, holds = seq0, rule_hold
+        final = decode(inst, seqs, holds)
+        out.search = SearchInfo(mode="edd" if rule == "edd" else "rule", start_rule=rule)
+    out.holds = {k: v for k, v in holds.items() if k in inst.jobs and v > inst.jobs[k].release + 1e-9}
     out.kpis = _kpis(inst, final)
     out.violations = check(inst, final)
 
@@ -287,7 +311,8 @@ def run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None,
             id=f"{b.key}/{b.sub}", key=b.key, order=o.order, seq=o.seq, sub=b.sub, product=o.product,
             group=o.group, resource=b.resource, unit=b.unit, qty=b.qty, setup_start=b.setup_start,
             run_start=b.run_start, end=b.end, setup_hours=b.setup_work, run_hours=b.run_work,
-            setup_from=b.prev[1] if b.prev else None, late=o.order in late_orders))
+            setup_from=b.prev[1] if b.prev else None, late=o.order in late_orders,
+            machines=[o.resource, *[r for r in o.alternatives if r in inst.resources]]))
     for j in sorted(inst.jobs.values(), key=lambda j: (j.due, j.id)):
         m = meta[j.id]
         c = final.completion[j.id]
@@ -308,7 +333,8 @@ def run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None,
             parts_from=sorted((p for p in came if p.available > j.release + 1e-6), key=lambda p: -p.available),
             missing_parts=sorted(m["missing"]),
             finish_date=s.planning_start + timedelta(days=max(0, math.floor((c - 1e-9) / 24.0))),
-            available_date=avail, days_late=max(0, done_day - int(j.due // 24))))
+            available_date=avail, days_late=max(0, done_day - int(j.due // 24)), frozen=j.id in inst.frozen,
+            hold=out.holds.get(j.id)))
 
     span = max([cfg.horizon_days * 24.0, final.makespan, *(b.end for b in final.blocks)])
     out.span_hours = span
@@ -326,7 +352,7 @@ def run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None,
             windows=[[a, b] for a, b in wins], busy_hours=busy, setup_hours=sum(b.setup_work for b in bl),
             available_hours=avail, utilization=busy / avail if avail else 0.0,
             changeovers=sum(1 for b in bl if is_changeover(b, ops[b.key])),
-            sequence=seqs.get(rid, [])))
+            sequence=final.realized.get(rid, [])))
     out.labour = _labour(ds, inst, final)
     out.ok = True
     return out
@@ -339,3 +365,38 @@ def _gaps(clk: ResourceClock, a: float, b: float) -> float:
 
 def _gr(ds: Dataset, m: dict) -> float:
     return gr_days(ds.location_product_by_key.get((m["location"], m["product"])))
+
+
+def compare_schedules(ds: Dataset) -> ScheduleComparison:
+    """Every start rule, the local search and the optimiser on the same window, scored with the current weights."""
+    import time
+
+    cfg = ds.scheduling
+    out = ScheduleComparison(ok=False, weights={"tardiness": cfg.tardiness_weight, "setup": cfg.setup_weight,
+                                                "earliness": cfg.earliness_weight, "makespan": cfg.makespan_weight})
+    out.issues = validate(ds)
+    if has_errors(out.issues):
+        return out
+    inst, *_ = build_instance(ds)
+    names = {h.id: h.name for h in HEURISTICS}
+    for rule in ("edd", "spt", "slack", "campaign", "backward"):
+        t = time.perf_counter()
+        seqs, hold = start(inst, rule, cfg.backward_buffer_days)
+        d = decode(inst, seqs, hold)
+        out.rows.append(CompareRow(method=rule, name=names[rule], kpis=_kpis(inst, d), seconds=time.perf_counter() - t))
+    seq0, hold0 = start(inst, cfg.start_rule, cfg.backward_buffer_days)
+    t = time.perf_counter()
+    ls_seqs, ls, st = improve(inst, seq0, time_limit=cfg.time_limit_seconds, hold=hold0)
+    ls_time = time.perf_counter() - t
+    out.rows.append(CompareRow(method="improve", name=f"{names['improve']} from {names[cfg.start_rule].lower()}",
+                               kpis=_kpis(inst, ls), seconds=ls_time))
+    t = time.perf_counter()
+    _, d, _, _, _ = optimize(inst, seq0, hold0, cfg.time_limit_seconds, searched=(ls_seqs, ls, st.trace))
+    out.rows.append(CompareRow(method="optimize", name=names["optimize"], kpis=_kpis(inst, d),
+                               seconds=ls_time + time.perf_counter() - t))
+    if out.rows:
+        low = min(r.kpis.objective for r in out.rows)
+        for r in out.rows:
+            r.best = r.kpis.objective <= low + 1e-7
+    out.ok = True
+    return out

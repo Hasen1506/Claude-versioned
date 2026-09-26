@@ -5,6 +5,7 @@ small and mid-sized organisations. Object-local invariants are enforced here; cr
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -35,6 +36,12 @@ class Settings(Model):
     capacity_constrained: bool = Field(
         False, description="Plan make orders within the capacity of finite machines and labour: an order that does "
                            "not fit uses an alternative machine, else starts earlier, else finishes later (reported)")
+    capacity_direction: Literal["earlier", "later"] = Field(
+        "earlier", description="Levelling: an order that does not fit first tries earlier days (builds ahead, stock) "
+                               "or later days (accepts a delay, reported), then the other way")
+    capacity_max_early_days: int | None = Unit(
+        "days", ge=0, le=365, default=None,
+        description="Levelling: move an order at most this many days earlier to fit; empty = as far as today")
 
     @property
     def carrying_rate(self) -> float:

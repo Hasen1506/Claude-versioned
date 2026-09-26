@@ -12,6 +12,7 @@ dependencies = [
   "numpy>=1.26",
   "scipy>=1.12",
   "highspy>=1.7",
+  "ortools>=9.10",   # CP-SAT: the detailed-scheduling optimiser
   "fastapi>=0.110",
   "uvicorn[standard]>=0.29",
 ]

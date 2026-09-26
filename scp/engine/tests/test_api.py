@@ -99,6 +99,22 @@ def test_schedule():
     assert client.post("/api/schedule/apply", json={"dataset": bad}).status_code == 409
 
 
+def test_schedule_catalogue_compare_and_holds():
+    cat = client.get("/api/schedule/catalogue").json()
+    assert {h["id"] for h in cat["heuristics"]} >= {"edd", "campaign", "backward", "optimize"}
+    jit = next(p for p in cat["profiles"] if p["id"] == "just_in_time")
+    d = example_dict("kitchenware_network")
+    d["scheduling"] = {**d.get("scheduling", {}), **jit["settings"], "profile": "just_in_time",
+                       "time_limit_seconds": 1.0}
+    r = client.post("/api/schedule", json={"dataset": d}).json()
+    assert r["ok"] and r["violations"] == [] and r["profile"] == "just_in_time" and r["holds"]
+    seqs = {x["id"]: x["sequence"] for x in r["resources"]}
+    m = client.post("/api/schedule", json={"dataset": d, "sequence": seqs, "hold": r["holds"]}).json()
+    assert abs(m["kpis"]["objective"] - r["kpis"]["objective"]) < 1e-6
+    c = client.post("/api/schedule/compare", json=d).json()
+    assert c["ok"] and len(c["rows"]) == 7 and any(x["best"] for x in c["rows"])
+
+
 def test_promise_flow():
     d = example_dict("kitchenware_network")
     r = client.post("/api/promise", json=d).json()

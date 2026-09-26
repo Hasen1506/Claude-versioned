@@ -59,6 +59,10 @@ const TITLE: Record<string, string> = {
   alternatives: "Alternative machines", break_minutes: "Break (minutes)", cost_share: "Share of the run's cost",
   capacity_constrained: "Plan within machine capacity", wait_for_parts: "Wait for parts", step_resources: "Steps on an alternative machine",
   scheduled: "Dated by the shop floor schedule",
+  capacity_direction: "When a day is full, first try", capacity_max_early_days: "Build at most this many days ahead",
+  earliness_weight: "Weight: an hour early", makespan_weight: "Weight: an hour to clear the window", start_rule: "Start rule",
+  optimizer: "Use the optimiser (constraint solver)", backward_buffer_days: "Backward: buffer before the due date (days)",
+  frozen_days: "Frozen zone (days)", profile: "Scheduling profile", hold: "Not before",
 };
 
 /** Plain words for enum values; the stored value stays the code. */
@@ -71,6 +75,9 @@ const ENUM_LABEL: Record<string, string> = {
   POQ: "Cover a number of periods", MIN_MAX: "Replenish up to the maximum stock",
   fixed: "A fixed quantity", days_of_supply: "Days of cover", service_level: "Service level (chance of no stockout)",
   fill_rate: "Fill rate (share of demand served from stock)",
+  earlier: "Start earlier (build ahead)", later: "Finish later (delay)",
+  edd: "Earliest due date first", spt: "Shortest job first", slack: "Least slack first",
+  campaign: "Campaigns by setup group", backward: "Backward from the due date (just in time)",
 };
 
 /** Sentence-case label from a field name: `gr_processing_days` → "GR processing days". */
