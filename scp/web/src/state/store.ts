@@ -6,7 +6,7 @@
 // schedule reads (its settings and the changeover matrix), which leave the other results fresh.
 import { useSyncExternalStore } from "react";
 import { api, SchemaRejected, setPlanningView } from "../api/client";
-import type { ActualsView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
+import type { ActualsView, PurchasingView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
 
 export interface RunResults {
   forecast: ForecastResult;
@@ -16,6 +16,7 @@ export interface RunResults {
   schedule: ScheduleResult;
   promise: PromiseResult;
   actuals: ActualsView;
+  purchasing: PurchasingView;
   finance: FinanceResult;
   tower: TowerResult;
 }
@@ -63,6 +64,7 @@ export const PLAN_STEPS: { key: RunKey; label: string }[] = [
   { key: "inventory", label: "Sizing safety stock" },
   { key: "sop", label: "Balancing capacity" },
   { key: "schedule", label: "Sequencing the shop floor" },
+  { key: "purchasing", label: "Listing what to buy" },
   { key: "actuals", label: "Reading actuals" },
   { key: "finance", label: "Costing the plan" },
   { key: "tower", label: "Measuring performance" },
@@ -76,6 +78,7 @@ const RUNNERS: { [K in RunKey]: (ds: Dataset) => Promise<RunResults[K]> } = {
   schedule: (ds) => api.schedule(ds),
   promise: api.promise,
   actuals: (ds) => api.actuals(ds),
+  purchasing: api.purchasing,
   finance: api.finance,
   tower: api.tower,
 };
@@ -85,7 +88,7 @@ const VERSION_KEY = "scp.version.v1";
 const HISTORY = 100;
 
 const emptyRun = <T>(): Run<T> => ({ data: null, revision: null, running: false, error: null, at: null });
-const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), inventory: emptyRun(), sop: emptyRun(), plan: emptyRun(), schedule: emptyRun(), promise: emptyRun(), actuals: emptyRun(), finance: emptyRun(), tower: emptyRun() });
+const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), inventory: emptyRun(), sop: emptyRun(), plan: emptyRun(), schedule: emptyRun(), promise: emptyRun(), actuals: emptyRun(), purchasing: emptyRun(), finance: emptyRun(), tower: emptyRun() });
 
 let state: State = {
   dataset: null, version: null, revision: 0, touched: {}, validation: null, schemaErrors: [], network: null, runs: emptyRuns(),

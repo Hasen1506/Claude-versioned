@@ -4,8 +4,9 @@ test.beforeEach(async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   page.on("console", (m) => {
-    // a 422 is the engine's typed rejection of invalid values: handled by the UI, not an error
-    if (m.type() === "error" && !m.text().includes("status of 422")) errors.push(m.text());
+    // a 422 is the engine's typed rejection of invalid values, a 409 its refusal of an action the data doesn't allow
+    // (e.g. receiving beyond the supplier's tolerance): both are shown on the page, not errors
+    if (m.type() === "error" && !/status of (422|409)/.test(m.text())) errors.push(m.text());
   });
   (page as unknown as { __errors: string[] }).__errors = errors;
 });
@@ -385,6 +386,59 @@ test("execution: journal → stock in sync → ship → roll forward → accurac
   await expect(page.locator("td", { hasText: /^PRD-\d{5}$/ }).first()).toBeVisible();
 });
 
+test("buying: requisitions → purchase order → approve → send → confirm late and short → plan warns → receive part → block a supplier → undo", async ({ page }) => {
+  await openExample(page, "Kaveri Kitchenware");
+  await page.goto("/#/buying");
+  await expect(page.locator(".stage-head .answer")).toContainText("should be ordered in the next 7 days");
+  await expect(page.getByRole("row", { name: /Stainless jar set/ })).toContainText("Rajkot jar works");
+
+  // one order to the jar supplier, above the approval limit
+  await page.getByRole("button", { name: /^Create purchase orders \(1\)$/ }).click();
+  await expect(page.locator(".banner.ok")).toContainText("needs approval");
+  await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "fresh");       // re-planned: nothing to buy twice
+  await page.getByRole("tab", { name: /Purchase orders/ }).click();
+  await page.locator("tr.clickable", { hasText: "Rajkot jar works" }).click();
+  await expect(page.getByRole("button", { name: "Mark as sent" })).toHaveCount(0);      // not before approval
+  await page.getByRole("button", { name: "Approve" }).click();
+  await page.getByRole("button", { name: "Mark as sent" }).click();
+  await expect(page.locator(".banner.ok")).toContainText("sent to SUP-JARS");
+
+  // the supplier confirms four days late and 300 short: the plan expects that, and says so
+  await page.getByRole("button", { name: "Record confirmation" }).click();
+  await page.getByLabel(/Confirmed date/).fill("2026-10-19");
+  await page.getByLabel(/Confirmed quantity/).fill("4000");
+  await page.getByRole("button", { name: "Save confirmation" }).click();
+  await expect(page.locator(".banner.ok")).toContainText("the plan now counts only what is confirmed");
+  await page.goto("/#/plan");
+  await expect(page.getByText(/purchase order line confirmed later than asked/)).toBeVisible();
+  await expect(page.getByText(/purchase order line confirmed for less than ordered/)).toBeVisible();
+
+  // a first delivery; more than the tolerance is refused
+  await page.goto("/#/buying/orders");
+  await page.locator("tr.clickable", { hasText: "Rajkot jar works" }).click();
+  await page.getByRole("button", { name: "Receive goods" }).click();
+  await page.getByLabel(/Receive quantity/).fill("9000");
+  await page.getByRole("button", { name: "Post goods receipt" }).click();
+  await expect(page.locator(".banner.error")).toContainText("over-delivery tolerance");
+  await page.getByLabel(/Receive quantity/).fill("1500");
+  await page.getByRole("button", { name: "Post goods receipt" }).click();
+  await expect(page.locator(".banner.ok")).toContainText("2,800 still to come");
+  await expect(page.locator("tr.clickable", { hasText: "Rajkot jar works" })).toContainText("partly received");
+
+  // scorecard, then a purchasing block takes the supplier out of planning
+  await page.getByRole("tab", { name: /Suppliers/ }).click();
+  await page.locator("tr.clickable", { hasText: "Shenzhen electro-components" }).click();
+  await expect(page.getByText("their no. HT-220-1K2")).toBeVisible();
+  await page.locator("tr.clickable", { hasText: "Hindalco copper" }).click();
+  await expect(page.getByText(/from 2,000: ₹890/)).toBeVisible();
+  await page.getByRole("button", { name: "Block for purchasing" }).click();
+  await expect(freshness(page, "buying")).toHaveAttribute("data-fresh", "stale");
+  await page.goto("/#/readiness");
+  await expect(page.getByText(/only purchasing sources are blocked \(PIR-CU\)/)).toBeVisible();
+  await page.getByRole("button", { name: "Undo" }).first().click();
+  await expect(page.getByText(/only purchasing sources are blocked/)).toHaveCount(0);
+});
+
 test("versions: save base → edit → save as scenario → compare → promote; the base is unchanged", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/versions");
@@ -467,7 +521,7 @@ test("phone: the menu opens the pages, each page answers first, nothing scrolls 
   await page.locator("#main-nav").getByRole("link", { name: "Orders", exact: true }).click();
   await expect(page.locator("#main-nav")).toBeHidden();                 // picking a page closes the menu
   await expect(page.locator(".stage-head .answer")).toContainText("customer orders can ship in full");
-  for (const hash of ["#/", "#/plan", "#/promise", "#/finance", "#/tower", "#/data", "#/capacity", "#/schedule/orders", "#/schedule/methods"]) {
+  for (const hash of ["#/", "#/plan", "#/promise", "#/finance", "#/tower", "#/data", "#/capacity", "#/schedule/orders", "#/schedule/methods", "#/buying", "#/buying/orders", "#/buying/suppliers"]) {
     await page.goto(`/${hash}`);
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => document.documentElement.scrollWidth), hash).toBeLessThanOrEqual(390);

@@ -75,6 +75,18 @@ Phases: **A** get your own company in · **B** master-data depth · **C** capaci
 | N32 | *Campaigns by setup group* gains little on the example: its orders are spread over weeks, so few same-group orders are ready at once. | By design | The comparison on *Methods & profiles* shows this for each company; campaigns win where many orders of a group are ready together. |
 | N33 | A phone cannot drag a bar on the board: a drag there scrolls the board. | By design | A tap selects the order; its panel moves a step earlier or later, or onto another machine that can run it. |
 
+## Found while building Phase E
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N34 | Copying a dataset (firming, rolling forward, applying a schedule, any engine write) kept the copy's lookup tables from the original, so code that changed a list and then looked a record up by id in the copy could find the old record, or none. Found when a purchase order approved in the copy still read as unapproved. Present since the first engine writes. | Serious | **Fixed (E).** A dataset copy drops its lookup tables and builds them again from its own data. |
+| N35 | The supply plan chose a purchasing source by priority and quota only: there was no way to stop buying from a supplier, to name the one source planning must use, or to pay less for a larger order. | Serious | **Fixed (E).** A purchasing block on the supplier, fixed and blocked flags on the source (the source list), and price scales; planning follows S/4's order: quota, then the fixed source, then priority. A node whose only sources are blocked is reported with their names. |
+| N36 | A firm purchase was a receipt with a number and nothing else: no supplier document, approval, send date or confirmation, so the plan could only assume the supplier delivers everything on the date asked. | Serious | **Fixed (E).** *Buying* turns requisitions into purchase orders and runs them through approval, sending, the supplier's confirmation and goods receipt; the plan expects a confirmed line on its confirmed date and counts no more than confirmed. Firming a purchase in *Actuals* now creates its order document too. |
+| N37 | An open purchase order imported without a price (the example's heater order) showed as worth nothing in the order list. | Minor | **Fixed (E).** A line without a price is valued at its source's price for that quantity. |
+| N38 | A goods receipt posted today shows on the purchase order at once, but stock only changes when the plan moves past that day. | By design | Stock is derived from movements before the planning start, so today's plan already expects the order; the receipt's message says where stock updates (*Actuals → Start a new week*). |
+| N39 | Refusals (receiving more than the supplier's tolerance) come back as an HTTP 409 that the browser also logs as a failed request. | Minor | The page shows the reason; the end-to-end tests accept a 409 as they already did a 422. |
+| N40 | A supplier's order currency is recorded but not applied: a purchase order is priced in its source's currency. | Minor | Open. Keep a source's price in the currency the supplier invoices in. |
+
 ## Gaps against SAP recorded for later phases
 
 - MRP views: MRP controller, procurement type (E/F/X), phantom (special procurement 50) and the scheduling margin
@@ -95,4 +107,8 @@ Phases: **A** get your own company in · **B** master-data depth · **C** capaci
   board (**D**, done). Still missing: overtime and shift changes as optimiser choices, setup matrices by product
   (not only group), multi-resource steps (machine and tool together), pegging-aware re-scheduling of dependent
   orders when one moves.
-- MM: no vendor master, info records, source lists, requisitions, POs or goods-receipt documents (**E**).
+- MM: supplier purchasing data with a purchasing block, info records with price scales, the source list (fixed
+  and blocked), requisitions from MRP, purchase orders with an approval limit, supplier confirmations that planning
+  uses, and goods receipts with delivery tolerances (**E**, done). Still missing: invoice verification (three-way
+  match) and payment, outline agreements (contracts and scheduling agreements), several confirmation lines per
+  order line, quality inspection stock, returns to the supplier, and a release strategy with more than one level.

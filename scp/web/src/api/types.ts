@@ -131,3 +131,17 @@ export type ScenarioInfo = S["ScenarioInfo"];
 export type ScenarioReport = S["ScenarioReport"];
 export type ScenarioStep = S["StepReport"];
 export type ScenarioCheck = S["Check"];
+
+export type PurchasingView = S["PurchasingView"];
+export type Requisition = S["Requisition"];
+export type SourceChoice = S["SourceChoice"];
+export type PoView = S["PoView"];
+export type PoLine = S["PoLine"];
+export type VendorRow = S["VendorRow"];
+export type InfoRecord = S["InfoRecord"];
+export type CreateReport = S["CreateReport"];
+export type CreatePoResponse = S["CreatePoResponse"];
+export type PoActionResponse = S["PoActionResponse"];
+export type PoAction = S["PoActionRequest"]["action"];
+export type PoLineInput = S["PoLineInput"];
+export type RequisitionPick = S["RequisitionPick"];

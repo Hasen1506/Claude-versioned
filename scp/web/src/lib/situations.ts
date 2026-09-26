@@ -199,6 +199,34 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
           actions: [{ label: "Planning policies", to: href("data", "location_products") }],
         };
         break;
+      case "PO_CONFIRMED_LATE": {
+        s = {
+          title: `${plural(l.length, "purchase order line")} confirmed later than asked`,
+          why: "The supplier confirmed a delivery date after the one on the order. The plan now expects the goods on the confirmed date, so anything that needs them sooner may be late.",
+          items: l.map((e) => ({ label: `${e.order_id}: ${n(e.qty)} ${where(e)}`,
+            detail: `now ${d(iso(e.message, /confirmed (\d{4}-\d{2}-\d{2})/))}, asked ${d(iso(e.message, /requested (\d{4}-\d{2}-\d{2})/))}`, to: node(e) })),
+          actions: [{ label: "Open the purchase orders", to: href("buying", "orders") }],
+        };
+        break;
+      }
+      case "PO_CONFIRMED_SHORT": {
+        s = {
+          title: `${plural(l.length, "purchase order line")} confirmed for less than ordered`,
+          why: "The supplier can deliver only part of the order. The plan counts what they confirmed and buys the rest again; order it elsewhere, or reduce the line so it matches.",
+          items: l.map((e) => ({ label: `${e.order_id}: ${n(e.qty)} ${where(e)} not confirmed`, to: node(e) })),
+          actions: [{ label: "Open the purchase orders", to: href("buying", "orders") }, { label: "See what to order", to: href("buying") }],
+        };
+        break;
+      }
+      case "PO_NOT_CONFIRMED": {
+        s = {
+          title: `${plural(l.length, "purchase order line")} not confirmed by the supplier`,
+          why: "These suppliers confirm their orders and haven't answered in the time they usually take. The plan still expects the goods as ordered; chase the supplier for a date.",
+          items: l.map((e) => ({ label: `${e.order_id}: ${n(e.qty)} ${where(e)}`, detail: `due ${d(e.date)}`, to: node(e) })),
+          actions: [{ label: "Open the purchase orders", to: href("buying", "orders") }],
+        };
+        break;
+      }
       default:
         s = { title: `${codeLabel(code)} (${list.length})`, why: "", items: l.map((e) => ({ label: e.message, to: node(e) })), actions: [] };
     }
@@ -216,6 +244,8 @@ const CODE_LABEL: Record<string, string> = {
   CAPACITY_OVERTIME: "Overtime needed", SUPPLIER_CAPACITY: "Supplier over capacity", LANE_CAPACITY: "Lane over capacity",
   EOQ_FALLBACK: "No economic lot size", STOCKOUT: "Stock runs out", SCHEDULE_LATE: "Scheduled to finish late",
   CAPACITY_EARLIER: "Started earlier to fit", CAPACITY_LATE: "Only fits later", ALTERNATIVE_MACHINE: "On an alternative machine",
+  PO_CONFIRMED_LATE: "Supplier confirmed late", PO_CONFIRMED_SHORT: "Supplier confirmed less", PO_NOT_CONFIRMED: "Not confirmed by the supplier",
+  RECEIPT_OVERDUE: "Order overdue",
 };
 export function codeLabel(code: string): string {
   if (CODE_LABEL[code]) return CODE_LABEL[code];

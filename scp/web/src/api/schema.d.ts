@@ -502,6 +502,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/purchasing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Purchasing
+         * @description Requisitions from the supply plan, every purchase order with its lines' status, and the supplier scorecard.
+         */
+        post: operations["post_purchasing_api_purchasing_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/purchasing/create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Create Pos */
+        post: operations["post_create_pos_api_purchasing_create_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/purchasing/act": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Po Action */
+        post: operations["post_po_action_api_purchasing_act_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/versions": {
         parameters: {
             query?: never;
@@ -820,6 +874,18 @@ export interface components {
             forecast: number;
             /** Actual */
             actual: number;
+        };
+        /** ActionReport */
+        ActionReport: {
+            /** Ok */
+            ok: boolean;
+            /** Message */
+            message: string;
+            /**
+             * Movements
+             * @default []
+             */
+            movements: string[];
         };
         /** ActualsRequest */
         ActualsRequest: {
@@ -1406,6 +1472,21 @@ export interface components {
              * Format: date
              */
             closed_on: string;
+            /**
+             * Po
+             * @description Purchase: the purchase order the line was on
+             */
+            po?: string | null;
+            /**
+             * Price
+             * @description Purchase: net price per unit
+             */
+            price?: number | null;
+            /**
+             * Confirmed Date
+             * @description Purchase: the date the supplier confirmed, if any
+             */
+            confirmed_date?: string | null;
         };
         /**
          * CoProduct
@@ -1536,6 +1617,53 @@ export interface components {
             /** Difference */
             difference: number;
         };
+        /** CreatePoRequest */
+        CreatePoRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Lines */
+            lines?: components["schemas"]["RequisitionPick"][] | null;
+            /** Order Date */
+            order_date?: string | null;
+        };
+        /** CreatePoResponse */
+        CreatePoResponse: {
+            dataset: components["schemas"]["Dataset"];
+            report: components["schemas"]["CreateReport"];
+        };
+        /** CreateReport */
+        CreateReport: {
+            /** Ok */
+            ok: boolean;
+            /** Created */
+            created: components["schemas"]["CreatedPo"][];
+            /** Lines */
+            lines: {
+                [key: string]: string;
+            };
+            /** Skipped */
+            skipped: {
+                [key: string]: string;
+            };
+        };
+        /** CreatedPo */
+        CreatedPo: {
+            /** Id */
+            id: string;
+            /** Supplier */
+            supplier: string;
+            /** Location */
+            location: string;
+            /** Currency */
+            currency: string;
+            /** Value */
+            value: number;
+            /** Lines */
+            lines: string[];
+            /** Approved */
+            approved: boolean;
+            /** Notes */
+            notes: string[];
+        };
         /** CtpStep */
         CtpStep: {
             /**
@@ -1611,6 +1739,11 @@ export interface components {
             purchasing_sources?: components["schemas"]["PurchasingSource"][];
             /** Lanes */
             lanes?: components["schemas"]["TransportLane"][];
+            /** Vendors */
+            vendors?: components["schemas"]["Vendor"][];
+            /** Purchase Orders */
+            purchase_orders?: components["schemas"]["PurchaseOrder"][];
+            purchasing?: components["schemas"]["PurchasingSettings"];
             /** Demand */
             demand?: components["schemas"]["DemandRecord"][];
             /** Receipts */
@@ -2323,6 +2456,41 @@ export interface components {
              * @default []
              */
             events: string[];
+        };
+        /** InfoRecord */
+        InfoRecord: {
+            /** Source Id */
+            source_id: string;
+            /** Product */
+            product: string;
+            /** Location */
+            location: string;
+            /** Price */
+            price: number;
+            /** Currency */
+            currency: string;
+            /** Price Scales */
+            price_scales: components["schemas"]["PriceScale"][];
+            /** Moq */
+            moq: number;
+            /** Rounding Qty */
+            rounding_qty: number | null;
+            /** Lead Time Days */
+            lead_time_days: number;
+            /** Valid From */
+            valid_from: string | null;
+            /** Valid To */
+            valid_to: string | null;
+            /** Fixed */
+            fixed: boolean;
+            /** Blocked */
+            blocked: boolean;
+            /** Priority */
+            priority: number;
+            /** Quota */
+            quota: number | null;
+            /** Vendor Material */
+            vendor_material: string;
         };
         /** InventoryResult */
         InventoryResult: {
@@ -3932,6 +4100,129 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** PoActionRequest */
+        PoActionRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "approve" | "send" | "confirm" | "receive" | "change" | "cancel";
+            /** Po */
+            po: string;
+            /** Lines */
+            lines?: components["schemas"]["PoLineInput"][] | null;
+            /** Date */
+            date?: string | null;
+            /**
+             * Reference
+             * @default
+             */
+            reference: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** PoActionResponse */
+        PoActionResponse: {
+            dataset: components["schemas"]["Dataset"];
+            report: components["schemas"]["ActionReport"];
+        };
+        /** PoLine */
+        PoLine: {
+            /** Id */
+            id: string;
+            /** Product */
+            product: string;
+            /** Ordered */
+            ordered: number;
+            /** Received */
+            received: number;
+            /** Open */
+            open: number;
+            /** Price */
+            price: number | null;
+            /** Value */
+            value: number;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /** Confirmed Date */
+            confirmed_date: string | null;
+            /** Confirmed Qty */
+            confirmed_qty: number | null;
+            /**
+             * Expected Date
+             * Format: date
+             */
+            expected_date: string;
+            /** Status */
+            status: string;
+            /** Days Late */
+            days_late: number;
+            /** Closed */
+            closed: boolean;
+            /** Last Receipt */
+            last_receipt: string | null;
+            /** Source */
+            source: string | null;
+        };
+        /** PoLineInput */
+        PoLineInput: {
+            /** Id */
+            id: string;
+            /** Qty */
+            qty?: number | null;
+            /** Date */
+            date?: string | null;
+            /** Price */
+            price?: number | null;
+            /**
+             * Final
+             * @default false
+             */
+            final: boolean;
+        };
+        /** PoView */
+        PoView: {
+            /** Id */
+            id: string;
+            /** Header */
+            header: boolean;
+            /** Supplier */
+            supplier: string | null;
+            /** Location */
+            location: string;
+            /** Order Date */
+            order_date: string | null;
+            /** Currency */
+            currency: string;
+            /** Approved */
+            approved: boolean;
+            /** Sent On */
+            sent_on: string | null;
+            /** Vendor Reference */
+            vendor_reference: string;
+            /** Note */
+            note: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "awaiting approval" | "to send" | "awaiting confirmation" | "confirmed" | "sent" | "partly received" | "received" | "closed";
+            /** Value */
+            value: number;
+            /** Open Value */
+            open_value: number;
+            /** Lines */
+            lines: components["schemas"]["PoLine"][];
+            /** Attention */
+            attention: string[];
+        };
         /** PoolingRow */
         PoolingRow: {
             /** Product */
@@ -3952,6 +4243,16 @@ export interface components {
             saving_pct: number;
             /** Unit Value */
             unit_value: number;
+        };
+        /**
+         * PriceScale
+         * @description A quantity break on an info record: from this quantity per order line, this price.
+         */
+        PriceScale: {
+            /** From Qty */
+            from_qty: number;
+            /** Price */
+            price: number;
         };
         /**
          * ProcurementType
@@ -4241,8 +4542,72 @@ export interface components {
             note: string;
         };
         /**
+         * PurchaseOrder
+         * @description A purchase order header (≈ EKKO). Lines are the purchase receipts whose ``po`` is this id.
+         */
+        PurchaseOrder: {
+            /** Id */
+            id: string;
+            /** Supplier */
+            supplier: string;
+            /**
+             * Location
+             * @description Receiving location
+             */
+            location: string;
+            /**
+             * Order Date
+             * Format: date
+             */
+            order_date: string;
+            /**
+             * Currency
+             * @description Empty = company currency
+             */
+            currency?: string | null;
+            /**
+             * Approved
+             * @description Released for sending (orders above the approval limit start unapproved)
+             * @default true
+             */
+            approved: boolean;
+            /**
+             * Sent On
+             * @description When the order went to the supplier; empty = not sent yet
+             */
+            sent_on?: string | null;
+            /**
+             * Vendor Reference
+             * @description The supplier's order confirmation number
+             * @default
+             */
+            vendor_reference: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** PurchasingSettings */
+        PurchasingSettings: {
+            /**
+             * Approval Limit
+             * @description Purchase orders worth more than this (company currency) need approval before they are sent; empty = no approval step
+             */
+            approval_limit?: number | null;
+            /**
+             * Release Window Days
+             * @description Requisitions whose order date falls within this many days are shown as due to order
+             * @default 7
+             */
+            release_window_days: number;
+        };
+        /**
          * PurchasingSource
          * @description Who sells us a product, at what price and lead time (≈ info record + source list + quota).
+         *
+         *     ``price_scales`` are quantity breaks per order line; ``fixed`` makes this the source planning uses while it is
+         *     valid (source list fixed indicator), ``blocked`` keeps planning and new orders off it (source list block).
          */
         PurchasingSource: {
             /** Id */
@@ -4319,6 +4684,73 @@ export interface components {
             valid_from?: string | null;
             /** Valid To */
             valid_to?: string | null;
+            /**
+             * Price Scales
+             * @description Quantity breaks: from this quantity per order line, this price
+             */
+            price_scales?: components["schemas"]["PriceScale"][];
+            /**
+             * Fixed
+             * @description Source list: the fixed source, used ahead of priority and quota while it is valid
+             * @default false
+             */
+            fixed: boolean;
+            /**
+             * Blocked
+             * @description Source list: blocked, not used by planning or new orders
+             * @default false
+             */
+            blocked: boolean;
+            /**
+             * Vendor Material
+             * @description The supplier's own part number
+             * @default
+             */
+            vendor_material: string;
+        };
+        /** PurchasingTotals */
+        PurchasingTotals: {
+            /** Requisitions */
+            requisitions: number;
+            /** Due Now */
+            due_now: number;
+            /** Due Now Value */
+            due_now_value: number;
+            /** Late To Order */
+            late_to_order: number;
+            /** Open Orders */
+            open_orders: number;
+            /** Open Value */
+            open_value: number;
+            /** Awaiting Approval */
+            awaiting_approval: number;
+            /** To Send */
+            to_send: number;
+            /** Confirmations Overdue */
+            confirmations_overdue: number;
+            /** Late Lines */
+            late_lines: number;
+        };
+        /** PurchasingView */
+        PurchasingView: {
+            /** Ok */
+            ok: boolean;
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Currency */
+            currency: string;
+            /** Approval Limit */
+            approval_limit: number | null;
+            totals: components["schemas"]["PurchasingTotals"];
+            /** Requisitions */
+            requisitions: components["schemas"]["Requisition"][];
+            /** Orders */
+            orders: components["schemas"]["PoView"][];
+            /** Vendors */
+            vendors: components["schemas"]["VendorRow"][];
         };
         /**
          * ReceiptKind
@@ -4419,6 +4851,60 @@ export interface components {
              * @default false
              */
             past_due: boolean;
+        };
+        /**
+         * Requisition
+         * @description A planned purchase (≈ purchase requisition from MRP): what to buy, from whom, by when.
+         */
+        Requisition: {
+            /** Id */
+            id: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Need Date
+             * Format: date
+             */
+            need_date: string;
+            /**
+             * Order Date
+             * Format: date
+             */
+            order_date: string;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /** Source Id */
+            source_id: string;
+            /** Supplier */
+            supplier: string;
+            /** Price */
+            price: number;
+            /** Currency */
+            currency: string;
+            /** Value */
+            value: number;
+            /** Due Now */
+            due_now: boolean;
+            /** Late */
+            late: boolean;
+            /** Choices */
+            choices: components["schemas"]["SourceChoice"][];
+        };
+        /** RequisitionPick */
+        RequisitionPick: {
+            /** Id */
+            id: string;
+            /** Source Id */
+            source_id?: string | null;
+            /** Qty */
+            qty?: number | null;
         };
         /**
          * Reservation
@@ -5253,6 +5739,26 @@ export interface components {
              * @default false
              */
             scheduled: boolean;
+            /**
+             * Po
+             * @description Purchase: the purchase order (header) this line is on
+             */
+            po?: string | null;
+            /**
+             * Price
+             * @description Purchase: net price per base unit, in the order's currency
+             */
+            price?: number | null;
+            /**
+             * Confirmed Date
+             * @description Purchase: delivery date the supplier confirmed; planning expects the goods then
+             */
+            confirmed_date?: string | null;
+            /**
+             * Confirmed Qty
+             * @description Purchase: quantity the supplier confirmed (of the ordered quantity); planning counts no more than this
+             */
+            confirmed_qty?: number | null;
         };
         /** ScheduledReceiptOut */
         ScheduledReceiptOut: {
@@ -5807,6 +6313,42 @@ export interface components {
                 [key: string]: number;
             };
         };
+        /**
+         * SourceChoice
+         * @description A supplier that could fill a requisition, with its terms for this quantity.
+         */
+        SourceChoice: {
+            /** Source Id */
+            source_id: string;
+            /** Supplier */
+            supplier: string;
+            /** Price */
+            price: number;
+            /** Currency */
+            currency: string;
+            /** Value */
+            value: number;
+            /** Qty */
+            qty: number;
+            /** Lead Time Days */
+            lead_time_days: number;
+            /**
+             * Arrives
+             * Format: date
+             */
+            arrives: string;
+            /** Days Late */
+            days_late: number;
+            /** Fixed */
+            fixed: boolean;
+            /** Assigned */
+            assigned: boolean;
+            /**
+             * Blocked
+             * @default
+             */
+            blocked: string;
+        };
         /** StepReport */
         StepReport: {
             /** N */
@@ -6191,6 +6733,128 @@ export interface components {
             by_type: {
                 [key: string]: number;
             };
+        };
+        /**
+         * Vendor
+         * @description A supplier's purchasing data (≈ vendor master, purchasing organisation view).
+         */
+        Vendor: {
+            /**
+             * Supplier
+             * @description The supplier location this record describes
+             */
+            supplier: string;
+            /**
+             * Contact
+             * @description Who to talk to
+             * @default
+             */
+            contact: string;
+            /**
+             * Email
+             * @default
+             */
+            email: string;
+            /**
+             * Phone
+             * @default
+             */
+            phone: string;
+            /**
+             * Currency
+             * @description Order currency; empty = the price's currency on each source
+             */
+            currency?: string | null;
+            /**
+             * Payment Terms Days
+             * @description Pay this many days after the invoice
+             * @default 30
+             */
+            payment_terms_days: number;
+            /**
+             * Incoterms
+             * @description Delivery terms, e.g. FCA Pune
+             * @default
+             */
+            incoterms: string;
+            /**
+             * Blocked
+             * @description Purchasing block: planning and new purchase orders skip this supplier; open orders are still received
+             * @default false
+             */
+            blocked: boolean;
+            /**
+             * Block Reason
+             * @default
+             */
+            block_reason: string;
+            /**
+             * Confirmation Required
+             * @description The supplier confirms each order (date and quantity)
+             * @default false
+             */
+            confirmation_required: boolean;
+            /**
+             * Confirmation Days
+             * @description A confirmation is overdue this many days after the order is sent
+             * @default 3
+             */
+            confirmation_days: number;
+            /**
+             * Over Delivery Tolerance
+             * @description A goods receipt may take this much more than ordered; empty = no limit
+             * @default 0.1
+             */
+            over_delivery_tolerance: number | null;
+            /**
+             * Under Delivery Tolerance
+             * @description A delivery this much short of the order closes the line (final delivery)
+             * @default 0
+             */
+            under_delivery_tolerance: number;
+            /**
+             * Min Order Value
+             * @description Smallest order the supplier accepts
+             * @default 0
+             */
+            min_order_value: number;
+        };
+        /** VendorRow */
+        VendorRow: {
+            /** Supplier */
+            supplier: string;
+            /** Name */
+            name: string;
+            /** Has Record */
+            has_record: boolean;
+            /** Blocked */
+            blocked: boolean;
+            /** Block Reason */
+            block_reason: string;
+            /** Confirmation Required */
+            confirmation_required: boolean;
+            /** Payment Terms Days */
+            payment_terms_days: number;
+            /** Currency */
+            currency: string;
+            /** Open Lines */
+            open_lines: number;
+            /** Open Value */
+            open_value: number;
+            /** Closed Lines */
+            closed_lines: number;
+            /** On Time */
+            on_time: number | null;
+            /** In Full */
+            in_full: number | null;
+            /** Avg Days Late */
+            avg_days_late: number | null;
+            /** Confirmed Late */
+            confirmed_late: number;
+            /** Last Delivery */
+            last_delivery: string | null;
+            /** Info Records */
+            info_records: components["schemas"]["InfoRecord"][];
         };
         /** VersionDoc */
         VersionDoc: {
@@ -7176,6 +7840,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FirmResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_purchasing_api_purchasing_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchasingView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_create_pos_api_purchasing_create_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatePoResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_po_action_api_purchasing_act_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PoActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoActionResponse"];
                 };
             };
             /** @description Validation Error */

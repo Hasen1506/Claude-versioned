@@ -63,6 +63,14 @@ const TITLE: Record<string, string> = {
   earliness_weight: "Weight: an hour early", makespan_weight: "Weight: an hour to clear the window", start_rule: "Start rule",
   optimizer: "Use the optimiser (constraint solver)", backward_buffer_days: "Backward: buffer before the due date (days)",
   frozen_days: "Frozen zone (days)", profile: "Scheduling profile", hold: "Not before",
+  price_scales: "Price scales (quantity breaks)", from_qty: "From quantity", fixed: "Fixed source (planning uses it first)",
+  blocked: "Blocked", vendor_material: "Supplier's part number", payment_terms_days: "Payment terms (days)",
+  confirmation_required: "Supplier confirms each order", confirmation_days: "Confirmation expected within (days)",
+  over_delivery_tolerance: "Over-delivery allowed", under_delivery_tolerance: "Short delivery that still closes the line",
+  min_order_value: "Minimum order value", approval_limit: "Orders above this need approval",
+  release_window_days: "Show as due to order within (days)", sent_on: "Sent on", vendor_reference: "Supplier's confirmation number",
+  po: "Purchase order", confirmed_date: "Confirmed delivery date", confirmed_qty: "Confirmed quantity",
+  block_reason: "Why blocked", incoterms: "Delivery terms (Incoterms)",
 };
 
 /** Plain words for enum values; the stored value stays the code. */

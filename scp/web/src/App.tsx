@@ -6,6 +6,7 @@ import { setPlanYear } from "./lib/format";
 import { href, go, useRoute } from "./lib/router";
 import { NAV, navItemFor, type NavItem } from "./lib/nav";
 import { Demand } from "./pages/Demand";
+import { Buying } from "./pages/Buying";
 import { Execution } from "./pages/Execution";
 import { Finance } from "./pages/Finance";
 import { Home, markVisited } from "./pages/Home";
@@ -89,6 +90,7 @@ export function App() {
           : page === "schedule" ? <Schedule route={route} />
           : page === "promise" ? <Promising route={route} />
           : page === "execution" ? <Execution route={route} />
+          : page === "buying" ? <Buying route={route} />
           : page === "finance" ? <Finance route={route} />
           : page === "tower" ? <Tower route={route} />
           : page === "versions" ? <Versions />

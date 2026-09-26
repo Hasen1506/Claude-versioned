@@ -1,6 +1,7 @@
 import type {
   Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
+  PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoLineInput, RequisitionPick,
 } from "./types";
 
 /** Thrown when the engine rejects the dataset shape (HTTP 422). Carries field-level errors. */
@@ -109,6 +110,15 @@ export const api = {
     withDataset<ActualsView>("/api/actuals", dataset, { as_of: asOf ?? null }),
   roll: (dataset: Dataset, asOf: string) =>
     write<RollResponse>("/api/actuals/roll", dataset, { as_of: asOf }),
+  /** Requisitions from the supply plan, every purchase order and the supplier scorecard. */
+  purchasing: (ds: Dataset) => planPost<PurchasingView>("/api/purchasing", ds),
+  /** Turn requisitions into purchase orders (`lines` = which, on which source; none = everything due now). */
+  createPurchaseOrders: (dataset: Dataset, lines?: RequisitionPick[], orderDate?: string) =>
+    write<CreatePoResponse>("/api/purchasing/create", dataset, { lines: lines ?? null, order_date: orderDate ?? null }),
+  /** Approve, send, confirm, receive, change or cancel lines of a purchase order. */
+  poAction: (dataset: Dataset, action: PoAction, po: string, extra: { lines?: PoLineInput[]; date?: string; reference?: string; note?: string } = {}) =>
+    write<PoActionResponse>("/api/purchasing/act", dataset, { action, po, lines: extra.lines ?? null, date: extra.date ?? null,
+      reference: extra.reference ?? "", note: extra.note ?? "" }),
   /** Firm planned orders into receipts: `ids`, or everything starting within the firm zone. */
   firm: (dataset: Dataset, ids?: string[], withinDays?: number) =>
     write<FirmResponse>("/api/orders/firm", dataset, { ids: ids ?? null, within_days: withinDays ?? null }),

@@ -40,6 +40,9 @@ export const NAV: NavGroup[] = [
     { id: "promise", label: "Orders", question: "What can we promise each customer, and when?", run: "promise" },
     { id: "execution", label: "Actuals", question: "What actually happened?", run: "actuals" },
   ] },
+  { label: "Suppliers", items: [
+    { id: "buying", label: "Buying", question: "What should we order, from whom, and where are our orders?", run: "purchasing" },
+  ] },
   { label: "Results", items: [
     { id: "finance", label: "Money", question: "What does the plan cost and earn?", run: "finance" },
     { id: "tower", label: "Performance", question: "Are we hitting our targets, and what needs following up?", run: "tower" },
