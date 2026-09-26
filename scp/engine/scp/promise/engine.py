@@ -27,9 +27,9 @@ from ..model import (
 from ..model.promise import Allocation, BopSegment, Confirmation
 from ..network import NetworkGraph, Node, build_graph, supply_options
 from ..plan import PlanResult
-from ..plan.costing import component_factor
+from ..plan.structure import entering, needs
 from ..plan.leadtime import (
-    gr_days, nominal_lead_time_days, schedule_buy, schedule_make, schedule_transfer, started_qty,
+    gr_days, nominal_lead_time_days, schedule_buy, schedule_make, schedule_transfer,
 )
 from .atp import EPS, AtpSeries
 from .result import AtpNode, CtpStep, OrderPromise, ScheduleLine
@@ -354,13 +354,13 @@ class Promiser:
         steps: list[CtpStep] = []
         actions: list[Action] = []
         start = 0
-        for comp in ps.components:
-            cnode = (loc, comp.product)
-            cq = qty * component_factor(ds, ps_id, comp.product)
+        for need in needs(ds, ps, self.origin):
+            cnode = (loc, need.product)
+            cq = need.qty(qty)
             s = self.series_for(cnode)
             k = s.first_firm(cq, 0)
             if k is not None:
-                steps.append(CtpStep(kind="component", location=loc, product=comp.product, qty=cq, start=self.date(k),
+                steps.append(CtpStep(kind="component", location=loc, product=need.product, qty=cq, start=self.date(k),
                                      note="component available-to-promise"))
                 actions.append(Action("out", cnode, k, cq))
             else:
@@ -372,11 +372,11 @@ class Promiser:
                 actions += sub.actions
             start = max(start, k)
         # finite capacity: every operation's hours must fit into free bucket capacity from the start
-        q = started_qty(ps, qty)
+        enter = entering(ps)
         hours: dict[str, float] = defaultdict(float)
         for op in ps.operations:
-            if op.resource in self.free:
-                hours[op.resource] += op.setup_hours + op.run_hours_per_unit * q
+            if op.resource and op.resource in self.free:
+                hours[op.resource] += op.setup_hours + op.run_hours_per_unit * qty * enter[op.seq]
         finish = start
         for rid, h in hours.items():
             got = self._capacity(rid, start, h)

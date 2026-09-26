@@ -13,7 +13,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Literal
 
-from ..model import Dataset, LocationType
+from ..model import Dataset, LocationType, ProcurementType
 
 Node = tuple[str, str]  # (location, product)
 OptionKind = Literal["make", "buy", "transfer"]
@@ -49,12 +49,19 @@ _KIND_RANK = {"make": 0, "transfer": 1, "buy": 2}
 
 def supply_options(ds: Dataset, node: Node) -> list[SupplyOption]:
     """Every way ``node`` can be replenished, ranked by priority then make < transfer < buy."""
+    from ..plan.structure import needs   # the BOM rules live with planning; imported late to avoid a cycle
+
     loc, prod = node
+    lp = ds.location_product_by_key.get(node)
+    proc = lp.procurement if lp else ProcurementType.ANY
     out: list[SupplyOption] = []
     for ps in ds.production_sources:
-        if ps.location == loc and ps.product == prod:
-            ups = tuple((loc, c.product) for c in ps.components)
+        if ps.location == loc and ps.product == prod and proc is not ProcurementType.EXTERNAL:
+            ups = tuple((loc, n.product) for n in needs(ds, ps))
             out.append(SupplyOption("make", ps.id, node, ups, ps.priority, ps.quota))
+    if proc is ProcurementType.MAKE:
+        out.sort(key=lambda o: (o.priority, _KIND_RANK[o.kind], o.source_id))
+        return out
     for pu in ds.purchasing_sources:
         if pu.location == loc and pu.product == prod:
             out.append(SupplyOption("buy", pu.id, node, ((pu.supplier, prod),), pu.priority, pu.quota))
@@ -98,6 +105,7 @@ def build_graph(ds: Dataset) -> NetworkGraph:
     suppliers_of: dict[Node, set[Node]] = defaultdict(set)
     queue: deque[Node] = deque(seed_nodes(ds))
     known: dict[Node, None] = dict.fromkeys(queue)
+    after: list[tuple[Node, Node]] = []   # (main, co-product): the co-product is planned after its main product
     while queue:
         node = queue.popleft()
         opts = supply_options(ds, node)
@@ -105,14 +113,30 @@ def build_graph(ds: Dataset) -> NetworkGraph:
         for o in opts:
             if o.kind == "buy":
                 continue  # supplier nodes are leaves, not planned
-            for up in o.upstream:
+            ups = list(o.upstream)
+            if o.kind == "make":
+                ps = ds.production_source_by_id[o.source_id]
+                for co in ps.co_products:
+                    cn = (node[0], co.product)
+                    if co.product in ds.product_by_id:
+                        after.append((node, cn))
+                        if cn not in known:
+                            known[cn] = None
+                            queue.append(cn)
+            for up in ups:
                 consumers[up].add(node)
                 suppliers_of[node].add(up)
                 if up not in known:
                     known[up] = None
                     queue.append(up)
     nodes = list(known)
-    llc, cycles = _low_level_codes(nodes, consumers, suppliers_of)
+    # the ordering edges count only for the planning order, not as supply
+    order_cons = {k: set(v) for k, v in consumers.items()}
+    order_sups = {k: set(v) for k, v in suppliers_of.items()}
+    for main, co in after:
+        order_cons.setdefault(co, set()).add(main)
+        order_sups.setdefault(main, set()).add(co)
+    llc, cycles = _low_level_codes(nodes, order_cons, order_sups)
     order = sorted((n for n in nodes if n in llc), key=lambda n: (llc[n], n))
     return NetworkGraph(nodes, options, dict(consumers), dict(suppliers_of), llc, cycles, order)
 

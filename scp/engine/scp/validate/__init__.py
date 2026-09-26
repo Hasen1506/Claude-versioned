@@ -68,6 +68,7 @@ RULES: dict[str, tuple[Severity, str]] = {
     "STOCK_NOT_SYNCED": ("warning", "On-hand differs from the goods-movement journal"),
     "NEGATIVE_STOCK": ("warning", "The movement journal takes stock below zero"),
     "MOVEMENT_REF_UNKNOWN": ("warning", "Goods movement references no open or closed order"),
+    "PHANTOM_NOT_MADE": ("warning", "Phantom assembly that is not made at that plant"),
 }
 
 
@@ -181,10 +182,18 @@ def _references(ds: Dataset, c: _Collector) -> None:
         _ref(ds, c, "product", ps.product, "production_source", ps.id, "product")
         for comp in ps.components:
             _ref(ds, c, "product", comp.product, "production_source", ps.id, "components.product")
+        for co in ps.co_products:
+            _ref(ds, c, "product", co.product, "production_source", ps.id, "co_products.product")
         for op in ps.operations:
             _ref(ds, c, "resource", op.resource, "production_source", ps.id, f"operations[{op.seq}].resource")
             _ref(ds, c, "resource", op.labor_resource, "production_source", ps.id,
                  f"operations[{op.seq}].labor_resource")
+            for alt in op.alternatives:
+                _ref(ds, c, "resource", alt, "production_source", ps.id, f"operations[{op.seq}].alternatives")
+            if op.subcontract is not None and _ref(ds, c, "location", op.subcontract.supplier, "production_source",
+                                                   ps.id, f"operations[{op.seq}].subcontract.supplier"):
+                _loc_type(ds, c, op.subcontract.supplier, {LocationType.SUPPLIER}, "production_source", ps.id,
+                          f"operations[{op.seq}].subcontract.supplier", "work done outside needs a supplier")
     for pu in ds.purchasing_sources:
         if _ref(ds, c, "location", pu.supplier, "purchasing_source", pu.id, "supplier"):
             _loc_type(ds, c, pu.supplier, {LocationType.SUPPLIER}, "purchasing_source", pu.id, "supplier",
@@ -307,10 +316,8 @@ def _production(ds: Dataset, c: _Collector) -> None:
                 c.add("PRODUCTION_NO_LEAD_TIME", "production_source", ps.id,
                       "Production lead time will be 0 days", "Add operations or fixed_lead_time_workdays")
         for op in ps.operations:
-            used.add(op.resource)
-            if op.labor_resource:
-                used.add(op.labor_resource)
-            for rid in (op.resource, op.labor_resource):
+            used.update(x for x in (op.resource, op.labor_resource, *op.alternatives) if x)
+            for rid in (op.resource, op.labor_resource, *op.alternatives):
                 r = ds.resource_by_id.get(rid) if rid else None
                 if r is not None and r.location != ps.location:
                     c.add("RESOURCE_WRONG_LOCATION", "production_source", ps.id,
@@ -320,6 +327,13 @@ def _production(ds: Dataset, c: _Collector) -> None:
             c.add("SOURCE_NOT_VALID_IN_HORIZON", "production_source", ps.id,
                   "Its valid-from and valid-to dates don't cover the whole plan; outside them it is not used",
                   "Extend valid_from/valid_to or add another source")
+    made = {(ps.location, ps.product) for ps in ds.production_sources}
+    for lp in ds.location_products:
+        if lp.phantom and (lp.location, lp.product) not in made:
+            c.add("PHANTOM_NOT_MADE", "location_product", f"{lp.location}/{lp.product}",
+                  "Marked as a phantom assembly, but it is not made here, so its parts can't be passed through; "
+                  "it is planned as an ordinary part",
+                  "Add how it is made here, or clear the phantom mark", "phantom")
     for r in ds.resources:
         if r.id not in used:
             c.add("RESOURCE_UNUSED", "resource", r.id, "No operation uses this resource",
@@ -444,6 +458,8 @@ def _graph(ds: Dataset, c: _Collector) -> None:
     # which nodes will receive requirements?
     has_req = {(d.location, d.product) for d in ds.demand}
     has_req |= {node for node in g.nodes if g.consumers.get(node)}
+    # a co-product comes out of another product's run: that is its supply, even with no source of its own
+    co_made = {(ps.location, co.product) for ps in ds.production_sources for co in ps.co_products}
     for node in g.nodes:
         loc, prod = node
         if ds.location_type(loc) not in STOCKING_LOCATION_TYPES | {LocationType.CUSTOMER}:
@@ -455,12 +471,16 @@ def _graph(ds: Dataset, c: _Collector) -> None:
             c.add("LOCATION_PRODUCT_DEFAULTED", "location_product", f"{loc}/{prod}",
                   "No stock or ordering rules here yet: ordered exactly as needed, with no safety stock and nothing on hand",
                   "Enter its stock and ordering rules (Set up → the product, or Planning policies)")
-        if not g.options.get(node):
+        if not g.options.get(node) and node not in co_made:
             onhand = lp.on_hand if lp else 0.0
+            proc = lp.procurement.value if lp else "any"
+            limited = {"make": " Its procurement type allows only making it here.",
+                       "external": " Its procurement type allows only buying it or shipping it in."}.get(proc, "")
             c.add("NO_SOURCE", "location_product", f"{loc}/{prod}",
                   f"{prod} at {loc} is needed but has no way to be supplied: it is not made, bought or shipped there"
-                  + (f" (only {onhand:g} on hand)" if onhand else ""),
-                  "Say how it gets there: made there, bought from a supplier, or shipped from another place (Set up → the product)")
+                  + (f" (only {onhand:g} on hand)" if onhand else "") + ("." + limited if limited else ""),
+                  "Say how it gets there: made there, bought from a supplier, or shipped from another place (Set up → the product)"
+                  + ("; or change its procurement type" if limited else ""))
     # quotas
     for node, opts in g.options.items():
         q = [o.quota for o in opts if o.quota is not None]

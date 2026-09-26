@@ -468,8 +468,11 @@ function SetupMatrix({ ds, res }: { ds: Dataset; res: ScheduleResult | null }) {
     const groupOf = (p: string) => (ds.products ?? []).find((x) => x.id === p)?.setup_group || p;
     for (const ps of ds.production_sources ?? []) {
       for (const op of ps.operations ?? []) {
-        if (!m.has(op.resource)) m.set(op.resource, new Set());
-        m.get(op.resource)!.add(groupOf(ps.product));
+        for (const r of [op.resource, ...(op.alternatives ?? [])]) {
+          if (!r) continue;
+          if (!m.has(r)) m.set(r, new Set());
+          m.get(r)!.add(groupOf(ps.product));
+        }
       }
     }
     return m;

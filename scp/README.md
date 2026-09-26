@@ -43,6 +43,20 @@ network, or import a dataset JSON. The dataset is saved in your browser and can 
   it. A record you haven't finished (a lane with no places chosen yet) is set aside with its reason and the rest
   keeps planning; it never locks the company.
 
+## Master-data depth (Phase B)
+
+- **Products at places** is the material master at plant level: MRP 1 (ordering, MRP controller), MRP 2 (procurement
+  type, phantom, lead times, scheduling margin), MRP 3 (strategy, consumption, safety stock) and MRP 4 (production
+  versions, a multi-level BOM explorer on any date, where used), with the stock/requirements list (every receipt
+  and requirement by date, and the stock after it) on the same page. The index filters by who plans each product.
+- **Machines & shifts**: named shifts with clock times, breaks and weekdays; capacity changes for a period (a
+  shutdown, a second shift from a date, more machines, a slower run-in); a week drawn as clock bars and the hours
+  week by week beside the plan's load. MRP, the capacity plan, lead times and the shop floor schedule all read the
+  same day-by-day hours (`engine/scp/time/capacity.py`).
+- **BOMs and routings**: date-effective lines (engineering change), fixed-quantity parts, phantom assemblies, co-
+  and by-products with cost shares, step scrap, overlapping steps, steps done outside by a supplier, and
+  alternative machines. One module applies the rules for every planner (`engine/scp/plan/structure.py`).
+
 What real use turned up, and what was done about it, is logged in [docs/USABILITY_LOG.md](docs/USABILITY_LOG.md).
 
 ## What is here (P0–P10)
@@ -50,7 +64,7 @@ What real use turned up, and what was done about it, is logged in [docs/USABILIT
 | Area | Where | What it does |
 |---|---|---|
 | Data model | `engine/scp/model` | Typed master and transactional data. Fractions are 0–1, and quantities are in base UoM. Units are enforced by the schema, not by convention. |
-| Readiness gate | `engine/scp/validate` | 33 coded master-data and execution-data checks with fix hints. Errors block planning. Unfinished records (a schema error, or a reference left empty) are set aside with a plain reason instead of rejecting the dataset (`lenient.py`), and a setup checklist says what is still missing, in setup order (`setup.py`). |
+| Readiness gate | `engine/scp/validate` | 34 coded master-data and execution-data checks with fix hints. Errors block planning. Unfinished records (a schema error, or a reference left empty) are set aside with a plain reason instead of rejecting the dataset (`lenient.py`), and a setup checklist says what is still missing, in setup order (`setup.py`). |
 | Network | `engine/scp/network` | Supply options per (location, product), low-level codes across BOM and transport edges, cycle detection. |
 | Supply planning | `engine/scp/plan` | Network MRP/DRP: forecast consumption by strategy, PIR splitting, safety stock (fixed / coverage / α / β), lot sizing (L4L / FIXED / EOQ / POQ / MIN_MAX + MOQ / rounding / max split), quota sourcing, working-day scheduling, firming fence, BOM explosion with scrap, capacity / supplier / lane load, pegging, delay propagation, exceptions, cost KPIs. |
 | Demand planning | `engine/scp/demand` | History to periods, cleansing (event baseline, robust outliers), ABC/XYZ and demand-pattern segmentation, a 12-model competition on a rolling backtest (MASE / WAPE / bias / value added), prediction ranges, events with measured lifts, NPI like-modelling with ramp and cannibalisation, consensus overrides, and release as forecast demand. Google TimesFM is an optional candidate model ([docs/TIMESFM.md](docs/TIMESFM.md)). |

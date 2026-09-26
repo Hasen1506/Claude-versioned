@@ -13,7 +13,9 @@ from datetime import timedelta
 
 from ..model import Dataset
 from ..plan import run_mrp
-from ..plan.leadtime import location_calendar, resource_calendar, started_qty
+from ..plan.leadtime import location_calendar, resource_calendar
+from ..plan.structure import entering
+from ..time.capacity import day_capacity, max_units
 from ..validate import has_errors, validate
 from .clock import ResourceClock, after_queue
 from .core import Decoded, Instance, is_changeover, Job, OpSpec, Res, check, complete, decode, edd, improve, setup_rule
@@ -27,6 +29,25 @@ def group_of(ds: Dataset, product: str) -> str:
     return (p.setup_group if p and p.setup_group else product)
 
 
+def resource_clocks(ds: Dataset, rid: str) -> Res:
+    """A resource's working time, one clock per unit: its shifts, breaks and capacity changes by day."""
+    r = ds.resource_by_id[rid]
+    cal = resource_calendar(ds, rid)
+    origin, start = ds.settings.planning_start, ds.scheduling.day_start_hour
+    plain = not r.shifts and not r.capacity_changes
+
+    def unit_clock(u: int) -> ResourceClock:
+        def days(d: dt.date) -> tuple[list[tuple[float, float]], float]:
+            dc = day_capacity(r, cal, d, start)
+            return (list(dc.windows) if dc.units > u else []), dc.efficiency
+        return ResourceClock(cal, origin, start, r.shifts_per_day * r.hours_per_shift, r.efficiency,
+                             None if plain else days)
+
+    n = max_units(r)
+    clocks = [unit_clock(u) for u in range(n)] if not plain else None
+    return Res(rid, n, clocks[0] if clocks else unit_clock(0), r.finite, clocks)
+
+
 def build_instance(ds: Dataset) -> tuple[Instance, dict, int, int]:
     s = ds.settings
     cfg = ds.scheduling
@@ -37,10 +58,7 @@ def build_instance(ds: Dataset) -> tuple[Instance, dict, int, int]:
 
     def res(rid: str) -> Res:
         if rid not in resources:
-            r = ds.resource_by_id[rid]
-            clk = ResourceClock(resource_calendar(ds, rid), origin, cfg.day_start_hour,
-                                r.shifts_per_day * r.hours_per_shift, r.efficiency)
-            resources[rid] = Res(rid, r.units, clk, r.finite)
+            resources[rid] = resource_clocks(ds, rid)
         return resources[rid]
 
     jobs: dict[str, Job] = {}
@@ -48,19 +66,37 @@ def build_instance(ds: Dataset) -> tuple[Instance, dict, int, int]:
     beyond = no_routing = 0
     def add(oid: str, ps, location: str, product: str, qty: float, start: dt.date, due: dt.date,
             firm: bool) -> None:
-        q = started_qty(ps, qty)
+        enter = entering(ps)
         grp = group_of(ds, product)
-        ops = [OpSpec(key=f"{oid}:{op.seq}", order=oid, seq=op.seq, resource=op.resource, product=product,
-                      group=grp, qty=q, setup=op.setup_hours, run=op.run_hours_per_unit * q,
-                      queue_workdays=op.queue_workdays, parallel=op.parallel_units,
-                      labor_resource=op.labor_resource, labor_hours=op.labor_hours_per_unit * q)
-               for op in sorted(ps.operations, key=lambda x: x.seq)]
+        cal = location_calendar(ds, location)
+        release = max(0, (start - origin).days) * 24.0
+        ops: list[OpSpec] = []
+        lead_out = 0.0   # outside processing before the first step here
+        for op in sorted(ps.operations, key=lambda x: x.seq):
+            if op.subcontract is not None:
+                # done by a supplier: a wait after the step before it (or before the order can start here)
+                wait = op.subcontract.workdays + op.queue_workdays
+                if ops:
+                    ops[-1].queue_workdays += wait
+                else:
+                    lead_out += wait
+                continue
+            q = qty * enter[op.seq]
+            ops.append(OpSpec(key=f"{oid}:{op.seq}", order=oid, seq=op.seq, resource=op.resource, product=product,
+                              group=grp, qty=q, setup=op.setup_hours, run=op.run_hours_per_unit * q,
+                              queue_workdays=op.queue_workdays, parallel=op.parallel_units,
+                              labor_resource=op.labor_resource, labor_hours=op.labor_hours_per_unit * q,
+                              alternatives=list(op.alternatives), send_ahead=op.send_ahead_qty))
+        if lead_out:
+            release = after_queue(cal, origin, release, lead_out)
         for op in ops:
             res(op.resource)
-        release = max(0, (start - origin).days) * 24.0
+            for alt in op.alternatives:
+                if alt in ds.resource_by_id:
+                    res(alt)
         jobs[oid] = Job(oid, product, release, (due - origin).days * 24.0, ops)
         meta[oid] = {"location": location, "qty": qty, "start": max(start, origin), "due": due, "firm": firm,
-                     "cal": location_calendar(ds, location)}
+                     "cal": cal}
 
     for o in plan.orders:
         if o.kind != "make":
@@ -69,7 +105,7 @@ def build_instance(ds: Dataset) -> tuple[Instance, dict, int, int]:
             beyond += 1
             continue
         ps = ds.production_source_by_id.get(o.source_id)
-        if ps is None or not ps.operations:
+        if ps is None or not any(op.resource for op in ps.operations):
             no_routing += 1
             continue
         add(o.id, ps, o.location, o.product, o.qty, o.start_date, o.due_date, firm=False)
@@ -79,7 +115,7 @@ def build_instance(ds: Dataset) -> tuple[Instance, dict, int, int]:
         if rc.kind.value != "production" or not rc.source or rc.due_date >= window_end:
             continue
         ps = ds.production_source_by_id.get(rc.source)
-        if ps is None or not ps.operations:
+        if ps is None or not any(op.resource for op in ps.operations):
             continue
         add(rc.id, ps, rc.location, rc.product, rc.qty, max(rc.start_date or origin, origin), rc.due_date, firm=True)
 
@@ -107,7 +143,8 @@ def _labour(ds: Dataset, inst: Instance, d: Decoded) -> list[LabourDay]:
         o = ops[b.key]
         if not o.labor_resource or o.labor_hours <= 0 or b.end <= b.run_start:
             continue
-        clk = inst.resources[b.resource].clock
+        res = inst.resources[b.resource]
+        clk = res.at(b.unit if res.finite else -1)
         share = o.labor_hours * (b.qty / o.qty)
         total = clk.work_between(b.run_start, b.end)
         if total <= 0:
@@ -122,7 +159,7 @@ def _labour(ds: Dataset, inst: Instance, d: Decoded) -> list[LabourDay]:
         if r is None:
             continue
         date = origin + timedelta(days=day)
-        avail = r.units * r.hours_per_workday_per_unit if resource_calendar(ds, rid).is_workday(date) else 0.0
+        avail = day_capacity(r, resource_calendar(ds, rid), date, ds.scheduling.day_start_hour).productive_hours
         out.append(LabourDay(resource=rid, date=date, required=req, available=avail, overload=req > avail + 1e-6))
     return out
 
@@ -177,13 +214,15 @@ def run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None) -> S
         m = ds.resource_by_id[rid]
         bl = [b for b in final.blocks if b.resource == rid]
         wins = r.clock.windows(0.0, span)
-        shift = sum(e - s0 for s0, e in wins)
-        busy = sum(b.end - b.setup_start - _gaps(r.clock, b.setup_start, b.end) for b in bl)
-        units = r.units if r.finite else max(1, len(bl))
+        busy = sum(b.end - b.setup_start - _gaps(r.at(b.unit if r.finite else -1), b.setup_start, b.end) for b in bl)
+        if r.finite:
+            avail = sum(r.at(u).open_between(0.0, span) for u in range(r.units))
+        else:
+            avail = r.clock.open_between(0.0, span) * max(1, len(bl))
         out.resources.append(ScheduleResource(
             id=rid, name=m.name, kind=m.kind.value, units=r.units, finite=r.finite, efficiency=m.efficiency,
             windows=[[a, b] for a, b in wins], busy_hours=busy, setup_hours=sum(b.setup_work for b in bl),
-            available_hours=shift * units, utilization=busy / (shift * units) if shift else 0.0,
+            available_hours=avail, utilization=busy / avail if avail else 0.0,
             changeovers=sum(1 for b in bl if is_changeover(b, ops[b.key])),
             sequence=seqs.get(rid, [])))
     out.labour = _labour(ds, inst, final)
@@ -192,5 +231,5 @@ def run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None) -> S
 
 
 def _gaps(clk: ResourceClock, a: float, b: float) -> float:
-    """Clock hours inside [a, b] that are outside shift windows (a job paused overnight)."""
-    return (b - a) - clk.work_between(a, b) / clk.eff
+    """Clock hours inside [a, b] that are outside shift windows (a job paused overnight or for a break)."""
+    return (b - a) - clk.open_between(a, b)

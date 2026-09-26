@@ -97,6 +97,10 @@ FIELD_WORDS = {
     "resource": "resource", "date": "date", "due_date": "due date", "price": "price", "id": "id",
     "run_hours_per_unit": "run hours per unit", "setup_hours": "setup hours", "seq": "operation number",
     "wacc": "WACC", "horizon_days": "horizon days", "planning_start": "planning start",
+    "components": "part", "operations": "step", "co_products": "co-product", "shifts": "shift",
+    "capacity_changes": "capacity change", "subcontract": "done outside", "send_ahead_qty": "overlap quantity",
+    "break_minutes": "break", "valid_from": "valid from", "valid_to": "valid to", "workdays": "working days",
+    "float_before_workdays": "float before production", "float_after_workdays": "float after production",
 }
 
 

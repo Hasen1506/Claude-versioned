@@ -209,7 +209,7 @@ function NodeDetail({ plan, node }: { plan: PlanResult; node: PlanResult["nodes"
   return (
     <div className="stack">
       <Panel title={<div className="context-bar"><a href={href("network", node.location)}>{node.location}</a><span>›</span><b>{node.product}</b></div>}
-        actions={<a className="btn sm" href={href("data", "location_products", `${node.location}|${node.product}`)}>Edit policy</a>}>
+        actions={<a className="btn sm" href={href("material", node.product, node.location, "mrp1")}>Planning settings</a>}>
         <div className="grid-auto small" style={{ marginBottom: 12 }}>
           <div><div className="faint">Strategy · MRP type</div>{node.strategy} · {node.mrp_type}</div>
           <div><div className="faint">Lot sizing</div>{node.lot_policy}</div>

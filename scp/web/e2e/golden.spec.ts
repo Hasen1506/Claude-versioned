@@ -451,3 +451,42 @@ test("upload: demand pasted from a spreadsheet, by name, with a preview of what 
   await expect(page.locator("td", { hasText: /^2026-10-05$/ })).toHaveCount(2);
   await expect(page.locator("td", { hasText: /^1000$/ })).toHaveCount(1);
 });
+
+test("machines & shifts: named shifts and a shutdown change the hours the supply plan uses", async ({ page }) => {
+  await openExample(page, "Kaveri Kitchenware");
+  await page.goto("/#/machines/PUNE-L2");
+  await expect(page.getByRole("heading", { name: /Assembly line 2/ })).toBeVisible();
+  await page.getByLabel("Use a pattern").selectOption("two");
+  await expect(page.getByLabel("Shift name")).toHaveCount(2);
+  await expect(page.locator("svg[aria-label='Working hours in a sample week'] rect").first()).toBeVisible();
+  // a week of maintenance: no hours that week, and the supply plan goes out of date
+  await page.getByRole("button", { name: "+ Add a change" }).click();
+  await page.getByLabel("To").first().fill("2026-10-03");   // the plant works Saturdays
+  const weeks = page.getByRole("region", { name: "Hours week by week" }).or(page.locator("section.panel", { hasText: "Hours week by week" }));
+  await expect(weeks.getByRole("row", { name: /28 Sep/ })).toContainText(/^Mon 28 Sep0/);
+  await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "stale");
+  await page.getByRole("button", { name: /Plan everything/ }).click();
+  await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "fresh", { timeout: 45_000 });
+  // the plan's load sits beside the hours, so a week that needs more than it has stands out
+  await expect(weeks.getByRole("columnheader", { name: "Plan needs" })).toBeVisible();
+  await expect(weeks.getByRole("row", { name: /28 Sep/ })).toContainText(/^Mon 28 Sep0/);
+});
+
+test("products at places: MRP views, the structure explorer and the stock/requirements list", async ({ page }) => {
+  await openExample(page, "Kaveri Kitchenware");
+  await page.locator('.rail a[href="#/material"]').click();
+  await expect(page.getByRole("heading", { name: "Products at places" })).toBeVisible();
+  await page.locator('a[href="#/material/MG-500/PLT-PUNE"]').click();
+  // stock and requirements: every receipt and requirement by date, with the stock after it
+  await expect(page.getByRole("heading", { name: /Receipts and requirements/ })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "On hand today" })).toBeVisible();
+  // MRP 1: give it an owner, then filter the index by that owner
+  await page.getByRole("tab", { name: /MRP 1/ }).click();
+  await page.getByLabel(/MRP controller/).fill("Asha");
+  await page.getByRole("tab", { name: /MRP 4/ }).click();
+  await expect(page.getByRole("heading", { name: /What one Mixer grinder 500 W is made from/ })).toBeVisible();
+  await expect(page.getByRole("cell", { name: /Enamelled copper wire/ })).toBeVisible();   // second level, through the motor
+  await page.goto("/#/material");
+  await page.getByLabel("Planned by").selectOption("Asha");
+  await expect(page.locator("tbody tr")).toHaveCount(1);
+});

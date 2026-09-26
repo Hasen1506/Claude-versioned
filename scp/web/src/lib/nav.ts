@@ -45,6 +45,8 @@ export const NAV: NavGroup[] = [
   ] },
   { label: "Setup", items: [
     { id: "setup", label: "Set up", question: "What is my company made of, and what's still missing?" },
+    { id: "material", label: "Products at places", question: "How is each product planned where it is kept?" },
+    { id: "machines", label: "Machines & shifts", question: "When does each machine or crew work, and how much?" },
     { ...network, label: "Network", tabs: [
       network,
       { id: "readiness", label: "Data check", question: "Is the data complete enough to plan?" },

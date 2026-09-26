@@ -89,6 +89,7 @@ def checklist(ds: Dataset, aside: list[SetAside] | None = None) -> list[SetupIte
                 + (f", {len(ds.history)} rows of sales history" if ds.history else "") + ").", "Open demand", ["demand"])
 
     # --- supply: every place that needs a product must be able to get it
+    from ..plan.structure import needs   # planning's BOM rules; imported here to avoid a cycle at load
     g = build_graph(ds)
     needed: dict[tuple[str, str], str] = {}  # node → why it is needed
     for n in g.nodes:
@@ -96,13 +97,14 @@ def checklist(ds: Dataset, aside: list[SetAside] | None = None) -> list[SetupIte
     for ps in ds.production_sources:
         if ps.location not in lname:
             continue
-        for c in ps.components:
-            if c.product in pname and not needed.get((ps.location, c.product)):
-                needed[(ps.location, c.product)] = f"a component of {pname.get(ps.product, ps.product)}"
+        for n in needs(ds, ps):
+            if n.product in pname and not needed.get((ps.location, n.product)):
+                needed[(ps.location, n.product)] = f"a component of {pname.get(ps.product, ps.product)}"
+    co_made = {(ps.location, co.product) for ps in ds.production_sources for co in ps.co_products}
     onhand = {(lp.location, lp.product): lp.on_hand for lp in ds.location_products}
     missing = 0
     for (loc, prod), why in needed.items():
-        if ds.location_type(loc) in (LocationType.SUPPLIER, LocationType.CUSTOMER, None):
+        if ds.location_type(loc) in (LocationType.SUPPLIER, LocationType.CUSTOMER, None) or (loc, prod) in co_made:
             continue
         opts = g.options.get((loc, prod))
         if opts is None:
@@ -116,7 +118,8 @@ def checklist(ds: Dataset, aside: list[SetAside] | None = None) -> list[SetupIte
             + (f", so only the {stock:g} on hand can be used." if stock else "."),
             "Set up how it is supplied", ["setup", "product", prod, loc])
     for p in fgs:
-        if p.id in demanded and not any(ps.product == p.id for ps in ds.production_sources) \
+        if p.id in demanded and not any(ps.product == p.id or any(c.product == p.id for c in ps.co_products)
+                                        for ps in ds.production_sources) \
                 and not any(pu.product == p.id for pu in ds.purchasing_sources):
             missing += 1
             add("supply", "todo", f"{pname[p.id]} is neither made nor bought anywhere.", "Set up how it is supplied",

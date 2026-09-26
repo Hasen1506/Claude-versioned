@@ -178,6 +178,10 @@ def _movement_ref(d):
                        "reference": "PO-NOPE"}]
 
 
+def _phantom_not_made(d):
+    lp(d, "P", "B")["phantom"] = True
+
+
 MUTATORS = {
     "DUP_ID": _dup_id, "DUP_LOCATION_PRODUCT": _dup_lp, "REF_UNKNOWN": _ref_unknown,
     "REF_WRONG_TYPE": _ref_wrong_type, "FX_MISSING": _fx_missing, "CALENDAR_NO_WORKDAY_IN_HORIZON": _calendar,
@@ -192,6 +196,7 @@ MUTATORS = {
     "OVERRIDE_OUTSIDE_HORIZON": _override_outside, "OVERRIDE_WITHOUT_FORECAST": _override_no_fc,
     "CONFIRMATION_ORPHAN": _confirmation_orphan, "STOCK_NOT_SYNCED": _stock_not_synced,
     "NEGATIVE_STOCK": _negative_stock, "MOVEMENT_REF_UNKNOWN": _movement_ref,
+    "PHANTOM_NOT_MADE": _phantom_not_made,
 }
 
 

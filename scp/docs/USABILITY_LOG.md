@@ -36,14 +36,30 @@ Phases: **A** get your own company in · **B** master-data depth · **C** capaci
 | N8 | Forecast records that cover a month are shown spread over its weeks by calendar days, while the engine spreads them over working days. Totals agree; single weeks can differ slightly. | Minor | Open (documented in the grid's code). |
 | N10 | Opening *Set up* before the first data check had answered froze the page (a selector returned a new empty list on every render). Found only at phone width, where the page opened first. | Critical | **Fixed (A).** |
 | N11 | At phone width the places and routes tables ran past their panel. | Minor | **Fixed (A).** |
-| N9 | Lanes created by the wizard carry all products. Right for most companies, but a lane for one product needs Master data. | Minor | Open (Phase B: lane products in the wizard). |
+| N9 | Lanes created by the wizard carry all products. Right for most companies, but a lane for one product needs Master data. | Minor | **Fixed (B).** The wizard asks whether a new route is for every product or only this one. |
+
+## Found while building Phase B
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N12 | Editing how a product is made in the setup wizard rebuilt its parts and steps from the few fields the form shows, silently dropping queue times, labour, the step a part is used at, and anything set in Master data. Present since Phase A. | Serious | **Fixed (B).** Each row keeps the record it came from; only what the form shows is changed. Checked in the browser: queue time, alternative machines and a change number survive an unchanged save. |
+| N13 | Forms showed stored codes in dropdowns (“any”, “L4L”, “MTS_CONSUME”) and field names like “Float before workdays”. | Minor | **Fixed (B).** Plain choices with the SAP code in brackets where a planner knows it (“Make to stock, orders consume the forecast (40)”). |
+| N14 | MRP scheduled make orders with a typical day's hours even across a week the line is shut, so the plan and the capacity check disagreed about the same week. | Serious | **Fixed (B).** Lead times walk the actual days when a machine has named shifts or capacity changes; the shutdown test pins it. |
+| N15 | Alternative machines are used by the shop floor schedule only; MRP's load and the capacity plan still put all of a step's hours on its main machine. | Minor | Open (Phase C: capacity levelling; Phase D: alternative resources in the optimiser). |
+| N16 | A fixed-quantity part (a mould, a fixed charge) is exact per order in MRP, promising and the schedule, but the monthly capacity plan and unit costs spread it over a typical run (the minimum lot or the base quantity). | Minor | Stated in the code; exact when the capacity plan works in orders (Phase C). |
+| N17 | The “plan needs” column on Machines & shifts is filled only when the plan works in weeks or days; with monthly buckets it shows a dash. | Minor | Open (Phase C: the capacity levelling view by day and week). |
 
 ## Gaps against SAP recorded for later phases
 
-- MRP views: no MRP controller or MRP group, no special procurement keys, no scheduling margin key, no single
-  "material at plant" screen with MRP 1–4 tabs (**B**).
-- Work centres: one start hour for all, no named shifts, breaks or capacity that changes over time (**B**).
-- BOM and routing: no alternatives, phantoms, co-products, engineering change, overlap or subcontracting (**B**).
+- MRP views: MRP controller, procurement type (E/F/X), phantom (special procurement 50) and the scheduling margin
+  (float before and after production) are in (**B**). Still missing: MRP groups, other special procurement keys
+  (withdrawal from another plant, direct production), discontinuation with a follow-up material, availability check
+  groups.
+- Work centres: named shifts with breaks and weekdays, capacity changes over time, per-unit availability (**B**, done).
+- BOM and routing: date-effective lines (engineering change), fixed quantities, phantoms, co- and by-products with
+  cost shares, step scrap, overlap (send-ahead), steps done outside by a supplier and alternative machines (**B**,
+  done). Still missing: BOM usage/alternative BOMs separate from production versions, routing alternative sequences,
+  change-number history.
 - Capacity: no levelling view, no capacity-constrained MRP, scheduling ignores material (**C**).
 - PP/DS: one heuristic and a short local search; no strategy profiles, heuristics catalogue, real optimiser or
   drag-and-drop board (**D**).

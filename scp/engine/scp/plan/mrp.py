@@ -31,6 +31,7 @@ from ..model import (
 )
 from ..network import NetworkGraph, Node, SupplyOption, build_graph
 from ..time import Buckets
+from ..time.capacity import hours_between, overtime_between
 from ..validate import has_errors, validate
 from . import costing, rates
 from .consumption import effective_demand
@@ -39,6 +40,7 @@ from .leadtime import (
     schedule, supplier_lane,
 )
 from .lotsize import apply_modifiers, base_lot
+from .structure import co_output, needs
 from .result import (
     BucketOut, Kpis, NodeBucket, NodePlan, Peg, PlanException, PlannedOrder, PlanResult,
     Requirement, ResourceBucket, ResourcePlan, ScheduledReceiptOut,
@@ -212,7 +214,7 @@ class _Planner:
             self._peg(node, st)
             return
         reqs = sorted(st.reqs, key=lambda r: (r.date, r.priority, r.id))
-        receipts = sorted((s for s in st.supplies if s.kind == "receipt"), key=lambda s: s.date)
+        receipts = sorted((s for s in st.supplies if s.kind in ("receipt", "co_product")), key=lambda s: s.date)
         # the buffer is checked where requirements fall, buckets start and targets are set, never on a date where
         # only a receipt lands: a stock target ramps daily, so checking on receipt dates would size orders by
         # when firm supply happens to arrive (and firming a plan, then planning again, would change it)
@@ -303,8 +305,8 @@ class _Planner:
         for s in receipts:
             if got >= short - EPS:
                 break
-            if s.date <= d or s.date > earliest:
-                continue
+            if s.kind != "receipt" or s.date <= d or s.date > earliest:
+                continue   # only firm orders are expedited; a co-product comes when its run does
             rec_on[s.date] -= s.qty
             self._exc("RESCHEDULE_IN", "warning",
                       f"{s.id}: arrives {s.date.isoformat()} but is needed {d.isoformat()}; expedite it by "
@@ -417,13 +419,23 @@ class _Planner:
         # explode
         if opt.kind == "make":
             ps = ds.production_source_by_id[opt.source_id]
-            for c in ps.components:
-                cq = qty * costing.component_factor(ds, ps.id, c.product)
-                cd = max(self.start, (sch.component_dates or {}).get(c.product, sch.start_date))
-                req = Requirement(id=f"R:{oid}:{c.product}", location=loc, product=c.product, date=cd, qty=cq,
+            # the BOM as it stands on the day production starts (engineering change), phantoms passed through
+            prod_start = sch.ops[0].start if sch.ops else sch.start_date
+            for n in needs(ds, ps, prod_start):
+                cq = n.qty(qty)
+                if cq <= EPS:
+                    continue
+                cd = max(self.start, (sch.component_dates or {}).get(n.product, sch.start_date))
+                req = Requirement(id=f"R:{oid}:{n.product}", location=loc, product=n.product, date=cd, qty=cq,
                                   kind="dependent", parent_order=oid)
-                self._add_dependent((loc, c.product), req, oid)
+                self._add_dependent((loc, n.product), req, oid)
+            for co, cq in co_output(ps, qty):
+                cst = self.state.get((loc, co))
+                if cst is not None and cq > EPS:
+                    cst.supplies.append(_Supply("co_product", oid, sch.available_date, cq, sch.available_date))
             for w in sch.ops:
+                if w.resource is None:
+                    continue   # done outside by a supplier
                 self._load(w.resource, w.start, w.end, w.machine_hours)
                 if w.labor_resource and w.labor_hours > 0:
                     self._load(w.labor_resource, w.start, w.end, w.labor_hours)
@@ -502,7 +514,8 @@ class _Planner:
 
     # ------------------------------------------------------------------ pegging
     def _peg(self, node: Node, st: _NodeState) -> None:
-        supplies = sorted(st.supplies, key=lambda s: (s.date, {"on_hand": 0, "receipt": 1, "order": 2}[s.kind], s.id))
+        supplies = sorted(st.supplies, key=lambda s: (s.date, {"on_hand": 0, "receipt": 1, "co_product": 2, "order": 3}[s.kind],
+                                                      s.id))
         reqs = sorted(st.reqs, key=lambda r: (r.date, r.priority, r.id))
         left = [s.qty for s in supplies]
         first_peg = len(self.pegs)
@@ -555,6 +568,9 @@ class _Planner:
                 return chunks.get(i, [(self.order_by_id[p.supply_id].available_date, p.qty)])
             if p.supply_kind == "receipt":
                 return [(receipt_date.get(p.supply_id, self.start), p.qty)]
+            if p.supply_kind == "co_product":
+                main = self.order_by_id[p.supply_id]
+                return [(main.projected_available_date or main.available_date, p.qty)]
             return [(self.start, p.qty)]
 
         def req_profile(r: Requirement) -> list[tuple[date, float]]:
@@ -775,9 +791,8 @@ class _Planner:
             loads = self.res_daily.get(r.id, {})
             bks = []
             for b in self.b:
-                wd = cal.workdays_between(b.start, b.end)
-                cap = wd * r.hours_per_workday
-                ot = wd * r.overtime_hours_per_day * r.units
+                cap = hours_between(r, cal, b.start, b.end)
+                ot = overtime_between(r, cal, b.start, b.end)
                 load = sum(h for d, h in loads.items() if b.start <= d < b.end)
                 bks.append(ResourceBucket(bucket=b.index, load_hours=load, capacity_hours=cap, overtime_hours=ot,
                                           utilization=(load / cap) if cap > 0 else (0.0 if load == 0 else math.inf)))

@@ -35,6 +35,7 @@ export const CHECK_TITLE: Record<string, string> = {
   STOCK_NOT_SYNCED: "Stock on hand differs from the stock journal",
   NEGATIVE_STOCK: "The stock journal goes below zero",
   MOVEMENT_REF_UNKNOWN: "A goods movement for an unknown order",
+  PHANTOM_NOT_MADE: "A phantom assembly that isn't made there",
 };
 
 export const checkTitle = (code: string) => CHECK_TITLE[code] ?? code.toLowerCase().replace(/_/g, " ");

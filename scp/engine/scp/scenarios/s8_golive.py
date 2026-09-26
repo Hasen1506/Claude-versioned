@@ -49,7 +49,7 @@ def build() -> dict:
              "safety_time_days": 2},
             {"location": "PLANT", "product": "FRUIT", "on_hand": 250,
              "safety_stock": {"method": "service_level", "service_level": 0.95}},
-            {"location": "PLANT", "product": "SUGAR"},
+            {"location": "PLANT", "product": "SUGAR", "phantom": True},                        # bought, not made
             {"location": "DC", "product": "JAM", "on_hand": 40},
             {"location": "DC", "product": "JAM", "on_hand": 50, "strategy": "MTO"},              # maintained twice
             {"location": "DC", "product": "GIFT"},
@@ -130,6 +130,7 @@ WARNINGS = {
     ("NPI_DUPLICATE", "npi", "CUST/GIFT"), ("NPI_LIKE_WITHOUT_HISTORY", "npi", "CUST/GIFT"),
     ("OVERRIDE_OUTSIDE_HORIZON", "override", "CUST/JAM@2026-09-01"),
     ("OVERRIDE_WITHOUT_FORECAST", "override", "DC/JAM@2026-07-15"),
+    ("PHANTOM_NOT_MADE", "location_product", "PLANT/SUGAR"),
     ("PRODUCTION_NO_LEAD_TIME", "production_source", "PV-LABEL"),
     ("PRODUCTION_NO_OPERATIONS", "production_source", "PV-LABEL"),
     ("PURCHASE_ZERO_LEAD_TIME", "purchasing_source", "PU-SUGAR"), ("QUOTA_SUM", "location_product", "PLANT/SUGAR"),

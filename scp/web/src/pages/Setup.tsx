@@ -473,13 +473,19 @@ function Parts({ ds, net, ps }: { ds: Dataset; net: NetworkView | null; ps: Prod
   );
 }
 
-interface CompRow { product: string; newName: string; qty: string; scrap: string }
-interface StepRow { resource: string; newName: string; setup: string; runMin: string }
+// each row keeps the record it came from, so fields this form does not show (queue time, labour, validity dates,
+// alternatives…) survive an edit here
+interface CompRow { product: string; newName: string; qty: string; scrap: string; orig?: Record<string, unknown> }
+interface StepRow { resource: string; newName: string; setup: string; runMin: string; outDays: string; orig?: Record<string, unknown> }
 
 function MakeForm({ ds, product, place, existing, index, done }: { ds: Dataset; product: string; place: string; existing?: ProductionSource; index?: number; done: () => void }) {
   const nm = names(ds);
-  const [comps, setComps] = useState<CompRow[]>(() => (existing?.components ?? []).map((c) => ({ product: c.product, newName: "", qty: String(c.qty), scrap: String(Math.round((c.scrap ?? 0) * 1000) / 10) })));
-  const [steps, setSteps] = useState<StepRow[]>(() => (existing?.operations ?? []).map((o) => ({ resource: o.resource, newName: "", setup: String(o.setup_hours ?? 0), runMin: String(Math.round((o.run_hours_per_unit ?? 0) * 60 * 1000) / 1000) })));
+  const [comps, setComps] = useState<CompRow[]>(() => (existing?.components ?? []).map((c) => ({ product: c.product, newName: "", qty: String(c.qty), scrap: String(Math.round((c.scrap ?? 0) * 1000) / 10), orig: c as unknown as Record<string, unknown> })));
+  const [steps, setSteps] = useState<StepRow[]>(() => (existing?.operations ?? []).map((o) => ({
+    resource: o.subcontract ? `out:${o.subcontract.supplier}` : o.resource ?? "", newName: "", setup: String(o.setup_hours ?? 0),
+    runMin: String(Math.round((o.run_hours_per_unit ?? 0) * 60 * 1000) / 1000), outDays: String(o.subcontract?.workdays ?? 1),
+    orig: o as unknown as Record<string, unknown> })));
+  const suppliers = (ds.locations ?? []).filter((l) => l.type === "supplier");
   const [lead, setLead] = useState(existing?.fixed_lead_time_workdays != null ? String(existing.fixed_lead_time_workdays) : "");
   const [err, setErr] = useState<string | null>(null);
   const partChoices = (ds.products ?? []).filter((x) => x.id !== product);
@@ -494,6 +500,7 @@ function MakeForm({ ds, product, place, existing, index, done }: { ds: Dataset; 
     for (const s of steps) {
       if (s.resource === "" || (s.resource === "+new" && !s.newName.trim())) return setErr("Choose the machine or line for each step, or name a new one.");
       if (!(num(s.runMin || "0") >= 0) || !(num(s.setup || "0") >= 0)) return setErr("Times must be 0 or more.");
+      if (s.resource.startsWith("out:") && !(num(s.outDays || "0") >= 0)) return setErr("Days outside must be 0 or more.");
     }
     if (lead !== "" && !(num(lead) >= 0)) return setErr("The lead time must be 0 or more working days.");
     store.update((d) => {
@@ -506,16 +513,22 @@ function MakeForm({ ds, product, place, existing, index, done }: { ds: Dataset; 
           prodIds.push(id);
           add(d, "products", { id, name: c.newName.trim(), type: "RM" });
         }
-        return { product: id, qty: num(c.qty), scrap: num(c.scrap || "0") / 100 };
+        return { ...(c.orig ?? {}), product: id, qty: num(c.qty), scrap: num(c.scrap || "0") / 100 };
       });
       const operations = steps.map((s, i) => {
+        const base = { ...(s.orig ?? {}), seq: (i + 1) * 10 } as Record<string, unknown>;
+        if (s.resource.startsWith("out:")) {
+          const old = (s.orig?.subcontract ?? {}) as Record<string, unknown>;
+          return { ...base, resource: null, alternatives: [], setup_hours: 0, run_hours_per_unit: 0,
+            subcontract: { ...old, supplier: s.resource.slice(4), workdays: num(s.outDays || "0") } };
+        }
         let id = s.resource;
         if (id === "+new") {
           id = newId(s.newName, resIds, "LINE");
           resIds.push(id);
           add(d, "resources", { id, name: s.newName.trim(), location: place });
         }
-        return { seq: (i + 1) * 10, resource: id, setup_hours: num(s.setup || "0"), run_hours_per_unit: num(s.runMin || "0") / 60 };
+        return { ...base, resource: id, subcontract: null, setup_hours: num(s.setup || "0"), run_hours_per_unit: num(s.runMin || "0") / 60 };
       });
       const next: ProductionSource = {
         ...(existing ?? { id: newId(`${product}-${place}`, (d.production_sources ?? []).map((x) => x.id), "MAKE"), location: place, product }),
@@ -546,13 +559,15 @@ function MakeForm({ ds, product, place, existing, index, done }: { ds: Dataset; 
         <span className="wz-n">{i + 1}</span>
         <Field label="On machine or line"><select className="select" value={s.resource} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, resource: e.target.value } : x))}>
           <option value="">Choose…</option>{lines.map((r) => <option key={r.id} value={r.id}>{r.name || r.id}</option>)}
-          <option value="+new">+ a new machine or line…</option></select></Field>
+          <option value="+new">+ a new machine or line…</option>
+          {suppliers.length > 0 && <optgroup label="Done outside by a supplier">{suppliers.map((l) => <option key={l.id} value={`out:${l.id}`}>{l.name || l.id}</option>)}</optgroup>}</select></Field>
         {s.resource === "+new" && <Field label="Its name"><input className="input" value={s.newName} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, newName: e.target.value } : x))} placeholder="e.g. Line 1" /></Field>}
+        {s.resource.startsWith("out:") ? <Field label="Working days there and back"><input className="input" type="number" min={0} step="any" value={s.outDays} style={{ width: 90 }} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, outDays: e.target.value } : x))} /></Field> : <>
         <Field label="Minutes per unit"><input className="input" type="number" min={0} step="any" value={s.runMin} style={{ width: 90 }} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, runMin: e.target.value } : x))} /></Field>
-        <Field label="Setup hours per run"><input className="input" type="number" min={0} step="any" value={s.setup} style={{ width: 90 }} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, setup: e.target.value } : x))} /></Field>
+        <Field label="Setup hours per run"><input className="input" type="number" min={0} step="any" value={s.setup} style={{ width: 90 }} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, setup: e.target.value } : x))} /></Field></>}
         <button className="btn sm ghost danger" onClick={() => setSteps(steps.filter((_, j) => j !== i))} aria-label="Remove step">Remove</button>
       </div>)}
-      <button className="btn sm" onClick={() => setSteps([...steps, { resource: lines.length === 1 ? lines[0].id : lines.length ? "" : "+new", newName: "", setup: "0", runMin: "1" }])}>+ Add a step</button>
+      <button className="btn sm" onClick={() => setSteps([...steps, { resource: lines.length === 1 ? lines[0].id : lines.length ? "" : "+new", newName: "", setup: "0", runMin: "1", outDays: "2" }])}>+ Add a step</button>
       {!steps.length && <p className="faint small">With no steps, no machine time is planned. Give a lead time instead, or add the steps to check capacity.</p>}
       <div className="qrow">
         <Field label="Fixed lead time" hint="working days; leave empty to take it from the steps"><input className="input" type="number" min={0} step="any" value={lead} style={{ width: 90 }} onChange={(e) => setLead(e.target.value)} /></Field>
@@ -610,8 +625,10 @@ function ShipForm({ ds, product, place, done }: { ds: Dataset; product: string; 
   const [from, setFrom] = useState(origins.length === 1 ? origins[0].id : "");
   const [mode, setMode] = useState("truck_ftl");
   const [days, setDays] = useState("2");
+  const [only, setOnly] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const lane = (ds.lanes ?? []).findIndex((l) => l.origin === from && l.destination === place);
+  const existing = lane >= 0 ? ds.lanes![lane] : null;
   const save = () => {
     if (!from) return setErr("Choose where it ships from.");
     if (lane < 0 && !(num(days) >= 0)) return setErr("Transit days must be 0 or more.");
@@ -621,7 +638,8 @@ function ShipForm({ ds, product, place, done }: { ds: Dataset; product: string; 
         if (l.products?.length && !l.products.includes(product)) l.products.push(product);
       } else {
         const id = newId(`${from}-${place}`, (d.lanes ?? []).map((x) => x.id), "LANE");
-        add(d, "lanes", { id, origin: from, destination: place, modes: [{ mode, transit_days: num(days) }] });
+        add(d, "lanes", { id, origin: from, destination: place, modes: [{ mode, transit_days: num(days) }],
+          ...(only ? { products: [product] } : {}) });
       }
     });
     done();
@@ -636,15 +654,22 @@ function ShipForm({ ds, product, place, done }: { ds: Dataset; product: string; 
           <Field label="Days in transit"><input className="input" type="number" min={0} step="0.5" value={days} style={{ width: 80 }} onChange={(e) => setDays(e.target.value)} /></Field>
         </>}
       </div>
-      {from && lane >= 0 && <p className="small muted">There is already a route from {nm.loc(from)}; {nm.prod(product)} will use it.</p>}
-      {from && lane < 0 && <p className="small muted">This adds a route from {nm.loc(from)} to {nm.loc(place)} for all products. Then set up how {nm.prod(product)} gets to {nm.loc(from)}.</p>}
+      {from && existing && <p className="small muted">There is already a route from {nm.loc(from)}; {nm.prod(product)} will use it
+        {existing.products?.length ? <> (it carries {existing.products.length} named product{existing.products.length === 1 ? "" : "s"}; {nm.prod(product)} is added to them)</> : null}.</p>}
+      {from && lane < 0 && <>
+        <div className="row wrap" role="radiogroup" aria-label="What the route carries">
+          <label className="row small"><input type="radio" checked={!only} onChange={() => setOnly(false)} /> Every product can use this route</label>
+          <label className="row small"><input type="radio" checked={only} onChange={() => setOnly(true)} /> Only {nm.prod(product)}</label>
+        </div>
+        <p className="small muted">This adds a route from {nm.loc(from)} to {nm.loc(place)}{only ? ` for ${nm.prod(product)} only; other products can be added to it later` : " for all products"}. Then set up how {nm.prod(product)} gets to {nm.loc(from)}.</p>
+      </>}
       {err && <div className="banner warning" role="alert">{err}</div>}
       <div className="row"><button className="btn primary" onClick={save}>Save</button><button className="btn ghost" onClick={done}>Cancel</button></div>
     </div>
   );
 }
 
-/** Stock and simple rules at this place: on hand, safety stock, lot size. The full MRP settings are in Master data. */
+/** Stock and simple rules at this place: on hand, safety stock, lot size. The full MRP settings are on the product-at-place page. */
 function StockForm({ ds, product, place, lp }: { ds: Dataset; product: string; place: string; lp?: LocationProduct }) {
   const nm = names(ds);
   const ss = lp?.safety_stock?.method ?? "none";
@@ -675,7 +700,7 @@ function StockForm({ ds, product, place, lp }: { ds: Dataset; product: string; p
           {!["L4L", "FIXED"].includes(lot) && <option value={lot}>{lot}</option>}</select></Field>
         {lot === "FIXED" && <Field label="Batch size"><input className="input" type="number" min={1} step="any" defaultValue={lp?.lot_sizing?.fixed_qty ?? 100} style={{ width: 90 }}
           onBlur={(e) => { const n = num(e.target.value); if (n > 0) write((x) => { x.lot_sizing = { ...(x.lot_sizing ?? {}), policy: "FIXED", fixed_qty: n }; }); }} /></Field>}
-        {lp && <a className="btn sm ghost" href={href("data", "location_products", `${place}|${product}`)}>All planning settings</a>}
+        <a className="btn sm ghost" href={href("material", product, place, "mrp1")}>All planning settings (MRP 1–4)</a>
       </div>
     </div>
   );

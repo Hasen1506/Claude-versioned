@@ -921,6 +921,28 @@ export interface components {
              * @description Operation seq that consumes it (default: first)
              */
             operation?: number | null;
+            /**
+             * Fixed Qty
+             * @description The quantity is per order, whatever its size (a mould, a fixed charge)
+             * @default false
+             */
+            fixed_qty: boolean;
+            /**
+             * Valid From
+             * @description Engineering change: used on orders starting on or after this day
+             */
+            valid_from?: string | null;
+            /**
+             * Valid To
+             * @description Engineering change: used on orders starting on or before this day
+             */
+            valid_to?: string | null;
+            /**
+             * Change
+             * @description Engineering change number or reason
+             * @default
+             */
+            change: string;
         };
         /** BopRow */
         BopRow: {
@@ -1099,6 +1121,45 @@ export interface components {
             buckets: components["schemas"]["BucketValue"][];
         };
         /**
+         * CapacityChange
+         * @description Capacity that differs for a period (≈ S/4 interval of available capacity): a second shift from
+         *     a date, a machine out for maintenance, a line running slower while it is being run in.
+         */
+        CapacityChange: {
+            /**
+             * Valid From
+             * Format: date
+             */
+            valid_from: string;
+            /**
+             * Valid To
+             * @description Last day it applies (empty = from then on)
+             */
+            valid_to?: string | null;
+            /**
+             * Units
+             * @description Machines or people available (0 = shut down)
+             */
+            units?: number | null;
+            /**
+             * Shifts
+             * @description Shifts worked in this period instead of the usual ones
+             */
+            shifts?: components["schemas"]["Shift"][] | null;
+            /**
+             * Shifts Per Day
+             * @description Or: how many shifts of the usual length
+             */
+            shifts_per_day?: number | null;
+            /** Efficiency */
+            efficiency?: number | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /**
          * CapacityOption
          * @description A capacity investment (a new machine, an added shift, a line upgrade) that adds regular hours to one
          *     resource. Its value is what the S&OP plan saves with the hours; its NPV nets that against the spend.
@@ -1216,6 +1277,25 @@ export interface components {
              * Format: date
              */
             closed_on: string;
+        };
+        /**
+         * CoProduct
+         * @description Another product the same production run yields (≈ S/4 co-product / by-product).
+         */
+        CoProduct: {
+            /** Product */
+            product: string;
+            /**
+             * Qty
+             * @description Quantity per output_qty of the main product
+             */
+            qty: number;
+            /**
+             * Cost Share
+             * @description Share of the run's cost it carries (0 = a by-product that carries none)
+             * @default 0
+             */
+            cost_share: number;
         };
         /** CollectionDiff */
         CollectionDiff: {
@@ -2567,6 +2647,35 @@ export interface components {
             location: string;
             /** Product */
             product: string;
+            /**
+             * Mrp Controller
+             * @description Who plans it (MRP controller): filters the worklists
+             * @default
+             */
+            mrp_controller: string;
+            /**
+             * @description Make here, get from outside (buy or transfer), or either
+             * @default any
+             */
+            procurement: components["schemas"]["ProcurementType"];
+            /**
+             * Phantom
+             * @description Phantom assembly: never stocked; its parts go straight into the parent
+             * @default false
+             */
+            phantom: boolean;
+            /**
+             * Float Before Workdays
+             * @description Scheduling margin: release this many working days before production starts
+             * @default 0
+             */
+            float_before_workdays: number;
+            /**
+             * Float After Workdays
+             * @description Scheduling margin: working days kept between production end and the due date
+             * @default 0
+             */
+            float_after_workdays: number;
             /** @default MTS_CONSUME */
             strategy: components["schemas"]["Strategy"];
             /** @default deterministic */
@@ -3101,8 +3210,11 @@ export interface components {
              * @default
              */
             name: string;
-            /** Resource */
-            resource: string;
+            /**
+             * Resource
+             * @description Machine or line (empty only when done outside)
+             */
+            resource?: string | null;
             /**
              * Setup Hours
              * @description Per order
@@ -3134,6 +3246,24 @@ export interface components {
              * @description Resource units one order may run on in parallel (default: all units of the resource)
              */
             parallel_units?: number | null;
+            /**
+             * Scrap
+             * @description Share of the units entering this step that are lost in it
+             * @default 0
+             */
+            scrap: number;
+            /**
+             * Send Ahead Qty
+             * @description Overlap: the next step may start once this many units are done here (empty = when all are)
+             */
+            send_ahead_qty?: number | null;
+            /**
+             * Alternatives
+             * @description Other machines that can do this step with the same times
+             */
+            alternatives?: string[];
+            /** @description Done outside by a supplier instead of on a resource */
+            subcontract?: components["schemas"]["Subcontract"] | null;
         };
         /** OrderChange */
         OrderChange: {
@@ -3268,7 +3398,7 @@ export interface components {
              * Supply Kind
              * @enum {string}
              */
-            supply_kind: "on_hand" | "receipt" | "order";
+            supply_kind: "on_hand" | "receipt" | "co_product" | "order";
             /** Supply Id */
             supply_id: string;
             /** Requirement Id */
@@ -3499,6 +3629,12 @@ export interface components {
             /** Unit Value */
             unit_value: number;
         };
+        /**
+         * ProcurementType
+         * @description Procurement type (S/4 MRP 2): which sources MRP may use.
+         * @enum {string}
+         */
+        ProcurementType: "any" | "make" | "external";
         /** Product */
         Product: {
             /** Id */
@@ -3575,6 +3711,11 @@ export interface components {
             components?: components["schemas"]["BomItem"][];
             /** Operations */
             operations?: components["schemas"]["Operation"][];
+            /**
+             * Co Products
+             * @description Other products the same run yields (co- and by-products)
+             */
+            co_products?: components["schemas"]["CoProduct"][];
             /**
              * Assembly Scrap
              * @description Share of started output lost (start = good ÷ (1 − scrap))
@@ -3992,14 +4133,26 @@ export interface components {
             units: number;
             /**
              * Shifts Per Day
+             * @description Used when no named shifts are given
              * @default 1
              */
             shifts_per_day: number;
             /**
              * Hours Per Shift
+             * @description Used when no named shifts are given
              * @default 8
              */
             hours_per_shift: number;
+            /**
+             * Shifts
+             * @description Named shifts with clock times and breaks (replace shifts per day)
+             */
+            shifts?: components["schemas"]["Shift"][];
+            /**
+             * Capacity Changes
+             * @description Periods with other shifts, units or efficiency (later rows win)
+             */
+            capacity_changes?: components["schemas"]["CapacityChange"][];
             /**
              * Efficiency
              * @description OEE / utilisation: share of shift hours that are productive
@@ -4892,6 +5045,44 @@ export interface components {
             text: string;
             action?: components["schemas"]["SetupAction"] | null;
         };
+        /**
+         * Shift
+         * @description One named shift (≈ S/4 shift definition): its clock times, its break and the weekdays it runs.
+         */
+        Shift: {
+            /**
+             * Name
+             * @description e.g. Early, Late, Night
+             * @default
+             */
+            name: string;
+            /**
+             * Start
+             * @description Start time, HH:MM
+             */
+            start: string;
+            /**
+             * End
+             * @description End time, HH:MM; earlier than the start means it ends the next day
+             */
+            end: string;
+            /**
+             * Break Minutes
+             * @description Unpaid break inside the shift
+             * @default 0
+             */
+            break_minutes: number;
+            /**
+             * Break Start
+             * @description When the break starts (default: halfway)
+             */
+            break_start?: string | null;
+            /**
+             * Weekdays
+             * @description Only on these weekdays, 0 = Monday (empty = every working day)
+             */
+            weekdays?: number[] | null;
+        };
         /** SolverInfo */
         SolverInfo: {
             /** Status */
@@ -5180,6 +5371,28 @@ export interface components {
          * @enum {string}
          */
         Strategy: "MTS" | "MTS_CONSUME" | "MTO" | "ATO";
+        /**
+         * Subcontract
+         * @description An operation done outside by a supplier (≈ S/4 external operation): no own resource is loaded.
+         */
+        Subcontract: {
+            /**
+             * Supplier
+             * @description A location of type supplier
+             */
+            supplier: string;
+            /**
+             * Workdays
+             * @description Working days from sending the parts to getting them back
+             */
+            workdays: number;
+            /**
+             * Cost Per Unit
+             * @description Price per unit processed
+             * @default 0
+             */
+            cost_per_unit: number;
+        };
         /** Summary */
         Summary: {
             /** Series */

@@ -351,7 +351,7 @@ export function exportRows(ds: Dataset, ckey: CollectionKey, cols: Col[], kind: 
   }
   if (kind === "routing") {
     return [head, ...(ds.production_sources ?? []).flatMap((p) => (p.operations ?? []).map((o) =>
-      [p.location, p.product, o.seq, o.resource, o.setup_hours ?? 0, o.run_hours_per_unit ?? 0, "", o.name ?? "", p.id]))];
+      [p.location, p.product, o.seq, o.resource ?? "", o.setup_hours ?? 0, o.run_hours_per_unit ?? 0, "", o.name ?? "", p.id]))];
   }
   return [head, ...items(ds, ckey).map((o) => cols.map((c) => cell(c, getPath(o, c.path))))];
 }

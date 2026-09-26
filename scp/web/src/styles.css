@@ -670,3 +670,16 @@ table.dp .dp-cell { padding: 2px; }
 .dp-in:hover { border-color: var(--border); }
 .dp-in:focus { outline: 2px solid var(--accent); background: var(--surface); }
 table.dp tr.dp-so td { border-top: 0; color: var(--text-2); }
+
+/* ---- Phase B: products at places, machines & shifts ---- */
+.bar { position: relative; height: 10px; background: var(--surface-3); border: 1px solid var(--border); min-width: 80px; }
+.bar > span { display: block; height: 100%; background: var(--series-1); }
+.bar > i { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); }
+tr.struck td { color: var(--text-3); }
+tr.struck td a { text-decoration: line-through; }
+.chip.on { background: var(--accent-soft); border-color: var(--accent); }
+table.bom td { vertical-align: top; }
+.num.pos { color: var(--good-text); }
+.wd { display: inline-flex; gap: 2px; }
+.wd button { width: 22px; height: 22px; padding: 0; border: 1px solid var(--border); background: var(--surface); font: 600 11px var(--font); color: var(--text-2); cursor: pointer; }
+.wd button.on { background: var(--hl); border-color: var(--on-hl); color: var(--on-hl); }
