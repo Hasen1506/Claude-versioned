@@ -70,12 +70,17 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
         k = (rc.id, rc.location, rc.product)
         delivered = got.get(k, 0.0)
         open_q = ordered - delivered
-        closed = open_q <= ordered * tol + EPS or rc.id in g_final
+        # a purchase closes at the supplier's under-delivery tolerance, or once what they confirmed (if less) is in
+        line_tol = max(tol, ds.vendor(counterparty(ds, rc) or "").under_delivery_tolerance) \
+            if rc.kind.value == "purchase" else tol
+        target = min(ordered, rc.confirmed_qty) if rc.confirmed_qty is not None and delivered > EPS else ordered
+        closed = open_q <= ordered * line_tol + EPS or rc.id in g_final or delivered >= target - EPS > 0
         if closed:
             rep.closed.append(ClosedOrder(kind=rc.kind.value, id=rc.id, location=rc.location, product=rc.product,
                                           counterparty=counterparty(ds, rc), ordered_qty=ordered, delivered_qty=delivered,
                                           due_date=rc.due_date, first_delivery=g_first.get(k), last_delivery=g_last.get(k),
-                                          closed_on=g_last.get(k, as_of)))
+                                          closed_on=g_last.get(k, as_of), po=rc.po, price=rc.price,
+                                          confirmed_date=rc.confirmed_date))
         else:
             rvs = []
             for rv in rc.reservations:

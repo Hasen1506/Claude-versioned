@@ -136,7 +136,8 @@ class _Planner:
             if st is None:
                 continue
             d = self.receipt_date(rc)
-            st.supplies.append(_Supply("receipt", rc.id, d, rc.qty, d, rc.scheduled))
+            if rc.expected_qty > EPS:   # a supplier who confirmed less than ordered: the plan counts what is confirmed
+                st.supplies.append(_Supply("receipt", rc.id, d, rc.expected_qty, d, rc.scheduled))
             self._firm_load(rc)
             # what the firm order still draws from stock: components, or goods at a transfer's origin
             for rv in rc.reservations:
@@ -168,9 +169,10 @@ class _Planner:
                 self._load(w.labor_resource, w.start, w.end, w.labor_hours, who)
 
     def receipt_date(self, rc) -> date:
-        """A firm receipt is available after goods-receipt processing, like a planned order."""
+        """A firm receipt is available after goods-receipt processing, like a planned order; a purchase line the
+        supplier confirmed arrives on the confirmed date."""
         gr = gr_days(self.ds.location_product_by_key.get((rc.location, rc.product)))
-        return max(rc.due_date + timedelta(days=math.ceil(gr - 1e-9)), self.start)
+        return max(rc.expected_date + timedelta(days=math.ceil(gr - 1e-9)), self.start)
 
     def _split(self, node: Node, d: date, qty: float, period_days: int | None) -> list[tuple[date, float]]:
         """PIR splitting: spread a period forecast evenly over the working days of its window."""
@@ -415,6 +417,10 @@ class _Planner:
             total = sum(o.quota for o in quota)
             return min(quota, key=lambda o: ((self.quota_alloc[(node, o.source_id)] + qty) / (o.quota / total),
                                              o.priority, o.source_id))
+        if valid[0].kind == "buy":   # S/4 order: quota arrangement, then the source list's fixed source, then priority
+            fixed = [o for o in valid if o.kind == "buy" and self.ds.purchasing_source_by_id[o.source_id].fixed]
+            if fixed:
+                return min(fixed, key=lambda o: (o.priority, o.source_id))
         return valid[0]
 
     # ------------------------------------------------------------------ orders
@@ -654,7 +660,7 @@ class _Planner:
         total = 0.0
         if opt.kind == "buy":
             pu = ds.purchasing_source_by_id[opt.source_id]
-            price = pu.price * costing.fx(ds, pu.currency) * (1.0 + pu.duty_rate)
+            price = pu.price_for(qty) * costing.fx(ds, pu.currency) * (1.0 + pu.duty_rate)
             lane = supplier_lane(ds, pu.supplier, pu.location, pu.product)
             freight = 0.0
             if lane:
@@ -884,10 +890,11 @@ class _Planner:
         self._demand_risk()
         out.resources = self._resources()
         self._capacity_checks()
+        self._purchase_checks()
         out.orders = self.orders
         out.requirements = [r for st in self.state.values() for r in st.reqs]
         out.receipts = [ScheduledReceiptOut(id=r.id, kind=r.kind.value, location=r.location, product=r.product,
-                                            qty=r.qty, date=self.receipt_date(r)) for r in self.ds.receipts]
+                                            qty=r.expected_qty, date=self.receipt_date(r)) for r in self.ds.receipts]
         out.pegs = self.pegs
         k.inventory_value_start = inv_start
         k.inventory_value_end = inv_end
@@ -1028,6 +1035,35 @@ class _Planner:
                 if q > cap + 1e-6:
                     self._exc("LANE_CAPACITY", "error", f"Lane {lane_id}: {q:,.0f} shipped vs capacity {cap:,.0f} in {b.label}",
                               when=b.start, qty=q - cap)
+
+    def _purchase_checks(self) -> None:
+        """Open purchase lines against what their supplier confirmed (or has not)."""
+        for rc in self.ds.receipts:
+            if rc.kind.value != "purchase":
+                continue
+            node = (rc.location, rc.product)
+            ordered = rc.ordered_qty if rc.ordered_qty is not None else rc.qty
+            if rc.confirmed_date is not None and rc.confirmed_date > rc.due_date:
+                days = (rc.confirmed_date - rc.due_date).days
+                self._exc("PO_CONFIRMED_LATE", "warning",
+                          f"{rc.id}: the supplier confirmed {rc.confirmed_date.isoformat()}, {days} d after the requested "
+                          f"{rc.due_date.isoformat()}; the plan expects it then", node=node, order=rc.id,
+                          when=rc.confirmed_date, qty=rc.expected_qty)
+            if rc.confirmed_qty is not None and rc.confirmed_qty < ordered - EPS:
+                self._exc("PO_CONFIRMED_SHORT", "warning",
+                          f"{rc.id}: the supplier confirmed {rc.confirmed_qty:,.0f} of {ordered:,.0f}; the plan counts "
+                          f"only what is confirmed", node=node, order=rc.id, when=rc.expected_date,
+                          qty=ordered - rc.confirmed_qty)
+            po = self.ds.purchase_order_by_id.get(rc.po or "")
+            if po is None or rc.confirmed_date is not None or rc.confirmed_qty is not None or po.sent_on is None:
+                continue
+            v = self.ds.vendor(po.supplier)
+            by = po.sent_on + timedelta(days=v.confirmation_days)
+            if v.confirmation_required and by < self.start:
+                self._exc("PO_NOT_CONFIRMED", "warning",
+                          f"{rc.id}: sent to {po.supplier} on {po.sent_on.isoformat()} and not confirmed (expected by "
+                          f"{by.isoformat()}); the plan still expects it on {rc.due_date.isoformat()}", node=node,
+                          order=rc.id, when=rc.due_date, qty=rc.qty)
 
     def _exc(self, code: str, severity: str, message: str, *, node: Node | None = None, order: str | None = None,
              resource: str | None = None, when: date | None = None, qty: float | None = None) -> None:

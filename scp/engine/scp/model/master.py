@@ -13,6 +13,7 @@ from .common import (
     BucketSize, Id, LocationType, LotSizePolicy, Model, MrpType, ProcurementType, ProductType, Ref, ResourceKind,
     SafetyStockMethod, Strategy, TransportMode, Unit,
 )
+from .purchasing import PriceScale
 
 
 # --------------------------------------------------------------------------------------------
@@ -486,7 +487,10 @@ class ProductionSource(Model):
 # Sourcing & transport
 # --------------------------------------------------------------------------------------------
 class PurchasingSource(Model):
-    """Who sells us a product, at what price and lead time (≈ info record + source list + quota)."""
+    """Who sells us a product, at what price and lead time (≈ info record + source list + quota).
+
+    ``price_scales`` are quantity breaks per order line; ``fixed`` makes this the source planning uses while it is
+    valid (source list fixed indicator), ``blocked`` keeps planning and new orders off it (source list block)."""
 
     id: Id
     supplier: str = Ref("location", description="A location of type supplier")
@@ -505,11 +509,33 @@ class PurchasingSource(Model):
     quota: float | None = Unit("fraction", default=None, le=1)
     valid_from: date | None = None
     valid_to: date | None = None
+    price_scales: list[PriceScale] = Field(default_factory=list,
+                                           description="Quantity breaks: from this quantity per order line, this price")
+    fixed: bool = Field(False, description="Source list: the fixed source, used ahead of priority and quota while "
+                                           "it is valid")
+    blocked: bool = Field(False, description="Source list: blocked, not used by planning or new orders")
+    vendor_material: str = Field("", max_length=64, description="The supplier's own part number")
 
     @field_validator("currency")
     @classmethod
     def _upper(cls, v: str | None) -> str | None:
         return v.upper() if v else v
+
+    @field_validator("price_scales")
+    @classmethod
+    def _scales(cls, v: list[PriceScale]) -> list[PriceScale]:
+        v = sorted(v, key=lambda x: x.from_qty)
+        if len({x.from_qty for x in v}) < len(v):
+            raise ValueError("two price scales start at the same quantity")
+        return v
+
+    def price_for(self, qty: float) -> float:
+        """Unit price for one order line of ``qty`` (in the source's currency, before duty)."""
+        p = self.price
+        for sc in self.price_scales:
+            if qty + 1e-9 >= sc.from_qty:
+                p = sc.price
+        return p
 
 
 class LaneMode(Model):

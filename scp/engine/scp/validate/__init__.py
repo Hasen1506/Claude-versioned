@@ -8,7 +8,7 @@ docs can enumerate them, and each one has a positive and negative test.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -69,6 +69,9 @@ RULES: dict[str, tuple[Severity, str]] = {
     "NEGATIVE_STOCK": ("warning", "The movement journal takes stock below zero"),
     "MOVEMENT_REF_UNKNOWN": ("warning", "Goods movement references no open or closed order"),
     "PHANTOM_NOT_MADE": ("warning", "Phantom assembly that is not made at that plant"),
+    "PO_LINE_MISMATCH": ("error", "Purchase order line that does not match its order"),
+    "FIXED_SOURCE_TWICE": ("warning", "More than one fixed source for a product at a place"),
+    "OPEN_PO_BLOCKED_SUPPLIER": ("warning", "Open purchase order with a blocked supplier"),
 }
 
 
@@ -124,11 +127,16 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         "resource": ds.resources, "production_source": ds.production_sources,
         "purchasing_source": ds.purchasing_sources, "lane": ds.lanes, "receipt": ds.receipts,
         "movement": ds.movements, "capacity_option": ds.finance.capacity_options,
+        "purchase_order": ds.purchase_orders,
     }
     for typ, items in groups.items():
         for oid, n in Counter(i.id for i in items).items():
             if n > 1:
                 c.add("DUP_ID", typ, oid, f"{typ} id '{oid}' is used {n} times", "Ids must be unique per type")
+    for sup, n in Counter(v.supplier for v in ds.vendors).items():
+        if n > 1:
+            c.add("DUP_ID", "vendor", sup, f"supplier '{sup}' has {n} purchasing records; the first is used",
+                  "Keep one record per supplier")
     for (loc, prod), n in Counter((lp.location, lp.product) for lp in ds.location_products).items():
         if n > 1:
             c.add("DUP_LOCATION_PRODUCT", "location_product", f"{loc}/{prod}",
@@ -262,6 +270,17 @@ def _references(ds: Dataset, c: _Collector) -> None:
         for rv in r.reservations:
             _ref(ds, c, "location", rv.location, "receipt", r.id, "reservations.location")
             _ref(ds, c, "product", rv.product, "receipt", r.id, "reservations.product")
+    for v in ds.vendors:
+        if _ref(ds, c, "location", v.supplier, "vendor", v.supplier, "supplier"):
+            _loc_type(ds, c, v.supplier, {LocationType.SUPPLIER}, "vendor", v.supplier, "supplier",
+                      "purchasing data belongs to a supplier location")
+    for po in ds.purchase_orders:
+        if _ref(ds, c, "location", po.supplier, "purchase_order", po.id, "supplier"):
+            _loc_type(ds, c, po.supplier, {LocationType.SUPPLIER}, "purchase_order", po.id, "supplier",
+                      "a purchase order goes to a supplier")
+        if _ref(ds, c, "location", po.location, "purchase_order", po.id, "location"):
+            _loc_type(ds, c, po.location, STOCKING_LOCATION_TYPES, "purchase_order", po.id, "location",
+                      "goods must be received at a stocking location")
     for m in ds.movements:
         if _ref(ds, c, "location", m.location, "movement", m.id, "location"):
             _loc_type(ds, c, m.location, STOCKING_LOCATION_TYPES, "movement", m.id, "location",
@@ -353,6 +372,55 @@ def _purchasing(ds: Dataset, c: _Collector) -> None:
         if not _covers(pu.valid_from, pu.valid_to, s.planning_start, end):
             c.add("SOURCE_NOT_VALID_IN_HORIZON", "purchasing_source", pu.id,
                   "Its valid-from and valid-to dates don't cover the whole plan", "Extend the dates or add another source")
+
+
+    fixed: dict[tuple[str, str], list] = {}
+    for pu in ds.purchasing_sources:
+        if pu.fixed and not ds.source_blocked(pu):
+            fixed.setdefault((pu.location, pu.product), []).append(pu)
+    for (loc, prod), pus in fixed.items():
+        for i, a in enumerate(pus):
+            for b in pus[i + 1:]:
+                if _overlap(a, b):
+                    c.add("FIXED_SOURCE_TWICE", "purchasing_source", b.id,
+                          f"{prod} at {loc} has two fixed sources at the same time ({a.id} and {b.id}); "
+                          f"planning uses {min(a, b, key=lambda x: (x.priority, x.id)).id}",
+                          "Keep one fixed source per period, or give them dates that do not overlap", "fixed")
+    _purchase_orders(ds, c)
+
+
+def _overlap(a, b) -> bool:
+    lo = max(a.valid_from or date.min, b.valid_from or date.min)
+    hi = min(a.valid_to or date.max, b.valid_to or date.max)
+    return lo <= hi
+
+
+def _purchase_orders(ds: Dataset, c: _Collector) -> None:
+    open_on: dict[str, int] = Counter()
+    for r in ds.receipts:
+        if r.po is None:
+            continue
+        po = ds.purchase_order_by_id.get(r.po)
+        if po is None:
+            c.add("REF_UNKNOWN", "receipt", r.id, f"po refers to unknown purchase order '{r.po}'",
+                  f"Create purchase order '{r.po}' or clear the reference", "po")
+            continue
+        src = ds.purchasing_source_by_id.get(r.source or "")
+        why = ("it is not a purchase" if r.kind.value != "purchase"
+               else f"it is received at {r.location}, the order at {po.location}" if r.location != po.location
+               else f"its source {src.id} is bought from {src.supplier}, the order goes to {po.supplier}"
+               if src is not None and src.supplier != po.supplier else None)
+        if why:
+            c.add("PO_LINE_MISMATCH", "receipt", r.id, f"Line {r.id} is on purchase order {po.id} but {why}",
+                  "Move the line to a matching order, or fix it", "po")
+        open_on[po.supplier] += 1
+    for pu_sup, n in open_on.items():
+        v = ds.vendor_by_supplier.get(pu_sup)
+        if v is not None and v.blocked:
+            c.add("OPEN_PO_BLOCKED_SUPPLIER", "vendor", pu_sup,
+                  f"{n} open purchase order line{'s' if n != 1 else ''} with {pu_sup}, which is blocked for purchasing"
+                  + (f" ({v.block_reason})" if v.block_reason else ""),
+                  "Receive or cancel them, or lift the block; planning still counts them")
 
 
 def _lanes(ds: Dataset, c: _Collector) -> None:
@@ -476,8 +544,12 @@ def _graph(ds: Dataset, c: _Collector) -> None:
             proc = lp.procurement.value if lp else "any"
             limited = {"make": " Its procurement type allows only making it here.",
                        "external": " Its procurement type allows only buying it or shipping it in."}.get(proc, "")
+            blocked = sorted(pu.id for pu in ds.purchasing_sources
+                             if pu.location == loc and pu.product == prod and ds.source_blocked(pu))
             c.add("NO_SOURCE", "location_product", f"{loc}/{prod}",
-                  f"{prod} at {loc} is needed but has no way to be supplied: it is not made, bought or shipped there"
+                  (f"{prod} at {loc} is needed but its only purchasing sources are blocked ({', '.join(blocked)})"
+                   if blocked else
+                   f"{prod} at {loc} is needed but has no way to be supplied: it is not made, bought or shipped there")
                   + (f" (only {onhand:g} on hand)" if onhand else "") + ("." + limited if limited else ""),
                   "Say how it gets there: made there, bought from a supplier, or shipped from another place (Set up → the product)"
                   + ("; or change its procurement type" if limited else ""))

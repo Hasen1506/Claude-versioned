@@ -16,6 +16,7 @@ from .tower import OwnerRule, TowerSettings
 from .promise import (
     Allocation, BopSegment, Confirmation, ConfirmationStrategy, PromiseSettings,
 )
+from .purchasing import PriceScale, PurchaseOrder, PurchasingSettings, Vendor
 from .schedule import Changeover, ScheduleSettings
 from .sop import SopMode, SopSettings, StockTarget
 from .master import (
@@ -26,6 +27,7 @@ from .master import (
 from .transactional import DemandRecord, Reservation, SalesHistory, ScheduledReceipt
 
 __all__ = [
+    "PriceScale", "PurchaseOrder", "PurchasingSettings", "Vendor",
     "AccuracyRecord", "OwnerRule", "TowerSettings", "CapacityOption", "FinanceSettings", "ClosedOrder", "ExecutionSettings", "GoodsMovement", "MovementType", "RolledWeek", "Reservation",
     "DEFAULT_MODELS", "Allocation", "BopSegment", "Confirmation", "ConfirmationStrategy", "PromiseSettings", "DemandEvent", "EventKind", "ForecastModelId", "ForecastOverride", "ForecastPeriod",
     "ForecastSettings", "InventorySettings", "NpiRule", "OutlierMethod", "SelectionMetric",

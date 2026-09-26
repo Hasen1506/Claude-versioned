@@ -826,7 +826,17 @@
    "rounding_qty": 250,
    "lead_time_days": 7,
    "lead_time_std_days": 1.5,
-   "capacity_per_week": 6000
+   "capacity_per_week": 6000,
+   "price_scales": [
+    {
+     "from_qty": 2000,
+     "price": 890
+    },
+    {
+     "from_qty": 5000,
+     "price": 875
+    }
+   ]
   },
   {
    "id": "PIR-STAMP",
@@ -837,7 +847,13 @@
    "moq": 1000,
    "rounding_qty": 500,
    "lead_time_days": 5,
-   "lead_time_std_days": 1
+   "lead_time_std_days": 1,
+   "price_scales": [
+    {
+     "from_qty": 5000,
+     "price": 112
+    }
+   ]
   },
   {
    "id": "PIR-JARS",
@@ -880,7 +896,8 @@
    "moq": 5000,
    "rounding_qty": 1000,
    "lead_time_days": 14,
-   "lead_time_std_days": 3
+   "lead_time_std_days": 3,
+   "vendor_material": "HT-220-1K2"
   },
   {
    "id": "PIR-SWITCH",
@@ -1030,6 +1047,37 @@
    ]
   }
  ],
+ "vendors": [
+  {
+   "supplier": "SUP-SHENZHEN",
+   "contact": "Li Wei (export desk)",
+   "email": "export@example.com",
+   "currency": "USD",
+   "payment_terms_days": 60,
+   "incoterms": "FOB Shenzhen",
+   "confirmation_required": true,
+   "confirmation_days": 3,
+   "over_delivery_tolerance": 0.05
+  },
+  {
+   "supplier": "SUP-COPPER",
+   "contact": "Sales office Silvassa",
+   "payment_terms_days": 45,
+   "confirmation_required": true,
+   "confirmation_days": 2
+  },
+  {
+   "supplier": "SUP-PACK",
+   "payment_terms_days": 30,
+   "min_order_value": 5000,
+   "under_delivery_tolerance": 0.02
+  }
+ ],
+ "purchase_orders": [],
+ "purchasing": {
+  "approval_limit": 1000000,
+  "release_window_days": 7
+ },
  "demand": [
   {
    "location": "CUS-ECOM",

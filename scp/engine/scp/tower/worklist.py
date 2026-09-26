@@ -26,7 +26,8 @@ CATEGORY = {
     "CAPACITY_OVERLOAD": "capacity", "CAPACITY_OVERTIME": "capacity", "SUPPLIER_CAPACITY": "capacity",
     "LANE_CAPACITY": "capacity", "EXCESS_STOCK": "inventory", "SHELF_LIFE_RISK": "inventory",
     "START_IN_PAST": "orders", "RESCHEDULE_IN": "orders", "SCHEDULE_LATE": "orders", "FENCE_SHIFT": "orders", "NO_VALID_SOURCE": "orders",
-    "RECEIPT_OVERDUE": "orders", "ORDER_OVERDUE": "delivery", "PROMISE_AT_RISK": "delivery",
+    "RECEIPT_OVERDUE": "orders", "PO_CONFIRMED_LATE": "orders",
+    "PO_CONFIRMED_SHORT": "orders", "PO_NOT_CONFIRMED": "orders", "ORDER_OVERDUE": "delivery", "PROMISE_AT_RISK": "delivery",
     "PROMISE_LATE": "delivery", "FORECAST_BIAS": "demand", "NO_DEMAND_STOCK": "inventory",
 }
 SKIP = {"EOQ_FALLBACK"}  # a parameter note for the data owner, not planner work

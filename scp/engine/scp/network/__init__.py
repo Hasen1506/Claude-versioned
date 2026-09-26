@@ -63,7 +63,7 @@ def supply_options(ds: Dataset, node: Node) -> list[SupplyOption]:
         out.sort(key=lambda o: (o.priority, _KIND_RANK[o.kind], o.source_id))
         return out
     for pu in ds.purchasing_sources:
-        if pu.location == loc and pu.product == prod:
+        if pu.location == loc and pu.product == prod and not ds.source_blocked(pu):
             out.append(SupplyOption("buy", pu.id, node, ((pu.supplier, prod),), pu.priority, pu.quota))
     for ln in ds.lanes:
         if ln.destination != loc or not ln.carries(prod):

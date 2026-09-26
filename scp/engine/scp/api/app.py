@@ -29,6 +29,8 @@ from ..model.common import Out
 from ..network import build_graph, location_edges, location_layers
 from ..plan import PlanResult, run_mrp
 from ..plan.level import LevelPreview, level_preview
+from ..purchasing import PurchasingError, act as purchasing_act, create_purchase_orders, purchasing_view
+from ..purchasing.result import ActionReport, CreateReport, PurchasingView
 from ..promise import PromiseResult, check_order, commit, run_bop, run_promise
 from ..scenarios import BY_ID as SCENARIOS, EngineClient, ScenarioInfo, ScenarioReport
 from ..schedule import (
@@ -462,6 +464,74 @@ def post_firm(req: FirmRequest) -> FirmResponse:
     if not rep.ok:
         raise HTTPException(409, "the readiness gate has errors; fix them before firming orders")
     return FirmResponse(dataset=new, report=rep)
+
+
+# --- procure-to-pay (Phase E) --------------------------------------------------------------------
+@app.post("/api/purchasing", response_model=PurchasingView)
+def post_purchasing(ds: Dataset) -> PurchasingView:
+    """Requisitions from the supply plan, every purchase order with its lines' status, and the supplier scorecard."""
+    return purchasing_view(ds, run_mrp(ds))
+
+
+class RequisitionPick(Out):
+    id: str
+    source_id: str | None = None
+    qty: float | None = None
+
+
+class CreatePoRequest(Out):
+    dataset: Dataset
+    lines: list[RequisitionPick] | None = None      # None = every requisition due now, on its planned source
+    order_date: dt.date | None = None
+
+
+class CreatePoResponse(Out):
+    dataset: Dataset
+    report: CreateReport
+
+
+@app.post("/api/purchasing/create", response_model=CreatePoResponse)
+def post_create_pos(req: CreatePoRequest) -> CreatePoResponse:
+    plan = run_mrp(req.dataset)
+    lines = None if req.lines is None else [x.model_dump(exclude_none=True) for x in req.lines]
+    new, rep = create_purchase_orders(req.dataset, plan, lines, req.order_date)
+    if not rep.ok:
+        raise HTTPException(409, "the readiness gate has errors; fix them before ordering")
+    return CreatePoResponse(dataset=new, report=rep)
+
+
+class PoLineInput(Out):
+    id: str
+    qty: float | None = None
+    date: dt.date | None = None
+    price: float | None = None
+    final: bool = False
+
+
+class PoActionRequest(Out):
+    dataset: Dataset
+    action: Literal["approve", "send", "confirm", "receive", "change", "cancel"]
+    po: str
+    lines: list[PoLineInput] | None = None          # None = every open line, as ordered
+    date: dt.date | None = None                     # sent on / received on (default: the planning start)
+    reference: str = ""                             # the supplier's confirmation number
+    note: str = ""                                  # delivery note on a goods receipt
+
+
+class PoActionResponse(Out):
+    dataset: Dataset
+    report: ActionReport
+
+
+@app.post("/api/purchasing/act", response_model=PoActionResponse)
+def post_po_action(req: PoActionRequest) -> PoActionResponse:
+    lines = None if req.lines is None else [x.model_dump(exclude_none=True) for x in req.lines]
+    try:
+        new, rep = purchasing_act(req.dataset, req.action, req.po, lines=lines, on=req.date, reference=req.reference,
+                                  note=req.note)
+    except PurchasingError as e:
+        raise HTTPException(409, str(e)) from e
+    return PoActionResponse(dataset=new, report=rep)
 
 
 # --- versions & scenarios (P8) -------------------------------------------------------------------

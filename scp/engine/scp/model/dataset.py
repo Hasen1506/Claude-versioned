@@ -16,6 +16,7 @@ from .finance import FinanceSettings
 from .tower import TowerSettings
 from .demand import DemandEvent, ForecastOverride, ForecastSettings, NpiRule
 from .inventory import InventorySettings
+from .purchasing import PurchaseOrder, PurchasingSettings, Vendor
 from .promise import Allocation, Confirmation, PromiseSettings
 from .schedule import Changeover, ScheduleSettings
 from .sop import SopSettings, StockTarget
@@ -37,6 +38,9 @@ class Dataset(Model):
     production_sources: list[ProductionSource] = Field(default_factory=list)
     purchasing_sources: list[PurchasingSource] = Field(default_factory=list)
     lanes: list[TransportLane] = Field(default_factory=list)
+    vendors: list[Vendor] = Field(default_factory=list)
+    purchase_orders: list[PurchaseOrder] = Field(default_factory=list)
+    purchasing: PurchasingSettings = Field(default_factory=PurchasingSettings)
     demand: list[DemandRecord] = Field(default_factory=list)
     receipts: list[ScheduledReceipt] = Field(default_factory=list)
     history: list[SalesHistory] = Field(default_factory=list)
@@ -59,6 +63,14 @@ class Dataset(Model):
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
     finance: FinanceSettings = Field(default_factory=FinanceSettings)
     tower: TowerSettings = Field(default_factory=TowerSettings)
+
+    def model_copy(self, *, update: dict | None = None, deep: bool = False) -> Dataset:
+        """A copy without the lookup indices below: pydantic copies the instance dict, cached indices included, so
+        a copy with new receipts or orders would otherwise look records up in the old ones."""
+        c = super().model_copy(update=update, deep=deep)
+        for name in _CACHED:
+            c.__dict__.pop(name, None)
+        return c
 
     # ---- indices (first occurrence wins; duplicates are reported by the readiness gate) ----
     @cached_property
@@ -86,6 +98,25 @@ class Dataset(Model):
         return _index(self.purchasing_sources)
 
     @cached_property
+    def vendor_by_supplier(self) -> dict[str, Vendor]:
+        out: dict[str, Vendor] = {}
+        for v in self.vendors:
+            out.setdefault(v.supplier, v)
+        return out
+
+    @cached_property
+    def purchase_order_by_id(self) -> dict[str, PurchaseOrder]:
+        return _index(self.purchase_orders)
+
+    def vendor(self, supplier: str) -> Vendor:
+        """The supplier's purchasing data, or the defaults when none is kept."""
+        return self.vendor_by_supplier.get(supplier) or Vendor(supplier=supplier)
+
+    def source_blocked(self, pu: PurchasingSource) -> bool:
+        """A source planning and new orders may not use: blocked in the source list, or its supplier blocked."""
+        return pu.blocked or self.vendor(pu.supplier).blocked
+
+    @cached_property
     def lane_by_id(self) -> dict[str, TransportLane]:
         return _index(self.lanes)
 
@@ -99,6 +130,9 @@ class Dataset(Model):
     def location_type(self, loc_id: str) -> LocationType | None:
         loc = self.location_by_id.get(loc_id)
         return loc.type if loc else None
+
+
+_CACHED = tuple(k for k, v in vars(Dataset).items() if isinstance(v, cached_property))
 
 
 def _index(items: list) -> dict:

@@ -64,6 +64,27 @@ class ScheduledReceipt(Model):
     scheduled: bool = Field(False, description="Dates set by the detailed schedule: when it finishes later than "
                                                "needed, planning counts it where it is needed and reports the delay "
                                                "instead of adding an order in front of it")
+    po: str | None = Field(None, max_length=64, description="Purchase: the purchase order (header) this line is on")
+    price: float | None = Unit("money_per_unit", default=None,
+                               description="Purchase: net price per base unit, in the order's currency")
+    confirmed_date: dt.date | None = Field(None, description="Purchase: delivery date the supplier confirmed; "
+                                                             "planning expects the goods then")
+    confirmed_qty: float | None = Unit("qty", default=None,
+                                       description="Purchase: quantity the supplier confirmed (of the ordered "
+                                                   "quantity); planning counts no more than this")
+
+    @property
+    def expected_date(self) -> dt.date:
+        """When the goods are expected: the confirmed date, else the due date."""
+        return self.confirmed_date or self.due_date
+
+    @property
+    def expected_qty(self) -> float:
+        """What is still expected: the open quantity, capped by what the supplier confirmed and has not delivered."""
+        if self.confirmed_qty is None:
+            return self.qty
+        received = (self.ordered_qty if self.ordered_qty is not None else self.qty) - self.qty
+        return max(0.0, min(self.qty, self.confirmed_qty - received))
 
 
 class SalesHistory(Model):
