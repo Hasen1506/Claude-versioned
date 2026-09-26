@@ -173,25 +173,37 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
                "POQ covers the shortage plus the rest of the next bucket, rounded up to packs of 500: "
                "161.2 + 306.1 → 500; 324.5 + 408.2 → 1,000; 242.9 + 357.1 → 1,000.")
 
-        late_mo = one(fg, need_date=d("2026-01-26"))
-        ctx.eq("delay carried to the 26 Jan packing order", (late_mo.projected_available_date, late_mo.delay_days),
-               (d("2026-02-07"), 12.0),
-               "The 19 Jan roast needs 625 kg but only 375 remain until the late PO lands on 31 Jan (+12 days), "
-               "so that roast finishes 3 Feb; the packing order pegged to it slips from 26 Jan to 7 Feb.")
+        late_roast = one(roast, need_date=d("2026-01-22"))
+        ctx.eq("the 19 Jan roast: on time, then late (qty on time, last date, delay)",
+               (late_roast.projected_on_time_qty, late_roast.projected_available_date, late_roast.delay_days),
+               (300.0, d("2026-02-03"), 12.0),
+               "It needs 625 kg green on 19 Jan; 375 kg are left on hand, the other 250 kg wait for the late PO "
+               "(31 Jan, +12 days). 375 ÷ 625 = 60 % of the lot, 300 kg, finishes on time on 22 Jan; the other "
+               "200 kg on 3 Feb.")
+        on_time_mo = one(fg, need_date=d("2026-01-26"))
+        ctx.eq("the 26 Jan packing order is covered by the on-time roast",
+               (on_time_mo.projected_on_time_qty, on_time_mo.delay_days), (300.0, 0.0),
+               "Its 300 kg of roast: 150 left of the first lot, then the first 150 of the on-time 300 of the second.")
+        late_mo = one(fg, need_date=d("2026-02-02"))
+        ctx.eq("delay carried to the 2 Feb packing order (qty on time, last date, delay)",
+               (late_mo.projected_on_time_qty, late_mo.projected_available_date, late_mo.delay_days),
+               (150.0, d("2026-02-06"), 4.0),
+               "Its 350 kg of roast: the last 150 of the on-time 300, then the 200 kg that finish 3 Feb, 4 days "
+               "after its 30 Jan start, so 200 bags slip from 2 Feb to 6 Feb.")
         risk = [e for e in plan.exceptions if e.code == "DEMAND_AT_RISK"]
-        ctx.near("demand at risk (bags)", sum(e.qty or 0 for e in risk), 550, 1e-6,
-                 "Pegging FIFO: 26 Jan needs 300, of which 200 come from the late order; 2 Feb needs 350: 100 from "
-                 "the same order and 250 from the next one, which also waits for the late roast until 6 Feb. "
-                 "200 + 100 + 250 = 550.")
-        ctx.near("on-time fill rate", plan.kpis.on_time_fill_rate, 2100 / 2650, 1e-9, "(2,650 − 550) ÷ 2,650")
+        ctx.near("demand at risk (bags)", sum(e.qty or 0 for e in risk), 100, 1e-6,
+                 "Pegging FIFO: 2 Feb needs 350: 100 from the 26 Jan order (on time) and 250 from the 2 Feb order, "
+                 "which has 150 on time. The 200 late bags arrive 6 Feb: 100 of them go to 2 Feb, the other 100 to "
+                 "9 Feb, which they still reach on time. 100 late.")
+        ctx.near("on-time fill rate", plan.kpis.on_time_fill_rate, 2550 / 2650, 1e-9, "(2,650 − 100) ÷ 2,650")
         ctx.eq("exceptions", sorted((e.code, e.product) for e in plan.exceptions),
                [("DEMAND_AT_RISK", "FG-BAG"), ("START_IN_PAST", "RM-GREEN"), ("STOCKOUT", "RM-GREEN")],
                "Green beans run 250 kg short in the week of 19 Jan; nothing else is wrong.")
         fg_node = one(plan.nodes, product="FG-BAG")
         ctx.eq("FG demand at risk by bucket", [round(b.at_risk, 6) for b in fg_node.buckets],
-               [0, 0, 0, 200, 350, 0, 0, 0],
-               "The stock view must show the 550 late bags where they fall (week of 26 Jan: 200; week of 2 Feb: "
-               "350), not a healthy 100 on hand.")
+               [0, 0, 0, 0, 100, 0, 0, 0],
+               "The stock view must show the 100 late bags where they fall (week of 2 Feb), not a healthy 100 on "
+               "hand, and not the whole roast lot as late when 60 % of it is on time.")
 
         k = plan.kpis
         ctx.near("purchase cost", k.purchase_cost, 4 * 600 * 6 * 1.5 * 1.05 + 2500 * 0.40, 1e-6,
@@ -262,5 +274,7 @@ SCENARIO = Scenario(
     found=["A per-kg lane from a supplier flagged a missing weight on products that supplier never sells",
            "The projection showed demand reached a day late as covered, while the exception list called it at risk",
            "Firming a late order made the next run plan a second one instead of rescheduling the firm order in",
-           "A purchase order was placed on a Saturday: the start was offset by lead time but not moved to a working day"],
+           "A purchase order was placed on a Saturday: the start was offset by lead time but not moved to a working day",
+           "An order whose input was only partly late was projected late as a whole: 550 bags at risk where 100 are "
+           "(found by an outside test, where promising confirmed 35 of 50 on time and MRP called all 50 late)"],
     build=build, run=run)

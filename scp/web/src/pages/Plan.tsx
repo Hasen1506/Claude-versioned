@@ -8,6 +8,9 @@ import { day, money, ORDER_LABEL, pct, qty } from "../lib/format";
 import { go, href } from "../lib/router";
 import { isStale, store, useStore } from "../state/store";
 
+/** Part of a late order is still on time: its inputs are only partly late (the part in stock ships as planned). */
+const partOnTime = (o: PlannedOrder) => (o.projected_on_time_qty ?? 0) > 1e-9 && (o.projected_on_time_qty ?? 0) < o.qty - 1e-9;
+
 type View = "overview" | "node" | "capacity" | "orders";
 
 export function Plan({ route }: { route: string[] }) {
@@ -348,7 +351,7 @@ function OrderTable({ plan, orders, sel, onSelect, compact }: {
             <td className="num">{qty(o.qty)}</td>
             <td className="small">{day(o.start_date)}{o.start_in_past && <> <Badge sev="warning">past</Badge></>}</td>
             <td className="small">{day(o.available_date)}{o.fence_shifted && <> <Badge sev="info">fence</Badge></>}</td>
-            <td className="num">{o.delay_days === -1 ? <Badge sev="error">uncovered</Badge> : (o.delay_days ?? 0) > 0 ? <Badge sev="warning">{o.delay_days} d</Badge> : "·"}</td>
+            <td className="num">{o.delay_days === -1 ? <Badge sev="error">uncovered</Badge> : (o.delay_days ?? 0) > 0 ? <><Badge sev="warning">{o.delay_days} d</Badge>{partOnTime(o) && <div className="faint small">{qty(o.projected_on_time_qty ?? 0)} on time</div>}</> : "·"}</td>
             <td className="num">{money(o.total_cost, plan.currency)}</td>
           </tr>
         ))}
@@ -422,7 +425,8 @@ function PegTree({ plan, orderId }: { plan: PlanResult; orderId: string }) {
         <div style={{ fontWeight: 600 }}>{ORDER_LABEL[o.kind]} of {qty(o.qty)} {o.product} at {o.location}</div>
         <div className="muted small">
           {o.origin && <>from {o.origin} · </>}source {o.source_id} · start {day(o.start_date)} · due {day(o.due_date)} · available {day(o.available_date)}
-          {o.projected_available_date && o.projected_available_date !== o.available_date && <> · projected {day(o.projected_available_date)}</>}
+          {o.projected_available_date && o.projected_available_date !== o.available_date && <> · projected {partOnTime(o)
+            ? <>{qty(o.projected_on_time_qty ?? 0)} on time, the rest by {day(o.projected_available_date)}</> : day(o.projected_available_date)}</>}
         </div>
         <div className="muted small">Need date {day(o.need_date)} · cost {money(o.total_cost, plan.currency)}{o.shipments ? ` · ${o.shipments} shipment(s)` : ""}</div>
         {(buffer > 1e-6 || rounding > 1e-6) && (

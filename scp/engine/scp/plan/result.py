@@ -54,7 +54,8 @@ class PlannedOrder(Out):
     costs: dict[str, float] = {}  # total_cost by category (purchase, production, setup, ordering, transport, handling)
     shipments: int | None = None
     delay_days: float = 0.0       # projected lateness vs need incl. upstream delays; −1 = an input is uncovered
-    projected_available_date: dt.date | None = None
+    projected_available_date: dt.date | None = None  # when all of it is projected available
+    projected_on_time_qty: float | None = None       # how much is projected available by the need date
     lot_excess: float = 0.0       # quantity not pegged to any requirement by the end of the horizon
     # why the order is this size, as planned: qty = for requirements + for_buffer + for_lot_size
     for_buffer: float = 0.0       # raises projected stock to the safety stock, stock target or reorder point

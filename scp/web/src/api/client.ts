@@ -11,26 +11,41 @@ export class SchemaRejected extends Error {
 }
 
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
+/** A proof run answers only when it is done; on a small server the generated flow takes minutes. */
+export const RUN_TIMEOUT_MS = 15 * 60_000;
 
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_ORIGIN}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-  });
-  if (res.status === 422) {
-    const body = await res.json();
-    throw new SchemaRejected((body.detail ?? []) as SchemaError[]);
-  }
-  if (!res.ok) {
-    let detail = "";
-    try {
-      detail = ((await res.json()) as { detail?: string }).detail ?? "";
-    } catch {
-      /* not JSON */
+/** `timeoutMs`: give up (and say so) when the engine has not answered by then. */
+async function call<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
+  const ctrl = timeoutMs ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : undefined;
+  try {
+    const res = await fetch(`${API_ORIGIN}${path}`, {
+      ...init,
+      signal: ctrl?.signal ?? init?.signal,
+      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    });
+    if (res.status === 422) {
+      const body = await res.json();
+      throw new SchemaRejected((body.detail ?? []) as SchemaError[]);
     }
-    throw new Error(detail || `${path}: HTTP ${res.status}`);
+    if (!res.ok) {
+      let detail = "";
+      try {
+        detail = ((await res.json()) as { detail?: string }).detail ?? "";
+      } catch {
+        /* not JSON */
+      }
+      throw new Error(detail || `${path}: HTTP ${res.status}`);
+    }
+    return (await res.json()) as T;
+  } catch (e) {
+    if (ctrl?.signal.aborted) {
+      throw new Error(`no answer after ${Math.round(timeoutMs! / 60_000)} minutes: the engine may be overloaded or restarting`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
-  return (await res.json()) as T;
 }
 
 const post = <T>(path: string, ds: Dataset) => call<T>(path, { method: "POST", body: JSON.stringify(ds) });
@@ -92,7 +107,7 @@ export const api = {
   /** Proof: end-to-end scenarios with hand-derived answers, run against an isolated in-memory store. */
   scenarios: () => call<ScenarioInfo[]>("/api/scenarios"),
   scenarioDataset: (id: string) => call<Dataset>(`/api/scenarios/${encodeURIComponent(id)}/dataset`),
-  runScenario: (id: string) => call<ScenarioReport>(`/api/scenarios/${encodeURIComponent(id)}/run`, { method: "POST" }),
+  runScenario: (id: string) => call<ScenarioReport>(`/api/scenarios/${encodeURIComponent(id)}/run`, { method: "POST" }, RUN_TIMEOUT_MS),
 };
 
 // Minimal JSON-schema shape used by the form generator.

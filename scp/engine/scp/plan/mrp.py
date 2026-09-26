@@ -15,7 +15,9 @@ projection per bucket, capacity/supplier/lane checks, exceptions and KPIs.
 
 Netting uses *need dates* (the plan's intent) so orders are never duplicated. The physical projection
 uses each order's *available date* (the MD04 view of the plan); the fill-rate KPI, DEMAND_AT_RISK and the
-per-bucket ``at_risk`` row use *projected dates*, which carry upstream delays down the pegging.
+per-bucket ``at_risk`` row use *projected dates*, which carry upstream delays down the pegging. They are
+quantities by date, not one date per order: when an input is only partly late, the share of the order its
+on-time inputs cover stays on time (as promising would split the shipment), and only the rest is delayed.
 """
 from __future__ import annotations
 
@@ -533,49 +535,93 @@ class _Planner:
         self._propagate()
 
     def _propagate(self) -> None:
-        """Projected availability: an order cannot finish earlier than its inputs are available.
-        Upstream first (descending LLC)."""
-        pegs_by_req: dict[str, list[Peg]] = defaultdict(list)
-        for p in self.pegs:
-            pegs_by_req[p.requirement_id].append(p)
-        self._pegs_by_req = pegs_by_req
-        receipt_date = {rc.id: self.receipt_date(rc) for rc in self.ds.receipts}
-        eff: dict[str, date] = {}
-        beyond = self.b.end + timedelta(days=3650)
-
-        def supply_date(p: Peg) -> date:
+        """Projected availability: an order cannot finish earlier than its inputs are available. Each order carries
+        a profile of how much of it is available by when, so an input that is only partly late delays only that
+        share of the order (the part covered from stock ships on time, as promising splits it). An order's supply
+        goes to its requirements earliest first. Upstream first (descending LLC)."""
+        pegs_by_req: dict[str, list[int]] = defaultdict(list)
+        pegs_by_order: dict[str, list[int]] = defaultdict(list)
+        for i, p in enumerate(self.pegs):
+            pegs_by_req[p.requirement_id].append(i)
             if p.supply_kind == "order":
-                return eff.get(p.supply_id, self.order_by_id[p.supply_id].available_date)
+                pegs_by_order[p.supply_id].append(i)
+        receipt_date = {rc.id: self.receipt_date(rc) for rc in self.ds.receipts}
+        beyond = self.b.end + timedelta(days=3650)
+        chunks: dict[int, list[tuple[date, float]]] = {}  # peg index -> (date available, qty)
+
+        def peg_chunks(i: int) -> list[tuple[date, float]]:
+            p = self.pegs[i]
+            if p.supply_kind == "order":
+                return chunks.get(i, [(self.order_by_id[p.supply_id].available_date, p.qty)])
             if p.supply_kind == "receipt":
-                return receipt_date.get(p.supply_id, self.start)
-            return self.start
+                return [(receipt_date.get(p.supply_id, self.start), p.qty)]
+            return [(self.start, p.qty)]
 
-        def ready(req: Requirement) -> date:
-            ps = pegs_by_req.get(req.id, [])
-            covered = sum(p.qty for p in ps)
-            if covered < req.qty - 1e-6:
-                return beyond
-            return max((supply_date(p) for p in ps), default=self.start)
+        def req_profile(r: Requirement) -> list[tuple[date, float]]:
+            out = [c for i in pegs_by_req.get(r.id, []) for c in peg_chunks(i)]
+            short = r.qty - sum(q for _, q in out)
+            if short > 1e-6:
+                out.append((beyond, short))
+            return sorted(out)
 
-        self._ready = ready
-        self._supply_date = supply_date
+        def order_profile(o: PlannedOrder) -> list[tuple[date, float]]:
+            steps = []  # per input: requirement date, [(cumulative share, date)]
+            for rid in self.order_inputs.get(o.id, []):
+                r = self.req_by_id[rid]
+                if r.qty <= 1e-9:
+                    continue
+                cum, marks = 0.0, []
+                for d, q in req_profile(r):
+                    cum += q
+                    marks.append((cum / r.qty, d))
+                steps.append((r.date, marks))
+            if not steps:
+                return [(o.available_date, o.qty)]
+            cuts = sorted({min(1.0, x) for _, marks in steps for x, _ in marks} | {1.0})
+            out: dict[date, float] = defaultdict(float)
+            prev = 0.0
+            for x in cuts:
+                if x - prev <= 1e-12:
+                    continue
+                mid, delay, late = (prev + x) / 2, 0, False
+                for need, marks in steps:
+                    d = next((d for c, d in marks if c >= mid - 1e-12), beyond)
+                    late = late or d >= beyond
+                    delay = max(delay, (d - need).days)
+                out[beyond if late else o.available_date + timedelta(days=delay)] += (x - prev) * o.qty
+                prev = x
+            return sorted((d, round(q, 9)) for d, q in out.items())
+
         for node in sorted(self.g.order, key=lambda n: -self.g.llc[n]):
             for s in self.state[node].supplies:
                 if s.kind != "order":
                     continue
                 o = self.order_by_id[s.id]
-                delay = 0
-                for rid in self.order_inputs.get(o.id, []):
-                    r = self.req_by_id[rid]
-                    rd = ready(r)
-                    delay = max(delay, (rd - r.date).days)
-                proj = o.available_date + timedelta(days=max(0, delay))
-                eff[o.id] = proj
-                o.projected_available_date = proj if proj < beyond else None
-                o.delay_days = float(max(0, (proj - o.need_date).days)) if proj < beyond else float("inf")
-        for o in self.orders:
-            if o.delay_days == float("inf"):
-                o.delay_days = -1.0  # unknown: an input is not covered at all
+                prof = order_profile(o)
+                last = prof[-1][0]
+                o.projected_available_date = last if last < beyond else None
+                o.delay_days = float(max(0, (last - o.need_date).days)) if last < beyond else -1.0
+                o.projected_on_time_qty = sum(q for d, q in prof if d <= o.need_date)
+                queue = [list(c) for c in prof]
+                for i in sorted(pegs_by_order.get(o.id, []),
+                                key=lambda i: (self.req_by_id[self.pegs[i].requirement_id].date, i)):
+                    need, got = self.pegs[i].qty, []
+                    while need > 1e-9 and queue:
+                        take = min(need, queue[0][1])
+                        got.append((queue[0][0], take))
+                        need -= take
+                        queue[0][1] -= take
+                        if queue[0][1] <= 1e-9:
+                            queue.pop(0)
+                    if need > 1e-9:
+                        got.append((beyond, need))
+                    chunks[i] = got
+        self._pegs_by_req = pegs_by_req
+        self._peg_chunks = peg_chunks
+
+    def _on_time(self, r: Requirement) -> float:
+        """How much of a requirement its pegged supply projects to be available by the requirement's date."""
+        return sum(q for i in self._pegs_by_req.get(r.id, []) for d, q in self._peg_chunks(i) if d <= r.date)
 
     # ------------------------------------------------------------------ outputs
     def result(self) -> PlanResult:
@@ -630,7 +676,7 @@ class _Planner:
                 if r.kind not in ("forecast", "sales_order"):
                     continue
                 total_ind += r.qty
-                covered = sum(p.qty for p in self._pegs_by_req.get(r.id, []) if self._supply_date(p) <= r.date)
+                covered = self._on_time(r)
                 on_time += covered
                 bi = self.b.index_of(r.date)
                 if 0 <= bi < n and r.qty - covered > 1e-6:
@@ -709,10 +755,7 @@ class _Planner:
             for r in self.state[node].reqs:
                 if r.kind not in ("forecast", "sales_order"):
                     continue
-                covered = 0.0
-                for p in self._pegs_by_req.get(r.id, []):
-                    if self._supply_date(p) <= r.date:
-                        covered += p.qty
+                covered = self._on_time(r)
                 if r.qty - covered > 1e-6:
                     late += r.qty - covered
                     first = r.date if first is None else min(first, r.date)

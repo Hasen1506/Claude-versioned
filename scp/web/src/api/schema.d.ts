@@ -3456,6 +3456,8 @@ export interface components {
             delay_days: number;
             /** Projected Available Date */
             projected_available_date: string | null;
+            /** Projected On Time Qty */
+            projected_on_time_qty: number | null;
             /**
              * Lot Excess
              * @default 0
@@ -4255,6 +4257,11 @@ export interface components {
              * @default []
              */
             found: string[];
+            /**
+             * Generated
+             * @default false
+             */
+            generated: boolean;
         };
         /** ScenarioReport */
         ScenarioReport: {
