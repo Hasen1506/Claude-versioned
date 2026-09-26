@@ -10,8 +10,10 @@ export class SchemaRejected extends Error {
   }
 }
 
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(`${API_ORIGIN}${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
