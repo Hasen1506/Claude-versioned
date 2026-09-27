@@ -677,6 +677,7 @@ function Resources({ res }: { res: ScheduleResult }) {
 // ------------------------------------------------------------------------------------------------
 /** The setup matrix for one resource: rows = from group, columns = to group, cells = hours. */
 function SetupMatrix({ ds, res }: { ds: Dataset; res: ScheduleResult | null }) {
+  const nm = useNames();
   const used = useMemo(() => {
     const m = new Map<string, Set<string>>();
     const groupOf = (p: string) => (ds.products ?? []).find((x) => x.id === p)?.setup_group || p;
@@ -725,9 +726,9 @@ function SetupMatrix({ ds, res }: { ds: Dataset; res: ScheduleResult | null }) {
   return (
     <div className="split" style={cols("minmax(0, 1fr) minmax(260px, 360px)")}>
       <div className="stack">
-        <div className="row wrap">{resources.map((r) => <button key={r} className={`btn sm ${r === rid ? "primary" : ""}`} onClick={() => setRid(r)}>{r}</button>)}</div>
-        <Panel flush title={`${rid}: changeover hours (from row → to column)`}>
-          <div className="table-wrap">
+        <div className="row wrap">{resources.map((r) => <button key={r} className={`btn sm ${r === rid ? "primary" : ""}`} onClick={() => setRid(r)}>{nm.res(r)}</button>)}</div>
+        <Panel flush title={`${nm.res(rid)}: changeover hours (from row → to column)`}>
+          <Edits><div className="table-wrap">
             <table className="t nowrap">
               <thead><tr><th>from ↓ · to →</th>{groups.map((g) => <th key={g} className="num">{g}</th>)}</tr></thead>
               <tbody>
@@ -752,7 +753,7 @@ function SetupMatrix({ ds, res }: { ds: Dataset; res: ScheduleResult | null }) {
                 ))}
               </tbody>
             </table>
-          </div>
+          </div></Edits>
         </Panel>
       </div>
       <Reading formula={<>Setup when a unit switches: nothing before → the operation's full setup; same product → none; same group → full × {minor};
@@ -804,7 +805,7 @@ function Methods({ ds, res, running }: { ds: Dataset; res: ScheduleResult | null
       <Panel title="How to schedule" actions={res && <span className="small muted">now: <b>{current === "custom" ? "your own settings" : cat?.profiles.find((p) => p.id === current)?.name ?? current}</b></span>}>
         <p className="small" style={{ marginTop: 0 }}>A profile sets the start rule, the search and what the score weighs, together. Picking one schedules again; Undo puts
           the settings back. Change any field in Settings to make your own.</p>
-        <div className="grid-auto">
+        <Edits><div className="grid-auto">
           {(cat?.profiles ?? []).map((p) => {
             const on = current === p.id;
             return (
@@ -816,7 +817,7 @@ function Methods({ ds, res, running }: { ds: Dataset; res: ScheduleResult | null
               </button>
             );
           })}
-        </div>
+        </div></Edits>
       </Panel>
       <Panel flush title="Compare the methods on these orders" actions={<button className="btn sm accent" onClick={compare} disabled={busy}>
         {busy ? "Scheduling every way…" : cmp ? "Compare again" : "Compare all methods"}</button>}>
@@ -837,7 +838,7 @@ function Methods({ ds, res, running }: { ds: Dataset; res: ScheduleResult | null
                 <td><div className="bar-track"><div className="bar-fill" style={{ width: `${(r.kpis.objective / worst) * 100}%`,
                   background: r.best ? "var(--good)" : "var(--series-1)" }} /></div></td>
                 <td className="num small">{r.seconds < 0.05 ? "<0.1 s" : `${r.seconds.toFixed(1)} s`}</td>
-                <td>{!inUse(r) && <button className="btn sm" disabled={running} onClick={() => pick(methodSettings(r.method), "custom")}>Use this</button>}</td>
+                <td>{!inUse(r) && <Edits><button className="btn sm" disabled={running} onClick={() => pick(methodSettings(r.method), "custom")}>Use this</button></Edits>}</td>
               </tr>))}</tbody>
           </table></div>
           <p className="small muted" style={{ padding: "8px 14px 12px", margin: 0 }}>Score = {Object.entries(cmp.weights).filter(([, v]) => v > 0)

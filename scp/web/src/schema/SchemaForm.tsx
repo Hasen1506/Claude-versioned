@@ -39,7 +39,7 @@ export function unwrap(schema: JsonSchema, node: JsonSchemaNode): { node: JsonSc
 
 function pick(n: JsonSchemaNode): JsonSchemaNode {
   const out: JsonSchemaNode = {};
-  for (const k of ["title", "description", "x-unit", "x-ref", "default"] as const) {
+  for (const k of ["title", "description", "x-unit", "x-ref", "x-multiline", "default"] as const) {
     if (n[k] !== undefined) (out as Record<string, unknown>)[k] = n[k];
   }
   return out;
@@ -56,6 +56,7 @@ const TITLE: Record<string, string> = {
   mrp_controller: "MRP controller (who plans it)", procurement: "Procurement type", phantom: "Phantom assembly",
   send_ahead_qty: "Overlap: send ahead quantity", co_products: "Co-products and by-products", capacity_changes: "Capacity changes",
   fixed_qty: "Fixed quantity per run", change: "Engineering change", subcontract: "Done outside by a supplier",
+  tax_id: "Tax number (GSTIN, VAT)", company_tax_id: "Company tax number (GSTIN, VAT)", company_address: "Company address (for invoices)",
   alternatives: "Alternative machines", break_minutes: "Break (minutes)", cost_share: "Share of the run's cost",
   capacity_constrained: "Plan within machine capacity", wait_for_parts: "Wait for parts", step_resources: "Steps on an alternative machine",
   scheduled: "Dated by the shop floor schedule",
@@ -314,6 +315,10 @@ function Widget({ id, name, node, nullable, value, onChange, currency, invalid }
   if (node.format === "date") {
     return <input id={id} type="date" className={cls} value={(value as string) ?? ""}
       onChange={(e) => onChange(e.target.value || (nullable ? null : ""))} />;
+  }
+  if (node["x-multiline"]) {
+    return <textarea id={id} className={cls} rows={3} value={(value as string) ?? ""}
+      onChange={(e) => onChange(e.target.value === "" && nullable ? null : e.target.value)} />;
   }
   return <input id={id} className={cls} value={(value as string) ?? ""}
     onChange={(e) => onChange(e.target.value === "" && nullable ? null : e.target.value)} />;

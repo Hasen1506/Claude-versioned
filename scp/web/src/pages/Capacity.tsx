@@ -231,7 +231,7 @@ function Levelling({ ds, plan, on, stale }: { ds: Dataset; plan: PlanResult; on:
           (never before today), else finishes later and is reported. {moved.length ? <>{plural(moved.length, "order")} moved in this plan.</> : "Nothing had to move."}</>
         : <>The supply plan now assumes unlimited capacity: each order goes where its dates say, even onto a full machine; the shop floor schedule then
           finds out. Planning within capacity moves orders to where they fit instead.</>}</p>
-      <div className="row wrap small" style={{ gap: 16, marginBottom: 8 }}>
+      <Edits><div className="row wrap small" style={{ gap: 16, marginBottom: 8 }}>
         <label className="row" style={{ gap: 6 }}>When a machine's day is full, first try
           <select aria-label="Levelling direction" value={ds.settings.capacity_direction ?? "earlier"}
             onChange={(e) => setting({ capacity_direction: e.target.value as "earlier" | "later" })}>
@@ -243,7 +243,7 @@ function Levelling({ ds, plan, on, stale }: { ds: Dataset; plan: PlanResult; on:
             defaultValue={ds.settings.capacity_max_early_days ?? ""} key={String(ds.settings.capacity_max_early_days ?? "")} placeholder="any"
             onBlur={(e) => { const v = e.target.value.trim(); if (v === "" || Number(v) >= 0) setting({ capacity_max_early_days: v === "" ? null : Math.round(Number(v)) }); }}
             onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} /> days ahead</label>
-      </div>
+      </div></Edits>
       {err && <div className="banner error"><Badge sev="error">That didn't work</Badge>{err}</div>}
       {msg && <div className="banner ok"><span>{msg}</span><span className="spacer" /><button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
       {asking && <div className="banner warning" role="alertdialog" aria-label="Keep the levelled dates">

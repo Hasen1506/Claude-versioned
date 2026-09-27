@@ -3457,6 +3457,18 @@ export interface components {
              * @default
              */
             region: string;
+            /**
+             * Address
+             * @description Postal address, a line per row: printed on purchase orders (the supplier's, the place to deliver to)
+             * @default
+             */
+            address: string;
+            /**
+             * Tax Id
+             * @description Tax registration (GSTIN, VAT number), printed on purchase orders
+             * @default
+             */
+            tax_id: string;
             /** Calendar */
             calendar?: string | null;
             /** Lat */
@@ -6669,6 +6681,18 @@ export interface components {
              * @default My Company
              */
             company_name: string;
+            /**
+             * Company Address
+             * @description The company's postal address for invoices, a line per row: printed on purchase orders as the address to invoice
+             * @default
+             */
+            company_address: string;
+            /**
+             * Company Tax Id
+             * @description The company's tax registration (GSTIN, VAT number)
+             * @default
+             */
+            company_tax_id: string;
             /**
              * Currency
              * @description ISO 4217 company currency

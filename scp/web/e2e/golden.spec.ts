@@ -96,7 +96,7 @@ test("demand planning: forecast → workbench → consensus override → release
 
   // consensus grid: type an override, the forecast re-runs with it
   await page.goto("/#/demand/consensus");
-  const cell = page.getByLabel(/^KT-15 CUS-ECOM/).first();
+  const cell = page.getByLabel(/^Electric kettle 1\.5 L at E-commerce marketplaces,/).first();
   await cell.fill("777");
   await cell.press("Enter");
   await expect(page.locator("td.edit input[value='777']")).toBeVisible();
@@ -302,7 +302,7 @@ test("scheduling: schedule → select order → resequence → reset → edit se
 
   // the setup matrix edits the dataset: the schedule goes stale
   await page.goto("/#/schedule/setups");
-  await page.getByRole("button", { name: "PUNE-TEST" }).click();
+  await page.getByRole("button", { name: "Hi-pot & run test benches" }).click();
   const cell = page.getByLabel("KT to MG hours");
   await cell.fill("3");
   await cell.press("Enter");
@@ -516,6 +516,13 @@ test("buying: requisitions → purchase order → approve → send → confirm l
   await page.getByRole("button", { name: "Approve" }).click();
   await page.getByRole("button", { name: "Mark as sent" }).click();
   await expect(page.locator(".banner.ok")).toContainText("sent to Rajkot jar works");
+  // the order as a document, with the supplier's, the plant's and the company's addresses (N69)
+  await expect(page.getByText(/^No address yet/)).toHaveCount(0);
+  const [doc] = await Promise.all([page.context().waitForEvent("page"), page.getByRole("button", { name: "Print or PDF" }).click()]);
+  await expect(doc.locator("body")).toContainText("Shed 32, Aji GIDC");
+  await expect(doc.locator("body")).toContainText("Plot 21, MIDC Chakan Phase II");
+  await expect(doc.locator("body")).toContainText("Invoice to");
+  await doc.close();
 
   // the supplier confirms four days late and 300 short: the plan expects that, and says so
   await page.getByRole("button", { name: "Record confirmation" }).click();
@@ -829,4 +836,10 @@ test("company on the server: sign up → keep it there → saves itself → a co
   await expect(meera.getByRole("button", { name: "Take this order" })).toBeDisabled();
   await meera.goto("/#/data/products");
   await expect(meera.getByRole("button", { name: /New product/ })).toBeDisabled();
+  // nor type into a grid (N70); a page whose result was never calculated here calculates on opening (N71)
+  await meera.goto("/#/execution/count");
+  await expect(meera.getByLabel(/^Counted .* at /).first()).toBeDisabled();
+  await meera.reload();
+  await meera.goto("/#/buying");
+  await expect(meera.locator(".stage-head .answer")).toContainText("should be ordered in the next 7 days");
 });

@@ -320,7 +320,7 @@ function Ddmrp({ res, ds }: { res: InventoryResult; ds: Dataset }) {
             <tbody>
               {rows.map((r) => (
                 <tr key={key(r)}>
-                  <td><input type="checkbox" aria-label={`Position buffer at ${r.location} ${r.product}`} checked={isPos(r)} onChange={(e) => setPos(r, e.target.checked)} /></td>
+                  <td><Edits><input type="checkbox" aria-label={`Position buffer at ${r.location} ${r.product}`} checked={isPos(r)} onChange={(e) => setPos(r, e.target.checked)} /></Edits></td>
                   <td><Loc id={r.location} /></td><td><b><Prod id={r.product} /></b></td>
                   <td className="num">{qty(r.adu)}</td>
                   <td className="num">{days(r.dlt)}</td>

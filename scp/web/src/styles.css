@@ -732,3 +732,6 @@ ol.history > li > .btn.ghost { align-self: flex-start; }
 fieldset.edits { display: contents; }
 fieldset.edits-form { border: 0; margin: 0; padding: 0; min-width: 0; }
 fieldset:disabled .btn, fieldset:disabled button { cursor: not-allowed; }
+
+/* multi-line fields (addresses): the input style's fixed height would show one line */
+textarea.input { height: auto; min-height: 4.6em; padding-block: 6px; line-height: 1.4; resize: vertical; font: inherit; }

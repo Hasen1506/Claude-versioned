@@ -22,6 +22,10 @@ from .purchasing import PriceScale
 # --------------------------------------------------------------------------------------------
 class Settings(Model):
     company_name: str = Field("My Company", max_length=120)
+    company_address: str = Field("", max_length=400, json_schema_extra={"x-multiline": True},
+                                 description="The company's postal address for invoices, a line per row: printed on "
+                                             "purchase orders as the address to invoice")
+    company_tax_id: str = Field("", max_length=40, description="The company's tax registration (GSTIN, VAT number)")
     currency: str = Field("INR", min_length=3, max_length=3, description="ISO 4217 company currency")
     planning_start: date = Field(description="First day of the plan ('today' for planning)")
     horizon_days: int = Field(182, ge=7, le=1100, description="Planning horizon length in calendar days")
@@ -104,6 +108,10 @@ class Location(Model):
     name: str = ""
     type: LocationType
     region: str = ""
+    address: str = Field("", max_length=400, json_schema_extra={"x-multiline": True},
+                         description="Postal address, a line per row: printed on purchase orders (the supplier's, "
+                                     "the place to deliver to)")
+    tax_id: str = Field("", max_length=40, description="Tax registration (GSTIN, VAT number), printed on purchase orders")
     calendar: str | None = Ref("calendar", default=None)
     lat: float | None = Field(None, ge=-90, le=90)
     lon: float | None = Field(None, ge=-180, le=180)

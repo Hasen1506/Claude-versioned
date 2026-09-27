@@ -64,11 +64,11 @@ def kitchenware() -> dict:
          "holidays": ["2026-10-02", "2026-10-20", "2026-11-09", "2026-11-10", "2026-12-25", "2027-01-26"]},
     ]
     locations = [
-        {"id": "PLT-PUNE", "name": "Pune plant (Chakan)", "type": "plant", "region": "West", "calendar": "CAL-IN-6D",
+        {"id": "PLT-PUNE", "name": "Pune plant (Chakan)", "type": "plant", "region": "West", "address": "Plot 21, MIDC Chakan Phase II\nPune 410501, Maharashtra", "calendar": "CAL-IN-6D",
          "lat": 18.76, "lon": 73.86, "storage_capacity_m3": 2500, "handling_cost_per_unit": 2},
-        {"id": "DC-BHIWANDI", "name": "Bhiwandi DC (Mumbai)", "type": "dc", "region": "West", "calendar": "CAL-IN-6D",
+        {"id": "DC-BHIWANDI", "name": "Bhiwandi DC (Mumbai)", "type": "dc", "region": "West", "address": "Gala 4, Building B7, Vashere logistics park\nBhiwandi 421302, Maharashtra", "calendar": "CAL-IN-6D",
          "lat": 19.30, "lon": 73.06, "storage_capacity_m3": 4000, "handling_cost_per_unit": 6},
-        {"id": "DC-DELHI", "name": "Delhi NCR DC", "type": "dc", "region": "North", "calendar": "CAL-IN-6D",
+        {"id": "DC-DELHI", "name": "Delhi NCR DC", "type": "dc", "region": "North", "address": "Warehouse 12, Sector 37 industrial area\nGurugram 122001, Haryana", "calendar": "CAL-IN-6D",
          "lat": 28.46, "lon": 77.03, "storage_capacity_m3": 3000, "handling_cost_per_unit": 7},
         {"id": "CUS-WEST-TRADE", "name": "West trade distributors", "type": "customer", "region": "West",
          "lat": 19.08, "lon": 72.88},
@@ -76,14 +76,14 @@ def kitchenware() -> dict:
          "lat": 12.97, "lon": 77.59},
         {"id": "CUS-NORTH-TRADE", "name": "North trade distributors", "type": "customer", "region": "North",
          "lat": 28.61, "lon": 77.21},
-        {"id": "SUP-COPPER", "name": "Hindalco copper (Silvassa)", "type": "supplier", "region": "West",
+        {"id": "SUP-COPPER", "name": "Hindalco copper (Silvassa)", "type": "supplier", "region": "West", "address": "Survey 118, Masat industrial estate\nSilvassa 396230, Dadra and Nagar Haveli",
          "lat": 20.27, "lon": 73.02},
-        {"id": "SUP-STAMP", "name": "Chakan stampings", "type": "supplier", "region": "West", "lat": 18.75, "lon": 73.85},
-        {"id": "SUP-JARS", "name": "Rajkot jar works", "type": "supplier", "region": "West", "lat": 22.30, "lon": 70.80},
-        {"id": "SUP-MOULD", "name": "Pune polymer moulders", "type": "supplier", "region": "West", "lat": 18.52, "lon": 73.85},
-        {"id": "SUP-SHENZHEN", "name": "Shenzhen electro-components", "type": "supplier", "region": "China",
+        {"id": "SUP-STAMP", "name": "Chakan stampings", "type": "supplier", "region": "West", "address": "Plot 7, Talegaon road\nChakan 410501, Maharashtra", "lat": 18.75, "lon": 73.85},
+        {"id": "SUP-JARS", "name": "Rajkot jar works", "type": "supplier", "region": "West", "address": "Shed 32, Aji GIDC\nRajkot 360003, Gujarat", "lat": 22.30, "lon": 70.80},
+        {"id": "SUP-MOULD", "name": "Pune polymer moulders", "type": "supplier", "region": "West", "address": "Unit 5, Bhosari MIDC, T block\nPune 411026, Maharashtra", "lat": 18.52, "lon": 73.85},
+        {"id": "SUP-SHENZHEN", "name": "Shenzhen electro-components", "type": "supplier", "region": "China", "address": "Floor 3, Block B, Longhua industrial park\nShenzhen 518109, Guangdong, China",
          "lat": 22.54, "lon": 114.06},
-        {"id": "SUP-PACK", "name": "Bhosari corrugated boxes", "type": "supplier", "region": "West",
+        {"id": "SUP-PACK", "name": "Bhosari corrugated boxes", "type": "supplier", "region": "West", "address": "Plot 44, J block, Bhosari MIDC\nPune 411026, Maharashtra",
          "lat": 18.64, "lon": 73.84},
     ]
     products = [
@@ -312,6 +312,7 @@ def kitchenware() -> dict:
     return {
         "schema_version": "1",
         "settings": {"company_name": "Kaveri Kitchenware Pvt Ltd (fictional)", "currency": "INR",
+                     "company_address": "Kaveri House, 3rd floor, Baner road\nPune 411045, Maharashtra",
                      "planning_start": START.isoformat(), "horizon_days": 182, "bucket": "week",
                      "fx_rates": {"USD": 84.2}, "wacc": 0.13, "holding_spread": 0.09,
                      "default_service_level": 0.95, "default_calendar": "CAL-IN-6D"},

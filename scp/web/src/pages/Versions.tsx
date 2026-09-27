@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { Comparison, Dataset, PlanSummary, VersionMeta } from "../api/types";
-import { Badge, Empty, Panel, Reading, SectionBand, StageHeader, StatTile } from "../components/ui";
+import { Badge, Edits, Empty, Panel, Reading, SectionBand, StageHeader, StatTile } from "../components/ui";
 import { day, money, pct, qty } from "../lib/format";
 import { go, href } from "../lib/router";
 import { isModified, store, useStore } from "../state/store";
@@ -137,9 +137,9 @@ export function Versions() {
             {current && (modified ? <Badge sev="warning">modified</Badge> : <Badge sev="ok">saved</Badge>)}
             {current && current.status !== "active" && <Badge sev="info">{current.status}</Badge>}
             <span className="spacer" />
-            <input className="input" style={{ width: 260 }} placeholder={label} value={name} onChange={(e) => setName(e.target.value)} aria-label="Version name" />
+            <Edits><input className="input" style={{ width: 260 }} placeholder={label} value={name} onChange={(e) => setName(e.target.value)} aria-label="Version name" />
             <button className="btn accent" disabled={busy || unfinished > 0} onClick={saveBase}>Save as base version</button>
-            {current && <button className="btn" disabled={busy || unfinished > 0} onClick={saveAsScenario}>Save as new scenario of {current.id}</button>}
+            {current && <button className="btn" disabled={busy || unfinished > 0} onClick={saveAsScenario}>Save as new scenario of {current.id}</button>}</Edits>
             {canSave && <button className="btn" disabled={busy || unfinished > 0 || !modified} onClick={saveScenario}>Save to {current!.id}</button>}
           </div>
           {unfinished > 0 && <p className="small" style={{ marginBottom: 0 }}><Badge sev="warning">Can't save yet</Badge>{" "}

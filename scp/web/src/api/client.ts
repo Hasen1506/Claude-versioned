@@ -242,6 +242,7 @@ export interface JsonSchemaNode {
   exclusiveMaximum?: number;
   "x-unit"?: string;
   "x-ref"?: string;
+  "x-multiline"?: boolean;
 }
 
 export interface JsonSchema extends JsonSchemaNode {

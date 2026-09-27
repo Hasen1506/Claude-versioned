@@ -3,6 +3,7 @@
  "settings": {
   "company_name": "Kaveri Kitchenware Pvt Ltd (fictional)",
   "currency": "INR",
+  "company_address": "Kaveri House, 3rd floor, Baner road\nPune 411045, Maharashtra",
   "planning_start": "2026-09-28",
   "horizon_days": 182,
   "bucket": "week",
@@ -42,6 +43,7 @@
    "name": "Pune plant (Chakan)",
    "type": "plant",
    "region": "West",
+   "address": "Plot 21, MIDC Chakan Phase II\nPune 410501, Maharashtra",
    "calendar": "CAL-IN-6D",
    "lat": 18.76,
    "lon": 73.86,
@@ -53,6 +55,7 @@
    "name": "Bhiwandi DC (Mumbai)",
    "type": "dc",
    "region": "West",
+   "address": "Gala 4, Building B7, Vashere logistics park\nBhiwandi 421302, Maharashtra",
    "calendar": "CAL-IN-6D",
    "lat": 19.3,
    "lon": 73.06,
@@ -64,6 +67,7 @@
    "name": "Delhi NCR DC",
    "type": "dc",
    "region": "North",
+   "address": "Warehouse 12, Sector 37 industrial area\nGurugram 122001, Haryana",
    "calendar": "CAL-IN-6D",
    "lat": 28.46,
    "lon": 77.03,
@@ -99,6 +103,7 @@
    "name": "Hindalco copper (Silvassa)",
    "type": "supplier",
    "region": "West",
+   "address": "Survey 118, Masat industrial estate\nSilvassa 396230, Dadra and Nagar Haveli",
    "lat": 20.27,
    "lon": 73.02
   },
@@ -107,6 +112,7 @@
    "name": "Chakan stampings",
    "type": "supplier",
    "region": "West",
+   "address": "Plot 7, Talegaon road\nChakan 410501, Maharashtra",
    "lat": 18.75,
    "lon": 73.85
   },
@@ -115,6 +121,7 @@
    "name": "Rajkot jar works",
    "type": "supplier",
    "region": "West",
+   "address": "Shed 32, Aji GIDC\nRajkot 360003, Gujarat",
    "lat": 22.3,
    "lon": 70.8
   },
@@ -123,6 +130,7 @@
    "name": "Pune polymer moulders",
    "type": "supplier",
    "region": "West",
+   "address": "Unit 5, Bhosari MIDC, T block\nPune 411026, Maharashtra",
    "lat": 18.52,
    "lon": 73.85
   },
@@ -131,6 +139,7 @@
    "name": "Shenzhen electro-components",
    "type": "supplier",
    "region": "China",
+   "address": "Floor 3, Block B, Longhua industrial park\nShenzhen 518109, Guangdong, China",
    "lat": 22.54,
    "lon": 114.06
   },
@@ -139,6 +148,7 @@
    "name": "Bhosari corrugated boxes",
    "type": "supplier",
    "region": "West",
+   "address": "Plot 44, J block, Bhosari MIDC\nPune 411026, Maharashtra",
    "lat": 18.64,
    "lon": 73.84
   }

@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { Dataset, Kpi, TowerResult, WorkItem, WorkItemEntry } from "../api/types";
 import {
-  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, type Severity, RunButton,
+  Badge, Edits, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, type Severity, RunButton,
 } from "../components/ui";
 import { codeLabel } from "../lib/situations";
 import { day, money, pct, plural, qty, unitMoney } from "../lib/format";
-import { Msg } from "../lib/names";
+import { Msg, namesOf } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -209,6 +209,7 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
   const [selId, setSelId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const items = res.worklist;
+  const nm = namesOf(ds);
   const live = items.filter((w) => w.status === "open" || w.status === "acknowledged");
   const cats = [...new Set(items.map((w) => w.category))].sort();
   const owners = [...new Set([...items.map((w) => w.owner), ...(ds.tower?.owners ?? []).map((o) => o.owner), ds.tower?.default_owner ?? "Unassigned"])].sort();
@@ -302,14 +303,14 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
                   <td><Badge sev={ITEM_SEV[w.severity]} /></td>
                   <td><a href={href(...(CAT_LINK[w.category] ?? ["plan"]))}>{w.category}</a></td>
                   <td><b>{codeLabel(w.code)}</b> <span className="mono faint small">{w.code}</span><div className="small clamp2"><Msg text={w.message} /></div></td>
-                  <td className="small nowrap">{[w.location, w.product].filter(Boolean).join(" · ") || w.resource}{w.order_id && <div className="faint">{w.order_id}</div>}</td>
-                  <td>
+                  <td className="small">{[w.location && nm.loc(w.location), w.product && nm.prod(w.product)].filter(Boolean).join(" · ") || (w.resource && nm.res(w.resource))}{w.order_id && <div className="faint">{w.order_id}</div>}</td>
+                  <td><Edits>
                     <input className="input" list="tower-owners" aria-label={`Owner of ${w.code} ${w.location ?? ""} ${w.product ?? ""}`.trim()} defaultValue={w.owner}
                       key={`${w.id}-${w.owner}`} style={{ height: 28, minWidth: 230 }}
                       onBlur={(e) => { if (e.target.value.trim() !== w.owner) void patch(w, { owner: e.target.value }); }}
                       onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
                     {w.owner_source !== "manual" && <div className="faint small">by {w.owner_source === "rule" ? "rule" : "default"}</div>}
-                  </td>
+                  </Edits></td>
                   <td>
                     <div className="age-bar" title={w.sla_days !== null ? `${w.age_days} of ${w.sla_days} days` : `${w.age_days} days`}>
                       <span style={{ width: `${Math.min(100, (w.age_days / Math.max(1, w.sla_days ?? w.age_days)) * 100)}%` }} className={w.breached ? "late" : ""} />
@@ -318,11 +319,11 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
                   </td>
                   <td className="nowrap">
                     <span className="small">{w.status}</span>
-                    <div className="row" style={{ gap: 4, marginTop: 3 }}>
+                    <Edits><div className="row" style={{ gap: 4, marginTop: 3 }}>
                       {w.status === "open" && <button className="btn sm" onClick={() => patch(w, { status: "acknowledged" })} aria-label={`Acknowledge ${w.code} ${w.location ?? ""} ${w.product ?? ""}`.trim()}>Seen</button>}
                       {w.status !== "resolved" && <button className="btn sm" onClick={() => patch(w, { status: "resolved" })} aria-label={`Resolve ${w.code} ${w.location ?? ""} ${w.product ?? ""}`.trim()}>Resolve</button>}
                       {w.status === "resolved" && <button className="btn sm ghost" onClick={() => patch(w, { status: "open" })}>Reopen</button>}
-                    </div>
+                    </div></Edits>
                   </td>
                   <td className="small nowrap">{day(w.first_seen)}{w.reopened > 0 && <div className="faint">reopened ×{w.reopened}</div>}</td>
                   <td><button className="btn sm ghost" onClick={() => setSelId(sel?.id === w.id ? null : w.id)} aria-label={`Details of ${w.code}`}>{sel?.id === w.id ? "Close" : "Details"}</button></td>

@@ -6,7 +6,7 @@ import {
 } from "../components/ui";
 import { day, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Prod, namesOf } from "../lib/names";
-import { poDocument, poEmail } from "../lib/podoc";
+import { poAddresses, poDocument, poEmail } from "../lib/podoc";
 import { download } from "../lib/tabular";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
@@ -383,7 +383,10 @@ function PoDocButtons({ po, ds }: { po: PoView; ds: Dataset }) {
   };
   const mail = poEmail(po, ds);
   const mailto = `mailto:${encodeURIComponent(mail.to)}?subject=${encodeURIComponent(mail.subject)}&body=${encodeURIComponent(mail.body)}`;
+  const { missing } = poAddresses(po, ds);
   return <span className="row" style={{ gap: 6 }}>
+    {missing.length > 0 && <span className="faint small" title="Printed on the order once filled in">No address yet for {missing.map((m, i) =>
+      <span key={m.href}>{i ? (i === missing.length - 1 ? " and " : ", ") : ""}<a href={m.href}>{m.what}</a></span>)}</span>}
     <button className="btn sm ghost" onClick={print} title="Opens the order as a page and the print dialog, where it can be saved as PDF">Print or PDF</button>
     <button className="btn sm ghost" onClick={() => download(file, poDocument(po, ds), "text/html")}>Download</button>
     <a className="btn sm ghost" href={mailto} title={mail.to ? `An e-mail to ${mail.to} with the order in its text` : "An e-mail with the order in its text (no e-mail address on the supplier's purchasing data)"}>E-mail</a>

@@ -39,7 +39,7 @@ export function nextMonday(): string {
 export function blankCompany(v: CompanyValues): Dataset {
   return {
     schema_version: "1",
-    settings: { company_name: v.name, currency: v.currency, planning_start: v.start, horizon_days: 182, bucket: "week",
+    settings: { company_name: v.name, company_address: v.address ?? "", company_tax_id: v.taxId ?? "", currency: v.currency, planning_start: v.start, horizon_days: 182, bucket: "week",
       week_start: 0, fx_rates: v.fx, wacc: 0.12, holding_spread: 0.08, default_service_level: 0.95, default_calendar: "CAL-STD",
       default_lot_policy: COVER.find((c) => c.id === v.cover)!.policy, default_lot_periods: COVER.find((c) => c.id === v.cover)!.periods },
     calendars: [{ id: "CAL-STD", name: workweekName(v.workdays), workdays: v.workdays, holidays: [] }],
@@ -54,7 +54,10 @@ function workweekName(days: number[]): string {
   return run && s.length > 1 ? `${DAYS[s[0]]}–${DAYS[s[s.length - 1]]}` : s.map((d) => DAYS[d]).join(", ");
 }
 
-export interface CompanyValues { name: string; currency: string; start: string; workdays: number[]; cover: string; fx: Record<string, number> }
+export interface CompanyValues {
+  name: string; currency: string; start: string; workdays: number[]; cover: string; fx: Record<string, number>;
+  address?: string; taxId?: string;
+}
 
 /** The company's own settings as the form edits them. */
 export function companyValues(ds: Dataset): CompanyValues {
@@ -63,6 +66,7 @@ export function companyValues(ds: Dataset): CompanyValues {
   return {
     name: String(s.company_name ?? ""), currency: String(s.currency ?? "INR"), start: String(s.planning_start),
     workdays: cal?.workdays ?? [0, 1, 2, 3, 4], cover: coverOf(s as never), fx: { ...((s.fx_rates as Record<string, number>) ?? {}) },
+    address: String(s.company_address ?? ""), taxId: String(s.company_tax_id ?? ""),
   };
 }
 
@@ -70,7 +74,7 @@ export function companyValues(ds: Dataset): CompanyValues {
 export function applyCompany(d: Dataset, v: CompanyValues, alsoExact: boolean) {
   const s = d.settings as unknown as Obj;
   const c = COVER.find((x) => x.id === v.cover)!;
-  Object.assign(s, { company_name: v.name, currency: v.currency, planning_start: v.start, fx_rates: v.fx,
+  Object.assign(s, { company_name: v.name, company_address: (v.address ?? "").trim(), company_tax_id: (v.taxId ?? "").trim(), currency: v.currency, planning_start: v.start, fx_rates: v.fx,
     default_lot_policy: c.policy, default_lot_periods: c.periods });
   const cals = (d.calendars ??= []);
   let cal = cals.find((x) => x.id === s.default_calendar);
@@ -133,6 +137,15 @@ export function CompanyForm({ ds, initial, submit, submitLabel, cancel }: {
         <label className="qf"><span className="qf-l">Planning starts</span>
           <input className="input" type="date" value={v.start} onChange={(e) => set({ start: e.target.value })} aria-label="Planning starts" />
           <span className="qf-h">"today" for the plan; move it on each week</span></label>
+      </div>
+      <div className="qrow">
+        <label className="qf" style={{ flex: "2 1 260px" }}><span className="qf-l">Address</span>
+          <textarea className="input" rows={3} value={v.address ?? ""} onChange={(e) => set({ address: e.target.value })} aria-label="Company address"
+            placeholder={"Plot 14, GIDC Estate\nVapi 396195, Gujarat"} />
+          <span className="qf-h">optional: printed on purchase orders as the address to invoice</span></label>
+        <label className="qf"><span className="qf-l">Tax number</span>
+          <input className="input" value={v.taxId ?? ""} onChange={(e) => set({ taxId: e.target.value })} aria-label="Company tax number" placeholder="GSTIN or VAT number" />
+          <span className="qf-h">optional</span></label>
       </div>
       <div className="qf"><span className="qf-l">Working days</span>
         <div className="row wrap" role="group" aria-label="Working days">{DAYS.map((d, i) => <label key={d} className="row small">

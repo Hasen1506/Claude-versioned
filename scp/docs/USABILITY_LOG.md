@@ -140,9 +140,19 @@ Phases: **A** get your own company in · **B** master-data depth · **C** capaci
 | N66 | *Performance*'s breakdown by series named them by ids ("DEALERS-WEST · EMULSION-WHITE-20-L"). | Minor | **Fixed (J)** with Q17. |
 | N67 | On a phone, a list-and-detail page could still be widened by its detail (a table or chart), clipping it on the right. | Minor | **Fixed (J).** The stacked column is never wider than the screen; wide tables scroll in their own box. |
 | N68 | At phone width the save chip read "This bro". | Minor | **Fixed (J).** Its short form is *Local*. |
-| N69 | The purchase order document has no addresses: places have no postal address, and the supplier's contact and terms appear only when its purchasing data is filled in. | Minor | Open: an address on places (SAP gap: business partner addresses). |
-| N70 | A viewer can still type into the stock count and the demand grid (they are not forms); nothing is saved, and the change is refused with a notice. | Minor | Open. |
-| N71 | A result that was never calculated (after reopening the browser) still waits for *Plan everything* or *Calculate*; only out-of-date results recalculate on opening a page. | Minor | Open: calculate a missing result on opening when it is quick. |
+| N69 | The purchase order document has no addresses: places have no postal address, and the supplier's contact and terms appear only when its purchasing data is filled in. | Minor | **Fixed (J+).** A place has a postal address and a tax number, the company an invoice address and a tax number (*Set up → Your company*, and the place's record). The order prints the supplier's address, where to deliver and where to invoice; the e-mail carries them; an order whose addresses are missing says which, with links to fill them in. The kitchenware example has addresses. |
+| N70 | A viewer can still type into the stock count and the demand grid (they are not forms); nothing is saved, and the change is refused with a notice. | Minor | **Fixed (J+).** Every page was walked as a viewer, listing each control still enabled: the stock count, the demand and consensus grids and the others in N74 are now disabled. What stays open to a viewer changes nothing: filters, searches, ticking rows, checking an order's availability. |
+| N71 | A result that was never calculated (after reopening the browser) still waits for *Plan everything* or *Calculate*; only out-of-date results recalculate on opening a page. | Minor | **Fixed (J+).** Actuals, Buying, Money and customer orders calculate a missing result on opening (about half a second on the kitchenware company), unless the data check blocks planning. |
+
+## Found while fixing N69–N71
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N72 | The consensus grid named its series by ids ("KT-15 CUS-ECOM"), in the rows and in the cells' labels. | Minor | **Fixed (J+)** with names. |
+| N73 | The worklist's *Where* column and the setup matrix's machine buttons and title still showed ids. | Minor | **Fixed (J+).** |
+| N74 | Beyond the two grids of N70, a viewer could still change the capacity levelling settings, position a DDMRP buffer, set a worklist item's owner or mark it seen or resolved (the server refused), pick a shop-floor profile or method, type into the setup matrix and save a version (refused too). | Minor | **Fixed (J+).** All shown disabled with the reason on hover. |
+| N75 | Multi-line fields (the new addresses) showed one line: the input style fixed their height. | Minor | **Fixed (J+).** |
+| N76 | Screen-reader labels on the inventory placement and buffer tick-boxes still use ids ("Select PLT-PUNE RM-STAMP"). Sighted users see names. | Minor | Open. |
 
 ## Found in the second reality check (after Phase E)
 
@@ -199,7 +209,44 @@ roll-forward report, and every page at phone width except *Machines & shifts* (n
   setup. Supplier currency.
 - **I: a real place to keep the company** (Q14): **done**, see the status above and N58–N65. Server-side storage,
   sign-in and roles, autosave with conflicts caught and merged, an audit trail with compare and put back.
-- **J: polish sweep** (Q17–Q25, N8, N31, N56, N57, N62): **done**, see the statuses above and N66–N71.
+- **J: polish sweep** (Q17–Q25, N8, N31, N56, N57, N62): **done**, see the statuses above and N66–N71; its open
+  items N69–N71 are **done** too (J+), with N72–N76.
+
+## The next plan (after Phase J)
+
+Every finding of both reality checks is fixed. What is left is breadth against SAP (the gaps below), the small open
+items (N63–N65, N76) and use at a real company's scale. Proposed, in the order recommended:
+
+- **K: third reality check, over weeks, not a day** (first). A company from another industry (food: shelf life,
+  batches, a make-to-stock line and a make-to-order one) built from empty by a planner, with an owner and a viewer
+  signed in at the same time, then run for **six planning weeks**: each week post the actuals, roll, re-plan, buy,
+  promise, schedule. It finds what a one-cycle check cannot: drift between the journal and the plan, a growing
+  history and journal, accuracy and performance over time, how a second planner's edits meet the first's. Findings go
+  here as R1, R2, …, ranked; the phases below are re-ordered by them.
+- **L: platform for real use** (N63–N65 and the users gap). Saves that send only what changed (N64); a side-by-side
+  choice per record when two people changed it (N65); password reset by e-mail and single sign-on (N63); rights by
+  plant or product group; four eyes on master-data changes; change documents with every field's old and new value;
+  a nightly backup and a restore. A measured test at scale (5,000 products × 20 places, two years of history) with
+  the plan's time and memory, and the slow parts fixed. A deployment guide (container, database, mail).
+- **M: order to cash, complete** (SD gaps). Orders with several lines; prices with discounts and quantity scales;
+  payment terms and a credit check; an order confirmation to send the customer (as the purchase order); delivery
+  documents with picking, packing and proof of delivery; invoices; returns and credit notes; quotations.
+- **N: procure to pay, complete** (MM gaps). Invoice verification (three-way match) and what is owed to whom;
+  contracts and scheduling agreements; several confirmation lines per order line; returns to the supplier; a
+  release strategy with more than one level.
+- **O: stock you can trace** (inventory gaps, needed by the food company in K). Batch and serial numbers; first
+  expiring, first out; stock in quality inspection and blocked; reversal of a posting; a physical inventory document
+  with a freeze; stock in transit as its own stock type.
+- **P: planning depth** (the remaining MRP, BOM, capacity and PP/DS gaps). MRP groups; withdrawal from another plant
+  and direct production; a discontinued product with its follow-up; alternative BOMs; overtime as a levelling and
+  optimiser choice; supplier and lane capacity in planning; steps needing a machine and a tool together; dragging
+  orders between days to level.
+- **Q: connected to the rest of the company**. Scheduled imports and an API for an ERP to send orders, stock and
+  movements and to take back purchase and production orders; e-mail sent from the application (orders to suppliers,
+  confirmations to customers, the worklist's reminders).
+
+K goes first because both earlier reality checks found more than the phases before them had; L before the process
+phases because a company that keeps a year of history needs it before it needs invoices.
 
 ## Gaps against SAP recorded for later phases
 

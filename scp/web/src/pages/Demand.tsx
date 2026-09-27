@@ -9,7 +9,7 @@ import {
   Badge, cols, Edits, Empty, Panel, Provenance, Reading, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
 } from "../components/ui";
 import { day, pct, plural, qty } from "../lib/format";
-import { Loc, Prod } from "../lib/names";
+import { Loc, namesOf, Prod } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -409,6 +409,7 @@ function PeriodTable({ s }: { s: ForecastSeries }) {
 function Consensus({ fc, ds }: { fc: ForecastResult; ds: Dataset }) {
   const periods = fc.series[0]?.forecast ?? [];
   const totals = periods.map((_, i) => fc.series.reduce((a, s) => a + s.forecast[i].final, 0));
+  const nm = namesOf(ds);
   const setOverride = (s: ForecastSeries, p: ForecastPoint, raw: string) => {
     const v = raw.trim() === "" ? null : Number(raw);
     if (v !== null && (!Number.isFinite(v) || v < 0)) return;
@@ -422,18 +423,18 @@ function Consensus({ fc, ds }: { fc: ForecastResult; ds: Dataset }) {
     <div className="stack">
       <div className="banner info">Type a quantity into a cell to set a consensus override for that period; clear it to fall back to the
         statistical forecast. The forecast re-runs after each edit. {ds.overrides?.length ?? 0} overrides in the dataset.</div>
-      <Panel flush>
+      <Panel flush><Edits>
         <div className="table-wrap" style={{ maxHeight: "calc(100vh - 290px)" }}>
           <table className="t nowrap">
             <thead><tr><th className="stub">Series</th>{periods.map((p) => <th key={p.start} className="num">{p.label.replace(/^W\d+ /, "")}</th>)}</tr></thead>
             <tbody>
               {fc.series.map((s) => (
                 <tr key={s.key}>
-                  <td className="stub"><a href={href("demand", "series", s.key)}>{s.product}</a> <span className="faint small">{s.location}</span></td>
+                  <td className="stub"><a href={href("demand", "series", s.key)}>{nm.prod(s.product)}</a> <span className="faint small">{nm.loc(s.location)}</span></td>
                   {s.forecast.map((p) => (
                     <td key={p.start} className={`num ${p.override !== null ? "edit" : ""}`} title={`Statistical ${qty(p.statistical * p.event_factor)}${p.override_reason ? ` · ${p.override_reason}` : ""}`}>
                       <input className="cell" defaultValue={p.override !== null ? String(Math.round(p.override)) : ""}
-                        placeholder={qty(p.final)} aria-label={`${s.product} ${s.location} ${day(p.start)}`}
+                        placeholder={qty(p.final)} aria-label={`${nm.prod(s.product)} at ${nm.loc(s.location)}, ${day(p.start)}`}
                         key={`${p.start}-${p.override}`}
                         onBlur={(e) => { if (e.target.value !== (p.override !== null ? String(Math.round(p.override)) : "")) setOverride(s, p, e.target.value); }}
                         onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
@@ -445,7 +446,7 @@ function Consensus({ fc, ds }: { fc: ForecastResult; ds: Dataset }) {
             </tbody>
           </table>
         </div>
-      </Panel>
+      </Edits></Panel>
     </div>
   );
 }

@@ -304,7 +304,7 @@ function Count({ ds, res }: { ds: Dataset; res: ActualsView | null }) {
         {msg && <div className="banner info" style={{ marginTop: 10 }}><Badge sev="ok">Saved</Badge><span>{msg}</span></div>}
         {err && <div className="banner error" style={{ marginTop: 10 }}><Badge sev="error">Not saved</Badge>{err}</div>}
       </Panel>
-      <Panel flush>
+      <Panel flush><Edits>
         <div className="table-wrap" style={{ maxHeight: 620 }}>
           <table className="t">
             <thead><tr><th>Place</th><th>Product</th><th className="num">Stock now</th><th className="num">Counted</th><th>Unit</th></tr></thead>
@@ -326,7 +326,7 @@ function Count({ ds, res }: { ds: Dataset; res: ActualsView | null }) {
             </tbody>
           </table>
         </div>
-      </Panel>
+      </Edits></Panel>
       <Reading formula="count − stock by the journal on that day = the opening balance (nothing recorded yet) or a count adjustment (±)."
         soWhat="Counting keeps the journal, the stock the plan starts from and the shelf in agreement; typing on-hand in the planning policies does not." />
     </div>

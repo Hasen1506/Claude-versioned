@@ -188,6 +188,18 @@ What real use turned up, and what was done about it, is logged in [docs/USABILIT
   forecast over working days as planning does; *Machines & shifts* stacks at phone width; the bottling example has an
   alternative line to move steps onto.
 
+### Follow-up (J+)
+
+- **Addresses on documents.** Places have a postal address and a tax number, the company an invoice address; the
+  purchase order prints the supplier's, the delivery and the invoice address, and says which are missing (N69).
+- **Viewers change nothing.** Every page was walked as a viewer: grids, levelling settings, buffers, the worklist,
+  shop-floor profiles and version saves are disabled, not refused after typing (N70, N74).
+- **Results that are simply missing** (after reopening the browser) are calculated when Actuals, Buying, Money or
+  customer orders open (N71).
+
+The next plan (phases K–Q, starting with a six-week reality check) is at the end of
+[docs/USABILITY_LOG.md](docs/USABILITY_LOG.md#the-next-plan-after-phase-j).
+
 ## What is here (P0–P10)
 
 | Area | Where | What it does |

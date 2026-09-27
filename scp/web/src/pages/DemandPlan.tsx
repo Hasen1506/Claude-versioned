@@ -150,7 +150,7 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
         </Empty></Panel>
       ) : series.length > 0 && (
         <Panel flush>
-          <div className="table-wrap dp-wrap">
+          <Edits><div className="table-wrap dp-wrap">
             <table className="t dp">
               <thead><tr>
                 <th className="dp-stub">Product at place</th>
@@ -185,7 +185,7 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
                 ];
               })}</tbody>
             </table>
-          </div>
+          </div></Edits>
           {series.some((s) => s.after > 0) && <p className="faint small" style={{ padding: "0 14px" }}>Demand after the end of the plan is kept but not planned.</p>}
         </Panel>
       )}
