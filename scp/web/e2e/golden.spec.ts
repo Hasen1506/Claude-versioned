@@ -750,7 +750,7 @@ test("shop floor: steps wait for parts, and the schedule's dates go back into th
   await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "stale");
 });
 
-test("company on the server: sign up → keep it there → saves itself → a colleague saves first → merge both → history → put back; a viewer changes nothing", async ({ page, browser }) => {
+test("company on the server: sign up → keep it there → saves itself → a colleague saves first → merged by itself → both change one order → merge both → history → put back; a viewer changes nothing", async ({ page, browser }) => {
   page.on("dialog", (d) => d.accept());
   await openExample(page, "Kaveri Kitchenware");
   const chip = page.locator(".save-chip .save-long");
@@ -802,24 +802,42 @@ test("company on the server: sign up → keep it there → saves itself → a co
   const ravi = await colleague("ravi@kaveri.in", "Ravi Menon");
   await take(ravi, 20, "RAVI-1");
   await expect(ravi.locator(".save-chip .save-long")).toHaveText(/^Saved \d\d:\d\d$/);
+  // they changed different records: Asha's refused save merges by itself and says so
   await take(page, 30, "ASHA-2");
-  await expect(chip).toHaveText("Not saved · saved by someone else");
-  await expect(page.locator(".save-banner")).toContainText("Ravi Menon saved Kaveri");
-  await page.getByRole("button", { name: "Merge both" }).click();
-  await expect(page.locator(".save-banner")).toContainText("Merged with Ravi Menon");
-  await expect(page.locator(".save-banner")).toContainText("renumbered SO-88223 → SO-88224");
-  await expect(chip).toHaveText(/^Saved/);
+  await expect(page.locator(".save-banner")).toContainText("Ravi Menon saved while you were working; both sets of changes are kept");
+  await expect(page.locator(".save-banner")).toContainText("SO-88223 → SO-88224");
+  await expect(chip).toHaveText(/^Saved \d\d:\d\d$/);
+  await page.locator(".save-banner").getByRole("button", { name: "OK" }).click();
   await ravi.reload();
   await ravi.goto("/#/data/demand");
   await expect(ravi.locator("tr", { hasText: "SO-88224" })).toHaveText(/sales_order30$/);   // both orders are kept
   await expect(ravi.locator("tr", { hasText: "SO-88223" })).toHaveText(/sales_order20$/);
 
+  // both change the same order: that is not merged silently, Asha is asked
+  const change = async (p: Page, q: number) => {
+    await p.goto("/#/promise/orders/SO-88222");
+    await p.getByRole("button", { name: "Change", exact: true }).click();
+    await p.getByLabel("Ordered quantity").fill(String(q));
+    await p.getByRole("button", { name: "Save and promise again" }).click();
+    await expect(p.locator(".banner.info", { hasText: "Saved" })).toContainText(`SO-88222 changed (quantity 10 → ${q}`);
+  };
+  await change(ravi, 12);
+  await expect(ravi.locator(".save-chip .save-long")).toHaveText(/^Saved \d\d:\d\d$/);
+  await change(page, 15);
+  await expect(chip).toHaveText("Not saved · saved by someone else");
+  await expect(page.locator(".save-banner")).toContainText("Ravi Menon saved Kaveri");
+  await page.getByRole("button", { name: "Merge both" }).click();
+  await expect(page.locator(".save-banner")).toContainText("Merged with Ravi Menon");
+  await expect(page.locator(".save-banner")).toContainText("Changed on both sides, their version kept");
+  await expect(chip).toHaveText(/^Saved/);
+  await page.goto("/#/data/demand");
+  await expect(page.locator("tr", { hasText: "SO-88222" })).toHaveText(/sales_order12$/);    // his change stands
+
   // the history says who changed what; put the company back to before the merge
   await page.goto("/#/history");
-  const top = page.locator("ol.history > li").first();
-  await expect(top).toContainText("Asha Rao");
-  await expect(top).toContainText("merged with Ravi Menon's save");
-  const ravis = page.locator("ol.history > li", { hasText: "Ravi Menon" }).filter({ hasText: "saved" }).first();
+  await expect(page.locator("ol.history > li").first()).toContainText("Ravi Menon");     // the clash kept his: nothing new of hers
+  await expect(page.locator("ol.history > li", { hasText: "Asha Rao" }).first()).toContainText("merged with Ravi Menon's save");
+  const ravis = page.locator("ol.history > li", { hasText: "Ravi Menon" }).filter({ hasText: "saved" }).last();   // his first save
   await ravis.getByRole("button", { name: "Which records" }).click();
   await expect(ravis).toContainText("+ SO-88223");
   await ravis.getByRole("button", { name: "Put back to this" }).click();

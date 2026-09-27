@@ -377,3 +377,21 @@ def test_foundation_disabled_by_default_and_noncommercial_refused(monkeypatch):
     assert s.champion is M.NAIVE
     assert all(sc.model is not M.TIMESFM for sc in s.leaderboard)
     foundation.set_provider(None)
+
+
+def test_a_promotion_added_after_the_release_is_flagged_until_the_forecast_is_used_again():
+    # K: marketing entered a mango promotion after Monday's release; Home said "everything is up to date" and the
+    # plan went on without it
+    d = dataset(weekly("P", "A", smooth()))
+    first, _ = release(ds(d), run_forecast(ds(d)))
+    changed = [i for i in validate(first) if i.code == "FORECAST_INPUTS_CHANGED"]
+    assert not changed
+    start = first.settings.planning_start
+    promo = {"id": "E-1", "kind": "promo", "products": ["A"], "start": str(start), "end": str(start + timedelta(days=6)),
+             "lift": 0.4}
+    later = ds({**first.model_dump(mode="json"), "events": [promo]})
+    assert [i.code for i in validate(later) if i.code == "FORECAST_INPUTS_CHANGED"] == ["FORECAST_INPUTS_CHANGED"]
+    again, _ = release(later, run_forecast(later))
+    assert not [i for i in validate(again) if i.code == "FORECAST_INPUTS_CHANGED"]
+    week = lambda x: sum(r.qty for r in x.demand if r.released and r.date < start + timedelta(days=7))  # noqa: E731
+    assert week(again) == pytest.approx(week(first) * 1.4, rel=0.02)

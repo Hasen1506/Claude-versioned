@@ -5,6 +5,8 @@ snapshots. Lookup helpers build id indices lazily; they never mutate the data.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from functools import cached_property
 from typing import Literal
 
@@ -64,6 +66,15 @@ class Dataset(Model):
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
     finance: FinanceSettings = Field(default_factory=FinanceSettings)
     tower: TowerSettings = Field(default_factory=TowerSettings)
+
+    def forecast_inputs(self) -> str:
+        """A fingerprint of what a forecast is made from besides sales history: demand events, new-product rules,
+        consensus overrides and the forecast settings. A release records it; a change after that is not in the plan."""
+        parts = {"events": [e.model_dump(mode="json") for e in self.events],
+                 "npi": [n.model_dump(mode="json") for n in self.npi],
+                 "overrides": [o.model_dump(mode="json") for o in self.overrides],
+                 "settings": self.forecasting.model_dump(mode="json", exclude={"released_inputs"})}
+        return hashlib.sha1(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]
 
     def model_copy(self, *, update: dict | None = None, deep: bool = False) -> Dataset:
         """A copy without the lookup indices below: pydantic copies the instance dict, cached indices included, so

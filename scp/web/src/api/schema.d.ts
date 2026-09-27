@@ -2268,7 +2268,7 @@ export interface components {
             end: string;
             /**
              * Lift
-             * @description Demand change while the event runs: 0.3 = +30 %, −0.2 = −20 %
+             * @description Demand change while the event runs: +30 % or −20 %; empty = the lift measured on past events of the kind
              */
             lift?: number | null;
         };
@@ -2602,7 +2602,7 @@ export interface components {
             qty?: number | null;
             /**
              * Change
-             * @description Relative change to the statistical forecast: 0.1 = +10 %
+             * @description Relative change to the statistical forecast, e.g. +10 %
              */
             change?: number | null;
             /**
@@ -2764,10 +2764,15 @@ export interface components {
             xyz_y: number;
             /**
              * Interval
-             * @description Central prediction interval shown with the forecast (0.8 = P10–P90)
+             * @description Central prediction interval shown with the forecast (80 % = P10–P90)
              * @default 0.8
              */
             interval: number;
+            /**
+             * Released Inputs
+             * @description Written by a forecast release: a fingerprint of the events, new-product rules, overrides and these settings it was made with, so a later change to them is noticed
+             */
+            released_inputs?: string | null;
         };
         /** FoundationStatus */
         FoundationStatus: {

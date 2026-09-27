@@ -553,7 +553,8 @@ def release(ds: Dataset, result: ForecastResult, keys: list[str] | None = None) 
             days = max(1, round(p.share * (p.end - p.start).days))
             new.append(DemandRecord(location=s.location, product=s.product, date=frm, qty=qty,
                                     kind=DemandKind.FORECAST, period_days=days, released=True))
-    out = ds.model_copy(update={"demand": kept + new})
+    out = ds.model_copy(update={"demand": kept + new, "forecasting": ds.forecasting.model_copy(
+        update={"released_inputs": ds.forecast_inputs()})})
     cv: list[CvSuggestion] = []
     for s in chosen:
         lp = ds.location_product_by_key.get((s.location, s.product))

@@ -29,6 +29,7 @@ export function Demand({ route }: { route: string[] }) {
   const fc = run.data;
   const stale = useStore((s) => isStale(s, "forecast"));
   const blocking = useStore((s) => s.validation?.blocking ?? false);
+  const outdated = useStore((s) => (s.validation?.issues ?? []).some((i) => i.code === "FORECAST_INPUTS_CHANGED"));
   const ds = useStore((s) => s.dataset)!;
   const view = ((route[1] as View) || "plan") as View;
   const [released, setReleased] = useState<ReleaseInfo | null>(null);
@@ -72,7 +73,12 @@ export function Demand({ route }: { route: string[] }) {
     ...(fc?.ok && fc.series.length ? [{ id: "series" as View, label: "Series workbench", count: fc.series.length }, { id: "consensus" as View, label: "Consensus grid" }] : []),
     { id: "settings", label: "Forecast settings" },
   ]} />;
-  const body = (children: React.ReactNode) => <div>{head}<div className="content">{tabs}{children}</div></div>;
+  const notYet = outdated && !released && <div className="banner warning" role="status">
+    <span><b>Not in the plan yet:</b> a demand event, new-product rule, override or forecast setting changed after the forecast was
+      last used in the supply plan. Recalculate the forecast and press <i>Use this forecast in the supply plan</i>.</span>
+    {view === "plan" && <><span className="spacer" /><button className="btn sm" onClick={() => go("demand", "overview")}>Open the forecast</button></>}
+  </div>;
+  const body = (children: React.ReactNode) => <div>{head}<div className="content">{tabs}{notYet}{children}</div></div>;
   if (view === "plan") return body(<>{released && <ReleaseBanner info={released} ds={ds} onClose={() => setReleased(null)} />}<DemandPlan ds={ds} /></>);
 
   if (run.error) return body(<div className="banner error"><Badge sev="error">Forecast failed</Badge>{run.error}</div>);

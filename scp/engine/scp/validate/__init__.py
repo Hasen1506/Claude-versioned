@@ -56,6 +56,8 @@ RULES: dict[str, tuple[Severity, str]] = {
     "DEMAND_PAST_DUE": ("warning", "Demand before planning start is treated as backlog"),
     "MTO_WITH_FORECAST": ("warning", "Forecast on an MTO product is ignored"),
     "FORECAST_TWICE": ("warning", "Forecast at a place and at a customer it supplies: both are planned"),
+    "FORECAST_INPUTS_CHANGED": ("warning", "Demand events, overrides or forecast settings changed after the forecast "
+                                           "was last used in the plan"),
     "STOCK_AT_CUSTOMER": ("warning", "Stock maintained at a customer location is not planned"),
     "RESOURCE_UNUSED": ("warning", "Resource not used by any operation"),
     "LOCATION_PRODUCT_DEFAULTED": ("warning", "Planning node without a location-product: defaults used"),
@@ -510,6 +512,12 @@ def _demand(ds: Dataset, c: _Collector) -> None:
                   f"{prod} has a forecast at {loc} and at {', '.join(below)}, which {loc} supplies: the plan makes "
                   "both", f"Right if {loc} also sells {prod} itself (a trade counter). If not, the same sales are "
                   f"counted twice: remove the forecast at {loc}, and give its sales their customer")
+    made = ds.forecasting.released_inputs
+    if made and any(d.released for d in ds.demand) and made != ds.forecast_inputs():
+        c.add("FORECAST_INPUTS_CHANGED", "demand", "*",
+              "Demand events, new-product rules, overrides or forecast settings changed after the forecast was last "
+              "used in the plan: the plan does not have them yet",
+              "Demand → Forecast: recalculate it and press Use this forecast in the supply plan")
 
 
 def _served_customers(ds: Dataset, loc: str, prod: str) -> set[str]:

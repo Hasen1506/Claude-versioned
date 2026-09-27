@@ -85,7 +85,7 @@ def build() -> dict:
         ],
         "demand": [
             *[{"location": "CUST", "product": p, "date": (START + dt.timedelta(weeks=w)).isoformat(), "qty": q,
-               "period_days": 7} for w in range(4) for p, q in (("JAM", 90), ("GIFT", 10))],
+               "period_days": 7, "released": True} for w in range(4) for p, q in (("JAM", 90), ("GIFT", 10))],
             {"location": "DC", "product": "JAM", "date": START.isoformat(), "qty": 15},        # trade counter
             {"location": "PLANT", "product": "LABEL", "date": START.isoformat(), "qty": 500},  # spare labels, MTO
             {"id": "SO-9", "location": "CUST", "product": "JAM-XL", "date": "2026-07-09", "qty": 12, "kind": "sales_order"},
@@ -96,6 +96,7 @@ def build() -> dict:
         "npi": [{"location": "CUST", "product": "GIFT", "like_product": "FRUIT", "launch_date": START.isoformat()},
                 {"location": "CUST", "product": "GIFT", "like_product": "JAM", "scale": 0.1,
                  "launch_date": START.isoformat()}],
+        "forecasting": {"released_inputs": "before-the-overrides"},   # the overrides came after the release
         "overrides": [{"location": "CUST", "product": "JAM", "date": "2026-09-01", "qty": 120},
                       {"location": "DC", "product": "JAM", "date": "2026-07-15", "qty": 30}],
         "confirmations": [{"order": "SO-GONE", "ship_from": "DC", "ship_date": "2026-07-07", "date": "2026-07-08",
@@ -135,6 +136,7 @@ WARNINGS = {
     ("CONFIRMATION_ORPHAN", "confirmation", "#0"), ("DEMAND_OUTSIDE_HORIZON", "demand", "*"),
     ("DEMAND_PAST_DUE", "demand", "*"), ("HISTORY_AFTER_START", "history", "*"),
     ("FORECAST_TWICE", "demand", "DC/JAM"),  # the DC's trade counter sells jam too: both are meant
+    ("FORECAST_INPUTS_CHANGED", "demand", "*"),
     ("LOCATION_PRODUCT_DEFAULTED", "location_product", "PLANT/JAR"), ("MOVEMENT_REF_UNKNOWN", "movement", "GM-2"),
     ("MTO_WITH_FORECAST", "location_product", "PLANT/LABEL"), ("NEGATIVE_STOCK", "location_product", "PLANT/JAR"),
     ("NPI_DUPLICATE", "npi", "CUST/GIFT"), ("NPI_LIKE_WITHOUT_HISTORY", "npi", "CUST/GIFT"),
