@@ -26,6 +26,9 @@ import { blankCompany, CompanyForm, nextMonday, type CompanyValues } from "./pag
 import { Material } from "./pages/Material";
 import { Machines } from "./pages/Machines";
 import { Capacity } from "./pages/Capacity";
+import { Account, CompanyList, SignIn, useAuthConfig } from "./pages/Account";
+import { History } from "./pages/History";
+import { SaveBanner, SaveChip } from "./components/SaveStatus";
 import { freshness, isModified, planFreshness, store, useStore, NO_ISSUES } from "./state/store";
 
 /** Open a dataset and calculate everything, so no page opens empty. */
@@ -67,14 +70,17 @@ export function App() {
       {ds ? <Rail page={page} /> : (
         <nav className="rail" id="main-nav" aria-label="Main">
           <div className="rail-group">
-            <a className={`rail-item ${page !== "proof" ? "active" : ""}`} href="#/">Start</a>
+            <a className={`rail-item ${page !== "proof" && page !== "account" ? "active" : ""}`} href="#/">Start</a>
+            <a className={`rail-item ${page === "account" ? "active" : ""}`} href={href("account")}>Sign in and companies</a>
             <a className={`rail-item ${page === "proof" ? "active" : ""}`} href={href("proof")}>Proof</a>
           </div>
         </nav>
       )}
       <main className="main">
         {item?.tabs && <SectionTabs item={item} page={page} />}
+        <SaveBanner />
         {page === "proof" ? <Proof route={route} />
+          : page === "account" ? <Account />
           : !ds ? <div className="content"><Welcome /></div>
           : page === "data" ? <MasterData route={route} />
           : page === "settings" ? <MasterData route={["data", "settings"]} />
@@ -95,6 +101,7 @@ export function App() {
           : page === "finance" ? <Finance route={route} />
           : page === "tower" ? <Tower route={route} />
           : page === "versions" ? <Versions />
+          : page === "history" ? <History />
           : <div className="content"><Home ds={ds} /></div>}
       </main>
     </div>
@@ -148,6 +155,8 @@ function TopBar({ navOpen, onNav }: { navOpen: boolean; onNav: () => void }) {
   const file = useRef<HTMLInputElement>(null);
   const version = useStore((s) => s.version);
   const modified = useStore(isModified);
+  const company = useStore((s) => s.company);
+  const session = useStore((s) => s.session);
 
   const exportJson = () => {
     if (!ds) return;
@@ -164,8 +173,9 @@ function TopBar({ navOpen, onNav }: { navOpen: boolean; onNav: () => void }) {
       <button className="btn ghost nav-toggle" aria-expanded={navOpen} aria-controls="main-nav" onClick={onNav}>{navOpen ? "✕ Close" : "☰ Menu"}</button>
       <a className="brand" href={ds ? href("home") : "#/"} aria-label="Home"><span className="brand-mark">S</span><span className="brand-name">SCP</span></a>
       {ds && <span className="company" title={ds.settings.company_name}>{ds.settings.company_name}</span>}
-      {ds && <a className="version-chip" href={href("versions")} title="Versions and what-ifs: save, branch and compare">
-        {version ? <>{version.name} · {version.kind}{modified && <span className="mod"> · unsaved changes</span>}</> : <>working copy, not saved</>}</a>}
+      {ds && <SaveChip />}
+      {ds && version && (!company || company.live) && <a className="version-chip" href={href("versions")} title="Versions and what-ifs: save, branch and compare">
+        {version.name} · {version.kind}{modified && <span className="mod"> · unsaved changes</span>}</a>}
       {ds && engineError && <Badge sev="error">Engine not answering</Badge>}
       {ds && !engineError && schemaBad && <a href={href("readiness")}><Badge sev="error">Invalid values</Badge></a>}
       <span className="spacer" />
@@ -180,13 +190,18 @@ function TopBar({ navOpen, onNav }: { navOpen: boolean; onNav: () => void }) {
           <button role="menuitem" data-close onClick={() => file.current?.click()}>Import a dataset file…</button>
           <button role="menuitem" data-close onClick={exportJson}>Export this dataset</button>
           <a role="menuitem" data-close href={href("versions")}>Versions and what-ifs</a>
+          {company && <a role="menuitem" data-close href={href("history")}>History: who changed what</a>}
           <a role="menuitem" data-close href={href("proof")}>Proof: check the numbers</a>
           <hr />
         </>}
+        <a role="menuitem" data-close href={href("account")}>{session ? `${session.user.name}: companies and people` : "Sign in"}</a>
         <div className="menu-row"><span>Theme</span><ThemeSwitch /></div>
         {ds && <>
           <hr />
-          <button role="menuitem" data-close onClick={() => { if (window.confirm("Close this dataset? Export it first if you want to keep it.")) { store.clear(); go(); } }}>Close dataset</button>
+          <button role="menuitem" data-close onClick={() => {
+            const ask = company ? `Close ${company.name} on this browser? It stays on the server.` : "Close this dataset? Export it first if you want to keep it.";
+            if (window.confirm(ask)) { store.clear(); go(); }
+          }}>{company ? "Close the company" : "Close dataset"}</button>
         </>}
       </Menu>
       <input ref={file} type="file" accept="application/json,.json" hidden onChange={async (e) => {
@@ -235,6 +250,7 @@ function Rail({ page }: { page: string }) {
       ))}
       <div className="rail-foot">
         <a className={page === "versions" ? "active" : ""} href={href("versions")}>Versions and what-ifs</a>
+        <a className={page === "account" || page === "history" ? "active" : ""} href={href("account")}>Sign in, companies, people</a>
         <a className={page === "proof" ? "active" : ""} href={href("proof")}>Proof</a>
       </div>
     </nav>
@@ -263,7 +279,13 @@ function SectionTabs({ item, page }: { item: NavItem; page: string }) {
 function Welcome() {
   const [examples, setExamples] = useState<ExampleInfo[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { api.examples().then(setExamples).catch((e) => setErr(String(e))); }, []);
+  const session = useStore((s) => s.session);
+  const config = useAuthConfig();
+  const locked = !!config?.require_signin && !session;
+  useEffect(() => {
+    if (locked || !config) return;
+    api.examples().then(setExamples).catch((e) => setErr(String(e)));
+  }, [locked, config, session]);
   const [starting, setStarting] = useState(false);
   const blank = (v: CompanyValues) => {
     store.load(blankCompany(v));
@@ -280,7 +302,13 @@ function Welcome() {
         <li><b>For managers:</b> Home sums up service, cost and performance on one screen.</li>
         <li><b>For analysts and students:</b> the method and formulas behind every number are one click away.</li>
       </ul>
-      <div className="welcome-grid">
+      {(session || config?.require_signin) && <div className="welcome-grid" style={{ marginBottom: 16 }}>
+        <section className="hcard">
+          <h2 className="q">{session ? `Your companies, ${session.user.name}` : "Sign in to open your company"}</h2>
+          {session ? <CompanyList /> : <SignIn config={config} />}
+        </section>
+      </div>}
+      {!locked && <div className="welcome-grid">
         <section className="hcard">
           <h2 className="q">Try an example</h2>
           <p className="muted">A fictional company, fully set up. It opens planned, so you can look around straight away. Change anything you like.</p>
@@ -304,8 +332,9 @@ function Welcome() {
             initial={{ name: "", currency: "INR", start: nextMonday(), workdays: [0, 1, 2, 3, 4], cover: "week", fx: {} }} />
             : <div><button className="btn" onClick={() => setStarting(true)}>Start with an empty company</button></div>}
           <p className="muted small">Or open a file you exported earlier with <b>Import a file</b>, top right.</p>
+          {!session && <p className="muted small">To work on it with colleagues and keep it safe on the server, <a href={href("account")}>sign in</a>.</p>}
         </section>
-      </div>
+      </div>}
       <p className="welcome-proof">Can you trust the numbers? Eight companies were worked out by hand and checked against the engine
         step by step, and one more flow runs over many generated companies. <a href={href("proof")}>See the proof</a></p>
     </div>

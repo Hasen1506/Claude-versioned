@@ -120,6 +120,19 @@ Phases: **A** get your own company in · **B** master-data depth · **C** capaci
 | N56 | After an action on one page (taking an order), another page's earlier result (Actuals' open orders) stays until it is recalculated; its tab shows it is out of date, but the new order is not in its list yet. | Minor | Open (**J**): recalculate on opening a page whose result is out of date and cheap to rebuild. |
 | N57 | Posting messages give dates as 2026-09-28 while order messages say Mon 5 Oct. | Minor | Open (**J**). |
 
+## Found while building Phase I
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N58 | Two planners taking a customer order at the same time both got the next number (SO-00004), and keeping one save over the other silently dropped the colleague's order. The same holds for purchase orders and goods movements numbered in the browser. | Serious | **Fixed (I).** *Merge both* merges record by record from the save both started from; a record both added under the same number keeps the latest save's and gets the next free number for the other, and the promises and deliveries that point at it follow. *Replace theirs with mine* now says what it undoes. |
+| N59 | Plan versions and the worklist were one pool on the server: anyone reaching it could list and open every version, and two companies with the same name shared one worklist. | Serious | **Fixed (I).** Both are kept per company (`X-Company`), for its members only; the browser's own stay separate. |
+| N60 | A viewer's order check went through to *Take this order*; nothing was saved, but the page moved on as if it had been. | Minor | **Fixed (I).** Every engine call that changes the company is refused before it is sent, with the reason; direct edits are refused with a notice. |
+| N61 | Opening a company, merging or putting back left every result empty until *Plan everything*. | Minor | **Fixed (I).** Opening a company plans it. |
+| N62 | A viewer still sees the buttons that change data (they are refused with a reason, not hidden or disabled). | Minor | Open (**J**). |
+| N63 | No password reset: a forgotten password needs the server's administrator (there is no mail sending), and an owner cannot reset a colleague's. | Minor | Open: needs a mail setup or single sign-on (SAP gap below). |
+| N64 | Each save sends the whole company, as every planning call already does. A company of tens of megabytes saves slowly; saving only what changed would be lighter. | Minor | Open. |
+| N65 | Where both people changed the same record, the merge keeps the latest save's version and lists the record; there is no side-by-side choice per record. | Minor | Open. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution
@@ -144,7 +157,7 @@ on a desktop and at phone width. Phases F–J are the proposal at the end of thi
 | Q11 | The demand upload does not read the columns a sales spreadsheet has: *Customer* is not taken as the place, *Month* is not taken as the date, and "Oct 2026" is "not a date". A monthly forecast needs an ISO date plus a *period_days* column that nothing mentions. | Serious | **Fixed (H).** A demand or history upload reads *Customer*, *Month*, *Units sold*, *Item name* and other sales-sheet columns; a month ("Oct 2026", "2026-10", "10/2026", "Oct-26") or a week ("2026-W41") is a total spread over its days (`period_days`, now on history too), and a sheet with the months across the top becomes one row per month. |
 | Q12 | An empty company never asks its name, currency, planning start or working week (the header says "My Company", Monday to Saturday is imposed), and setup never asks for selling prices or costs. | Serious | **Fixed (H).** *Start with an empty company* asks the company's name, currency, planning start, working days and how much an order covers; *Set up → Your company* changes them and the exchange rates later, and the checklist starts with it. The product list takes selling prices and costs, marks the whole-unit products and shows a bought product's supplier price; the checklist notes sold products without a price. |
 | Q13 | *Enter stock on hand* opens an empty planning-policy table (the side list shows a warning count of 15 next to it). Stock can only be typed once a policy row exists for each product and place. | Serious | **Fixed (F).** *Actuals → Count stock*: every product at every place it is kept (planning policies, production and its parts, purchasing, routes, the journal) with its stock now and a *Counted* column. A place with nothing recorded gets an opening balance, any other a count difference, and on-hand follows the journal; a count after the start counts at the next new week. The checklist's stock step opens it. |
-| Q14 | The working company exists only in this browser's local storage: no sign-in, nothing shared with a colleague, gone if site data is cleared. A real company with a year of history will outgrow the browser's roughly 5 MB, and a failed save is swallowed without a word. | Serious | Open (**I**). Companies stored on the server, with sign-in, autosave and an audit trail. |
+| Q14 | The working company exists only in this browser's local storage: no sign-in, nothing shared with a colleague, gone if site data is cleared. A real company with a year of history will outgrow the browser's roughly 5 MB, and a failed save is swallowed without a word. | Serious | **Fixed (I).** Companies kept on the server (`engine/scp/companies`, `/api/auth/*`, `/api/companies/*`): accounts, members as owner, planner or viewer (invited by e-mail), every change saved a moment later with the top bar saying so, a save on top of an older revision refused with who saved and when, *Merge both* record by record, a history of every save with what changed, compare and put back. Plan versions and the worklist are kept per company. A browser-only company whose save fails now says so (storage full or blocked) and offers the server or a download. |
 | Q15 | A late posting goes nowhere visible. Sales posted after the week was rolled are dated before the new start, so forecast accuracy still reads "0 units sold vs 2,732 forecast" and nothing asks for a re-roll. Home kept saying 98% on time while four places disagreed with the journal; the data check calls that a warning. | Serious | **Fixed (F).** The actuals view says what re-booking the current start would change (stock, orders, accuracy weeks, history, closed orders); *Actuals* shows *Not counted yet · Count them now*, and Home leads with *Is the stock the plan starts from right?* whenever postings are not counted, stock disagrees with the journal or a place would go negative. |
 | Q16 | The buy form takes a price only in the company currency, so the importer's USD pigment has to be converted by hand. | Minor | **Fixed (H).** The buy form takes the price in the supplier's currency and asks for the exchange rate once. |
 | Q17 | Raw ids are still on screen: the data check's problem text ("EMULSION-WHITE-20-L at VAPI-PAINT-PLANT is needed…"), the shop-floor board's rows, legend and busiest-resource tile, *Buying*'s "PO-00001 to PIGMENT-IMPORTER", the firm zone's *From* column (truncated source ids), and the new-order drop-downs, which lead with the id. | Minor | Open (**J**). |
@@ -173,7 +186,8 @@ roll-forward report, and every page at phone width except *Machines & shifts* (n
 - **H: sensible defaults and a second onboarding pass** (Q6–Q8, Q11, Q12, Q16, N40): **done**, see the statuses above and N48–N51. The company's own settings
   come first. Whole units. A weekly default lot size. Batch steps. Monthly demand upload. Prices and costs in
   setup. Supplier currency.
-- **I: a real place to keep the company** (Q14). Server-side storage, sign-in and roles, autosave, an audit trail.
+- **I: a real place to keep the company** (Q14): **done**, see the status above and N58–N65. Server-side storage,
+  sign-in and roles, autosave with conflicts caught and merged, an audit trail with compare and put back.
 - **J: polish sweep** (Q17–Q25, N8, N31).
 
 ## Gaps against SAP recorded for later phases
@@ -211,3 +225,9 @@ roll-forward report, and every page at phone width except *Machines & shifts* (n
   uses, and goods receipts with delivery tolerances (**E**, done). Still missing: invoice verification (three-way
   match) and payment, outline agreements (contracts and scheduling agreements), several confirmation lines per
   order line, quality inspection stock, returns to the supplier, and a release strategy with more than one level.
+- Users and authorisations: accounts, companies with owner, planner and viewer roles, invitations, conflict-safe saves
+  with a merge, and a change log per company (**I**, done). Still missing: authorisation by object (a planner for
+  one plant or product group only), approval steps (four eyes) on master data changes, single sign-on (SAML or
+  OpenID Connect) and password reset by e-mail, locking a record while someone edits it, and change documents with
+  every field's old and new value kept for years (the history keeps the first few per save, and a document per
+  person per ten minutes).

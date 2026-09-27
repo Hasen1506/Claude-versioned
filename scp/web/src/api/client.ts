@@ -2,6 +2,7 @@ import type {
   Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
   PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoLineInput, RequisitionPick, PostAction, CountInput, UsageInput, SalesOrderChange, SalesOrderResponse,
+  AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult,
 } from "./types";
 
 /** Thrown when the engine rejects the dataset shape (HTTP 422). Carries field-level errors. */
@@ -10,6 +11,23 @@ export class SchemaRejected extends Error {
     super(`${errors.length} schema error(s)`);
   }
 }
+
+/** Any other refusal: the engine's plain-words reason, its HTTP status and the whole answer (a save conflict says
+ *  who saved and when). */
+export class ApiError extends Error {
+  constructor(message: string, public status: number, public body: Record<string, unknown>) {
+    super(message);
+  }
+}
+
+/** Who is asking and in which company: the store installs this (sign-in and the open server company). */
+let authOf: () => { token: string | null; company: string | null } = () => ({ token: null, company: null });
+export function setAuth(fn: typeof authOf) { authOf = fn; }
+
+/** Why a change may not be made now (a viewer of the open company), or null: the store installs this, and every
+ *  engine call that changes the company is refused before it is sent. */
+let writeGuard: () => string | null = () => null;
+export function setWriteGuard(fn: typeof writeGuard) { writeGuard = fn; }
 
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
 /** A proof run answers only when it is done; on a small server the generated flow takes minutes. */
@@ -20,23 +38,30 @@ async function call<T>(path: string, init?: RequestInit, timeoutMs?: number): Pr
   const ctrl = timeoutMs ? new AbortController() : null;
   const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : undefined;
   try {
+    const who = authOf();
     const res = await fetch(`${API_ORIGIN}${path}`, {
       ...init,
       signal: ctrl?.signal ?? init?.signal,
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      headers: {
+        "Content-Type": "application/json",
+        ...(who.token ? { Authorization: `Bearer ${who.token}` } : {}),
+        ...(who.company ? { "X-Company": who.company } : {}),
+        ...(init?.headers ?? {}),
+      },
     });
     if (res.status === 422) {
       const body = await res.json();
       throw new SchemaRejected((body.detail ?? []) as SchemaError[]);
     }
     if (!res.ok) {
-      let detail = "";
+      let body: Record<string, unknown> = {};
       try {
-        detail = ((await res.json()) as { detail?: string }).detail ?? "";
+        body = (await res.json()) as Record<string, unknown>;
       } catch {
         /* not JSON */
       }
-      throw new Error(detail || `${path}: HTTP ${res.status}`);
+      const detail = typeof body.detail === "string" ? body.detail : "";
+      throw new ApiError(detail || `${path}: HTTP ${res.status}`, res.status, body);
     }
     return (await res.json()) as T;
   } catch (e) {
@@ -61,6 +86,8 @@ const clean = (ds: Dataset) => planningViewOf(ds).clean;
 const planPost = <T>(path: string, ds: Dataset) => post<T>(path, clean(ds));
 /** POST `{ dataset, ...extra }` and put the set-aside records back into the dataset that comes back. */
 async function write<T extends { dataset: Dataset }>(path: string, dataset: Dataset, extra: Record<string, unknown> = {}): Promise<T> {
+  const refused = writeGuard();
+  if (refused) throw new Error(refused);
   const v = planningViewOf(dataset);
   const out = await call<T>(path, { method: "POST", body: JSON.stringify({ dataset: v.clean, ...extra }) });
   return { ...out, dataset: v.restore(out.dataset) };
@@ -78,6 +105,8 @@ export const api = {
   plan: (ds: Dataset) => planPost<PlanResult>("/api/plan", ds),
   sop: (ds: Dataset) => planPost<SopResult>("/api/sop", ds),
   sopRelease: async (ds: Dataset) => {
+    const refused = writeGuard();
+    if (refused) throw new Error(refused);
     const v = planningViewOf(ds);
     const out = await post<SopReleaseResponse>("/api/sop/release", v.clean);
     return { ...out, dataset: v.restore(out.dataset) };
@@ -133,6 +162,36 @@ export const api = {
   /** Firm planned orders into receipts: `ids`, or everything starting within the firm zone. */
   firm: (dataset: Dataset, ids?: string[], withinDays?: number) =>
     write<FirmResponse>("/api/orders/firm", dataset, { ids: ids ?? null, within_days: withinDays ?? null }),
+  // ---- sign-in and companies kept on the server (Phase I)
+  authConfig: () => call<AuthConfig>("/api/auth/config"),
+  signUp: (email: string, name: string, password: string) =>
+    call<Session>("/api/auth/signup", { method: "POST", body: JSON.stringify({ email, name, password }) }),
+  signIn: (email: string, password: string) =>
+    call<Session>("/api/auth/signin", { method: "POST", body: JSON.stringify({ email, password }) }),
+  signOut: () => call<{ ok: boolean }>("/api/auth/signout", { method: "POST" }),
+  me: () => call<Me>("/api/auth/me"),
+  changePassword: (old: string, next: string) =>
+    call<{ ok: boolean }>("/api/auth/password", { method: "POST", body: JSON.stringify({ old, new: next }) }),
+  companies: () => call<CompanyMeta[]>("/api/companies"),
+  createCompany: (dataset: Dataset, note = "") =>
+    call<CompanyMeta>("/api/companies", { method: "POST", body: JSON.stringify({ dataset, note }) }),
+  company: (id: string) => call<CompanyDoc>(`/api/companies/${encodeURIComponent(id)}`),
+  saveCompany: (id: string, dataset: Dataset, baseRevision: number, note = "") =>
+    call<SaveReport>(`/api/companies/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ dataset, base_revision: baseRevision, note }) }),
+  mergeCompany: (id: string, base: Dataset, dataset: Dataset, baseRevision: number) =>
+    call<MergeResult>(`/api/companies/${encodeURIComponent(id)}/merge`, { method: "POST", body: JSON.stringify({ base, dataset, base_revision: baseRevision }) }),
+  deleteCompany: (id: string) => call<{ ok: boolean }>(`/api/companies/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  companyHistory: (id: string, before?: number) =>
+    call<LogRow[]>(`/api/companies/${encodeURIComponent(id)}/history${before ? `?before=${before}` : ""}`),
+  companyRevision: (id: string, rev: number) => call<Dataset>(`/api/companies/${encodeURIComponent(id)}/revisions/${rev}`),
+  restoreCompany: (id: string, revision: number, baseRevision: number) =>
+    call<SaveReport>(`/api/companies/${encodeURIComponent(id)}/restore`, { method: "POST", body: JSON.stringify({ revision, base_revision: baseRevision }) }),
+  members: (id: string) => call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members`),
+  setMember: (id: string, email: string, role: string) =>
+    call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members`, { method: "POST", body: JSON.stringify({ email, role }) }),
+  removeMember: (id: string, email: string) =>
+    call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members/${encodeURIComponent(email)}`, { method: "DELETE" }),
+
   versions: () => call<VersionMeta[]>("/api/versions"),
   version: (id: string) => call<VersionDoc>(`/api/versions/${encodeURIComponent(id)}`),
   saveBase: (dataset: Dataset, name: string, note = "") =>

@@ -197,7 +197,7 @@ export function Versions() {
   );
 }
 
-function CompareView({ c, currency }: { c: Comparison; currency: string }) {
+export function CompareView({ c, currency }: { c: Comparison; currency: string }) {
   const [open, setOpen] = useState<string | null>(null);
   const rows: [string, (p: PlanSummary) => number, (v: number) => string, boolean][] = [
     ["Total plan cost", (p) => p.total_cost, (v) => money(v, currency), false],

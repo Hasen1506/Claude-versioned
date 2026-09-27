@@ -4,6 +4,261 @@
  */
 
 export interface paths {
+    "/api/auth/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Auth Config */
+        get: operations["auth_config_api_auth_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Auth Signup */
+        post: operations["auth_signup_api_auth_signup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/signin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Auth Signin */
+        post: operations["auth_signin_api_auth_signin_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/signout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Auth Signout */
+        post: operations["auth_signout_api_auth_signout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Auth Me */
+        get: operations["auth_me_api_auth_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Auth Password */
+        post: operations["auth_password_api_auth_password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Companies */
+        get: operations["list_companies_api_companies_get"];
+        put?: never;
+        /**
+         * Create Company
+         * @description Keep a company on the server (e.g. the one in this browser); whoever creates it is its owner.
+         */
+        post: operations["create_company_api_companies_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Open Company */
+        get: operations["open_company_api_companies__cid__get"];
+        /**
+         * Save Company
+         * @description Save the working copy. 409 when someone saved after ``base_revision`` (``revision``, ``updated_by`` and
+         *     ``updated_at`` say who and when).
+         */
+        put: operations["save_company_api_companies__cid__put"];
+        post?: never;
+        /** Delete Company */
+        delete: operations["delete_company_api_companies__cid__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge Company
+         * @description After a refused save: merge the working copy with the saves made since, record by record, and save that.
+         */
+        post: operations["merge_company_api_companies__cid__merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Company History */
+        get: operations["company_history_api_companies__cid__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/revisions/{rev}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Company Revision */
+        get: operations["company_revision_api_companies__cid__revisions__rev__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore Company */
+        post: operations["restore_company_api_companies__cid__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Company Members */
+        get: operations["company_members_api_companies__cid__members_get"];
+        put?: never;
+        /**
+         * Set Company Member
+         * @description Add a member or change their role; an e-mail without an account is invited.
+         */
+        post: operations["set_company_member_api_companies__cid__members_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/members/{email}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Company Member */
+        delete: operations["remove_company_member_api_companies__cid__members__email__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -1092,6 +1347,18 @@ export interface components {
              */
             shortage_qty: number;
         };
+        /** AuthConfig */
+        AuthConfig: {
+            /**
+             * Signup
+             * @enum {string}
+             */
+            signup: "open" | "invite" | "closed";
+            /** Require Signin */
+            require_signin: boolean;
+            /** First Account */
+            first_account: boolean;
+        };
         /** BacktestPoint */
         BacktestPoint: {
             /** Origin */
@@ -1566,6 +1833,33 @@ export interface components {
             changed: number;
             /** Items */
             items: components["schemas"]["ItemChange"][];
+        };
+        /** CompanyDoc */
+        CompanyDoc: {
+            meta: components["schemas"]["CompanyMeta"];
+            /** Dataset */
+            dataset: {
+                [key: string]: unknown;
+            };
+        };
+        /** CompanyMeta */
+        CompanyMeta: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Role */
+            role: string;
+            /** Revision */
+            revision: number;
+            /** Updated At */
+            updated_at: string;
+            /** Updated By */
+            updated_by: string;
+            /** Created At */
+            created_at: string;
+            /** Size */
+            size: number;
         };
         /** CompareRequest */
         CompareRequest: {
@@ -3135,6 +3429,19 @@ export interface components {
             /** Hours */
             hours: number;
         };
+        /** ListChange */
+        ListChange: {
+            /** List */
+            list: string;
+            /** Added */
+            added: number;
+            /** Removed */
+            removed: number;
+            /** Changed */
+            changed: number;
+            /** Names */
+            names: string[];
+        };
         /** Location */
         Location: {
             /** Id */
@@ -3304,6 +3611,25 @@ export interface components {
             /** Detail */
             detail: string;
         };
+        /** LogRow */
+        LogRow: {
+            /** Seq */
+            seq: number;
+            /** Revision */
+            revision: number | null;
+            /** At */
+            at: string;
+            /** User */
+            user: string;
+            /** Action */
+            action: string;
+            /** Summary */
+            summary: string;
+            /** Changes */
+            changes: components["schemas"]["ListChange"][];
+            /** Kept */
+            kept: boolean;
+        };
         /**
          * LotSizePolicy
          * @enum {string}
@@ -3345,6 +3671,72 @@ export interface components {
              * @default 0
              */
             ordering_cost: number;
+        };
+        /** Me */
+        Me: {
+            user: components["schemas"]["User"];
+            /** Companies */
+            companies: components["schemas"]["CompanyMeta"][];
+        };
+        /** Member */
+        Member: {
+            /** User Id */
+            user_id: string | null;
+            /** Email */
+            email: string;
+            /** Name */
+            name: string;
+            /** Role */
+            role: string;
+            /** Since */
+            since: string;
+        };
+        /** MemberChange */
+        MemberChange: {
+            /** Email */
+            email: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "owner" | "planner" | "viewer";
+        };
+        /** MergeCompany */
+        MergeCompany: {
+            /** Base */
+            base: {
+                [key: string]: unknown;
+            };
+            /** Dataset */
+            dataset: {
+                [key: string]: unknown;
+            };
+            /** Base Revision */
+            base_revision: number;
+        };
+        /** MergeReport */
+        MergeReport: {
+            /** Mine */
+            mine: number;
+            /** Theirs */
+            theirs: number;
+            /** Conflicts */
+            conflicts: string[];
+            /** Renumbered */
+            renumbered: string[];
+            /** Summary */
+            summary: string;
+        };
+        /** MergeResult */
+        MergeResult: {
+            meta: components["schemas"]["CompanyMeta"];
+            /** Dataset */
+            dataset: {
+                [key: string]: unknown;
+            };
+            report: components["schemas"]["MergeReport"];
+            /** Merged With */
+            merged_with: string;
         };
         /** ModelInfo */
         ModelInfo: {
@@ -3469,6 +3861,18 @@ export interface components {
                 string,
                 string
             ][][];
+        };
+        /** NewCompany */
+        NewCompany: {
+            /** Dataset */
+            dataset: {
+                [key: string]: unknown;
+            };
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /** NodeBucket */
         NodeBucket: {
@@ -3989,6 +4393,13 @@ export interface components {
             available: number;
             /** Scheduled */
             scheduled: boolean;
+        };
+        /** PasswordChange */
+        PasswordChange: {
+            /** Old */
+            old: string;
+            /** New */
+            new: string;
         };
         /** Peg */
         Peg: {
@@ -5247,6 +5658,13 @@ export interface components {
             /** Orders */
             orders: components["schemas"]["OrderLoad"][];
         };
+        /** RestoreCompany */
+        RestoreCompany: {
+            /** Revision */
+            revision: number;
+            /** Base Revision */
+            base_revision: number;
+        };
         /** RollReport */
         RollReport: {
             /** Ok */
@@ -5453,6 +5871,28 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /** SaveCompany */
+        SaveCompany: {
+            /** Dataset */
+            dataset: {
+                [key: string]: unknown;
+            };
+            /** Base Revision */
+            base_revision: number;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** SaveReport */
+        SaveReport: {
+            meta: components["schemas"]["CompanyMeta"];
+            /** Saved */
+            saved: boolean;
+            /** Summary */
+            summary: string;
         };
         /** ScenarioInfo */
         ScenarioInfo: {
@@ -6183,6 +6623,14 @@ export interface components {
             /** Margin Pct */
             margin_pct: number | null;
         };
+        /** Session */
+        Session: {
+            /** Token */
+            token: string;
+            user: components["schemas"]["User"];
+            /** Expires At */
+            expires_at: string;
+        };
         /**
          * SetAside
          * @description A record left out of planning until it is fixed.
@@ -6352,6 +6800,25 @@ export interface components {
              * @description Only on these weekdays, 0 = Monday (empty = every working day)
              */
             weekdays?: number[] | null;
+        };
+        /** SignIn */
+        SignIn: {
+            /** Email */
+            email: string;
+            /** Password */
+            password: string;
+        };
+        /** SignUp */
+        SignUp: {
+            /** Email */
+            email: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** Password */
+            password: string;
         };
         /** SolverInfo */
         SolverInfo: {
@@ -6952,6 +7419,15 @@ export interface components {
             /** Qty */
             qty: number;
         };
+        /** User */
+        User: {
+            /** Id */
+            id: string;
+            /** Email */
+            email: string;
+            /** Name */
+            name: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -7274,6 +7750,557 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    auth_config_api_auth_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthConfig"];
+                };
+            };
+        };
+    };
+    auth_signup_api_auth_signup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignUp"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_signin_api_auth_signin_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_signout_api_auth_signout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    auth_me_api_auth_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+        };
+    };
+    auth_password_api_auth_password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_companies_api_companies_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyMeta"][];
+                };
+            };
+        };
+    };
+    create_company_api_companies_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewCompany"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_company_api_companies__cid__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyDoc"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_company_api_companies__cid__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveCompany"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SaveReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_company_api_companies__cid__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    merge_company_api_companies__cid__merge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergeCompany"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MergeResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    company_history_api_companies__cid__history_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                before?: number | null;
+            };
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    company_revision_api_companies__cid__revisions__rev__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                rev: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_company_api_companies__cid__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreCompany"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SaveReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    company_members_api_companies__cid__members_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Member"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_company_member_api_companies__cid__members_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Member"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_company_member_api_companies__cid__members__email__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                email: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Member"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_api_health_get: {
         parameters: {
             query?: never;

@@ -42,12 +42,14 @@ def plan_stability(cur: PlanResult, prev: PlanResult, prev_end: dt.date, start: 
     return (m / n if n else None), n, m, rows
 
 
-def _previous_base(ds: Dataset, store: Store | None = None) -> tuple[Dataset | None, str]:
+def _previous_base(ds: Dataset, store: Store | None = None, scope: str | None = None) -> tuple[Dataset | None, str]:
+    """The latest earlier base version of this company: of the server company ``scope`` when one is open, else the
+    browser's own versions with the same company name."""
     store = store or get_store()
     own = sha(canonical(ds))
     start = ds.settings.planning_start.isoformat()
-    cands = [m for m in store.list() if m.kind == "base" and m.company == ds.settings.company_name
-             and m.planning_start <= start and m.sha256 != own]
+    cands = [m for m in store.list(scope or "") if m.kind == "base"
+             and (scope or m.company == ds.settings.company_name) and m.planning_start <= start and m.sha256 != own]
     if not cands:
         return None, ""
     prev = max(cands, key=lambda m: (m.planning_start, m.created_at, m.id))
@@ -55,7 +57,8 @@ def _previous_base(ds: Dataset, store: Store | None = None) -> tuple[Dataset | N
 
 
 def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult | None = None,
-              store: Store | None = None) -> TowerResult:
+              store: Store | None = None, scope: str | None = None) -> TowerResult:
+    """``scope``: the server company the worklist and the previous plan belong to (none: the browser's own)."""
     tracker = tracker or (Tracker(store) if store is not None else get_tracker())
     issues = validate(ds)
     out = TowerResult(ok=True, company=ds.settings.company_name, as_of=ds.settings.planning_start, issues=issues)
@@ -71,7 +74,7 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
     promise = run_promise(ds) if plan.ok else None
     window = ds.settings.planning_start - dt.timedelta(days=ds.tower.kpi_window_days)
     acc = accuracy_report([r for r in ds.accuracy if r.end > window and r.start < ds.settings.planning_start])
-    live, cleared = tracker.sync(ds, collect(ds, plan if plan.ok else None, promise, acc))
+    live, cleared = tracker.sync(ds, collect(ds, plan if plan.ok else None, promise, acc), scope)
     order = {"open": 0, "acknowledged": 1, "resolved": 2}
     out.worklist = sorted(live, key=lambda w: (order.get(w.status, 3), not w.breached, SEV[w.severity], -w.age_days,
                                                w.category, w.key))
@@ -85,7 +88,7 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
     k.adherence()
     if plan.ok:
         k.inventory(plan)
-        prev, label = _previous_base(ds, store)
+        prev, label = _previous_base(ds, store, scope)
         if prev is not None:
             pplan = run_mrp(prev)
             end = prev.settings.planning_start + dt.timedelta(days=prev.settings.horizon_days)

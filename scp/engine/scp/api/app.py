@@ -1,7 +1,8 @@
 """HTTP API. Deliberately thin: parse the dataset (pydantic), call the engine, return typed results.
 
-The server is stateless in P0/P1: the client owns the dataset document and posts it with each
-request. Plan versions and persistence arrive in P7/P8 (see docs/BLUEPRINT.md §10).
+Planning calls are stateless: the client owns the working dataset and posts it with each request. What is kept, a
+company on the server, its plan versions and its worklist, belongs to a company (``X-Company``) and is only for its
+members (see :mod:`scp.api.companies`); without a company, versions and the worklist are the browser's own.
 """
 from __future__ import annotations
 
@@ -45,6 +46,8 @@ from ..validate import RULES, Issue, validate
 from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, plain_errors
 from ..validate.setup import SetupItem, checklist
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
+from ..companies import CompanyError
+from .companies import EditScope, Scope, company_error, gate, router as companies_router
 
 ROOT = Path(__file__).resolve().parents[3]          # scp/
 EXAMPLES = ROOT / "examples"
@@ -54,6 +57,11 @@ app = FastAPI(title="SCP — Supply Chain Planning", version=__version__,
               description="Typed network master data, readiness gate, demand planning, network MRP/DRP.")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "https://hasen1506.github.io"],
                    allow_methods=["*"], allow_headers=["*"])
+
+
+app.middleware("http")(gate)
+app.add_exception_handler(CompanyError, company_error)  # type: ignore[arg-type]
+app.include_router(companies_router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -644,34 +652,34 @@ class CompareRequest(Out):
 
 
 @app.get("/api/versions", response_model=list[VersionMeta])
-def list_versions() -> list[VersionMeta]:
-    return get_store().list()
+def list_versions(sc: Scope) -> list[VersionMeta]:
+    return get_store().list(sc)
 
 
 @app.post("/api/versions", response_model=VersionMeta)
-def save_base(req: SaveBaseRequest) -> VersionMeta:
-    return get_store().save_base(req.dataset, req.name, req.note)
+def save_base(req: SaveBaseRequest, sc: EditScope) -> VersionMeta:
+    return get_store().save_base(req.dataset, req.name, req.note, sc)
 
 
 @app.get("/api/versions/{vid}", response_model=VersionDoc)
-def get_version(vid: str) -> VersionDoc:
-    return get_store().get(vid)
+def get_version(vid: str, sc: Scope) -> VersionDoc:
+    return get_store().get(vid, sc)
 
 
 @app.put("/api/versions/{vid}", response_model=VersionMeta)
-def update_version(vid: str, ds: Dataset) -> VersionMeta:
-    return get_store().update(vid, ds)
+def update_version(vid: str, ds: Dataset, sc: EditScope) -> VersionMeta:
+    return get_store().update(vid, ds, sc)
 
 
 @app.post("/api/versions/{vid}/branch", response_model=VersionMeta)
-def branch_version(vid: str, req: BranchRequest) -> VersionMeta:
-    return get_store().branch(vid, req.name, req.note)
+def branch_version(vid: str, req: BranchRequest, sc: EditScope) -> VersionMeta:
+    return get_store().branch(vid, req.name, req.note, sc)
 
 
 @app.post("/api/tower", response_model=TowerResult)
-def post_tower(ds: Dataset) -> TowerResult:
+def post_tower(ds: Dataset, sc: Scope) -> TowerResult:
     """KPIs, the exception worklist (recorded in the version store: first seen, owner, status) and data quality."""
-    return run_tower(ds)
+    return run_tower(ds, scope=sc or None)
 
 
 class WorkItemUpdate(Out):
@@ -688,29 +696,30 @@ class WorkItemEntry(Out):
 
 
 @app.post("/api/tower/items/{iid}", response_model=WorkItem)
-def update_work_item(iid: str, body: WorkItemUpdate) -> WorkItem:
-    return get_tracker().update(iid, owner=body.owner, status=body.status, note=body.note, sla=body.sla_days)
+def update_work_item(iid: str, body: WorkItemUpdate, sc: EditScope) -> WorkItem:
+    return get_tracker().update(iid, owner=body.owner, status=body.status, note=body.note, sla=body.sla_days,
+                                scope=sc or None)
 
 
 @app.get("/api/tower/items/{iid}/history", response_model=list[WorkItemEntry])
-def work_item_history(iid: str) -> list[WorkItemEntry]:
-    return [WorkItemEntry(at=a, action=b, detail=c) for a, b, c in get_tracker().history(iid)]
+def work_item_history(iid: str, sc: Scope) -> list[WorkItemEntry]:
+    return [WorkItemEntry(at=a, action=b, detail=c) for a, b, c in get_tracker().history(iid, sc or None)]
 
 
 @app.post("/api/versions/{vid}/discard", response_model=VersionMeta)
-def discard_version(vid: str) -> VersionMeta:
-    return get_store().discard(vid)
+def discard_version(vid: str, sc: EditScope) -> VersionMeta:
+    return get_store().discard(vid, sc)
 
 
 @app.post("/api/versions/{vid}/promote", response_model=VersionMeta)
-def promote_version(vid: str, req: PromoteRequest) -> VersionMeta:
-    return get_store().promote(vid, req.name, req.note)
+def promote_version(vid: str, req: PromoteRequest, sc: EditScope) -> VersionMeta:
+    return get_store().promote(vid, req.name, req.note, sc)
 
 
 @app.get("/api/versions/{a}/compare/{b}", response_model=Comparison)
-def compare_versions(a: str, b: str) -> Comparison:
+def compare_versions(a: str, b: str, sc: Scope) -> Comparison:
     st = get_store()
-    return compare(st.dataset(a), st.dataset(b), a, b)
+    return compare(st.dataset(a, sc), st.dataset(b, sc), a, b)
 
 
 @app.post("/api/compare", response_model=Comparison)

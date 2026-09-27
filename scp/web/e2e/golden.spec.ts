@@ -741,3 +741,86 @@ test("shop floor: steps wait for parts, and the schedule's dates go back into th
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "stale");
 });
+
+test("company on the server: sign up → keep it there → saves itself → a colleague saves first → merge both → history → put back; a viewer changes nothing", async ({ page, browser }) => {
+  page.on("dialog", (d) => d.accept());
+  await openExample(page, "Kaveri Kitchenware");
+  const chip = page.locator(".save-chip .save-long");
+  await expect(chip).toHaveText("In this browser only");
+
+  // sign up and keep the company on the server
+  await chip.click();
+  await page.getByRole("tab", { name: "Make an account" }).click();
+  await page.getByLabel("E-mail").fill("asha@kaveri.in");
+  await page.getByLabel("Your name").fill("Asha Rao");
+  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByRole("button", { name: "Make the account" }).click();
+  await page.getByRole("button", { name: "Keep it on the server" }).click();
+  await expect(chip).toHaveText("Saved");
+  await page.getByLabel("Colleague's e-mail").fill("ravi@kaveri.in");
+  await page.getByRole("button", { name: "Add" }).click();
+  await expect(page.locator("tr", { hasText: "ravi@kaveri.in" })).toContainText("invited");
+  await page.getByLabel("Colleague's e-mail").fill("meera@kaveri.in");
+  await page.getByLabel("Their role").selectOption("viewer");
+  await page.getByRole("button", { name: "Add" }).click();
+  await expect(page.locator("tr", { hasText: "meera@kaveri.in" })).toContainText("viewer");
+
+  const take = async (p: Page, q: number, ref: string) => {
+    await p.goto("/#/promise/simulate");
+    await p.getByLabel("Quantity").fill(String(q));
+    await p.getByLabel("Customer's order number").fill(ref);
+    await p.getByRole("button", { name: "Check availability" }).click();
+    await p.getByRole("button", { name: "Take this order" }).click();
+  };
+  const colleague = async (email: string, name: string) => {
+    const p = await (await browser.newContext()).newPage();
+    await p.goto("/#/account");
+    await p.getByRole("tab", { name: "Make an account" }).click();
+    await p.getByLabel("E-mail").fill(email);
+    await p.getByLabel("Your name").fill(name);
+    await p.getByLabel(/^Password/).fill("colleague-1");
+    await p.getByRole("button", { name: "Make the account" }).click();
+    await p.getByRole("button", { name: /Open Kaveri Kitchenware/ }).click();
+    await expect(p.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+    return p;
+  };
+
+  // a change saves itself
+  await take(page, 10, "ASHA-1");
+  await expect(page.locator(".banner.info", { hasText: "Saved" })).toContainText("SO-88222 taken");
+  await expect(chip).toHaveText(/^Saved \d\d:\d\d$/);
+
+  // Ravi, a planner, opens it and takes an order; Asha takes one too before seeing his
+  const ravi = await colleague("ravi@kaveri.in", "Ravi Menon");
+  await take(ravi, 20, "RAVI-1");
+  await expect(ravi.locator(".save-chip .save-long")).toHaveText(/^Saved \d\d:\d\d$/);
+  await take(page, 30, "ASHA-2");
+  await expect(chip).toHaveText("Not saved · saved by someone else");
+  await expect(page.locator(".save-banner")).toContainText("Ravi Menon saved Kaveri");
+  await page.getByRole("button", { name: "Merge both" }).click();
+  await expect(page.locator(".save-banner")).toContainText("Merged with Ravi Menon");
+  await expect(page.locator(".save-banner")).toContainText("renumbered SO-88223 → SO-88224");
+  await expect(chip).toHaveText(/^Saved/);
+  await ravi.reload();
+  await ravi.goto("/#/data/demand");
+  await expect(ravi.locator("tr", { hasText: "SO-88224" })).toHaveText(/sales_order30$/);   // both orders are kept
+  await expect(ravi.locator("tr", { hasText: "SO-88223" })).toHaveText(/sales_order20$/);
+
+  // the history says who changed what; put the company back to before the merge
+  await page.goto("/#/history");
+  const top = page.locator("ol.history > li").first();
+  await expect(top).toContainText("Asha Rao");
+  await expect(top).toContainText("merged with Ravi Menon's save");
+  const ravis = page.locator("ol.history > li", { hasText: "Ravi Menon" }).filter({ hasText: "saved" }).first();
+  await ravis.getByRole("button", { name: "Which records" }).click();
+  await expect(ravis).toContainText("+ SO-88223");
+  await ravis.getByRole("button", { name: "Put back to this" }).click();
+  await expect(page.locator(".banner.ok:not(.save-banner)")).toContainText("Put back to revision");
+  await expect(page.locator("ol.history > li").first()).toContainText("put back");
+
+  // Meera, a viewer, can look but changes nothing
+  const meera = await colleague("meera@kaveri.in", "Meera");
+  await expect(meera.locator(".save-chip .save-long")).toHaveText("View only");
+  await take(meera, 5, "MEERA-1");
+  await expect(meera.getByText(/Nothing was changed: you are a viewer of Kaveri Kitchenware/)).toBeVisible();
+});
