@@ -967,3 +967,47 @@ test("opening another company while one is planning: the first one's results are
     await expect(page.locator("main")).not.toContainText(/Mixer grinder|Electric kettle|Enamelled copper|MG-500|MG-750|KT-15/);
   }
 });
+
+test("a company on the server is planned from the server's copy: calls name the save, a change comes back as what changed, pegging is asked for", async ({ page }) => {
+  page.on("dialog", (d) => d.accept());
+  await openExample(page, "Kaveri Kitchenware");
+  await page.locator(".save-chip .save-long").click();
+  await page.getByRole("tab", { name: "Make an account" }).click();
+  await page.getByLabel("E-mail").fill("ref@kaveri.in");
+  await page.getByLabel("Your name").fill("Rhea Ref");
+  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByRole("button", { name: "Make the account" }).click();
+  await page.getByRole("button", { name: "Keep it on the server" }).click();
+  await expect(page.locator(".save-chip .save-long")).toHaveText("Saved");
+
+  // every planning call names the save instead of carrying the company
+  const sent: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "POST" && /\/api\/(validate|network|forecast|plan|promise|inventory|sop|schedule|purchasing|actuals|finance|tower)(\?|$)/.test(r.url())) sent.push(r.postData() ?? "");
+  });
+  await page.goto("/#/home");
+  await page.getByRole("button", { name: /^Plan everything/ }).first().click();
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 60_000 });
+  expect(sent.length).toBeGreaterThanOrEqual(10);
+  for (const b of sent) {
+    expect(b).toContain('"$ref"');
+    expect(b.length).toBeLessThan(2_000);
+  }
+
+  // the plan comes without its pegging: an order's is asked for when it is opened
+  await page.goto("/#/plan/orders");
+  await page.locator("table.t tbody tr").first().click();
+  await expect(page.locator(".peg-tree")).toContainText("Serves");
+
+  // a change the engine makes (a released forecast) comes back as what changed, and lands in the working copy
+  await page.goto("/#/demand/overview");
+  const answer = page.waitForResponse((r) => r.url().includes("/api/forecast/release"));
+  await page.getByRole("button", { name: "Use this forecast in the supply plan" }).click();
+  const body = await (await answer).json();
+  expect(body.dataset).toBeNull();
+  expect([...Object.keys(body.patch.lists ?? {}), ...Object.keys(body.patch.set ?? {})]).toContain("demand");   // record by record, or the list
+  await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/, { timeout: 15_000 });
+  await page.goto("/#/demand");
+  await expect(page.getByText(/Everything is up to date|out of date/).first()).toBeVisible();
+  await expect(page.locator("main")).toContainText(/units over the next/);
+});

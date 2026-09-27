@@ -1,7 +1,7 @@
 // Home: the page a dataset opens on. It answers the questions people come with (will customers get what
 // they need, what do I do this week, what does it cost, what is off track) from the results "Plan
 // everything" calculates, and links each answer to the page where you act on it.
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Edits } from "../components/ui";
 import { api } from "../api/client";
 import type { Dataset, Kpi, PlannedOrder } from "../api/types";
@@ -416,6 +416,15 @@ function StockAlert({ ds }: { ds: Dataset }) {
   );
 }
 
+/** How long a step has run, once it runs long (a large company's forecast takes minutes): the page is not stuck. */
+function Elapsed({ since }: { since: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const s = Math.floor((now - since) / 1000);
+  if (s < 5) return null;
+  return <>, {s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`} so far</>;
+}
+
 /** One line under the page title: what "Plan everything" is doing, or whether the results are current. */
 function Status() {
   const s = useStore((x) => x);
@@ -427,7 +436,7 @@ function Status() {
     return (
       <div className="status running" role="status">
         <div className="progress" aria-hidden><i style={{ width: `${(p.done / p.of) * 100}%` }} /></div>
-        <span>{p.label}… <span className="faint">step {p.done + 1} of {p.of}</span></span>
+        <span>{p.label}… <span className="faint">step {p.done + 1} of {p.of}<Elapsed since={p.since} /></span></span>
       </div>
     );
   }

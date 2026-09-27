@@ -97,7 +97,7 @@ export interface State {
   canUndo: boolean;
   canRedo: boolean;
   /** "Plan everything" in progress: which step of how many, and what it is doing now. */
-  planning: { done: number; of: number; label: string } | null;
+  planning: { done: number; of: number; label: string; since: number } | null;   // since: when this step began (ms)
 }
 
 /** What "Plan everything" calculates, in order. Every step only reads the dataset; none changes it. */
@@ -802,7 +802,7 @@ export const store = {
       set({ planning: null });
       if (planQueued) { planQueued = false; void store.planAll(); }
     };
-    set({ planning: { done: 0, of, label: "Checking your data" } });
+    set({ planning: { done: 0, of, label: "Checking your data", since: Date.now() } });
     clearTimeout(timer);
     await check();
     if (epoch !== loadEpoch || !state.dataset || state.engineError || state.schemaErrors.length || !state.validation
@@ -812,7 +812,7 @@ export const store = {
     }
     for (const [i, st] of PLAN_STEPS.entries()) {
       if (!state.dataset || epoch !== loadEpoch) break;
-      set({ planning: { done: i + 1, of, label: st.label } });
+      set({ planning: { done: i + 1, of, label: st.label, since: Date.now() } });
       await store.run(st.key);
     }
     done();
@@ -837,7 +837,10 @@ export const store = {
         // a company too large to keep in this browser (persist): open its latest save from the server
         const cr = localStorage.getItem(COMPANY_KEY);
         const c = cr ? (JSON.parse(cr) as OpenCompany) : null;
-        if (c?.live) void api.company(c.id).then((doc) => { if (!state.dataset) store.openCompany(doc); }, () => { /* opened by hand */ });
+        if (c?.live) void api.company(c.id).then((doc) => { if (!state.dataset) store.openCompany(doc); }, (e) => {
+          // deleted, or no longer this person's: forget it (the company list offers the others); offline: open by hand
+          if (e instanceof ApiError && (e.status === 403 || e.status === 404)) { try { localStorage.removeItem(COMPANY_KEY); } catch { /* ignore */ } }
+        });
       }
       if (raw) {
         const ds = JSON.parse(raw) as Dataset;

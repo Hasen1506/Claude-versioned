@@ -19,6 +19,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import os
 import threading
 from collections import OrderedDict
 from contextvars import ContextVar
@@ -37,6 +38,10 @@ from ..validate import validate
 from ..validate.lenient import COLLECTION_TYPES, SetAside, lenient_checked
 
 REF = "$ref"
+#: A company this large (records in all) is planned one at a time on the server (``SCP_LARGE_AT_ONCE``, default 1):
+#: its plan takes gigabytes, and two at once (two planners' unsaved changes) would not fit a machine sized for one.
+LARGE_ROWS = 200_000
+_large = threading.Semaphore(max(1, int(os.environ.get("SCP_LARGE_AT_ONCE", "1") or 1)))
 KEEP = 2      # companies kept read (a large one takes about 1.5 GB): the latest save, and it with unsaved changes
 
 #: who asks and in which company: set for each request by the API's gate
@@ -58,6 +63,10 @@ class Read:
     aside: list[SetAside]
     checked: list[Any] | None
     extras: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def large(self) -> bool:
+        return sum(len(v) for v in self.ds.__dict__.values() if isinstance(v, list)) >= LARGE_ROWS
 
     @property
     def fingerprint(self) -> str:
@@ -265,7 +274,11 @@ def respond(name: str, ds: Dataset, make: Callable[[], BaseModel], *params: Any,
         with _lock:
             hit = r.extras.get(key)
         if hit is None:
-            hit = _body(make(), exclude)
+            if r.large:
+                with _large:                      # a large company's calculations wait for one another
+                    hit = _body(make(), exclude)
+            else:
+                hit = _body(make(), exclude)
             with _lock:
                 r.extras[key] = hit
                 _making.pop((r.key, key), None)
