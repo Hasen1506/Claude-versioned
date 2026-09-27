@@ -1,13 +1,13 @@
 """Stock, open quantities and forecast accuracy from the goods-movement journal (pure functions)."""
 from __future__ import annotations
 
-import math
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from datetime import date, timedelta
 
 from ..model import AccuracyRecord, Dataset, DemandKind, GoodsMovement, LocationType, MovementType
+from ..plan.leadtime import transit_whole_days
 from .result import AccuracyReport, AccuracySeries, AccuracyWeek, OpenOrderRow, StockRow
 
 EPS = 1e-6
@@ -179,7 +179,7 @@ def transit_days(ds: Dataset, origin: str, destination: str, product: str) -> in
         return 0
     for ln in ds.lanes:
         if ln.origin == origin and ln.destination == destination and ln.carries(product):
-            return math.ceil(ln.planning_mode.transit_days - 1e-9)
+            return transit_whole_days(ln.planning_mode.transit_days)
     return 0
 
 

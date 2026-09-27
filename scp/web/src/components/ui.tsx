@@ -198,7 +198,7 @@ export function StaleMark({ what, onRerun, busy }: { what: string; onRerun?: () 
   return (
     <div className="stale-mark" role="status">
       <b>⚠ Out of date</b>
-      <span className="spacer">You changed the data after this {what} was calculated, so these numbers may be wrong.</span>
+      <span className="spacer">The data changed after this {what} was calculated, so these numbers may be wrong.</span>
       {onRerun && <button className="btn sm" onClick={onRerun} disabled={busy}>{busy ? "Calculating…" : "Recalculate now"}</button>}
     </div>
   );

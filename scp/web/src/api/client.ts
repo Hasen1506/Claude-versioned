@@ -178,8 +178,9 @@ export const api = {
   company: (id: string) => call<CompanyDoc>(`/api/companies/${encodeURIComponent(id)}`),
   saveCompany: (id: string, dataset: Dataset, baseRevision: number, note = "") =>
     call<SaveReport>(`/api/companies/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ dataset, base_revision: baseRevision, note }) }),
-  mergeCompany: (id: string, base: Dataset, dataset: Dataset, baseRevision: number) =>
-    call<MergeResult>(`/api/companies/${encodeURIComponent(id)}/merge`, { method: "POST", body: JSON.stringify({ base, dataset, base_revision: baseRevision }) }),
+  mergeCompany: (id: string, base: Dataset, dataset: Dataset, baseRevision: number, cleanOnly = false) =>
+    call<MergeResult>(`/api/companies/${encodeURIComponent(id)}/merge`, { method: "POST",
+      body: JSON.stringify({ base, dataset, base_revision: baseRevision, clean_only: cleanOnly }) }),
   deleteCompany: (id: string) => call<{ ok: boolean }>(`/api/companies/${encodeURIComponent(id)}`, { method: "DELETE" }),
   companyHistory: (id: string, before?: number) =>
     call<LogRow[]>(`/api/companies/${encodeURIComponent(id)}/history${before ? `?before=${before}` : ""}`),

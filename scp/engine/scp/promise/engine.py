@@ -30,6 +30,7 @@ from ..plan import PlanResult
 from ..plan.structure import entering, needs
 from ..plan.leadtime import (
     gr_days, nominal_lead_time_days, resource_calendar, schedule_buy, schedule_make, schedule_transfer,
+    transit_whole_days,
 )
 from ..time.capacity import day_capacity
 from .atp import EPS, AtpSeries
@@ -336,7 +337,8 @@ class Promiser:
             if opt.kind == "transfer":
                 src = opt.upstream[0]
                 ln = self.ds.lane_by_id[opt.source_id]
-                transit = math.ceil(ln.planning_mode.transit_days + gr_days(self.ds.location_product_by_key.get(node)) - 1e-9)
+                transit = (transit_whole_days(ln.planning_mode.transit_days)
+                           + math.ceil(gr_days(self.ds.location_product_by_key.get(node)) - 1e-9))
                 up = self.ctp(src, qty, max(0, need - transit), depth + 1, path)
                 if up is not None:
                     sched = schedule_transfer(self.ds, opt.source_id, prod, start=self.date(up.day))

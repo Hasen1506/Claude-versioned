@@ -361,6 +361,19 @@ function shipFrom(ds: Dataset, customer: string, order: string): string | null {
   return own && own.type !== "customer" && own.type !== "supplier" ? customer : null;
 }
 
+/** The last day an order can leave and still reach the customer on the date asked: the promise's ship date when it
+ *  was saved, else the date asked less the route's transit time (in whole days, as arrivals are counted). */
+function shipBy(ds: Dataset, customer: string, order: string, due: string): string {
+  const c = (ds.confirmations ?? []).filter((x) => x.order === order).map((x) => x.ship_date).sort()[0];
+  if (c) return c;
+  const from = shipFrom(ds, customer, order);
+  const lane = (ds.lanes ?? []).find((l) => l.origin === from && l.destination === customer);
+  const t = Math.max(0, Math.ceil((lane?.modes?.[0]?.transit_days ?? 0) - 0.5 - 1e-9));   // up to half a day: same day
+  const d = new Date(due + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - t);
+  return d.toISOString().slice(0, 10);
+}
+
 function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
   const [postDate, setPostDate] = useState(ds.settings.planning_start);
   const [open, setOpen] = useState<string | null>(null);
@@ -434,18 +447,22 @@ function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
           <div className="table-wrap" style={{ maxHeight: 420 }}>
             <table className="t">
               <thead><tr><th>Order</th><th>Customer</th><th>Product</th><th className="num">Ordered</th><th className="num">Delivered</th>
-                <th className="num">Open</th><th>Requested</th><th /></tr></thead>
+                <th className="num">Open</th><th title="The day it must leave to arrive on the date asked">Ship by</th><th>Arrives by</th><th /></tr></thead>
               <tbody>
-                {sales.map((o) => (
+                {sales.map((o) => {
+                  const by = shipBy(ds, o.location, o.id, o.due_date);
+                  return (
                   <tr key={o.id}>
                     <td><b>{o.id}</b></td><td><Loc id={o.location} /></td><td><Prod id={o.product} /></td><td className="num">{qty(o.ordered)}</td>
                     <td className="num">{o.delivered ? qty(o.delivered) : ""}</td><td className="num">{qty(o.open)}</td>
+                    <td>{day(by)} {o.open > 1e-6 && postDate > by && <Badge sev="warning">late if sent {day(postDate)}</Badge>}</td>
                     <td>{day(o.due_date)} {o.past_due && <Badge sev="warning">past due</Badge>}</td>
                     <td className="nowrap"><Edits><button className="btn sm" onClick={() => act(o.id, "deliver")} disabled={!!busy || o.open <= 1e-6 || !shipFrom(ds, o.location, o.id)}
                       aria-label={`Deliver ${o.id}`} title="Goods issue of the open quantity to the customer, from where it was promised">Deliver</button></Edits>{" "}
                       <a className="btn sm ghost" href={href("promise", "orders", o.id)} aria-label={`Open ${o.id}`} title="Part of it, change or cancel">…</a></td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

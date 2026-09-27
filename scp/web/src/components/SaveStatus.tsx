@@ -122,11 +122,12 @@ export function SaveBanner() {
       <button className="btn sm ghost" onClick={download}>Download mine</button>
     </div>;
   }
-  if (merged) {
+  const news = merged ?? save.merged;
+  if (news) {
     return <div className="banner ok save-banner" role="status">
-      <span>{merged}</span><span className="spacer" />
+      <span>{news}</span><span className="spacer" />
       <a href={href("history")}>History</a>
-      <button className="btn sm ghost" onClick={() => setMerged(null)}>OK</button>
+      <button className="btn sm ghost" onClick={() => { setMerged(null); store.clearMerged(); }}>OK</button>
     </div>;
   }
   if (save.status === "failed") {

@@ -415,9 +415,11 @@ class Companies:
                 raise
             return SaveReport(meta=self._meta(cid, role), saved=True, summary=summary)
 
-    def merge_save(self, user: User, cid: str, base: dict, mine: dict, base_revision: int) -> MergeResult:
+    def merge_save(self, user: User, cid: str, base: dict, mine: dict, base_revision: int,
+                   clean_only: bool = False) -> MergeResult:
         """Save the working copy made from revision ``base_revision`` (whose document is ``base``) merged with the
-        saves made since (see :mod:`scp.companies.merge`)."""
+        saves made since (see :mod:`scp.companies.merge`). ``clean_only``: refuse (409, as a stale save is) when a
+        record was changed on both sides, so nothing is decided for the person without asking."""
         with self.lock:
             self._need(user, cid, *CAN_EDIT)
             r = self.db.execute("SELECT * FROM companies WHERE id = ?", (cid,)).fetchone()
@@ -428,6 +430,12 @@ class Companies:
                                    report=MergeReport(mine=0, theirs=0, conflicts=[], renumbered=[], summary="nothing to merge"))
             theirs = json.loads(r["dataset"])
             merged, report = merge(base, mine, theirs)
+            if clean_only and report.conflicts:
+                raise CompanyError(
+                    f"{who} saved this company at {r['updated_at']} after you opened it and changed "
+                    f"{len(report.conflicts)} of the same records", 409,
+                    {"revision": r["revision"], "updated_by": who, "updated_at": r["updated_at"],
+                     "conflicts": report.conflicts})
             saved = self.save(user, cid, merged, r["revision"], action="merged",
                               note=f"merged with {who}'s save ({report.summary})")
             return MergeResult(meta=saved.meta, dataset=merged, report=report, merged_with=who)

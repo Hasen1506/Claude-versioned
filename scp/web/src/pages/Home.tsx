@@ -408,7 +408,7 @@ function Status() {
       <button className="btn sm" onClick={() => store.planAll()}>Plan everything</button></div>
   );
   if (f === "stale") return (
-    <div className="status warn" role="status">You changed the data after the last calculation, so some answers are out of date.
+    <div className="status warn" role="status">The data changed after the last calculation, so some answers are out of date.
       <button className="btn sm" onClick={() => store.planAll()}>Plan everything again</button></div>
   );
   const at = s.runs.tower.at ?? s.runs.plan.at;

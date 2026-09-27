@@ -3,6 +3,7 @@ unseen, revisions to go back to, an audit trail, and plan versions and the workl
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -317,3 +318,24 @@ def test_two_people_taking_an_order_at_once_both_keep_theirs_after_a_merge():
     assert out["settings"] == {"a": 2, "b": 5}
     assert out["products"] == [{"id": "A", "price": 2}, {"id": "B", "price": 4}, {"id": "D"}]   # C removed here
     assert rep.conflicts == ["products B"] and "1 changed on both sides (theirs kept)" in rep.summary
+
+
+def test_an_autosave_merge_refuses_when_a_record_changed_on_both_sides():
+    asha, ravi = signup("asha@k.in", "Asha"), signup("ravi@k.in", "Ravi")
+    base = example()
+    cid = new_company(asha, base)
+    client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "ravi@k.in", "role": "planner"})
+    theirs, mine = json.loads(json.dumps(base)), json.loads(json.dumps(base))
+    theirs["products"][0]["price"] = 111
+    mine["products"][0]["price"] = 222
+    assert client.put(f"/api/companies/{cid}", headers=h(ravi), json={"dataset": theirs, "base_revision": 1}).status_code == 200
+    body = {"base": base, "dataset": mine, "base_revision": 1, "clean_only": True}
+    r = client.post(f"/api/companies/{cid}/merge", headers=h(asha), json=body)
+    assert r.status_code == 409 and r.json()["revision"] == 2 and r.json()["updated_by"] == "Ravi"
+    assert client.get(f"/api/companies/{cid}", headers=h(asha)).json()["meta"]["revision"] == 2   # nothing saved
+    mine["products"][0]["price"] = theirs["products"][0]["price"]
+    mine["products"][1]["price"] = 333                               # a different record: merged without asking
+    r = client.post(f"/api/companies/{cid}/merge", headers=h(asha), json=body | {"dataset": mine})
+    assert r.status_code == 200 and r.json()["report"]["conflicts"] == []
+    got = client.get(f"/api/companies/{cid}", headers=h(ravi)).json()["dataset"]
+    assert (got["products"][0]["price"], got["products"][1]["price"]) == (111, 333)

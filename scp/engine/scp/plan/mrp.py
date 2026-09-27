@@ -251,7 +251,9 @@ class _Planner:
         rec_on: dict[date, float] = defaultdict(float)
         for s in receipts:
             rec_on[s.date] += s.qty
-        avail = 0.0 if mto else onhand
+        # make to order still uses free stock first: what a full batch left over, or stock made before the product
+        # became make-to-order, would otherwise sit (and, with a shelf life, spoil) while the next order is made new
+        avail = onhand
         eoq_qty = None
         if lp.lot_sizing.policy is LotSizePolicy.EOQ:
             eoq_qty = rates.eoq_qty(self.ds, self.g, node, self._rate(node, st), self.val.unit_value.get(node, 0.0))

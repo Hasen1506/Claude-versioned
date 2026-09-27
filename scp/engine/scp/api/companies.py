@@ -172,6 +172,7 @@ class MergeCompany(Out):
     base: dict[str, Any]          # the save the working copy was made from
     dataset: dict[str, Any]       # the working copy
     base_revision: int
+    clean_only: bool = False      # refuse instead of choosing when a record changed on both sides (autosave)
 
 
 class RestoreCompany(Out):
@@ -210,7 +211,7 @@ def save_company(cid: str, body: SaveCompany, user: Signed) -> SaveReport:
 @router.post("/companies/{cid}/merge", response_model=MergeResult)
 def merge_company(cid: str, body: MergeCompany, user: Signed) -> MergeResult:
     """After a refused save: merge the working copy with the saves made since, record by record, and save that."""
-    return get_companies().merge_save(user, cid, body.base, body.dataset, body.base_revision)
+    return get_companies().merge_save(user, cid, body.base, body.dataset, body.base_revision, body.clean_only)
 
 
 @router.delete("/companies/{cid}")

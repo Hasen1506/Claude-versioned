@@ -66,6 +66,8 @@ export interface SaveState {
   localError: string | null;
   /** A viewer tried to change something (time of the last try, to show the notice). */
   refused: number;
+  /** A colleague's save was merged in on its own (nothing both changed): what the merge did, in plain words. */
+  merged?: string | null;
 }
 
 export interface State {
@@ -267,6 +269,7 @@ async function saveNow(note = ""): Promise<void> {
     } catch (e) {
       if (state.company?.id !== c.id) return;
       if (e instanceof ApiError && e.status === 409 && typeof e.body.revision === "number") {
+        if (await mergeQuietly(c, ds, rev)) return;
         set({ save: { ...state.save, status: "conflict", error: e.message, newer: null,
           conflict: { by: String(e.body.updated_by ?? "someone"), at: String(e.body.updated_at ?? ""), revision: e.body.revision } } });
       } else if (e instanceof ApiError && e.status === 401) {
@@ -285,6 +288,40 @@ async function saveNow(note = ""): Promise<void> {
   if (state.save.status === "saved" && unsaved(state)) scheduleSave(200);
 }
 
+/** A save refused because a colleague saved first: merge the two when no record was changed by both (the server
+ *  refuses otherwise, and the planner chooses), save that, and carry on from it. Edits made while the merge ran are
+ *  merged onto its result the same way. False when it could not merge. */
+async function mergeQuietly(c: OpenCompany, ds: Dataset, rev: number): Promise<boolean> {
+  try {
+    let base = baseDoc ?? await api.companyRevision(c.id, c.revision);
+    let mine = ds, mineRev = rev;
+    let r = await api.mergeCompany(c.id, base, mine, c.revision, true);
+    for (let i = 0; i < 3 && state.company?.id === c.id && state.revision !== mineRev; i++) {
+      base = mine; mine = state.dataset!; mineRev = state.revision;
+      r = await api.mergeCompany(c.id, base, mine, c.revision, true);
+    }
+    if (state.company?.id !== c.id) return true;
+    if (state.revision !== mineRev) return false;
+    const rep = r.report;
+    const note = [`${r.merged_with || "Someone"} saved while you were working; both sets of changes are kept (${rep.summary}).`,
+      rep.renumbered.length ? `Renumbered: ${rep.renumbered.join(", ")}.` : ""].filter(Boolean).join(" ");
+    // undo would bring back a copy without the colleague's changes, and autosave would then undo them on the server
+    past.length = 0;
+    future.length = 0;
+    const merged = r.dataset as unknown as Dataset;
+    setBase(merged);
+    persist(merged);
+    advance(merged);
+    set({ company: { ...state.company, revision: r.meta.revision, savedRevision: state.revision },
+      save: { ...state.save, status: "saved", at: now(), error: null, conflict: null, newer: null, merged: note } });
+    persistCompany();
+    scheduleCheck();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Look for a colleague's newer save of the open company. */
 async function checkNewer() {
   const c = state.company;
@@ -294,6 +331,12 @@ async function checkNewer() {
     if (!m || state.company?.id !== c.id) return;
     if (m.role !== state.company.role) set({ company: { ...state.company, role: m.role } });
     if (m.revision > state.company.revision && !saving) {
+      // a viewer has nothing of their own to lose: show them the latest plan, not the one they opened
+      if (m.role === "viewer") {
+        const doc = await api.company(c.id);
+        if (state.company?.id === c.id && state.company.role === "viewer") store.openCompany(doc);
+        return;
+      }
       const newer = { by: m.updated_by, at: m.updated_at, revision: m.revision };
       // nothing unsaved here: nothing to lose, but say so rather than change the page under the planner's hands
       if (!unsaved(state)) set({ save: { ...state.save, newer } });
@@ -450,6 +493,9 @@ export const store = {
     scheduleCheck();
     setTimeout(() => { void store.planAll(); }, 0);   // no page opens empty
   },
+
+  /** The planner has read what an automatic merge did. */
+  clearMerged() { if (state.save.merged) set({ save: { ...state.save, merged: null } }); },
 
   /** Save now (and wait): before signing out, or when the planner asks. */
   saveNow: (note = "") => saveNow(note),
