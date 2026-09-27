@@ -3738,6 +3738,11 @@ export interface components {
             };
             /** Base Revision */
             base_revision: number;
+            /**
+             * Clean Only
+             * @default false
+             */
+            clean_only: boolean;
         };
         /** MergeReport */
         MergeReport: {

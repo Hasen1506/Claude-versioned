@@ -66,13 +66,21 @@ def stock_rows(ds: Dataset, as_of: date) -> list[StockRow]:
         lp = ds.location_product_by_key.get(n)
         master = lp.on_hand if lp else 0.0
         ms = by_node.get(n, [])
-        bal, neg = 0.0, None
+        # a dip below zero is reported while it lasts, or when it began in the week just closed (a late receipt
+        # can still be posted for it); an older dip the stock came back from has had its say at that week's roll
+        bal, neg, dip = 0.0, None, None
         by_type: dict[str, float] = defaultdict(float)
         for m in ms:
             bal += m.signed
             by_type[m.type.value] += m.signed
-            if bal < -EPS and neg is None:
-                neg = m.date
+            if bal < -EPS:
+                dip = dip or m.date
+            elif dip is not None:
+                if neg is None and dip >= as_of - timedelta(days=7):
+                    neg = dip
+                dip = None
+        if neg is None and dip is not None:
+            neg = dip
         rows.append(StockRow(location=n[0], product=n[1], master_on_hand=master,
                              movement_stock=round(bal, 6) if ms else None,
                              difference=round(max(0.0, bal) - master, 6) if ms else 0.0, movements=len(ms),

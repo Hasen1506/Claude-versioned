@@ -8,6 +8,7 @@ from datetime import date, timedelta
 import pytest
 
 from scp.actuals import accuracy_report, actuals_view, firm_orders, roll_forward, stock
+from scp.actuals.stock import stock_rows
 from scp.model import Dataset, GoodsMovement
 from scp.plan import run_mrp
 from scp.validate import validate
@@ -68,6 +69,21 @@ def test_stock_view_reconciles_and_flags_negative_stock():
     row = next(r for r in v.stock if (r.location, r.product) == ("P", "A"))
     assert row.movement_stock == -4 and row.difference == -10 and row.negative_on == date(2026, 1, 2)
     assert {i.code for i in validate(ds(d))} >= {"STOCK_NOT_SYNCED", "NEGATIVE_STOCK"}
+
+
+def test_an_old_dip_below_zero_the_stock_came_back_from_is_not_reported_again():
+    d = net()
+    d["movements"] = [mv(1, "2026-01-01", "opening", "P", "A", 10),
+                      mv(2, "2026-01-02", "sale", "P", "A", 14, counterparty="K"),
+                      mv(3, "2026-01-05", "receipt", "P", "A", 20)]
+    x = ds(d)
+    at = {r.product: r for r in stock_rows(x, date(2026, 1, 8)) if r.location == "P"}
+    assert at["A"].negative_on == date(2026, 1, 2)                   # it happened in the week just closed
+    at = {r.product: r for r in stock_rows(x, date(2026, 1, 20)) if r.location == "P"}
+    assert at["A"].negative_on is None and at["A"].movement_stock == 16  # weeks later it is history
+    d["movements"].append(mv(4, "2026-01-12", "sale", "P", "A", 30, counterparty="K"))
+    at = {r.product: r for r in stock_rows(ds(d), date(2026, 1, 30)) if r.location == "P"}
+    assert at["A"].negative_on == date(2026, 1, 12)                  # still below zero: always reported
 
 
 # ---- roll-forward -------------------------------------------------------------------------------------

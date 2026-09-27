@@ -16,7 +16,7 @@ class StockRow(Out):
     movements: int
     last_date: dt.date | None
     by_type: dict[str, float]             # signed quantity per movement type
-    negative_on: dt.date | None = None    # first date the running balance went below zero
+    negative_on: dt.date | None = None    # when the balance went below zero: still is, or did in the last week
     opening_from_setup: bool = False      # on-hand typed at setup counts as the opening balance (journalled at the next roll)
 
 
