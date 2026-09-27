@@ -487,7 +487,7 @@ def _demand(ds: Dataset, c: _Collector) -> None:
             past += 1
         elif d.date >= end:
             outside += 1
-        lp = ds.location_product_by_key.get((d.location, d.product))
+        lp = ds.demand_lp((d.location, d.product)) if ds.location_type(d.location) is not None else None
         if lp and lp.strategy is Strategy.MTO and d.kind is DemandKind.FORECAST:
             mto_fc.add((d.location, d.product))
     if past:

@@ -9,6 +9,7 @@ from datetime import date
 import pytest
 
 from scp.plan import run_mrp
+from scp.validate import validate
 from scp.plan.consumption import effective_demand
 from scp.plan.lotsize import apply_modifiers, base_lot, eoq
 from scp.model import DemandRecord, LotSizing, Strategy
@@ -186,6 +187,22 @@ def test_mto_ignores_anonymous_stock_and_forecast():
                    demand("P", "A", "2026-01-19", 99)]
     r = run_mrp(ds(d))
     assert [o.qty for o in orders(r, "A")] == [30]
+
+
+def test_customer_channel_follows_the_strategy_where_the_product_is_kept():
+    """R: make to order set at the plant also holds for the channels it ships to (through a DC without a record of
+    its own): their forecast is not planned, their orders are. A channel's own record still wins."""
+    d = base()
+    d["locations"] += [{"id": "D", "type": "dc"}, {"id": "K", "type": "customer"}]
+    d["lanes"] = [{"id": "PD", "origin": "P", "destination": "D", "modes": [{"transit_days": 1}]},
+                  {"id": "DK", "origin": "D", "destination": "K", "modes": [{"transit_days": 1}]}]
+    lp(d, "P", "A").update(strategy="MTO", on_hand=0)
+    d["demand"] = [demand("K", "A", "2026-01-12", 99), demand("K", "A", "2026-01-19", 30, "sales_order", id="SO1")]
+    r = plan(d)
+    assert [o.qty for o in orders(r, "A") if o.kind == "make"] == [30]
+    assert any(i.code == "MTO_WITH_FORECAST" for i in validate(ds(d)))
+    lp(d, "K", "A")["strategy"] = "MTS"
+    assert sum(o.qty for o in orders(plan(d), "A") if o.kind == "make") == 99  # its forecast is planned again
 
 
 def test_ato_forecast_supply_is_not_convertible():

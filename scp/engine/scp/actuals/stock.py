@@ -7,7 +7,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from datetime import date, timedelta
 
-from ..model import AccuracyRecord, Dataset, DemandKind, GoodsMovement, MovementType
+from ..model import AccuracyRecord, Dataset, DemandKind, GoodsMovement, LocationType, MovementType
 from .result import AccuracyReport, AccuracySeries, AccuracyWeek, OpenOrderRow, StockRow
 
 EPS = 1e-6
@@ -157,10 +157,19 @@ def demand_keys(ds: Dataset) -> set[Node]:
     return {(d.location, d.product) for d in ds.demand} | {(h.location, h.product) for h in ds.history}
 
 
-def sale_key(m: GoodsMovement, keys: set[Node]) -> Node:
-    """Where a sale counts as demand: the customer if demand is planned there, else the shipping location."""
+def sale_key(ds: Dataset, m: GoodsMovement, keys: set[Node]) -> Node:
+    """Where a sale counts as demand: the customer if demand is planned there; a sale without a customer from a place
+    that plans no demand of its own and ships the product to one channel only, that channel (a dispatch register
+    often has no customer column); else the shipping location."""
     if m.counterparty and (m.counterparty, m.product) in keys:
         return (m.counterparty, m.product)
+    if not m.counterparty and (m.location, m.product) not in ds.demand_nodes:
+        channels = {ln.destination for ln in ds.lanes if ln.origin == m.location
+                    and (not ln.products or m.product in ln.products)
+                    and ds.location_type(ln.destination) is LocationType.CUSTOMER
+                    and (ln.destination, m.product) in keys}
+        if len(channels) == 1:
+            return (channels.pop(), m.product)
     return (m.location, m.product)
 
 
@@ -183,7 +192,7 @@ def arrival(ds: Dataset, ship_from: str, to: str, product: str, goods_issue: dat
 def sale_point(ds: Dataset, m: GoodsMovement, keys: set[Node]) -> tuple[Node, date]:
     """Where and when a sale counts as demand: at the customer on the day it arrives, if demand is planned
     there; else at the shipping location on the goods-issue date."""
-    node = sale_key(m, keys)
+    node = sale_key(ds, m, keys)
     return node, arrival(ds, m.location, node[0], m.product, m.date)
 
 

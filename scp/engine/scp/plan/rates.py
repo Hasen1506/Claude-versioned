@@ -58,7 +58,7 @@ def independent_demand(ds: Dataset) -> dict[Node, list[tuple[IndependentReq, int
         recs[(d.location, d.product)].append((d.id or f"#{i}", d))
     out: dict[Node, list[tuple[IndependentReq, int]]] = {}
     for node, rs in recs.items():
-        lp = _lp(ds, node)
+        lp = ds.demand_lp(node)
         period = {rid: (r.period_days or 1) for rid, r in rs}
         out[node] = [(r, period[r.source_ref] if r.kind == "forecast" else 1)
                      for r in effective_demand(rs, lp.strategy, lp.consumption_backward_days,

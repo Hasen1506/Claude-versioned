@@ -146,6 +146,22 @@ def test_accuracy_report_over_weeks():
     assert r.accuracy == pytest.approx(1 - 30 / 150)
 
 
+def test_a_sale_without_its_customer_counts_for_the_one_channel_the_place_serves():
+    """R: a dispatch register without a customer column. The plant plans no demand of its own and ships A to one
+    channel only, so the sale is K's: its accuracy and history, not a new series at the plant. With a second channel
+    the sale stays the plant's (which channel is unknown)."""
+    d = net()
+    d["movements"] = [mv(1, "2026-01-06", "sale", "P", "A", 60)]
+    a, _ = roll_forward(ds(d), date(2026, 1, 12))
+    assert {(x.location, x.actual) for x in a.accuracy} == {("K", 60)}
+    assert {h.location for h in a.history} == {"K"}
+    d["locations"].append({"id": "K2", "type": "customer"})
+    d["lanes"].append({"id": "PK2", "origin": "P", "destination": "K2", "modes": [{"transit_days": 1}]})
+    d["demand"].append(demand("K2", "A", "2026-01-05", 10, period_days=7))
+    b, _ = roll_forward(ds(d), date(2026, 1, 12))
+    assert {h.location for h in b.history} == {"P"}
+
+
 def test_cannot_roll_back():
     new, rep = roll_forward(ds(net()), date(2026, 1, 1))
     assert not rep.ok and new.settings.planning_start == date(2026, 1, 5)

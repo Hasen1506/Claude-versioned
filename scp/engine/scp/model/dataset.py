@@ -133,6 +133,11 @@ class Dataset(Model):
             out.setdefault((lp.location, lp.product), lp)
         return out
 
+    @cached_property
+    def demand_nodes(self) -> set[tuple[str, str]]:
+        """Every (location, product) with a demand record: forecast or customer order."""
+        return {(d.location, d.product) for d in self.demand}
+
     def lot_sizing(self, lp: LocationProduct) -> LotSizing:
         """The lot-sizing rule planning uses at a node: its own, or the company default where it leaves it empty."""
         ls = lp.lot_sizing
@@ -147,6 +152,30 @@ class Dataset(Model):
         lp = self.location_product_by_key.get(node) or LocationProduct(location=node[0], product=node[1])
         if lp.lot_sizing.policy is None:
             lp = lp.model_copy(update={"lot_sizing": self.lot_sizing(lp)})
+        return lp
+
+    def demand_lp(self, node: tuple[str, str]) -> LocationProduct:
+        """The planning policy whose strategy decides how demand at a node is planned (forecast, orders, or orders
+        consuming the forecast). A customer channel without a record of its own follows the nearest place upstream that
+        has one: the strategy is set where the product is kept (make to order at the plant), not on every channel."""
+        lp = self.planning_lp(node)
+        if node in self.location_product_by_key or self.location_type(node[0]) is not LocationType.CUSTOMER:
+            return lp
+        seen, level = {node[0]}, [node[0]]
+        while level:
+            nxt: list[str] = []
+            for dest in level:
+                for ln in self.lanes:
+                    if ln.destination != dest or ln.origin in seen or (ln.products and node[1] not in ln.products):
+                        continue
+                    up = self.location_product_by_key.get((ln.origin, node[1]))
+                    if up is not None:
+                        return lp.model_copy(update={"strategy": up.strategy,
+                                                     "consumption_backward_days": up.consumption_backward_days,
+                                                     "consumption_forward_days": up.consumption_forward_days})
+                    seen.add(ln.origin)
+                    nxt.append(ln.origin)
+            level = nxt
         return lp
 
     @cached_property
