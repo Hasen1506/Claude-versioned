@@ -63,6 +63,9 @@ class PlannedOrder(Out):
     # capacity-constrained planning: workdays moved to fit (negative = earlier) and steps on an alternative machine
     capacity_shift_days: int = 0
     step_resources: dict[int, str] = {}
+    # buy: open purchase order lines for the same product and place that arrive after this is needed (expediting one
+    # of them may do instead of ordering again)
+    open_later: list[str] = []
 
 
 class ScheduledReceiptOut(Out):

@@ -69,6 +69,8 @@ export function columnsFor(schema: JsonSchema, ckey: CollectionKey, kind: Import
     }
   };
   walk(def, "", def.required ?? [], 0);
+  // a goods movement is numbered by the journal: dispatch registers and stock reports have no id column (Q4)
+  if (ckey === "movements") for (const c of out) if (c.path === "id") { c.required = false; c.help = "Leave out: new movements are numbered GM-00001, GM-00002, …"; }
   // required first, keeping the schema's order otherwise
   return [...out.filter((c) => c.required), ...out.filter((c) => !c.required)];
 }
@@ -285,7 +287,9 @@ export function applyRows(d: Dataset, ckey: CollectionKey, kind: ImportKind, row
     const def = byKey[ckey];
     if (replace) coll[ckey] = [];
     const list = (coll[ckey] ??= []);
+    let gm = ckey === "movements" ? Math.max(0, ...list.map((m) => Number(/^GM-(\d+)$/.exec(String(m.id ?? ""))?.[1] ?? 0))) : 0;
     for (const r of good) {
+      if (ckey === "movements" && !r.record!.id) r.record!.id = `GM-${String(++gm).padStart(5, "0")}`;
       const at = r.key ? list.findIndex((o, i) => def.keyOf(o, i) === r.key) : -1;
       if (at >= 0) list[at] = deepMerge(list[at], r.record!);
       else list.push(r.record!);

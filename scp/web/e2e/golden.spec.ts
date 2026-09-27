@@ -386,6 +386,55 @@ test("execution: journal → stock in sync → ship → roll forward → accurac
   await expect(page.locator("td", { hasText: /^PRD-\d{5}$/ }).first()).toBeVisible();
 });
 
+test("posting: count stock → firm → ship and receive a transfer → confirm production with its parts → a late posting is offered", async ({ page }) => {
+  await openExample(page, "Kaveri Kitchenware");
+  const posted = page.locator(".banner.info", { hasText: "Posted" });
+
+  // count: the difference is posted, the plan starts from the count
+  await page.goto("/#/execution/count");
+  const cell = page.locator('input[aria-label^="Counted"]').first();
+  const was = Number((await cell.getAttribute("placeholder"))!.replace(/,/g, ""));
+  await cell.fill(String(was + 7));
+  await page.getByRole("button", { name: "Save 1 count" }).click();
+  await expect(page.locator(".banner", { hasText: "Saved" })).toContainText(/1 count as of/);
+
+  // firm one production order and one transfer
+  await page.goto("/#/execution/orders");
+  await page.getByRole("button", { name: /^(Recalculate the supply plan|Calculate the supply plan)$/ }).click();
+  await page.getByRole("button", { name: "Select none" }).click();
+  await page.locator("tr.clickable", { hasText: "production order" }).first().locator("input").check();
+  await page.locator("tr.clickable", { hasText: "stock transfer" }).first().locator("input").check();
+  await page.getByRole("button", { name: "Make 2 orders firm" }).click();
+  await expect(page.getByText(/2 planned orders firmed/)).toBeVisible();
+
+  // the transfer ships (in transit), then arrives
+  const sto = (await page.locator("td b", { hasText: /^STO-\d{5}$/ }).first().innerText()).trim();
+  await page.getByRole("button", { name: `Ship ${sto}`, exact: true }).click();
+  await expect(posted).toContainText("now in transit");
+  await page.getByRole("button", { name: `Receive ${sto}`, exact: true }).click();
+  await expect(posted).toContainText("(complete)");
+  await expect(page.getByRole("button", { name: `Ship ${sto}`, exact: true })).toBeDisabled();
+
+  // the production order is confirmed a day before the start: its parts are issued, and it is a late posting
+  const start = await page.locator("#post-date").inputValue();
+  const d = new Date(start + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() - 1);
+  await page.locator("#post-date").fill(d.toISOString().slice(0, 10));
+  const prd = (await page.locator("td b", { hasText: /^PRD-\d{5}$/ }).first().innerText()).trim();
+  await page.getByRole("button", { name: `Post part of ${prd}` }).click();
+  await expect(page.getByText("Parts issued with it")).toBeVisible();
+  await page.locator("tr.sub").getByRole("button", { name: /^Confirm/ }).click();
+  await expect(posted).toContainText(/parts? issued in proportion/);
+  await page.goto("/#/execution/journal");
+  await expect(page.locator("td", { hasText: prd }).first()).toBeVisible();
+  await expect(page.locator("tr", { hasText: prd }).filter({ hasText: "issue" }).first()).toBeVisible();
+
+  await page.goto("/#/execution/stock");
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
+  await expect(page.getByText("Not counted yet")).toBeVisible();
+  await page.getByRole("button", { name: "Count them now" }).click();
+  await expect(page.getByText("Not counted yet")).toHaveCount(0);
+});
+
 test("buying: requisitions → purchase order → approve → send → confirm late and short → plan warns → receive part → block a supplier → undo", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/buying");
@@ -521,7 +570,7 @@ test("phone: the menu opens the pages, each page answers first, nothing scrolls 
   await page.locator("#main-nav").getByRole("link", { name: "Orders", exact: true }).click();
   await expect(page.locator("#main-nav")).toBeHidden();                 // picking a page closes the menu
   await expect(page.locator(".stage-head .answer")).toContainText("customer orders can ship in full");
-  for (const hash of ["#/", "#/plan", "#/promise", "#/finance", "#/tower", "#/data", "#/capacity", "#/schedule/orders", "#/schedule/methods", "#/buying", "#/buying/orders", "#/buying/suppliers"]) {
+  for (const hash of ["#/", "#/plan", "#/promise", "#/finance", "#/tower", "#/data", "#/capacity", "#/schedule/orders", "#/schedule/methods", "#/buying", "#/buying/orders", "#/buying/suppliers", "#/execution/count", "#/execution/orders"]) {
     await page.goto(`/${hash}`);
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => document.documentElement.scrollWidth), hash).toBeLessThanOrEqual(390);

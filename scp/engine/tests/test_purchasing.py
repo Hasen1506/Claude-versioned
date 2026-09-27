@@ -273,17 +273,24 @@ def test_purchasing_api_round_trip():
 
 
 def test_firming_a_purchase_gives_it_an_order_document():
+    """Firming goes through Buying's order creation: one order per supplier and place, the approval limit applies to
+    the whole order (Q9: one road to a purchase order)."""
     from scp.actuals import firm_orders
     d = _buying()
     d["purchasing"] = {"approval_limit": 500}
     dset = ds(d)
-    new, rep = firm_orders(dset, run_mrp(dset), within_days=30)
+    plan = run_mrp(dset)
+    new, rep = firm_orders(dset, plan, within_days=30)
     buys = [f for f in rep.firmed if f.kind == "purchase"]
-    assert buys and {h.id for h in new.purchase_orders} == {f.receipt_id for f in buys}
+    lines = {r.id: r for r in new.receipts}
+    assert buys and {lines[f.receipt_id].po for f in buys} == {h.id for h in new.purchase_orders} == set(rep.purchase_orders)
+    # the same lines as Buying would create from the same requisitions
+    _, made = create_purchase_orders(dset, plan, [{"id": f.planned_id} for f in buys])
+    assert {rid: lid for rid, lid in made.lines.items()} == {f.planned_id: f.receipt_id for f in buys}
     b = next(f for f in buys if f.product == "B")
-    assert new.purchase_order_by_id[b.receipt_id].approved is False           # 80 × 10 = 800 > 500
-    line = next(r for r in new.receipts if r.id == b.receipt_id)
-    assert line.po == b.receipt_id and line.price == pytest.approx(10)
+    po = lines[b.receipt_id].po
+    assert new.purchase_order_by_id[po].approved is False and any("approval limit" in n for n in rep.notes)
+    assert lines[b.receipt_id].price == pytest.approx(10)
     views = {p.id: p for p in purchase_orders(new)}
-    assert views[b.receipt_id].header and views[b.receipt_id].status == "awaiting approval"
+    assert views[po].header and views[po].status == "awaiting approval"
     assert validate(new) == []

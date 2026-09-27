@@ -556,6 +556,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/actuals/post": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Posting
+         * @description Post what happened: ship a transfer, receive an order (with its parts issued), or count stock.
+         */
+        post: operations["post_posting_api_actuals_post_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/versions": {
         parameters: {
             query?: never;
@@ -909,6 +929,7 @@ export interface components {
             movements: number;
             /** Unmatched */
             unmatched: string[];
+            unbooked: components["schemas"]["Unbooked"] | null;
         };
         /**
          * Allocation
@@ -1617,6 +1638,15 @@ export interface components {
             /** Difference */
             difference: number;
         };
+        /** CountInput */
+        CountInput: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+        };
         /** CreatePoRequest */
         CreatePoRequest: {
             dataset: components["schemas"]["Dataset"];
@@ -2090,6 +2120,16 @@ export interface components {
             skipped: {
                 [key: string]: string;
             };
+            /**
+             * Purchase Orders
+             * @default []
+             */
+            purchase_orders: string[];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
         };
         /** FirmRequest */
         FirmRequest: {
@@ -4099,6 +4139,11 @@ export interface components {
             step_resources: {
                 [key: string]: string;
             };
+            /**
+             * Open Later
+             * @default []
+             */
+            open_later: string[];
         };
         /** PoActionRequest */
         PoActionRequest: {
@@ -4243,6 +4288,35 @@ export interface components {
             saving_pct: number;
             /** Unit Value */
             unit_value: number;
+        };
+        /** PostRequest */
+        PostRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "ship" | "receive" | "count";
+            /** Order */
+            order?: string | null;
+            /** Qty */
+            qty?: number | null;
+            /** Date */
+            date?: string | null;
+            /**
+             * Final
+             * @default false
+             */
+            final: boolean;
+            /** Usage */
+            usage?: components["schemas"]["UsageInput"][] | null;
+            /** Counts */
+            counts?: components["schemas"]["CountInput"][] | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /**
          * PriceScale
@@ -4896,6 +4970,11 @@ export interface components {
             late: boolean;
             /** Choices */
             choices: components["schemas"]["SourceChoice"][];
+            /**
+             * Open Later
+             * @default []
+             */
+            open_later: string[];
         };
         /** RequisitionPick */
         RequisitionPick: {
@@ -6407,6 +6486,11 @@ export interface components {
             };
             /** Negative On */
             negative_on: string | null;
+            /**
+             * Opening From Setup
+             * @default false
+             */
+            opening_from_setup: boolean;
         };
         /**
          * StockTarget
@@ -6671,6 +6755,27 @@ export interface components {
          * @enum {string}
          */
         TransportMode: "truck_ftl" | "truck_ltl" | "rail" | "sea" | "air" | "courier" | "pipeline";
+        /**
+         * Unbooked
+         * @description Postings dated before the planning start that the starting position does not reflect yet (a late posting, or
+         *     one dated in a week already rolled): what moving the plan to the same start again would change.
+         */
+        Unbooked: {
+            /** Needed */
+            needed: boolean;
+            /** Movements */
+            movements: number;
+            /** Stock */
+            stock: number;
+            /** Orders */
+            orders: number;
+            /** Accuracy Weeks */
+            accuracy_weeks: number;
+            /** History Days */
+            history_days: number;
+            /** Closed */
+            closed: number;
+        };
         /** UomConversion */
         UomConversion: {
             /** Uom */
@@ -6680,6 +6785,13 @@ export interface components {
              * @description Base units in one of this UoM (e.g. 1 CS = 12 EA → 12)
              */
             factor: number;
+        };
+        /** UsageInput */
+        UsageInput: {
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -7929,6 +8041,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["PoActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_posting_api_actuals_post_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PostRequest"];
             };
         };
         responses: {

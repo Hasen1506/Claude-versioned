@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from ..model import (
-    Dataset, LocationProduct, LocationType, LotSizePolicy, MrpType, SafetyStockMethod, Strategy,
+    Dataset, LocationProduct, LocationType, LotSizePolicy, MrpType, ReceiptKind, SafetyStockMethod, Strategy,
 )
 from ..network import NetworkGraph, Node, SupplyOption, build_graph
 from ..time import Buckets
@@ -1094,7 +1094,20 @@ def run_mrp(ds: Dataset) -> PlanResult:
     p.run()
     res = p.result()
     res.issues = issues
+    _open_later(ds, res)
     return res
+
+
+def _open_later(ds: Dataset, res: PlanResult) -> None:
+    """Mark planned purchases that an open order for the same product and place would cover if it came sooner."""
+    open_po: dict[tuple[str, str], list] = {}
+    for r in ds.receipts:
+        if r.kind is ReceiptKind.PURCHASE and (r.confirmed_qty is None or r.confirmed_qty > 0):
+            open_po.setdefault((r.location, r.product), []).append(r)
+    for o in res.orders:
+        if o.kind == "buy":
+            o.open_later = [r.id for r in open_po.get((o.location, o.product), [])
+                            if (r.confirmed_date or r.due_date) > o.need_date]
 
 
 __all__ = ["run_mrp"]

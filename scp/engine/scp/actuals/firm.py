@@ -1,9 +1,10 @@
 """Firming (S/4 conversion of planned orders): planned orders become firm receipts that MRP keeps.
 
 A make order becomes a production order that reserves its components; a transfer becomes a stock
-transport order that reserves the goods at its origin until they are issued; a buy becomes a one-line purchase
-order with its order document (priced from the source's price scales, unapproved above the approval limit), so
-Buying can approve, send, confirm and receive it. Re-planning after firming everything therefore reproduces the same projection with no new orders.
+transport order that reserves the goods at its origin until they are issued; buys go through Buying's own purchase
+order creation (one order per supplier, receiving place and currency, priced from the price scales, unapproved above
+the approval limit), so both roads to a purchase order give the same orders. Re-planning after firming everything
+therefore reproduces the same projection with no new orders.
 """
 from __future__ import annotations
 
@@ -11,9 +12,9 @@ import re
 from collections import defaultdict
 from datetime import timedelta
 
-from ..model import Dataset, LocationType, PurchaseOrder, ReceiptKind, Reservation, ScheduledReceipt
-from ..plan.costing import fx
+from ..model import Dataset, LocationType, ReceiptKind, Reservation, ScheduledReceipt
 from ..plan import PlanResult
+from ..purchasing import create_purchase_orders
 from .result import FirmedOrder, FirmReport
 
 PREFIX = {"make": ("PRD", ReceiptKind.PRODUCTION), "buy": ("PO", ReceiptKind.PURCHASE),
@@ -43,7 +44,7 @@ def firm_orders(ds: Dataset, plan: PlanResult, ids: list[str] | None = None,
             reqs[rq.parent_order].append(rq)
     num = _next_numbers(ds)
     receipts = list(ds.receipts)
-    headers = list(ds.purchase_orders)
+    buys = []
     for o in plan.orders:
         if wanted is not None:
             if o.id not in wanted:
@@ -56,28 +57,36 @@ def firm_orders(ds: Dataset, plan: PlanResult, ids: list[str] | None = None,
         if ds.location_type(o.location) is LocationType.CUSTOMER:
             rep.skipped[o.id] = "a delivery to a customer: promised and shipped, not firmed"
             continue
+        if o.kind == "buy":
+            buys.append(o)
+            continue
         prefix, kind = PREFIX[o.kind]
         num[prefix] += 1
         rid = f"{prefix}-{num[prefix]:05d}"
         rvs = [Reservation(location=r.location, product=r.product, date=r.date, qty=r.qty) for r in reqs.get(o.id, [])]
-        po = price = None
-        if kind is ReceiptKind.PURCHASE:
-            pu = ds.purchasing_source_by_id[o.source_id]
-            price = pu.price_for(o.qty)
-            limit = ds.purchasing.approval_limit
-            po = rid
-            headers.append(PurchaseOrder(id=rid, supplier=pu.supplier, location=o.location,
-                                         order_date=ds.settings.planning_start, currency=pu.currency,
-                                         approved=limit is None or o.qty * price * fx(ds, pu.currency) <= limit))
         receipts.append(ScheduledReceipt(id=rid, kind=kind, location=o.location, product=o.product, qty=o.qty,
                                          due_date=o.due_date, start_date=o.start_date, source=o.source_id,
-                                         reservations=rvs, step_resources=dict(o.step_resources), po=po,
-                                         price=price))
+                                         reservations=rvs, step_resources=dict(o.step_resources)))
         rep.firmed.append(FirmedOrder(planned_id=o.id, receipt_id=rid, kind=kind.value, location=o.location,
                                       product=o.product, qty=o.qty, start_date=o.start_date, due_date=o.due_date,
                                       reservations=len(rvs)))
+    out = ds.model_copy(update={"receipts": receipts})
+    if buys:
+        out, made = create_purchase_orders(out, plan, [{"id": o.id} for o in buys], ds.settings.planning_start)
+        rep.skipped.update(made.skipped)
+        by_line = {r.id: r for r in out.receipts}
+        for o in buys:
+            lid = made.lines.get(o.id)
+            if lid is None:
+                continue
+            r = by_line[lid]
+            rep.firmed.append(FirmedOrder(planned_id=o.id, receipt_id=lid, kind="purchase", location=o.location,
+                                          product=o.product, qty=r.qty, start_date=o.start_date, due_date=r.due_date,
+                                          reservations=0))
+        rep.purchase_orders = [c.id for c in made.created]
+        rep.notes = [n for c in made.created for n in c.notes]
     if wanted is not None:
         for oid in sorted(wanted - {f.planned_id for f in rep.firmed} - set(rep.skipped)):
             rep.skipped[oid] = "not in the current plan (re-run supply planning)"
     rep.ok = True
-    return ds.model_copy(update={"receipts": receipts, "purchase_orders": headers}), rep
+    return out, rep

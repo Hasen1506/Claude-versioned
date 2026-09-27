@@ -149,7 +149,9 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
                   return (
                     <tr key={r.id} className={chosen.has(r.id) ? "selected" : ""}>
                       <td><input type="checkbox" checked={chosen.has(r.id)} onChange={() => toggle(r.id)} aria-label={`Order ${r.id}`} /></td>
-                      <td><Prod id={r.product} /><div className="faint small">{r.id}</div></td><td><Loc id={r.location} /></td>
+                      <td><Prod id={r.product} /><div className="faint small">{r.id}</div>
+                        {!!r.open_later?.length && <div className="small" style={{ color: "var(--warning-text)" }}>{r.open_later.join(", ")} is already on order
+                          but arrives later: expedite it instead?</div>}</td><td><Loc id={r.location} /></td>
                       <td className="num">{qty(c?.qty ?? r.qty)}</td><td>{day(r.need_date)}</td>
                       <td>{day(r.order_date)} {r.late && <Badge sev="warning">late</Badge>}</td>
                       <td>

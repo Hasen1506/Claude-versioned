@@ -2,7 +2,8 @@
 
 What happened before ``as_of`` becomes the new starting position:
 
-* on-hand at every node with movements = Σ movements before ``as_of`` (stock is derived, never typed);
+* on-hand at every node with movements = Σ movements before ``as_of`` (stock is derived, never typed); stock
+  typed at setup at a place with no earlier movement is written into the journal as its opening balance first;
 * firm receipts are reduced by their goods receipts and closed when complete (or marked final); their
   reservations by the component issues / transfer goods issues posted against them;
 * sales orders are reduced by their deliveries and closed when complete, their confirmations trimmed;
@@ -28,8 +29,8 @@ from ..model import (
 )
 from .result import OrderChange, RollReport, StockChange
 from .stock import (
-    EPS, _sum, accuracy_records, arrival, before, by_ref, counterparty, demand_keys, refresh_actuals, sale_point,
-    stock, week_grid,
+    EPS, _sum, accuracy_records, arrival, before, by_ref, counterparty, demand_keys, pending_openings, refresh_actuals,
+    sale_point, stock, week_grid,
 )
 
 
@@ -41,6 +42,7 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
         rep.warnings.append(f"Cannot roll back: {as_of.isoformat()} is before the planning start {prev.isoformat()}")
         return ds, rep
     tol = ds.execution.delivery_tolerance
+    openings = pending_openings(ds)          # setup stock enters the journal as the opening balance
     movs = before(ds, as_of)
 
     # ① stock ------------------------------------------------------------------------------------------
@@ -174,17 +176,25 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
 
     # ⑥ the logs: earlier weeks and closed orders re-read from the journal ---------------------------------
     now = set(week_grid(prev, as_of))
-    earlier = sorted({(w.start, w.end) for w in ds.rolled_weeks} - now)
-    acc = refresh_actuals(ds, [a for a in ds.accuracy if (a.start, a.end) not in now], earlier) + rep.accuracy
+    rolled_before = {(w.start, w.end) for w in ds.rolled_weeks}
+    earlier = sorted(rolled_before - now)
+    # weeks logged before the journal began (imported with the history) are kept as they came: the journal has no
+    # sales for them, so re-reading them would wipe their actuals
+    imported_acc = [a for a in ds.accuracy if (a.start, a.end) not in rolled_before and (a.start, a.end) not in now]
+    acc = sorted(imported_acc + refresh_actuals(ds, [a for a in ds.accuracy if (a.start, a.end) in rolled_before
+                                                     and (a.start, a.end) not in now], earlier) + rep.accuracy,
+                 key=lambda a: (a.start, a.location, a.product))
     rolled = [RolledWeek(start=w, end=we) for w, we in sorted(set(earlier) | now)]
     closed_ids = {(c.kind, c.id) for c in rep.closed}
-    closed_log = [_redeliver(ds, c, (got, g_first, g_last), (sold, s_first, s_last))
+    referenced = {m.reference for m in ds.movements if m.reference}
+    closed_log = [_redeliver(ds, c, (got, g_first, g_last), (sold, s_first, s_last), referenced)
                   for c in ds.closed_orders if (c.kind, c.id) not in closed_ids] + rep.closed
     closed_log.sort(key=lambda c: (c.closed_on, c.kind, c.id))   # one order however many rolls it took
     new = ds.model_copy(update={
         "settings": ds.settings.model_copy(update={"planning_start": as_of}),
         "location_products": lps, "receipts": receipts, "demand": demand, "confirmations": keep_confs,
         "history": history, "accuracy": acc, "rolled_weeks": rolled, "closed_orders": closed_log,
+        "movements": [*ds.movements, *openings],
     })
     past_due = [r.id for r in receipts if r.due_date < as_of]
     if past_due:
@@ -194,8 +204,12 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
     return Dataset.model_validate(new.model_dump()), rep
 
 
-def _redeliver(ds: Dataset, c: ClosedOrder, receipts: tuple[dict, dict, dict], sales: tuple[dict, dict, dict]) -> ClosedOrder:
-    """A closed order's deliveries as the journal now has them (a late posting may add one)."""
+def _redeliver(ds: Dataset, c: ClosedOrder, receipts: tuple[dict, dict, dict], sales: tuple[dict, dict, dict],
+               referenced: set[str]) -> ClosedOrder:
+    """A closed order's deliveries as the journal now has them (a late posting may add one). An order the journal has
+    no movement for (closed before the journal began, imported with the log) is kept as it came."""
+    if c.id not in referenced:
+        return c
     if c.kind == "sales":
         sold, first, last = sales
         ks = [k for k in sold if k[0] == c.id and k[2] == c.product]

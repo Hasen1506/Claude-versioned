@@ -1,17 +1,17 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { AccuracySeries, ActualsView, Dataset, GoodsMovement, OpenOrderRow, PlannedOrder, RollReport, StockRow } from "../api/types";
+import type { AccuracySeries, ActualsView, Dataset, GoodsMovement, OpenOrderRow, PlannedOrder, PostAction, RollReport, StockRow, UsageInput } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
   Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
 } from "../components/ui";
 import { day, pct, plural, qty } from "../lib/format";
-import { Loc, Prod } from "../lib/names";
+import { Loc, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
 
-type View = "stock" | "orders" | "journal" | "roll" | "accuracy";
+type View = "stock" | "count" | "orders" | "journal" | "roll" | "accuracy";
 
 // The last roll-forward report, kept across tab switches (the roll itself is an undoable dataset edit).
 let lastRoll: RollReport | null = null;
@@ -39,6 +39,22 @@ function post(m: Omit<GoodsMovement, "id">) {
   });
 }
 
+/** Post through the engine (ship, receive with parts issued, count), keep the new dataset and re-read the journal. */
+async function postActual(ds: Dataset, action: PostAction, extra: Parameters<typeof api.postActual>[2]): Promise<string> {
+  const out = await api.postActual(ds, action, extra);
+  store.replace(out.dataset);
+  await store.run("actuals");
+  return out.report.message;
+}
+
+/** Book the journal into the starting position again without moving the planning start (a late posting, a count). */
+async function rebook(ds: Dataset) {
+  const out = await api.roll(ds, ds.settings.planning_start);
+  lastRoll = out.report;
+  store.replace(out.dataset);
+  await store.run("actuals");
+}
+
 export function Execution({ route }: { route: string[] }) {
   const run = useStore((s) => s.runs.actuals);
   const res = run.data;
@@ -60,6 +76,7 @@ export function Execution({ route }: { route: string[] }) {
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   const nav = <Nav view={view} res={res} ds={ds} />;
   if (view === "journal") return body(<>{nav}<Journal ds={ds} /></>);
+  if (view === "count") return body(<>{nav}<Count ds={ds} res={res ?? null} /></>);
   if (view === "roll") return body(<>{nav}<Roll ds={ds} /></>);
   if (run.error) return body(<div className="banner error"><Badge sev="error">Could not read the journal</Badge>{run.error}</div>);
   if (!res) {
@@ -75,6 +92,7 @@ export function Execution({ route }: { route: string[] }) {
   return body(<>
     {stale && <StaleMark what="journal view" onRerun={() => store.run("actuals")} busy={run.running} />}
     {nav}
+    {!stale && <UnbookedBanner res={res} ds={ds} />}
     {view === "stock" && <Stock res={res} ds={ds} />}
     {view === "orders" && <Orders res={res} ds={ds} />}
     {view === "accuracy" && <Accuracy res={res} sel={route[2]} />}
@@ -85,6 +103,7 @@ function Nav({ view, res, ds }: { view: View; res: ActualsView | null; ds: Datas
   return (
     <Tabs<View> value={view} onChange={(v) => go("execution", v)} tabs={[
       { id: "stock", label: "Stock from movements", count: res?.stock.length },
+      { id: "count", label: "Count stock" },
       { id: "orders", label: "Open orders & firming", count: res?.open_orders.length },
       { id: "journal", label: "Movement journal", count: ds.movements?.length ?? 0 },
       { id: "roll", label: "Start a new week" },
@@ -109,14 +128,12 @@ function Stock({ res, ds }: { res: ActualsView; ds: Dataset }) {
   const [err, setErr] = useState<string | null>(null);
   const off = res.stock.filter((r) => Math.abs(r.difference) > 1e-6);
   const neg = res.stock.filter((r) => r.negative_on);
+  const setup = res.stock.filter((r) => r.opening_from_setup).length;
   const sync = async () => {
     setBusy(true);
     setErr(null);
     try {
-      const out = await api.roll(ds, ds.settings.planning_start);
-      lastRoll = out.report;
-      store.replace(out.dataset);
-      await store.run("actuals");
+      await rebook(ds);
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -126,14 +143,14 @@ function Stock({ res, ds }: { res: ActualsView; ds: Dataset }) {
   return (
     <div className="stack">
       <div className="grid-auto">
-        <StatTile label="Movements" value={qty(res.movements)} sub={`${qty(res.stock.reduce((a, r) => a + r.movements, 0))} before ${day(res.as_of)} are in stock`} />
-        <StatTile label="Nodes in the journal" value={qty(res.stock.filter((r) => r.movements > 0).length)} sub={`of ${res.stock.length} holding stock`} />
+        <StatTile label="Movements" value={qty(res.movements)} sub={setup ? `plus ${plural(setup, "opening balance")} from setup` : `${qty(res.stock.reduce((a, r) => a + r.movements, 0))} before ${day(res.as_of)} are in stock`} />
+        <StatTile label="Places in the journal" value={qty(res.stock.filter((r) => r.movements > (r.opening_from_setup ? 1 : 0)).length)} sub={`of ${res.stock.length} holding stock`} />
         <StatTile label="Out of sync" value={qty(off.length)} sub="on-hand ≠ Σ movements" tone={off.length ? "hl" : undefined} />
         <StatTile label="Negative stock" value={qty(neg.length)} sub="a receipt missing or late" />
         <StatTile label="Unmatched references" value={qty(res.unmatched.length)} sub="no open or closed order" />
       </div>
       {err && <div className="banner error"><Badge sev="error">Sync failed</Badge>{err}</div>}
-      {off.length > 0 && (
+      {off.length > 0 && !res.unbooked?.needed && (
         <div className="banner warning"><Badge sev="warning">{off.length} nodes out of sync</Badge>
           <span>On-hand in the planning policies differs from the journal. Syncing adopts the journal without moving the planning start.</span>
           <span className="spacer" /><button className="btn sm" onClick={sync} disabled={busy}>{busy ? "Syncing…" : "Sync stock from journal"}</button></div>
@@ -149,8 +166,8 @@ function Stock({ res, ds }: { res: ActualsView; ds: Dataset }) {
           </table>
         </div>
       </Panel>
-      <Reading formula="on-hand(node) = Σ signed movements dated before the planning start: + opening, receipt; − issue, sale, transfer issue, scrap; ± count adjustment."
-        soWhat="Stock is never typed in once a node has movements. Post what happened, then roll forward: the plan starts from the physical truth." />
+      <Reading formula="on-hand(node) = Σ signed movements dated before the planning start: + opening, receipt; − issue, sale, transfer issue, scrap; ± count adjustment. Stock entered at setup at a place with no earlier movement is its opening balance."
+        soWhat="Once a place has movements, change its stock with a count, not by typing on-hand: post what happened, then start a new week and the plan starts from the physical truth." />
     </div>
   );
 }
@@ -161,7 +178,8 @@ function StockLine({ r }: { r: StockRow }) {
   const scale = Math.max(inflow, outflow, 1);
   return (
     <tr>
-      <td><Loc id={r.location} /></td><td><Prod id={r.product} /></td><td className="num">{qty(r.master_on_hand)}</td>
+      <td><Loc id={r.location} /></td><td><Prod id={r.product} /></td>
+      <td className="num">{qty(r.master_on_hand)}{r.opening_from_setup && <> <span title="Stock entered at setup is the opening balance; starting a new week writes it into the journal"><Badge sev="info">opening</Badge></span></>}</td>
       <td className="num">{r.movement_stock === null ? <span className="faint">—</span> : qty(r.movement_stock)}</td>
       <td className="num">{Math.abs(r.difference) > 1e-6 ? <Badge sev="warning">{r.difference > 0 ? "+" : ""}{qty(r.difference)}</Badge> : <span className="faint">0</span>}
         {r.negative_on && <> <Badge sev="error">negative {day(r.negative_on)}</Badge></>}</td>
@@ -177,6 +195,138 @@ function StockLine({ r }: { r: StockRow }) {
 }
 
 // ------------------------------------------------------------------------------------------------
+/** Postings dated before the planning start that the starting position does not reflect yet (Q15). */
+function UnbookedBanner({ res, ds }: { res: ActualsView; ds: Dataset }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const u = res.unbooked;
+  if (!u?.needed) return null;
+  const what = [u.stock && `stock at ${plural(u.stock, "place")}`, u.orders && plural(u.orders, "order"),
+    u.accuracy_weeks && `forecast accuracy for ${plural(u.accuracy_weeks, "week")}`,
+    !u.accuracy_weeks && u.history_days && `sales history for ${plural(u.history_days, "day")}`,
+    u.closed && `deliveries on ${plural(u.closed, "closed order")}`].filter(Boolean).join(", ");
+  const book = async () => {
+    setBusy(true);
+    setErr(null);
+    try { await rebook(ds); } catch (e) { setErr(String(e)); } finally { setBusy(false); }
+  };
+  return (
+    <div className="banner warning" role="status" style={{ marginBottom: 12 }}>
+      <Badge sev="warning">Not counted yet</Badge>
+      <span>Movements dated before {day(ds.settings.planning_start)} were posted after the plan started from them. Counting them
+        changes {what}. The planning start stays where it is.</span>
+      <span className="spacer" />
+      <button className="btn sm accent" onClick={book} disabled={busy}>{busy ? "Counting…" : "Count them now"}</button>
+      {err && <span className="small" style={{ color: "var(--error-text)" }}>{err}</span>}
+    </div>
+  );
+}
+
+/** Where each product is kept: planning policies, production (and its parts), purchasing, routes that name it, the journal. */
+function stockNodes(ds: Dataset): [string, string][] {
+  const type = new Map((ds.locations ?? []).map((l) => [l.id, l.type]));
+  const phantom = new Set((ds.location_products ?? []).filter((x) => x.phantom).map((x) => `${x.location}|${x.product}`));
+  const out = new Map<string, [string, string]>();
+  const add = (l?: string | null, p?: string | null) => {
+    const t = l ? type.get(l) : undefined;
+    if (!l || !p || !t || t === "customer" || t === "supplier" || phantom.has(`${l}|${p}`)) return;
+    out.set(`${l}|${p}`, [l, p]);
+  };
+  for (const x of ds.location_products ?? []) add(x.location, x.product);
+  for (const ps of ds.production_sources ?? []) {
+    add(ps.location, ps.product);
+    for (const c of ps.components ?? []) add(ps.location, c.product);
+    for (const c of ps.co_products ?? []) add(ps.location, c.product);
+  }
+  for (const pu of ds.purchasing_sources ?? []) add(pu.location, pu.product);
+  for (const ln of ds.lanes ?? []) for (const p of ln.products ?? []) { add(ln.origin, p); add(ln.destination, p); }
+  for (const m of ds.movements ?? []) add(m.location, m.product);
+  return [...out.values()];
+}
+
+function Count({ ds, res }: { ds: Dataset; res: ActualsView | null }) {
+  const nm = useNames();
+  const start = ds.settings.planning_start;
+  const [on, setOn] = useState(addDays(start, -1));
+  const [place, setPlace] = useState("");
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const uom = new Map((ds.products ?? []).map((p) => [p.id, p.base_uom ?? "EA"]));
+  const rows = useMemo(() => stockNodes(ds).sort((a, b) => nm.loc(a[0]).localeCompare(nm.loc(b[0])) || nm.prod(a[1]).localeCompare(nm.prod(b[1]))), [ds, nm]);
+  const places = [...new Set(rows.map((r) => r[0]))];
+  const now = (l: string, p: string) => {
+    const r = res?.stock.find((x) => x.location === l && x.product === p);
+    if (r) return r.movement_stock ?? r.master_on_hand;
+    return (ds.location_products ?? []).find((x) => x.location === l && x.product === p)?.on_hand ?? 0;
+  };
+  const changed = Object.entries(edits).filter(([, v]) => v.trim() !== "" && Number.isFinite(Number(v)));
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const counts = changed.map(([k, v]) => { const [location, product] = k.split("|"); return { location, product, qty: Number(v) }; });
+      setMsg(await postActual(ds, "count", { counts, date: on }));
+      setEdits({});
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!rows.length) {
+    return <Panel><Empty title="Nothing is kept anywhere yet">Add places and products first: <a href={href("setup")}>Set up the company</a>.</Empty></Panel>;
+  }
+  const shown = rows.filter((r) => !place || r[0] === place);
+  return (
+    <div className="stack">
+      <Panel title="Count stock" actions={
+        <button className="btn sm accent" onClick={save} disabled={busy || !changed.length}>{busy ? "Saving…" : changed.length ? `Save ${plural(changed.length, "count")}` : "Save counts"}</button>}>
+        <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
+          <label className="small muted" htmlFor="count-date">Counted at the end of</label>
+          <input id="count-date" type="date" className="input" style={{ width: 170 }} value={on} onChange={(e) => setOn(e.target.value)} />
+          <select className="input" style={{ width: 220 }} value={place} onChange={(e) => setPlace(e.target.value)} aria-label="Place">
+            <option value="">Every place</option>
+            {places.map((l) => <option key={l} value={l}>{nm.loc(l)}</option>)}
+          </select>
+          <span className="faint small">{on < start
+            ? `The plan starts ${day(start)} from these counts. A place with no stock recorded gets them as its opening balance; any other gets the difference as a count adjustment.`
+            : `A count after ${day(start)} is posted as a count adjustment and counts when you start a new week past it.`}</span>
+        </div>
+        {msg && <div className="banner info" style={{ marginTop: 10 }}><Badge sev="ok">Saved</Badge><span>{msg}</span></div>}
+        {err && <div className="banner error" style={{ marginTop: 10 }}><Badge sev="error">Not saved</Badge>{err}</div>}
+      </Panel>
+      <Panel flush>
+        <div className="table-wrap" style={{ maxHeight: 620 }}>
+          <table className="t">
+            <thead><tr><th>Place</th><th>Product</th><th className="num">Stock now</th><th className="num">Counted</th><th>Unit</th></tr></thead>
+            <tbody>
+              {shown.map(([l, p]) => {
+                const k = `${l}|${p}`;
+                const cur = now(l, p);
+                return (
+                  <tr key={k}>
+                    <td><Loc id={l} /></td><td><Prod id={p} /></td>
+                    <td className="num">{qty(cur)}</td>
+                    <td className="num"><input className="input" type="number" min={0} step="any" style={{ width: 110, textAlign: "right" }}
+                      value={edits[k] ?? ""} placeholder={qty(cur)} onChange={(e) => setEdits({ ...edits, [k]: e.target.value })}
+                      aria-label={`Counted ${nm.prod(p)} at ${nm.loc(l)}`} /></td>
+                    <td className="faint">{uom.get(p)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+      <Reading formula="count − stock by the journal on that day = the opening balance (nothing recorded yet) or a count adjustment (±)."
+        soWhat="Counting keeps the journal, the stock the plan starts from and the shelf in agreement; typing on-hand in the planning policies does not." />
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------------------------------------
 function shipFrom(ds: Dataset, customer: string, order: string): string | null {
   const c = (ds.confirmations ?? []).find((x) => x.order === order);
   if (c) return c.ship_from;
@@ -185,42 +335,73 @@ function shipFrom(ds: Dataset, customer: string, order: string): string | null {
 }
 
 function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
-  const [postDate, setPostDate] = useState(addDays(ds.settings.planning_start, -1));
+  const [postDate, setPostDate] = useState(ds.settings.planning_start);
+  const [open, setOpen] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const receipts = res.open_orders.filter((o) => o.kind !== "sales");
   const sales = res.open_orders.filter((o) => o.kind === "sales");
   const closed = [...(ds.closed_orders ?? [])].reverse().slice(0, 30);
-  const receive = (o: OpenOrderRow) => post({ date: postDate, type: "receipt", location: o.location, product: o.product,
-    qty: Math.round(o.open * 1000) / 1000, reference: o.id, counterparty: o.kind === "purchase" ? o.counterparty : null, final: false, note: "" });
+  const act = async (id: string, action: PostAction, extra: Parameters<typeof api.postActual>[2] = {}) => {
+    setBusy(id);
+    setErr(null);
+    try {
+      setMsg(await postActual(ds, action, { order: id, date: postDate, ...extra }));
+      setOpen(null);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
   const ship = (o: OpenOrderRow) => {
     const from = shipFrom(ds, o.location, o.id);
     if (!from) return;
     post({ date: postDate, type: "sale", location: from, product: o.product, qty: Math.round(o.open * 1000) / 1000, reference: o.id,
       counterparty: o.location, final: false, note: "" });
   };
+  const toShip = (o: OpenOrderRow) => o.ordered - o.delivered - o.in_transit;
   return (
     <div className="stack">
       <div className="row" style={{ gap: 10 }}>
         <label className="small muted" htmlFor="post-date">Posting date</label>
         <input id="post-date" type="date" className="input" style={{ width: 170 }} value={postDate} onChange={(e) => setPostDate(e.target.value)} />
-        <span className="faint small">Quick posts land in the journal on this date. Movements before the planning start ({day(ds.settings.planning_start)}) count
-          at the next sync; later ones at the next roll-forward.</span>
+        <span className="faint small">What you post lands in the journal on this date. From {day(ds.settings.planning_start)} on it counts when you
+          start a new week; an earlier date is a late posting, counted with one click.</span>
       </div>
+      {msg && <div className="banner info"><Badge sev="ok">Posted</Badge><span>{msg}</span><span className="spacer" />
+        <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
+      {err && <div className="banner error"><Badge sev="error">Not posted</Badge>{err}</div>}
       <Firming ds={ds} />
       <Panel flush title="Firm receipts: purchase, production and transfer orders">
-        {receipts.length === 0 ? <Empty title="No firm receipts">Firm planned orders above, or add receipts under Planning data.</Empty> : (
-          <div className="table-wrap" style={{ maxHeight: 420 }}>
+        {receipts.length === 0 ? <Empty title="No firm receipts">Firm planned orders above, or order on Buying.</Empty> : (
+          <div className="table-wrap" style={{ maxHeight: 520 }}>
             <table className="t">
               <thead><tr><th>Order</th><th>Kind</th><th>Receiving</th><th>Product</th><th>From</th><th className="num">Ordered</th>
-                <th className="num">Received</th><th className="num">Open</th><th className="num">In transit</th><th className="num">To issue</th><th>Due</th><th /></tr></thead>
+                <th className="num">Received</th><th className="num">Open</th><th className="num">In transit</th><th className="num">Parts to issue</th><th>Due</th><th /></tr></thead>
               <tbody>
                 {receipts.map((o) => (
-                  <tr key={o.id}>
-                    <td><b>{o.id}</b></td><td>{o.kind}</td><td><Loc id={o.location} /></td><td><Prod id={o.product} /></td><td>{o.counterparty ?? ""}</td>
-                    <td className="num">{qty(o.ordered)}</td><td className="num">{o.delivered ? qty(o.delivered) : ""}</td><td className="num">{qty(o.open)}</td>
-                    <td className="num">{o.in_transit ? qty(o.in_transit) : ""}</td><td className="num">{o.reservations_open ? qty(o.reservations_open) : ""}</td>
-                    <td>{day(o.due_date)} {o.past_due && <Badge sev="warning">past due</Badge>}</td>
-                    <td><button className="btn sm" onClick={() => receive(o)} disabled={o.open <= 1e-6} aria-label={`Receive ${o.id}`}>Receive</button></td>
-                  </tr>
+                  <Fragment key={o.id}>
+                    <tr>
+                      <td><b>{o.id}</b></td><td>{KIND[o.kind] ?? o.kind}</td><td><Loc id={o.location} /></td><td><Prod id={o.product} /></td>
+                      <td>{o.kind === "production" ? <span className="faint">made here</span> : o.counterparty ? <Loc id={o.counterparty} /> : ""}</td>
+                      <td className="num">{qty(o.ordered)}</td><td className="num">{o.delivered ? qty(o.delivered) : ""}</td><td className="num">{qty(o.open)}</td>
+                      <td className="num">{o.in_transit ? qty(o.in_transit) : ""}</td><td className="num">{o.reservations_open ? qty(o.reservations_open) : ""}</td>
+                      <td>{day(o.due_date)} {o.past_due && <Badge sev="warning">past due</Badge>}</td>
+                      <td className="nowrap">
+                        {o.kind === "transfer" && <button className="btn sm" onClick={() => act(o.id, "ship")} disabled={!!busy || toShip(o) <= 1e-6}
+                          aria-label={`Ship ${o.id}`} title="Goods issue at the sending place: the goods are then in transit">Ship</button>}{" "}
+                        <button className="btn sm" onClick={() => act(o.id, "receive")} disabled={!!busy || o.open <= 1e-6} aria-label={`Receive ${o.id}`}
+                          title={o.kind === "production" ? "Post what was made and issue its parts" : o.kind === "transfer" ? "Post the arrival (and the dispatch, if it was not posted)" : "Goods receipt of the open quantity"}>
+                          {o.kind === "production" ? "Confirm" : "Receive"}</button>{" "}
+                        <button className="btn sm ghost" onClick={() => setOpen(open === o.id ? null : o.id)} aria-expanded={open === o.id}
+                          aria-label={`Post part of ${o.id}`} title="Part of it, a final delivery, or the parts actually used">…</button>
+                      </td>
+                    </tr>
+                    {open === o.id && <tr className="sub"><td colSpan={12}><PostForm o={o} ds={ds} busy={busy === o.id}
+                      onPost={(extra) => act(o.id, "receive", extra)} onShip={(q) => act(o.id, "ship", { qty: q })} /></td></tr>}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -271,6 +452,49 @@ function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
   );
 }
 
+const KIND: Record<string, string> = { purchase: "purchase", production: "production", transfer: "transfer" };
+
+/** Post part of an order, close it short, or (production) the parts actually used instead of the backflush. */
+function PostForm({ o, ds, busy, onPost, onShip }: { o: OpenOrderRow; ds: Dataset; busy: boolean;
+  onPost: (extra: { qty: number; final: boolean; usage: UsageInput[] | null }) => void; onShip: (qty: number) => void }) {
+  const rc = (ds.receipts ?? []).find((r) => r.id === o.id);
+  const [q, setQ] = useState(String(Math.round(o.open * 1000) / 1000));
+  const [final, setFinal] = useState(false);
+  const [actual, setActual] = useState(false);
+  const parts = (rc?.reservations ?? []).filter((r) => o.kind === "production" || r.location !== o.location);
+  const share = o.ordered > 0 ? Math.min(1, (o.delivered + (Number(q) || 0)) / o.ordered) : 1;
+  const [usage, setUsage] = useState<Record<string, string>>({});
+  const n = Number(q);
+  const issued = (prod: string) => (ds.movements ?? []).filter((m) => m.reference === o.id && m.type === "issue" && m.product === prod).reduce((a, m) => a + m.qty, 0);
+  const guess = (r: (typeof parts)[number]) => Math.max(0, (r.required_qty ?? r.qty) * share - issued(r.product));
+  return (
+    <div className="stack" style={{ gap: 8, padding: "6px 4px" }}>
+      <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+        <label className="small muted">Quantity <input className="input" type="number" min={0} step="any" value={q} onChange={(e) => setQ(e.target.value)}
+          style={{ width: 110 }} aria-label={`Quantity for ${o.id}`} /></label>
+        <label className="small"><input type="checkbox" checked={final} onChange={(e) => setFinal(e.target.checked)} /> Last delivery: close the order even if short</label>
+        {o.kind === "production" && parts.length > 0 && <label className="small"><input type="checkbox" checked={actual} onChange={(e) => setActual(e.target.checked)} /> Enter the parts actually used</label>}
+        <span className="spacer" />
+        {o.kind === "transfer" && <button className="btn sm" disabled={busy || !(n > 0)} onClick={() => onShip(n)}>Ship {qty(n || 0)}</button>}
+        <button className="btn sm accent" disabled={busy || !(n > 0)}
+          onClick={() => onPost({ qty: n, final, usage: actual ? parts.map((r) => ({ product: r.product, qty: Number(usage[r.product] ?? guess(r).toFixed(3)) || 0 })) : null })}>
+          {o.kind === "production" ? "Confirm" : "Receive"} {qty(n || 0)}</button>
+      </div>
+      {o.kind === "production" && parts.length > 0 && (
+        <div className="small muted">{actual ? "Parts used:" : "Parts issued with it (in proportion to what is made):"}{" "}
+          {parts.map((r) => (
+            <span key={r.product} style={{ marginRight: 14, whiteSpace: "nowrap" }}><Prod id={r.product} />{" "}
+              {actual ? <input className="input" type="number" min={0} step="any" style={{ width: 90 }} value={usage[r.product] ?? guess(r).toFixed(3)}
+                onChange={(e) => setUsage({ ...usage, [r.product]: e.target.value })} aria-label={`Used ${r.product}`} />
+                : <b>{qty(guess(r))}</b>}</span>
+          ))}
+        </div>
+      )}
+      {o.kind === "production" && !parts.length && <div className="small faint">This order has no parts reserved: they are issued from the bill of materials.</div>}
+    </div>
+  );
+}
+
 function Firming({ ds }: { ds: Dataset }) {
   const plan = useStore((s) => s.runs.plan);
   const planStale = useStore((s) => isStale(s, "plan"));
@@ -279,7 +503,8 @@ function Firming({ ds }: { ds: Dataset }) {
   const cands = useMemo(() => (plan.data?.ok ? plan.data.orders.filter((o) => o.start_date < limit && o.convertible
     && !(ds.locations ?? []).some((l) => l.id === o.location && l.type === "customer")) : []), [plan.data, limit, ds.locations]);
   const [pick, setPick] = useState<Set<string> | null>(null);
-  const chosen = pick ?? new Set(cands.map((o) => o.id));
+  // a purchase that an open order would cover if it came sooner is left out until someone decides (Q9)
+  const chosen = pick ?? new Set(cands.filter((o) => !o.open_later?.length).map((o) => o.id));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -290,7 +515,12 @@ function Firming({ ds }: { ds: Dataset }) {
       const out = await api.firm(ds, [...chosen]);
       store.replace(out.dataset);
       setPick(null);
-      setMsg(`${out.report.firmed.length} planned orders firmed: ${out.report.firmed.slice(0, 4).map((f) => `${f.planned_id} → ${f.receipt_id}`).join(", ")}${out.report.firmed.length > 4 ? "…" : ""}. Re-plan to see the rest move around them.`);
+      const r = out.report;
+      const pos = r.purchase_orders ?? [];
+      setMsg(`${plural(r.firmed.length, "planned order")} firmed: ${r.firmed.slice(0, 4).map((f) => `${f.planned_id} → ${f.receipt_id}`).join(", ")}${r.firmed.length > 4 ? "…" : ""}.`
+        + (pos.length ? ` Purchases went onto ${plural(pos.length, "purchase order")} (${pos.join(", ")}), grouped per supplier as on Buying${(r.notes ?? []).length ? `: ${(r.notes ?? []).join("; ")}` : ""}.` : "")
+        + (Object.keys(r.skipped).length ? ` Not firmed: ${Object.entries(r.skipped).slice(0, 3).map(([k, v]) => `${k} (${v})`).join(", ")}.` : "")
+        + " Re-plan to see the rest move around them.");
       await Promise.all([store.run("plan"), store.run("actuals")]);
     } catch (e) {
       setErr(String(e));
@@ -306,9 +536,10 @@ function Firming({ ds }: { ds: Dataset }) {
   };
   return (
     <Panel flush title={`Firm zone: planned orders starting before ${day(limit)} (${zone} days)`} actions={
-      plan.data ? <button className="btn sm accent" disabled={busy || planStale || chosen.size === 0} onClick={firm}
+      plan.data ? <><button className="btn sm ghost" disabled={busy || planStale || !cands.length} onClick={() => setPick(new Set(chosen.size ? [] : cands.map((o) => o.id)))}>
+        {chosen.size ? "Select none" : "Select all"}</button><button className="btn sm accent" disabled={busy || planStale || chosen.size === 0} onClick={firm}
         title={planStale ? "Recalculate the supply plan first" : "Turns these planned orders into firm purchase, production and transfer orders in your data. Undo reverts it."}>
-        {busy ? "Saving…" : `Make ${chosen.size} order${chosen.size === 1 ? "" : "s"} firm`}</button> : null}>
+        {busy ? "Saving…" : `Make ${chosen.size} order${chosen.size === 1 ? "" : "s"} firm`}</button></> : null}>
       {msg && <div className="banner info" style={{ margin: 12 }}><Badge sev="ok">Firmed</Badge><span>{msg}</span><span className="spacer" />
         <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
       {err && <div className="banner error" style={{ margin: 12 }}><Badge sev="error">Firming failed</Badge>{err}</div>}
@@ -322,8 +553,10 @@ function Firming({ ds }: { ds: Dataset }) {
                 {cands.map((o) => (
                   <tr key={o.id} className="clickable" onClick={() => toggle(o)}>
                     <td><input type="checkbox" checked={chosen.has(o.id)} onChange={() => toggle(o)} onClick={(e) => e.stopPropagation()} aria-label={`Firm ${o.id}`} /></td>
-                    <td><b>{o.id}</b></td><td>{o.kind === "make" ? "production order" : o.kind === "buy" ? "purchase order" : "stock transfer"}</td>
-                    <td><Loc id={o.location} /></td><td><Prod id={o.product} /></td><td>{o.origin ?? o.source_id}</td><td className="num">{qty(o.qty)}</td>
+                    <td><b>{o.id}</b></td><td>{o.kind === "make" ? "production order" : o.kind === "buy" ? "purchase order line" : "stock transfer"}
+                      {!!o.open_later?.length && <div className="small" style={{ color: "var(--warning-text)" }}>{o.open_later.join(", ")} is already on order but arrives
+                        later; expediting it may do instead</div>}</td>
+                    <td><Loc id={o.location} /></td><td><Prod id={o.product} /></td><td>{o.kind === "make" ? <span className="faint">made here</span> : o.origin ? <Loc id={o.origin} /> : o.source_id}</td><td className="num">{qty(o.qty)}</td>
                     <td>{day(o.start_date)} {o.start_in_past && <Badge sev="warning">late start</Badge>}</td><td>{day(o.due_date)}</td>
                   </tr>
                 ))}
@@ -369,7 +602,7 @@ function Journal({ ds }: { ds: Dataset }) {
                       <td className="faint">{m.id}</td><td>{day(m.date)}</td><td>{m.type.replace("_", " ")}{m.final && <> <Badge sev="info">final</Badge></>}</td>
                       <td><Loc id={m.location} /></td><td><Prod id={m.product} /></td>
                       <td className="num" style={{ color: signed < 0 ? "var(--warning-text)" : undefined }}>{signed > 0 ? "+" : ""}{qty(signed)}</td>
-                      <td>{m.reference ?? ""}</td><td>{m.counterparty ?? ""}</td>
+                      <td>{m.reference ?? ""}</td><td>{m.counterparty ? <Loc id={m.counterparty} /> : ""}</td>
                     </tr>
                   );
                 })}

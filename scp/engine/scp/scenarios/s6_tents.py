@@ -89,11 +89,12 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
                 ("SO-3", d("2026-05-08"), d("2026-05-09"), 20)])
 
     with ctx.step("Firm the next two weeks", "execution", "POST /api/orders/firm",
-                  "Planned orders starting before 18 May become purchase orders; deliveries to the customer are "
-                  "shipped against promises, never firmed."):
+                  "Planned orders starting before 18 May become one purchase order to the supplier, a line per "
+                  "delivery, as Buying groups them; deliveries to the customer are shipped against promises, never "
+                  "firmed."):
         ds, rep = c.firm(ds, within_days=14)
         firmed = sorted((f.receipt_id, f.qty, f.due_date) for f in rep.firmed)
-        ctx.eq("purchase orders created", firmed, [("PO-00001", 40, d("2026-05-12")), ("PO-00002", 70, d("2026-05-19"))])
+        ctx.eq("purchase order lines created", firmed, [("PO-00001-10", 40, d("2026-05-12")), ("PO-00001-20", 70, d("2026-05-19"))])
         ctx.true("customer deliveries skipped with a reason", len(rep.skipped) > 0
                  and all("customer" in r for r in rep.skipped.values()), actual=sorted(set(rep.skipped.values())),
                  expect="at least one, each naming the customer")
@@ -101,7 +102,7 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
     with ctx.step("Post two weeks of goods movements", "execution", "POST /api/actuals",
                   "Stock is never typed: it is the sum of the journal. The view flags what does not add up yet."):
         raw = json.loads(ds.model_dump_json())
-        raw["movements"] += _journal("PO-00001", "PO-00002")
+        raw["movements"] += _journal("PO-00001-10", "PO-00001-20")
         ds = Dataset.model_validate(raw)
         view = c.actuals(ds, ROLL)
         row = one(view.stock, location="WH", product="TENT")
@@ -109,8 +110,8 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
                  "Opening 100 − sales 166 + receipts 100 − 2 damaged = 32.")
         ctx.near("difference to the master record", row.difference, 32 - 100, 1e-9)
         ctx.near("by movement type", row.by_type, {"opening": 100, "sale": -166, "receipt": 100, "adjustment": -2}, 1e-9)
-        po2 = one(view.open_orders, id="PO-00002")
-        ctx.near("PO-00002 open after the partial receipt", (po2.delivered, po2.open), (60, 10), 1e-9)
+        po2 = one(view.open_orders, id="PO-00001-20")
+        ctx.near("PO-00001-20 open after the partial receipt", (po2.delivered, po2.open), (60, 10), 1e-9)
         ctx.eq("every movement matches an order or is unreferenced", view.unmatched, [])
 
     with ctx.step("Roll forward to 18 May", "execution", "POST /api/actuals/roll",
@@ -119,10 +120,10 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
         rolled, rr = c.roll(ds, ROLL)
         ctx.eq("new planning start", rolled.settings.planning_start, ROLL)
         ctx.near("warehouse on hand", one(rolled.location_products, location="WH").on_hand, 32, 1e-9)
-        ctx.eq("receipts left open", [(r.id, r.qty, r.ordered_qty) for r in rolled.receipts], [("PO-00002", 10, 70)])
+        ctx.eq("receipts left open", [(r.id, r.qty, r.ordered_qty) for r in rolled.receipts], [("PO-00001-20", 10, 70)])
         closed = {x.id: (x.ordered_qty, x.delivered_qty, x.due_date, x.last_delivery) for x in rr.closed}
         ctx.eq("closed orders (ordered, delivered, due, delivered on)", closed, {
-            "PO-00001": (40, 40, d("2026-05-12"), d("2026-05-13")),
+            "PO-00001-10": (40, 40, d("2026-05-12"), d("2026-05-13")),
             "SO-1": (50, 50, d("2026-05-06"), d("2026-05-07")),
             "SO-2": (30, 28, d("2026-05-08"), d("2026-05-08")),
             "SO-3": (20, 20, d("2026-05-09"), d("2026-05-09"))},
@@ -175,7 +176,7 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
         ctx.near("perfect order", k["perfect_order"].value, 1 / 3, 1e-9)
         ctx.near("confirmed on requested date", k["confirmation_rate"].value, 1.0, 1e-9)
         ctx.eq("supplier reliability", (k["supplier_reliability"].value, k["supplier_reliability"].n), (0.0, 1),
-               "PO-00001 arrived a day late; PO-00002 is still open, so it is not measured yet.")
+               "PO-00001-10 arrived a day late; PO-00001-20 is still open, so it is not measured yet.")
 
     with ctx.step("Version the new base and try a scenario", "versions", "POST /api/versions …",
                   "Save the rolled plan as a base (immutable), branch a scenario with 30 tents of safety stock, "

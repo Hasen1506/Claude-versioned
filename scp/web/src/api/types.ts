@@ -107,6 +107,10 @@ export type RollReport = S["RollReport"];
 export type RollResponse = S["RollResponse"];
 export type FirmResponse = S["FirmResponse"];
 export type GoodsMovement = S["GoodsMovement"];
+export type Unbooked = S["Unbooked"];
+export type PostAction = S["PostRequest"]["action"];
+export type CountInput = S["CountInput"];
+export type UsageInput = S["UsageInput"];
 export type ClosedOrder = S["ClosedOrder"];
 
 export type FinanceResult = S["FinanceResult"];

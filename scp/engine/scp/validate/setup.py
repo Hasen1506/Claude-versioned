@@ -153,7 +153,7 @@ def checklist(ds: Dataset, aside: list[SetAside] | None = None) -> list[SetupIte
     # --- stock
     if ds.locations and not any(lp.on_hand > 0 for lp in ds.location_products) and not ds.movements:
         add("stock", "info", "No stock on hand is entered anywhere, so the plan assumes every place starts empty.",
-            "Enter stock on hand", ["data", "location_products"])
+            "Count stock on hand", ["execution", "count"])
 
     # --- unfinished records
     for a in aside or []:

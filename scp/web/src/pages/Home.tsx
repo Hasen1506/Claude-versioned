@@ -2,6 +2,7 @@
 // they need, what do I do this week, what does it cost, what is off track) from the results "Plan
 // everything" calculates, and links each answer to the page where you act on it.
 import { useState, type ReactNode } from "react";
+import { api } from "../api/client";
 import type { Dataset, Kpi, PlannedOrder } from "../api/types";
 import { addDays, dayName, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { href } from "../lib/router";
@@ -214,7 +215,7 @@ export function Home({ ds }: { ds: Dataset }) {
         })}
       </ul>
       {past.length > 0 && <p className="muted"><em>{qty(past.length)} of them should already have started.</em> Starting them today loses the least time.
-        {noStock && <> No stock on hand has been entered, so the plan starts every place from zero; <a href={href("data", "location_products")}>enter today's stock</a> for a realistic first plan.</>}</p>}
+        {noStock && <> No stock on hand has been entered, so the plan starts every place from zero; <a href={href("execution", "count")}>count today's stock</a> for a realistic first plan.</>}</p>}
     </>);
   }
 
@@ -283,6 +284,7 @@ export function Home({ ds }: { ds: Dataset }) {
       </header>
 
       <Status />
+      {locations.length > 0 && !settingUp && <StockAlert ds={ds} />}
       {locations.length > 0 && !settingUp && <Guide planned={planned !== "none"} />}
 
       {locations.length === 0 ? (
@@ -328,6 +330,48 @@ export function Home({ ds }: { ds: Dataset }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** Stock the plan starts from that the goods movements disagree with comes first: every answer below builds on it (Q15). */
+function StockAlert({ ds }: { ds: Dataset }) {
+  const act = useStore((x) => x.runs.actuals.data);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  if (!act) return null;
+  const u = act.unbooked;
+  const off = act.stock.filter((r) => r.movement_stock !== null && Math.abs(r.difference) > 1e-6).length;
+  const neg = act.stock.filter((r) => r.negative_on).length;
+  if (!u?.needed && !off && !neg) return null;
+  const book = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const out = await api.roll(ds, ds.settings.planning_start);
+      store.replace(out.dataset);
+      await store.run("actuals");
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const what = u?.needed ? [u.stock && `stock at ${plural(u.stock, "place")}`, u.orders && plural(u.orders, "order"),
+    u.accuracy_weeks && `forecast accuracy for ${plural(u.accuracy_weeks, "week")}`].filter(Boolean).join(", ") : "";
+  return (
+    <section className="hcard attn" aria-label="Stock needs attention" style={{ marginBottom: 16 }}>
+      <h2 className="q">Is the stock the plan starts from right?</h2>
+      <p className="answer"><em>Not quite.</em>{" "}
+        {u?.needed ? <>Movements posted late are not counted yet{what ? `: they change ${what}` : ""}.</>
+          : off ? <>{plural(off, "place")} {off === 1 ? "has" : "have"} stock that the goods movements disagree with.</> : null}
+        {neg > 0 && <> {plural(neg, "place")} would go below zero: a receipt is missing or posted late.</>}</p>
+      <p className="muted">Every answer below starts from this stock, so it comes first.</p>
+      <div className="links">
+        {(u?.needed || off > 0) && <button className="btn sm accent" onClick={book} disabled={busy}>{busy ? "Counting…" : "Count the movements now"}</button>}
+        <a href={href("execution", "stock")}>See which places</a><a href={href("execution", "count")}>Count stock</a>
+      </div>
+      {err && <p className="small" style={{ color: "var(--error-text)" }}>{err}</p>}
+    </section>
   );
 }
 

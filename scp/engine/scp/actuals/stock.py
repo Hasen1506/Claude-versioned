@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import math
+import re
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import date, timedelta
 
 from ..model import AccuracyRecord, Dataset, DemandKind, GoodsMovement, MovementType
@@ -13,8 +14,36 @@ EPS = 1e-6
 Node = tuple[str, str]
 
 
+def movement_ids(ds: Dataset, taken: Iterable[str] = ()) -> Iterable[str]:
+    """Fresh journal numbers (GM-00001, …) after the highest one used by the journal and ``taken``."""
+    n = 0
+    for mid in [m.id for m in ds.movements] + list(taken):
+        x = re.fullmatch(r"GM-(\d+)", mid)
+        if x:
+            n = max(n, int(x.group(1)))
+    while True:
+        n += 1
+        yield f"GM-{n:05d}"
+
+
+def pending_openings(ds: Dataset) -> list[GoodsMovement]:
+    """Stock typed in during setup that the journal does not hold yet.
+
+    On-hand in the planning policies is the stock at the planning start. A place with no movement dated before the
+    start has nothing in the journal to derive it from, so its on-hand is its opening balance: an opening movement
+    the day before the start. The roll-forward writes these into the journal, after which the journal alone decides."""
+    start = ds.settings.planning_start
+    seen = {(m.location, m.product) for m in ds.movements if m.date < start}
+    ids = movement_ids(ds)
+    return [GoodsMovement(id=next(ids), date=start - timedelta(days=1), type=MovementType.OPENING, location=lp.location,
+                          product=lp.product, qty=round(lp.on_hand, 6), note="Opening balance: stock entered at setup")
+            for lp in ds.location_product_by_key.values()      # a record kept twice: the one planning uses
+            if lp.on_hand > EPS and (lp.location, lp.product) not in seen]
+
+
 def before(ds: Dataset, as_of: date) -> list[GoodsMovement]:
-    return [m for m in ds.movements if m.date < as_of]
+    """The journal before ``as_of``, with setup stock not yet in it as opening balances."""
+    return [m for m in [*ds.movements, *pending_openings(ds)] if m.date < as_of]
 
 
 def stock(movs: list[GoodsMovement]) -> dict[Node, float]:
@@ -31,6 +60,7 @@ def stock_rows(ds: Dataset, as_of: date) -> list[StockRow]:
     for m in movs:
         by_node[(m.location, m.product)].append(m)
     nodes = set(by_node) | {(lp.location, lp.product) for lp in ds.location_products if lp.on_hand > 0}
+    setup = {(m.location, m.product) for m in pending_openings(ds)}
     rows = []
     for n in sorted(nodes):
         lp = ds.location_product_by_key.get(n)
@@ -46,7 +76,8 @@ def stock_rows(ds: Dataset, as_of: date) -> list[StockRow]:
         rows.append(StockRow(location=n[0], product=n[1], master_on_hand=master,
                              movement_stock=round(bal, 6) if ms else None,
                              difference=round(max(0.0, bal) - master, 6) if ms else 0.0, movements=len(ms),
-                             last_date=ms[-1].date if ms else None, by_type=dict(by_type), negative_on=neg))
+                             last_date=ms[-1].date if ms else None, by_type=dict(by_type), negative_on=neg,
+                             opening_from_setup=n in setup))
     return rows
 
 
@@ -73,7 +104,9 @@ def by_ref(d: dict, ref: str, product: str, location: str | None = None) -> floa
 
 
 def open_orders(ds: Dataset, as_of: date) -> list[OpenOrderRow]:
-    movs = before(ds, as_of)
+    """Every firm and sales order with what has been received, shipped and issued against it so far (all postings,
+    whatever their date: an order received this week shows as received now, not after the next roll)."""
+    movs = list(ds.movements)
     got, *_ = _sum(movs, {MovementType.RECEIPT})
     iss, *_ = _sum(movs, {MovementType.ISSUE, MovementType.TRANSFER_OUT})
     sold, *_ = _sum(movs, {MovementType.SALE})

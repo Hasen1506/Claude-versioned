@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from .. import __version__
-from ..actuals import ActualsView, FirmReport, RollReport, actuals_view, firm_orders, roll_forward
+from ..actuals import ActualsView, FirmReport, PostingError, RollReport, actuals_view, firm_orders, post, roll_forward
 from ..demand import ForecastResult, ReleaseResult, release, run_forecast
 from ..finance import FinanceResult, run_finance
 from ..tower import TowerResult, WorkItem, get_tracker, run_tower
@@ -530,6 +530,41 @@ def post_po_action(req: PoActionRequest) -> PoActionResponse:
         new, rep = purchasing_act(req.dataset, req.action, req.po, lines=lines, on=req.date, reference=req.reference,
                                   note=req.note)
     except PurchasingError as e:
+        raise HTTPException(409, str(e)) from e
+    return PoActionResponse(dataset=new, report=rep)
+
+
+class UsageInput(Out):
+    product: str
+    qty: float
+
+
+class CountInput(Out):
+    location: str
+    product: str
+    qty: float
+
+
+class PostRequest(Out):
+    dataset: Dataset
+    action: Literal["ship", "receive", "count"]
+    order: str | None = None                        # the firm order (ship / receive)
+    qty: float | None = None                        # default: everything still open
+    date: dt.date | None = None                     # posting date (default: the planning start; a count: the day before)
+    final: bool = False                             # last delivery: closes the order even if short
+    usage: list[UsageInput] | None = None           # production: parts actually used, instead of the backflush
+    counts: list[CountInput] | None = None          # count: stock counted per place and product
+    note: str = ""
+
+
+@app.post("/api/actuals/post", response_model=PoActionResponse)
+def post_posting(req: PostRequest) -> PoActionResponse:
+    """Post what happened: ship a transfer, receive an order (with its parts issued), or count stock."""
+    try:
+        new, rep = post(req.dataset, req.action, order=req.order, qty=req.qty, on=req.date, final=req.final,
+                        usage=None if req.usage is None else [u.model_dump() for u in req.usage],
+                        counts=None if req.counts is None else [c.model_dump() for c in req.counts], note=req.note)
+    except PostingError as e:
         raise HTTPException(409, str(e)) from e
     return PoActionResponse(dataset=new, report=rep)
 

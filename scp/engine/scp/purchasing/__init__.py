@@ -139,7 +139,7 @@ def requisitions(ds: Dataset, plan: PlanResult) -> list[Requisition]:
             order_date=o.start_date, due_date=o.due_date, source_id=pu.id, supplier=pu.supplier, price=price,
             currency=_currency(ds, pu.currency), value=o.qty * price * fx(ds, pu.currency) * (1.0 + pu.duty_rate),
             due_now=(o.start_date - start).days <= window, late=o.start_in_past or o.start_date < start,
-            choices=choices))
+            choices=choices, open_later=list(o.open_later)))
     out.sort(key=lambda r: (r.order_date, r.supplier, r.product, r.id))
     return out
 

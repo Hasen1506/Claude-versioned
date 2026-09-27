@@ -17,6 +17,7 @@ class StockRow(Out):
     last_date: dt.date | None
     by_type: dict[str, float]             # signed quantity per movement type
     negative_on: dt.date | None = None    # first date the running balance went below zero
+    opening_from_setup: bool = False      # on-hand typed at setup counts as the opening balance (journalled at the next roll)
 
 
 class OpenOrderRow(Out):
@@ -63,6 +64,19 @@ class AccuracyReport(Out):
     periods: int                          # distinct weeks logged
 
 
+class Unbooked(Out):
+    """Postings dated before the planning start that the starting position does not reflect yet (a late posting, or
+    one dated in a week already rolled): what moving the plan to the same start again would change."""
+
+    needed: bool
+    movements: int                        # movements dated before the start (the journal the position comes from)
+    stock: int                            # places whose starting stock would change
+    orders: int                           # firm and sales orders whose open quantity would change or that would close
+    accuracy_weeks: int                   # rolled weeks whose actual sales would change
+    history_days: int                     # sales-history days that would change
+    closed: int                           # closed orders whose deliveries would change
+
+
 class ActualsView(Out):
     as_of: dt.date
     stock: list[StockRow]
@@ -70,6 +84,7 @@ class ActualsView(Out):
     accuracy: AccuracyReport
     movements: int
     unmatched: list[str]                  # movement ids whose reference matches no open or closed order
+    unbooked: Unbooked | None = None      # None when the view is not as of the planning start
 
 
 class StockChange(Out):
@@ -120,3 +135,5 @@ class FirmReport(Out):
     ok: bool
     firmed: list[FirmedOrder]
     skipped: dict[str, str]               # planned order id → reason
+    purchase_orders: list[str] = []       # purchase orders created for the firmed buys (grouped as Buying does)
+    notes: list[str] = []                 # from those orders: approval needed, below a supplier's minimum, …

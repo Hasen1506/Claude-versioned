@@ -43,6 +43,7 @@ class Requisition(Out):
     due_now: bool                     # to order within the release window
     late: bool                        # should already have been ordered
     choices: list[SourceChoice]
+    open_later: list[str] = []        # open order lines for the same product and place that arrive after it is needed
 
 
 class PoLine(Out):
