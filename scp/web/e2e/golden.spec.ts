@@ -923,3 +923,47 @@ test("rights and four eyes: a planner limited to a place is refused elsewhere; m
   await page.getByRole("button", { name: "Find" }).click();
   await expect(page.locator(".panel", { hasText: "Changes to a record" }).locator("tbody tr").first()).toContainText("Plot 2, Chakan");
 });
+
+test("opening another company while one is planning: the first one's results are dropped and the new one is planned", async ({ page }) => {
+  page.on("dialog", (d) => d.accept());
+  await openExample(page, "Kaveri Kitchenware");
+  await page.locator(".save-chip .save-long").click();
+  await page.getByRole("tab", { name: "Make an account" }).click();
+  await page.getByLabel("E-mail").fill("switch@kaveri.in");
+  await page.getByLabel("Your name").fill("Sam Switch");
+  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByRole("button", { name: "Make the account" }).click();
+  await page.getByRole("button", { name: "Keep it on the server" }).click();
+  await expect(page.locator(".save-chip .save-long")).toHaveText("Saved");
+  // a second company, the bottler, made on the server by the same person
+  const token = await page.evaluate(() => JSON.parse(localStorage.getItem("scp.session.v1") ?? "{}").token as string);
+  const bottler = await (await page.request.get("/api/examples/single_product_plant")).json();
+  expect((await page.request.post("/api/companies", { headers: { Authorization: `Bearer ${token}` },
+    data: { dataset: bottler, note: "second company" } })).ok()).toBe(true);
+  await page.goto("/#/account");
+  await page.reload();
+
+  // Kaveri's forecast takes long; the bottler is opened while Kaveri is still being planned
+  let slow = true;
+  await page.route("**/api/forecast", async (r) => {
+    if (slow) await new Promise((ok) => setTimeout(ok, 4000));
+    await r.continue();
+  });
+  const asked = page.waitForRequest("**/api/forecast");
+  await page.getByRole("button", { name: /^Open Kaveri Kitchenware/ }).click();
+  await asked;
+  await expect(page).toHaveURL(/#\/home/);
+  await page.goto("/#/account");
+  await page.getByRole("button", { name: /^Open Single-product bottler/ }).click();
+  slow = false;
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+  // every result is the bottler's: Kaveri's forecast, which came back after the bottler was open, is not taken
+  await page.goto("/#/demand");
+  await expect(page.getByRole("tab", { name: "Demand plan" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /Series workbench/ })).toHaveCount(0);   // the bottler has no sales history
+  for (const at of ["#/demand", "#/plan/orders", "#/buying"]) {
+    await page.goto("/" + at);
+    await expect(page.locator("main")).toContainText(/Mineral water|PET preform|Cap \+ label/);
+    await expect(page.locator("main")).not.toContainText(/Mixer grinder|Electric kettle|Enamelled copper|MG-500|MG-750|KT-15/);
+  }
+});

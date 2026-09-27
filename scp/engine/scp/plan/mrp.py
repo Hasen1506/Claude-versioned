@@ -26,8 +26,10 @@ import math
 import threading
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from typing import Any, TypeVar
 
 from ..model import (
     Dataset, LocationProduct, LocationType, LotSizePolicy, MrpType, ReceiptKind, SafetyStockMethod, Strategy,
@@ -1099,7 +1101,8 @@ def target_at(points: list[tuple[date, float]], d: date) -> float:
 # performance), each with the same data: a large company's plan takes a minute and a half, so the last one that took
 # long is kept, by the data's content, and handed out again. Callers only read a plan.
 _KEEP_AFTER_S = 2.0
-_last: tuple[str, PlanResult] | None = None
+T = TypeVar("T")
+_last: tuple[str, PlanResult, dict[str, Any]] | None = None
 _last_lock = threading.Lock()
 
 
@@ -1120,8 +1123,23 @@ def run_mrp(ds: Dataset) -> PlanResult:
     res = _run_mrp(ds)
     if time.perf_counter() - t >= _KEEP_AFTER_S:
         with _last_lock:
-            _last = (key or _fingerprint(ds), res)
+            _last = (key or _fingerprint(ds), res, {})
     return res
+
+
+def with_kept_plan(ds: Dataset, plan: PlanResult, name: str, make: Callable[[], T]) -> T:
+    """``make()``, kept beside the kept plan when ``plan`` is it and ``ds`` is the data it was made from (money and
+    performance both follow the plan's costs to the customers, a quarter of a minute for a large company)."""
+    kept = _last
+    if kept is None or kept[1] is not plan or _fingerprint(ds) != kept[0]:
+        return make()
+    with _last_lock:
+        if name in kept[2]:
+            return kept[2][name]
+    out = make()
+    with _last_lock:
+        kept[2][name] = out
+    return out
 
 
 def _run_mrp(ds: Dataset) -> PlanResult:

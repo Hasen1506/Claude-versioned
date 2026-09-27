@@ -26,6 +26,7 @@ import hmac
 import json
 import re
 import secrets
+import threading
 import zlib
 from typing import Any
 from collections.abc import Callable
@@ -1003,13 +1004,15 @@ class Companies:
 
 
 _by_store: dict[int, Companies] = {}
+_by_store_lock = threading.Lock()
 
 
 def get_companies() -> Companies:
     store = get_store()
-    c = _by_store.get(id(store))
-    if c is None or c.store is not store:
-        c = Companies(store)
-        _by_store.clear()
-        _by_store[id(store)] = c
-    return c
+    with _by_store_lock:   # two first requests at once would both add the new columns (Phase L)
+        c = _by_store.get(id(store))
+        if c is None or c.store is not store:
+            c = Companies(store)
+            _by_store.clear()
+            _by_store[id(store)] = c
+        return c

@@ -169,17 +169,28 @@ Measured on a 4-core machine with a generated company of 5,000 products at 20 pl
 warehouses; 11,635 planning policies), two years of weekly sales history (624,000 rows) and 26 weeks of forecast
 (156,000 rows): a 71 MB company.
 
-| Step | Time | Memory of the server process |
+| Step (as *Plan everything* runs them) | Time | Peak memory of the server process |
 |---|---|---|
-| Reading the company | 3.4 s | 1.4 GB |
-| Data checks | 10 s | 2.1 GB |
-| Network view | 7 s | |
-| Supply plan | 89 s | 5.1 GB |
-| Forecast (6,000 series, 4 cores) | 124 s | |
-| Promising, with the plan already made | 12 s | |
-| Saving a change (only what changed is sent) | 5 s | |
+| Reading the company | 3.6 s | 1.4 GB |
+| Data checks and network view (after each change) | 7 s each | 2.1 GB |
+| Supply plan | 66–78 s | 5.5 GB |
+| Forecast (6,000 series, 4 cores) | 136 s | 6.1 GB |
+| Promising (the plan is kept, not made again) | 3 s | |
+| Safety stock | 30 s | |
+| Capacity (S&OP) | 14 s | |
+| Schedule | 5 s | |
+| Buying | 4 s | |
+| Actuals | 9 s | |
+| Money | 17 s | |
+| Performance | 12 s | 6.7 GB |
+| Saving a change (only what changed is sent) | 5–7 s | |
 
-So for a company that size: **4 cores and 8 GB of memory**, and one company planned at a time. A company of a few
+*Plan everything* takes about five minutes for a company that size; `engine/scripts/scale.py` measures your own
+machine (`python scripts/scale.py --products 1000`).
+
+So for a company that size: **4 cores and 8 GB of memory**, and one company planned at a time. The browser is the
+limit before the server is: it receives every result whole (the supply plan alone is about 130 MB at 1,000 products),
+so until results are sent in pages (the next phase), keep companies to a few hundred products. A company of a few
 hundred products needs 2 cores and 2 GB. The database grows by about the company's size every 25 saves (each save
 keeps only what changed, with a full copy every 25), so give the data volume some room and keep an eye on it.
 

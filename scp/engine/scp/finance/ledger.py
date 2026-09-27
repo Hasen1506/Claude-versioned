@@ -14,6 +14,7 @@ import math
 from collections import defaultdict
 
 from ..model import Dataset, LocationType
+from ..plan.mrp import with_kept_plan
 from ..plan.result import PlanResult, Requirement
 from ..plan.structure import main_share
 from .result import (
@@ -241,6 +242,10 @@ class _Ledger:
 
 
 def cost_to_serve(ds: Dataset, plan: PlanResult) -> tuple[list[ServeRow], Reconciliation]:
+    return with_kept_plan(ds, plan, "cost_to_serve", lambda: _cost_to_serve(ds, plan))
+
+
+def _cost_to_serve(ds: Dataset, plan: PlanResult) -> tuple[list[ServeRow], Reconciliation]:
     led = _Ledger(ds, plan)
     rows = led.run()
     k = plan.kpis

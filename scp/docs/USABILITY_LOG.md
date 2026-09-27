@@ -156,6 +156,51 @@ After J: **K** third reality check (six weeks, R-findings) · then **L** platfor
 | N75 | Multi-line fields (the new addresses) showed one line: the input style fixed their height. | Minor | **Fixed (J+).** |
 | N76 | Screen-reader labels on the inventory placement and buffer tick-boxes still use ids ("Select PLT-PUNE RM-STAMP"). Sighted users see names. | Minor | **Fixed (L).** "Select Stamping steel at Pune plant". |
 
+## Found while building Phase L
+
+L was used as it was built: the dairy of K with its three people (saving, merging, history, a forgotten password,
+single sign-on against a test identity provider, rights by plant, a second person approving master data, a backup
+put back), a company of 5,000 products at 20 places with two years of weekly history timed step by step, and the
+container built and run as the deployment guide says.
+
+Measured on 4 cores (5,000 products, 20 places: 11,635 planning policies, 624,000 history rows, 156,000 forecast
+rows, a company of 71 MB), each step as *Plan everything* and a change ask for it:
+
+| Step | Before L | After L |
+|---|---|---|
+| Reading the company | 3.4 s | 3.6 s |
+| Data checks (after every change) | 22.2 s | 6.7 s |
+| Network view (after every change) | 16.1 s | 6.7 s |
+| Supply plan | 89 s, 5.1 GB | 66–78 s, 5.5 GB |
+| Forecast (6,000 series) | about 40 min (300 series: 113 s) | 136 s |
+| Promising | 99 s | 3.1 s |
+| Safety stock | | 30 s |
+| Capacity (S&OP) | | 14 s |
+| Schedule | | 4.7 s |
+| Buying | 45 s | 4.0 s |
+| Actuals | | 9.0 s |
+| Money | 16 s | 17 s |
+| Performance | 24 s | 12 s |
+| Saving one change | 5.1 s | 5–7 s |
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N77 | A large company does not fit the browser. The web client holds the whole company and every result, sends the whole company with each planning call and with the checks after every change (71 MB each time at 5,000 products), and receives every result whole: the supply plan's answer is about 131 MB at 1,000 products (requirements 50 MB, orders 36 MB, pegging 25 MB, places 19 MB) and would be about 650 MB at 5,000. The browser's storage cannot keep it ("storage is full" is shown). Saving is light since N64; planning is not. At 1,000 products (a 14 MB company) the browser still copes: opening in 2 s, the first calculation in 27 s, *Plan everything* in 64 s, at most 200 MB of script memory. | Critical (at scale) | Open: **S**, next. Results kept on the server by company and plan, pages and totals sent instead of every row; checks and planning run on the server's copy of the company, so a change sends only itself. |
+| N78 | The supply plan of 5,000 products at 20 places takes 66–78 s and 5.5 GB in one process, so one server plans one such company at a time and needs 8 GB. | Serious | Open: **S** (a leaner plan result, pegging on demand; planning in a worker process). Measured and written into the deployment guide's sizing. |
+| N79 | The forecast ran 20 times slower in parallel than one series after another: each worker's maths library started a thread per core (300 series: 113 s instead of 6 s; 6,000 series would have taken about 40 minutes). | Serious | **Fixed (L).** One maths thread per worker, set before the library loads; workers as many as the cores the server may use. 6,000 series in 136 s. |
+| N80 | The data checks after every change ran twice (once for the readiness gate), copied each planning policy per row and looked up sources by scanning every source for every product at every place. | Serious | **Fixed (L).** Indexed sources and routes, policies worked out once per company, the gate reuses the checks: 22 s → 6.7 s; the network view 16 s → 6.7 s. |
+| N81 | *Plan everything* planned the company six times (the plan, promising, capacity, buying, money and performance each asked for it with the same data). | Serious | **Fixed (L).** The last plan that took long is kept by the data's content and handed out again for the same data only; promising 99 s → 3.1 s. |
+| N82 | Buying looked at every purchasing source for each planned purchase; money and performance each followed the plan's costs to the customers again. | Serious | **Fixed (L).** Sources by place and product; the costs followed to customers are kept beside the kept plan: buying 45 s → 4.0 s, performance 24 s → 12 s. |
+| N83 | The container stopped at start: single sign-on needs an HTTP client that was installed only for development. | Critical | **Fixed (L)**, found by building the container: it is a dependency of the server. |
+| N84 | *Your company* kept the values it opened with after a colleague's save; saving it wrote them back over the colleague's change. | Serious | **Fixed (L).** The form takes in a newer save while it is not being edited. |
+| N85 | Saving *Your company* renamed the working calendar even when the working week had not changed, so the save showed a changed record nobody touched. | Minor | **Fixed (L).** |
+| N86 | Rights by product group need products to have a group, and setup never asked for one. | Minor | **Fixed (L)** with R29. |
+| N87 | An edit the person's rights do not cover was refused by the server, and after a reload the page kept trying to save it while *Undo* had nothing to undo. | Minor | **Fixed (L).** The refusal offers *Drop my unsaved changes* (back to the latest save), *Undo the last change* and *Download them*. |
+| N88 | Changing a member to the role they already had was logged in *History*. | Minor | **Fixed (L).** |
+| N89 | Safety stock for 5,000 products at 20 places takes 30 s: the placement is one optimisation over every place and product. | Minor | Open: **S** (placement per product family, in parallel). |
+| N90 | Opening another company while *Plan everything* ran for the first one: the run went on, its later steps with the new company's data, and a result that came back after the switch was taken as the new company's and shown as up to date (the bottler's Demand page listed Kaveri's nine forecast series). Opening the new company did not plan it, because a run was going. Found with the 1,000-product company, where a run takes a minute. | Serious | **Fixed (L).** Opening a company, a file or a version drops every result asked for before it and stops that run at its next step; the new company is then planned. |
+| N91 | The first requests to a newly started server, arriving together (a browser asks for the sign-in settings and the company list at once), each set up the company store: both added the new columns and one failed ("duplicate column name", an error page); on an in-memory database two stores could be made, one of them lost. Seen in the end-to-end tests' server log. | Serious | **Fixed (L).** The store and the company store are made once, under a lock. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution
@@ -279,29 +324,35 @@ currencies, two years of history), buying and sending every week, firming, posti
 transfers in minutes, the weekly roll, the promotion once it was in, backorder processing, the viewer on a phone (no
 sideways scroll, no change buttons), and three people working on one company without losing a change once R6 was fixed.
 
-## The next plan (after Phase J)
+## The next plan (after Phase L)
 
-Every finding of the first two reality checks is fixed, and every critical one of the third (K). What is left is
-K's open findings (R13–R31, ranked above), breadth against SAP (the gaps below), the small open items (N63–N65,
-N76) and use at a real company's scale. Proposed, in the order recommended:
+Every finding of the first two reality checks is fixed, and every critical one of the third (K). L made the platform
+fit for a real company of a few hundred products: saving that can be trusted, accounts and control, backups, a
+container and a deployment guide. What is left is K's open findings (R13–R17, R20, R21, R30), use at the scale of
+thousands of products (N77, N78, N89) and breadth against SAP (the gaps below). Proposed, in the order recommended:
 
-- **K: third reality check, over weeks, not a day**: **done**, see R1–R31 above. Every critical finding is fixed;
-  what is open is ranked there with its phase, and the phases below are re-ordered by it.
-- **L: platform for real use** (R18, R19, R22, R27–R29, R31, N63–N65, N76 and the users gap). A save never
-  refused as someone else's when it is one's own (R18); every save a state to put back, and undo that survives a
-  reload (R19); saves that send only what changed (N64); a side-by-side choice per record when two people changed it
-  (N65); password reset by e-mail and single sign-on (N63); rights by plant or product group; four eyes on
-  master-data changes; change documents with every field's old and new value; a nightly backup and a restore.
-  Creating a company while signed in keeps it on the server (R28). A sweep of the minor items (R22, R27, R29, R31,
-  N76). A measured test at scale (5,000 products × 20 places, two years of history) with the plan's time and memory,
-  and the slow parts fixed. A deployment guide (container, database, mail).
-- **O: stock you can trace** (R15–R17, R30 and the inventory gaps; moved up by K). Batch numbers with an expiry
-  date, and first expiring, first out, so shelf life shows in stock (R15); a short receipt names the firm orders that
-  can no longer run in full, and offers to shorten them (R16); stock below zero as a company rule — refuse the
-  posting, allow it and ask for a count, or count it as found — instead of the roll setting it to 0 (R17); stock in
-  quality inspection and blocked; reversal of a posting; a physical inventory document with a freeze; stock in
-  transit as its own stock type; a refrigerated route mode (R30); serial numbers.
-- **P: planning depth** (R13, R15, R17, R21 and the remaining MRP, BOM, capacity and PP/DS gaps; moved up by K).
+- **K: third reality check, over weeks, not a day**: **done**, see R1–R31 above.
+- **L: platform for real use**: **done**, see R18, R19, R22, R27–R29, R31, N63–N65, N76 and N77–N91. A save is never
+  refused as someone else's when it is one's own (R18); every save can be put back and undo survives a reload (R19);
+  saves send only what changed (N64); a clash is chosen record by record (N65); a forgotten password by e-mail or
+  from the owner, and single sign-on (N63); rights by plant or product group; master data approved by a second
+  person; change documents with every field's old and new value; nightly backups and a restore; a new company kept
+  on the server when signed in (R28); the minor sweep (R22, R27, R29, R31, N76). At 5,000 products × 20 places the
+  forecast went from about 40 minutes to 2¼, the checks after each change from 22 s to 7 s, and *Plan everything*
+  plans once instead of six times. A container, Compose with HTTPS, and [the deployment guide](DEPLOY.md).
+- **S: large companies** (N77, N78, N89; new, first). The engine copes with 5,000 products; the browser does not.
+  Results kept on the server by company and plan, with pages, totals and a product's own detail sent on request
+  instead of every row; the checks and every planning call run on the server's copy of the company, so a change
+  sends only itself; a leaner plan result (pegging worked out when asked); planning in a worker process, with its
+  progress shown and one plan per company at a time; safety stock placed per product family in parallel. Then the
+  browser test of L repeated at 5,000 products: *Plan everything* and every page within a minute and a gigabyte.
+- **O: stock you can trace** (R15–R17, R30 and the inventory gaps). Batch numbers with an expiry date, and first
+  expiring, first out, so shelf life shows in stock (R15); a short receipt names the firm orders that can no longer
+  run in full, and offers to shorten them (R16); stock below zero as a company rule — refuse the posting, allow it and
+  ask for a count, or count it as found — instead of the roll setting it to 0 (R17); stock in quality inspection and
+  blocked; reversal of a posting; a physical inventory document with a freeze; stock in transit as its own stock
+  type; a refrigerated route mode (R30); serial numbers.
+- **P: planning depth** (R13, R15, R17, R21 and the remaining MRP, BOM, capacity and PP/DS gaps).
   Capable-to-promise that creates the planned order it promised on, firm, as SAP does (R13); lot sizes and batches
   that stay within shelf life (R15); yield in the bill of materials so a part is bought with the loss in it (R17);
   demand events on the Demand page, a new one starting without effect (R21); MRP groups; withdrawal from another
@@ -318,11 +369,10 @@ N76) and use at a real company's scale. Proposed, in the order recommended:
   movements and to take back purchase and production orders; e-mail sent from the application (orders to suppliers,
   confirmations to customers, the worklist's reminders).
 
-Order after K: **L, O, P, M, N, Q**. L stays first: six weeks with three people showed that trust in saving and
-going back (R18, R19) matters before any new process, and a year of history needs the scale work. O and P move ahead
-of M and N because every open serious finding of K is about stock that is really there (shelf life, short receipts,
-stock below zero) or a plan that acts on it, while none was about invoices or contracts: a food company cannot run on
-a plan that ignores expiry, and it can invoice from its own system meanwhile.
+Order after L: **S, O, P, M, N, Q**. S comes first because it is the one finding that stops a company from using
+the rest: at a thousand products *Plan everything* moves over a hundred megabytes into the browser, and the browser
+cannot keep what it gets. O and P stay ahead of M and N for K's reasons: every open serious finding of K is about
+stock that is really there (shelf life, short receipts, stock below zero) or a plan that acts on it.
 
 ## Gaps against SAP recorded for later phases
 

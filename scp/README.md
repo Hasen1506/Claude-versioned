@@ -197,8 +197,26 @@ What real use turned up, and what was done about it, is logged in [docs/USABILIT
 - **Results that are simply missing** (after reopening the browser) are calculated when Actuals, Buying, Money or
   customer orders open (N71).
 
-The next plan (phases K–Q, starting with a six-week reality check) is at the end of
-[docs/USABILITY_LOG.md](docs/USABILITY_LOG.md#the-next-plan-after-phase-j).
+## Platform for real use (Phase L)
+
+- **Saving you can trust.** Every save is kept and can be put back from *History*; a save sends only the records that
+  changed; a reload during a save is never a clash with oneself; undo survives a reload; where two people changed the
+  same record, each record is shown side by side and chosen *mine* or *theirs*.
+- **Accounts and control.** *Forgot your password?* mails a one-time link when the server has mail, otherwise an
+  owner gives one; single sign-on by OpenID Connect (Microsoft Entra ID, Google, Okta, Keycloak). An owner limits a
+  planner to plants or product groups; master-data changes can wait for a second person's approval; change documents
+  keep every field's old and new value.
+- **Backups.** A nightly copy of the database with `SCP_BACKUP_DIR`, and `python -m scp.admin backup | check |
+  restore | users | reset-link`.
+- **Scale.** Measured at 5,000 products × 20 places with two years of history: the forecast runs one maths thread
+  per worker (about 40 minutes → 2¼), the checks after each change are indexed and run once (22 s → 7 s), and the
+  supply plan is made once per *Plan everything*, not six times. The browser is still the limit at that size (N77,
+  next phase).
+- **Deployment.** A `Dockerfile`, `deploy/compose.yaml` with Caddy for HTTPS, and [docs/DEPLOY.md](docs/DEPLOY.md):
+  settings, mail, single sign-on, the reverse proxy, backups and putting one back, the size of the machine, updating.
+
+The next plan (phases S, O, P, M, N, Q, starting with large companies) is at the end of
+[docs/USABILITY_LOG.md](docs/USABILITY_LOG.md#the-next-plan-after-phase-l).
 
 ## What is here (P0–P10)
 

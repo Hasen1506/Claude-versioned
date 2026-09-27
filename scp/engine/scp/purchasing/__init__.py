@@ -128,8 +128,8 @@ def requisitions(ds: Dataset, plan: PlanResult) -> list[Requisition]:
         pu = ds.purchasing_source_by_id[o.source_id]
         order_on = max(o.start_date, start)
         choices = []
-        for alt in ds.purchasing_sources:
-            if alt.location != o.location or alt.product != o.product or not _valid(alt, o.need_date):
+        for alt in ds.sources_at.get((o.location, o.product), ((), ()))[1]:
+            if not _valid(alt, o.need_date):
                 continue
             choices.append(_choice(ds, alt, o.qty, order_on, o.need_date, alt.id == pu.id))
         choices.sort(key=lambda c: (not c.assigned, bool(c.blocked), c.days_late, c.value))

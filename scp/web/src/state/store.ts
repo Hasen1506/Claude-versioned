@@ -156,6 +156,11 @@ let checkedRevision = -1;
 /** Unfinished records the last data check set aside, by collection, as their JSON text: matched by content, so
  *  an edit elsewhere (which shifts row positions) never un-sets or wrongly sets aside a record. */
 let setAside: Map<string, Set<string>> = new Map();
+/** Counts datasets replaced whole (a company opened, a file or version loaded, closed): a result asked for before
+ *  belongs to the data that was there, and is dropped when it arrives; a "Plan everything" of it stops. */
+let loadEpoch = 0;
+let planningEpoch = -1;
+let planQueued = false;
 
 type Coll = Record<string, unknown[] | undefined>;
 
@@ -519,6 +524,7 @@ export const store = {
    *  or a blank company leaves the open server company (the working copy is then this browser's own); a plan
    *  version of the open company keeps it, but is not its live data. */
   load(ds: Dataset, version: Omit<WorkingVersion, "savedRevision"> | null = null) {
+    loadEpoch++;
     past.length = 0;
     future.length = 0;
     persist(ds);
@@ -552,6 +558,7 @@ export const store = {
 
   /** Open a company kept on the server: its latest save becomes the working copy. */
   openCompany(doc: CompanyDoc) {
+    loadEpoch++;
     past.length = 0;
     future.length = 0;
     const ds = doc.dataset as unknown as Dataset;
@@ -646,6 +653,7 @@ export const store = {
   },
 
   clear() {
+    loadEpoch++;
     clearTimeout(saveTimer);
     setAside = new Map();
     past.length = 0;
@@ -703,11 +711,14 @@ export const store = {
     const ds = state.dataset;
     if (!ds) return;
     const rev = state.revision;
+    const epoch = loadEpoch;
     setRun(key, { running: true, error: null });
     try {
       const data = await RUNNERS[key](ds);
+      if (epoch !== loadEpoch) return;   // another company or file was opened meanwhile
       setRun(key, { data, revision: rev, running: false, at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
     } catch (e) {
+      if (epoch !== loadEpoch) return;
       if (e instanceof SchemaRejected) {
         set({ schemaErrors: e.errors });
         setRun(key, { running: false, error: "The dataset has invalid values." });
@@ -718,21 +729,32 @@ export const store = {
   /** "Plan everything": check the data, then calculate every result in order. Stops at the data check
    *  when something blocks planning; nothing it does changes the dataset. */
   async planAll() {
-    if (!state.dataset || state.planning) return;
+    if (!state.dataset) return;
+    if (state.planning) {
+      // still planning what was open before: stop that at its next step and plan this instead
+      if (planningEpoch !== loadEpoch) planQueued = true;
+      return;
+    }
+    const epoch = planningEpoch = loadEpoch;
     const of = PLAN_STEPS.length + 1;
+    const done = () => {
+      set({ planning: null });
+      if (planQueued) { planQueued = false; void store.planAll(); }
+    };
     set({ planning: { done: 0, of, label: "Checking your data" } });
     clearTimeout(timer);
     await check();
-    if (!state.dataset || state.engineError || state.schemaErrors.length || !state.validation || state.validation.blocking) {
-      set({ planning: null });
+    if (epoch !== loadEpoch || !state.dataset || state.engineError || state.schemaErrors.length || !state.validation
+        || state.validation.blocking) {
+      done();
       return;
     }
     for (const [i, st] of PLAN_STEPS.entries()) {
-      if (!state.dataset) break;
+      if (!state.dataset || epoch !== loadEpoch) break;
       set({ planning: { done: i + 1, of, label: st.label } });
       await store.run(st.key);
     }
-    set({ planning: null });
+    done();
   },
 
   /** Store a result computed outside `run` (e.g. a schedule with a hand-edited sequence). */

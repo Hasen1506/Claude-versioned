@@ -47,3 +47,35 @@ def test_the_readiness_gate_uses_the_checks_it_already_ran():
     assert checked is not None and not aside
     assert checked == validate(parsed)
     assert post_validate(raw).issues == checked
+
+
+def test_the_costs_followed_to_customers_are_kept_beside_the_plan_they_follow(keep_every_plan):
+    from scp.finance.ledger import cost_to_serve
+    d = ds(example_dict("kitchenware_network"))
+    plan = mrp.run_mrp(d)
+    rows, _ = cost_to_serve(d, plan)
+    assert cost_to_serve(d, plan)[0] is rows
+    # the same plan asked about with other data (prices changed): worked out again
+    dearer = d.model_copy(update={"products": [p.model_copy(update={"price": (p.price or 0) + 1}) for p in d.products]})
+    assert cost_to_serve(dearer, plan)[0] is not rows
+    # a plan that is not the kept one: worked out again
+    other = mrp._run_mrp(d)
+    assert cost_to_serve(d, other)[0] is not rows
+    assert cost_to_serve(d, other)[0] == rows
+
+
+def test_the_first_requests_at_once_make_one_store(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from scp.companies import store as cstore
+    from scp.versions import store as vstore
+    monkeypatch.setenv("SCP_DB", ":memory:")
+    vstore.set_store(None)
+    cstore._by_store.clear()
+    try:
+        with ThreadPoolExecutor(8) as ex:
+            got = list(ex.map(lambda _: cstore.get_companies(), range(16)))
+        assert len({id(c) for c in got}) == 1 and len({id(c.store) for c in got}) == 1
+    finally:
+        vstore.set_store(None)
+        cstore._by_store.clear()
