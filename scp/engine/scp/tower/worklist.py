@@ -25,8 +25,9 @@ CATEGORY = {
     "STOCKOUT": "coverage", "BELOW_SAFETY_STOCK": "coverage", "DEMAND_AT_RISK": "coverage",
     "CAPACITY_OVERLOAD": "capacity", "CAPACITY_OVERTIME": "capacity", "SUPPLIER_CAPACITY": "capacity",
     "LANE_CAPACITY": "capacity", "EXCESS_STOCK": "inventory", "SHELF_LIFE_RISK": "inventory",
-    "START_IN_PAST": "orders", "RESCHEDULE_IN": "orders", "FENCE_SHIFT": "orders", "NO_VALID_SOURCE": "orders",
-    "RECEIPT_OVERDUE": "orders", "ORDER_OVERDUE": "delivery", "PROMISE_AT_RISK": "delivery",
+    "START_IN_PAST": "orders", "RESCHEDULE_IN": "orders", "SCHEDULE_LATE": "orders", "FENCE_SHIFT": "orders", "NO_VALID_SOURCE": "orders",
+    "RECEIPT_OVERDUE": "orders", "PO_CONFIRMED_LATE": "orders",
+    "PO_CONFIRMED_SHORT": "orders", "PO_NOT_CONFIRMED": "orders", "ORDER_OVERDUE": "delivery", "PROMISE_AT_RISK": "delivery",
     "PROMISE_LATE": "delivery", "FORECAST_BIAS": "demand", "NO_DEMAND_STOCK": "inventory",
 }
 SKIP = {"EOQ_FALLBACK"}  # a parameter note for the data owner, not planner work
@@ -133,6 +134,11 @@ def owner_for(ds: Dataset, r: Raw) -> tuple[str, str]:
 
 
 # ------------------------------------------------------------------------------------------------ tracker
+def owner_key(ds: Dataset, scope: str | None) -> str:
+    """Whose worklist an item is on: a server company's (``@C0001``) or, in the browser, the company name's."""
+    return f"@{scope}" if scope else ds.settings.company_name
+
+
 def item_id(company: str, key: str) -> str:
     return hashlib.sha1(f"{company}\x1f{key}".encode()).hexdigest()[:12]
 
@@ -160,9 +166,9 @@ class Tracker:
                         age_days=age, sla_days=s, breached=s is not None and age > s, reopened=r["reopened"],
                         note=r["note"])
 
-    def sync(self, ds: Dataset, raws: list[Raw]) -> tuple[list[WorkItem], list[WorkItem]]:
+    def sync(self, ds: Dataset, raws: list[Raw], scope: str | None = None) -> tuple[list[WorkItem], list[WorkItem]]:
         """Record this run's exceptions: new ones open, known ones refresh (or reopen), missing ones clear."""
-        company = ds.settings.company_name
+        company = owner_key(ds, scope)
         as_of = ds.settings.planning_start
         day = as_of.isoformat()
         sla = ds.tower.sla_days
@@ -213,12 +219,17 @@ class Tracker:
                 tuple(cleared_ids))] if cleared_ids else []
         return live, cleared
 
+    def _get(self, iid: str, scope: str | None) -> sqlite3.Row:
+        """An item, only if it is on the worklist of ``scope`` (a server company) or, without one, the browser's."""
+        r = self.db.execute("SELECT * FROM tower_items WHERE id = ?", (iid,)).fetchone()
+        if r is None or (r["company"] != f"@{scope}" if scope else r["company"].startswith("@")):
+            raise VersionError(f"no worklist item '{iid}'", 404)
+        return r
+
     def update(self, iid: str, *, owner: str | None = None, status: str | None = None, note: str | None = None,
-               sla: dict[str, int] | None = None) -> WorkItem:
+               sla: dict[str, int] | None = None, scope: str | None = None) -> WorkItem:
         with self.store.lock:
-            r = self.db.execute("SELECT * FROM tower_items WHERE id = ?", (iid,)).fetchone()
-            if r is None:
-                raise VersionError(f"no worklist item '{iid}'", 404)
+            r = self._get(iid, scope)
             day = r["last_seen"]
             if status is not None:
                 if status not in ("open", "acknowledged", "resolved"):
@@ -241,7 +252,9 @@ class Tracker:
             r = self.db.execute("SELECT * FROM tower_items WHERE id = ?", (iid,)).fetchone()
             return self._item(r, dt.date.fromisoformat(r["last_seen"]), sla or {})
 
-    def history(self, iid: str) -> list[tuple[str, str, str]]:
+    def history(self, iid: str, scope: str | None = None) -> list[tuple[str, str, str]]:
+        with self.store.lock:
+            self._get(iid, scope)
         return [(r["at"], r["action"], r["detail"]) for r in
                 self.db.execute("SELECT at, action, detail FROM tower_log WHERE item_id = ? ORDER BY seq", (iid,))]
 

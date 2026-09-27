@@ -15,7 +15,7 @@ from scp.schedule.clock import ResourceClock, after_queue
 from scp.schedule.core import Instance, Job, OpSpec, Res, check, complete, decode, edd, improve, setup_rule
 from scp.time import WorkCalendar
 
-from .factory import load_example
+from .factory import base, demand, ds as make_ds, load_example, lp
 
 MON = date(2026, 1, 5)
 WEEKDAYS = WorkCalendar(Calendar(id="W", workdays=[0, 1, 2, 3, 4]))
@@ -174,6 +174,11 @@ def _random_instance(rng: random.Random) -> Instance:
         ops = [_op(prod, g, rng.choice([0.0, 1.0]), rng.uniform(0.5, 30.0), rng.choice(list(resources)), f"J{j}",
                    10 * (k + 1), queue_workdays=rng.choice([0, 0, 1]), parallel=rng.choice([None, 1]))
                for k in range(rng.randint(1, 3))]
+        if jobs and rng.random() < 0.4:
+            # parts from an earlier order (acyclic), or a fixed arrival
+            rng.choice(ops).waits_on.append((rng.choice(jobs).id, rng.choice([0, 1])))
+        if rng.random() < 0.3:
+            rng.choice(ops).parts_ready = rng.choice([30.0, 80.0])
         jobs.append(Job(f"J{j}", prod, rel, rel + rng.uniform(10, 150), ops, weight=rng.choice([1.0, 2.0])))
     return _instance(jobs, resources, co, cal=rng.choice([WEEKDAYS, ALLDAYS]), span=rng.choice([8.0, 16.0]))
 
@@ -192,6 +197,97 @@ def test_random_instances_are_feasible_and_search_never_worsens():
         d = decode(inst, shuffled)
         assert check(inst, d) == []
         assert set(d.completion) == set(inst.jobs)
+
+
+# ---- parts --------------------------------------------------------------------------------------
+def test_step_waits_for_parts_from_another_order():
+    """J1's second step uses what J0 makes: it starts when J0 finishes (plus a receiving day), not before; its first
+    step does not wait. A fixed arrival holds a step the same way, and the checker catches a step moved earlier."""
+    j0 = Job("J0", "SUB", 0.0, 99.0, [_op("SUB", "G", 0, 10, "R1", "J0", 10)])
+    j1 = Job("J1", "FG", 0.0, 99.0, [_op("FG", "G", 0, 1, "R2", "J1", 10),
+                                     _op("FG", "G", 0, 1, "R2", "J1", 20, waits_on=[("J0", 0)])])
+    inst = _instance([j0, j1], {"R1": 1, "R2": 1})
+    d = decode(inst, edd(inst))
+    assert d.completion["J0"] == pytest.approx(16.0)             # 06:00 + 10 h
+    step2 = next(b for b in d.blocks if b.key == "J1:20")
+    assert step2.setup_start == pytest.approx(16.0)
+    assert d.held["J1:20"] == pytest.approx(16.0 - 7.0)          # could have started at 07:00
+    assert "J1:10" not in d.held
+    assert check(inst, d) == []
+    # one receiving day: the part is there from the next working day
+    inst.receive = lambda order, t, days: after_queue(ALLDAYS, MON, t, days)
+    j1.ops[1].waits_on = [("J0", 1)]
+    d = decode(inst, edd(inst))
+    assert next(b for b in d.blocks if b.key == "J1:20").setup_start == pytest.approx(48.0 + 6.0)
+    bad = copy.deepcopy(d)
+    b = next(b for b in bad.blocks if b.key == "J1:20")
+    b.setup_start, b.run_start, b.end = 7.0, 7.0, 8.0
+    assert any("parts" in v for v in check(inst, bad))
+    j1.ops[1].waits_on = []
+    j1.ops[1].parts_ready = 30.0
+    d = decode(inst, edd(inst))
+    assert next(b for b in d.blocks if b.key == "J1:20").setup_start == pytest.approx(30.0)
+
+
+def _made_sub() -> dict:
+    """A (on M2) is made from SUB (on M1), made in the same schedule from bought C."""
+    d = base(horizon=28)
+    d["products"].append({"id": "SUB", "type": "SFG"})
+    d["resources"].append({"id": "M2", "location": "P", "efficiency": 1.0, "hours_per_shift": 8})
+    d["production_sources"] = [
+        {"id": "PV-A", "location": "P", "product": "A", "fixed_lead_time_workdays": 1,
+         "components": [{"product": "SUB", "qty": 1}],
+         "operations": [{"seq": 10, "resource": "M2", "setup_hours": 0, "run_hours_per_unit": 0.1}]},
+        {"id": "PV-SUB", "location": "P", "product": "SUB", "fixed_lead_time_workdays": 1,
+         "components": [{"product": "C", "qty": 1}],
+         "operations": [{"seq": 10, "resource": "M1", "setup_hours": 0, "run_hours_per_unit": 0.4}]},
+    ]
+    lp(d, "P", "A")["on_hand"] = 0
+    lp(d, "P", "SUB")["on_hand"] = 0
+    lp(d, "P", "C")["on_hand"] = 1000
+    d["demand"] = [demand("P", "A", "2026-01-12", 40)]
+    return d
+
+
+def test_schedule_waits_for_a_subassembly_made_in_the_same_schedule():
+    """SUB takes 16 h of M1 (two 8 h days) where MRP allowed one working day: A waits for it and finishes late.
+    Without waiting for parts it would start on its MRP day as if SUB were there."""
+    d = _made_sub()
+    d["scheduling"] = {"improve": False}
+    r = run_schedule(make_ds(d))
+    assert r.ok and r.violations == []
+    a = next(o for o in r.orders if o.product == "A")
+    sub = next(o for o in r.orders if o.product == "SUB")
+    assert [p.supply for p in a.parts_from] == [sub.id] and a.parts_from[0].scheduled
+    a_start = min(op.setup_start for op in r.ops if op.order == a.id)
+    assert a_start >= sub.completion - 1e-6
+    assert a.held_for_parts > 0 and r.kpis.waiting_for_parts == 1
+    d["scheduling"] = {"improve": False, "wait_for_parts": False}
+    r2 = run_schedule(make_ds(d))
+    a2 = next(o for o in r2.orders if o.product == "A")
+    assert min(op.setup_start for op in r2.ops if op.order == a2.id) < a_start
+    assert a2.parts_from == [] and r2.kpis.waiting_for_parts == 0
+
+
+def test_schedule_waits_for_a_late_firm_purchase():
+    """C comes only on an open purchase order due day 6 (a new one would take 20 days): MRP pegs A's parts to it,
+    and the schedule holds A until it is there; the finish and available dates report the slip."""
+    d = base(horizon=28)
+    d["purchasing_sources"][1]["lead_time_days"] = 20
+    lp(d, "P", "A")["on_hand"] = 0
+    lp(d, "P", "B")["on_hand"] = 1000
+    d["demand"] = [demand("P", "A", "2026-01-08", 10)]
+    d["receipts"] = [{"id": "PO-1", "kind": "purchase", "location": "P", "product": "C", "qty": 10,
+                      "due_date": "2026-01-11"}]
+    d["scheduling"] = {"improve": False}
+    r = run_schedule(make_ds(d))
+    assert r.ok and r.violations == []
+    a = r.orders[0]
+    assert [(p.supply, p.product, p.scheduled) for p in a.parts_from] == [("PO-1", "C", False)]
+    assert a.parts_ready == pytest.approx(6 * 24.0)
+    assert min(op.setup_start for op in r.ops) >= 6 * 24.0
+    assert a.tardy and a.days_late >= 1
+    assert a.available_date is not None and a.available_date > a.mrp_due_date
 
 
 def test_complete_manual_sequence():

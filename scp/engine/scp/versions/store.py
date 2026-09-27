@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS versions (
   planning_start TEXT NOT NULL,
   sha256      TEXT NOT NULL,
   size        INTEGER NOT NULL,
-  dataset     TEXT NOT NULL
+  dataset     TEXT NOT NULL,
+  scope       TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS version_log (
   seq         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,12 +107,15 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(SCHEMA)
+        if "scope" not in {r["name"] for r in self.db.execute("PRAGMA table_info(versions)")}:
+            self.db.execute("ALTER TABLE versions ADD COLUMN scope TEXT NOT NULL DEFAULT ''")
         self.lock = threading.RLock()
 
     # ---- helpers ------------------------------------------------------------------------------------
-    def _row(self, vid: str) -> sqlite3.Row:
+    def _row(self, vid: str, scope: str | None = None) -> sqlite3.Row:
+        """A version's row; with ``scope``, only a version of that company (``""``: the browser's own)."""
         r = self.db.execute("SELECT * FROM versions WHERE id = ?", (vid,)).fetchone()
-        if r is None:
+        if r is None or (scope is not None and r["scope"] != scope):
             raise VersionError(f"no version '{vid}'", 404)
         return r
 
@@ -134,60 +138,63 @@ class Store:
         self.db.execute("INSERT INTO version_log (version_id, at, action, detail) VALUES (?, ?, ?, ?)",
                         (vid, _now(), action, detail))
 
-    def _insert(self, ds: Dataset, name: str, kind: str, parent: str | None, note: str) -> str:
+    def _insert(self, ds: Dataset, name: str, kind: str, parent: str | None, note: str, scope: str = "") -> str:
         text = canonical(ds)
         vid = self._next_id()
         now = _now()
         self.db.execute(
             "INSERT INTO versions (id, name, kind, parent_id, status, note, created_at, updated_at, planning_start, "
-            "sha256, size, dataset) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)",
+            "sha256, size, dataset, scope) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)",
             (vid, name, kind, parent, note, now, now, ds.settings.planning_start.isoformat(), sha(text),
-             len(text.encode("utf-8")), text))
+             len(text.encode("utf-8")), text, scope))
         return vid
 
     # ---- queries ------------------------------------------------------------------------------------
-    def list(self) -> list[VersionMeta]:
+    def list(self, scope: str | None = None) -> list[VersionMeta]:
+        """Every version, or with ``scope`` those of one company (``""``: the browser's own)."""
         with self.lock:
-            return [self._meta(r) for r in self.db.execute("SELECT * FROM versions ORDER BY created_at, id")]
+            rows = (self.db.execute("SELECT * FROM versions ORDER BY created_at, id") if scope is None else
+                    self.db.execute("SELECT * FROM versions WHERE scope = ? ORDER BY created_at, id", (scope,)))
+            return [self._meta(r) for r in rows]
 
-    def meta(self, vid: str) -> VersionMeta:
+    def meta(self, vid: str, scope: str | None = None) -> VersionMeta:
         with self.lock:
-            return self._meta(self._row(vid))
+            return self._meta(self._row(vid, scope))
 
-    def text(self, vid: str) -> str:
+    def text(self, vid: str, scope: str | None = None) -> str:
         with self.lock:
-            return self._row(vid)["dataset"]
+            return self._row(vid, scope)["dataset"]
 
-    def dataset(self, vid: str) -> Dataset:
-        return Dataset.model_validate_json(self.text(vid))
+    def dataset(self, vid: str, scope: str | None = None) -> Dataset:
+        return Dataset.model_validate_json(self.text(vid, scope))
 
-    def get(self, vid: str) -> VersionDoc:
+    def get(self, vid: str, scope: str | None = None) -> VersionDoc:
         with self.lock:
-            r = self._row(vid)
+            r = self._row(vid, scope)
             log = [LogEntry(at=x["at"], action=x["action"], detail=x["detail"]) for x in
                    self.db.execute("SELECT * FROM version_log WHERE version_id = ? ORDER BY seq", (vid,))]
             return VersionDoc(meta=self._meta(r), dataset=Dataset.model_validate_json(r["dataset"]), log=log)
 
     # ---- actions ------------------------------------------------------------------------------------
-    def save_base(self, ds: Dataset, name: str, note: str = "") -> VersionMeta:
+    def save_base(self, ds: Dataset, name: str, note: str = "", scope: str = "") -> VersionMeta:
         with self.lock:
-            vid = self._insert(ds, name, "base", None, note)
+            vid = self._insert(ds, name, "base", None, note, scope)
             self._log(vid, "created", "base version")
             return self._meta(self._row(vid))
 
-    def branch(self, parent: str, name: str, note: str = "") -> VersionMeta:
+    def branch(self, parent: str, name: str, note: str = "", scope: str | None = None) -> VersionMeta:
         with self.lock:
-            p = self._row(parent)
+            p = self._row(parent, scope)
             if p["status"] == "discarded":
                 raise VersionError(f"{parent} is discarded")
-            vid = self._insert(Dataset.model_validate_json(p["dataset"]), name, "scenario", parent, note)
+            vid = self._insert(Dataset.model_validate_json(p["dataset"]), name, "scenario", parent, note, p["scope"])
             self._log(vid, "branched", f"from {parent}")
             self._log(parent, "branched", f"to {vid}")
             return self._meta(self._row(vid))
 
-    def update(self, vid: str, ds: Dataset) -> VersionMeta:
+    def update(self, vid: str, ds: Dataset, scope: str | None = None) -> VersionMeta:
         with self.lock:
-            r = self._row(vid)
+            r = self._row(vid, scope)
             if r["kind"] != "scenario":
                 raise VersionError(f"{vid} is a base version: base versions are immutable — branch a scenario to change it")
             if r["status"] != "active":
@@ -201,9 +208,9 @@ class Store:
             self._log(vid, "saved", sha(text)[:12])
             return self._meta(self._row(vid))
 
-    def discard(self, vid: str) -> VersionMeta:
+    def discard(self, vid: str, scope: str | None = None) -> VersionMeta:
         with self.lock:
-            r = self._row(vid)
+            r = self._row(vid, scope)
             if r["kind"] != "scenario":
                 raise VersionError(f"{vid} is a base version and cannot be discarded")
             if r["status"] != "active":
@@ -212,17 +219,17 @@ class Store:
             self._log(vid, "discarded")
             return self._meta(self._row(vid))
 
-    def promote(self, vid: str, name: str | None = None, note: str = "") -> VersionMeta:
+    def promote(self, vid: str, name: str | None = None, note: str = "", scope: str | None = None) -> VersionMeta:
         """A scenario becomes the new base: a new immutable base version with the scenario's content. The
         base it descends from is marked superseded (its content is untouched)."""
         with self.lock:
-            r = self._row(vid)
+            r = self._row(vid, scope)
             if r["kind"] != "scenario" or r["status"] != "active":
                 raise VersionError(f"only an active scenario can be promoted ({vid} is a {r['status']} {r['kind']})")
             self.db.execute("BEGIN")
             try:
                 new = self._insert(Dataset.model_validate_json(r["dataset"]), name or r["name"], "base", vid,
-                                   note or f"promoted from scenario {vid}")
+                                   note or f"promoted from scenario {vid}", r["scope"])
                 self.db.execute("UPDATE versions SET status = 'promoted', updated_at = ? WHERE id = ?", (_now(), vid))
                 root = self._base_of(vid)
                 if root:

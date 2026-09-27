@@ -1,7 +1,8 @@
 """Execution data (blueprint P7): the goods-movement journal and the logs the roll-forward writes.
 
 Stock is never typed in once movements exist: on-hand at a node is the sum of its movements before the
-planning start (an S/4 MATDOC projection). Firm orders keep their original quantity next to what is
+planning start (an S/4 MATDOC projection). Stock entered at setup at a node with no earlier movement is its opening
+balance; the roll-forward writes it into the journal, and a count posts an opening balance or a count difference. Firm orders keep their original quantity next to what is
 still open, so rolling forward is idempotent — re-running it with the same journal changes nothing.
 """
 from __future__ import annotations
@@ -71,6 +72,11 @@ class ClosedOrder(Model):
     first_delivery: dt.date | None = None
     last_delivery: dt.date | None = None
     closed_on: dt.date
+    po: str | None = Field(None, max_length=64, description="Purchase: the purchase order the line was on")
+    price: float | None = Unit("money_per_unit", default=None, description="Purchase: net price per unit")
+    confirmed_date: dt.date | None = Field(None, description="Purchase: the date the supplier confirmed, if any")
+    cancelled: bool = Field(False, description="Sales: cancelled before it was delivered in full; what was delivered "
+                                               "is `delivered_qty`, and only that counts in OTIF")
 
 
 class AccuracyRecord(Model):

@@ -1,21 +1,23 @@
 """HTTP API. Deliberately thin: parse the dataset (pydantic), call the engine, return typed results.
 
-The server is stateless in P0/P1: the client owns the dataset document and posts it with each
-request. Plan versions and persistence arrive in P7/P8 (see docs/BLUEPRINT.md §10).
+Planning calls are stateless: the client owns the working dataset and posts it with each request. What is kept, a
+company on the server, its plan versions and its worklist, belongs to a company (``X-Company``) and is only for its
+members (see :mod:`scp.api.companies`); without a company, versions and the worklist are the browser's own.
 """
 from __future__ import annotations
 
 import datetime as dt
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from .. import __version__
-from ..actuals import ActualsView, FirmReport, RollReport, actuals_view, firm_orders, roll_forward
+from ..actuals import ActualsView, FirmReport, PostingError, RollReport, actuals_view, firm_orders, post, roll_forward
 from ..demand import ForecastResult, ReleaseResult, release, run_forecast
 from ..finance import FinanceResult, run_finance
 from ..tower import TowerResult, WorkItem, get_tracker, run_tower
@@ -27,12 +29,25 @@ from ..model import Dataset, DemandRecord, ForecastModelId
 from ..model.common import Out
 from ..network import build_graph, location_edges, location_layers
 from ..plan import PlanResult, run_mrp
+from ..plan.level import LevelPreview, level_preview
+from ..purchasing import PurchasingError, act as purchasing_act, create_purchase_orders, purchasing_view
+from ..purchasing.result import ActionReport, CreateReport, PurchasingView
 from ..promise import PromiseResult, check_order, commit, run_bop, run_promise
+from ..promise.orders import (
+    OrderError, SalesOrderReport, accept as accept_order, cancel as cancel_order, change as change_order,
+)
 from ..scenarios import BY_ID as SCENARIOS, EngineClient, ScenarioInfo, ScenarioReport
-from ..schedule import ScheduleResult, run_schedule
+from ..schedule import (
+    HEURISTICS, PROFILES, ApplyReport, Heuristic, Profile, ScheduleComparison, ScheduleResult, apply_schedule,
+    compare_schedules, run_schedule,
+)
 from ..sop import SopRelease, SopResult, release_sop, run_sop
 from ..validate import RULES, Issue, validate
+from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, plain_errors
+from ..validate.setup import SetupItem, checklist
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
+from ..companies import CompanyError
+from .companies import EditScope, Scope, company_error, gate, router as companies_router
 
 ROOT = Path(__file__).resolve().parents[3]          # scp/
 EXAMPLES = ROOT / "examples"
@@ -42,6 +57,22 @@ app = FastAPI(title="SCP — Supply Chain Planning", version=__version__,
               description="Typed network master data, readiness gate, demand planning, network MRP/DRP.")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "https://hasen1506.github.io"],
                    allow_methods=["*"], allow_headers=["*"])
+
+
+app.middleware("http")(gate)
+app.add_exception_handler(CompanyError, company_error)  # type: ignore[arg-type]
+app.include_router(companies_router)
+
+
+@app.exception_handler(RequestValidationError)
+def _request_invalid(_request, exc: RequestValidationError) -> JSONResponse:
+    """422 with each field's problem in plain words (``loc`` still points at the field for the forms)."""
+    return JSONResponse(status_code=422, content={"detail": plain_errors(list(exc.errors()))})
+
+
+@app.exception_handler(DatasetRejected)
+def _dataset_rejected(_request, exc: DatasetRejected) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"detail": exc.errors})
 
 
 @app.exception_handler(VersionError)
@@ -67,9 +98,15 @@ class RuleInfo(Out):
     description: str
 
 
+# A dataset as the client holds it, possibly with unfinished records (see validate.lenient).
+RawDataset = Annotated[dict[str, Any], Body()]
+
+
 class ValidationResult(Out):
     issues: list[Issue]
     blocking: bool
+    set_aside: list[SetAside] = []
+    setup: list[SetupItem] = []   # what is still missing, in the order a planner sets a company up
 
 
 class NetLocation(Out):
@@ -140,7 +177,10 @@ def example(name: str) -> Dataset:
 
 @app.get("/api/rules", response_model=list[RuleInfo])
 def rules() -> list[RuleInfo]:
-    return [RuleInfo(code=k, severity=v[0], description=v[1]) for k, v in RULES.items()]
+    out = [RuleInfo(code=k, severity=v[0], description=v[1]) for k, v in RULES.items()]
+    # raised while reading the dataset (validate.lenient), before the readiness gate runs
+    return out + [RuleInfo(code="SET_ASIDE", severity="warning",
+                           description="An unfinished record is left out of planning until it is fixed")]
 
 
 @app.get("/api/schema")
@@ -150,13 +190,22 @@ def schema() -> dict:
 
 
 @app.post("/api/validate", response_model=ValidationResult)
-def post_validate(ds: Dataset) -> ValidationResult:
-    issues = validate(ds)
-    return ValidationResult(issues=issues, blocking=any(i.severity == "error" for i in issues))
+def post_validate(raw: RawDataset) -> ValidationResult:
+    """The readiness gate on everything that can be planned; unfinished records are set aside and listed,
+    each also as a SET_ASIDE warning, instead of making the whole dataset unreadable."""
+    ds, aside = lenient(raw)
+    issues = [Issue(code="SET_ASIDE", severity="warning", object_type=a.object_type, object_id=a.object_id,
+                    message=f"{SINGULAR[a.collection]} {a.label} is left out of planning until it is fixed: {a.reason}",
+                    hint="Fix it or delete it; it comes back into the plan as soon as it is complete", field=a.field)
+              for a in aside]
+    issues += validate(ds)
+    return ValidationResult(issues=issues, blocking=any(i.severity == "error" for i in issues), set_aside=aside,
+                            setup=checklist(ds, aside))
 
 
 @app.post("/api/network", response_model=NetworkView)
-def post_network(ds: Dataset) -> NetworkView:
+def post_network(raw: RawDataset) -> NetworkView:
+    ds, _ = lenient(raw)
     g = build_graph(ds)
     layers = location_layers(ds)
     prods: dict[str, set[str]] = {}
@@ -281,12 +330,49 @@ def post_sop_release(ds: Dataset) -> SopReleaseResponse:
 
 class ScheduleRequest(Out):
     dataset: Dataset
-    sequence: dict[str, list[str]] | None = None   # resource → operation keys; None = EDD + local search
+    sequence: dict[str, list[str]] | None = None   # resource → operation keys, each run where it is listed;
+                                                   # None = the start rule, local search and optimiser per settings
+    hold: dict[str, float] | None = None           # order → not-before clock hour (the result's holds)
 
 
 @app.post("/api/schedule", response_model=ScheduleResult)
 def post_schedule(req: ScheduleRequest) -> ScheduleResult:
-    return run_schedule(req.dataset, req.sequence)
+    return run_schedule(req.dataset, req.sequence, hold=req.hold)
+
+
+class ScheduleCatalogue(Out):
+    heuristics: list[Heuristic]
+    profiles: list[Profile]
+
+
+@app.get("/api/schedule/catalogue", response_model=ScheduleCatalogue)
+def get_schedule_catalogue() -> ScheduleCatalogue:
+    """The scheduling heuristics and the profiles that bundle a start rule, the search and the objective weights."""
+    return ScheduleCatalogue(heuristics=HEURISTICS, profiles=PROFILES)
+
+
+@app.post("/api/schedule/compare", response_model=ScheduleComparison)
+def post_schedule_compare(ds: Dataset) -> ScheduleComparison:
+    """Every start rule, the local search and the optimiser on the same window, scored with the current weights."""
+    return compare_schedules(ds)
+
+
+class ScheduleApplyRequest(ScheduleRequest):
+    ids: list[str] | None = None       # scheduled orders to date; None = every order on the schedule
+
+
+class ScheduleApplyResponse(Out):
+    dataset: Dataset
+    report: ApplyReport
+
+
+@app.post("/api/schedule/apply", response_model=ScheduleApplyResponse)
+def post_schedule_apply(req: ScheduleApplyRequest) -> ScheduleApplyResponse:
+    """Fix the schedule's dates on its orders: planned ones become production orders, released ones are re-dated."""
+    new, rep = apply_schedule(req.dataset, req.sequence, req.ids, req.hold)
+    if not rep.ok:
+        raise HTTPException(409, "the readiness gate has errors; fix them before using the schedule's dates")
+    return ScheduleApplyResponse(dataset=new, report=rep)
 
 
 @app.post("/api/promise", response_model=PromiseResult)
@@ -327,9 +413,60 @@ def post_promise_commit(req: PromiseCommitRequest) -> PromiseCommitResponse:
     return PromiseCommitResponse(dataset=new, result=res)
 
 
+class SalesOrderChange(Out):
+    qty: float | None = None                        # the whole ordered quantity, delivered included
+    date: dt.date | None = None
+    priority: int | None = None
+    price: float | None = None                      # sent as null: the price list's price again
+    complete_delivery: bool | None = None
+    customer_ref: str | None = None
+
+
+class SalesOrderRequest(Out):
+    dataset: Dataset
+    action: Literal["accept", "change", "cancel"]
+    order: DemandRecord | None = None               # accept: the checked order (no number: the next one)
+    id: str | None = None                           # change / cancel: the order
+    changes: SalesOrderChange | None = None
+    date: dt.date | None = None                     # cancel: the day (default: the planning start)
+    reason: str = ""
+
+
+class SalesOrderResponse(Out):
+    dataset: Dataset
+    report: SalesOrderReport
+
+
+@app.post("/api/orders/sales", response_model=SalesOrderResponse)
+def post_sales_order(req: SalesOrderRequest) -> SalesOrderResponse:
+    """Take a checked customer order, change one (it is promised again), or cancel what is still open."""
+    try:
+        if req.action == "accept":
+            if req.order is None:
+                raise OrderError("send the order to take")
+            new, rep = accept_order(req.dataset, req.order)
+        elif not req.id:
+            raise OrderError("say which order")
+        elif req.action == "change":
+            ch = req.changes or SalesOrderChange()
+            given = {k: getattr(ch, k) for k in ch.model_fields_set if getattr(ch, k) is not None or k == "price"}
+            new, rep = change_order(req.dataset, req.id, given)
+        else:
+            new, rep = cancel_order(req.dataset, req.id, req.date, req.reason)
+    except (OrderError, ValueError) as e:
+        raise HTTPException(409, str(e)) from e
+    return SalesOrderResponse(dataset=new, report=rep)
+
+
 @app.post("/api/plan", response_model=PlanResult)
 def post_plan(ds: Dataset) -> PlanResult:
     return run_mrp(ds)
+
+
+@app.post("/api/capacity/level", response_model=LevelPreview)
+def post_level(ds: Dataset) -> LevelPreview:
+    """What planning within machine capacity moves: earlier, onto alternative machines, or later."""
+    return level_preview(ds)
 
 
 @app.post("/api/finance", response_model=FinanceResult)
@@ -385,6 +522,111 @@ def post_firm(req: FirmRequest) -> FirmResponse:
     return FirmResponse(dataset=new, report=rep)
 
 
+# --- procure-to-pay (Phase E) --------------------------------------------------------------------
+@app.post("/api/purchasing", response_model=PurchasingView)
+def post_purchasing(ds: Dataset) -> PurchasingView:
+    """Requisitions from the supply plan, every purchase order with its lines' status, and the supplier scorecard."""
+    return purchasing_view(ds, run_mrp(ds))
+
+
+class RequisitionPick(Out):
+    id: str
+    source_id: str | None = None
+    qty: float | None = None
+
+
+class CreatePoRequest(Out):
+    dataset: Dataset
+    lines: list[RequisitionPick] | None = None      # None = every requisition due now, on its planned source
+    order_date: dt.date | None = None
+
+
+class CreatePoResponse(Out):
+    dataset: Dataset
+    report: CreateReport
+
+
+@app.post("/api/purchasing/create", response_model=CreatePoResponse)
+def post_create_pos(req: CreatePoRequest) -> CreatePoResponse:
+    plan = run_mrp(req.dataset)
+    lines = None if req.lines is None else [x.model_dump(exclude_none=True) for x in req.lines]
+    new, rep = create_purchase_orders(req.dataset, plan, lines, req.order_date)
+    if not rep.ok:
+        raise HTTPException(409, "the readiness gate has errors; fix them before ordering")
+    return CreatePoResponse(dataset=new, report=rep)
+
+
+class PoLineInput(Out):
+    id: str
+    qty: float | None = None
+    date: dt.date | None = None
+    price: float | None = None
+    final: bool = False
+
+
+class PoActionRequest(Out):
+    dataset: Dataset
+    action: Literal["approve", "send", "confirm", "receive", "change", "cancel"]
+    po: str
+    lines: list[PoLineInput] | None = None          # None = every open line, as ordered
+    date: dt.date | None = None                     # sent on / received on (default: the planning start)
+    reference: str = ""                             # the supplier's confirmation number
+    note: str = ""                                  # delivery note on a goods receipt
+
+
+class PoActionResponse(Out):
+    dataset: Dataset
+    report: ActionReport
+
+
+@app.post("/api/purchasing/act", response_model=PoActionResponse)
+def post_po_action(req: PoActionRequest) -> PoActionResponse:
+    lines = None if req.lines is None else [x.model_dump(exclude_none=True) for x in req.lines]
+    try:
+        new, rep = purchasing_act(req.dataset, req.action, req.po, lines=lines, on=req.date, reference=req.reference,
+                                  note=req.note)
+    except PurchasingError as e:
+        raise HTTPException(409, str(e)) from e
+    return PoActionResponse(dataset=new, report=rep)
+
+
+class UsageInput(Out):
+    product: str
+    qty: float
+
+
+class CountInput(Out):
+    location: str
+    product: str
+    qty: float
+
+
+class PostRequest(Out):
+    dataset: Dataset
+    action: Literal["ship", "receive", "deliver", "count"]
+    order: str | None = None                        # the firm order (ship / receive) or sales order (deliver)
+    qty: float | None = None                        # default: everything still open
+    date: dt.date | None = None                     # posting date (default: the planning start; a count: the day before)
+    final: bool = False                             # last delivery: closes the order even if short
+    usage: list[UsageInput] | None = None           # production: parts actually used, instead of the backflush
+    counts: list[CountInput] | None = None          # count: stock counted per place and product
+    ship_from: str | None = None                    # deliver: the place it ships from (default: where it was promised)
+    note: str = ""
+
+
+@app.post("/api/actuals/post", response_model=PoActionResponse)
+def post_posting(req: PostRequest) -> PoActionResponse:
+    """Post what happened: ship a transfer, receive an order (with its parts issued), or count stock."""
+    try:
+        new, rep = post(req.dataset, req.action, order=req.order, qty=req.qty, on=req.date, final=req.final,
+                        usage=None if req.usage is None else [u.model_dump() for u in req.usage],
+                        counts=None if req.counts is None else [c.model_dump() for c in req.counts], note=req.note,
+                        ship_from=req.ship_from)
+    except PostingError as e:
+        raise HTTPException(409, str(e)) from e
+    return PoActionResponse(dataset=new, report=rep)
+
+
 # --- versions & scenarios (P8) -------------------------------------------------------------------
 class SaveBaseRequest(Out):
     dataset: Dataset
@@ -410,34 +652,34 @@ class CompareRequest(Out):
 
 
 @app.get("/api/versions", response_model=list[VersionMeta])
-def list_versions() -> list[VersionMeta]:
-    return get_store().list()
+def list_versions(sc: Scope) -> list[VersionMeta]:
+    return get_store().list(sc)
 
 
 @app.post("/api/versions", response_model=VersionMeta)
-def save_base(req: SaveBaseRequest) -> VersionMeta:
-    return get_store().save_base(req.dataset, req.name, req.note)
+def save_base(req: SaveBaseRequest, sc: EditScope) -> VersionMeta:
+    return get_store().save_base(req.dataset, req.name, req.note, sc)
 
 
 @app.get("/api/versions/{vid}", response_model=VersionDoc)
-def get_version(vid: str) -> VersionDoc:
-    return get_store().get(vid)
+def get_version(vid: str, sc: Scope) -> VersionDoc:
+    return get_store().get(vid, sc)
 
 
 @app.put("/api/versions/{vid}", response_model=VersionMeta)
-def update_version(vid: str, ds: Dataset) -> VersionMeta:
-    return get_store().update(vid, ds)
+def update_version(vid: str, ds: Dataset, sc: EditScope) -> VersionMeta:
+    return get_store().update(vid, ds, sc)
 
 
 @app.post("/api/versions/{vid}/branch", response_model=VersionMeta)
-def branch_version(vid: str, req: BranchRequest) -> VersionMeta:
-    return get_store().branch(vid, req.name, req.note)
+def branch_version(vid: str, req: BranchRequest, sc: EditScope) -> VersionMeta:
+    return get_store().branch(vid, req.name, req.note, sc)
 
 
 @app.post("/api/tower", response_model=TowerResult)
-def post_tower(ds: Dataset) -> TowerResult:
+def post_tower(ds: Dataset, sc: Scope) -> TowerResult:
     """KPIs, the exception worklist (recorded in the version store: first seen, owner, status) and data quality."""
-    return run_tower(ds)
+    return run_tower(ds, scope=sc or None)
 
 
 class WorkItemUpdate(Out):
@@ -454,29 +696,30 @@ class WorkItemEntry(Out):
 
 
 @app.post("/api/tower/items/{iid}", response_model=WorkItem)
-def update_work_item(iid: str, body: WorkItemUpdate) -> WorkItem:
-    return get_tracker().update(iid, owner=body.owner, status=body.status, note=body.note, sla=body.sla_days)
+def update_work_item(iid: str, body: WorkItemUpdate, sc: EditScope) -> WorkItem:
+    return get_tracker().update(iid, owner=body.owner, status=body.status, note=body.note, sla=body.sla_days,
+                                scope=sc or None)
 
 
 @app.get("/api/tower/items/{iid}/history", response_model=list[WorkItemEntry])
-def work_item_history(iid: str) -> list[WorkItemEntry]:
-    return [WorkItemEntry(at=a, action=b, detail=c) for a, b, c in get_tracker().history(iid)]
+def work_item_history(iid: str, sc: Scope) -> list[WorkItemEntry]:
+    return [WorkItemEntry(at=a, action=b, detail=c) for a, b, c in get_tracker().history(iid, sc or None)]
 
 
 @app.post("/api/versions/{vid}/discard", response_model=VersionMeta)
-def discard_version(vid: str) -> VersionMeta:
-    return get_store().discard(vid)
+def discard_version(vid: str, sc: EditScope) -> VersionMeta:
+    return get_store().discard(vid, sc)
 
 
 @app.post("/api/versions/{vid}/promote", response_model=VersionMeta)
-def promote_version(vid: str, req: PromoteRequest) -> VersionMeta:
-    return get_store().promote(vid, req.name, req.note)
+def promote_version(vid: str, req: PromoteRequest, sc: EditScope) -> VersionMeta:
+    return get_store().promote(vid, req.name, req.note, sc)
 
 
 @app.get("/api/versions/{a}/compare/{b}", response_model=Comparison)
-def compare_versions(a: str, b: str) -> Comparison:
+def compare_versions(a: str, b: str, sc: Scope) -> Comparison:
     st = get_store()
-    return compare(st.dataset(a), st.dataset(b), a, b)
+    return compare(st.dataset(a, sc), st.dataset(b, sc), a, b)
 
 
 @app.post("/api/compare", response_model=Comparison)

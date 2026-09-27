@@ -83,13 +83,6 @@ class AtpSeries:
                 return j, -min(c[j:min(self.horizon, self.days)])
         return None
 
-    def firm_available(self, day: int) -> float:
-        """Look-ahead ATP over the whole series, ignoring RLT: real supply only (used by CTP)."""
-        if day >= self.days:
-            return 0.0
-        c = self.cum()
-        return max(0.0, min(c[max(day, 0):]))
-
     def first_firm(self, qty: float, start: int = 0) -> int | None:
         """First day ≥ start on which ``qty`` of real supply can be taken."""
         c = self.cum()

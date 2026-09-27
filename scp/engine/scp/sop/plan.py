@@ -36,9 +36,11 @@ from ..model import SopMode
 from ..model.dataset import Dataset
 from ..network import Node, build_graph
 from ..plan import costing
+from ..plan.structure import co_output, entering, needs, typical_lot
 from ..plan.leadtime import lead_time_std_days, nominal_lead_time_days, resource_calendar
 from ..plan.rates import bucket_days, horizon_flows, independent_demand, node_role, policy_safety_stock
 from ..time import Buckets
+from ..time.capacity import hours_between, overtime_between
 from ..validate import has_errors, validate
 from .lp import INF, LinearProgram
 from .result import (
@@ -71,6 +73,7 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
     start = s.planning_start
     res.buckets = [SopBucket(index=b.index, start=b.start, end=b.end, label=b.label, days=b.days) for b in bk]
     nodes = list(g.order)
+    node_set = set(nodes)
     role = {n: node_role(ds, n) for n in nodes}
     is_cust = {n: role[n] == "customer" for n in nodes}
     rate = {n: (lp.holding_rate if (lp := ds.location_product_by_key.get(n)) and lp.holding_rate is not None
@@ -109,10 +112,11 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
     demand_nodes = [n for n in nodes if n in dem]
 
     def price(n: Node) -> float:
-        p = ds.product_by_id.get(n[1])
-        return p.price if p and p.price is not None else val.unit_value.get(n, 0.0)
+        p = ds.selling_price(*n)
+        return p if p is not None else val.unit_value.get(n, 0.0)
 
-    no_price = sorted({n[1] for n in demand_nodes if (p := ds.product_by_id.get(n[1])) is None or p.price is None})
+    no_price = sorted({n[1] for n in demand_nodes if ds.selling_price(*n) is None})
+    priced = {n for n in demand_nodes if ds.selling_price(*n) is not None}
 
     lp = LinearProgram()
     # ---- columns ---------------------------------------------------------------------------------------
@@ -150,7 +154,8 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
                 lt = nominal_lead_time_days(ds, opt) or 0.0
                 off = _bucket_offset(lt, mean_bd)
                 uc = costing.conversion_unit_cost(ds, ps.id)
-                started = 1.0 / (1.0 - ps.assembly_scrap)
+                enter = entering(ps)
+                lot = typical_lot(ps)
                 cols: list[int | None] = []
                 for t in range(T):
                     t0 = t - off
@@ -161,15 +166,18 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
                     cost_of[j] = ("production", uc)
                     cols.append(j)
                     add(arrivals, n, t, j, 1.0)
-                    for c in ps.components:
-                        add(departs, (ps.location, c.product), t0, j, costing.component_factor(ds, ps.id, c.product))
+                    for co, per in co_output(ps, 1.0):
+                        if (ps.location, co) in node_set:
+                            add(arrivals, (ps.location, co), t, j, per)
+                    for need in needs(ds, ps, bk[t0].start):
+                        add(departs, (ps.location, need.product), t0, j, need.per_unit + need.per_order / lot)
                     for op in ps.operations:
-                        if op.run_hours_per_unit > 0:
+                        if op.resource and op.run_hours_per_unit_avg > 0:
                             cell = res_load[op.resource][t0]
-                            cell[j] = cell.get(j, 0.0) + op.run_hours_per_unit * started
+                            cell[j] = cell.get(j, 0.0) + op.run_hours_per_unit_avg * enter[op.seq]
                         if op.labor_resource and op.labor_hours_per_unit > 0:
                             cell = res_load[op.labor_resource][t0]
-                            cell[j] = cell.get(j, 0.0) + op.labor_hours_per_unit * started
+                            cell[j] = cell.get(j, 0.0) + op.labor_hours_per_unit * enter[op.seq]
                 flows.append((Flow(kind="make", source_id=ps.id, location=n[0], product=n[1], origin=None, qty=[],
                                    unit_cost=uc, lead_buckets=off), cols))
             elif opt.kind == "buy":
@@ -217,9 +225,9 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
     # firm receipts (past due land in bucket 0)
     firm: dict[Node, list[float]] = defaultdict(lambda: [0.0] * T)
     for r in ds.receipts:
-        i = 0 if r.due_date < start else bk.index_of(r.due_date)
+        i = 0 if r.expected_date < start else bk.index_of(r.expected_date)
         if 0 <= i < T:
-            firm[(r.location, r.product)][i] += r.qty
+            firm[(r.location, r.product)][i] += r.expected_qty
         for rv in r.reservations:      # still to be issued: components, or a transfer's goods at its origin
             j = 0 if rv.date < start else bk.index_of(rv.date)
             if 0 <= j < T:
@@ -289,10 +297,8 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
         cal = resource_calendar(ds, r.id)
         f = cfg.capacity_factor
         extra = cfg.capacity_add_hours_per_week.get(r.id, 0.0)
-        capacity[r.id] = [max(0.0, cal.workdays_between(b.start, b.end) * r.hours_per_workday * f + extra * b.days / 7.0)
-                          for b in bk]
-        ot_limit[r.id] = [cal.workdays_between(b.start, b.end) * r.overtime_hours_per_day * r.units * f
-                          if cfg.allow_overtime else 0.0 for b in bk]
+        capacity[r.id] = [max(0.0, hours_between(r, cal, b.start, b.end) * f + extra * b.days / 7.0) for b in bk]
+        ot_limit[r.id] = [overtime_between(r, cal, b.start, b.end) * f if cfg.allow_overtime else 0.0 for b in bk]
         ot_cols[r.id] = []
         cap_rows[r.id] = []
         for t in range(T):
@@ -444,14 +450,15 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
         if n in gap:
             econ["ss"] += sum(lp.cost[j] * xv(j) for j in gap[n])
     for n in demand_nodes:
-        econ["revenue"] += sum(price(n) * xv(j) for j in sales[n])
+        econ["revenue" if n in priced else "at_cost"] += sum(price(n) * xv(j) for j in sales[n])
         econ["backlog"] += sum(lp.cost[j] * xv(j) for j in back[n])
         econ["lost"] += sum(lp.cost[j] * xv(j) for j in lost[n])
     total = sum(econ[k] for k in ("purchase", "production", "transport", "holding", "overtime", "backlog", "lost", "ss"))
     res.economics = Economics(
         revenue=econ["revenue"], purchase=econ["purchase"], production=econ["production"], transport=econ["transport"],
         holding=econ["holding"], overtime=econ["overtime"], backlog_penalty=econ["backlog"], lost_penalty=econ["lost"],
-        ss_penalty=econ["ss"], total_cost=total, profit=econ["revenue"] - total)
+        ss_penalty=econ["ss"], total_cost=total, profit=econ["revenue"] + econ["at_cost"] - total,
+        valued_at_cost=econ["at_cost"], unpriced=no_price)
     d_tot = sum(sum(v) for v in dem.values())
     s_tot = sum(sum(dl.sales) for dl in res.demand)
     on_time = sum(min(dl.demand[t], max(0.0, dl.sales[t] - (dl.backlog[t - 1] if t else 0.0)))
@@ -469,8 +476,9 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
         "Setups, lot sizes and minimum order quantities are left to MRP and scheduling: the LP plans volumes.",
         "Safety-stock targets are each node's configured policy; falling below costs the shortfall penalty.",
     ]
-    if profit and no_price:
-        res.notes.append(f"No selling price for {', '.join(no_price)}: valued at cost, so serving it earns no margin.")
+    if no_price:
+        res.notes.append(f"No selling price for {', '.join(no_price)}: its sales are valued at cost, so they earn no "
+                         "margin and are left out of revenue.")
     res.ok = True
     return res
 

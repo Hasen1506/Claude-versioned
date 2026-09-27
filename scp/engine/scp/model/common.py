@@ -95,6 +95,24 @@ class MrpType(str, Enum):
     NONE = "none"                     # SAP ND — projected, never replenished
 
 
+class ProcurementType(str, Enum):
+    """Procurement type (S/4 MRP 2): which sources MRP may use."""
+
+    ANY = "any"            # SAP X: made here or got from outside
+    MAKE = "make"          # SAP E: in-house production only
+    EXTERNAL = "external"  # SAP F: bought, or transferred from another place
+
+
+# Units counted in whole pieces (SAP: a unit of measure with no decimal places). A product in one of these is planned
+# in whole units unless it says otherwise.
+COUNT_UNITS = frozenset({
+    "EA", "EACH", "PC", "PCS", "PCE", "PIECE", "PIECES", "ST", "NO", "NOS", "NR", "UN", "UNIT", "UNITS", "ITEM",
+    "BOX", "BX", "CS", "CASE", "CAR", "CTN", "CARTON", "PK", "PAC", "PACK", "PKT", "PACKET", "BAG", "BG", "SACK",
+    "BOT", "BTL", "BOTTLE", "CAN", "TIN", "DR", "DRUM", "PAIL", "BKT", "BUCKET", "JAR", "TUB", "TUBE", "ROL", "ROLL",
+    "SET", "KIT", "PAL", "PALLET", "PR", "PAIR", "DZ", "DOZ", "DOZEN", "SHEET", "REEL", "COIL", "BALE", "CRATE",
+})
+
+
 class LotSizePolicy(str, Enum):
     L4L = "L4L"          # lot-for-lot (SAP EX)
     FIXED = "FIXED"      # fixed lot, repeated until covered (SAP FX)

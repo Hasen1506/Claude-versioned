@@ -15,6 +15,7 @@ from collections import defaultdict
 
 from ..model import Dataset, LocationType
 from ..plan.result import PlanResult, Requirement
+from ..plan.structure import main_share
 from .result import (
     PLAN_COSTS, CostLine, InventoryValue, LocationValue, Reconciliation, ServeRow, ValueBucket,
 )
@@ -81,9 +82,12 @@ class _Ledger:
         for rc in plan.receipts:
             self.receipts_by_node[(rc.location, rc.product)].append(rc)
         self.order_pegged: dict[str, float] = defaultdict(float)
+        self.co_pegged: dict[tuple[str, str], float] = defaultdict(float)   # (order, co-product) -> pegged
         for p in plan.pegs:
             if p.supply_kind == "order":
                 self.order_pegged[p.supply_id] += p.qty
+            elif p.supply_kind == "co_product":
+                self.co_pegged[(p.supply_id, self.reqs[p.requirement_id].product)] += p.qty
         self.pegs_by_req: dict[str, list] = defaultdict(list)
         for p in plan.pegs:
             self.pegs_by_req[p.requirement_id].append(p)
@@ -100,8 +104,16 @@ class _Ledger:
         self.holding_share: dict[str, float] = {}
         self._allocate_holding()
 
+    def _split(self, oid: str) -> tuple[float, dict[str, tuple[float, float]]]:
+        """How a run's cost divides: the main product's share, and per co-product (share, quantity the order yields)."""
+        o = self.orders[oid]
+        ps = self.ds.production_source_by_id.get(o.source_id) if o.kind == "make" else None
+        if ps is None or not ps.co_products:
+            return 1.0, {}
+        return main_share(ps), {c.product: (c.cost_share, o.qty * c.qty / ps.output_qty) for c in ps.co_products}
+
     def _supply_date(self, p) -> object:
-        if p.supply_kind == "order":
+        if p.supply_kind in ("order", "co_product"):
             return self.orders[p.supply_id].available_date
         if p.supply_kind == "receipt":
             return self.receipt_date.get(p.supply_id, self.start)
@@ -159,10 +171,16 @@ class _Ledger:
         for r in self.inputs.get(oid, []):
             _add(v, self.requirement(r.id))
         self.full[oid] = v
-        # the share of the order no requirement is pegged to (lot sizing, safety stock) is unabsorbed
+        # the share of the order no requirement is pegged to (lot sizing, safety stock) is unabsorbed; a run with
+        # co-products divides its cost by their shares first
+        main, cos = self._split(oid)
         left = o.qty - self.order_pegged.get(oid, 0.0)
         if o.qty > 0 and left > 1e-9:
-            self._unabsorb(v, "lot-size and safety-stock excess", left / o.qty)
+            self._unabsorb(v, "lot-size and safety-stock excess", main * left / o.qty)
+        for prod, (share, made) in cos.items():
+            rest = made - self.co_pegged.get((oid, prod), 0.0)
+            if share > 0 and made > 0 and rest > 1e-9:
+                self._unabsorb(v, "co-products not used by the plan", share * rest / made)
         return v
 
     def requirement(self, rid: str) -> Vec:
@@ -175,7 +193,11 @@ class _Ledger:
             if p.supply_kind == "order":
                 o = self.orders[p.supply_id]
                 if o.qty > 0:
-                    _add(v, self.order_full(o.id), p.qty / o.qty)
+                    _add(v, self.order_full(o.id), self._split(o.id)[0] * p.qty / o.qty)
+            elif p.supply_kind == "co_product":
+                share, made = self._split(p.supply_id)[1].get(r.product, (0.0, 0.0))
+                if made > 0:
+                    _add(v, self.order_full(p.supply_id), share * p.qty / made)
             elif p.supply_kind == "receipt":
                 _add(v, {"firm": p.qty * uv})
             else:
@@ -195,10 +217,9 @@ class _Ledger:
                 key = (r.location, r.product)
                 if key not in rows:
                     loc = self.ds.location_by_id.get(r.location)
-                    prod = self.ds.product_by_id.get(r.product)
                     rows[key] = ServeRow(location=r.location, location_type=loc.type.value if loc else "",
                                          region=loc.region if loc else "", product=r.product, demand=0.0, served=0.0,
-                                         price=prod.price if prod else None, revenue=0.0, costs={})
+                                         price=self.ds.selling_price(r.location, r.product), revenue=0.0, costs={})
                 row = rows[key]
                 row.demand += r.qty
                 row.served += sum(p.qty for p in self.pegs_by_req.get(r.id, []))
@@ -213,8 +234,8 @@ class _Ledger:
             row.plan_cost = sum(x for k, x in row.costs.items() if k in PLAN_COSTS)
             row.total_cost = sum(row.costs.values())
             row.cost_per_unit = row.total_cost / row.served if row.served > 0 else 0.0
-            row.margin = row.revenue - row.total_cost
-            row.margin_pct = row.margin / row.revenue if row.revenue > 0 else None
+            row.margin = None if row.price is None else row.revenue - row.total_cost
+            row.margin_pct = row.margin / row.revenue if row.margin is not None and row.revenue > 0 else None
             out.append(row)
         return sorted(out, key=lambda x: (x.region, x.location, x.product))
 

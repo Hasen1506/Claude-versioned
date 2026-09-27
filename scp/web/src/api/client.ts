@@ -1,6 +1,8 @@
 import type {
   Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
-  ScenarioInfo, ScenarioReport, SchemaError, ValidationResult,
+  ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
+  PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoLineInput, RequisitionPick, PostAction, CountInput, UsageInput, SalesOrderChange, SalesOrderResponse,
+  AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult,
 } from "./types";
 
 /** Thrown when the engine rejects the dataset shape (HTTP 422). Carries field-level errors. */
@@ -10,30 +12,88 @@ export class SchemaRejected extends Error {
   }
 }
 
-const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
+/** Any other refusal: the engine's plain-words reason, its HTTP status and the whole answer (a save conflict says
+ *  who saved and when). */
+export class ApiError extends Error {
+  constructor(message: string, public status: number, public body: Record<string, unknown>) {
+    super(message);
+  }
+}
 
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_ORIGIN}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-  });
-  if (res.status === 422) {
-    const body = await res.json();
-    throw new SchemaRejected((body.detail ?? []) as SchemaError[]);
-  }
-  if (!res.ok) {
-    let detail = "";
-    try {
-      detail = ((await res.json()) as { detail?: string }).detail ?? "";
-    } catch {
-      /* not JSON */
+/** Who is asking and in which company: the store installs this (sign-in and the open server company). */
+let authOf: () => { token: string | null; company: string | null } = () => ({ token: null, company: null });
+export function setAuth(fn: typeof authOf) { authOf = fn; }
+
+/** Why a change may not be made now (a viewer of the open company), or null: the store installs this, and every
+ *  engine call that changes the company is refused before it is sent. */
+let writeGuard: () => string | null = () => null;
+export function setWriteGuard(fn: typeof writeGuard) { writeGuard = fn; }
+
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
+/** A proof run answers only when it is done; on a small server the generated flow takes minutes. */
+export const RUN_TIMEOUT_MS = 15 * 60_000;
+
+/** `timeoutMs`: give up (and say so) when the engine has not answered by then. */
+async function call<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
+  const ctrl = timeoutMs ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : undefined;
+  try {
+    const who = authOf();
+    const res = await fetch(`${API_ORIGIN}${path}`, {
+      ...init,
+      signal: ctrl?.signal ?? init?.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(who.token ? { Authorization: `Bearer ${who.token}` } : {}),
+        ...(who.company ? { "X-Company": who.company } : {}),
+        ...(init?.headers ?? {}),
+      },
+    });
+    if (res.status === 422) {
+      const body = await res.json();
+      throw new SchemaRejected((body.detail ?? []) as SchemaError[]);
     }
-    throw new Error(detail || `${path}: HTTP ${res.status}`);
+    if (!res.ok) {
+      let body: Record<string, unknown> = {};
+      try {
+        body = (await res.json()) as Record<string, unknown>;
+      } catch {
+        /* not JSON */
+      }
+      const detail = typeof body.detail === "string" ? body.detail : "";
+      throw new ApiError(detail || `${path}: HTTP ${res.status}`, res.status, body);
+    }
+    return (await res.json()) as T;
+  } catch (e) {
+    if (ctrl?.signal.aborted) {
+      throw new Error(`no answer after ${Math.round(timeoutMs! / 60_000)} minutes: the engine may be overloaded or restarting`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
-  return (await res.json()) as T;
 }
 
 const post = <T>(path: string, ds: Dataset) => call<T>(path, { method: "POST", body: JSON.stringify(ds) });
+
+/** What the engine plans: the dataset without the unfinished records the data check set aside, and a way to put
+ *  them back into a dataset the engine returns (a released forecast, committed promises, …), so an engine write
+ *  never loses a record the planner is still filling in. The store installs this. */
+export interface PlanningView { clean: Dataset; restore: (next: Dataset) => Dataset }
+let planningViewOf: (ds: Dataset) => PlanningView = (ds) => ({ clean: ds, restore: (x) => x });
+export function setPlanningView(fn: (ds: Dataset) => PlanningView) { planningViewOf = fn; }
+const clean = (ds: Dataset) => planningViewOf(ds).clean;
+const planPost = <T>(path: string, ds: Dataset) => post<T>(path, clean(ds));
+/** POST `{ dataset, ...extra }` and put the set-aside records back into the dataset that comes back. */
+async function write<T extends { dataset: Dataset }>(path: string, dataset: Dataset, extra: Record<string, unknown> = {}): Promise<T> {
+  const refused = writeGuard();
+  if (refused) throw new Error(refused);
+  const v = planningViewOf(dataset);
+  const out = await call<T>(path, { method: "POST", body: JSON.stringify({ dataset: v.clean, ...extra }) });
+  return { ...out, dataset: v.restore(out.dataset) };
+}
+const withDataset = <T>(path: string, dataset: Dataset, extra: Record<string, unknown> = {}) =>
+  call<T>(path, { method: "POST", body: JSON.stringify({ dataset: clean(dataset), ...extra }) });
 
 export const api = {
   examples: () => call<ExampleInfo[]>("/api/examples"),
@@ -42,29 +102,96 @@ export const api = {
   rules: () => call<RuleInfo[]>("/api/rules"),
   validate: (ds: Dataset) => post<ValidationResult>("/api/validate", ds),
   network: (ds: Dataset) => post<NetworkView>("/api/network", ds),
-  plan: (ds: Dataset) => post<PlanResult>("/api/plan", ds),
-  sop: (ds: Dataset) => post<SopResult>("/api/sop", ds),
-  sopRelease: (ds: Dataset) => post<SopReleaseResponse>("/api/sop/release", ds),
-  inventory: (ds: Dataset) => post<InventoryResult>("/api/inventory", ds),
+  plan: (ds: Dataset) => planPost<PlanResult>("/api/plan", ds),
+  sop: (ds: Dataset) => planPost<SopResult>("/api/sop", ds),
+  sopRelease: async (ds: Dataset) => {
+    const refused = writeGuard();
+    if (refused) throw new Error(refused);
+    const v = planningViewOf(ds);
+    const out = await post<SopReleaseResponse>("/api/sop/release", v.clean);
+    return { ...out, dataset: v.restore(out.dataset) };
+  },
+  inventory: (ds: Dataset) => planPost<InventoryResult>("/api/inventory", ds),
   /** Write the multi-echelon recommendation as fixed policies; keys "location|product", null = every stage that differs. */
   applyPlacement: (dataset: Dataset, keys: string[] | null) =>
-    call<PlacementResponse>("/api/inventory/apply", { method: "POST", body: JSON.stringify({ dataset, keys }) }),
-  promise: (ds: Dataset) => post<PromiseResult>("/api/promise", ds),
-  bop: (ds: Dataset) => post<PromiseResult>("/api/promise/bop", ds),
+    write<PlacementResponse>("/api/inventory/apply", dataset, { keys }),
+  promise: (ds: Dataset) => planPost<PromiseResult>("/api/promise", ds),
+  bop: (ds: Dataset) => planPost<PromiseResult>("/api/promise/bop", ds),
   promiseCheck: (dataset: Dataset, order: DemandRecord) =>
-    call<PromiseResult>("/api/promise/check", { method: "POST", body: JSON.stringify({ dataset, order }) }),
+    withDataset<PromiseResult>("/api/promise/check", dataset, { order }),
   promiseCommit: (dataset: Dataset, mode: "entry" | "bop") =>
-    call<PromiseCommitResponse>("/api/promise/commit", { method: "POST", body: JSON.stringify({ dataset, mode }) }),
-  /** Detailed schedule; `sequence` (resource → operation keys) fixes the order on those resources. */
-  schedule: (dataset: Dataset, sequence?: Record<string, string[]>) =>
-    call<ScheduleResult>("/api/schedule", { method: "POST", body: JSON.stringify({ dataset, sequence: sequence ?? null }) }),
+    write<PromiseCommitResponse>("/api/promise/commit", dataset, { mode }),
+  /** Detailed schedule; `sequence` (resource → operation keys) fixes the order on those resources and puts a step
+   *  listed on an alternative machine there; `hold` = not-before times (clock hours) per order. */
+  schedule: (dataset: Dataset, sequence?: Record<string, string[]>, hold?: Record<string, number>) =>
+    withDataset<ScheduleResult>("/api/schedule", dataset, { sequence: sequence ?? null, hold: hold ?? null }),
+  /** Fix the schedule's dates on its orders (planned ones become dated production orders); `ids` = only these.
+   *  Send the shown schedule's sequences and holds: the optimiser may not give the same answer twice. */
+  applySchedule: (dataset: Dataset, sequence?: Record<string, string[]>, ids?: string[], hold?: Record<string, number>) =>
+    write<ScheduleApplyResponse>("/api/schedule/apply", dataset, { sequence: sequence ?? null, ids: ids ?? null, hold: hold ?? null }),
+  /** The scheduling heuristics and profiles (what each does, when to use it). */
+  scheduleCatalogue: () => call<ScheduleCatalogue>("/api/schedule/catalogue"),
+  /** Every start rule, the local search and the optimiser on the same orders and weights. */
+  compareSchedules: (ds: Dataset) => planPost<ScheduleComparison>("/api/schedule/compare", ds),
+  /** What planning within machine capacity would move (runs the plan both ways; changes nothing). */
+  level: (ds: Dataset) => planPost<LevelPreview>("/api/capacity/level", ds),
   actuals: (dataset: Dataset, asOf?: string) =>
-    call<ActualsView>("/api/actuals", { method: "POST", body: JSON.stringify({ dataset, as_of: asOf ?? null }) }),
+    withDataset<ActualsView>("/api/actuals", dataset, { as_of: asOf ?? null }),
   roll: (dataset: Dataset, asOf: string) =>
-    call<RollResponse>("/api/actuals/roll", { method: "POST", body: JSON.stringify({ dataset, as_of: asOf }) }),
+    write<RollResponse>("/api/actuals/roll", dataset, { as_of: asOf }),
+  /** Post what happened: ship a transfer, receive an order (a production order issues its parts), or count stock. */
+  postActual: (dataset: Dataset, action: PostAction, extra: { order?: string; qty?: number | null; date?: string; final?: boolean;
+    usage?: UsageInput[] | null; counts?: CountInput[]; note?: string; ship_from?: string | null } = {}) =>
+    write<PoActionResponse>("/api/actuals/post", dataset, { action, order: extra.order ?? null, qty: extra.qty ?? null,
+      date: extra.date ?? null, final: extra.final ?? false, usage: extra.usage ?? null, counts: extra.counts ?? null, note: extra.note ?? "",
+      ship_from: extra.ship_from ?? null }),
+  /** Take a checked customer order (with its promise), change one (promised again), or cancel what is still open. */
+  salesOrder: (dataset: Dataset, action: "accept" | "change" | "cancel",
+    extra: { order?: DemandRecord; id?: string; changes?: Partial<SalesOrderChange>; date?: string; reason?: string }) =>
+    write<SalesOrderResponse>("/api/orders/sales", dataset, { action, order: extra.order ?? null, id: extra.id ?? null,
+      changes: extra.changes ?? null, date: extra.date ?? null, reason: extra.reason ?? "" }),
+  /** Requisitions from the supply plan, every purchase order and the supplier scorecard. */
+  purchasing: (ds: Dataset) => planPost<PurchasingView>("/api/purchasing", ds),
+  /** Turn requisitions into purchase orders (`lines` = which, on which source; none = everything due now). */
+  createPurchaseOrders: (dataset: Dataset, lines?: RequisitionPick[], orderDate?: string) =>
+    write<CreatePoResponse>("/api/purchasing/create", dataset, { lines: lines ?? null, order_date: orderDate ?? null }),
+  /** Approve, send, confirm, receive, change or cancel lines of a purchase order. */
+  poAction: (dataset: Dataset, action: PoAction, po: string, extra: { lines?: PoLineInput[]; date?: string; reference?: string; note?: string } = {}) =>
+    write<PoActionResponse>("/api/purchasing/act", dataset, { action, po, lines: extra.lines ?? null, date: extra.date ?? null,
+      reference: extra.reference ?? "", note: extra.note ?? "" }),
   /** Firm planned orders into receipts: `ids`, or everything starting within the firm zone. */
   firm: (dataset: Dataset, ids?: string[], withinDays?: number) =>
-    call<FirmResponse>("/api/orders/firm", { method: "POST", body: JSON.stringify({ dataset, ids: ids ?? null, within_days: withinDays ?? null }) }),
+    write<FirmResponse>("/api/orders/firm", dataset, { ids: ids ?? null, within_days: withinDays ?? null }),
+  // ---- sign-in and companies kept on the server (Phase I)
+  authConfig: () => call<AuthConfig>("/api/auth/config"),
+  signUp: (email: string, name: string, password: string) =>
+    call<Session>("/api/auth/signup", { method: "POST", body: JSON.stringify({ email, name, password }) }),
+  signIn: (email: string, password: string) =>
+    call<Session>("/api/auth/signin", { method: "POST", body: JSON.stringify({ email, password }) }),
+  signOut: () => call<{ ok: boolean }>("/api/auth/signout", { method: "POST" }),
+  me: () => call<Me>("/api/auth/me"),
+  changePassword: (old: string, next: string) =>
+    call<{ ok: boolean }>("/api/auth/password", { method: "POST", body: JSON.stringify({ old, new: next }) }),
+  companies: () => call<CompanyMeta[]>("/api/companies"),
+  createCompany: (dataset: Dataset, note = "") =>
+    call<CompanyMeta>("/api/companies", { method: "POST", body: JSON.stringify({ dataset, note }) }),
+  company: (id: string) => call<CompanyDoc>(`/api/companies/${encodeURIComponent(id)}`),
+  saveCompany: (id: string, dataset: Dataset, baseRevision: number, note = "") =>
+    call<SaveReport>(`/api/companies/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ dataset, base_revision: baseRevision, note }) }),
+  mergeCompany: (id: string, base: Dataset, dataset: Dataset, baseRevision: number) =>
+    call<MergeResult>(`/api/companies/${encodeURIComponent(id)}/merge`, { method: "POST", body: JSON.stringify({ base, dataset, base_revision: baseRevision }) }),
+  deleteCompany: (id: string) => call<{ ok: boolean }>(`/api/companies/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  companyHistory: (id: string, before?: number) =>
+    call<LogRow[]>(`/api/companies/${encodeURIComponent(id)}/history${before ? `?before=${before}` : ""}`),
+  companyRevision: (id: string, rev: number) => call<Dataset>(`/api/companies/${encodeURIComponent(id)}/revisions/${rev}`),
+  restoreCompany: (id: string, revision: number, baseRevision: number) =>
+    call<SaveReport>(`/api/companies/${encodeURIComponent(id)}/restore`, { method: "POST", body: JSON.stringify({ revision, base_revision: baseRevision }) }),
+  members: (id: string) => call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members`),
+  setMember: (id: string, email: string, role: string) =>
+    call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members`, { method: "POST", body: JSON.stringify({ email, role }) }),
+  removeMember: (id: string, email: string) =>
+    call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members/${encodeURIComponent(email)}`, { method: "DELETE" }),
+
   versions: () => call<VersionMeta[]>("/api/versions"),
   version: (id: string) => call<VersionDoc>(`/api/versions/${encodeURIComponent(id)}`),
   saveBase: (dataset: Dataset, name: string, note = "") =>
@@ -78,21 +205,21 @@ export const api = {
     call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/promote`, { method: "POST", body: JSON.stringify({ name: name ?? null }) }),
   compareVersions: (a: string, b: string) => call<Comparison>(`/api/versions/${encodeURIComponent(a)}/compare/${encodeURIComponent(b)}`),
   compare: (a: Dataset, b: Dataset, labelA: string, labelB: string) =>
-    call<Comparison>("/api/compare", { method: "POST", body: JSON.stringify({ a, b, label_a: labelA, label_b: labelB }) }),
-  finance: (ds: Dataset) => post<FinanceResult>("/api/finance", ds),
-  tower: (ds: Dataset) => post<TowerResult>("/api/tower", ds),
+    call<Comparison>("/api/compare", { method: "POST", body: JSON.stringify({ a: clean(a), b: clean(b), label_a: labelA, label_b: labelB }) }),
+  finance: (ds: Dataset) => planPost<FinanceResult>("/api/finance", ds),
+  tower: (ds: Dataset) => planPost<TowerResult>("/api/tower", ds),
   /** Assign (owner "" = back to the rules), acknowledge / resolve / reopen, or annotate a worklist item. */
   towerItem: (id: string, patch: { owner?: string; status?: "open" | "acknowledged" | "resolved"; note?: string; sla_days?: Record<string, number> }) =>
     call<WorkItem>(`/api/tower/items/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(patch) }),
   towerHistory: (id: string) => call<WorkItemEntry[]>(`/api/tower/items/${encodeURIComponent(id)}/history`),
   forecastModels: () => call<ForecastModels>("/api/forecast/models"),
-  forecast: (ds: Dataset) => post<ForecastResult>("/api/forecast", ds),
+  forecast: (ds: Dataset) => planPost<ForecastResult>("/api/forecast", ds),
   release: (dataset: Dataset, keys?: string[]) =>
-    call<ReleaseResponse>("/api/forecast/release", { method: "POST", body: JSON.stringify({ dataset, keys: keys ?? null }) }),
+    write<ReleaseResponse>("/api/forecast/release", dataset, { keys: keys ?? null }),
   /** Proof: end-to-end scenarios with hand-derived answers, run against an isolated in-memory store. */
   scenarios: () => call<ScenarioInfo[]>("/api/scenarios"),
   scenarioDataset: (id: string) => call<Dataset>(`/api/scenarios/${encodeURIComponent(id)}/dataset`),
-  runScenario: (id: string) => call<ScenarioReport>(`/api/scenarios/${encodeURIComponent(id)}/run`, { method: "POST" }),
+  runScenario: (id: string) => call<ScenarioReport>(`/api/scenarios/${encodeURIComponent(id)}/run`, { method: "POST" }, RUN_TIMEOUT_MS),
 };
 
 // Minimal JSON-schema shape used by the form generator.
@@ -115,6 +242,7 @@ export interface JsonSchemaNode {
   exclusiveMaximum?: number;
   "x-unit"?: string;
   "x-ref"?: string;
+  "x-multiline"?: boolean;
 }
 
 export interface JsonSchema extends JsonSchemaNode {

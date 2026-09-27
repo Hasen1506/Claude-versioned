@@ -71,6 +71,7 @@ class ScenarioInfo(Out):
     proves: list[str]
     stages: list[str]
     found: list[str] = []      # defects this scenario exposed (each has a regression test)
+    generated: bool = False    # runs over generated companies and checks properties, not hand-worked values
 
 
 class ScenarioReport(Out):
@@ -334,7 +335,8 @@ class Scenario:
 
     def info(self) -> ScenarioInfo:
         return ScenarioInfo(id=self.id, title=self.title, company=self.company, story=self.story,
-                            proves=self.proves, stages=self.stages, found=self.found)
+                            proves=self.proves, stages=self.stages, found=self.found,
+                            generated="generated" in self.tags)
 
     def execute(self, client: Client | None = None) -> ScenarioReport:
         client = client or EngineClient()

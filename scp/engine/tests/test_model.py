@@ -101,3 +101,22 @@ def test_json_schema_carries_unit_and_ref_metadata():
     assert op["run_hours_per_unit"]["x-unit"] == "hours"
     lp = schema["$defs"]["LocationProduct"]["properties"]
     assert lp["holding_rate"]["x-unit"] == "fraction"
+
+
+def test_addresses_for_documents():
+    """N69: places and the company carry a postal address and a tax number for purchase orders; they are optional,
+    kept as typed (a line per row) and marked multi-line for the form."""
+    d = base()
+    assert ds(d).locations[0].address == "" and ds(d).settings.company_address == ""
+    d["locations"][0]["address"] = "Plot 21, MIDC Chakan\nPune 410501"
+    d["locations"][0]["tax_id"] = "27ABCDE1234F1Z5"
+    d["settings"]["company_address"] = "Baner road\nPune 411045"
+    got = ds(d)
+    assert got.locations[0].address.splitlines() == ["Plot 21, MIDC Chakan", "Pune 410501"]
+    assert got.settings.company_address.endswith("411045")
+    d["locations"][0]["address"] = "x" * 401
+    with pytest.raises(ValidationError):
+        ds(d)
+    schema = Dataset.model_json_schema()["$defs"]
+    assert schema["Location"]["properties"]["address"]["x-multiline"] is True
+    assert schema["Settings"]["properties"]["company_address"]["x-multiline"] is True

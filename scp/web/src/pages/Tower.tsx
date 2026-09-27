@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { Dataset, Kpi, TowerResult, WorkItem, WorkItemEntry } from "../api/types";
 import {
-  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, type Severity,
+  Badge, Edits, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, type Severity, RunButton,
 } from "../components/ui";
-import { day, money, pct, qty, unitMoney } from "../lib/format";
+import { codeLabel } from "../lib/situations";
+import { day, money, pct, plural, qty, unitMoney } from "../lib/format";
+import { Msg, namesOf } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -22,6 +24,12 @@ const GROUPS: { title: string; ids: string[] }[] = [
 
 const STATUS_SEV: Record<string, Severity | undefined> = { good: "ok", warning: "warning", critical: "error" };
 const STATUS_LABEL: Record<string, string> = { good: "On target", warning: "Near target", critical: "Off target", none: "No data" };
+/** Why a measure has no grade: nothing to measure yet, no target set, or a measure that is neither better high nor low. */
+function gradeLabel(k: Pick<Kpi, "status" | "value" | "target" | "direction">): string {
+  if (k.status !== "none") return STATUS_LABEL[k.status];
+  if (k.value === null || k.value === undefined) return "No data";
+  return k.direction === "none" ? "For reading" : "No target";
+}
 const ITEM_SEV: Record<string, Severity> = { error: "error", warning: "warning", info: "info" };
 
 function fmtKpi(k: Pick<Kpi, "unit">, v: number | null | undefined, cur: string): string {
@@ -38,6 +46,16 @@ function targetText(k: Kpi, cur: string): string {
   return k.direction === "up" ? `target ≥ ${t}` : k.direction === "down" ? `target ≤ ${t}` : `target within ±${t}`;
 }
 
+function towerAnswer(res: TowerResult) {
+  const graded = res.kpis.filter((k) => k.status !== "none");
+  const off = res.kpis.filter((k) => k.status === "critical");
+  const live = res.worklist.filter((w) => w.status === "open" || w.status === "acknowledged");
+  const late = live.filter((w) => w.breached).length;
+  return <>{graded.length ? <>{graded.length - off.length} of {plural(graded.length, "measure")} {graded.length - off.length === 1 ? "is" : "are"} on or near target
+    {off.length ? <>; off target: {off.slice(0, 3).map((k) => k.name).join(", ")}{off.length > 3 ? ` and ${off.length - 3} more` : ""}.</> : "."}</> : "No measure has data yet."}
+    {" "}{live.length ? <>{plural(live.length, "problem")} {live.length === 1 ? "is" : "are"} open{late ? <>, {late} past {late === 1 ? "its" : "their"} time limit</> : null}.</> : <>No problems are open.</>}</>;
+}
+
 export function Tower({ route }: { route: string[] }) {
   const run = useStore((s) => s.runs.tower);
   const res = run.data;
@@ -47,13 +65,14 @@ export function Tower({ route }: { route: string[] }) {
   const cur = ds.settings.currency;
 
   const head = (
-    <StageHeader n="11" title="Control tower" kicker={<>How the supply chain is performing and what needs a planner now. The KPI set
-      of the S/4 guide §18.2, each with its definition, source and target; one worklist of exceptions from every stage with an owner,
-      an age on the planning clock and an SLA, kept across runs; master-data defects in their own data-quality view.</>} right={<>
+    <StageHeader title="Performance" kicker="Are you hitting your targets? And a follow-up list of every problem, with who owns it and how long it has been open."
+      how={<>A standard set of supply-chain measures (as in SAP's S/4HANA planning guide, §18.2), each with its definition, where
+        its numbers come from and its target. The follow-up list gathers exceptions from every page, gives each an owner by rule,
+        and ages it on the planning clock against a time limit; it is kept across recalculations. Data problems have their own view.</>}
+      answer={res && towerAnswer(res)}
+      right={<>
       {res && <Provenance kind="derived" at={run.at} stale={stale} />}
-      <button className="btn accent" onClick={() => store.run("tower")} disabled={run.running}>
-        {run.running ? "Refreshing…" : res ? "Refresh" : "Refresh tower"}
-      </button></>} />
+      <RunButton running={run.running} has={!!res} onClick={() => store.run("tower")} /></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   const live = res?.worklist.filter((w) => w.status === "open" || w.status === "acknowledged") ?? [];
@@ -97,7 +116,7 @@ function Kpis({ res, cur, sel }: { res: TowerResult; cur: string; sel?: string }
         <StatTile label="On target" value={count("good")} sub={`of ${res.kpis.length} KPIs`} />
         <StatTile label="Near target" value={count("warning")} />
         <StatTile label="Off target" value={count("critical")} tone={count("critical") ? "hl" : undefined} />
-        <StatTile label="No data yet" value={count("none")} sub="not graded" />
+        <StatTile label="Not graded" value={count("none")} sub="no data yet, no target, or read only" />
         <StatTile label="Measured up to" value={day(res.as_of)} sub="the planning start" />
       </div>
       {GROUPS.map((g) => (
@@ -108,11 +127,11 @@ function Kpis({ res, cur, sel }: { res: TowerResult; cur: string; sel?: string }
               const k = by[id];
               return (
                 <button key={id} className={`kpi-card ${k.status} ${cur_?.id === id ? "on" : ""}`} onClick={() => go("tower", "kpis", id)}
-                  aria-pressed={cur_?.id === id} aria-label={`${k.name}: ${fmtKpi(k, k.value, cur)}, ${STATUS_LABEL[k.status]}`}>
+                  aria-pressed={cur_?.id === id} aria-label={`${k.name}: ${fmtKpi(k, k.value, cur)}, ${gradeLabel(k)}`}>
                   <span className="kpi-name">{k.name}</span>
                   <span className="kpi-value">{fmtKpi(k, k.value, cur)}</span>
                   <span className="kpi-foot">
-                    {STATUS_SEV[k.status] ? <Badge sev={STATUS_SEV[k.status]}>{STATUS_LABEL[k.status]}</Badge> : <span className="faint">{STATUS_LABEL[k.status]}</span>}
+                    {STATUS_SEV[k.status] ? <Badge sev={STATUS_SEV[k.status]}>{gradeLabel(k)}</Badge> : <span className="faint">{gradeLabel(k)}</span>}
                     <span className="faint">{targetText(k, cur)}</span>
                   </span>
                   <span className="kpi-n faint">{k.n ? `${qty(k.n)} observations` : k.note ? "—" : ""}</span>
@@ -150,7 +169,7 @@ function KpiDetail({ k, cur }: { k: Kpi; cur: string }) {
                       || (k.direction === "zero" && Math.abs(r.value) > k.target));
                     return (
                       <tr key={r.label}>
-                        <td>{r.label}</td>
+                        <td title={r.label}><Msg text={r.label} /></td>
                         <td className={`num ${bad ? "neg" : ""}`}>{k.id === "excess_obsolete" ? money(r.value, cur) : fmtKpi(k, r.value, cur)}</td>
                         <td>
                           <div className="bar-track" style={{ position: "relative" }}>
@@ -190,6 +209,7 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
   const [selId, setSelId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const items = res.worklist;
+  const nm = namesOf(ds);
   const live = items.filter((w) => w.status === "open" || w.status === "acknowledged");
   const cats = [...new Set(items.map((w) => w.category))].sort();
   const owners = [...new Set([...items.map((w) => w.owner), ...(ds.tower?.owners ?? []).map((o) => o.owner), ds.tower?.default_owner ?? "Unassigned"])].sort();
@@ -282,15 +302,15 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
                 <tr key={w.id} className={`${sel?.id === w.id ? "selected" : ""} ${w.status === "resolved" ? "dim" : ""}`}>
                   <td><Badge sev={ITEM_SEV[w.severity]} /></td>
                   <td><a href={href(...(CAT_LINK[w.category] ?? ["plan"]))}>{w.category}</a></td>
-                  <td><b className="mono small">{w.code}</b><div className="small">{w.message}</div></td>
-                  <td className="small nowrap">{[w.location, w.product].filter(Boolean).join(" · ") || w.resource}{w.order_id && <div className="faint">{w.order_id}</div>}</td>
-                  <td>
+                  <td><b>{codeLabel(w.code)}</b> <span className="mono faint small">{w.code}</span><div className="small clamp2"><Msg text={w.message} /></div></td>
+                  <td className="small">{[w.location && nm.loc(w.location), w.product && nm.prod(w.product)].filter(Boolean).join(" · ") || (w.resource && nm.res(w.resource))}{w.order_id && <div className="faint">{w.order_id}</div>}</td>
+                  <td><Edits>
                     <input className="input" list="tower-owners" aria-label={`Owner of ${w.code} ${w.location ?? ""} ${w.product ?? ""}`.trim()} defaultValue={w.owner}
                       key={`${w.id}-${w.owner}`} style={{ height: 28, minWidth: 230 }}
                       onBlur={(e) => { if (e.target.value.trim() !== w.owner) void patch(w, { owner: e.target.value }); }}
                       onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
                     {w.owner_source !== "manual" && <div className="faint small">by {w.owner_source === "rule" ? "rule" : "default"}</div>}
-                  </td>
+                  </Edits></td>
                   <td>
                     <div className="age-bar" title={w.sla_days !== null ? `${w.age_days} of ${w.sla_days} days` : `${w.age_days} days`}>
                       <span style={{ width: `${Math.min(100, (w.age_days / Math.max(1, w.sla_days ?? w.age_days)) * 100)}%` }} className={w.breached ? "late" : ""} />
@@ -299,11 +319,11 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
                   </td>
                   <td className="nowrap">
                     <span className="small">{w.status}</span>
-                    <div className="row" style={{ gap: 4, marginTop: 3 }}>
-                      {w.status === "open" && <button className="btn sm" onClick={() => patch(w, { status: "acknowledged" })} aria-label={`Acknowledge ${w.code} ${w.location ?? ""} ${w.product ?? ""}`.trim()}>Ack</button>}
+                    <Edits><div className="row" style={{ gap: 4, marginTop: 3 }}>
+                      {w.status === "open" && <button className="btn sm" onClick={() => patch(w, { status: "acknowledged" })} aria-label={`Acknowledge ${w.code} ${w.location ?? ""} ${w.product ?? ""}`.trim()}>Seen</button>}
                       {w.status !== "resolved" && <button className="btn sm" onClick={() => patch(w, { status: "resolved" })} aria-label={`Resolve ${w.code} ${w.location ?? ""} ${w.product ?? ""}`.trim()}>Resolve</button>}
                       {w.status === "resolved" && <button className="btn sm ghost" onClick={() => patch(w, { status: "open" })}>Reopen</button>}
-                    </div>
+                    </div></Edits>
                   </td>
                   <td className="small nowrap">{day(w.first_seen)}{w.reopened > 0 && <div className="faint">reopened ×{w.reopened}</div>}</td>
                   <td><button className="btn sm ghost" onClick={() => setSelId(sel?.id === w.id ? null : w.id)} aria-label={`Details of ${w.code}`}>{sel?.id === w.id ? "Close" : "Details"}</button></td>
@@ -321,7 +341,7 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
             <table className="t">
               <thead><tr><th>Exception</th><th>Where</th><th>Owner</th><th className="num">Was open</th></tr></thead>
               <tbody>{res.cleared.map((w) => (
-                <tr key={w.id}><td><b className="mono small">{w.code}</b> <span className="small">{w.message}</span></td>
+                <tr key={w.id}><td><b>{codeLabel(w.code)}</b> <span className="mono faint small">{w.code}</span> <span className="small"><Msg text={w.message} /></span></td>
                   <td className="small">{[w.location, w.product].filter(Boolean).join(" · ") || w.resource}</td><td>{w.owner}</td><td className="num">{w.age_days} d</td></tr>
               ))}</tbody>
             </table>
@@ -343,8 +363,8 @@ function ItemDetail({ w, onNote }: { w: WorkItem; onNote: (note: string) => void
   }, [w.id, w.note, w.status, w.owner]);
   return (
     <div className="grid-2" style={{ alignItems: "start" }}>
-      <Panel title={`${w.code} · ${[w.location, w.product].filter(Boolean).join(" · ") || w.resource || ""}`}>
-        <p style={{ marginTop: 0 }}>{w.message}</p>
+      <Panel title={`${codeLabel(w.code)} · ${[w.location, w.product].filter(Boolean).join(" · ") || w.resource || ""}`}>
+        <p style={{ marginTop: 0 }}><Msg text={w.message} /></p>
         <div className="small faint" style={{ marginBottom: 8 }}>
           {w.date && <>Date {day(w.date)} · </>}{w.qty !== null && <>qty {qty(w.qty)} · </>}first seen {day(w.first_seen)} · last seen {day(w.last_seen)}
         </div>
@@ -369,7 +389,7 @@ function Quality({ res }: { res: TowerResult }) {
   const total = res.data_quality.reduce((a, r) => a + r.count, 0);
   return (
     <div className="stack">
-      <div className="banner info"><Badge sev="info">Kept apart</Badge>Master-data defects go to data owners, not into planner worklists (S/4 guide §8.6). Fix them in Readiness.</div>
+      <div className="banner info"><Badge sev="info">Kept apart</Badge>Master-data defects go to data owners, not into planner worklists (S/4 guide §8.6). Fix them in the data check (Setup → Network → Data check).</div>
       {total === 0 ? <Panel><Empty title="No data-quality findings"><p>Every readiness check passes.</p></Empty></Panel> : (
         <Panel flush title={`${total} findings by rule`}>
           <div className="table-wrap">

@@ -4,6 +4,261 @@
  */
 
 export interface paths {
+    "/api/auth/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Auth Config */
+        get: operations["auth_config_api_auth_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Auth Signup */
+        post: operations["auth_signup_api_auth_signup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/signin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Auth Signin */
+        post: operations["auth_signin_api_auth_signin_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/signout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Auth Signout */
+        post: operations["auth_signout_api_auth_signout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Auth Me */
+        get: operations["auth_me_api_auth_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Auth Password */
+        post: operations["auth_password_api_auth_password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Companies */
+        get: operations["list_companies_api_companies_get"];
+        put?: never;
+        /**
+         * Create Company
+         * @description Keep a company on the server (e.g. the one in this browser); whoever creates it is its owner.
+         */
+        post: operations["create_company_api_companies_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Open Company */
+        get: operations["open_company_api_companies__cid__get"];
+        /**
+         * Save Company
+         * @description Save the working copy. 409 when someone saved after ``base_revision`` (``revision``, ``updated_by`` and
+         *     ``updated_at`` say who and when).
+         */
+        put: operations["save_company_api_companies__cid__put"];
+        post?: never;
+        /** Delete Company */
+        delete: operations["delete_company_api_companies__cid__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge Company
+         * @description After a refused save: merge the working copy with the saves made since, record by record, and save that.
+         */
+        post: operations["merge_company_api_companies__cid__merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Company History */
+        get: operations["company_history_api_companies__cid__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/revisions/{rev}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Company Revision */
+        get: operations["company_revision_api_companies__cid__revisions__rev__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore Company */
+        post: operations["restore_company_api_companies__cid__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Company Members */
+        get: operations["company_members_api_companies__cid__members_get"];
+        put?: never;
+        /**
+         * Set Company Member
+         * @description Add a member or change their role; an e-mail without an account is invited.
+         */
+        post: operations["set_company_member_api_companies__cid__members_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/members/{email}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Company Member */
+        delete: operations["remove_company_member_api_companies__cid__members__email__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -101,7 +356,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Post Validate */
+        /**
+         * Post Validate
+         * @description The readiness gate on everything that can be planned; unfinished records are set aside and listed,
+         *     each also as a SET_ASIDE warning, instead of making the whole dataset unreadable.
+         */
         post: operations["post_validate_api_validate_post"];
         delete?: never;
         options?: never;
@@ -262,6 +521,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/schedule/catalogue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Schedule Catalogue
+         * @description The scheduling heuristics and the profiles that bundle a start rule, the search and the objective weights.
+         */
+        get: operations["get_schedule_catalogue_api_schedule_catalogue_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schedule/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Schedule Compare
+         * @description Every start rule, the local search and the optimiser on the same window, scored with the current weights.
+         */
+        post: operations["post_schedule_compare_api_schedule_compare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schedule/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Schedule Apply
+         * @description Fix the schedule's dates on its orders: planned ones become production orders, released ones are re-dated.
+         */
+        post: operations["post_schedule_apply_api_schedule_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/promise": {
         parameters: {
             query?: never;
@@ -330,6 +649,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/orders/sales": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Sales Order
+         * @description Take a checked customer order, change one (it is promised again), or cancel what is still open.
+         */
+        post: operations["post_sales_order_api_orders_sales_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/plan": {
         parameters: {
             query?: never;
@@ -341,6 +680,26 @@ export interface paths {
         put?: never;
         /** Post Plan */
         post: operations["post_plan_api_plan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/capacity/level": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Level
+         * @description What planning within machine capacity moves: earlier, onto alternative machines, or later.
+         */
+        post: operations["post_level_api_capacity_level_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -412,6 +771,80 @@ export interface paths {
         put?: never;
         /** Post Firm */
         post: operations["post_firm_api_orders_firm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/purchasing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Purchasing
+         * @description Requisitions from the supply plan, every purchase order with its lines' status, and the supplier scorecard.
+         */
+        post: operations["post_purchasing_api_purchasing_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/purchasing/create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Create Pos */
+        post: operations["post_create_pos_api_purchasing_create_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/purchasing/act": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Po Action */
+        post: operations["post_po_action_api_purchasing_act_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/actuals/post": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Posting
+         * @description Post what happened: ship a transfer, receive an order (with its parts issued), or count stock.
+         */
+        post: operations["post_posting_api_actuals_post_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -737,6 +1170,18 @@ export interface components {
             /** Actual */
             actual: number;
         };
+        /** ActionReport */
+        ActionReport: {
+            /** Ok */
+            ok: boolean;
+            /** Message */
+            message: string;
+            /**
+             * Movements
+             * @default []
+             */
+            movements: string[];
+        };
         /** ActualsRequest */
         ActualsRequest: {
             dataset: components["schemas"]["Dataset"];
@@ -759,6 +1204,7 @@ export interface components {
             movements: number;
             /** Unmatched */
             unmatched: string[];
+            unbooked: components["schemas"]["Unbooked"] | null;
         };
         /**
          * Allocation
@@ -822,6 +1268,55 @@ export interface components {
             /** Fallback */
             fallback: string;
         };
+        /** AppliedOrder */
+        AppliedOrder: {
+            /** Order */
+            order: string;
+            /** Receipt */
+            receipt: string;
+            /** Product */
+            product: string;
+            /** Location */
+            location: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Start Date
+             * Format: date
+             */
+            start_date: string;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /** Was Start */
+            was_start: string | null;
+            /**
+             * Was Due
+             * Format: date
+             */
+            was_due: string;
+            /** New */
+            new: boolean;
+        };
+        /** ApplyReport */
+        ApplyReport: {
+            /** Ok */
+            ok: boolean;
+            /**
+             * Applied
+             * @default []
+             */
+            applied: components["schemas"]["AppliedOrder"][];
+            /**
+             * Skipped
+             * @default {}
+             */
+            skipped: {
+                [key: string]: string;
+            };
+        };
         /** AtpNode */
         AtpNode: {
             /** Location */
@@ -851,6 +1346,18 @@ export interface components {
              * @default 0
              */
             shortage_qty: number;
+        };
+        /** AuthConfig */
+        AuthConfig: {
+            /**
+             * Signup
+             * @enum {string}
+             */
+            signup: "open" | "invite" | "closed";
+            /** Require Signin */
+            require_signin: boolean;
+            /** First Account */
+            first_account: boolean;
         };
         /** BacktestPoint */
         BacktestPoint: {
@@ -917,6 +1424,28 @@ export interface components {
              * @description Operation seq that consumes it (default: first)
              */
             operation?: number | null;
+            /**
+             * Fixed Qty
+             * @description The quantity is per order, whatever its size (a mould, a fixed charge)
+             * @default false
+             */
+            fixed_qty: boolean;
+            /**
+             * Valid From
+             * @description Engineering change: used on orders starting on or after this day
+             */
+            valid_from?: string | null;
+            /**
+             * Valid To
+             * @description Engineering change: used on orders starting on or before this day
+             */
+            valid_to?: string | null;
+            /**
+             * Change
+             * @description Engineering change number or reason
+             * @default
+             */
+            change: string;
         };
         /** BopRow */
         BopRow: {
@@ -1095,6 +1624,45 @@ export interface components {
             buckets: components["schemas"]["BucketValue"][];
         };
         /**
+         * CapacityChange
+         * @description Capacity that differs for a period (≈ S/4 interval of available capacity): a second shift from
+         *     a date, a machine out for maintenance, a line running slower while it is being run in.
+         */
+        CapacityChange: {
+            /**
+             * Valid From
+             * Format: date
+             */
+            valid_from: string;
+            /**
+             * Valid To
+             * @description Last day it applies (empty = from then on)
+             */
+            valid_to?: string | null;
+            /**
+             * Units
+             * @description Machines or people available (0 = shut down)
+             */
+            units?: number | null;
+            /**
+             * Shifts
+             * @description Shifts worked in this period instead of the usual ones
+             */
+            shifts?: components["schemas"]["Shift"][] | null;
+            /**
+             * Shifts Per Day
+             * @description Or: how many shifts of the usual length
+             */
+            shifts_per_day?: number | null;
+            /** Efficiency */
+            efficiency?: number | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /**
          * CapacityOption
          * @description A capacity investment (a new machine, an added shift, a line upgrade) that adds regular hours to one
          *     resource. Its value is what the S&OP plan saves with the hours; its NPV nets that against the spend.
@@ -1212,6 +1780,46 @@ export interface components {
              * Format: date
              */
             closed_on: string;
+            /**
+             * Po
+             * @description Purchase: the purchase order the line was on
+             */
+            po?: string | null;
+            /**
+             * Price
+             * @description Purchase: net price per unit
+             */
+            price?: number | null;
+            /**
+             * Confirmed Date
+             * @description Purchase: the date the supplier confirmed, if any
+             */
+            confirmed_date?: string | null;
+            /**
+             * Cancelled
+             * @description Sales: cancelled before it was delivered in full; what was delivered is `delivered_qty`, and only that counts in OTIF
+             * @default false
+             */
+            cancelled: boolean;
+        };
+        /**
+         * CoProduct
+         * @description Another product the same production run yields (≈ S/4 co-product / by-product).
+         */
+        CoProduct: {
+            /** Product */
+            product: string;
+            /**
+             * Qty
+             * @description Quantity per output_qty of the main product
+             */
+            qty: number;
+            /**
+             * Cost Share
+             * @description Share of the run's cost it carries (0 = a by-product that carries none)
+             * @default 0
+             */
+            cost_share: number;
         };
         /** CollectionDiff */
         CollectionDiff: {
@@ -1225,6 +1833,33 @@ export interface components {
             changed: number;
             /** Items */
             items: components["schemas"]["ItemChange"][];
+        };
+        /** CompanyDoc */
+        CompanyDoc: {
+            meta: components["schemas"]["CompanyMeta"];
+            /** Dataset */
+            dataset: {
+                [key: string]: unknown;
+            };
+        };
+        /** CompanyMeta */
+        CompanyMeta: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Role */
+            role: string;
+            /** Revision */
+            revision: number;
+            /** Updated At */
+            updated_at: string;
+            /** Updated By */
+            updated_by: string;
+            /** Created At */
+            created_at: string;
+            /** Size */
+            size: number;
         };
         /** CompareRequest */
         CompareRequest: {
@@ -1240,6 +1875,21 @@ export interface components {
              * @default B
              */
             label_b: string;
+        };
+        /** CompareRow */
+        CompareRow: {
+            /** Method */
+            method: string;
+            /** Name */
+            name: string;
+            kpis: components["schemas"]["ScheduleKpis"];
+            /** Seconds */
+            seconds: number;
+            /**
+             * Best
+             * @default false
+             */
+            best: boolean;
         };
         /** Comparison */
         Comparison: {
@@ -1308,6 +1958,62 @@ export interface components {
             /** Difference */
             difference: number;
         };
+        /** CountInput */
+        CountInput: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+        };
+        /** CreatePoRequest */
+        CreatePoRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Lines */
+            lines?: components["schemas"]["RequisitionPick"][] | null;
+            /** Order Date */
+            order_date?: string | null;
+        };
+        /** CreatePoResponse */
+        CreatePoResponse: {
+            dataset: components["schemas"]["Dataset"];
+            report: components["schemas"]["CreateReport"];
+        };
+        /** CreateReport */
+        CreateReport: {
+            /** Ok */
+            ok: boolean;
+            /** Created */
+            created: components["schemas"]["CreatedPo"][];
+            /** Lines */
+            lines: {
+                [key: string]: string;
+            };
+            /** Skipped */
+            skipped: {
+                [key: string]: string;
+            };
+        };
+        /** CreatedPo */
+        CreatedPo: {
+            /** Id */
+            id: string;
+            /** Supplier */
+            supplier: string;
+            /** Location */
+            location: string;
+            /** Currency */
+            currency: string;
+            /** Value */
+            value: number;
+            /** Lines */
+            lines: string[];
+            /** Approved */
+            approved: boolean;
+            /** Notes */
+            notes: string[];
+        };
         /** CtpStep */
         CtpStep: {
             /**
@@ -1330,6 +2036,25 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /**
+         * CustomerPrice
+         * @description What a customer pays for a product (≈ a customer-specific condition record, PR00 per customer and material).
+         *     A sales order's own price wins; without either, the product's selling price.
+         */
+        CustomerPrice: {
+            /**
+             * Customer
+             * @description The customer (or selling location) the price is agreed with
+             */
+            customer: string;
+            /** Product */
+            product: string;
+            /**
+             * Price
+             * @description Net price per base unit, in the company currency
+             */
+            price: number;
         };
         /** CvSuggestion */
         CvSuggestion: {
@@ -1373,6 +2098,8 @@ export interface components {
             locations?: components["schemas"]["Location"][];
             /** Products */
             products?: components["schemas"]["Product"][];
+            /** Customer Prices */
+            customer_prices?: components["schemas"]["CustomerPrice"][];
             /** Location Products */
             location_products?: components["schemas"]["LocationProduct"][];
             /** Resources */
@@ -1383,6 +2110,11 @@ export interface components {
             purchasing_sources?: components["schemas"]["PurchasingSource"][];
             /** Lanes */
             lanes?: components["schemas"]["TransportLane"][];
+            /** Vendors */
+            vendors?: components["schemas"]["Vendor"][];
+            /** Purchase Orders */
+            purchase_orders?: components["schemas"]["PurchaseOrder"][];
+            purchasing?: components["schemas"]["PurchasingSettings"];
             /** Demand */
             demand?: components["schemas"]["DemandRecord"][];
             /** Receipts */
@@ -1608,6 +2340,17 @@ export interface components {
              */
             ordered_qty?: number | null;
             /**
+             * Price
+             * @description Sales order: the agreed net price per unit, in the company currency. Empty = the customer's price, else the product's
+             */
+            price?: number | null;
+            /**
+             * Customer Ref
+             * @description Sales order: the customer's own order number
+             * @default
+             */
+            customer_ref: string;
+            /**
              * Period Days
              * @description Forecast only: the record covers [date, date + period_days) and is spread evenly over the working days of that window (PIR splitting). Empty = the whole quantity is due on `date`.
              */
@@ -1637,6 +2380,16 @@ export interface components {
             total_cost: number;
             /** Profit */
             profit: number;
+            /**
+             * Valued At Cost
+             * @default 0
+             */
+            valued_at_cost: number;
+            /**
+             * Unpriced
+             * @default []
+             */
+            unpriced: string[];
         };
         /**
          * EventKind
@@ -1729,6 +2482,16 @@ export interface components {
             skipped: {
                 [key: string]: string;
             };
+            /**
+             * Purchase Orders
+             * @default []
+             */
+            purchase_orders: string[];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
         };
         /** FirmRequest */
         FirmRequest: {
@@ -2062,6 +2825,19 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** Heuristic */
+        Heuristic: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** What */
+            what: string;
+            /** Good For */
+            good_for: string;
+            /** Sap */
+            sap: string;
+        };
         /** HistoryPoint */
         HistoryPoint: {
             /**
@@ -2082,6 +2858,41 @@ export interface components {
              * @default []
              */
             events: string[];
+        };
+        /** InfoRecord */
+        InfoRecord: {
+            /** Source Id */
+            source_id: string;
+            /** Product */
+            product: string;
+            /** Location */
+            location: string;
+            /** Price */
+            price: number;
+            /** Currency */
+            currency: string;
+            /** Price Scales */
+            price_scales: components["schemas"]["PriceScale"][];
+            /** Moq */
+            moq: number;
+            /** Rounding Qty */
+            rounding_qty: number | null;
+            /** Lead Time Days */
+            lead_time_days: number;
+            /** Valid From */
+            valid_from: string | null;
+            /** Valid To */
+            valid_to: string | null;
+            /** Fixed */
+            fixed: boolean;
+            /** Blocked */
+            blocked: boolean;
+            /** Priority */
+            priority: number;
+            /** Quota */
+            quota: number | null;
+            /** Vendor Material */
+            vendor_material: string;
         };
         /** InventoryResult */
         InventoryResult: {
@@ -2524,6 +3335,113 @@ export interface components {
              */
             default: boolean;
         };
+        /** LevelMove */
+        LevelMove: {
+            /** Order */
+            order: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Need Date
+             * Format: date
+             */
+            need_date: string;
+            /**
+             * Was Start
+             * Format: date
+             */
+            was_start: string;
+            /**
+             * Was Available
+             * Format: date
+             */
+            was_available: string;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * Available
+             * Format: date
+             */
+            available: string;
+            /** Shift Days */
+            shift_days: number;
+            /** Late Days */
+            late_days: number;
+            /** Step Resources */
+            step_resources: {
+                [key: string]: string;
+            };
+        };
+        /** LevelPreview */
+        LevelPreview: {
+            /** Ok */
+            ok: boolean;
+            /** Active */
+            active: boolean;
+            /** Moves */
+            moves: components["schemas"]["LevelMove"][];
+            /** Resources */
+            resources: components["schemas"]["LevelResource"][];
+            /**
+             * Late Before
+             * @default 0
+             */
+            late_before: number;
+            /**
+             * Late After
+             * @default 0
+             */
+            late_after: number;
+            /**
+             * Fill Before
+             * @default 1
+             */
+            fill_before: number;
+            /**
+             * Fill After
+             * @default 1
+             */
+            fill_after: number;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+        };
+        /** LevelResource */
+        LevelResource: {
+            /** Resource */
+            resource: string;
+            /** Finite */
+            finite: boolean;
+            /** Peak Before */
+            peak_before: number;
+            /** Peak After */
+            peak_after: number;
+            /** Overloaded Days Before */
+            overloaded_days_before: number;
+            /** Overloaded Days After */
+            overloaded_days_after: number;
+            /** Hours */
+            hours: number;
+        };
+        /** ListChange */
+        ListChange: {
+            /** List */
+            list: string;
+            /** Added */
+            added: number;
+            /** Removed */
+            removed: number;
+            /** Changed */
+            changed: number;
+            /** Names */
+            names: string[];
+        };
         /** Location */
         Location: {
             /** Id */
@@ -2539,6 +3457,18 @@ export interface components {
              * @default
              */
             region: string;
+            /**
+             * Address
+             * @description Postal address, a line per row: printed on purchase orders (the supplier's, the place to deliver to)
+             * @default
+             */
+            address: string;
+            /**
+             * Tax Id
+             * @description Tax registration (GSTIN, VAT number), printed on purchase orders
+             * @default
+             */
+            tax_id: string;
             /** Calendar */
             calendar?: string | null;
             /** Lat */
@@ -2563,6 +3493,35 @@ export interface components {
             location: string;
             /** Product */
             product: string;
+            /**
+             * Mrp Controller
+             * @description Who plans it (MRP controller): filters the worklists
+             * @default
+             */
+            mrp_controller: string;
+            /**
+             * @description Make here, get from outside (buy or transfer), or either
+             * @default any
+             */
+            procurement: components["schemas"]["ProcurementType"];
+            /**
+             * Phantom
+             * @description Phantom assembly: never stocked; its parts go straight into the parent
+             * @default false
+             */
+            phantom: boolean;
+            /**
+             * Float Before Workdays
+             * @description Scheduling margin: release this many working days before production starts
+             * @default 0
+             */
+            float_before_workdays: number;
+            /**
+             * Float After Workdays
+             * @description Scheduling margin: working days kept between production end and the due date
+             * @default 0
+             */
+            float_after_workdays: number;
             /** @default MTS_CONSUME */
             strategy: components["schemas"]["Strategy"];
             /** @default deterministic */
@@ -2664,6 +3623,25 @@ export interface components {
             /** Detail */
             detail: string;
         };
+        /** LogRow */
+        LogRow: {
+            /** Seq */
+            seq: number;
+            /** Revision */
+            revision: number | null;
+            /** At */
+            at: string;
+            /** User */
+            user: string;
+            /** Action */
+            action: string;
+            /** Summary */
+            summary: string;
+            /** Changes */
+            changes: components["schemas"]["ListChange"][];
+            /** Kept */
+            kept: boolean;
+        };
         /**
          * LotSizePolicy
          * @enum {string}
@@ -2671,8 +3649,8 @@ export interface components {
         LotSizePolicy: "L4L" | "FIXED" | "EOQ" | "POQ" | "MIN_MAX";
         /** LotSizing */
         LotSizing: {
-            /** @default L4L */
-            policy: components["schemas"]["LotSizePolicy"];
+            /** @description Empty: the company default (settings) */
+            policy?: components["schemas"]["LotSizePolicy"] | null;
             /**
              * Fixed Qty
              * @description FIXED: lot size
@@ -2705,6 +3683,72 @@ export interface components {
              * @default 0
              */
             ordering_cost: number;
+        };
+        /** Me */
+        Me: {
+            user: components["schemas"]["User"];
+            /** Companies */
+            companies: components["schemas"]["CompanyMeta"][];
+        };
+        /** Member */
+        Member: {
+            /** User Id */
+            user_id: string | null;
+            /** Email */
+            email: string;
+            /** Name */
+            name: string;
+            /** Role */
+            role: string;
+            /** Since */
+            since: string;
+        };
+        /** MemberChange */
+        MemberChange: {
+            /** Email */
+            email: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "owner" | "planner" | "viewer";
+        };
+        /** MergeCompany */
+        MergeCompany: {
+            /** Base */
+            base: {
+                [key: string]: unknown;
+            };
+            /** Dataset */
+            dataset: {
+                [key: string]: unknown;
+            };
+            /** Base Revision */
+            base_revision: number;
+        };
+        /** MergeReport */
+        MergeReport: {
+            /** Mine */
+            mine: number;
+            /** Theirs */
+            theirs: number;
+            /** Conflicts */
+            conflicts: string[];
+            /** Renumbered */
+            renumbered: string[];
+            /** Summary */
+            summary: string;
+        };
+        /** MergeResult */
+        MergeResult: {
+            meta: components["schemas"]["CompanyMeta"];
+            /** Dataset */
+            dataset: {
+                [key: string]: unknown;
+            };
+            report: components["schemas"]["MergeReport"];
+            /** Merged With */
+            merged_with: string;
         };
         /** ModelInfo */
         ModelInfo: {
@@ -2829,6 +3873,18 @@ export interface components {
                 string,
                 string
             ][][];
+        };
+        /** NewCompany */
+        NewCompany: {
+            /** Dataset */
+            dataset: {
+                [key: string]: unknown;
+            };
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /** NodeBucket */
         NodeBucket: {
@@ -3087,6 +4143,8 @@ export interface components {
              * @default 0
              */
             reservations_open: number;
+            /** Planned As */
+            planned_as: string | null;
         };
         /** Operation */
         Operation: {
@@ -3097,8 +4155,11 @@ export interface components {
              * @default
              */
             name: string;
-            /** Resource */
-            resource: string;
+            /**
+             * Resource
+             * @description Machine or line (empty only when done outside)
+             */
+            resource?: string | null;
             /**
              * Setup Hours
              * @description Per order
@@ -3111,6 +4172,17 @@ export interface components {
              * @default 0
              */
             run_hours_per_unit: number;
+            /**
+             * Batch Qty
+             * @description Process step: units one batch holds (a 2,000 L mixer), counted like the units entering the step; the step runs in whole batches
+             */
+            batch_qty?: number | null;
+            /**
+             * Batch Hours
+             * @description Process step: machine hours one batch takes, however full it is
+             * @default 0
+             */
+            batch_hours: number;
             /** Labor Resource */
             labor_resource?: string | null;
             /**
@@ -3130,6 +4202,61 @@ export interface components {
              * @description Resource units one order may run on in parallel (default: all units of the resource)
              */
             parallel_units?: number | null;
+            /**
+             * Scrap
+             * @description Share of the units entering this step that are lost in it
+             * @default 0
+             */
+            scrap: number;
+            /**
+             * Send Ahead Qty
+             * @description Overlap: the next step may start once this many units are done here (empty = when all are)
+             */
+            send_ahead_qty?: number | null;
+            /**
+             * Alternatives
+             * @description Other machines that can do this step with the same times
+             */
+            alternatives?: string[];
+            /** @description Done outside by a supplier instead of on a resource */
+            subcontract?: components["schemas"]["Subcontract"] | null;
+        };
+        /** OptimizerInfo */
+        OptimizerInfo: {
+            /**
+             * Status
+             * @default not run
+             */
+            status: string;
+            /**
+             * Seconds
+             * @default 0
+             */
+            seconds: number;
+            /** Model Objective */
+            model_objective: number | null;
+            /** Model Bound */
+            model_bound: number | null;
+            /**
+             * Steps
+             * @default 0
+             */
+            steps: number;
+            /**
+             * Machines Changed
+             * @default 0
+             */
+            machines_changed: number;
+            /**
+             * Kept
+             * @default false
+             */
+            kept: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /** OrderChange */
         OrderChange: {
@@ -3147,6 +4274,19 @@ export interface components {
             open_after: number;
             /** Closed */
             closed: boolean;
+        };
+        /** OrderLoad */
+        OrderLoad: {
+            /** Order */
+            order: string;
+            /** Product */
+            product: string;
+            /** Firm */
+            firm: boolean;
+            /** Hours */
+            hours: {
+                [key: string]: number;
+            };
         };
         /** OrderPromise */
         OrderPromise: {
@@ -3219,11 +4359,10 @@ export interface components {
              * @default
              */
             reason: string;
-            /**
-             * Value
-             * @default 0
-             */
-            value: number;
+            /** Price */
+            price: number | null;
+            /** Value */
+            value: number | null;
         };
         /**
          * OutlierMethod
@@ -3258,13 +4397,31 @@ export interface components {
              */
             families?: string[];
         };
+        /** PartSupply */
+        PartSupply: {
+            /** Supply */
+            supply: string;
+            /** Product */
+            product: string;
+            /** Available */
+            available: number;
+            /** Scheduled */
+            scheduled: boolean;
+        };
+        /** PasswordChange */
+        PasswordChange: {
+            /** Old */
+            old: string;
+            /** New */
+            new: string;
+        };
         /** Peg */
         Peg: {
             /**
              * Supply Kind
              * @enum {string}
              */
-            supply_kind: "on_hand" | "receipt" | "order";
+            supply_kind: "on_hand" | "receipt" | "co_product" | "order";
             /** Supply Id */
             supply_id: string;
             /** Requirement Id */
@@ -3420,6 +4577,8 @@ export interface components {
              * @default false
              */
             start_in_past: boolean;
+            /** Wanted Start */
+            wanted_start: string | null;
             /**
              * Fence Shifted
              * @default false
@@ -3456,6 +4615,8 @@ export interface components {
             delay_days: number;
             /** Projected Available Date */
             projected_available_date: string | null;
+            /** Projected On Time Qty */
+            projected_on_time_qty: number | null;
             /**
              * Lot Excess
              * @default 0
@@ -3471,6 +4632,146 @@ export interface components {
              * @default 0
              */
             for_lot_size: number;
+            /**
+             * Capacity Shift Days
+             * @default 0
+             */
+            capacity_shift_days: number;
+            /**
+             * Step Resources
+             * @default {}
+             */
+            step_resources: {
+                [key: string]: string;
+            };
+            /**
+             * Open Later
+             * @default []
+             */
+            open_later: string[];
+        };
+        /** PoActionRequest */
+        PoActionRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "approve" | "send" | "confirm" | "receive" | "change" | "cancel";
+            /** Po */
+            po: string;
+            /** Lines */
+            lines?: components["schemas"]["PoLineInput"][] | null;
+            /** Date */
+            date?: string | null;
+            /**
+             * Reference
+             * @default
+             */
+            reference: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** PoActionResponse */
+        PoActionResponse: {
+            dataset: components["schemas"]["Dataset"];
+            report: components["schemas"]["ActionReport"];
+        };
+        /** PoLine */
+        PoLine: {
+            /** Id */
+            id: string;
+            /** Product */
+            product: string;
+            /** Ordered */
+            ordered: number;
+            /** Received */
+            received: number;
+            /** Open */
+            open: number;
+            /** Price */
+            price: number | null;
+            /** Value */
+            value: number;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /** Confirmed Date */
+            confirmed_date: string | null;
+            /** Confirmed Qty */
+            confirmed_qty: number | null;
+            /**
+             * Expected Date
+             * Format: date
+             */
+            expected_date: string;
+            /** Status */
+            status: string;
+            /** Days Late */
+            days_late: number;
+            /** Closed */
+            closed: boolean;
+            /** Last Receipt */
+            last_receipt: string | null;
+            /** Source */
+            source: string | null;
+        };
+        /** PoLineInput */
+        PoLineInput: {
+            /** Id */
+            id: string;
+            /** Qty */
+            qty?: number | null;
+            /** Date */
+            date?: string | null;
+            /** Price */
+            price?: number | null;
+            /**
+             * Final
+             * @default false
+             */
+            final: boolean;
+        };
+        /** PoView */
+        PoView: {
+            /** Id */
+            id: string;
+            /** Header */
+            header: boolean;
+            /** Supplier */
+            supplier: string | null;
+            /** Location */
+            location: string;
+            /** Order Date */
+            order_date: string | null;
+            /** Currency */
+            currency: string;
+            /** Approved */
+            approved: boolean;
+            /** Sent On */
+            sent_on: string | null;
+            /** Vendor Reference */
+            vendor_reference: string;
+            /** Note */
+            note: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "awaiting approval" | "to send" | "awaiting confirmation" | "confirmed" | "sent" | "partly received" | "received" | "closed";
+            /** Value */
+            value: number;
+            /** Open Value */
+            open_value: number;
+            /** Lines */
+            lines: components["schemas"]["PoLine"][];
+            /** Attention */
+            attention: string[];
         };
         /** PoolingRow */
         PoolingRow: {
@@ -3493,6 +4794,53 @@ export interface components {
             /** Unit Value */
             unit_value: number;
         };
+        /** PostRequest */
+        PostRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "ship" | "receive" | "deliver" | "count";
+            /** Order */
+            order?: string | null;
+            /** Qty */
+            qty?: number | null;
+            /** Date */
+            date?: string | null;
+            /**
+             * Final
+             * @default false
+             */
+            final: boolean;
+            /** Usage */
+            usage?: components["schemas"]["UsageInput"][] | null;
+            /** Counts */
+            counts?: components["schemas"]["CountInput"][] | null;
+            /** Ship From */
+            ship_from?: string | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /**
+         * PriceScale
+         * @description A quantity break on an info record: from this quantity per order line, this price.
+         */
+        PriceScale: {
+            /** From Qty */
+            from_qty: number;
+            /** Price */
+            price: number;
+        };
+        /**
+         * ProcurementType
+         * @description Procurement type (S/4 MRP 2): which sources MRP may use.
+         * @enum {string}
+         */
+        ProcurementType: "any" | "make" | "external";
         /** Product */
         Product: {
             /** Id */
@@ -3527,6 +4875,11 @@ export interface components {
             volume_m3?: number | null;
             /** Shelf Life Days */
             shelf_life_days?: number | null;
+            /**
+             * Whole Units
+             * @description Planned in whole units (no 25.9 tins). Empty: from the unit, whole for EA, PC, box, case, tin, pail, bag, drum, bottle, …; fractional for kg, L, m, …
+             */
+            whole_units?: boolean | null;
             /**
              * Standard Cost
              * @description Override for the computed cost roll-up
@@ -3570,6 +4923,11 @@ export interface components {
             /** Operations */
             operations?: components["schemas"]["Operation"][];
             /**
+             * Co Products
+             * @description Other products the same run yields (co- and by-products)
+             */
+            co_products?: components["schemas"]["CoProduct"][];
+            /**
              * Assembly Scrap
              * @description Share of started output lost (start = good ÷ (1 − scrap))
              * @default 0
@@ -3587,6 +4945,12 @@ export interface components {
             min_lot: number;
             /** Max Lot */
             max_lot?: number | null;
+            /**
+             * Full Batches
+             * @description Orders are planned in whole batches of the steps that run in batches (a half-filled mixer still takes a batch's time)
+             * @default true
+             */
+            full_batches: boolean;
             /**
              * Conversion Cost Per Unit
              * @description Cost not captured by resource rates (energy, overhead)
@@ -3608,6 +4972,19 @@ export interface components {
             valid_from?: string | null;
             /** Valid To */
             valid_to?: string | null;
+        };
+        /** Profile */
+        Profile: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** What */
+            what: string;
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
         };
         /** PromiseCheckRequest */
         PromiseCheckRequest: {
@@ -3666,6 +5043,11 @@ export interface components {
              * @default 0
              */
             value_unconfirmed: number;
+            /**
+             * Unpriced Unconfirmed
+             * @default 0
+             */
+            unpriced_unconfirmed: number;
             /**
              * Rlt Lines
              * @default 0
@@ -3757,8 +5139,72 @@ export interface components {
             note: string;
         };
         /**
+         * PurchaseOrder
+         * @description A purchase order header (≈ EKKO). Lines are the purchase receipts whose ``po`` is this id.
+         */
+        PurchaseOrder: {
+            /** Id */
+            id: string;
+            /** Supplier */
+            supplier: string;
+            /**
+             * Location
+             * @description Receiving location
+             */
+            location: string;
+            /**
+             * Order Date
+             * Format: date
+             */
+            order_date: string;
+            /**
+             * Currency
+             * @description Empty = company currency
+             */
+            currency?: string | null;
+            /**
+             * Approved
+             * @description Released for sending (orders above the approval limit start unapproved)
+             * @default true
+             */
+            approved: boolean;
+            /**
+             * Sent On
+             * @description When the order went to the supplier; empty = not sent yet
+             */
+            sent_on?: string | null;
+            /**
+             * Vendor Reference
+             * @description The supplier's order confirmation number
+             * @default
+             */
+            vendor_reference: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** PurchasingSettings */
+        PurchasingSettings: {
+            /**
+             * Approval Limit
+             * @description Purchase orders worth more than this (company currency) need approval before they are sent; empty = no approval step
+             */
+            approval_limit?: number | null;
+            /**
+             * Release Window Days
+             * @description Requisitions whose order date falls within this many days are shown as due to order
+             * @default 7
+             */
+            release_window_days: number;
+        };
+        /**
          * PurchasingSource
          * @description Who sells us a product, at what price and lead time (≈ info record + source list + quota).
+         *
+         *     ``price_scales`` are quantity breaks per order line; ``fixed`` makes this the source planning uses while it is
+         *     valid (source list fixed indicator), ``blocked`` keeps planning and new orders off it (source list block).
          */
         PurchasingSource: {
             /** Id */
@@ -3835,6 +5281,73 @@ export interface components {
             valid_from?: string | null;
             /** Valid To */
             valid_to?: string | null;
+            /**
+             * Price Scales
+             * @description Quantity breaks: from this quantity per order line, this price
+             */
+            price_scales?: components["schemas"]["PriceScale"][];
+            /**
+             * Fixed
+             * @description Source list: the fixed source, used ahead of priority and quota while it is valid
+             * @default false
+             */
+            fixed: boolean;
+            /**
+             * Blocked
+             * @description Source list: blocked, not used by planning or new orders
+             * @default false
+             */
+            blocked: boolean;
+            /**
+             * Vendor Material
+             * @description The supplier's own part number
+             * @default
+             */
+            vendor_material: string;
+        };
+        /** PurchasingTotals */
+        PurchasingTotals: {
+            /** Requisitions */
+            requisitions: number;
+            /** Due Now */
+            due_now: number;
+            /** Due Now Value */
+            due_now_value: number;
+            /** Late To Order */
+            late_to_order: number;
+            /** Open Orders */
+            open_orders: number;
+            /** Open Value */
+            open_value: number;
+            /** Awaiting Approval */
+            awaiting_approval: number;
+            /** To Send */
+            to_send: number;
+            /** Confirmations Overdue */
+            confirmations_overdue: number;
+            /** Late Lines */
+            late_lines: number;
+        };
+        /** PurchasingView */
+        PurchasingView: {
+            /** Ok */
+            ok: boolean;
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Currency */
+            currency: string;
+            /** Approval Limit */
+            approval_limit: number | null;
+            totals: components["schemas"]["PurchasingTotals"];
+            /** Requisitions */
+            requisitions: components["schemas"]["Requisition"][];
+            /** Orders */
+            orders: components["schemas"]["PoView"][];
+            /** Vendors */
+            vendors: components["schemas"]["VendorRow"][];
         };
         /**
          * ReceiptKind
@@ -3937,6 +5450,67 @@ export interface components {
             past_due: boolean;
         };
         /**
+         * Requisition
+         * @description A planned purchase (≈ purchase requisition from MRP): what to buy, from whom, by when.
+         */
+        Requisition: {
+            /** Id */
+            id: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Need Date
+             * Format: date
+             */
+            need_date: string;
+            /**
+             * Order Date
+             * Format: date
+             */
+            order_date: string;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /** Source Id */
+            source_id: string;
+            /** Supplier */
+            supplier: string;
+            /** Price */
+            price: number;
+            /** Currency */
+            currency: string;
+            /** Value */
+            value: number;
+            /** Due Now */
+            due_now: boolean;
+            /** Late */
+            late: boolean;
+            /** Wanted Order Date */
+            wanted_order_date: string | null;
+            /** Choices */
+            choices: components["schemas"]["SourceChoice"][];
+            /**
+             * Open Later
+             * @default []
+             */
+            open_later: string[];
+        };
+        /** RequisitionPick */
+        RequisitionPick: {
+            /** Id */
+            id: string;
+            /** Source Id */
+            source_id?: string | null;
+            /** Qty */
+            qty?: number | null;
+        };
+        /**
          * Reservation
          * @description What a firm order still has to draw from stock (S/4 RESB / stock-transport requirement): a production
          *     order's components, or a stock transfer's goods at its shipping location until they are issued.
@@ -3986,14 +5560,26 @@ export interface components {
             units: number;
             /**
              * Shifts Per Day
+             * @description Used when no named shifts are given
              * @default 1
              */
             shifts_per_day: number;
             /**
              * Hours Per Shift
+             * @description Used when no named shifts are given
              * @default 8
              */
             hours_per_shift: number;
+            /**
+             * Shifts
+             * @description Named shifts with clock times and breaks (replace shifts per day)
+             */
+            shifts?: components["schemas"]["Shift"][];
+            /**
+             * Capacity Changes
+             * @description Periods with other shifts, units or efficiency (later rows win)
+             */
+            capacity_changes?: components["schemas"]["CapacityChange"][];
             /**
              * Efficiency
              * @description OEE / utilisation: share of shift hours that are productive
@@ -4083,6 +5669,19 @@ export interface components {
             finite: boolean;
             /** Buckets */
             buckets: components["schemas"]["ResourceBucket"][];
+            /** Daily Load */
+            daily_load: {
+                [key: string]: number;
+            };
+            /** Orders */
+            orders: components["schemas"]["OrderLoad"][];
+        };
+        /** RestoreCompany */
+        RestoreCompany: {
+            /** Revision */
+            revision: number;
+            /** Base Revision */
+            base_revision: number;
         };
         /** RollReport */
         RollReport: {
@@ -4219,11 +5818,66 @@ export interface components {
              */
             promo: boolean;
             /**
+             * Period Days
+             * @description The row is a total over [date, date + period_days), e.g. a month of sales: it is spread evenly over those days. Empty = sold on `date`.
+             */
+            period_days?: number | null;
+            /**
              * From Journal
              * @description Written by the roll-forward from sale movements, and rebuilt from the whole journal on every roll (so a late posting reaches it)
              * @default false
              */
             from_journal: boolean;
+        };
+        /** SalesOrderChange */
+        SalesOrderChange: {
+            /** Qty */
+            qty?: number | null;
+            /** Date */
+            date?: string | null;
+            /** Priority */
+            priority?: number | null;
+            /** Price */
+            price?: number | null;
+            /** Complete Delivery */
+            complete_delivery?: boolean | null;
+            /** Customer Ref */
+            customer_ref?: string | null;
+        };
+        /** SalesOrderReport */
+        SalesOrderReport: {
+            /** Ok */
+            ok: boolean;
+            /** Order */
+            order: string;
+            /** Message */
+            message: string;
+            promise: components["schemas"]["OrderPromise"] | null;
+        };
+        /** SalesOrderRequest */
+        SalesOrderRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "accept" | "change" | "cancel";
+            order?: components["schemas"]["DemandRecord"] | null;
+            /** Id */
+            id?: string | null;
+            changes?: components["schemas"]["SalesOrderChange"] | null;
+            /** Date */
+            date?: string | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
+        /** SalesOrderResponse */
+        SalesOrderResponse: {
+            dataset: components["schemas"]["Dataset"];
+            report: components["schemas"]["SalesOrderReport"];
         };
         /** SaveBaseRequest */
         SaveBaseRequest: {
@@ -4235,6 +5889,28 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /** SaveCompany */
+        SaveCompany: {
+            /** Dataset */
+            dataset: {
+                [key: string]: unknown;
+            };
+            /** Base Revision */
+            base_revision: number;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** SaveReport */
+        SaveReport: {
+            meta: components["schemas"]["CompanyMeta"];
+            /** Saved */
+            saved: boolean;
+            /** Summary */
+            summary: string;
         };
         /** ScenarioInfo */
         ScenarioInfo: {
@@ -4255,6 +5931,11 @@ export interface components {
              * @default []
              */
             found: string[];
+            /**
+             * Generated
+             * @default false
+             */
+            generated: boolean;
         };
         /** ScenarioReport */
         ScenarioReport: {
@@ -4275,6 +5956,45 @@ export interface components {
             /** Steps */
             steps: components["schemas"]["StepReport"][];
         };
+        /** ScheduleApplyRequest */
+        ScheduleApplyRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Sequence */
+            sequence?: {
+                [key: string]: string[];
+            } | null;
+            /** Hold */
+            hold?: {
+                [key: string]: number;
+            } | null;
+            /** Ids */
+            ids?: string[] | null;
+        };
+        /** ScheduleApplyResponse */
+        ScheduleApplyResponse: {
+            dataset: components["schemas"]["Dataset"];
+            report: components["schemas"]["ApplyReport"];
+        };
+        /** ScheduleCatalogue */
+        ScheduleCatalogue: {
+            /** Heuristics */
+            heuristics: components["schemas"]["Heuristic"][];
+            /** Profiles */
+            profiles: components["schemas"]["Profile"][];
+        };
+        /** ScheduleComparison */
+        ScheduleComparison: {
+            /** Ok */
+            ok: boolean;
+            /** Weights */
+            weights: {
+                [key: string]: number;
+            };
+            /** Rows */
+            rows: components["schemas"]["CompareRow"][];
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+        };
         /** ScheduleKpis */
         ScheduleKpis: {
             /**
@@ -4293,10 +6013,20 @@ export interface components {
              */
             late_orders: number;
             /**
+             * Waiting For Parts
+             * @default 0
+             */
+            waiting_for_parts: number;
+            /**
              * Tardiness Hours
              * @default 0
              */
             tardiness_hours: number;
+            /**
+             * Earliness Hours
+             * @default 0
+             */
+            earliness_hours: number;
             /**
              * Max Lateness Hours
              * @default 0
@@ -4353,6 +6083,10 @@ export interface components {
             /** Sequence */
             sequence?: {
                 [key: string]: string[];
+            } | null;
+            /** Hold */
+            hold?: {
+                [key: string]: number;
             } | null;
         };
         /** ScheduleResource */
@@ -4411,6 +6145,15 @@ export interface components {
             baseline: components["schemas"]["ScheduleKpis"];
             kpis: components["schemas"]["ScheduleKpis"];
             search: components["schemas"]["SearchInfo"];
+            /**
+             * Profile
+             * @default balanced
+             */
+            profile: string;
+            /** Holds */
+            holds: {
+                [key: string]: number;
+            };
             /** Violations */
             violations: string[];
             /**
@@ -4459,14 +6202,63 @@ export interface components {
              */
             setup_weight: number;
             /**
+             * Earliness Weight
+             * @description Objective weight per hour an order finishes before it is due (stock built early); above 0, orders may be held back to start just in time
+             * @default 0
+             */
+            earliness_weight: number;
+            /**
+             * Makespan Weight
+             * @description Objective weight per hour until the last order in the window finishes
+             * @default 0
+             */
+            makespan_weight: number;
+            /**
+             * Profile
+             * @description The scheduling profile these settings came from (a label; the settings rule)
+             * @default balanced
+             */
+            profile: string;
+            /**
+             * Start Rule
+             * @description How the first sequence is built: earliest due date, shortest job first, least slack, campaigns by setup group, or backward from the due date (just in time)
+             * @default edd
+             * @enum {string}
+             */
+            start_rule: "edd" | "spt" | "slack" | "campaign" | "backward";
+            /**
+             * Optimizer
+             * @description Search for a better machine choice and sequence with a constraint solver (CP-SAT), then time it on the shift calendar; never worse than the dispatching rule and local search
+             * @default false
+             */
+            optimizer: boolean;
+            /**
+             * Backward Buffer Days
+             * @description Backward (just in time): start this many days before the latest start, as a buffer against queues on shared machines
+             * @default 1
+             */
+            backward_buffer_days: number;
+            /**
+             * Frozen Days
+             * @description Frozen zone: orders already dated by the schedule that start within this many days keep their place and machine; only later orders are resequenced
+             * @default 0
+             */
+            frozen_days: number;
+            /**
+             * Wait For Parts
+             * @description A step starts only once the parts it uses are there: from stock, a receipt, or the order that makes them (along the pegging)
+             * @default true
+             */
+            wait_for_parts: boolean;
+            /**
              * Improve
-             * @description Improve the EDD sequence by campaign / swap local search
+             * @description Improve the first sequence by campaign / swap local search
              * @default true
              */
             improve: boolean;
             /**
              * Time Limit Seconds
-             * @description Local-search time budget
+             * @description Search time budget: the local search gets this much, and the optimiser as much again
              * @default 4
              */
             time_limit_seconds: number;
@@ -4507,6 +6299,11 @@ export interface components {
             setup_from: string | null;
             /** Late */
             late: boolean;
+            /**
+             * Machines
+             * @default []
+             */
+            machines: string[];
         };
         /** ScheduledOrder */
         ScheduledOrder: {
@@ -4544,6 +6341,36 @@ export interface components {
             mrp_due_date: string;
             /** Firm */
             firm: boolean;
+            /**
+             * Parts Ready
+             * @default 0
+             */
+            parts_ready: number;
+            /**
+             * Held For Parts
+             * @default 0
+             */
+            held_for_parts: number;
+            /** Parts From */
+            parts_from: components["schemas"]["PartSupply"][];
+            /** Missing Parts */
+            missing_parts: string[];
+            /** Finish Date */
+            finish_date: string | null;
+            /** Available Date */
+            available_date: string | null;
+            /**
+             * Days Late
+             * @default 0
+             */
+            days_late: number;
+            /**
+             * Frozen
+             * @default false
+             */
+            frozen: boolean;
+            /** Hold */
+            hold: number | null;
         };
         /**
          * ScheduledReceipt
@@ -4587,6 +6414,44 @@ export interface components {
              * @description Components (production) or goods at the origin (transfer) still to be issued; planning reserves them
              */
             reservations?: components["schemas"]["Reservation"][];
+            /**
+             * Step Resources
+             * @description Production: steps (by number) to run on one of their alternative machines instead of their own
+             */
+            step_resources?: {
+                [key: string]: string;
+            };
+            /**
+             * Scheduled
+             * @description Dates set by the detailed schedule: when it finishes later than needed, planning counts it where it is needed and reports the delay instead of adding an order in front of it
+             * @default false
+             */
+            scheduled: boolean;
+            /**
+             * Po
+             * @description Purchase: the purchase order (header) this line is on
+             */
+            po?: string | null;
+            /**
+             * Planned As
+             * @description The planned order it was firmed from (for reference: planned numbers are handed out again on every plan)
+             */
+            planned_as?: string | null;
+            /**
+             * Price
+             * @description Purchase: net price per base unit, in the order's currency
+             */
+            price?: number | null;
+            /**
+             * Confirmed Date
+             * @description Purchase: delivery date the supplier confirmed; planning expects the goods then
+             */
+            confirmed_date?: string | null;
+            /**
+             * Confirmed Qty
+             * @description Purchase: quantity the supplier confirmed (of the ordered quantity); planning counts no more than this
+             */
+            confirmed_qty?: number | null;
         };
         /** ScheduledReceiptOut */
         ScheduledReceiptOut: {
@@ -4612,7 +6477,12 @@ export interface components {
              * Mode
              * @enum {string}
              */
-            mode: "improved" | "edd" | "manual";
+            mode: "improved" | "edd" | "rule" | "manual" | "optimized";
+            /**
+             * Start Rule
+             * @default edd
+             */
+            start_rule: string;
             /**
              * Moves Tried
              * @default 0
@@ -4641,6 +6511,7 @@ export interface components {
             stopped: "converged" | "time_limit" | "off";
             /** Trace */
             trace: number[];
+            optimizer: components["schemas"]["OptimizerInfo"] | null;
         };
         /** Segment */
         Segment: {
@@ -4770,13 +6641,38 @@ export interface components {
              * @default 0
              */
             cost_per_unit: number;
-            /**
-             * Margin
-             * @default 0
-             */
-            margin: number;
+            /** Margin */
+            margin: number | null;
             /** Margin Pct */
             margin_pct: number | null;
+        };
+        /** Session */
+        Session: {
+            /** Token */
+            token: string;
+            user: components["schemas"]["User"];
+            /** Expires At */
+            expires_at: string;
+        };
+        /**
+         * SetAside
+         * @description A record left out of planning until it is fixed.
+         */
+        SetAside: {
+            /** Collection */
+            collection: string;
+            /** Index */
+            index: number;
+            /** Object Type */
+            object_type: string;
+            /** Object Id */
+            object_id: string;
+            /** Label */
+            label: string;
+            /** Field */
+            field: string | null;
+            /** Reason */
+            reason: string;
         };
         /** Settings */
         Settings: {
@@ -4785,6 +6681,18 @@ export interface components {
              * @default My Company
              */
             company_name: string;
+            /**
+             * Company Address
+             * @description The company's postal address for invoices, a line per row: printed on purchase orders as the address to invoice
+             * @default
+             */
+            company_address: string;
+            /**
+             * Company Tax Id
+             * @description The company's tax registration (GSTIN, VAT number)
+             * @default
+             */
+            company_tax_id: string;
             /**
              * Currency
              * @description ISO 4217 company currency
@@ -4840,6 +6748,112 @@ export interface components {
             default_service_level: number;
             /** Default Calendar */
             default_calendar?: string | null;
+            /**
+             * Capacity Constrained
+             * @description Plan make orders within the capacity of finite machines and labour: an order that does not fit uses an alternative machine, else starts earlier, else finishes later (reported)
+             * @default false
+             */
+            capacity_constrained: boolean;
+            /**
+             * Capacity Direction
+             * @description Levelling: an order that does not fit first tries earlier days (builds ahead, stock) or later days (accepts a delay, reported), then the other way
+             * @default earlier
+             * @enum {string}
+             */
+            capacity_direction: "earlier" | "later";
+            /**
+             * @description How much an order covers where a product's planning policy leaves it empty: L4L = exactly what is needed that day, POQ = the need of the next `default_lot_periods` buckets (one week by default)
+             * @default L4L
+             */
+            default_lot_policy: components["schemas"]["LotSizePolicy"];
+            /**
+             * Default Lot Periods
+             * @description POQ default: buckets each order covers
+             * @default 1
+             */
+            default_lot_periods: number;
+            /**
+             * Capacity Max Early Days
+             * @description Levelling: move an order at most this many days earlier to fit; empty = as far as today
+             */
+            capacity_max_early_days?: number | null;
+        };
+        /** SetupAction */
+        SetupAction: {
+            /** Label */
+            label: string;
+            /** Route */
+            route: string[];
+        };
+        /** SetupItem */
+        SetupItem: {
+            /** Step */
+            step: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "done" | "todo" | "check" | "info";
+            /** Text */
+            text: string;
+            action?: components["schemas"]["SetupAction"] | null;
+        };
+        /**
+         * Shift
+         * @description One named shift (≈ S/4 shift definition): its clock times, its break and the weekdays it runs.
+         */
+        Shift: {
+            /**
+             * Name
+             * @description e.g. Early, Late, Night
+             * @default
+             */
+            name: string;
+            /**
+             * Start
+             * @description Start time, HH:MM
+             */
+            start: string;
+            /**
+             * End
+             * @description End time, HH:MM; earlier than the start means it ends the next day
+             */
+            end: string;
+            /**
+             * Break Minutes
+             * @description Unpaid break inside the shift
+             * @default 0
+             */
+            break_minutes: number;
+            /**
+             * Break Start
+             * @description When the break starts (default: halfway)
+             */
+            break_start?: string | null;
+            /**
+             * Weekdays
+             * @description Only on these weekdays, 0 = Monday (empty = every working day)
+             */
+            weekdays?: number[] | null;
+        };
+        /** SignIn */
+        SignIn: {
+            /** Email */
+            email: string;
+            /** Password */
+            password: string;
+        };
+        /** SignUp */
+        SignUp: {
+            /** Email */
+            email: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** Password */
+            password: string;
         };
         /** SolverInfo */
         SolverInfo: {
@@ -5039,6 +7053,42 @@ export interface components {
                 [key: string]: number;
             };
         };
+        /**
+         * SourceChoice
+         * @description A supplier that could fill a requisition, with its terms for this quantity.
+         */
+        SourceChoice: {
+            /** Source Id */
+            source_id: string;
+            /** Supplier */
+            supplier: string;
+            /** Price */
+            price: number;
+            /** Currency */
+            currency: string;
+            /** Value */
+            value: number;
+            /** Qty */
+            qty: number;
+            /** Lead Time Days */
+            lead_time_days: number;
+            /**
+             * Arrives
+             * Format: date
+             */
+            arrives: string;
+            /** Days Late */
+            days_late: number;
+            /** Fixed */
+            fixed: boolean;
+            /** Assigned */
+            assigned: boolean;
+            /**
+             * Blocked
+             * @default
+             */
+            blocked: string;
+        };
         /** StepReport */
         StepReport: {
             /** N */
@@ -5097,6 +7147,11 @@ export interface components {
             };
             /** Negative On */
             negative_on: string | null;
+            /**
+             * Opening From Setup
+             * @default false
+             */
+            opening_from_setup: boolean;
         };
         /**
          * StockTarget
@@ -5129,6 +7184,28 @@ export interface components {
          * @enum {string}
          */
         Strategy: "MTS" | "MTS_CONSUME" | "MTO" | "ATO";
+        /**
+         * Subcontract
+         * @description An operation done outside by a supplier (≈ S/4 external operation): no own resource is loaded.
+         */
+        Subcontract: {
+            /**
+             * Supplier
+             * @description A location of type supplier
+             */
+            supplier: string;
+            /**
+             * Workdays
+             * @description Working days from sending the parts to getting them back
+             */
+            workdays: number;
+            /**
+             * Cost Per Unit
+             * @description Price per unit processed
+             * @default 0
+             */
+            cost_per_unit: number;
+        };
         /** Summary */
         Summary: {
             /** Series */
@@ -5339,6 +7416,27 @@ export interface components {
          * @enum {string}
          */
         TransportMode: "truck_ftl" | "truck_ltl" | "rail" | "sea" | "air" | "courier" | "pipeline";
+        /**
+         * Unbooked
+         * @description Postings dated before the planning start that the starting position does not reflect yet (a late posting, or
+         *     one dated in a week already rolled): what moving the plan to the same start again would change.
+         */
+        Unbooked: {
+            /** Needed */
+            needed: boolean;
+            /** Movements */
+            movements: number;
+            /** Stock */
+            stock: number;
+            /** Orders */
+            orders: number;
+            /** Accuracy Weeks */
+            accuracy_weeks: number;
+            /** History Days */
+            history_days: number;
+            /** Closed */
+            closed: number;
+        };
         /** UomConversion */
         UomConversion: {
             /** Uom */
@@ -5348,6 +7446,22 @@ export interface components {
              * @description Base units in one of this UoM (e.g. 1 CS = 12 EA → 12)
              */
             factor: number;
+        };
+        /** UsageInput */
+        UsageInput: {
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+        };
+        /** User */
+        User: {
+            /** Id */
+            id: string;
+            /** Email */
+            email: string;
+            /** Name */
+            name: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -5368,6 +7482,16 @@ export interface components {
             issues: components["schemas"]["Issue"][];
             /** Blocking */
             blocking: boolean;
+            /**
+             * Set Aside
+             * @default []
+             */
+            set_aside: components["schemas"]["SetAside"][];
+            /**
+             * Setup
+             * @default []
+             */
+            setup: components["schemas"]["SetupItem"][];
         };
         /** ValueBucket */
         ValueBucket: {
@@ -5391,6 +7515,128 @@ export interface components {
             by_type: {
                 [key: string]: number;
             };
+        };
+        /**
+         * Vendor
+         * @description A supplier's purchasing data (≈ vendor master, purchasing organisation view).
+         */
+        Vendor: {
+            /**
+             * Supplier
+             * @description The supplier location this record describes
+             */
+            supplier: string;
+            /**
+             * Contact
+             * @description Who to talk to
+             * @default
+             */
+            contact: string;
+            /**
+             * Email
+             * @default
+             */
+            email: string;
+            /**
+             * Phone
+             * @default
+             */
+            phone: string;
+            /**
+             * Currency
+             * @description Order currency; empty = the price's currency on each source
+             */
+            currency?: string | null;
+            /**
+             * Payment Terms Days
+             * @description Pay this many days after the invoice
+             * @default 30
+             */
+            payment_terms_days: number;
+            /**
+             * Incoterms
+             * @description Delivery terms, e.g. FCA Pune
+             * @default
+             */
+            incoterms: string;
+            /**
+             * Blocked
+             * @description Purchasing block: planning and new purchase orders skip this supplier; open orders are still received
+             * @default false
+             */
+            blocked: boolean;
+            /**
+             * Block Reason
+             * @default
+             */
+            block_reason: string;
+            /**
+             * Confirmation Required
+             * @description The supplier confirms each order (date and quantity)
+             * @default false
+             */
+            confirmation_required: boolean;
+            /**
+             * Confirmation Days
+             * @description A confirmation is overdue this many days after the order is sent
+             * @default 3
+             */
+            confirmation_days: number;
+            /**
+             * Over Delivery Tolerance
+             * @description A goods receipt may take this much more than ordered; empty = no limit
+             * @default 0.1
+             */
+            over_delivery_tolerance: number | null;
+            /**
+             * Under Delivery Tolerance
+             * @description A delivery this much short of the order closes the line (final delivery)
+             * @default 0
+             */
+            under_delivery_tolerance: number;
+            /**
+             * Min Order Value
+             * @description Smallest order the supplier accepts
+             * @default 0
+             */
+            min_order_value: number;
+        };
+        /** VendorRow */
+        VendorRow: {
+            /** Supplier */
+            supplier: string;
+            /** Name */
+            name: string;
+            /** Has Record */
+            has_record: boolean;
+            /** Blocked */
+            blocked: boolean;
+            /** Block Reason */
+            block_reason: string;
+            /** Confirmation Required */
+            confirmation_required: boolean;
+            /** Payment Terms Days */
+            payment_terms_days: number;
+            /** Currency */
+            currency: string;
+            /** Open Lines */
+            open_lines: number;
+            /** Open Value */
+            open_value: number;
+            /** Closed Lines */
+            closed_lines: number;
+            /** On Time */
+            on_time: number | null;
+            /** In Full */
+            in_full: number | null;
+            /** Avg Days Late */
+            avg_days_late: number | null;
+            /** Confirmed Late */
+            confirmed_late: number;
+            /** Last Delivery */
+            last_delivery: string | null;
+            /** Info Records */
+            info_records: components["schemas"]["InfoRecord"][];
         };
         /** VersionDoc */
         VersionDoc: {
@@ -5539,6 +7785,557 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    auth_config_api_auth_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthConfig"];
+                };
+            };
+        };
+    };
+    auth_signup_api_auth_signup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignUp"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_signin_api_auth_signin_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_signout_api_auth_signout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    auth_me_api_auth_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+        };
+    };
+    auth_password_api_auth_password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_companies_api_companies_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyMeta"][];
+                };
+            };
+        };
+    };
+    create_company_api_companies_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewCompany"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_company_api_companies__cid__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyDoc"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_company_api_companies__cid__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveCompany"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SaveReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_company_api_companies__cid__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    merge_company_api_companies__cid__merge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergeCompany"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MergeResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    company_history_api_companies__cid__history_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                before?: number | null;
+            };
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    company_revision_api_companies__cid__revisions__rev__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                rev: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_company_api_companies__cid__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreCompany"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SaveReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    company_members_api_companies__cid__members_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Member"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_company_member_api_companies__cid__members_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Member"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_company_member_api_companies__cid__members__email__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                email: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Member"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_api_health_get: {
         parameters: {
             query?: never;
@@ -5661,7 +8458,9 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["Dataset"];
+                "application/json": {
+                    [key: string]: unknown;
+                };
             };
         };
         responses: {
@@ -5694,7 +8493,9 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["Dataset"];
+                "application/json": {
+                    [key: string]: unknown;
+                };
             };
         };
         responses: {
@@ -5969,6 +8770,92 @@ export interface operations {
             };
         };
     };
+    get_schedule_catalogue_api_schedule_catalogue_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleCatalogue"];
+                };
+            };
+        };
+    };
+    post_schedule_compare_api_schedule_compare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleComparison"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_schedule_apply_api_schedule_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleApplyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_promise_api_promise_post: {
         parameters: {
             query?: never;
@@ -6101,6 +8988,39 @@ export interface operations {
             };
         };
     };
+    post_sales_order_api_orders_sales_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SalesOrderRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SalesOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_plan_api_plan_post: {
         parameters: {
             query?: never;
@@ -6121,6 +9041,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlanResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_level_api_capacity_level_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LevelPreview"];
                 };
             };
             /** @description Validation Error */
@@ -6253,6 +9206,138 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FirmResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_purchasing_api_purchasing_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchasingView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_create_pos_api_purchasing_create_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatePoResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_po_action_api_purchasing_act_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PoActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_posting_api_actuals_post_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PostRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoActionResponse"];
                 };
             };
             /** @description Validation Error */

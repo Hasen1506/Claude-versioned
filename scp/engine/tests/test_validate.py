@@ -178,6 +178,29 @@ def _movement_ref(d):
                        "reference": "PO-NOPE"}]
 
 
+def _phantom_not_made(d):
+    lp(d, "P", "B")["phantom"] = True
+
+
+def _po_line_mismatch(d):
+    d["purchase_orders"] = [{"id": "PO-1", "supplier": "S", "location": "P", "order_date": "2026-01-02"}]
+    d["receipts"] = [{"id": "PRD-1", "kind": "production", "location": "P", "product": "A", "qty": 5,
+                      "due_date": "2026-01-09", "po": "PO-1"}]
+
+
+def _fixed_twice(d):
+    for pu in d["purchasing_sources"]:
+        pu["fixed"] = True
+    d["purchasing_sources"].append({**d["purchasing_sources"][0], "id": "PIR-B2"})
+
+
+def _open_po_blocked(d):
+    d["vendors"] = [{"supplier": "S", "blocked": True, "block_reason": "quality hold"}]
+    d["purchase_orders"] = [{"id": "PO-1", "supplier": "S", "location": "P", "order_date": "2026-01-02"}]
+    d["receipts"] = [{"id": "PO-1-10", "kind": "purchase", "location": "P", "product": "B", "qty": 5,
+                      "due_date": "2026-01-09", "po": "PO-1", "source": "PIR-B"}]
+
+
 MUTATORS = {
     "DUP_ID": _dup_id, "DUP_LOCATION_PRODUCT": _dup_lp, "REF_UNKNOWN": _ref_unknown,
     "REF_WRONG_TYPE": _ref_wrong_type, "FX_MISSING": _fx_missing, "CALENDAR_NO_WORKDAY_IN_HORIZON": _calendar,
@@ -192,6 +215,8 @@ MUTATORS = {
     "OVERRIDE_OUTSIDE_HORIZON": _override_outside, "OVERRIDE_WITHOUT_FORECAST": _override_no_fc,
     "CONFIRMATION_ORPHAN": _confirmation_orphan, "STOCK_NOT_SYNCED": _stock_not_synced,
     "NEGATIVE_STOCK": _negative_stock, "MOVEMENT_REF_UNKNOWN": _movement_ref,
+    "PHANTOM_NOT_MADE": _phantom_not_made, "PO_LINE_MISMATCH": _po_line_mismatch,
+    "FIXED_SOURCE_TWICE": _fixed_twice, "OPEN_PO_BLOCKED_SUPPLIER": _open_po_blocked,
 }
 
 

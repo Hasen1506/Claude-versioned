@@ -23,6 +23,11 @@ class DemandRecord(Model):
         "qty", default=None,
         description="Sales order: the originally ordered quantity; `qty` is what is still open. Set by the roll-forward "
                     "on the first delivery (empty = nothing delivered yet)")
+    price: float | None = Unit(
+        "money_per_unit", default=None,
+        description="Sales order: the agreed net price per unit, in the company currency. Empty = the customer's "
+                    "price, else the product's")
+    customer_ref: str = Field("", max_length=64, description="Sales order: the customer's own order number")
     period_days: int | None = Field(
         None, ge=1, le=366,
         description="Forecast only: the record covers [date, date + period_days) and is spread evenly over the "
@@ -58,6 +63,36 @@ class ScheduledReceipt(Model):
     reservations: list[Reservation] = Field(default_factory=list,
                                             description="Components (production) or goods at the origin (transfer) "
                                                         "still to be issued; planning reserves them")
+    step_resources: dict[int, str] = Field(default_factory=dict,
+                                           description="Production: steps (by number) to run on one of their alternative "
+                                                       "machines instead of their own")
+    scheduled: bool = Field(False, description="Dates set by the detailed schedule: when it finishes later than "
+                                               "needed, planning counts it where it is needed and reports the delay "
+                                               "instead of adding an order in front of it")
+    po: str | None = Field(None, max_length=64, description="Purchase: the purchase order (header) this line is on")
+    planned_as: str | None = Field(None, max_length=64,
+                                   description="The planned order it was firmed from (for reference: planned numbers "
+                                               "are handed out again on every plan)")
+    price: float | None = Unit("money_per_unit", default=None,
+                               description="Purchase: net price per base unit, in the order's currency")
+    confirmed_date: dt.date | None = Field(None, description="Purchase: delivery date the supplier confirmed; "
+                                                             "planning expects the goods then")
+    confirmed_qty: float | None = Unit("qty", default=None,
+                                       description="Purchase: quantity the supplier confirmed (of the ordered "
+                                                   "quantity); planning counts no more than this")
+
+    @property
+    def expected_date(self) -> dt.date:
+        """When the goods are expected: the confirmed date, else the due date."""
+        return self.confirmed_date or self.due_date
+
+    @property
+    def expected_qty(self) -> float:
+        """What is still expected: the open quantity, capped by what the supplier confirmed and has not delivered."""
+        if self.confirmed_qty is None:
+            return self.qty
+        received = (self.ordered_qty if self.ordered_qty is not None else self.qty) - self.qty
+        return max(0.0, min(self.qty, self.confirmed_qty - received))
 
 
 class SalesHistory(Model):
@@ -69,5 +104,9 @@ class SalesHistory(Model):
     qty: float = Unit("qty")
     price: float | None = Unit("money_per_unit", default=None)
     promo: bool = False
+    period_days: int | None = Field(
+        None, ge=1, le=366,
+        description="The row is a total over [date, date + period_days), e.g. a month of sales: it is spread evenly "
+                    "over those days. Empty = sold on `date`.")
     from_journal: bool = Field(False, description="Written by the roll-forward from sale movements, and rebuilt from "
                                                   "the whole journal on every roll (so a late posting reaches it)")

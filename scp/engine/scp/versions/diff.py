@@ -17,9 +17,11 @@ KEYS: dict[str, tuple[str, ...]] = {
     "history": ("location", "product", "date"), "overrides": ("location", "product", "date"),
     "demand": ("id", "location", "product", "date", "kind"), "confirmations": ("order", "ship_from", "ship_date"),
     "changeovers": ("resource", "from_group", "to_group"), "closed_orders": ("kind", "id"),
-    "accuracy": ("location", "product", "start"),
+    "accuracy": ("location", "product", "start"), "customer_prices": ("customer", "product"), "vendors": ("id",),
+    "purchase_orders": ("id",), "stock_targets": ("location", "product", "date"), "rolled_weeks": ("start",),
 }
-SINGLE = ("settings", "forecasting", "inventory", "sop", "scheduling", "promising", "execution")
+SINGLE = ("settings", "forecasting", "inventory", "sop", "scheduling", "promising", "execution", "purchasing", "finance",
+          "tower")
 MAX_FIELDS = 12
 
 
@@ -78,20 +80,27 @@ def _key(row: dict, fields: tuple[str, ...], i: int) -> str:
 
 
 def diff(a: Dataset, b: Dataset) -> DatasetDiff:
-    da, db = a.model_dump(mode="json"), b.model_dump(mode="json")
+    return diff_raw(a.model_dump(mode="json"), b.model_dump(mode="json"))
+
+
+def diff_raw(da: dict, db: dict) -> DatasetDiff:
+    """:func:`diff` on two datasets as JSON documents (a working copy may hold unfinished records)."""
     out: list[CollectionDiff] = []
     for name in SINGLE:
         fs, more = _fields(da.get(name) or {}, db.get(name) or {})
+        fs = [f for f in fs if f.path]
         if fs:
             out.append(CollectionDiff(collection=name, added=0, removed=0, changed=1,
                                       items=[ItemChange(key=name, change="changed", fields=fs, more=more)]))
-    for name, fields in KEYS.items():
+    extra = sorted(k for k in set(da) | set(db) if k not in KEYS and k not in SINGLE
+                   and isinstance(da.get(k, db.get(k)), list))
+    for name, fields in [*KEYS.items(), *((k, ("id",)) for k in extra)]:
         ra = {}
         for i, r in enumerate(da.get(name) or []):
-            ra.setdefault(_key(r, fields, i), r)
+            ra.setdefault(_key(r, fields, i) if isinstance(r, dict) else f"#{i}", r)
         rb = {}
         for i, r in enumerate(db.get(name) or []):
-            rb.setdefault(_key(r, fields, i), r)
+            rb.setdefault(_key(r, fields, i) if isinstance(r, dict) else f"#{i}", r)
         items: list[ItemChange] = []
         added = [k for k in rb if k not in ra]
         removed = [k for k in ra if k not in rb]
@@ -101,7 +110,8 @@ def diff(a: Dataset, b: Dataset) -> DatasetDiff:
         for k in removed:
             items.append(ItemChange(key=k, change="removed", fields=[]))
         for k in changed:
-            fs, more = _fields(ra[k], rb[k])
+            fs, more = _fields(ra[k], rb[k]) if isinstance(ra[k], dict) and isinstance(rb[k], dict) else (
+                [FieldChange(path="", a=ra[k], b=rb[k])], 0)
             items.append(ItemChange(key=k, change="changed", fields=fs, more=more))
         if items:
             out.append(CollectionDiff(collection=name, added=len(added), removed=len(removed), changed=len(changed),

@@ -7,7 +7,7 @@ type Obj = Record<string, unknown>;
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
   | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides"
-  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks";
+  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices";
 
 export interface Column {
   label: string;
@@ -119,13 +119,24 @@ export const COLLECTIONS: CollectionDef[] = [
     ],
   },
   {
+    key: "vendors", label: "Supplier purchasing data", singular: "supplier record", defName: "Vendor", issueType: "vendor",
+    group: "Make & buy", keyOf: (o) => s(o.supplier),
+    blurb: "How you buy from each supplier: contact, payment terms, whether they confirm orders, delivery tolerances and a purchasing block. A supplier without a record buys on the defaults.",
+    columns: [
+      { label: "Supplier", get: (o) => s(o.supplier) }, { label: "Contact", get: (o) => s(o.contact) },
+      { label: "Pay days", get: (o) => o.payment_terms_days as number, num: true },
+      { label: "Confirms", get: (o) => (o.confirmation_required ? "yes" : "") },
+      { label: "Blocked", get: (o) => (o.blocked ? `yes${o.block_reason ? `: ${s(o.block_reason)}` : ""}` : "") },
+    ],
+  },
+  {
     key: "location_products", label: "Planning policies", singular: "planning policy", defName: "LocationProduct",
     issueType: "location_product", group: "Planning data", keyOf: (o) => `${s(o.location)}|${s(o.product)}`,
     blurb: "How each product is planned at each location: strategy, stock, lot sizing, safety stock, fences.",
     columns: [
       { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
       { label: "Strategy", get: (o) => s(o.strategy ?? "MTS_CONSUME") },
-      { label: "Lot", get: (o) => s((o.lot_sizing as Obj | undefined)?.policy ?? "L4L") },
+      { label: "Lot", get: (o) => s((o.lot_sizing as Obj | undefined)?.policy ?? "company default") },
       { label: "Safety stock", get: (o) => s((o.safety_stock as Obj | undefined)?.method ?? "none") },
       { label: "On hand", get: (o) => (o.on_hand as number) ?? 0, num: true },
     ],
@@ -148,6 +159,25 @@ export const COLLECTIONS: CollectionDef[] = [
       { label: "Id", get: (o) => s(o.id) }, { label: "Kind", get: (o) => s(o.kind) },
       { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
       { label: "Due", get: (o) => s(o.due_date) }, { label: "Qty", get: (o) => o.qty as number, num: true },
+    ],
+  },
+  {
+    key: "purchase_orders", label: "Purchase orders", singular: "purchase order", defName: "PurchaseOrder",
+    issueType: "purchase_order", group: "Execution", keyOf: (o) => s(o.id),
+    blurb: "Purchase order headers: supplier, receiving place, order date, approval and when it was sent. The lines are the scheduled receipts that name the order (Buying manages both).",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Supplier", get: (o) => s(o.supplier) },
+      { label: "To", get: (o) => s(o.location) }, { label: "Ordered", get: (o) => s(o.order_date) },
+      { label: "Sent", get: (o) => s(o.sent_on) }, { label: "Approved", get: (o) => (o.approved === false ? "no" : "yes") },
+    ],
+  },
+  {
+    key: "customer_prices", label: "Customer prices", singular: "customer price", defName: "CustomerPrice",
+    issueType: "customer_price", group: "Demand inputs", keyOf: (o) => `${s(o.customer)}/${s(o.product)}`,
+    blurb: "What a customer pays for a product, where it differs from the product's selling price. An order's own price wins over both; without any price, sales show no revenue or margin.",
+    columns: [
+      { label: "Customer", get: (o) => s(o.customer) }, { label: "Product", get: (o) => s(o.product) },
+      { label: "Price", get: (o) => o.price as number, num: true },
     ],
   },
   {
@@ -265,6 +295,8 @@ export function whereUsed(ds: Dataset, kind: "location" | "product" | "resource"
     for (const r of ds.resources ?? []) add(r.location === id, `resource ${r.id}`);
     for (const p of ds.production_sources ?? []) add(p.location === id, `production source ${p.id}`);
     for (const p of ds.purchasing_sources ?? []) add(p.supplier === id || p.location === id, `purchasing source ${p.id}`);
+    for (const v of ds.vendors ?? []) add(v.supplier === id, "its supplier purchasing data");
+    for (const p of ds.purchase_orders ?? []) add(p.supplier === id || p.location === id, `purchase order ${p.id}`);
     for (const l of ds.lanes ?? []) add(l.origin === id || l.destination === id, `lane ${l.id}`);
     const lp = (ds.location_products ?? []).filter((x) => x.location === id).length;
     add(lp > 0, `${lp} planning polic${lp === 1 ? "y" : "ies"}`);
@@ -274,6 +306,8 @@ export function whereUsed(ds: Dataset, kind: "location" | "product" | "resource"
     add(hs > 0, `${hs} history row(s)`);
     for (const n of ds.npi ?? []) add(n.location === id || n.like_location === id, `NPI rule ${n.location}|${n.product}`);
     for (const e of ds.events ?? []) add(!!e.locations?.includes(id), `event ${e.id}`);
+    const cp = (ds.customer_prices ?? []).filter((x) => x.customer === id).length;
+    add(cp > 0, `${cp} customer price(s)`);
   }
   if (kind === "product") {
     for (const p of ds.production_sources ?? []) {
@@ -290,6 +324,8 @@ export function whereUsed(ds: Dataset, kind: "location" | "product" | "resource"
     add(hs > 0, `${hs} history row(s)`);
     for (const n of ds.npi ?? []) add(n.product === id || n.like_product === id, `NPI rule ${n.location}|${n.product}`);
     for (const e of ds.events ?? []) add(!!e.products?.includes(id), `event ${e.id}`);
+    const cp = (ds.customer_prices ?? []).filter((x) => x.product === id).length;
+    add(cp > 0, `${cp} customer price(s)`);
   }
   if (kind === "resource") {
     for (const p of ds.production_sources ?? [])

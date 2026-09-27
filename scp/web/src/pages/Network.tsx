@@ -115,8 +115,8 @@ export function Network({ route }: { route: string[] }) {
   if (!ds) return null;
   if (!net || !lay) return <Empty title="Building the network…" />;
   if (!net.locations.length) {
-    return <Empty title="No locations yet"><p>Start by adding your plants, DCs, suppliers and customers.</p>
-      <a className="btn primary" href={href("data", "locations")}>Add locations</a></Empty>;
+    return <Empty title="No places yet"><p>Start by adding your plants, warehouses, suppliers and customers.</p>
+      <a className="btn primary" href={href("setup", "network")}>Set up places and routes</a></Empty>;
   }
 
   const active = (l: NetLocation) => !focus || l.products.some((p) => focus.has(p));
@@ -132,7 +132,7 @@ export function Network({ route }: { route: string[] }) {
 
   return (
     <div>
-      <StageHeader n="01" title="Network" kicker="Your supply network from suppliers to customers. Pick a product to trace its path, including its components, through every location that stocks, makes, buys or moves it." right={<>
+      <StageHeader title="Network" kicker="Your supply network, from suppliers to customers. Pick a product to trace its path, with its components, through every place that stocks, makes, buys or moves it." right={<>
           <select className="select" value={product} onChange={(e) => setProduct(e.target.value)} style={{ width: 220 }} aria-label="Trace product">
             <option value="">All products</option>
             {products.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -158,7 +158,7 @@ export function Network({ route }: { route: string[] }) {
           <div className="net" style={{ overflowX: "auto" }}>
             {geo ? <GeoMap net={net} selected={selected} active={active} edgeActive={edgeActive} tip={tip} />
               : (
-                <svg viewBox={`0 0 ${lay.width} ${lay.height}`} style={{ minWidth: lay.width * 0.75 }} role="img" aria-label="Network flow map">
+                <svg viewBox={`0 0 ${lay.width} ${lay.height}`} style={{ minWidth: selected ? undefined : lay.width * 0.75 }} role="img" aria-label="Network flow map">
                   {Array.from({ length: lay.cols }, (_, ci) => {
                     const any = [...lay.placed.values()].find((p) => p.loc.layer === ci);
                     return any ? <text key={ci} className="col-label" x={any.x} y={22}>{colName([...lay.placed.values()].filter((p) => p.loc.layer === ci).map((p) => p.loc.type))}</text> : null;
@@ -191,8 +191,8 @@ export function Network({ route }: { route: string[] }) {
                         <rect width={NODE_W} height={NODE_H} />
                         <circle cx={20} cy={NODE_H / 2} r={11} fill={TYPE_COLOR[loc.type]} />
                         <text x={20} y={NODE_H / 2 + 4} textAnchor="middle" style={{ fill: "#fff", fontSize: 11 }}>{TYPE_GLYPH[loc.type]}</text>
-                        <text x={38} y={19}>{trunc(loc.id, 20)}</text>
-                        <text className="sub" x={38} y={34}>{trunc(loc.name, 24)}</text>
+                        <text x={38} y={19}>{trunc(loc.name || loc.id, 20)}</text>
+                        <text className="sub" x={38} y={34}>{trunc(loc.name && loc.name !== loc.id ? loc.id : TYPE_LABEL[loc.type], 24)}</text>
                         {h && (h.errors > 0 || h.warnings > 0) && (
                           <g transform={`translate(${NODE_W - 8},-6)`}>
                             <rect x={-26} y={0} width={28} height={16} style={{ fill: h.errors ? "var(--critical)" : "var(--warning)", stroke: "none" }} />

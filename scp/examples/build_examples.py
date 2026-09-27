@@ -64,11 +64,11 @@ def kitchenware() -> dict:
          "holidays": ["2026-10-02", "2026-10-20", "2026-11-09", "2026-11-10", "2026-12-25", "2027-01-26"]},
     ]
     locations = [
-        {"id": "PLT-PUNE", "name": "Pune plant (Chakan)", "type": "plant", "region": "West", "calendar": "CAL-IN-6D",
+        {"id": "PLT-PUNE", "name": "Pune plant (Chakan)", "type": "plant", "region": "West", "address": "Plot 21, MIDC Chakan Phase II\nPune 410501, Maharashtra", "calendar": "CAL-IN-6D",
          "lat": 18.76, "lon": 73.86, "storage_capacity_m3": 2500, "handling_cost_per_unit": 2},
-        {"id": "DC-BHIWANDI", "name": "Bhiwandi DC (Mumbai)", "type": "dc", "region": "West", "calendar": "CAL-IN-6D",
+        {"id": "DC-BHIWANDI", "name": "Bhiwandi DC (Mumbai)", "type": "dc", "region": "West", "address": "Gala 4, Building B7, Vashere logistics park\nBhiwandi 421302, Maharashtra", "calendar": "CAL-IN-6D",
          "lat": 19.30, "lon": 73.06, "storage_capacity_m3": 4000, "handling_cost_per_unit": 6},
-        {"id": "DC-DELHI", "name": "Delhi NCR DC", "type": "dc", "region": "North", "calendar": "CAL-IN-6D",
+        {"id": "DC-DELHI", "name": "Delhi NCR DC", "type": "dc", "region": "North", "address": "Warehouse 12, Sector 37 industrial area\nGurugram 122001, Haryana", "calendar": "CAL-IN-6D",
          "lat": 28.46, "lon": 77.03, "storage_capacity_m3": 3000, "handling_cost_per_unit": 7},
         {"id": "CUS-WEST-TRADE", "name": "West trade distributors", "type": "customer", "region": "West",
          "lat": 19.08, "lon": 72.88},
@@ -76,14 +76,14 @@ def kitchenware() -> dict:
          "lat": 12.97, "lon": 77.59},
         {"id": "CUS-NORTH-TRADE", "name": "North trade distributors", "type": "customer", "region": "North",
          "lat": 28.61, "lon": 77.21},
-        {"id": "SUP-COPPER", "name": "Hindalco copper (Silvassa)", "type": "supplier", "region": "West",
+        {"id": "SUP-COPPER", "name": "Hindalco copper (Silvassa)", "type": "supplier", "region": "West", "address": "Survey 118, Masat industrial estate\nSilvassa 396230, Dadra and Nagar Haveli",
          "lat": 20.27, "lon": 73.02},
-        {"id": "SUP-STAMP", "name": "Chakan stampings", "type": "supplier", "region": "West", "lat": 18.75, "lon": 73.85},
-        {"id": "SUP-JARS", "name": "Rajkot jar works", "type": "supplier", "region": "West", "lat": 22.30, "lon": 70.80},
-        {"id": "SUP-MOULD", "name": "Pune polymer moulders", "type": "supplier", "region": "West", "lat": 18.52, "lon": 73.85},
-        {"id": "SUP-SHENZHEN", "name": "Shenzhen electro-components", "type": "supplier", "region": "China",
+        {"id": "SUP-STAMP", "name": "Chakan stampings", "type": "supplier", "region": "West", "address": "Plot 7, Talegaon road\nChakan 410501, Maharashtra", "lat": 18.75, "lon": 73.85},
+        {"id": "SUP-JARS", "name": "Rajkot jar works", "type": "supplier", "region": "West", "address": "Shed 32, Aji GIDC\nRajkot 360003, Gujarat", "lat": 22.30, "lon": 70.80},
+        {"id": "SUP-MOULD", "name": "Pune polymer moulders", "type": "supplier", "region": "West", "address": "Unit 5, Bhosari MIDC, T block\nPune 411026, Maharashtra", "lat": 18.52, "lon": 73.85},
+        {"id": "SUP-SHENZHEN", "name": "Shenzhen electro-components", "type": "supplier", "region": "China", "address": "Floor 3, Block B, Longhua industrial park\nShenzhen 518109, Guangdong, China",
          "lat": 22.54, "lon": 114.06},
-        {"id": "SUP-PACK", "name": "Bhosari corrugated boxes", "type": "supplier", "region": "West",
+        {"id": "SUP-PACK", "name": "Bhosari corrugated boxes", "type": "supplier", "region": "West", "address": "Plot 44, J block, Bhosari MIDC\nPune 411026, Maharashtra",
          "lat": 18.64, "lon": 73.84},
     ]
     products = [
@@ -167,9 +167,10 @@ def kitchenware() -> dict:
     purchasing = [
         {"id": "PIR-CU", "supplier": "SUP-COPPER", "product": "RM-CU-WIRE", "location": "PLT-PUNE", "price": 905,
          "ordering_cost": 2500, "moq": 500, "rounding_qty": 250, "lead_time_days": 7, "lead_time_std_days": 1.5,
-         "capacity_per_week": 6000},
+         "capacity_per_week": 6000, "price_scales": [{"from_qty": 2000, "price": 890}, {"from_qty": 5000, "price": 875}]},
         {"id": "PIR-STAMP", "supplier": "SUP-STAMP", "product": "RM-STAMP", "location": "PLT-PUNE", "price": 118,
-         "moq": 1000, "rounding_qty": 500, "lead_time_days": 5, "lead_time_std_days": 1},
+         "moq": 1000, "rounding_qty": 500, "lead_time_days": 5, "lead_time_std_days": 1,
+         "price_scales": [{"from_qty": 5000, "price": 112}]},
         {"id": "PIR-JARS", "supplier": "SUP-JARS", "product": "RM-JARSET", "location": "PLT-PUNE", "price": 410,
          "moq": 500, "rounding_qty": 100, "lead_time_days": 10, "lead_time_std_days": 2},
         {"id": "PIR-BODY-MG", "supplier": "SUP-MOULD", "product": "RM-BODY-MG", "location": "PLT-PUNE", "price": 96,
@@ -178,7 +179,7 @@ def kitchenware() -> dict:
          "rounding_qty": 200, "lead_time_days": 6},
         {"id": "PIR-HEATER", "supplier": "SUP-SHENZHEN", "product": "RM-HEATER", "location": "PLT-PUNE", "price": 1.35,
          "currency": "USD", "duty_rate": 0.20, "ordering_cost": 18000, "moq": 5000, "rounding_qty": 1000,
-         "lead_time_days": 14, "lead_time_std_days": 3},
+         "lead_time_days": 14, "lead_time_std_days": 3, "vendor_material": "HT-220-1K2"},
         {"id": "PIR-SWITCH", "supplier": "SUP-SHENZHEN", "product": "RM-SWITCH", "location": "PLT-PUNE", "price": 0.62,
          "currency": "USD", "duty_rate": 0.20, "ordering_cost": 18000, "moq": 10000, "rounding_qty": 2000,
          "lead_time_days": 14, "lead_time_std_days": 3},
@@ -299,15 +300,27 @@ def kitchenware() -> dict:
         {"id": "STO-2201", "kind": "transfer", "location": "DC-DELHI", "product": "KT-15", "qty": 600,
          "due_date": "2026-09-29", "source": "LN-PUNE-DEL"},
     ]
+    # purchasing view of the suppliers that need more than the defaults (Phase E)
+    vendors = [
+        {"supplier": "SUP-SHENZHEN", "contact": "Li Wei (export desk)", "email": "export@example.com",
+         "currency": "USD", "payment_terms_days": 60, "incoterms": "FOB Shenzhen", "confirmation_required": True,
+         "confirmation_days": 3, "over_delivery_tolerance": 0.05},
+        {"supplier": "SUP-COPPER", "contact": "Sales office Silvassa", "payment_terms_days": 45,
+         "confirmation_required": True, "confirmation_days": 2},
+        {"supplier": "SUP-PACK", "payment_terms_days": 30, "min_order_value": 5000, "under_delivery_tolerance": 0.02},
+    ]
     return {
         "schema_version": "1",
         "settings": {"company_name": "Kaveri Kitchenware Pvt Ltd (fictional)", "currency": "INR",
+                     "company_address": "Kaveri House, 3rd floor, Baner road\nPune 411045, Maharashtra",
                      "planning_start": START.isoformat(), "horizon_days": 182, "bucket": "week",
                      "fx_rates": {"USD": 84.2}, "wacc": 0.13, "holding_spread": 0.09,
                      "default_service_level": 0.95, "default_calendar": "CAL-IN-6D"},
         "calendars": cal, "locations": locations, "products": products, "location_products": lps,
         "resources": resources, "production_sources": production_sources, "purchasing_sources": purchasing,
-        "lanes": lanes, "demand": demand, "receipts": receipts, "history": history, "events": events, "npi": npi,
+        "lanes": lanes, "vendors": vendors, "purchase_orders": [],
+        "purchasing": {"approval_limit": 1000000, "release_window_days": 7},
+        "demand": demand, "receipts": receipts, "history": history, "events": events, "npi": npi,
         "overrides": overrides,
         # sequence-dependent setups: winding gauge change (thick→thin needs re-tensioning) and
         # test-bench fixture swaps between grinders and kettles
@@ -491,12 +504,17 @@ def single_product() -> dict:
              "safety_stock": {"method": "fixed", "qty": 20000}}],
         "resources": [{"id": "BLOW-FILL", "name": "Blow-fill-cap line", "location": "PLANT", "kind": "line",
                        "shifts_per_day": 2, "hours_per_shift": 8, "efficiency": 0.8, "cost_per_hour": 2200,
-                       "overtime_hours_per_day": 4, "overtime_cost_per_hour": 3300}],
+                       "overtime_hours_per_day": 4, "overtime_cost_per_hour": 3300},
+                      # the old line, one shift and slower: the step can run on it when the main line is full, and the
+                      # shop-floor board and the optimiser can move a batch onto it
+                      {"id": "BLOW-FILL-OLD", "name": "Old blow-fill line", "location": "PLANT", "kind": "line",
+                       "shifts_per_day": 1, "hours_per_shift": 8, "efficiency": 0.65, "cost_per_hour": 2600}],
         "production_sources": [{"id": "PV-BTL-1L", "location": "PLANT", "product": "BTL-1L",
                                 "components": [{"product": "PREFORM", "qty": 1, "scrap": 0.005},
                                                {"product": "CAP-LABEL", "qty": 1, "scrap": 0.01}],
                                 "operations": [{"seq": 10, "name": "Blow, fill, cap, label", "resource": "BLOW-FILL",
-                                                "setup_hours": 0.5, "run_hours_per_unit": 0.0002}],
+                                                "setup_hours": 0.5, "run_hours_per_unit": 0.0002,
+                                                "alternatives": ["BLOW-FILL-OLD"]}],
                                 "assembly_scrap": 0.003, "conversion_cost_per_unit": 0.9}],
         "purchasing_sources": [
             {"id": "PIR-PREFORM", "supplier": "SUP-PREFORM", "product": "PREFORM", "location": "PLANT", "price": 2.6,
