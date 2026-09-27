@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import type { Dataset, PoLineInput, PoView, PurchasingView, Requisition, VendorRow } from "../api/types";
 import {
   Badge, Edits, Empty, Panel, Provenance, Reading, RunButton, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
+  MoreRows, ROW_LIMIT,
 } from "../components/ui";
 import { day, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Prod, namesOf } from "../lib/names";
@@ -85,7 +86,11 @@ function buyingAnswer(res: PurchasingView, window: number) {
 // ------------------------------------------------------------------------------------------------
 function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
   const [all, setAll] = useState(false);
-  const rows = useMemo(() => res.requisitions.filter((r) => all || r.due_now), [res.requisitions, all]);
+  const [q, setQ] = useState("");
+  const nmq = namesOf(ds);
+  const rows = useMemo(() => res.requisitions.filter((r) => (all || r.due_now) && (!q
+    || `${r.id} ${r.product} ${nmq.prod(r.product)} ${r.location} ${nmq.loc(r.location)} ${r.supplier} ${nmq.loc(r.supplier)}`.toLowerCase().includes(q.toLowerCase()))),
+  [res.requisitions, all, q, nmq]);
   const [pick, setPick] = useState<Set<string> | null>(null);
   const chosen = pick ?? new Set(rows.map((r) => r.id));
   const [source, setSource] = useState<Record<string, string>>({});
@@ -133,6 +138,8 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
       {msg && <div className="banner ok" role="status"><div>{msg}</div></div>}
       {err && <div className="banner error" role="alert"><Badge sev="error">Not ordered</Badge>{err}</div>}
       <Panel flush title="Requisitions: the plan's purchases" actions={<>
+        <input className="input" placeholder="Product, place, supplier…" value={q} onChange={(e) => { setQ(e.target.value); setPick(null); }}
+          style={{ maxWidth: 220 }} aria-label="Find requisitions" />
         <label className="row small"><input type="checkbox" checked={all} onChange={(e) => { setAll(e.target.checked); setPick(null); }} /> Show later ones too</label>
         <label className="row small" htmlFor="po-date">Order date <input id="po-date" type="date" className="input" style={{ width: 150 }} value={orderDate}
           min={ds.settings.planning_start} onChange={(e) => setOrderDate(e.target.value || ds.settings.planning_start)} /></label>
@@ -147,7 +154,7 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
               <thead><tr><th aria-label="Order" /><th>Product</th><th>To</th><th className="num">Qty</th><th>Needed</th><th>Order by</th>
                 <th>Supplier</th><th className="num">Price</th><th className="num">Value</th><th>Arrives</th></tr></thead>
               <tbody>
-                {rows.map((r) => {
+                {rows.slice(0, ROW_LIMIT).map((r) => {
                   const c = choiceOf(r);
                   return (
                     <tr key={r.id} className={chosen.has(r.id) ? "selected" : ""}>
@@ -175,6 +182,8 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
                 })}
               </tbody>
             </table>
+            <MoreRows shown={ROW_LIMIT} total={rows.length} what="requisitions"
+              how={`${picked.length === rows.length ? "All of them are ticked" : `${picked.length} are ticked`}: find a product, place or supplier to see the rest.`} />
           </div>
         )}
       </Panel>

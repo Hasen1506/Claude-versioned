@@ -24,8 +24,10 @@ from __future__ import annotations
 
 import itertools
 import math
+import os
 import time
 from collections.abc import Callable, Hashable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -91,7 +93,76 @@ def cumulative_lead_times(stages: Sequence[Stage]) -> dict[Hashable, int]:
     return m
 
 
+def groups(stages: Sequence[Stage]) -> list[list[Stage]]:
+    """The stages in groups that do not supply each other (Phase S, N89): each group's service times are chosen
+    without regard to the others', so each is solved on its own. A large company's thousands of product families
+    are thousands of small problems instead of one that runs out of time."""
+    ids = {s.id for s in stages}
+    parent: dict[Hashable, Hashable] = {s.id: s.id for s in stages}
+
+    def root(x: Hashable) -> Hashable:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for s in stages:
+        for u in s.upstream:
+            if u in ids:
+                a, b = root(s.id), root(u)
+                if a != b:
+                    parent[a] = b
+    out: dict[Hashable, list[Stage]] = {}
+    for s in stages:
+        out.setdefault(root(s.id), []).append(s)
+    return list(out.values())
+
+
+BUNDLE = 150     # small groups are solved together up to this many stages: one solver call each, not thousands
+
+
 def solve(stages: Sequence[Stage], *, time_limit: float = 30.0) -> Solution:
+    """The optimal service times of every stage. Groups of stages that do not supply each other are independent, so
+    the whole is optimal when each part is: small groups are bundled into problems of about ``BUNDLE`` stages, large
+    ones solved alone, all on the server's cores at once (the solver works outside Python's lock)."""
+    t0 = time.perf_counter()
+    parts = groups(stages)
+    if len(parts) <= 1:
+        return _solve_group(stages, time_limit=time_limit)
+    jobs: list[list[Stage]] = []
+    bundle: list[Stage] = []
+    for part in sorted(parts, key=len, reverse=True):
+        if len(part) >= BUNDLE:
+            jobs.append(part)
+            continue
+        bundle += part
+        if len(bundle) >= BUNDLE:
+            jobs.append(bundle)
+            bundle = []
+    if bundle:
+        jobs.append(bundle)
+    with ThreadPoolExecutor(max(1, min(len(jobs), os.cpu_count() or 1))) as pool:
+        sols = list(pool.map(lambda job: _solve_group(job, time_limit=time_limit), jobs))
+    out = Solution("optimal", 0.0)
+    for sol in sols:
+        out.variables += sol.variables
+        out.constraints += sol.constraints
+        if sol.status == "infeasible":
+            return Solution("infeasible", math.inf, variables=out.variables, constraints=out.constraints,
+                            seconds=time.perf_counter() - t0, message=sol.message)
+        if sol.status == "time_limit":
+            out.status, out.message = "time_limit", sol.message
+        out.service.update(sol.service)
+        out.inbound.update(sol.inbound)
+        out.net.update(sol.net)
+    out.objective = objective(stages, out.net)
+    out.seconds = time.perf_counter() - t0
+    if out.status == "optimal":
+        out.message = f"{len(parts)} independent groups of stages, each solved to optimality"
+    return out
+
+
+def _solve_group(stages: Sequence[Stage], *, time_limit: float) -> Solution:
     t0 = time.perf_counter()
     stages = _order(stages)
     if not stages:

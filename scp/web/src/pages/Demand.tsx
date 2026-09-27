@@ -7,6 +7,7 @@ import { BucketChart, type Mark, type Span } from "../components/charts";
 import { DemandPlan } from "./DemandPlan";
 import {
   Badge, cols, Edits, Empty, Panel, Provenance, Reading, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
+  MoreRows, ROW_LIMIT,
 } from "../components/ui";
 import { day, pct, plural, qty } from "../lib/format";
 import { Loc, namesOf, Prod, useNames } from "../lib/names";
@@ -243,7 +244,7 @@ function SeriesTable({ series }: { series: ForecastSeries[] }) {
         <thead><tr><th>Location</th><th>Product</th><th>ABC</th><th>XYZ</th><th>Pattern</th><th>Champion</th>
           <th className="num">WAPE</th><th className="num">Bias</th><th className="num">Value added</th><th className="num">Next 4 periods</th></tr></thead>
         <tbody>
-          {series.map((s) => {
+          {series.slice(0, ROW_LIMIT).map((s) => {
             const champ = s.leaderboard.find((m) => m.model === s.champion);
             const next = s.forecast.slice(0, 4).reduce((a, p) => a + p.final, 0);
             return (
@@ -261,6 +262,7 @@ function SeriesTable({ series }: { series: ForecastSeries[] }) {
           })}
         </tbody>
       </table>
+      <MoreRows shown={ROW_LIMIT} total={series.length} what="series" how="Click a cell of the matrix to narrow it, or find one in the series workbench." />
     </div>
   );
 }
@@ -277,7 +279,7 @@ function Workbench({ fc, sel }: { fc: ForecastResult; sel?: string }) {
         <div className="table-wrap" style={{ maxHeight: "calc(100vh - 260px)" }}>
           <table className="t">
             <tbody>
-              {list.map((s) => (
+              {list.slice(0, ROW_LIMIT).map((s) => (
                 <tr key={s.key} className={`clickable ${s.key === current.key ? "selected" : ""}`} onClick={() => go("demand", "series", s.key)}>
                   <td><b><Prod id={s.product} /></b><div className="faint small">{s.location}</div></td>
                   <td className="num"><Badge>{s.segment.abc}{s.segment.xyz}</Badge></td>
@@ -285,6 +287,7 @@ function Workbench({ fc, sel }: { fc: ForecastResult; sel?: string }) {
               ))}
             </tbody>
           </table>
+          <MoreRows shown={ROW_LIMIT} total={list.length} what="series" how="Type in the filter to find one." />
         </div>
       </Panel>
       <SeriesDetail s={current} fc={fc} />
@@ -424,6 +427,10 @@ function Consensus({ fc, ds }: { fc: ForecastResult; ds: Dataset }) {
   const periods = fc.series[0]?.forecast ?? [];
   const totals = periods.map((_, i) => fc.series.reduce((a, s) => a + s.forecast[i].final, 0));
   const nm = namesOf(ds);
+  // a grid of every series would be thousands of rows of inputs: the first ones, and a filter to find the rest
+  const [q, setQ] = useState("");
+  const rows = q ? fc.series.filter((s) => `${s.product} ${nm.prod(s.product)} ${s.location} ${nm.loc(s.location)}`.toLowerCase().includes(q.toLowerCase())) : fc.series;
+  const GRID_ROWS = 100;
   const setOverride = (s: ForecastSeries, p: ForecastPoint, raw: string) => {
     const v = raw.trim() === "" ? null : Number(raw);
     if (v !== null && (!Number.isFinite(v) || v < 0)) return;
@@ -437,12 +444,13 @@ function Consensus({ fc, ds }: { fc: ForecastResult; ds: Dataset }) {
     <div className="stack">
       <div className="banner info">Type a quantity into a cell to set a consensus override for that period; clear it to fall back to the
         statistical forecast. The forecast re-runs after each edit. {ds.overrides?.length ?? 0} overrides in the dataset.</div>
-      <Panel flush><Edits>
+      <Panel flush title={fc.series.length > GRID_ROWS ? <input className="input" placeholder="Find a product or place…" value={q}
+        onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 260 }} aria-label="Find series" /> : undefined}><Edits>
         <div className="table-wrap" style={{ maxHeight: "calc(100vh - 290px)" }}>
           <table className="t nowrap">
             <thead><tr><th className="stub">Series</th>{periods.map((p) => <th key={p.start} className="num">{p.label.replace(/^W\d+ /, "")}</th>)}</tr></thead>
             <tbody>
-              {fc.series.map((s) => (
+              {rows.slice(0, GRID_ROWS).map((s) => (
                 <tr key={s.key}>
                   <td className="stub"><a href={href("demand", "series", s.key)}>{nm.prod(s.product)}</a> <span className="faint small">{nm.loc(s.location)}</span></td>
                   {s.forecast.map((p) => (
@@ -456,9 +464,10 @@ function Consensus({ fc, ds }: { fc: ForecastResult; ds: Dataset }) {
                   ))}
                 </tr>
               ))}
-              <tr className="emph"><td className="stub">Total</td>{totals.map((t, i) => <td key={i} className="num">{qty(t)}</td>)}</tr>
+              <tr className="emph"><td className="stub">Total{fc.series.length > GRID_ROWS ? " (every series)" : ""}</td>{totals.map((t, i) => <td key={i} className="num">{qty(t)}</td>)}</tr>
             </tbody>
           </table>
+          <MoreRows shown={GRID_ROWS} total={rows.length} what="series" how="Find a product or place to see its row." />
         </div>
       </Edits></Panel>
     </div>

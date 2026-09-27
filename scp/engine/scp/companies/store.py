@@ -562,10 +562,16 @@ class Companies:
             return self._meta(cid, "owner", user.id)
 
     def open(self, user: User, cid: str) -> CompanyDoc:
+        meta, text = self.open_text(user, cid)
+        return CompanyDoc(meta=meta, dataset=json.loads(text))
+
+    def open_text(self, user: User, cid: str) -> tuple[CompanyMeta, str]:
+        """The company's latest save as it is kept (JSON text), with its meta: sent on as it is, a large company
+        opens without being read into objects and written out again."""
         with self.lock:
             role = self._need(user, cid)
             r = self.db.execute("SELECT dataset FROM companies WHERE id = ?", (cid,)).fetchone()
-            return CompanyDoc(meta=self._meta(cid, role, user.id), dataset=json.loads(r["dataset"]))
+            return self._meta(cid, role, user.id), str(r["dataset"])
 
     def _working_copy(self, cid: str, doc: dict | None, patch: dict | None, base_revision: int,
                       current: dict, current_rev: int) -> dict:

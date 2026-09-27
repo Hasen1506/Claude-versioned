@@ -205,3 +205,24 @@ def test_examples_optimise(name):
     for n in r.nodes:
         if n.demand_facing and n.role == "stocking":
             assert n.meio_service_days <= (n.max_service_days or 0)
+
+
+def test_placement_group_by_group_is_the_placement_of_the_whole():
+    """N89: stages that do not supply each other are solved apart; the answer is the one problem's."""
+    import random
+
+    from scp.inventory import gsm
+    rnd = random.Random(7)
+    stages = []
+    for f in range(12):                       # twelve product families, each a small tree
+        raw = gsm.Stage((f, "raw"), rnd.randint(2, 9), rnd.uniform(0.5, 3))
+        part = gsm.Stage((f, "part"), rnd.randint(1, 5), rnd.uniform(1, 5), upstream=[(f, "raw")])
+        dcs = [gsm.Stage((f, "dc", d), rnd.randint(1, 4), rnd.uniform(2, 8), upstream=[(f, "part")],
+                         max_service=rnd.choice([0, 1, 2])) for d in range(3)]
+        stages += [raw, part, *dcs]
+    assert len(gsm.groups(stages)) == 12
+    apart = gsm.solve(stages)
+    whole = gsm._solve_group(stages, time_limit=30)
+    assert apart.status == whole.status == "optimal"
+    assert abs(apart.objective - whole.objective) < 1e-6 * max(1.0, whole.objective)
+    assert "12 independent groups" in apart.message

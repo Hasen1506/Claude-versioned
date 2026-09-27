@@ -19,7 +19,7 @@ from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from ..companies import (
     CAN_EDIT, CompanyDoc, CompanyError, CompanyMeta, FieldChangeRow, HeldChange, LogRow, Member, MergeResult,
@@ -27,7 +27,7 @@ from ..companies import (
 )
 from ..companies import mail, sso
 from ..model.common import Out
-from .working import asker, takes_gzip, takes_rows
+from .working import asker, send_raw, takes_gzip, takes_rows
 
 router = APIRouter(prefix="/api", tags=["companies"])
 
@@ -242,8 +242,9 @@ def create_company(body: NewCompany, user: Signed) -> CompanyMeta:
 
 
 @router.get("/companies/{cid}", response_model=CompanyDoc)
-def open_company(cid: str, user: Signed) -> CompanyDoc:
-    return get_companies().open(user, cid)
+def open_company(cid: str, user: Signed) -> Response:
+    meta, text = get_companies().open_text(user, cid)
+    return send_raw(b'{"meta":' + meta.model_dump_json(by_alias=True).encode() + b',"dataset":' + text.encode() + b"}")
 
 
 @router.put("/companies/{cid}", response_model=SaveReport)

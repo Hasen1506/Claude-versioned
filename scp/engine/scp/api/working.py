@@ -27,13 +27,14 @@ from typing import Annotated, Any
 from collections.abc import Callable
 
 from fastapi.responses import Response
-from pydantic import BaseModel, BeforeValidator
+from pydantic import BaseModel, BeforeValidator, TypeAdapter, ValidationError
 
 from ..companies import CompanyError, get_companies
 from ..companies.patch import PatchError, apply_patch, make_patch
 from ..model import Dataset
 from ..plan import mrp
-from ..validate.lenient import SetAside, lenient_checked
+from ..validate import validate
+from ..validate.lenient import COLLECTION_TYPES, SetAside, lenient_checked
 
 REF = "$ref"
 KEEP = 2      # companies kept read (a large one takes about 1.5 GB): the latest save, and it with unsaved changes
@@ -103,22 +104,52 @@ def read(v: dict[str, Any]) -> Read:
             hit = _kept.get(key)
             if hit is not None:
                 return hit
-        doc = json.loads(companies.text_at(user, cid, key[1]))
-        if patch:
-            try:
-                doc = apply_patch(doc, patch)
-            except PatchError as e:
-                raise CompanyError(f"the changes sent do not fit revision {key[1]}: {e}; send the whole company",
-                                   409, {"patch": "unfit"}) from None
-        ds, aside, checked = lenient_checked(doc)
-        del doc
-        out = Read(key, ds, aside, checked)
+        with _lock:
+            base = _kept.get((cid, key[1], "")) if patch else None
+        out = _on_base(base, key, patch) if base is not None else None
+        if out is None:
+            doc = json.loads(companies.text_at(user, cid, key[1]))
+            if patch:
+                try:
+                    doc = apply_patch(doc, patch)
+                except PatchError as e:
+                    raise CompanyError(f"the changes sent do not fit revision {key[1]}: {e}; send the whole company",
+                                       409, {"patch": "unfit"}) from None
+            ds, aside, checked = lenient_checked(doc)
+            del doc
+            out = Read(key, ds, aside, checked)
         with _lock:
             _kept[key] = out
             while len(_kept) > KEEP:
                 _kept.popitem(last=False)
             _reading.pop(key, None)
         return out
+
+
+def _on_base(base: Read, key: tuple[str, int, str], patch: dict[str, Any]) -> Read | None:
+    """The saved company ``base`` with ``patch`` applied, reading only the lists the patch changes and sharing every
+    other one with it: a planner's unsaved edit costs its own lists, not a second copy of the whole company (about
+    1.5 GB for 5,000 products at 20 places). None when anything is out of the ordinary (a record that would be set
+    aside, a list removed): the company is then read whole."""
+    if base.aside or patch.get("drop"):
+        return None
+    names = set(patch.get("set") or {}) | set(patch.get("lists") or {})
+    fields = Dataset.model_fields
+    if not names or not names <= set(fields):
+        return None
+    try:
+        parts = base.ds.model_dump(mode="json", by_alias=True, include=names)
+        parts = apply_patch(parts, {**patch, "sizes": {k: v for k, v in (patch.get("sizes") or {}).items() if k in names}})
+        update = {n: TypeAdapter(fields[n].annotation).validate_python(parts[n]) for n in names}
+    except (PatchError, ValidationError):
+        return None
+    ds = base.ds.model_copy(update=update)
+    checked = validate(ds)
+    # a changed record with a reference to nothing yet would be set aside: the whole reading does that
+    kinds = {COLLECTION_TYPES[n] for n in names if n in COLLECTION_TYPES}
+    if any(i.code == "REF_UNKNOWN" and i.object_type in kinds for i in checked):
+        return None
+    return Read(key, ds, [], checked)
 
 
 def kept_read(ds: Dataset) -> Read | None:
@@ -202,6 +233,11 @@ def _body(out: BaseModel, exclude: set[str] | None = None) -> Body:
     if rows:
         raw = json.dumps(pack_rows(json.loads(raw)), separators=(",", ":"), ensure_ascii=False).encode()
     return Body(gzip.compress(raw, 1), True, rows) if len(raw) >= PACK_FROM else Body(raw, False, rows)
+
+
+def send_raw(raw: bytes) -> Response:
+    """JSON already written, compressed when large."""
+    return _send(Body(gzip.compress(raw, 1), True, False) if len(raw) >= PACK_FROM else Body(raw, False, False))
 
 
 def send(out: BaseModel) -> Response:

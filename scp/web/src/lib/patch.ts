@@ -87,7 +87,11 @@ export function makePatch(before: Doc, after: Doc): Patch {
 }
 
 /** How big a patch is against the whole company: sending it whole is simpler when most of it changed. */
-export const patchIsSmall = (p: Patch, whole: Doc) => JSON.stringify(p).length * 3 < JSON.stringify(whole).length;
+export const patchIsSmall = (p: Patch, whole: Doc) => {
+  // a large company is not written out to be measured: about a hundred characters a record
+  const rows = Object.values(whole).reduce<number>((n, v) => n + (Array.isArray(v) ? v.length : 0), 0);
+  return JSON.stringify(p).length * 3 < (rows > 50_000 ? rows * 100 : JSON.stringify(whole).length);
+};
 
 /** `doc` with `patch` applied, as the server applies it (scp/companies/patch.py apply_patch), for an engine answer
  *  that says what it changed instead of sending the company back whole (Phase S). Records are found by their key,

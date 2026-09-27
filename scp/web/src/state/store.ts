@@ -138,6 +138,12 @@ const RETRY_DELAY = 15_000;    // try a failed save again after this
 const CHECK_EVERY = 60_000;    // look for a colleague's newer save this often
 const HISTORY = 100;
 
+/** Records in a working copy beyond which this browser keeps no copy of a company the server keeps (Phase S): its
+ *  storage holds a few megabytes, a large company is tens, and trying costs seconds on every change. */
+const LOCAL_ROWS = 50_000;
+export const rowsOf = (ds: Dataset) => Object.values(ds as unknown as Record<string, unknown>)
+  .reduce<number>((n, v) => n + (Array.isArray(v) ? v.length : 0), 0);
+
 const emptyRun = <T>(): Run<T> => ({ data: null, revision: null, running: false, error: null, at: null });
 const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), inventory: emptyRun(), sop: emptyRun(), plan: emptyRun(), schedule: emptyRun(), promise: emptyRun(), actuals: emptyRun(), purchasing: emptyRun(), finance: emptyRun(), tower: emptyRun() });
 
@@ -195,7 +201,8 @@ let restoringSteps = false;
 
 function set(patch: Partial<State>) {
   state = { ...state, ...patch, canUndo: past.length > 0, canRedo: future.length > 0 };
-  if ("dataset" in patch && !restoringSteps) keepSteps(() => [state.dataset, past, future]);   // undo survives a reload (R19)
+  // undo survives a reload (R19); not for a company too large to keep here (thirty steps of it would be gigabytes)
+  if ("dataset" in patch && !restoringSteps) keepSteps(() => state.dataset && rowsOf(state.dataset) > LOCAL_ROWS ? [null, [], []] : [state.dataset, past, future]);
   listeners.forEach((l) => l());
 }
 
@@ -203,8 +210,14 @@ function setRun<K extends RunKey>(key: K, patch: Partial<Run<RunResults[K]>>) {
   set({ runs: { ...state.runs, [key]: { ...state.runs[key], ...patch } } });
 }
 
-function persist(ds: Dataset | null) {
+function persist(ds: Dataset | null, live = !!state.company?.live) {
   try {
+    if (ds && live && rowsOf(ds) > LOCAL_ROWS) {
+      // the server keeps it; a reload opens it from there (restore)
+      localStorage.removeItem(STORAGE_KEY);
+      if (state.save.localError) set({ save: { ...state.save, localError: null } });
+      return;
+    }
     if (ds) localStorage.setItem(STORAGE_KEY, JSON.stringify(ds));
     else localStorage.removeItem(STORAGE_KEY);
     if (state.save.localError) set({ save: { ...state.save, localError: null } });
@@ -249,7 +262,8 @@ function setBase(ds: Dataset | null, rev = -1) {
   baseDoc = ds;
   baseRev = ds ? rev : -1;
   try {
-    if (ds) localStorage.setItem(BASE_KEY, JSON.stringify({ revision: baseRev, dataset: ds }));
+    if (ds && rowsOf(ds) > LOCAL_ROWS) localStorage.removeItem(BASE_KEY);   // kept in memory only (see persist)
+    else if (ds) localStorage.setItem(BASE_KEY, JSON.stringify({ revision: baseRev, dataset: ds }));
     else localStorage.removeItem(BASE_KEY);
   } catch {
     /* the next save then sends the whole company, and merging asks the server for the base */
@@ -588,7 +602,7 @@ export const store = {
     past.length = 0;
     future.length = 0;
     const ds = doc.dataset as unknown as Dataset;
-    persist(ds);
+    persist(ds, true);
     persistVersion(null, false);
     const rev = state.revision + 1;
     setAside = new Map();
@@ -695,11 +709,32 @@ export const store = {
   /** Apply an edit to a deep copy of the dataset. */
   update(mutate: (draft: Dataset) => void) {
     if (!state.dataset) return;
-    const draft = structuredClone(state.dataset);
-    mutate(draft);
-    // a no-op edit (e.g. the same value committed on Enter and again on blur) must not create history
-    if (JSON.stringify(draft) === JSON.stringify(state.dataset)) return;
-    commit(draft);
+    // the edit gets a copy of each part it reads or writes, the rest stays shared: a large company's two years of
+    // sales history are not copied, nor compared, for a change to one product (Phase S)
+    const base = state.dataset as unknown as Record<string, unknown>;
+    const next: Record<string, unknown> = { ...base };
+    const parts = new Set<string>();
+    const draft = new Proxy(next, {
+      get(t, k) {
+        if (typeof k === "string" && !parts.has(k) && k in base) {
+          parts.add(k);
+          if (base[k] !== null && typeof base[k] === "object") t[k] = structuredClone(base[k]);
+        }
+        return Reflect.get(t, k);
+      },
+      set(t, k, v) { if (typeof k === "string") parts.add(k); return Reflect.set(t, k, v); },
+      deleteProperty(t, k) { if (typeof k === "string") parts.add(k); return Reflect.deleteProperty(t, k); },
+    });
+    mutate(draft as unknown as Dataset);
+    // a part read but not changed keeps the one it was; a no-op edit (the same value committed on Enter and again on
+    // blur) must not create history
+    let changed = false;
+    for (const k of parts) {
+      if (k in base && k in next && JSON.stringify(next[k]) === JSON.stringify(base[k])) next[k] = base[k];
+      else changed = true;
+    }
+    if (!changed) return;
+    commit(next as unknown as Dataset);
   },
 
   /** Replace the dataset with an engine-produced version (e.g. a released forecast), undoable. */
@@ -798,6 +833,12 @@ export const store = {
     }
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw && state.session) {
+        // a company too large to keep in this browser (persist): open its latest save from the server
+        const cr = localStorage.getItem(COMPANY_KEY);
+        const c = cr ? (JSON.parse(cr) as OpenCompany) : null;
+        if (c?.live) void api.company(c.id).then((doc) => { if (!state.dataset) store.openCompany(doc); }, () => { /* opened by hand */ });
+      }
       if (raw) {
         const ds = JSON.parse(raw) as Dataset;
         const rev = state.revision + 1;

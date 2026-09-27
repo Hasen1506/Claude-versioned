@@ -176,3 +176,24 @@ def test_a_lean_plan_leaves_the_pegging_to_be_asked_for_by_order_or_product(monk
     assert needs and all(r in tr["requirements"] for r in needs)
     assert all(str(p) in got_pegs for p in full["pegs"] if p["requirement_id"] in {r["id"] for r in needs})
     assert len(tr["pegs"]) < len(full["pegs"])
+
+
+def test_unsaved_changes_are_read_on_the_kept_save_and_share_the_rest():
+    tok, cid, doc, rev = company("omar@ref.example")
+    hd = h(tok, cid)
+    client.post("/api/validate", json=ref(rev), headers=hd)                      # the save, read and kept
+    base = working._kept[(cid, rev, "")]
+    changed = {**doc, "demand": [{**doc["demand"][0], "qty": doc["demand"][0]["qty"] + 9}, *doc["demand"][1:]]}
+    patch = make_patch(doc, changed)
+    got = client.post("/api/validate", json=ref(rev, patch), headers=hd).json()
+    edited = next(r for k, r in working._kept.items() if k[0] == cid and k[2])
+    assert edited.ds.history is base.ds.history and edited.ds.products is base.ds.products   # shared, not read again
+    assert edited.ds.demand is not base.ds.demand and edited.ds.demand[0].qty == doc["demand"][0]["qty"] + 9
+    assert got == client.post("/api/validate", json=changed).json()
+    assert client.post("/api/plan", json=ref(rev, patch), headers=hd).json() == client.post("/api/plan", json=changed).json()
+    # a record that would be set aside: the company is read whole, and the record is set aside as ever
+    working.forget()
+    client.post("/api/validate", json=ref(rev), headers=hd)
+    unfinished = {**doc, "lanes": [*doc["lanes"], {"id": "LN-NEW", "origin": doc["locations"][0]["id"], "destination": "", "modes": []}]}
+    got = client.post("/api/validate", json=ref(rev, make_patch(doc, unfinished)), headers=hd).json()
+    assert got == client.post("/api/validate", json=unfinished).json() and got["set_aside"]
