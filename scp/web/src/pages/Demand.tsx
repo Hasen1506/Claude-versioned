@@ -112,12 +112,14 @@ export function Demand({ route }: { route: string[] }) {
 // ------------------------------------------------------------------------------------------------
 interface ReleaseInfo {
   records: number; series: number; replaced: number; at: string; dropped?: { location: string; product: string }[];
+  made_to_order?: { location: string; product: string }[];
   cv_suggestions: { location: string; product: string; current: number | null; suggested: number }[];
 }
 
 function ReleaseBanner({ info, ds, onClose }: { info: ReleaseInfo; ds: Dataset; onClose: () => void }) {
   const nm = useNames();
   const gone = info.dropped ?? [];
+  const mto = info.made_to_order ?? [];
   const apply = () => store.update((d) => {
     for (const c of info.cv_suggestions) {
       const lp = d.location_products?.find((x) => x.location === c.location && x.product === c.product);
@@ -131,6 +133,8 @@ function ReleaseBanner({ info, ds, onClose }: { info: ReleaseInfo; ds: Dataset; 
       <span>{info.records} forecast records for {info.series} series written to demand at {info.at} (replaced {info.replaced}).
         {gone.length > 0 && <> Removed the forecast an earlier release wrote for {gone.length === 1 ? "a series" : `${gone.length} series`} this
           one no longer has: {gone.map((g) => `${nm.prod(g.product)} at ${nm.loc(g.location)}`).join(", ")}.</>}
+        {mto.length > 0 && <> Not written: {mto.map((g) => `${nm.prod(g.product)} at ${nm.loc(g.location)}`).join(", ")}, made to
+          order there, so customer orders drive {mto.length === 1 ? "it" : "them"}.</>}
         {" "}The supply plan is now stale. Undo reverts the release.</span>
       <span className="spacer" />
       {applicable.length > 0 && <Edits><button className="btn sm" onClick={apply}>Size safety stock from forecast error ({applicable.length} item{applicable.length === 1 ? "" : "s"})</button></Edits>}

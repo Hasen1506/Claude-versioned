@@ -314,7 +314,9 @@ export function Home({ ds }: { ds: Dataset }) {
             {staleNote(["plan"])}{serve}
           </Card>
           <Card q="Customer orders" loading={loading("promise")}
-            links={[{ to: href("promise"), label: "Open orders" }, { to: href("promise", "simulate"), label: "Check a new order" }]}>
+            links={[{ to: href("promise"), label: "Open orders" },
+              ...(prom && prom.kpis.on_time_orders < prom.kpis.orders ? [{ to: href("promise", "bop"), label: "Try to bring late orders forward" }] : []),
+              { to: href("promise", "simulate"), label: "Check a new order" }]}>
             {staleNote(["promise"])}{orders}
           </Card>
           <Card q="What to do this week" attn={weekAttn} loading={loading("plan")}

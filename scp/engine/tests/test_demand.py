@@ -395,3 +395,18 @@ def test_a_promotion_added_after_the_release_is_flagged_until_the_forecast_is_us
     assert not [i for i in validate(again) if i.code == "FORECAST_INPUTS_CHANGED"]
     week = lambda x: sum(r.qty for r in x.demand if r.released and r.date < start + timedelta(days=7))  # noqa: E731
     assert week(again) == pytest.approx(week(first) * 1.4, rel=0.02)
+
+
+def test_a_product_made_to_order_where_it_is_sold_gets_no_released_forecast():
+    # K: the hotels' catering paneer is made to order; a release wrote a forecast for it anyway (ignored by the plan,
+    # a warning every week)
+    d = dataset(weekly("P", "A", smooth()))
+    d["demand"] = [{"location": "P", "product": "A", "date": "2026-01-12", "qty": 80, "kind": "forecast",
+                    "period_days": 7, "released": True},
+                   {"location": "P", "product": "A", "date": "2026-01-14", "qty": 7, "kind": "sales_order"}]
+    next(lp for lp in d["location_products"] if (lp["location"], lp["product"]) == ("P", "A"))["strategy"] = "MTO"
+    new, info = release(ds(d), run_forecast(ds(d)))
+    assert [(x.kind.value, x.qty) for x in new.demand if x.product == "A"] == [("sales_order", 7)]
+    assert info.records == 0 and info.dropped == []
+    assert [(x.location, x.product) for x in info.made_to_order] == [("P", "A")]
+    assert not [i for i in validate(new) if i.code == "MTO_WITH_FORECAST"]

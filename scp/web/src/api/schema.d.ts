@@ -5438,6 +5438,11 @@ export interface components {
              * @description Series an earlier release wrote that this forecast no longer has: their forecast was removed from demand
              */
             dropped: components["schemas"]["DroppedSeries"][];
+            /**
+             * Made To Order
+             * @description Series of a product made to order there: not written (customer orders drive them), and any forecast an earlier release wrote for them removed
+             */
+            made_to_order: components["schemas"]["DroppedSeries"][];
         };
         /** Requirement */
         Requirement: {

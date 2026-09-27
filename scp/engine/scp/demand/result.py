@@ -145,3 +145,6 @@ class ReleaseResult(Out):
     cv_suggestions: list[CvSuggestion]
     dropped: list[DroppedSeries] = Field(default_factory=list, description="Series an earlier release wrote that "
                                          "this forecast no longer has: their forecast was removed from demand")
+    made_to_order: list[DroppedSeries] = Field(default_factory=list, description="Series of a product made to order "
+                                               "there: not written (customer orders drive them), and any forecast an "
+                                               "earlier release wrote for them removed")

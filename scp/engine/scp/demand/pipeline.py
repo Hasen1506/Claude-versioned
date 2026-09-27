@@ -17,7 +17,7 @@ from statistics import NormalDist
 import numpy as np
 
 from ..model import (
-    Dataset, DemandKind, DemandRecord, ForecastModelId, ForecastPeriod, NpiRule, OutlierMethod,
+    Dataset, DemandKind, DemandRecord, ForecastModelId, ForecastPeriod, NpiRule, OutlierMethod, Strategy,
 )
 from ..validate import blocks_demand, validate
 from . import foundation as fm
@@ -533,16 +533,24 @@ def release(ds: Dataset, result: ForecastResult, keys: list[str] | None = None) 
     """Write the consensus forecast into the dataset as forecast demand (≈ PIRs), replacing the
     forecast records of the released series. Releasing every series also removes what earlier releases wrote for a
     series the forecast no longer has (sales that were wrongly attributed and have since been corrected), so it is
-    not planned on top of the right one. Forecasts typed or uploaded by hand, and sales orders, are never touched."""
-    chosen = [s for s in result.series if keys is None or s.key in keys]
+    not planned on top of the right one. A product made to order where it is sold gets no forecast: its customer
+    orders drive it. Forecasts typed or uploaded by hand elsewhere, and sales orders, are never touched."""
+    def mto(loc: str, prod: str) -> bool:
+        lp = ds.demand_lp((loc, prod)) if ds.location_type(loc) is not None else None
+        return lp is not None and lp.strategy is Strategy.MTO
+
+    picked = [s for s in result.series if keys is None or s.key in keys]
+    to_order = {(s.location, s.product) for s in picked if mto(s.location, s.product)}
+    chosen = [s for s in picked if (s.location, s.product) not in to_order]
     released = {(s.location, s.product) for s in chosen}
 
     def replace(d: DemandRecord) -> bool:
-        return d.kind is DemandKind.FORECAST and ((d.location, d.product) in released or (keys is None and d.released))
+        return d.kind is DemandKind.FORECAST and ((d.location, d.product) in released | to_order
+                                                  or (keys is None and d.released))
 
     kept = [d for d in ds.demand if not replace(d)]
     replaced = len(ds.demand) - len(kept)
-    dropped = sorted({(d.location, d.product) for d in ds.demand if replace(d)} - released)
+    dropped = sorted({(d.location, d.product) for d in ds.demand if replace(d)} - released - to_order)
     new: list[DemandRecord] = []
     for s in chosen:
         for p in s.forecast:
@@ -564,4 +572,6 @@ def release(ds: Dataset, result: ForecastResult, keys: list[str] | None = None) 
     return Dataset.model_validate(out.model_dump()), ReleaseResult(records=len(new), series=len(chosen),
                                                                   replaced=replaced, cv_suggestions=cv,
                                                                   dropped=[DroppedSeries(location=loc, product=prod)
-                                                                           for loc, prod in dropped])
+                                                                           for loc, prod in dropped],
+                                                                  made_to_order=[DroppedSeries(location=loc, product=prod)
+                                                                                 for loc, prod in sorted(to_order)])

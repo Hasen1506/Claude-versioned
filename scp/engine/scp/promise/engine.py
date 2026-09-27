@@ -369,17 +369,19 @@ class Promiser:
             cq = need.qty(qty)
             s = self.series_for(cnode)
             k = s.first_firm(cq, 0)
-            if k is not None:
+            # stock or firm receipts that free the part only months out must not hide a part that can be bought or
+            # made sooner (K: standardised milk free in March, made from milk bought today by Tuesday)
+            sub = self.ctp(cnode, cq, 0, depth + 1, path) if k is None or k > 0 else None
+            if sub is not None and (k is None or sub.day < k):
+                k = sub.day
+                steps += sub.steps
+                actions += sub.actions
+            elif k is not None:
                 steps.append(CtpStep(kind="component", location=loc, product=need.product, qty=cq, start=self.date(k),
                                      note="component available-to-promise"))
                 actions.append(Action("out", cnode, k, cq))
             else:
-                sub = self.ctp(cnode, cq, 0, depth + 1, path)
-                if sub is None:
-                    return None
-                k = sub.day
-                steps += sub.steps
-                actions += sub.actions
+                return None
             start = max(start, k)
         # finite capacity: step by step, each in the free hours of its machine (or the alternative that finishes it
         # first) from the day the step before finishes

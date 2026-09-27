@@ -159,6 +159,19 @@ def test_ctp_through_transfer_production_and_purchase():
     assert run_promise(ds(d)).orders[0].status == "unconfirmed"
 
 
+def test_ctp_buys_a_part_whose_stock_frees_up_only_much_later():
+    # K: a component whose available-to-promise came only from a receipt months out made the order wait for it,
+    # though buying it today (1 day) was sooner
+    d = net(ctp=True)
+    lp(d, "P", "A")["on_hand"] = 0
+    d["receipts"] = [{"id": "PO-LATE", "kind": "purchase", "location": "P", "product": "C", "qty": 100,
+                      "due_date": "2026-02-10", "source": "PIR-C"}]
+    d["demand"] = [so("C1", 10, "2026-01-08", "SO1")]
+    o = run_promise(ds(d)).orders[0]
+    assert lines(o) == [("D", "2026-01-10", "2026-01-11", 10, "ctp")]
+    assert "buy" in [s.kind for s in o.ctp]
+
+
 def test_ctp_uses_source_stock_before_building():
     d = net(ctp=True)
     lp(d, "P", "A")["on_hand"] = 40
