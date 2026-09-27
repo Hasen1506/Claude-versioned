@@ -7950,13 +7950,6 @@ export interface components {
              */
             expired: number;
             /**
-             * In Transit
-             * @default 0
-             */
-            in_transit: number;
-            /** Planning Stock */
-            planning_stock: number | null;
-            /**
              * Lots
              * @default []
              */
@@ -7966,6 +7959,13 @@ export interface components {
              * @default []
              */
             serials: string[];
+            /**
+             * In Transit
+             * @default 0
+             */
+            in_transit: number;
+            /** Planning Stock */
+            planning_stock: number | null;
             /** Counting */
             counting: string | null;
         };
