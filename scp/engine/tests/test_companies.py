@@ -165,7 +165,7 @@ def test_roles_decide_who_may_change_the_data_and_the_members():
 
 
 # ---- revisions and the audit trail ----------------------------------------------------------------------------
-def test_saves_are_kept_per_ten_minute_run_and_a_company_can_be_put_back(clock):
+def test_every_save_is_kept_and_a_company_can_be_put_back_to_any_of_them(clock):
     asha, ravi = signup("asha@k.in", "Asha"), signup("ravi@k.in", "Ravi")
     cid = new_company(asha)
     client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "ravi@k.in", "role": "planner"})
@@ -183,29 +183,162 @@ def test_saves_are_kept_per_ten_minute_run_and_a_company_can_be_put_back(clock):
     assert rev == 5
     hist = client.get(f"/api/companies/{cid}/history", headers=h(asha)).json()
     assert [(x["revision"], x["user"], x["action"], x["kept"]) for x in hist if x["action"] != "member"] == [
-        (5, "Ravi", "saved", True), (4, "Asha", "saved", True), (3, "Asha", "saved", False),
-        (2, "Asha", "saved", False), (1, "Asha", "created", True)]
+        (5, "Ravi", "saved", True), (4, "Asha", "saved", True), (3, "Asha", "saved", True),
+        (2, "Asha", "saved", True), (1, "Asha", "created", True)]
     top = hist[0]
     assert "orders and forecasts: 2 removed" in top["summary"] and "places: 1 changed" in top["summary"]
     lists = {c["list"]: c for c in top["changes"]}
     assert lists["places"]["names"] == ["~ PLT-PUNE"] and len(lists["orders and forecasts"]["names"]) == 2
     assert any(x["action"] == "member" and x["summary"] == "Ravi added as planner" for x in hist)
-    r = client.get(f"/api/companies/{cid}/revisions/3", headers=h(asha))
-    assert r.status_code == 404 and "not kept" in r.json()["detail"]
-    assert client.get(f"/api/companies/{cid}/revisions/4", headers=h(asha)).json()["products"][0]["price"] == 102
-    clock.tick(15)                                       # a new run of Asha's saves keeps its own copy
-    doc["products"][0]["price"] = 7
-    client.put(f"/api/companies/{cid}", headers=h(asha), json={"dataset": doc, "base_revision": 5})
-    kept = {x["revision"] for x in client.get(f"/api/companies/{cid}/history", headers=h(asha)).json() if x["kept"]}
-    assert kept == {1, 4, 5, 6}
-    r = client.post(f"/api/companies/{cid}/restore", headers=h(asha), json={"revision": 1, "base_revision": 6})
-    assert r.status_code == 200 and r.json()["meta"]["revision"] == 7
+    # every save opens as it was (R19), though only the first is kept whole
+    for r, price in ((2, 100), (3, 101), (4, 102)):
+        assert client.get(f"/api/companies/{cid}/revisions/{r}", headers=h(asha)).json()["products"][0]["price"] == price
+    kinds = [r["kind"] for r in get_companies().db.execute(
+        "SELECT kind FROM company_revisions WHERE company_id = ? ORDER BY revision", (cid,))]
+    assert kinds == ["full", "delta", "delta", "delta", "delta"]
+    r = client.post(f"/api/companies/{cid}/restore", headers=h(asha), json={"revision": 1, "base_revision": 5})
+    assert r.status_code == 200 and r.json()["meta"]["revision"] == 6
     now = client.get(f"/api/companies/{cid}", headers=h(ravi)).json()["dataset"]
     assert now == example()
     top = client.get(f"/api/companies/{cid}/history", headers=h(asha)).json()[0]
     assert top["action"] == "restored" and top["summary"].startswith("put back to revision 1: ") and top["kept"]
     assert client.post(f"/api/companies/{cid}/restore", headers=h(asha),
-                       json={"revision": 1, "base_revision": 6}).status_code == 409
+                       json={"revision": 1, "base_revision": 5}).status_code == 409
+
+
+def test_a_long_run_of_saves_keeps_a_whole_copy_every_so_often_and_old_gaps_stay_unopenable(clock):
+    asha = signup("asha@k.in", "Asha")
+    cid = new_company(asha)
+    doc, rev = example(), 1
+    for i in range(60):
+        clock.tick(1)
+        doc["products"][i % 3]["price"] = 1000 + i
+        rev = client.put(f"/api/companies/{cid}", headers=h(asha),
+                         json={"dataset": doc, "base_revision": rev}).json()["meta"]["revision"]
+    kinds = [r["kind"] for r in get_companies().db.execute(
+        "SELECT kind FROM company_revisions WHERE company_id = ? ORDER BY revision", (cid,))]
+    assert len(kinds) == 61 and kinds.count("full") == 3 and kinds[0] == kinds[26] == kinds[52] == "full"
+    for r in (1, 25, 26, 27, 40, 61):
+        got = client.get(f"/api/companies/{cid}/revisions/{r}", headers=h(asha)).json()
+        assert got["products"][(r - 2) % 3]["price"] == 1000 + r - 2 if r > 1 else got == example()
+    # a company saved before every save was kept (Phase I kept one per ten-minute run): the gaps say so
+    get_companies().db.execute("DELETE FROM company_revisions WHERE company_id = ? AND revision IN (30, 31)", (cid,))
+    kept = {x["revision"] for x in client.get(f"/api/companies/{cid}/history?limit=100", headers=h(asha)).json()
+            if x["kept"]}
+    assert kept == set(range(1, 30)) | set(range(53, 62))
+    r = client.get(f"/api/companies/{cid}/revisions/40", headers=h(asha))
+    assert r.status_code == 404 and "not kept" in r.json()["detail"]
+
+
+def test_a_save_sends_only_what_changed_and_a_patch_that_does_not_fit_is_refused(clock):
+    from scp.companies.patch import PatchError, apply_patch, make_patch
+
+    asha = signup("asha@k.in", "Asha")
+    base = example()
+    cid = new_company(asha, base)
+    mine = json.loads(json.dumps(base))
+    mine["products"][1]["price"] = 55
+    mine["demand"] = mine["demand"][1:] + [{**mine["demand"][0], "id": "SO-NEW", "qty": 3}]
+    mine["settings"]["company_name"] = "Kaveri Kitchens"
+    del mine["overrides"]
+    p = make_patch(base, mine)
+    assert apply_patch(base, p) == mine
+    assert set(p) == {"v", "lists", "set", "drop", "sizes"} and p["drop"] == ["overrides"]
+    assert [r["id"] for r in p["lists"]["products"]["upsert"]] == [base["products"][1]["id"]]
+    assert len(json.dumps(p)) * 20 < len(json.dumps(mine))
+    r = client.put(f"/api/companies/{cid}", headers=h(asha), json={"patch": p, "base_revision": 1})
+    assert r.status_code == 200 and r.json()["meta"]["revision"] == 2
+    assert client.get(f"/api/companies/{cid}", headers=h(asha)).json()["dataset"] == mine
+    # records re-ordered, or two with one key: the list goes whole
+    shuffled = {**mine, "products": mine["products"][::-1]}
+    assert "products" in make_patch(mine, shuffled)["set"] and apply_patch(mine, make_patch(mine, shuffled)) == shuffled
+    # sent against the wrong company: refused, and the sender is told to send it whole
+    wrong = {**p, "sizes": {**p["sizes"], "products": 999}}
+    r = client.put(f"/api/companies/{cid}", headers=h(asha), json={"patch": wrong, "base_revision": 2})
+    assert r.status_code == 409 and r.json()["patch"] == "unfit" and "send the whole company" in r.json()["detail"]
+    with pytest.raises(PatchError):
+        apply_patch(base, {"v": 1, "lists": {"products": {"remove": [["NOPE"]]}}})
+
+
+def test_the_keys_the_browser_patches_by_are_the_servers():
+    import pathlib
+    import re
+
+    from scp.versions.diff import KEYS, SINGLE
+
+    ts = (pathlib.Path(__file__).parents[2] / "web" / "src" / "lib" / "patch.ts").read_text()
+    body = re.search(r"export const KEYS[^{]*\{(.*?)\};", ts, re.S).group(1)
+    got = {m.group(1): tuple(re.findall(r'"([^"]+)"', m.group(2)))
+           for m in re.finditer(r'(\w+): \[([^\]]*)\]', body)}
+    assert got == KEYS
+    single = re.search(r"export const SINGLE[^\[]*\[(.*?)\]", ts, re.S).group(1)
+    assert tuple(re.findall(r'"([^"]+)"', single)) == SINGLE
+
+
+def test_a_reload_during_a_save_is_not_taken_for_a_colleague(clock):
+    asha, ravi = signup("asha@k.in", "Asha"), signup("ravi@k.in", "Ravi")
+    cid = new_company(asha)
+    client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "ravi@k.in", "role": "planner"})
+    doc = example()
+    w1 = {**h(ravi), "X-Client": "tab-1"}
+    doc["products"][0]["price"] = 10
+    assert client.put(f"/api/companies/{cid}", headers=w1, json={"dataset": doc, "base_revision": 1}).status_code == 200
+    # the answer never reached the page (it reloaded): it saves again on revision 1, with more changes
+    doc["products"][1]["price"] = 20
+    r = client.put(f"/api/companies/{cid}", headers=w1, json={"dataset": doc, "base_revision": 1})
+    assert r.status_code == 200 and r.json()["own"] and r.json()["meta"]["revision"] == 3
+    got = client.get(f"/api/companies/{cid}", headers=h(asha)).json()["dataset"]
+    assert (got["products"][0]["price"], got["products"][1]["price"]) == (10, 20)
+    # the same person in another window: refused, marked as their own, and merged keeping their latest change
+    other = json.loads(json.dumps(doc))
+    other["products"][0]["price"] = 11
+    r = client.put(f"/api/companies/{cid}", headers={**h(ravi), "X-Client": "tab-2"},
+                   json={"dataset": other, "base_revision": 2})
+    assert r.status_code == 409 and r.json()["self"] is True
+    r = client.post(f"/api/companies/{cid}/merge", headers={**h(ravi), "X-Client": "tab-2"},
+                    json={"dataset": other, "base_revision": 2, "clean_only": True})
+    assert r.status_code == 200 and r.json()["merged_with"] == "you"
+    assert r.json()["dataset"]["products"][0]["price"] == 11
+    # a colleague's save in between is still a colleague's
+    doc = r.json()["dataset"]
+    rev = r.json()["meta"]["revision"]
+    doc["products"][2]["price"] = 30
+    assert client.put(f"/api/companies/{cid}", headers={**h(asha), "X-Client": "a"},
+                      json={"dataset": doc, "base_revision": rev}).status_code == 200
+    doc["products"][2]["price"] = 31
+    r = client.put(f"/api/companies/{cid}", headers=w1, json={"dataset": doc, "base_revision": rev})
+    assert r.status_code == 409 and r.json()["updated_by"] == "Asha" and r.json()["self"] is False
+
+
+def test_a_clash_shows_both_versions_and_each_record_is_kept_as_chosen(clock):
+    asha, ravi = signup("asha@k.in", "Asha"), signup("ravi@k.in", "Ravi")
+    base = example()
+    cid = new_company(asha, base)
+    client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "ravi@k.in", "role": "planner"})
+    theirs, mine = json.loads(json.dumps(base)), json.loads(json.dumps(base))
+    p0, p1 = base["products"][0]["id"], base["products"][1]["id"]
+    theirs["products"][0]["price"], mine["products"][0]["price"] = 111, 222
+    theirs["products"][1]["price"], mine["products"][1]["price"] = 5, 6
+    theirs["settings"]["company_name"], mine["settings"]["company_name"] = "Theirs Ltd", "Mine Ltd"
+    assert client.put(f"/api/companies/{cid}", headers=h(ravi), json={"dataset": theirs, "base_revision": 1}).status_code == 200
+    r = client.post(f"/api/companies/{cid}/merge", headers=h(asha),
+                    json={"dataset": mine, "base_revision": 1, "preview": True})
+    assert r.status_code == 200 and r.json()["saved"] is False
+    assert client.get(f"/api/companies/{cid}", headers=h(asha)).json()["meta"]["revision"] == 2   # nothing saved
+    clashes = {c["id"]: c for c in r.json()["report"]["clashes"]}
+    assert set(clashes) == {f"products {p0}", f"products {p1}", "settings.company_name"}
+    c = clashes[f"products {p0}"]
+    assert (c["list"], c["record"], c["kept"], c["group"]) == ("products", p0, "theirs", f"products {p0}")
+    assert [(f["path"], f["base"], f["mine"], f["theirs"]) for f in c["fields"]] == [
+        ("price", base["products"][0]["price"], 222, 111)]
+    s = clashes["settings.company_name"]
+    assert s["list"] == "company settings"
+    assert [(f["path"], f["mine"], f["theirs"]) for f in s["fields"]] == [("", "Mine Ltd", "Theirs Ltd")]
+    r = client.post(f"/api/companies/{cid}/merge", headers=h(asha), json={
+        "dataset": mine, "base_revision": 1, "choose": {f"products {p0}": "mine", "settings.company_name": "mine"}})
+    assert r.status_code == 200 and "yours kept for 2, theirs for 1" in r.json()["report"]["summary"]
+    got = client.get(f"/api/companies/{cid}", headers=h(ravi)).json()["dataset"]
+    assert (got["products"][0]["price"], got["products"][1]["price"], got["settings"]["company_name"]) == (222, 5, "Mine Ltd")
 
 
 # ---- plan versions and the worklist belong to the company -----------------------------------------------------

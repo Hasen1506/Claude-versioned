@@ -44,6 +44,11 @@ def token_of(request: Request) -> str | None:
     return h[7:].strip() or None if h.lower().startswith("bearer ") else None
 
 
+def client_of(request: Request) -> str:
+    """The browser window a save comes from (``X-Client``), so a reload during a save is not taken for a colleague."""
+    return request.headers.get("x-client", "").strip()[:64]
+
+
 def company_error(_request: Request, exc: CompanyError) -> JSONResponse:
     return JSONResponse(status_code=exc.status, content={"detail": str(exc), **exc.extra})
 
@@ -163,16 +168,20 @@ class NewCompany(Out):
 
 
 class SaveCompany(Out):
-    dataset: dict[str, Any]
+    dataset: dict[str, Any] | None = None   # the working copy, whole; or
+    patch: dict[str, Any] | None = None     # what changed since ``base_revision`` (scp.companies.patch)
     base_revision: int
     note: str = ""                # said in the audit trail, e.g. "from plan version V0003"
 
 
 class MergeCompany(Out):
-    base: dict[str, Any]          # the save the working copy was made from
-    dataset: dict[str, Any]       # the working copy
+    base: dict[str, Any] | None = None      # the save the working copy was made from (default: that revision, kept here)
+    dataset: dict[str, Any] | None = None   # the working copy; or
+    patch: dict[str, Any] | None = None     # what changed in it since ``base_revision``
     base_revision: int
     clean_only: bool = False      # refuse instead of choosing when a record changed on both sides (autosave)
+    choose: dict[str, Literal["mine", "theirs"]] = {}   # per clash id (report.clashes), whose version to keep
+    preview: bool = False         # say what the merge would do; save nothing
 
 
 class RestoreCompany(Out):
@@ -202,16 +211,21 @@ def open_company(cid: str, user: Signed) -> CompanyDoc:
 
 
 @router.put("/companies/{cid}", response_model=SaveReport)
-def save_company(cid: str, body: SaveCompany, user: Signed) -> SaveReport:
-    """Save the working copy. 409 when someone saved after ``base_revision`` (``revision``, ``updated_by`` and
-    ``updated_at`` say who and when)."""
-    return get_companies().save(user, cid, body.dataset, body.base_revision, note=body.note)
+def save_company(cid: str, body: SaveCompany, user: Signed, request: Request) -> SaveReport:
+    """Save the working copy, whole or as what changed. 409 when someone saved after ``base_revision``
+    (``revision``, ``updated_by`` and ``updated_at`` say who and when); not when every save since came from the
+    same window (``X-Client``), which a reload during a save leaves behind."""
+    return get_companies().save(user, cid, body.dataset, body.base_revision, note=body.note, patch=body.patch,
+                                client=client_of(request))
 
 
 @router.post("/companies/{cid}/merge", response_model=MergeResult)
-def merge_company(cid: str, body: MergeCompany, user: Signed) -> MergeResult:
-    """After a refused save: merge the working copy with the saves made since, record by record, and save that."""
-    return get_companies().merge_save(user, cid, body.base, body.dataset, body.base_revision, body.clean_only)
+def merge_company(cid: str, body: MergeCompany, user: Signed, request: Request) -> MergeResult:
+    """After a refused save: merge the working copy with the saves made since, record by record, and save that
+    (or, with ``preview``, only say what it would do, with each record changed on both sides side by side)."""
+    return get_companies().merge_save(user, cid, body.base, body.dataset, body.base_revision, body.clean_only,
+                                      patch=body.patch, client=client_of(request), choose=dict(body.choose),
+                                      preview=body.preview)
 
 
 @router.delete("/companies/{cid}")
@@ -231,8 +245,8 @@ def company_revision(cid: str, rev: int, user: Signed) -> dict[str, Any]:
 
 
 @router.post("/companies/{cid}/restore", response_model=SaveReport)
-def restore_company(cid: str, body: RestoreCompany, user: Signed) -> SaveReport:
-    return get_companies().restore(user, cid, body.revision, body.base_revision)
+def restore_company(cid: str, body: RestoreCompany, user: Signed, request: Request) -> SaveReport:
+    return get_companies().restore(user, cid, body.revision, body.base_revision, client=client_of(request))
 
 
 @router.get("/companies/{cid}/members", response_model=list[Member])

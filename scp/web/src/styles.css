@@ -700,6 +700,13 @@ table.bom td { vertical-align: top; }
 .save-chip.bad .save-dot { background: var(--critical); }
 .save-banner { margin: 14px 22px 0; }
 .save-banner .spacer { flex: 1; }
+.clash-chooser { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 10px; min-width: 0; }
+.clash-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.clash-list { display: flex; flex-direction: column; gap: 10px; max-height: 55vh; overflow: auto; }
+.clash { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px 8px; margin: 0; background: var(--surface); min-width: 0; }
+.clash legend { font-weight: 600; font-size: 13px; padding: 0 4px; overflow-wrap: anywhere; }
+.clash td.strong { font-weight: 700; }
+.clash th label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
 .signin { gap: 10px; max-width: 420px; }
 .stack-field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--text-2); }
 .company-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }

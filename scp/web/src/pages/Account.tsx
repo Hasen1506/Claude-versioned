@@ -222,8 +222,8 @@ export function Account() {
       <StageHeader title="Your company on the server" kicker={<>Keep the company on the server instead of only in this browser:
         colleagues can open it, every change is saved as you go, and the history shows who changed what.</>}
         how={<>Each save is a revision. A save made on top of an older revision than the latest is refused, so nobody overwrites
-          a colleague's work unseen. The document of each person's run of saves within ten minutes is kept, so the company can be
-          put back to an earlier state.</>} />
+          a colleague's work unseen, and when two people changed the same record you choose whose to keep. Every save is kept,
+          so the company can be put back to the state just before any of them.</>} />
       <div className="content">
         {!session ? (
           <div className="welcome-grid">

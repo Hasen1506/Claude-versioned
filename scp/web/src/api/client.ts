@@ -4,6 +4,7 @@ import type {
   PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoLineInput, RequisitionPick, PostAction, CountInput, UsageInput, SalesOrderChange, SalesOrderResponse,
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult,
 } from "./types";
+import type { Patch } from "../lib/patch";
 
 /** Thrown when the engine rejects the dataset shape (HTTP 422). Carries field-level errors. */
 export class SchemaRejected extends Error {
@@ -29,6 +30,18 @@ export function setAuth(fn: typeof authOf) { authOf = fn; }
 let writeGuard: () => string | null = () => null;
 export function setWriteGuard(fn: typeof writeGuard) { writeGuard = fn; }
 
+/** This browser window, across reloads (a tab keeps its session storage): the server takes a save from the window
+ *  whose own save it has not heard back about (a reload during a save) as that window's, not a colleague's. */
+export const CLIENT_ID = (() => {
+  try {
+    let id = sessionStorage.getItem("scp.client");
+    if (!id) { id = Math.random().toString(36).slice(2) + Date.now().toString(36); sessionStorage.setItem("scp.client", id); }
+    return id;
+  } catch {
+    return Math.random().toString(36).slice(2);
+  }
+})();
+
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
 /** A proof run answers only when it is done; on a small server the generated flow takes minutes. */
 export const RUN_TIMEOUT_MS = 15 * 60_000;
@@ -46,6 +59,7 @@ async function call<T>(path: string, init?: RequestInit, timeoutMs?: number): Pr
         "Content-Type": "application/json",
         ...(who.token ? { Authorization: `Bearer ${who.token}` } : {}),
         ...(who.company ? { "X-Company": who.company } : {}),
+        "X-Client": CLIENT_ID,
         ...(init?.headers ?? {}),
       },
     });
@@ -176,11 +190,16 @@ export const api = {
   createCompany: (dataset: Dataset, note = "") =>
     call<CompanyMeta>("/api/companies", { method: "POST", body: JSON.stringify({ dataset, note }) }),
   company: (id: string) => call<CompanyDoc>(`/api/companies/${encodeURIComponent(id)}`),
-  saveCompany: (id: string, dataset: Dataset, baseRevision: number, note = "") =>
-    call<SaveReport>(`/api/companies/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ dataset, base_revision: baseRevision, note }) }),
-  mergeCompany: (id: string, base: Dataset, dataset: Dataset, baseRevision: number, cleanOnly = false) =>
+  /** Save the working copy, whole (`dataset`) or as what changed since `baseRevision` (`patch`). */
+  saveCompany: (id: string, what: { dataset: Dataset } | { patch: Patch }, baseRevision: number, note = "") =>
+    call<SaveReport>(`/api/companies/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ ...what, base_revision: baseRevision, note }) }),
+  /** Merge the working copy (whole, or a patch on `baseRevision`) with the saves made since. `base` defaults to that
+   *  revision as the server keeps it; `choose` says whose version to keep per clash; `preview` saves nothing. */
+  mergeCompany: (id: string, o: { base?: Dataset; dataset?: Dataset; patch?: Patch; baseRevision: number; cleanOnly?: boolean;
+    choose?: Record<string, "mine" | "theirs">; preview?: boolean }) =>
     call<MergeResult>(`/api/companies/${encodeURIComponent(id)}/merge`, { method: "POST",
-      body: JSON.stringify({ base, dataset, base_revision: baseRevision, clean_only: cleanOnly }) }),
+      body: JSON.stringify({ base: o.base, dataset: o.dataset, patch: o.patch, base_revision: o.baseRevision, clean_only: !!o.cleanOnly,
+        choose: o.choose ?? {}, preview: !!o.preview }) }),
   deleteCompany: (id: string) => call<{ ok: boolean }>(`/api/companies/${encodeURIComponent(id)}`, { method: "DELETE" }),
   companyHistory: (id: string, before?: number) =>
     call<LogRow[]>(`/api/companies/${encodeURIComponent(id)}/history${before ? `?before=${before}` : ""}`),

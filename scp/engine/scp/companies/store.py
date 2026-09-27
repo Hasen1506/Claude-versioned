@@ -6,12 +6,15 @@ audit trail of who changed what.
 * **Members.** Each company has members: an *owner* (changes the data and who may see it), a *planner* (changes the
   data) or a *viewer* (reads it). An owner can invite an e-mail that has no account yet; the invitation becomes a
   membership when that address signs up or signs in. A company always keeps at least one owner.
-* **Saves.** The working copy is saved as a whole document with the revision it was based on. A save based on an
-  older revision than the company's is refused (someone else saved in between), so nobody overwrites a colleague's
-  work without seeing it. An unchanged document is not a new revision.
-* **Revisions.** Every save is a revision. Its document is kept compressed; one person's run of saves within ten
-  minutes shares one kept copy (the last), so a day's autosaves keep a copy per ten minutes, not one per keystroke.
-  A company can be opened as it was at any kept revision, and put back to it (a new revision, nothing is lost).
+* **Saves.** The working copy is saved with the revision it was based on, as what changed since that revision (a
+  patch, :mod:`scp.companies.patch`) or whole. A save based on an older revision than the company's is refused
+  (someone else saved in between), so nobody overwrites a colleague's work without seeing it; but a save from the
+  same window as the saves in between (a reload while a save was on its way) is its own work and is taken (R18). An
+  unchanged document is not a new revision.
+* **Revisions.** Every save is a revision, and every revision is kept (R19): as what changed since the one before,
+  compressed, with a whole copy every so often. A company can be opened as it was at any revision, and put back to
+  it (a new revision, nothing is lost). Revisions saved before this (Phase I kept one per ten-minute run) stay as
+  they were.
 * **Audit trail.** Every save, restore, membership change and deletion is logged with who, when, and for a save,
   what changed: records added, removed and changed per list, with the first few records by name.
 """
@@ -30,6 +33,7 @@ from ..model.common import Out
 from ..versions.diff import diff_raw
 from ..versions.store import Store, get_store, sha
 from .merge import MergeReport, merge
+from .patch import PatchError, apply_patch, make_patch
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -71,7 +75,7 @@ CREATE INDEX IF NOT EXISTS company_log_by_company ON company_log (company_id, se
 ROLES = ("owner", "planner", "viewer")
 CAN_EDIT = ("owner", "planner")
 SESSION_DAYS = 30
-RUN_MINUTES = 10              # one person's saves within this share one kept copy
+FULL_EVERY = 25               # a whole copy at least every this many revisions; deltas in between
 PBKDF2_ROUNDS = 200_000
 LOG_ITEMS = 12                # records named per list in a save's detail
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -134,13 +138,15 @@ class SaveReport(Out):
     meta: CompanyMeta
     saved: bool                   # False: nothing had changed
     summary: str
+    own: bool = False             # the saves it replaced were this window's own (a reload while one was on its way)
 
 
 class MergeResult(Out):
     meta: CompanyMeta
-    dataset: dict[str, Any]       # the merged company, now its latest save
+    dataset: dict[str, Any]       # the merged company, now its latest save (as it would be, for a preview)
     report: MergeReport
-    merged_with: str              # whose save it was merged with (a name)
+    merged_with: str              # whose save it was merged with (a name); "you" when both were one's own
+    saved: bool = True            # False: a preview, nothing saved
 
 
 class Member(Out):
@@ -223,6 +229,11 @@ class Companies:
         self.db = store.db
         self.lock = store.lock
         self.db.executescript(SCHEMA)
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(company_revisions)")}
+        if "kind" not in cols:        # Phase L: deltas between whole copies, and the window each save came from
+            self.db.execute("ALTER TABLE company_revisions ADD COLUMN kind TEXT NOT NULL DEFAULT 'full'")
+        if "client" not in cols:
+            self.db.execute("ALTER TABLE company_revisions ADD COLUMN client TEXT NOT NULL DEFAULT ''")
         self.failures: dict[str, list[dt.datetime]] = {}
 
     # ---- accounts ------------------------------------------------------------------------------------------
@@ -370,7 +381,7 @@ class Companies:
                     (cid, _company_name(doc), now, user.id, now, user.id, sha(text), len(text.encode()), text))
                 self.db.execute("INSERT INTO members (company_id, user_id, role, added_at, added_by) VALUES (?, ?, 'owner', ?, ?)",
                                 (cid, user.id, now, user.id))
-                self._keep(cid, 1, user.id, "created", text, now, fresh=True)
+                self._keep(cid, 1, user.id, "created", text, now, {}, doc, "")
                 self._log(cid, 1, user.id, "created", note or "company created")
                 self.db.execute("COMMIT")
             except Exception:
@@ -384,22 +395,51 @@ class Companies:
             r = self.db.execute("SELECT dataset FROM companies WHERE id = ?", (cid,)).fetchone()
             return CompanyDoc(meta=self._meta(cid, role), dataset=json.loads(r["dataset"]))
 
-    def save(self, user: User, cid: str, doc: dict, base_revision: int, action: str = "saved",
-             note: str = "") -> SaveReport:
-        """Save the working copy over revision ``base_revision``; refused when the company has moved on."""
+    def _working_copy(self, cid: str, doc: dict | None, patch: dict | None, base_revision: int,
+                      current: dict, current_rev: int) -> dict:
+        """The document a save sends: whole, or its patch applied to the revision it was based on."""
+        if patch is None:
+            if doc is None:
+                raise CompanyError("a save needs the company or what changed in it", 422)
+            return doc
+        try:
+            return apply_patch(current if base_revision == current_rev else self._doc_at(cid, base_revision), patch)
+        except (PatchError, CompanyError) as e:
+            raise CompanyError(f"the changes sent do not fit revision {base_revision}: {e}; send the whole company",
+                               409, {"patch": "unfit", "revision": current_rev}) from None
+
+    def _since(self, cid: str, base_revision: int) -> list[Any]:
+        return self.db.execute("SELECT user_id, client FROM company_revisions WHERE company_id = ? AND revision > ? "
+                               "ORDER BY revision", (cid, base_revision)).fetchall()
+
+    def _own(self, cid: str, base_revision: int, current_rev: int, uid: str, client: str) -> bool:
+        """Every save after ``base_revision`` came from this window (``client``): the working copy carries them."""
+        rows = self._since(cid, base_revision)
+        return bool(client) and len(rows) == current_rev - base_revision and all(
+            r["user_id"] == uid and r["client"] == client for r in rows)
+
+    def save(self, user: User, cid: str, doc: dict | None, base_revision: int, action: str = "saved",
+             note: str = "", patch: dict | None = None, client: str = "") -> SaveReport:
+        """Save the working copy (``doc``, or ``patch`` applied to revision ``base_revision``) over revision
+        ``base_revision``; refused when the company has moved on, unless only this window's own saves moved it."""
         with self.lock:
             role = self._need(user, cid, *CAN_EDIT)
             r = self.db.execute("SELECT * FROM companies WHERE id = ?", (cid,)).fetchone()
+            current = json.loads(r["dataset"])
+            own = False
             if base_revision != r["revision"]:
-                raise CompanyError(
-                    f"{self._name(r['updated_by'])} saved this company at {r['updated_at']} after you opened it "
-                    f"(revision {r['revision']}, yours is based on {base_revision})", 409,
-                    {"revision": r["revision"], "updated_by": self._name(r["updated_by"]), "updated_at": r["updated_at"]})
+                if not (0 < base_revision < r["revision"] and self._own(cid, base_revision, r["revision"], user.id, client)):
+                    raise CompanyError(
+                        f"{self._name(r['updated_by'])} saved this company at {r['updated_at']} after you opened it "
+                        f"(revision {r['revision']}, yours is based on {base_revision})", 409,
+                        {"revision": r["revision"], "updated_by": self._name(r["updated_by"]),
+                         "updated_at": r["updated_at"], "self": r["updated_by"] == user.id})
+                own = True
+            doc = self._working_copy(cid, doc, patch, base_revision, current, r["revision"])
             text = _canonical(doc)
             if text == r["dataset"]:
-                return SaveReport(meta=self._meta(cid, role), saved=False, summary="nothing changed")
-            before = json.loads(r["dataset"])
-            summary, changes = summarise(before, doc)
+                return SaveReport(meta=self._meta(cid, role), saved=False, summary="nothing changed", own=own)
+            summary, changes = summarise(current, doc)
             rev = r["revision"] + 1
             now = _iso(_now())
             self.db.execute("BEGIN")
@@ -407,69 +447,123 @@ class Companies:
                 self.db.execute("UPDATE companies SET name = ?, updated_at = ?, updated_by = ?, revision = ?, sha256 = ?, "
                                 "size = ?, dataset = ? WHERE id = ?",
                                 (_company_name(doc), now, user.id, rev, sha(text), len(text.encode()), text, cid))
-                self._keep(cid, rev, user.id, action, text, now, fresh=action != "saved")
+                self._keep(cid, rev, user.id, action, text, now, current, doc, client)
                 self._log(cid, rev, user.id, action, (note + ": " if note else "") + (summary or "no change"), changes)
                 self.db.execute("COMMIT")
             except Exception:
                 self.db.execute("ROLLBACK")
                 raise
-            return SaveReport(meta=self._meta(cid, role), saved=True, summary=summary)
+            return SaveReport(meta=self._meta(cid, role), saved=True, summary=summary, own=own)
 
-    def merge_save(self, user: User, cid: str, base: dict, mine: dict, base_revision: int,
-                   clean_only: bool = False) -> MergeResult:
-        """Save the working copy made from revision ``base_revision`` (whose document is ``base``) merged with the
-        saves made since (see :mod:`scp.companies.merge`). ``clean_only``: refuse (409, as a stale save is) when a
-        record was changed on both sides, so nothing is decided for the person without asking."""
+    def merge_save(self, user: User, cid: str, base: dict | None, mine: dict | None, base_revision: int,
+                   clean_only: bool = False, patch: dict | None = None, client: str = "",
+                   choose: dict[str, str] | None = None, preview: bool = False) -> MergeResult:
+        """Save the working copy made from revision ``base_revision`` merged with the saves made since (see
+        :mod:`scp.companies.merge`). The working copy is ``mine``, or ``patch`` applied to that revision; its base is
+        ``base``, or that revision as kept here. ``clean_only``: refuse (409, as a stale save is) when a record was
+        changed on both sides, so nothing is decided for the person without asking. ``choose``: per clash, whose
+        version to keep. ``preview``: say what the merge would do, save nothing. When every save in between was the
+        same person's (another window), their latest change of a record is kept without asking."""
         with self.lock:
             self._need(user, cid, *CAN_EDIT)
             r = self.db.execute("SELECT * FROM companies WHERE id = ?", (cid,)).fetchone()
             who = self._name(r["updated_by"])
+            current = json.loads(r["dataset"])
+            if base is None:
+                try:
+                    base = current if base_revision == r["revision"] else self._doc_at(cid, base_revision)
+                except CompanyError:
+                    raise CompanyError(f"revision {base_revision} is not kept here: send the save your changes were "
+                                       "made from", 409, {"base": "missing", "revision": r["revision"]}) from None
+            if patch is not None:
+                try:
+                    mine = apply_patch(base, patch)
+                except PatchError as e:
+                    raise CompanyError(f"the changes sent do not fit revision {base_revision}: {e}", 409,
+                                       {"patch": "unfit", "revision": r["revision"]}) from None
+            if mine is None:
+                raise CompanyError("a merge needs the working copy or what changed in it", 422)
             if base_revision == r["revision"]:
-                rep = self.save(user, cid, mine, base_revision)
+                if preview:
+                    return MergeResult(meta=self._meta(cid, self.role(user, cid)), dataset=mine, merged_with="", saved=False,
+                                       report=MergeReport(mine=0, theirs=0, conflicts=[], renumbered=[], summary="nothing to merge"))
+                rep = self.save(user, cid, mine, base_revision, client=client)
                 return MergeResult(meta=rep.meta, dataset=mine, merged_with="",
                                    report=MergeReport(mine=0, theirs=0, conflicts=[], renumbered=[], summary="nothing to merge"))
-            theirs = json.loads(r["dataset"])
-            merged, report = merge(base, mine, theirs)
-            if clean_only and report.conflicts:
+            mine_only = all(x["user_id"] == user.id for x in self._since(cid, base_revision)) and \
+                len(self._since(cid, base_revision)) == r["revision"] - base_revision
+            merged, report = merge(base, mine, current, choose=choose, prefer_mine=mine_only)
+            for c in report.clashes:
+                c.list = LABELS.get(c.list, c.list.replace("_", " "))
+            if mine_only:
+                who = "you"
+            if clean_only and report.conflicts and not mine_only:
                 raise CompanyError(
                     f"{who} saved this company at {r['updated_at']} after you opened it and changed "
                     f"{len(report.conflicts)} of the same records", 409,
                     {"revision": r["revision"], "updated_by": who, "updated_at": r["updated_at"],
                      "conflicts": report.conflicts})
-            saved = self.save(user, cid, merged, r["revision"], action="merged",
-                              note=f"merged with {who}'s save ({report.summary})")
+            if preview:
+                return MergeResult(meta=self._meta(cid, self.role(user, cid)), dataset=merged, report=report,
+                                   merged_with=who, saved=False)
+            saved = self.save(user, cid, merged, r["revision"], action="merged", client=client,
+                              note="merged with your save from another window" if mine_only
+                              else f"merged with {who}'s save ({report.summary})")
             return MergeResult(meta=saved.meta, dataset=merged, report=report, merged_with=who)
 
-    def _keep(self, cid: str, rev: int, uid: str, action: str, text: str, now: str, fresh: bool) -> None:
-        """Keep this revision's document; an autosave within the same person's ten-minute run replaces the run's
-        previous copy."""
-        started = now
-        if not fresh:
-            last = self.db.execute("SELECT * FROM company_revisions WHERE company_id = ? ORDER BY revision DESC LIMIT 1",
-                                   (cid,)).fetchone()
-            if (last is not None and last["user_id"] == uid and last["action"] == "saved"
-                    and dt.datetime.fromisoformat(now) - dt.datetime.fromisoformat(last["started_at"])
-                    < dt.timedelta(minutes=RUN_MINUTES)):
-                started = last["started_at"]
-                self.db.execute("DELETE FROM company_revisions WHERE company_id = ? AND revision = ?",
-                                (cid, last["revision"]))
+    def _keep(self, cid: str, rev: int, uid: str, action: str, text: str, now: str, before: dict, doc: dict,
+              client: str) -> None:
+        """Keep this revision: as what changed since the one before, or whole when that is kept only as a delta
+        chain too long, is missing, or the change is large."""
+        prev = self.db.execute("SELECT revision, kind FROM company_revisions WHERE company_id = ? ORDER BY revision "
+                               "DESC LIMIT ?", (cid, FULL_EVERY)).fetchall()
+        kind, data = "full", text
+        if prev and prev[0]["revision"] == rev - 1 and any(p["kind"] == "full" for p in prev):
+            delta = json.dumps(make_patch(before, doc), separators=(",", ":"), ensure_ascii=False)
+            if len(delta) * 4 < len(text):
+                kind, data = "delta", delta
         self.db.execute("INSERT INTO company_revisions (company_id, revision, at, started_at, user_id, action, sha256, "
-                        "size, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (cid, rev, now, started, uid, action, sha(text), len(text.encode()),
-                         zlib.compress(text.encode(), 6)))
+                        "size, data, kind, client) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (cid, rev, now, now, uid, action, sha(text), len(text.encode()),
+                         zlib.compress(data.encode(), 6), kind, client))
+
+    def _doc_at(self, cid: str, rev: int) -> dict:
+        """The company as it was at revision ``rev``: the whole copy before it and the changes since."""
+        rows = self.db.execute("SELECT revision, kind, data FROM company_revisions WHERE company_id = ? AND revision <= ? "
+                               "ORDER BY revision DESC LIMIT ?", (cid, rev, FULL_EVERY + 1)).fetchall()
+        chain: list[Any] = []
+        want = rev
+        for r in rows:
+            if r["revision"] != want:
+                break
+            chain.append(r)
+            if r["kind"] == "full":
+                doc = json.loads(zlib.decompress(r["data"]).decode())
+                for d in reversed(chain[:-1]):
+                    doc = apply_patch(doc, json.loads(zlib.decompress(d["data"]).decode()))
+                return doc
+            want -= 1
+        raise CompanyError(f"revision {rev} is not kept: before saves were all kept, only the last save of each "
+                           "ten-minute run was", 404)
+
+    def _kept(self, cid: str) -> set[int]:
+        """The revisions that can be opened: a whole copy, or a delta on one that can."""
+        out: set[int] = set()
+        for r in self.db.execute("SELECT revision, kind FROM company_revisions WHERE company_id = ? ORDER BY revision",
+                                 (cid,)):
+            if r["kind"] == "full" or r["revision"] - 1 in out:
+                out.add(r["revision"])
+        return out
 
     def revision(self, user: User, cid: str, rev: int) -> dict:
         with self.lock:
             self._need(user, cid)
-            r = self.db.execute("SELECT data FROM company_revisions WHERE company_id = ? AND revision = ?",
-                                (cid, rev)).fetchone()
-            if r is None:
-                raise CompanyError(f"revision {rev} is not kept: only the last save of each ten-minute run is", 404)
-            return json.loads(zlib.decompress(r["data"]).decode())
+            return self._doc_at(cid, rev)
 
-    def restore(self, user: User, cid: str, rev: int, base_revision: int) -> SaveReport:
+    def restore(self, user: User, cid: str, rev: int, base_revision: int, client: str = "") -> SaveReport:
         doc = self.revision(user, cid, rev)
-        return self.save(user, cid, doc, base_revision, action="restored", note=f"put back to revision {rev}")
+        return self.save(user, cid, doc, base_revision, action="restored", note=f"put back to revision {rev}",
+                         client=client)
 
     def delete(self, user: User, cid: str) -> None:
         with self.lock:
@@ -550,7 +644,7 @@ class Companies:
     def history(self, user: User, cid: str, limit: int = 200, before: int | None = None) -> list[LogRow]:
         with self.lock:
             self._need(user, cid)
-            kept = {r[0] for r in self.db.execute("SELECT revision FROM company_revisions WHERE company_id = ?", (cid,))}
+            kept = self._kept(cid)
             q = "SELECT * FROM company_log WHERE company_id = ?" + (" AND seq < ?" if before else "") + \
                 " ORDER BY seq DESC LIMIT ?"
             args = (cid, before, limit) if before else (cid, limit)

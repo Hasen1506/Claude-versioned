@@ -3,8 +3,9 @@ made from the same earlier save (*base*).
 
 Record by record, keyed as the dataset diff keys them: what only one side changed is taken from that side, what
 both changed the same way is kept once, and what both changed differently keeps the latest save's version and is
-reported. A record only one side removed stays removed unless the other side changed it. Settings are merged field
-by field the same way.
+reported, with both versions side by side (a *clash*), so the person can choose per record (``choose``: a clash's id
+→ ``"mine"``) and merge again (N65). A record only one side removed stays removed unless the other side changed it.
+Settings are merged field by field the same way.
 
 Two people taking an order (or a purchase order, a goods movement, …) at the same time give it the same next
 number. Such a record *mine* added under a number *theirs* also added is renumbered to the next free number of its
@@ -13,22 +14,42 @@ series, and the records *mine* added that point at it (its promises, its deliver
 from __future__ import annotations
 
 import re
+from contextvars import ContextVar
 from typing import Any
 
 from ..model.common import Out
-from ..versions.diff import KEYS, SINGLE, _key
+from ..versions.diff import KEYS, SINGLE, _flat, _key
 
 # fields of a record that point at another record by its number
 REF_FIELDS = ("order", "reference", "po", "purchase_order", "source_order")
 NUMBERED = re.compile(r"^(.*?)(\d+)$")
 
 
+class FieldClash(Out):
+    path: str                 # "qty", "lines[0].qty"; "" for the whole record or value
+    base: Any = None          # before either change
+    mine: Any = None
+    theirs: Any = None
+
+
+class Clash(Out):
+    id: str                   # "products B", "settings.company_name": what ``choose`` names
+    list: str                 # the dataset's list or settings the record is in
+    record: str               # the record's key, "B", or the setting's name
+    mine_removed: bool = False
+    theirs_removed: bool = False
+    fields: list[FieldClash]  # where the two versions differ
+    kept: str                 # "theirs" | "mine": which one this merge kept
+    group: str = ""           # records that belong together (an order and its promises: "SO-00012"): chosen as one
+
+
 class MergeReport(Out):
     mine: int                 # records (or settings) taken from the working copy
     theirs: int               # taken from the latest save
-    conflicts: list[str]      # changed on both sides differently: the latest save's version was kept
+    conflicts: list[str]      # changed on both sides differently: the version kept is in ``clashes``
     renumbered: list[str]     # "SO-00004 → SO-00005"
     summary: str
+    clashes: list[Clash] = []
 
 
 def _keys_of(name: str) -> tuple[str, ...]:
@@ -95,8 +116,12 @@ def _renumber(base: dict, mine: dict, theirs: dict, rep: MergeReport) -> dict:
     return out
 
 
-def merge(base: dict, mine: dict, theirs: dict) -> tuple[dict, MergeReport]:
+def merge(base: dict, mine: dict, theirs: dict, choose: dict[str, str] | None = None,
+          prefer_mine: bool = False) -> tuple[dict, MergeReport]:
+    """``choose``: per clash id, ``"mine"`` keeps the working copy's version (else the latest save's is kept).
+    ``prefer_mine``: every clash keeps the working copy's version (both saves are the same person's)."""
     rep = MergeReport(mine=0, theirs=0, conflicts=[], renumbered=[], summary="")
+    _chosen.set((choose or {}, prefer_mine))
     mine = _renumber(base, mine, theirs, rep)
     out: dict[str, Any] = {}
     for name in [*theirs, *(k for k in mine if k not in theirs)]:
@@ -107,7 +132,7 @@ def merge(base: dict, mine: dict, theirs: dict) -> tuple[dict, MergeReport]:
         elif present and all(isinstance(x, dict) for x in present):
             out[name] = _merge_dict(name, _dict(b), _dict(m), _dict(t), rep)
         else:
-            v = _pick(name, b, m, t, rep)
+            v = _pick(name, b, m, t, rep, name, "")
             if v is not _MISSING:
                 out[name] = v
     parts = []
@@ -115,13 +140,43 @@ def merge(base: dict, mine: dict, theirs: dict) -> tuple[dict, MergeReport]:
         parts.append(f"{rep.mine} of your changes")
     if rep.theirs:
         parts.append(f"{rep.theirs} of theirs")
+    n_mine = sum(c.kept == "mine" for c in rep.clashes)
     rep.summary = ("kept " + " and ".join(parts) if parts else "nothing to merge") + (
-        f"; {len(rep.conflicts)} changed on both sides (theirs kept)" if rep.conflicts else "") + (
+        f"; {len(rep.conflicts)} changed on both sides ("
+        + ("theirs kept" if not n_mine else "yours kept" if n_mine == len(rep.conflicts)
+           else f"yours kept for {n_mine}, theirs for {len(rep.conflicts) - n_mine}") + ")"
+        if rep.conflicts else "") + (
         "; renumbered " + ", ".join(rep.renumbered) if rep.renumbered else "")
     return out, rep
 
 
 _MISSING: Any = object()
+_chosen: ContextVar[tuple[dict[str, str], bool]] = ContextVar("chosen", default=({}, False))
+
+
+def _choice(cid: str) -> str | None:
+    """Whose version the person chose for this clash (every clash is theirs to decide when both saves were theirs)."""
+    choose, prefer_mine = _chosen.get()
+    return "mine" if prefer_mine else choose.get(cid)
+
+
+def _clash(cid: str, where: str, record: str, b: Any, m: Any, t: Any, rep: MergeReport, default: str = "theirs") -> Any:
+    """Both sides changed this differently: note it, with both versions, and keep the chosen one (``default`` when
+    nothing was chosen)."""
+    keep_mine = (_choice(cid) or default) == "mine"
+    fm = _flat(m, "") if isinstance(m, dict) else {"": None if m is _MISSING else m}
+    ft = _flat(t, "") if isinstance(t, dict) else {"": None if t is _MISSING else t}
+    fb = (_flat(b, "") if isinstance(b, dict) else {"": b}) if b is not _MISSING else {}
+    paths = sorted(p for p in set(fm) | set(ft) if fm.get(p) != ft.get(p))
+    if m is _MISSING or t is _MISSING:
+        paths = [p for p in paths if p]
+    rec = next((x for x in (m, t, b) if isinstance(x, dict)), {})
+    group = str(rec["order"]) if rec.get("order") else str(rec["id"]) if where == "demand" and rec.get("id") else cid
+    rep.clashes.append(Clash(id=cid, list=where, record=record, group=group, mine_removed=m is _MISSING,
+                             theirs_removed=t is _MISSING, kept="mine" if keep_mine else "theirs",
+                             fields=[FieldClash(path=p.lstrip("."), base=fb.get(p), mine=fm.get(p), theirs=ft.get(p))
+                                     for p in paths[:40]]))
+    return m if keep_mine else t
 
 
 def _list(x: Any) -> list:
@@ -132,7 +187,7 @@ def _dict(x: Any) -> dict:
     return x if isinstance(x, dict) else {}
 
 
-def _pick(what: str, b: Any, m: Any, t: Any, rep: MergeReport) -> Any:
+def _pick(what: str, b: Any, m: Any, t: Any, rep: MergeReport, where: str = "", record: str = "") -> Any:
     if m == t:
         return t
     if m == b:
@@ -142,13 +197,13 @@ def _pick(what: str, b: Any, m: Any, t: Any, rep: MergeReport) -> Any:
         rep.mine += 1
         return m
     rep.conflicts.append(what)
-    return t
+    return _clash(what, where or what, record, b, m, t, rep)
 
 
 def _merge_dict(name: str, b: dict, m: dict, t: dict, rep: MergeReport) -> dict:
     out: dict[str, Any] = {}
     for k in [*t, *(k for k in m if k not in t)]:
-        v = _pick(f"{name}.{k}", b.get(k, _MISSING), m.get(k, _MISSING), t.get(k, _MISSING), rep)
+        v = _pick(f"{name}.{k}", b.get(k, _MISSING), m.get(k, _MISSING), t.get(k, _MISSING), rep, name, k)
         if v is not _MISSING:
             out[k] = v
     return out
@@ -163,10 +218,13 @@ def _merge_list(name: str, b: list, m: list, t: list, rep: MergeReport) -> list:
             if tv == ib[k]:
                 rep.mine += 1                                  # removed here, left alone there
             else:
-                rep.conflicts.append(f"{name} {k} (removed here, changed there: kept)")
-                out.append(tv)
+                cid = f"{name} {k}"
+                if _clash(cid, name, k, ib[k], _MISSING, tv, rep) is not _MISSING:
+                    out.append(tv)
+                rep.conflicts.append(f"{cid} (removed here, changed there: "
+                                     + ("kept)" if rep.clashes[-1].kept == "theirs" else "removed)"))
         elif k in im:
-            out.append(_pick(f"{name} {k}", ib.get(k, _MISSING), im[k], tv, rep))
+            out.append(_pick(f"{name} {k}", ib.get(k, _MISSING), im[k], tv, rep, name, k))
         else:
             out.append(tv)
     for k, mv in im.items():                                   # records only the working copy has
@@ -174,8 +232,11 @@ def _merge_list(name: str, b: list, m: list, t: list, rep: MergeReport) -> list:
             continue
         if k in ib:
             if mv != ib[k]:
-                rep.conflicts.append(f"{name} {k} (changed here, removed there: kept)")
-                out.append(mv)
+                cid = f"{name} {k}"
+                if _clash(cid, name, k, ib[k], mv, _MISSING, rep, default="mine") is not _MISSING:
+                    out.append(mv)
+                rep.conflicts.append(f"{cid} (changed here, removed there: "
+                                     + ("kept)" if rep.clashes[-1].kept == "mine" else "removed)"))
             else:
                 rep.theirs += 1                                # removed there
             continue

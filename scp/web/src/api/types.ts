@@ -165,3 +165,4 @@ export type Member = S["Member"];
 export type LogRow = S["LogRow"];
 export type ListChange = S["ListChange"];
 export type MergeResult = S["MergeResult"];
+export type Clash = S["Clash"];

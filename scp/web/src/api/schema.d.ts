@@ -138,8 +138,9 @@ export interface paths {
         get: operations["open_company_api_companies__cid__get"];
         /**
          * Save Company
-         * @description Save the working copy. 409 when someone saved after ``base_revision`` (``revision``, ``updated_by`` and
-         *     ``updated_at`` say who and when).
+         * @description Save the working copy, whole or as what changed. 409 when someone saved after ``base_revision``
+         *     (``revision``, ``updated_by`` and ``updated_at`` say who and when); not when every save since came from the
+         *     same window (``X-Client``), which a reload during a save leaves behind.
          */
         put: operations["save_company_api_companies__cid__put"];
         post?: never;
@@ -161,7 +162,8 @@ export interface paths {
         put?: never;
         /**
          * Merge Company
-         * @description After a refused save: merge the working copy with the saves made since, record by record, and save that.
+         * @description After a refused save: merge the working copy with the saves made since, record by record, and save that
+         *     (or, with ``preview``, only say what it would do, with each record changed on both sides side by side).
          */
         post: operations["merge_company_api_companies__cid__merge_post"];
         delete?: never;
@@ -1735,6 +1737,34 @@ export interface components {
              */
             why: string;
         };
+        /** Clash */
+        Clash: {
+            /** Id */
+            id: string;
+            /** List */
+            list: string;
+            /** Record */
+            record: string;
+            /**
+             * Mine Removed
+             * @default false
+             */
+            mine_removed: boolean;
+            /**
+             * Theirs Removed
+             * @default false
+             */
+            theirs_removed: boolean;
+            /** Fields */
+            fields: components["schemas"]["FieldClash"][];
+            /** Kept */
+            kept: string;
+            /**
+             * Group
+             * @default
+             */
+            group: string;
+        };
         /**
          * ClosedOrder
          * @description A completed order, logged by the roll-forward: the source of OTIF and supplier reliability.
@@ -2443,6 +2473,17 @@ export interface components {
             a: unknown;
             /** B */
             b: unknown;
+        };
+        /** FieldClash */
+        FieldClash: {
+            /** Path */
+            path: string;
+            /** Base */
+            base: unknown;
+            /** Mine */
+            mine: unknown;
+            /** Theirs */
+            theirs: unknown;
         };
         /** FinanceResult */
         FinanceResult: {
@@ -3734,13 +3775,17 @@ export interface components {
         /** MergeCompany */
         MergeCompany: {
             /** Base */
-            base: {
+            base?: {
                 [key: string]: unknown;
-            };
+            } | null;
             /** Dataset */
-            dataset: {
+            dataset?: {
                 [key: string]: unknown;
-            };
+            } | null;
+            /** Patch */
+            patch?: {
+                [key: string]: unknown;
+            } | null;
             /** Base Revision */
             base_revision: number;
             /**
@@ -3748,6 +3793,18 @@ export interface components {
              * @default false
              */
             clean_only: boolean;
+            /**
+             * Choose
+             * @default {}
+             */
+            choose: {
+                [key: string]: "mine" | "theirs";
+            };
+            /**
+             * Preview
+             * @default false
+             */
+            preview: boolean;
         };
         /** MergeReport */
         MergeReport: {
@@ -3761,6 +3818,11 @@ export interface components {
             renumbered: string[];
             /** Summary */
             summary: string;
+            /**
+             * Clashes
+             * @default []
+             */
+            clashes: components["schemas"]["Clash"][];
         };
         /** MergeResult */
         MergeResult: {
@@ -3772,6 +3834,11 @@ export interface components {
             report: components["schemas"]["MergeReport"];
             /** Merged With */
             merged_with: string;
+            /**
+             * Saved
+             * @default true
+             */
+            saved: boolean;
         };
         /** ModelInfo */
         ModelInfo: {
@@ -5926,9 +5993,13 @@ export interface components {
         /** SaveCompany */
         SaveCompany: {
             /** Dataset */
-            dataset: {
+            dataset?: {
                 [key: string]: unknown;
-            };
+            } | null;
+            /** Patch */
+            patch?: {
+                [key: string]: unknown;
+            } | null;
             /** Base Revision */
             base_revision: number;
             /**
@@ -5944,6 +6015,11 @@ export interface components {
             saved: boolean;
             /** Summary */
             summary: string;
+            /**
+             * Own
+             * @default false
+             */
+            own: boolean;
         };
         /** ScenarioInfo */
         ScenarioInfo: {

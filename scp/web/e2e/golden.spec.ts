@@ -827,6 +827,12 @@ test("company on the server: sign up → keep it there → saves itself → a co
   await expect(chip).toHaveText("Not saved · saved by someone else");
   await expect(page.locator(".save-banner")).toContainText("Ravi Menon saved Kaveri");
   await page.getByRole("button", { name: "Merge both" }).click();
+  // the one order both changed (with its promise), side by side: she chooses whose to keep (his, here)
+  const chooser = page.locator(".clash-chooser");
+  await expect(chooser).toContainText("You and Ravi Menon both changed one record");
+  await expect(chooser.locator("legend")).toHaveText("Order SO-88222 and its promise");
+  await expect(chooser.locator("tr", { hasText: "orders and forecasts: qty" })).toContainText(/10\s*15\s*12/);
+  await chooser.getByRole("button", { name: "Merge, keeping Ravi Menon's" }).click();
   await expect(page.locator(".save-banner")).toContainText("Merged with Ravi Menon");
   await expect(page.locator(".save-banner")).toContainText("Changed on both sides, their version kept");
   await expect(chip).toHaveText(/^Saved/);

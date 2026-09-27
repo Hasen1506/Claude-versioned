@@ -124,7 +124,7 @@ function CompanySetup({ ds }: { ds: Dataset }) {
         right={<a className="btn" href={href("setup")}>Back to setup</a>} />
       <div className="content stack">
         {saved && <div className="banner ok" role="status">Saved. <a href={href("setup")}>Back to setup</a></div>}
-        <CompanyPanel ds={ds} onSave={(v, alsoExact) => { store.update((d) => applyCompany(d, v, alsoExact)); setSaved(true); }} />
+        <CompanyPanel key={JSON.stringify(ds.settings)} ds={ds} onSave={(v, alsoExact) => { store.update((d) => applyCompany(d, v, alsoExact)); setSaved(true); }} />
         <p className="faint small">More settings (horizon, cost of capital, service level, capacity rules) are in <a href={href("data", "settings")}>Master data → Company settings</a>.</p>
       </div>
     </div>
