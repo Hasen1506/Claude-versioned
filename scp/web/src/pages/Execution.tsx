@@ -287,6 +287,7 @@ function Count({ ds, res }: { ds: Dataset; res: ActualsView | null }) {
     return (ds.location_products ?? []).find((x) => x.location === l && x.product === p)?.on_hand ?? 0;
   };
   const changed = Object.entries(edits).filter(([, v]) => v.trim() !== "" && Number.isFinite(Number(v)));
+  const below = changed.filter(([, v]) => Number(v) < 0);
   const save = async () => {
     setBusy(true);
     setErr(null);
@@ -307,7 +308,8 @@ function Count({ ds, res }: { ds: Dataset; res: ActualsView | null }) {
   return (
     <div className="stack">
       <Panel title="Count stock" actions={
-        <Edits><button className="btn sm accent" onClick={save} disabled={busy || !changed.length}>{busy ? "Saving…" : changed.length ? `Save ${plural(changed.length, "count")}` : "Save counts"}</button></Edits>}>
+        <Edits><button className="btn sm accent" onClick={save} disabled={busy || !changed.length || below.length > 0}
+          title={below.length ? "A count is what is there: 0 or more" : undefined}>{busy ? "Saving…" : changed.length ? `Save ${plural(changed.length, "count")}` : "Save counts"}</button></Edits>}>
         <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
           <label className="small muted" htmlFor="count-date">Counted at the end of</label>
           <input id="count-date" type="date" className="input" style={{ width: 170 }} value={on} onChange={(e) => setOn(e.target.value)} />
@@ -321,6 +323,8 @@ function Count({ ds, res }: { ds: Dataset; res: ActualsView | null }) {
         </div>
         {msg && <div className="banner info" style={{ marginTop: 10 }}><Badge sev="ok">Saved</Badge><span>{msg}</span></div>}
         {err && <div className="banner error" style={{ marginTop: 10 }}><Badge sev="error">Not saved</Badge>{err}</div>}
+        {below.length > 0 && <div className="banner warning" style={{ marginTop: 10 }} role="status">A count is what is on the shelf: 0 or more.
+          Fix {below.map(([k]) => { const [l, p] = k.split("|"); return `${nm.prod(p)} at ${nm.loc(l)}`; }).join(", ")}.</div>}
       </Panel>
       <Panel flush><Edits>
         <div className="table-wrap" style={{ maxHeight: 620 }}>
@@ -333,9 +337,10 @@ function Count({ ds, res }: { ds: Dataset; res: ActualsView | null }) {
                 return (
                   <tr key={k}>
                     <td><Loc id={l} /></td><td><Prod id={p} /></td>
-                    <td className="num">{qty(cur)}</td>
+                    <td className="num" style={cur < 0 ? { color: "var(--warning-text)" } : undefined}
+                      title={cur < 0 ? "Below zero by the journal: more went out than was recorded coming in. Count what is there." : undefined}>{qty(cur)}</td>
                     <td className="num"><input className="input" type="number" min={0} step="any" style={{ width: 110, textAlign: "right" }}
-                      value={edits[k] ?? ""} placeholder={qty(cur)} onChange={(e) => setEdits({ ...edits, [k]: e.target.value })}
+                      value={edits[k] ?? ""} placeholder={qty(Math.max(0, cur))} onChange={(e) => setEdits({ ...edits, [k]: e.target.value })}
                       aria-label={`Counted ${nm.prod(p)} at ${nm.loc(l)}`} /></td>
                     <td className="faint">{uom.get(p)}</td>
                   </tr>

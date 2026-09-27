@@ -54,6 +54,9 @@ def stock(movs: list[GoodsMovement]) -> dict[Node, float]:
     return dict(out)
 
 
+COUNTED = {MovementType.ADJUSTMENT, MovementType.OPENING}   # what a stock count posts
+
+
 def stock_rows(ds: Dataset, as_of: date) -> list[StockRow]:
     movs = sorted(before(ds, as_of), key=lambda m: (m.date, m.id))
     by_node: dict[Node, list[GoodsMovement]] = defaultdict(list)
@@ -67,7 +70,8 @@ def stock_rows(ds: Dataset, as_of: date) -> list[StockRow]:
         master = lp.on_hand if lp else 0.0
         ms = by_node.get(n, [])
         # a dip below zero is reported while it lasts, or when it began in the week just closed (a late receipt
-        # can still be posted for it); an older dip the stock came back from has had its say at that week's roll
+        # can still be posted for it); an older dip the stock came back from has had its say at that week's roll,
+        # and one a count ended is settled: the count says what is there
         bal, neg, dip = 0.0, None, None
         by_type: dict[str, float] = defaultdict(float)
         for m in ms:
@@ -76,7 +80,7 @@ def stock_rows(ds: Dataset, as_of: date) -> list[StockRow]:
             if bal < -EPS:
                 dip = dip or m.date
             elif dip is not None:
-                if neg is None and dip >= as_of - timedelta(days=7):
+                if neg is None and dip >= as_of - timedelta(days=7) and m.type not in COUNTED:
                     neg = dip
                 dip = None
         if neg is None and dip is not None:

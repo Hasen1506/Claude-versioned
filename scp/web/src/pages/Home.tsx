@@ -405,6 +405,9 @@ function Status() {
     <div className="status" role="status">Not ready to plan yet: {plural(todo.length, "thing")} still to set up.
       <a href={href("readiness")}>Open the checklist</a></div>
   );
+  if (f === "none" && Object.values(s.runs).some((r) => r.running)) return (
+    <div className="status" role="status">Calculating the plan from the latest save…</div>
+  );
   if (f === "none") return (
     <div className="status" role="status">Nothing calculated yet.
       <button className="btn sm" onClick={() => store.planAll()}>Plan everything</button></div>

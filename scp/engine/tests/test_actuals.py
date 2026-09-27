@@ -84,6 +84,9 @@ def test_an_old_dip_below_zero_the_stock_came_back_from_is_not_reported_again():
     d["movements"].append(mv(4, "2026-01-12", "sale", "P", "A", 30, counterparty="K"))
     at = {r.product: r for r in stock_rows(ds(d), date(2026, 1, 30)) if r.location == "P"}
     assert at["A"].negative_on == date(2026, 1, 12)                  # still below zero: always reported
+    d["movements"].append(mv(5, "2026-01-13", "adjustment", "P", "A", 14))
+    at = {r.product: r for r in stock_rows(ds(d), date(2026, 1, 16)) if r.location == "P"}
+    assert at["A"].negative_on is None                               # a count settled it: nothing is missing
 
 
 # ---- roll-forward -------------------------------------------------------------------------------------

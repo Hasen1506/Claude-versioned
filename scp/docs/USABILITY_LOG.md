@@ -7,6 +7,8 @@ Open items name the roadmap phase that addresses them.
 Phases: **A** get your own company in · **B** master-data depth · **C** capacity and material together ·
 **D** PP/DS-class scheduling · **E** procure-to-pay · **F** execution you can trust · **H** defaults and onboarding ·
 **G** order to cash. Proposed after the second reality check: **I** a real place to keep the company · **J** polish.
+After J: **K** third reality check (six weeks, R-findings) · then **L** platform · **O** stock you can trace ·
+**P** planning depth · **M** order to cash, complete · **N** procure to pay, complete · **Q** connected.
 
 ## Found in the reality check (before Phase A)
 
@@ -212,41 +214,115 @@ roll-forward report, and every page at phone width except *Machines & shifts* (n
 - **J: polish sweep** (Q17–Q25, N8, N31, N56, N57, N62): **done**, see the statuses above and N66–N71; its open
   items N69–N71 are **done** too (J+), with N72–N76.
 
+## Found in the third reality check (Phase K)
+
+A food company built from an empty start through the screens: Godavari Dairy Foods (fictional), one dairy plant at
+Nashik, a cold store at Pune, five suppliers (a milk co-op delivering daily, sugar, mango pulp, an imported culture,
+packaging), three customer channels (modern trade, general trade, hotels and caterers), four finished goods (mango
+yoghurt, plain dahi, paneer, and catering paneer made to order for the hotels, 7 days' shelf life), standardised milk
+as an intermediate, and two years of weekly sales history. An owner (Asha, who also enters sales promotions), a
+planner (Ravi) and a viewer (Meera, on a phone) were signed in at the same time. Then **six planning weeks**, each:
+Home, buy what is due and send it, firm the firm zone, take the hotels' orders, post the week's receipts, production,
+transfers, deliveries and a dispatch register upload, sometimes a short delivery or a count, check the stock, move the
+plan a week, re-plan and read the results. Week 5 carried a mango promotion (+40 % at modern trade) that marketing
+entered ahead of time; week 6 a stock count at the cold store.
+
+How the weeks went (forecast accuracy and bias as *Actuals* shows them after each roll, over the weeks measured):
+
+| Week | Accuracy | Bias | What happened |
+|---|---|---|---|
+| 1 | 73 % | +26.8 % | Sales uploaded without a customer became phantom series at the cold store and the plant (R1–R4). |
+| 2 | 80 % | +7.0 % | A colleague's save silently stopped the planner's (R6); Monday demand late every week (R9). |
+| 3 | 83 % | +2.7 % | Make to order supplied orders from stock and made them again (R7). |
+| 4 | 85 % | −7.1 % | OTIF to confirmed date 25 % although every hotel order left on the day (R8). |
+| 5 | 86 % | −8.2 % | The promotion reached the plan only once it was flagged (R10); a hotel order half late (R12). |
+| 6 | 86 % | −7.7 % | OTIF to confirmed date 40 %; the late half of that order stayed late (R13); count at the cold store. |
+
+Ranked: the critical ones first (all fixed in K), then what is open, with the phase that takes it.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| R1 | A dispatch register's *Customer* column was dropped on upload ("Customer (not used)", *Place* had taken the location): sales lost their customer. | Critical | **Fixed (K).** A movement upload reads *Customer*, *Supplier*, *Vendor* or *Party* as the counterparty; the movement table shows it as *Customer or supplier*. |
+| R2 | Sales without a customer counted as sales of the cold store and the plant: week 1 accuracy 0 % on every channel, and 42 rows of new history series at places that sell nothing. | Critical | **Fixed (K).** A sale without a counterparty, from a place with no demand of its own that ships the product to one channel only, counts as that channel's (accuracy and history). |
+| R3 | Deleting the 42 wrong history rows did not stick: history is rebuilt from the journal on every roll. No bulk delete either. | Critical | **Fixed (K).** Master data deletes every row a search finds (*Delete these N*, with a confirmation); the journal's counterparty is visible and editable, which is where the fix belongs. |
+| R4 | The forecast then had 13 series instead of 7, and releasing it again replaced only the series it wrote: the six phantom series stayed in demand (4,96,122 units over 26 weeks instead of about 2,52,000), with no warning. | Critical | **Fixed (K).** Released records are marked; a full release removes what earlier releases wrote for series it no longer has and names them. New check `FORECAST_TWICE`: a forecast at a place and at a customer it supplies. |
+| R5 | Make to order set where setup leads (the plant) did nothing: the forecast sat at the hotels' channel, whose own default strategy passed it on, so 100 catering paneer a week were made with no order. | Critical | **Fixed (K).** A customer channel without a planning record takes its strategy from the nearest place upstream. |
+| R6 | Two people at once: Asha changed one safety stock while Ravi firmed 8 orders and took 2 hotel orders. Ravi's next save was refused, and every later page kept saying "Saved"; nothing of his reached the server until he pressed *Merge*; the viewer saw none of it. Re-doing the work then took both hotel orders twice. | Critical | **Fixed (K).** A refused autosave merges by itself when no record changed on both sides and says so; only a real clash asks. The order form warns when the customer's order number is already an order. A viewer's page takes in each new save. |
+| R7 | Make to order ignored stock in planning while promising used it: two hotel orders were promised from stock *and* got a new batch; catering paneer (7 days' life) reached 340 on hand. | Critical | **Fixed (K).** Make to order uses free stock first, never the forecast. |
+| R8 | OTIF to confirmed date read 0 % every week though every hotel order left on the day asked: the order list showed the arrival date, the planner posted the delivery on it, and the one-day route made each arrive a day late. | Critical | **Fixed (K).** *Ship by* on the open-order list (the promise's ship date, else the date less the route) with "late if sent …". |
+| R9 | Routes of half a day were rounded up to a day everywhere: Monday demand at the channels could never be met, about 1,330 units late every week. | Critical | **Fixed (K).** Up to half a day arrives the same day, in planning, promising and the journal's transit. |
+| R10 | Asha entered the promotion as a demand event; Home said "Everything is up to date" and the plan's demand never had it. | Critical | **Fixed (K).** A release records what it was made with; a later change to events, new-product rules, overrides or forecast settings raises `FORECAST_INPUTS_CHANGED` and a *Not in the plan yet* banner on Demand. With it used, mango at modern trade for the promotion week went 1,968 → 2,827 (sales 2,921). |
+| R11 | Using the forecast wrote a forecast for the hotels' catering paneer, made to order: ignored by the plan, a warning every week. | Critical | **Fixed (K).** A release skips products made to order where they are sold, removes what earlier releases wrote for them, and says so. |
+| R12 | Capable-to-promise took a component's availability even when it came months out (standardised milk free in March) and never tried making it (milk bought today, standardised by Tuesday): 20 of a 60-unit hotel order were promised 3 days late on the lead time. | Critical | **Fixed (K).** The earlier of the component's stock and new supply. |
+| R13 | A promise on new production does not make that production: the run stayed planned (Monday's firming came before the order), was never made, and the order went late at the roll. Nothing on Home pointed to backorder processing, which then brought the order on time. | Serious | **Fixed (K).** Taking an order made to order, or promised on new supply, says it must be made firm and where; Home links *Try to bring late orders forward* when an order is late. SAP's CTP creates the planned order itself: **P**. |
+| R14 | Home repeated "3 places would go below zero" every week for dips weeks old that the stock had come back from, and for dips a count had settled. | Serious | **Fixed (K).** A dip is reported while it lasts, or when it began in the week just closed and no count ended it. |
+| R15 | Shelf life never limits the plan: catering paneer (7 days) made in batches of 100 covering 10 days; "May expire" is a tag, but lot sizes, batch rounding and "a week's need" ignore it, and nothing expires in stock. | Serious | Open: **O** (expiry in stock, first expiring first out) and **P** (lot sizes within shelf life). |
+| R16 | A short milk delivery (85 %) is posted "closed 769 short", but the firm runs that needed it are not flagged; posting them in full takes raw milk to −2,307, and the roll sets it to 0. | Serious | Open: **O**. |
+| R17 | Raw milk ends every week slightly negative (−306): the plan buys exactly what the runs need and any yield or rounding takes it below zero; nothing suggests a buffer. The roll's "set to 0" leaves the journal and the plan disagreeing until someone counts. | Serious | Open: **O** (stock below zero as a policy: refuse, allow, or count), **P** (yield in the bill of materials). |
+| R18 | A person conflicts with their own save: a reload while a save is in flight is refused next time as "Ravi saved … after your changes began", shown to Ravi. | Serious | Open: **L**. |
+| R19 | History keeps a state to put back only every ~10 minutes per person, so "just before the release" was not there; *Undo* is gone after a reload. | Serious | Open: **L** (every save put-back-able; undo that survives a reload). |
+| R20 | Firming makes purchase orders after the day's orders were sent on *Buying*; they wait "to send" until someone goes back. | Serious | Open: **N** (firming offers to send what it created). |
+| R21 | Demand events are entered only in Master data; *+ New event* saves at once an event on every product at every place with the measured lift. | Serious | Open: **P** (events on the Demand page; a new event starts without effect). |
+| R22 | Two numbers called accuracy: Home "92 % accurate on past weeks" (backtest), Actuals "73 % against real sales". | Minor | Open: **J-type sweep in L**. |
+| R23 | One negative count refused all three counts; the count grid showed a negative book stock (−905) as the suggested count. | Minor | **Fixed (K).** A negative count is flagged before saving; a stock below zero is marked and suggests 0. |
+| R24 | A viewer's Home said "Nothing calculated yet" while its first calculation ran. | Minor | **Fixed (K).** "Calculating the plan from the latest save…". |
+| R25 | Event lift said "0.3 = +30 %" on a field typed in percent (also the override change and the forecast interval). | Minor | **Fixed (K).** |
+| R26 | Backorder processing told the planner to "simulate … then commit"; the buttons are *Re-decide who gets scarce stock* and *Save these new promised dates*. | Minor | **Fixed (K).** |
+| R27 | Master data tables and record headers show ids; the index shows a table's problem count where its row count goes ("Planning policies 3" for 16 rows); "Where used" truncates a source id. | Minor | Open: **L** sweep. |
+| R28 | Signed in, *Create the company* still makes a browser-only company; keeping it on the server is a second step. | Minor | Open: **L**. |
+| R29 | Setup never asks shelf life or make to order; forecast settings are labelled "Abc a", "Xyz x" and list models by code; *Upload sales history* opens a table where the upload is another button. | Minor | Open: **L** sweep. |
+| R30 | No refrigerated route mode; the cold chain is "Truck (full load)". | Minor | Open: **O**. |
+| R31 | Smaller: Actuals before a roll says movements run "up to" the start when they run to the week's end; the merge banner takes the page's own message slot; an order promised in two lines on the same day lists the day twice; a raw-milk PO line keeps 12 decimals in the data; the promotion check starts only with the first release after it existed. | Minor | Open: **L** sweep. |
+
+What held up: building a dairy from nothing (network, products with batches and a made-to-order line, suppliers with
+currencies, two years of history), buying and sending every week, firming, posting a week of receipts, production and
+transfers in minutes, the weekly roll, the promotion once it was in, backorder processing, the viewer on a phone (no
+sideways scroll, no change buttons), and three people working on one company without losing a change once R6 was fixed.
+
 ## The next plan (after Phase J)
 
-Every finding of both reality checks is fixed. What is left is breadth against SAP (the gaps below), the small open
-items (N63–N65, N76) and use at a real company's scale. Proposed, in the order recommended:
+Every finding of the first two reality checks is fixed, and every critical one of the third (K). What is left is
+K's open findings (R13–R31, ranked above), breadth against SAP (the gaps below), the small open items (N63–N65,
+N76) and use at a real company's scale. Proposed, in the order recommended:
 
-- **K: third reality check, over weeks, not a day** (first). A company from another industry (food: shelf life,
-  batches, a make-to-stock line and a make-to-order one) built from empty by a planner, with an owner and a viewer
-  signed in at the same time, then run for **six planning weeks**: each week post the actuals, roll, re-plan, buy,
-  promise, schedule. It finds what a one-cycle check cannot: drift between the journal and the plan, a growing
-  history and journal, accuracy and performance over time, how a second planner's edits meet the first's. Findings go
-  here as R1, R2, …, ranked; the phases below are re-ordered by them.
-- **L: platform for real use** (N63–N65 and the users gap). Saves that send only what changed (N64); a side-by-side
-  choice per record when two people changed it (N65); password reset by e-mail and single sign-on (N63); rights by
-  plant or product group; four eyes on master-data changes; change documents with every field's old and new value;
-  a nightly backup and a restore. A measured test at scale (5,000 products × 20 places, two years of history) with
-  the plan's time and memory, and the slow parts fixed. A deployment guide (container, database, mail).
+- **K: third reality check, over weeks, not a day**: **done**, see R1–R31 above. Every critical finding is fixed;
+  what is open is ranked there with its phase, and the phases below are re-ordered by it.
+- **L: platform for real use** (R18, R19, R22, R27–R29, R31, N63–N65, N76 and the users gap). A save never
+  refused as someone else's when it is one's own (R18); every save a state to put back, and undo that survives a
+  reload (R19); saves that send only what changed (N64); a side-by-side choice per record when two people changed it
+  (N65); password reset by e-mail and single sign-on (N63); rights by plant or product group; four eyes on
+  master-data changes; change documents with every field's old and new value; a nightly backup and a restore.
+  Creating a company while signed in keeps it on the server (R28). A sweep of the minor items (R22, R27, R29, R31,
+  N76). A measured test at scale (5,000 products × 20 places, two years of history) with the plan's time and memory,
+  and the slow parts fixed. A deployment guide (container, database, mail).
+- **O: stock you can trace** (R15–R17, R30 and the inventory gaps; moved up by K). Batch numbers with an expiry
+  date, and first expiring, first out, so shelf life shows in stock (R15); a short receipt names the firm orders that
+  can no longer run in full, and offers to shorten them (R16); stock below zero as a company rule — refuse the
+  posting, allow it and ask for a count, or count it as found — instead of the roll setting it to 0 (R17); stock in
+  quality inspection and blocked; reversal of a posting; a physical inventory document with a freeze; stock in
+  transit as its own stock type; a refrigerated route mode (R30); serial numbers.
+- **P: planning depth** (R13, R15, R17, R21 and the remaining MRP, BOM, capacity and PP/DS gaps; moved up by K).
+  Capable-to-promise that creates the planned order it promised on, firm, as SAP does (R13); lot sizes and batches
+  that stay within shelf life (R15); yield in the bill of materials so a part is bought with the loss in it (R17);
+  demand events on the Demand page, a new one starting without effect (R21); MRP groups; withdrawal from another
+  plant and direct production; a discontinued product with its follow-up; alternative BOMs; overtime as a levelling
+  and optimiser choice; supplier and lane capacity in planning; steps needing a machine and a tool together;
+  dragging orders between days to level.
 - **M: order to cash, complete** (SD gaps). Orders with several lines; prices with discounts and quantity scales;
   payment terms and a credit check; an order confirmation to send the customer (as the purchase order); delivery
   documents with picking, packing and proof of delivery; invoices; returns and credit notes; quotations.
-- **N: procure to pay, complete** (MM gaps). Invoice verification (three-way match) and what is owed to whom;
-  contracts and scheduling agreements; several confirmation lines per order line; returns to the supplier; a
-  release strategy with more than one level.
-- **O: stock you can trace** (inventory gaps, needed by the food company in K). Batch and serial numbers; first
-  expiring, first out; stock in quality inspection and blocked; reversal of a posting; a physical inventory document
-  with a freeze; stock in transit as its own stock type.
-- **P: planning depth** (the remaining MRP, BOM, capacity and PP/DS gaps). MRP groups; withdrawal from another plant
-  and direct production; a discontinued product with its follow-up; alternative BOMs; overtime as a levelling and
-  optimiser choice; supplier and lane capacity in planning; steps needing a machine and a tool together; dragging
-  orders between days to level.
+- **N: procure to pay, complete** (R20 and the MM gaps). Firming offers to send the purchase orders it created
+  (R20); invoice verification (three-way match) and what is owed to whom; contracts and scheduling agreements;
+  several confirmation lines per order line; returns to the supplier; a release strategy with more than one level.
 - **Q: connected to the rest of the company**. Scheduled imports and an API for an ERP to send orders, stock and
   movements and to take back purchase and production orders; e-mail sent from the application (orders to suppliers,
   confirmations to customers, the worklist's reminders).
 
-K goes first because both earlier reality checks found more than the phases before them had; L before the process
-phases because a company that keeps a year of history needs it before it needs invoices.
+Order after K: **L, O, P, M, N, Q**. L stays first: six weeks with three people showed that trust in saving and
+going back (R18, R19) matters before any new process, and a year of history needs the scale work. O and P move ahead
+of M and N because every open serious finding of K is about stock that is really there (shelf life, short receipts,
+stock below zero) or a plan that acts on it, while none was about invoices or contracts: a food company cannot run on
+a plan that ignores expiry, and it can invoice from its own system meanwhile.
 
 ## Gaps against SAP recorded for later phases
 
