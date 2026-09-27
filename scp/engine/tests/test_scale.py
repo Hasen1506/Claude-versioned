@@ -1,7 +1,7 @@
 """What the scale work (Phase L) relies on: results worked out once are handed out again only for the same data."""
 import pytest
 
-from scp.api.app import post_validate
+from scp.api.app import validation_view
 from scp.network import build_graph
 from scp.plan import mrp
 from scp.validate import validate
@@ -46,7 +46,7 @@ def test_the_readiness_gate_uses_the_checks_it_already_ran():
     parsed, aside, checked = lenient_checked(raw)
     assert checked is not None and not aside
     assert checked == validate(parsed)
-    assert post_validate(raw).issues == checked
+    assert validation_view(raw).issues == checked
 
 
 def test_the_costs_followed_to_customers_are_kept_beside_the_plan_they_follow(keep_every_plan):

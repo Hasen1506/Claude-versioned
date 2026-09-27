@@ -88,3 +88,35 @@ export function makePatch(before: Doc, after: Doc): Patch {
 
 /** How big a patch is against the whole company: sending it whole is simpler when most of it changed. */
 export const patchIsSmall = (p: Patch, whole: Doc) => JSON.stringify(p).length * 3 < JSON.stringify(whole).length;
+
+/** `doc` with `patch` applied, as the server applies it (scp/companies/patch.py apply_patch), for an engine answer
+ *  that says what it changed instead of sending the company back whole (Phase S). Records are found by their key,
+ *  so records the patch does not name (one the checks set aside, say) stay as they are. Throws when it does not fit. */
+export function applyPatch<T extends object>(doc: T, patch: Patch): T {
+  if (patch.v !== 1) throw new Error("not a patch this client understands");
+  const out = { ...(doc as Doc) };
+  for (const name of patch.drop ?? []) delete out[name];
+  for (const [name, v] of Object.entries(patch.set ?? {})) out[name] = v;
+  for (const [name, ch] of Object.entries(patch.lists ?? {})) {
+    const rows = (out[name] ?? []) as unknown[];
+    const fields = KEYS[name] ?? ["id"];
+    const keys = recordKeys(rows, fields);
+    if (!keys) throw new Error(`the records of ${name} cannot be told apart here`);
+    const pos = new Map(keys.map((k, i) => [JSON.stringify(k), i] as const));
+    const next = [...rows];
+    const gone = new Set<number>();
+    for (const k of ch.remove ?? []) {
+      const i = pos.get(JSON.stringify(k));
+      if (i === undefined) throw new Error(`${name}: a removed record is not here`);
+      gone.add(i);
+    }
+    for (const r of ch.upsert ?? []) {
+      const s = JSON.stringify(fields.map((f) => r[f] ?? null));
+      const i = pos.get(s);
+      if (i !== undefined) next[i] = r;
+      else { pos.set(s, next.length); next.push(r); }
+    }
+    out[name] = gone.size ? next.filter((_, i) => !gone.has(i)) : next;
+  }
+  return out as T;
+}

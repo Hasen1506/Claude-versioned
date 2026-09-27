@@ -1106,8 +1106,17 @@ _last: tuple[str, PlanResult, dict[str, Any]] | None = None
 _last_lock = threading.Lock()
 
 
+#: A dataset's fingerprint when something already stands for its content (a company read by reference is its save
+#: and the changes on it, scp.api.working), else None: hashing a large company takes seconds.
+def _no_fingerprint(_ds: Dataset) -> str | None:
+    return None
+
+
+known_fingerprint: Callable[[Dataset], str | None] = _no_fingerprint
+
+
 def _fingerprint(ds: Dataset) -> str:
-    return hashlib.sha256(ds.model_dump_json().encode()).hexdigest()
+    return known_fingerprint(ds) or hashlib.sha256(ds.model_dump_json().encode()).hexdigest()
 
 
 def run_mrp(ds: Dataset) -> PlanResult:

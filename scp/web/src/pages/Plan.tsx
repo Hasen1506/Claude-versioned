@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { Dataset, PlanResult, PlannedOrder, Requirement } from "../api/types";
+import type { Dataset, Peg, PlanResult, PlannedOrder, Requirement } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
   Badge, cols, Empty, Panel, Provenance, RunButton, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term, type Severity,
@@ -9,7 +9,7 @@ import { situations, codeLabel } from "../lib/situations";
 import { bucketWords, day, money, ORDER_LABEL, pct, plural, qty } from "../lib/format";
 import { Loc, Msg, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
-import { isStale, store, useStore } from "../state/store";
+import { isStale, store, usePlanTrace, useStore } from "../state/store";
 
 /** Part of a late order is still on time: its inputs are only partly late (the part in stock ships as planned). */
 const partOnTime = (o: PlannedOrder) => (o.projected_on_time_qty ?? 0) > 1e-9 && (o.projected_on_time_qty ?? 0) < o.qty - 1e-9;
@@ -386,19 +386,21 @@ function OrderTable({ plan, orders, sel, onSelect, compact }: {
 /** Pegging tree: what this order serves (upstream to the customer) and what it depends on. */
 function PegTree({ plan, orderId }: { plan: PlanResult; orderId: string }) {
   const nm = useNames();
+  const orders = useMemo(() => new Map(plan.orders.map((o) => [o.id, o])), [plan]);
+  // the plan comes without its pegging (Phase S): this order's chain is asked for
+  const tr = usePlanTrace({ order: orderId });
   const idx = useMemo(() => {
-    const orders = new Map(plan.orders.map((o) => [o.id, o]));
-    const reqs = new Map(plan.requirements.map((r) => [r.id, r]));
-    const bySupply = new Map<string, PlanResult["pegs"]>();
-    const byReq = new Map<string, PlanResult["pegs"]>();
+    const reqs = new Map((tr.data?.requirements ?? []).map((r) => [r.id, r]));
+    const bySupply = new Map<string, Peg[]>();
+    const byReq = new Map<string, Peg[]>();
     const byParent = new Map<string, Requirement[]>();
-    for (const p of plan.pegs) {
+    for (const p of tr.data?.pegs ?? []) {
       bySupply.set(p.supply_id, [...(bySupply.get(p.supply_id) ?? []), p]);
       byReq.set(p.requirement_id, [...(byReq.get(p.requirement_id) ?? []), p]);
     }
-    for (const r of plan.requirements) if (r.parent_order) byParent.set(r.parent_order, [...(byParent.get(r.parent_order) ?? []), r]);
+    for (const r of tr.data?.requirements ?? []) if (r.parent_order) byParent.set(r.parent_order, [...(byParent.get(r.parent_order) ?? []), r]);
     return { orders, reqs, bySupply, byReq, byParent };
-  }, [plan]);
+  }, [orders, tr.data]);
   const o = idx.orders.get(orderId);
   if (!o) return <div className="faint">Order not found.</div>;
 
@@ -458,6 +460,9 @@ function PegTree({ plan, orderId }: { plan: PlanResult; orderId: string }) {
             {rounding > 1e-6 && <> · {qty(rounding)} lot-size rounding</>}</div>
         )}
       </div>
+      {tr.error && <div className="banner error">What this order serves could not be read: {tr.error}</div>}
+      {!tr.data && !tr.error && <div className="faint small" role="status">Reading what this order serves and depends on…</div>}
+      {tr.data && <>
       <div>
         <h3>Serves</h3>
         {(idx.bySupply.get(o.id) ?? []).length ? <ul>{serves(o.id, 0)}</ul> : <div className="faint small">Not pegged to a requirement: it builds the buffer or is lot-size rounding.</div>}
@@ -466,6 +471,7 @@ function PegTree({ plan, orderId }: { plan: PlanResult; orderId: string }) {
         <h3>Depends on</h3>
         {(idx.byParent.get(o.id) ?? []).length ? <ul>{needs(o.id, 0)}</ul> : <div className="faint small">{o.kind === "buy" ? "Bought from the supplier: the end of the chain." : "No inputs."}</div>}
       </div>
+      </>}
     </div>
   );
 }

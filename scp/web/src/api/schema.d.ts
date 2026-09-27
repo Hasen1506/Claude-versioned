@@ -540,11 +540,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Post Validate
-         * @description The readiness gate on everything that can be planned; unfinished records are set aside and listed,
-         *     each also as a SET_ASIDE warning, instead of making the whole dataset unreadable.
-         */
+        /** Post Validate */
         post: operations["post_validate_api_validate_post"];
         delete?: never;
         options?: never;
@@ -862,8 +858,32 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Post Plan */
+        /**
+         * Post Plan
+         * @description The supply plan. ``pegging=false`` leaves out the requirements and the pegging (two thirds of a large plan):
+         *     ``/api/plan/trace`` gives an order's or a product's part of them when it is looked at.
+         */
         post: operations["post_plan_api_plan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/plan/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Plan Trace
+         * @description Part of the plan's requirements and pegging: an order's chain, or one product's at one place.
+         */
+        post: operations["post_plan_trace_api_plan_trace_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2221,7 +2241,11 @@ export interface components {
         };
         /** CreatePoResponse */
         CreatePoResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             report: components["schemas"]["CreateReport"];
         };
         /** CreateReport */
@@ -2817,7 +2841,11 @@ export interface components {
         };
         /** FirmResponse */
         FirmResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             report: components["schemas"]["FirmReport"];
         };
         /** FirmedOrder */
@@ -4862,7 +4890,11 @@ export interface components {
         };
         /** PlacementResponse */
         PlacementResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             applied: components["schemas"]["PlacementApplied"];
         };
         /** PlanException */
@@ -4935,6 +4967,13 @@ export interface components {
             exceptions: number;
             /** Errors */
             errors: number;
+        };
+        /** PlanTrace */
+        PlanTrace: {
+            /** Requirements */
+            requirements: components["schemas"]["Requirement"][];
+            /** Pegs */
+            pegs: components["schemas"]["Peg"][];
         };
         /** PlannedOrder */
         PlannedOrder: {
@@ -5080,7 +5119,11 @@ export interface components {
         };
         /** PoActionResponse */
         PoActionResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             report: components["schemas"]["ActionReport"];
         };
         /** PoLine */
@@ -5406,7 +5449,11 @@ export interface components {
         };
         /** PromiseCommitResponse */
         PromiseCommitResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             result: components["schemas"]["PromiseResult"];
         };
         /** PromiseKpis */
@@ -5800,7 +5847,11 @@ export interface components {
         };
         /** ReleaseResponse */
         ReleaseResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             release: components["schemas"]["ReleaseResult"];
         };
         /** ReleaseResult */
@@ -6159,7 +6210,11 @@ export interface components {
         };
         /** RollResponse */
         RollResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             report: components["schemas"]["RollReport"];
         };
         /**
@@ -6308,7 +6363,11 @@ export interface components {
         };
         /** SalesOrderResponse */
         SalesOrderResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             report: components["schemas"]["SalesOrderReport"];
         };
         /** SaveBaseRequest */
@@ -6418,7 +6477,11 @@ export interface components {
         };
         /** ScheduleApplyResponse */
         ScheduleApplyResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             report: components["schemas"]["ApplyReport"];
         };
         /** ScheduleCatalogue */
@@ -7390,7 +7453,11 @@ export interface components {
         };
         /** SopReleaseResponse */
         SopReleaseResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             release: components["schemas"]["SopRelease"];
         };
         /** SopResult */
@@ -7833,6 +7900,16 @@ export interface components {
              * @default 0.2
              */
             bias_alert: number;
+        };
+        /** TraceRequest */
+        TraceRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Order */
+            order?: string | null;
+            /** Location */
+            location?: string | null;
+            /** Product */
+            product?: string | null;
         };
         /** TransportLane */
         TransportLane: {
@@ -9775,7 +9852,9 @@ export interface operations {
     };
     post_plan_api_plan_post: {
         parameters: {
-            query?: never;
+            query?: {
+                pegging?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -9793,6 +9872,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlanResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_plan_trace_api_plan_trace_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TraceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanTrace"];
                 };
             };
             /** @description Validation Error */

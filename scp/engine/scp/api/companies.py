@@ -27,6 +27,7 @@ from ..companies import (
 )
 from ..companies import mail, sso
 from ..model.common import Out
+from .working import asker, takes_gzip, takes_rows
 
 router = APIRouter(prefix="/api", tags=["companies"])
 
@@ -60,6 +61,9 @@ def company_error(_request: Request, exc: CompanyError) -> JSONResponse:
 async def gate(request: Request, call_next):
     """With SCP_REQUIRE_SIGNIN, every API call but health and signing in needs a valid session."""
     path = request.url.path
+    asker.set((token_of(request), request.headers.get("x-company", "").strip()))
+    takes_gzip.set("gzip" in request.headers.get("accept-encoding", ""))
+    takes_rows.set(request.headers.get("x-pack", "") == "rows")
     if require_signin() and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS":
         try:
             get_companies().whoami(token_of(request))

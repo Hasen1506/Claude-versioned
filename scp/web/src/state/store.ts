@@ -4,11 +4,11 @@
 // was computed on, so the UI can show "stale" the moment any input it reads changes — the legacy STALE
 // cascade, done by construction: every result reads the whole dataset except the parts only the shop floor
 // schedule reads (its settings and the changeover matrix), which leave the other results fresh.
-import { useEffect, useSyncExternalStore } from "react";
-import { api, ApiError, SchemaRejected, setAuth, setPlanningView, setWriteGuard } from "../api/client";
-import { makePatch, patchIsSmall } from "../lib/patch";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { api, ApiError, SchemaRejected, setAuth, setDataRef, setPlanningView, setWriteGuard, type DataRef } from "../api/client";
+import { makePatch, patchIsSmall, type Patch } from "../lib/patch";
 import { keepSteps, stepsFor } from "./undoStore";
-import type { CompanyDoc, CompanyMeta, User, ActualsView, PurchasingView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
+import type { CompanyDoc, CompanyMeta, PlanTrace, User, ActualsView, PurchasingView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
 
 export interface RunResults {
   forecast: ForecastResult;
@@ -30,6 +30,7 @@ export interface Run<T> {
   running: boolean;
   error: string | null;
   at: string | null;         // wall-clock time of the last successful run
+  on?: Dataset | null;       // the working copy it was computed on (a trace of the plan asks about that data)
 }
 
 /** The stored version the working copy was opened from or last saved to (P8). */
@@ -179,10 +180,11 @@ setPlanningView((ds) => {
   }
   return {
     clean: clean as unknown as Dataset,
-    restore: (next) => {
-      if (!dropped.length) return next;
+    restore: (next, only) => {
+      const put = only ? dropped.filter(([coll]) => only.includes(coll)) : dropped;
+      if (!put.length) return next;
       const back = { ...next } as unknown as Coll;
-      for (const [coll, recs] of dropped) back[coll] = [...(back[coll] ?? []), ...recs];
+      for (const [coll, recs] of put) back[coll] = [...(back[coll] ?? []), ...recs];
       return back as unknown as Dataset;
     },
   };
@@ -253,6 +255,30 @@ function setBase(ds: Dataset | null, rev = -1) {
     /* the next save then sends the whole company, and merging asks the server for the base */
   }
 }
+
+/** The working copy as the planning calls send it (Phase S): the server's save it was made from and what changed
+ *  since, when the server keeps the company and this browser has that save; worked out once per edit. */
+let refMemo: { ds: Dataset; rev: number; ref: DataRef } | null = null;
+/** References made for earlier working copies: a result computed on one (the plan on screen, out of date) is asked
+ *  about with the same reference, so the server answers from what it kept instead of working it out again. */
+const refsMade = new WeakMap<Dataset, DataRef>();
+/** The server did not take a reference on this save (its copy differed): send the company whole until the next. */
+let refUnfitAt = -2;
+setDataRef((ds) => {
+  const c = state.company;
+  if (!c?.live || !state.session) return null;
+  if (ds !== state.dataset) return refsMade.get(ds) ?? null;
+  if (!baseDoc || baseRev !== c.revision || refUnfitAt === baseRev) return null;
+  if (refMemo && refMemo.ds === ds && refMemo.rev === baseRev) return refMemo.ref;
+  let patch: Patch | null = null;
+  if (baseDoc !== ds) {
+    patch = makePatch(baseDoc as unknown as Record<string, unknown>, ds as unknown as Record<string, unknown>);
+    if (!patch.lists && !patch.set && !patch.drop) patch = null;
+  }
+  refMemo = { ds, rev: baseRev, ref: { revision: baseRev, patch } };
+  refsMade.set(ds, refMemo.ref);
+  return refMemo.ref;
+}, () => { refUnfitAt = baseRev; refMemo = null; });
 
 /** What a save sends: the changes since the save it was made from when that is known and they are small, else the
  *  whole working copy. */
@@ -716,7 +742,7 @@ export const store = {
     try {
       const data = await RUNNERS[key](ds);
       if (epoch !== loadEpoch) return;   // another company or file was opened meanwhile
-      setRun(key, { data, revision: rev, running: false, at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
+      setRun(key, { data, revision: rev, on: ds, running: false, at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
     } catch (e) {
       if (epoch !== loadEpoch) return;
       if (e instanceof SchemaRejected) {
@@ -759,7 +785,8 @@ export const store = {
 
   /** Store a result computed outside `run` (e.g. a schedule with a hand-edited sequence). */
   put<K extends RunKey>(key: K, data: RunResults[K], rev: number) {
-    setRun(key, { data, revision: rev, running: false, error: null, at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
+    setRun(key, { data, revision: rev, on: rev === state.revision ? state.dataset : null, running: false, error: null,
+      at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
   },
 
   restore() {
@@ -833,6 +860,23 @@ export const store = {
 
 export function useStore<T>(select: (s: State) => T): T {
   return useSyncExternalStore(store.subscribe, () => select(state));
+}
+
+/** Part of the plan's requirements and pegging (Phase S: the plan comes without them): an order's chain, or one
+ *  product's at one place, asked about the data the plan on screen was computed on. `data` is null while it comes. */
+export function usePlanTrace(what: { order: string } | { location: string; product: string } | null) {
+  const run = useStore((s) => s.runs.plan);
+  const key = what && run.data ? `${JSON.stringify(what)}@${run.revision}` : "";
+  const [got, setGot] = useState<{ key: string; data: PlanTrace | null; error: string | null }>({ key: "", data: null, error: null });
+  useEffect(() => {
+    const on = run.on ?? state.dataset;
+    if (!key || !what || !on) return;
+    let live = true;
+    api.planTrace(on, what).then((data) => { if (live) setGot({ key, data, error: null }); },
+      (e) => { if (live) setGot({ key, data: null, error: String(e) }); });
+    return () => { live = false; };
+  }, [key]);   // eslint-disable-line react-hooks/exhaustive-deps
+  return got.key === key ? got : { key, data: null, error: null };
 }
 
 /** A viewer of the open company: controls that change data are shown disabled (N62). */

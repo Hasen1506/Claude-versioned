@@ -139,8 +139,8 @@ class EngineClient:
         return validate(ds)
 
     def network(self, ds: Dataset) -> Any:
-        from ..api.app import post_network   # the view is assembled in the API layer
-        return post_network(ds)
+        from ..api.app import network_view   # the view is assembled in the API layer
+        return network_view(ds)
 
     def forecast(self, ds: Dataset) -> ForecastResult:
         return run_forecast(ds)

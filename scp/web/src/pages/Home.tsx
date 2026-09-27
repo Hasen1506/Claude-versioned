@@ -10,7 +10,7 @@ import { href } from "../lib/router";
 import { earliestArrival } from "../lib/situations";
 import { earnings } from "../lib/earnings";
 import { Checklist, setupTodo } from "../components/Checklist";
-import { freshness, planFreshness, store, useStore, type RunKey } from "../state/store";
+import { freshness, PLAN_STEPS, planFreshness, store, useStore, type RunKey } from "../state/store";
 
 // ---- first-run guide: remembers which pages this browser has visited --------------------------------
 const VISITED_KEY = "scp.visited.v1";
@@ -446,6 +446,16 @@ function Status() {
   );
   if (f === "none") return (
     <div className="status" role="status">Nothing calculated yet.
+      <button className="btn sm" onClick={() => store.planAll()}>Plan everything</button></div>
+  );
+  // a step that failed is said as such, not as data that changed (at scale a failed answer was shown that way)
+  const failed = PLAN_STEPS.filter((p) => s.runs[p.key].error && !s.runs[p.key].running);
+  if (failed.length) return (
+    <div className="status bad" role="status">{failed.map((p) => p.label).join(", ")} did not finish: {s.runs[failed[0].key].error}
+      <button className="btn sm" onClick={() => store.planAll()}>Plan everything again</button></div>
+  );
+  if (f === "stale" && PLAN_STEPS.some((p) => !s.runs[p.key].data)) return (
+    <div className="status warn" role="status">Some answers are not calculated yet.
       <button className="btn sm" onClick={() => store.planAll()}>Plan everything</button></div>
   );
   if (f === "stale") return (

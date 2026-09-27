@@ -31,7 +31,10 @@ export type NetworkView = S["NetworkView"];
 export type NetLocation = S["NetLocation"];
 export type NetEdge = S["NetEdge"];
 
-export type PlanResult = S["PlanResult"];
+/** The supply plan as the browser gets it (Phase S): without the requirements and the pegging, two thirds of a large
+ *  plan; `api.planTrace` gives an order's or a product's part of them when a page shows it. */
+export type PlanResult = Omit<S["PlanResult"], "requirements" | "pegs">;
+export type PlanTrace = S["PlanTrace"];
 export type PlannedOrder = S["PlannedOrder"];
 export type NodePlan = S["NodePlan"];
 export type NodeBucket = S["NodeBucket"];

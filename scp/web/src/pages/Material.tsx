@@ -2,14 +2,14 @@
 // planned there, how it is supplied and made, and, once a plan has run, every receipt and requirement by date
 // with the stock after each. The index lists every product at every place, filterable by who plans it.
 import { useMemo, useState } from "react";
-import type { Dataset, LocationProduct, PlanResult, ProductionSource } from "../api/types";
+import type { Dataset, LocationProduct, PlanResult, ProductionSource, Requirement } from "../api/types";
 import { Badge, Edits, Empty, Panel, StageHeader, Tabs } from "../components/ui";
 import { day, ORDER_LABEL, qty, TYPE_LABEL } from "../lib/format";
 import { useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { codeLabel } from "../lib/situations";
 import { SchemaForm } from "../schema/SchemaForm";
-import { freshness, store, useStore } from "../state/store";
+import { freshness, store, usePlanTrace, useStore } from "../state/store";
 
 type Tab = "stock" | "mrp1" | "mrp2" | "mrp3" | "mrp4";
 const TABS: { id: Tab; label: string }[] = [
@@ -183,7 +183,7 @@ function MaterialPage({ ds, prod, loc, tab }: { ds: Dataset; prod: string; loc: 
 interface Element { date: string; kind: "stock" | "in" | "out"; what: string; detail?: string; qty: number; link?: string[] }
 
 /** Every receipt and requirement of the node, by date (MD04). */
-function elements(ds: Dataset, plan: PlanResult, prod: string, loc: string, nm: ReturnType<typeof useNames>): Element[] {
+function elements(ds: Dataset, plan: PlanResult, reqs: Requirement[], prod: string, loc: string, nm: ReturnType<typeof useNames>): Element[] {
   const out: Element[] = [];
   const node = plan.nodes.find((n) => n.location === loc && n.product === prod);
   const start = ds.settings.planning_start;
@@ -205,7 +205,7 @@ function elements(ds: Dataset, plan: PlanResult, prod: string, loc: string, nm: 
     }
   }
   const KIND: Record<string, string> = { forecast: "Forecast", sales_order: "Customer order", dependent: "Needed to make", transfer: "Shipped out for" };
-  for (const r of plan.requirements) {
+  for (const r of reqs) {
     if (r.location !== loc || r.product !== prod) continue;
     const parent = r.parent_order ? byId.get(r.parent_order) : undefined;
     const what = r.kind === "dependent" && parent ? `Needed to make ${nm.prod(parent.product)} (${parent.id})`
@@ -222,7 +222,9 @@ function StockList({ ds, plan, prod, loc }: { ds: Dataset; plan: PlanResult | nu
   const nm = useNames();
   const fresh = useStore((s) => freshness(s, "plan"));
   const running = useStore((s) => s.runs.plan.running);
-  const els = useMemo(() => (plan ? elements(ds, plan, prod, loc, nm) : []), [ds, plan, prod, loc, nm]);
+  // the plan comes without its requirements (Phase S): this product's at this place are asked for
+  const tr = usePlanTrace(plan ? { location: loc, product: prod } : null);
+  const els = useMemo(() => (plan && tr.data ? elements(ds, plan, tr.data.requirements, prod, loc, nm) : []), [ds, plan, tr.data, prod, loc, nm]);
   if (!plan) return (
     <Panel><Empty title="Not planned yet">
       <p>The stock and requirements list shows what the supply plan expects, day by day. Plan supply to see it.</p>
@@ -239,7 +241,9 @@ function StockList({ ds, plan, prod, loc }: { ds: Dataset; plan: PlanResult | nu
     <div className="stack">
       {fresh === "stale" && <div className="banner warning">The data changed since this plan ran. <button className="btn sm" disabled={running} onClick={() => store.run("plan")}>Plan again</button></div>}
       <Panel title={<h3>What the plan expects</h3>} actions={<a className="btn sm ghost" href={href("plan", "node", loc, prod)}>Week by week</a>}>
-        {!node ? <p className="muted">The plan does not reach {nm.prod(prod)} at {nm.loc(loc)}: nothing needs it here.</p> : <>
+        {!node ? <p className="muted">The plan does not reach {nm.prod(prod)} at {nm.loc(loc)}: nothing needs it here.</p>
+          : tr.error ? <div className="banner error">The requirements could not be read: {tr.error}</div>
+          : !tr.data ? <p className="faint" role="status">Reading what the plan needs here…</p> : <>
           <p style={{ marginTop: 0 }}>{low ? <>Stock runs out on <b>{day(low.date)}</b> ({qty(low.bal)}).</> : <>Stock never runs out over the plan.</>}
             {ss > 0 && <> Safety stock is {qty(ss)}.</>}
             {node.lead_time_days != null && <> Getting more takes about {qty(Math.round(node.lead_time_days * 10) / 10)} days.</>}</p>
@@ -247,7 +251,7 @@ function StockList({ ds, plan, prod, loc }: { ds: Dataset; plan: PlanResult | nu
             <Badge sev={e.severity === "error" ? "error" : "warning"}>{codeLabel(e.code)}</Badge> {e.date ? `from ${day(e.date)}` : ""}{e.qty ? ` · ${qty(e.qty)}` : ""}</li>)}</ul>}
         </>}
       </Panel>
-      {node && <Panel flush title={`Receipts and requirements (${rows.length})`}>
+      {node && tr.data && <Panel flush title={`Receipts and requirements (${rows.length})`}>
         <div className="table-wrap">
           <table className="t">
             <thead><tr><th>Date</th><th>What</th><th className="num">In / out</th><th className="num">Available after</th></tr></thead>

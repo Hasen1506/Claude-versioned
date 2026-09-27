@@ -753,6 +753,17 @@ class Companies:
             self._need(user, cid)
             return self._doc_at(cid, rev)
 
+    def text_at(self, user: User, cid: str, rev: int) -> str:
+        """The company at revision ``rev`` as JSON text, for a member: the latest save as it is kept, an earlier one
+        rebuilt (the planning calls read the company here instead of receiving it, Phase S)."""
+        with self.lock:
+            self._need(user, cid)
+            r = self.db.execute("SELECT revision, dataset FROM companies WHERE id = ? AND deleted = 0",
+                                (cid,)).fetchone()
+            if r is not None and r["revision"] == rev:
+                return str(r["dataset"])
+            return json.dumps(self._doc_at(cid, rev))
+
     def restore(self, user: User, cid: str, rev: int, base_revision: int, client: str = "") -> SaveReport:
         doc = self.revision(user, cid, rev)
         return self.save(user, cid, doc, base_revision, action="restored", note=f"put back to revision {rev}",
