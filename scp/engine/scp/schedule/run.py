@@ -93,7 +93,7 @@ def build_instance(ds: Dataset, plan: PlanResult | None = None) -> tuple[Instanc
             rid = steps.get(op.seq, op.resource) if steps.get(op.seq) in ds.resource_by_id else op.resource
             alts = [a for a in [op.resource, *op.alternatives] if a != rid]
             ops.append(OpSpec(key=f"{oid}:{op.seq}", order=oid, seq=op.seq, resource=rid, product=product,
-                              group=grp, qty=q, setup=op.setup_hours, run=op.run_hours_per_unit * q,
+                              group=grp, qty=q, setup=op.setup_hours, run=op.run_hours(q),
                               queue_workdays=op.queue_workdays, parallel=op.parallel_units,
                               labor_resource=op.labor_resource, labor_hours=op.labor_hours_per_unit * q,
                               alternatives=alts, send_ahead=op.send_ahead_qty))

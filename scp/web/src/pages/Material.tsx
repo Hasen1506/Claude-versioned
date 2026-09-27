@@ -116,7 +116,7 @@ function MaterialIndex({ ds }: { ds: Dataset }) {
                       <td>{nm.loc(r.loc)}</td>
                       <td>{r.lp?.mrp_controller || <span className="faint">—</span>}</td>
                       <td className="small">{how}{r.lp && r.lp.procurement && r.lp.procurement !== "any" && <div className="faint">{PROC[r.lp.procurement]}</div>}</td>
-                      <td className="small">{r.lp ? (r.lp.mrp_type === "none" ? "not replenished" : r.lp.mrp_type === "reorder_point" ? `reorder at ${qty(r.lp.reorder_point)}` : r.lp.lot_sizing?.policy ?? "L4L") : <span className="faint">defaults</span>}</td>
+                      <td className="small">{r.lp ? (r.lp.mrp_type === "none" ? "not replenished" : r.lp.mrp_type === "reorder_point" ? `reorder at ${qty(r.lp.reorder_point)}` : r.lp.lot_sizing?.policy ?? "company default") : <span className="faint">defaults</span>}</td>
                       <td className="small">{!r.lp || r.lp.safety_stock?.method === "none" || !r.lp.safety_stock ? "none" : r.lp.safety_stock.method.replace(/_/g, " ")}</td>
                       <td className="num">{qty(r.lp?.on_hand ?? 0)}</td>
                       <td>{!plan ? <span className="faint small">not planned</span> : x ? <Badge sev={x.error ? "error" : "warning"}>{x.n}</Badge> : <Badge sev="ok">OK</Badge>}</td>

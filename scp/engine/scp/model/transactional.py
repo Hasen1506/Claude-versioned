@@ -96,5 +96,9 @@ class SalesHistory(Model):
     qty: float = Unit("qty")
     price: float | None = Unit("money_per_unit", default=None)
     promo: bool = False
+    period_days: int | None = Field(
+        None, ge=1, le=366,
+        description="The row is a total over [date, date + period_days), e.g. a month of sales: it is spread evenly "
+                    "over those days. Empty = sold on `date`.")
     from_journal: bool = Field(False, description="Written by the roll-forward from sale movements, and rebuilt from "
                                                   "the whole journal on every roll (so a late posting reaches it)")

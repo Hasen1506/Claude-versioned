@@ -171,9 +171,9 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
                     for need in needs(ds, ps, bk[t0].start):
                         add(departs, (ps.location, need.product), t0, j, need.per_unit + need.per_order / lot)
                     for op in ps.operations:
-                        if op.resource and op.run_hours_per_unit > 0:
+                        if op.resource and op.run_hours_per_unit_avg > 0:
                             cell = res_load[op.resource][t0]
-                            cell[j] = cell.get(j, 0.0) + op.run_hours_per_unit * enter[op.seq]
+                            cell[j] = cell.get(j, 0.0) + op.run_hours_per_unit_avg * enter[op.seq]
                         if op.labor_resource and op.labor_hours_per_unit > 0:
                             cell = res_load[op.labor_resource][t0]
                             cell[j] = cell.get(j, 0.0) + op.labor_hours_per_unit * enter[op.seq]

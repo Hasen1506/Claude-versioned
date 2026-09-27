@@ -7,10 +7,10 @@ import { SevIcon } from "./ui";
 type Item = NonNullable<ValidationResult["setup"]>[number];
 
 const STEP_TITLE: Record<string, string> = {
-  places: "Places", products: "Products", demand: "Demand", supply: "How each product gets where it's needed",
-  making: "How products are made", stock: "Stock on hand", unfinished: "Unfinished records",
+  company: "Your company", places: "Places", products: "Products", demand: "Demand", supply: "How each product gets where it's needed",
+  making: "How products are made", stock: "Stock on hand", prices: "Prices", unfinished: "Unfinished records",
 };
-const ORDER = ["places", "products", "demand", "supply", "making", "stock", "unfinished"];
+const ORDER = ["company", "places", "products", "demand", "supply", "making", "stock", "prices", "unfinished"];
 const SEV = { done: "ok", todo: "error", check: "warning", info: "info" } as const;
 const WORD = { done: "Done", todo: "To do", check: "Check", info: "Note" } as const;
 

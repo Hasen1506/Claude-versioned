@@ -22,6 +22,7 @@ import { Network } from "./pages/Network";
 import { Plan } from "./pages/Plan";
 import { Readiness } from "./pages/Readiness";
 import { Setup } from "./pages/Setup";
+import { blankCompany, CompanyForm, nextMonday, type CompanyValues } from "./pages/Company";
 import { Material } from "./pages/Material";
 import { Machines } from "./pages/Machines";
 import { Capacity } from "./pages/Capacity";
@@ -263,20 +264,10 @@ function Welcome() {
   const [examples, setExamples] = useState<ExampleInfo[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => { api.examples().then(setExamples).catch((e) => setErr(String(e))); }, []);
-  const blank = () => {
-    const today = new Date();
-    const monday = new Date(today);
-    monday.setDate(today.getDate() + ((8 - today.getDay()) % 7 || 7));
-    const iso = monday.toISOString().slice(0, 10);
-    store.load({
-      schema_version: "1",
-      settings: { company_name: "My Company", currency: "INR", planning_start: iso, horizon_days: 182, bucket: "week",
-        week_start: 0, fx_rates: {}, wacc: 0.12, holding_spread: 0.08, default_service_level: 0.95, default_calendar: "CAL-STD" },
-      calendars: [{ id: "CAL-STD", name: "Mon–Sat", workdays: [0, 1, 2, 3, 4, 5], holidays: [] }],
-      locations: [], products: [], location_products: [], resources: [], production_sources: [],
-      purchasing_sources: [], lanes: [], demand: [], receipts: [], history: [], events: [], npi: [], overrides: [],
-    } as unknown as Dataset);
-    go("home");
+  const [starting, setStarting] = useState(false);
+  const blank = (v: CompanyValues) => {
+    store.load(blankCompany(v));
+    go("setup");
   };
   return (
     <div className="welcome animate-in">
@@ -307,9 +298,11 @@ function Welcome() {
         </section>
         <section className="hcard">
           <h2 className="q">Start your own</h2>
-          <p className="muted">An empty company with a Monday-to-Saturday calendar. Home shows what to fill in first, and the data
-            check tells you what's still missing.</p>
-          <div><button className="btn" onClick={blank}>Start with an empty company</button></div>
+          <p className="muted">Name your company, its currency and working week, then set up places, products and demand step by step.
+            Home shows what to fill in next.</p>
+          {starting ? <CompanyForm ds={null} submit={blank} submitLabel="Create the company" cancel={() => setStarting(false)}
+            initial={{ name: "", currency: "INR", start: nextMonday(), workdays: [0, 1, 2, 3, 4], cover: "week", fx: {} }} />
+            : <div><button className="btn" onClick={() => setStarting(true)}>Start with an empty company</button></div>}
           <p className="muted small">Or open a file you exported earlier with <b>Import a file</b>, top right.</p>
         </section>
       </div>

@@ -29,15 +29,15 @@ class SetupAction(BaseModel):
 
 
 class SetupItem(BaseModel):
-    step: str            # places | products | demand | supply | making | stock | unfinished
+    step: str            # company | places | products | demand | supply | making | stock | prices | unfinished
     status: Status
     text: str
     action: SetupAction | None = None
 
 
 STEPS: dict[str, str] = {
-    "places": "Places", "products": "Products", "demand": "Demand", "supply": "How each product is supplied",
-    "making": "How products are made", "stock": "Stock on hand", "unfinished": "Unfinished records",
+    "company": "Your company", "places": "Places", "products": "Products", "demand": "Demand", "supply": "How each product is supplied",
+    "making": "How products are made", "stock": "Stock on hand", "prices": "Prices", "unfinished": "Unfinished records",
 }
 
 
@@ -48,6 +48,18 @@ def checklist(ds: Dataset, aside: list[SetAside] | None = None) -> list[SetupIte
                   action=SetupAction(label=label, route=route) if label and route else None))
     lname = {lo.id: lo.name or lo.id for lo in ds.locations}
     pname = {p.id: p.name or p.id for p in ds.products}
+
+    # --- the company itself
+    st = ds.settings
+    n, unit = st.default_lot_periods, st.bucket.value
+    cover = ("exactly what's needed" if st.default_lot_policy.value == "L4L"
+             else f"a {unit}'s need" if n == 1 else f"{n} {unit}s' need")
+    if st.company_name.strip() in ("", "My Company"):
+        add("company", "check", "Name your company, and check its currency, planning start and working week.",
+            "Open your company", ["setup", "company"])
+    else:
+        add("company", "done", f"{st.company_name}: {st.currency}, planning from {st.planning_start:%a %d %b %Y}, "
+            f"each order covers {cover}.", "Open your company", ["setup", "company"])
 
     # --- places
     stocking = [lo for lo in ds.locations if lo.type in STOCKING_LOCATION_TYPES]
@@ -154,6 +166,14 @@ def checklist(ds: Dataset, aside: list[SetAside] | None = None) -> list[SetupIte
     if ds.locations and not any(lp.on_hand > 0 for lp in ds.location_products) and not ds.movements:
         add("stock", "info", "No stock on hand is entered anywhere, so the plan assumes every place starts empty.",
             "Count stock on hand", ["execution", "count"])
+
+    # --- prices: revenue and margin need a selling price (Q10); a note, not a blocker
+    unpriced = [p for p in fgs if p.price is None and p.id in demanded]
+    if unpriced:
+        names = ", ".join(pname[p.id] for p in unpriced[:4]) + (f" and {len(unpriced) - 4} more" if len(unpriced) > 4 else "")
+        one = len(unpriced) == 1
+        add("prices", "info", f"{names} {'has' if one else 'have'} no selling price, so revenue and margin leave "
+            f"{'it' if one else 'them'} out.", "Enter prices", ["setup", "products"])
 
     # --- unfinished records
     for a in aside or []:

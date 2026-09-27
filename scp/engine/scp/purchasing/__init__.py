@@ -110,8 +110,8 @@ def _choice(ds: Dataset, pu, qty: float, order_date: date, need_by: date, assign
     q = qty if assigned else _lot(pu, qty)
     sch = schedule_buy(ds, pu.id, start=order_date)
     price = pu.price_for(q)
-    return SourceChoice(source_id=pu.id, supplier=pu.supplier, price=price, currency=_currency(ds, pu.currency),
-                        value=q * price * fx(ds, pu.currency) * (1.0 + pu.duty_rate), qty=q,
+    return SourceChoice(source_id=pu.id, supplier=pu.supplier, price=price, currency=_currency(ds, ds.price_currency(pu)),
+                        value=q * price * fx(ds, ds.price_currency(pu)) * (1.0 + pu.duty_rate), qty=q,
                         lead_time_days=pu.lead_time_days, arrives=sch.due_date,
                         days_late=max(0, (sch.available_date - need_by).days), fixed=pu.fixed, assigned=assigned,
                         blocked=_blocked_reason(ds, pu))
@@ -137,7 +137,7 @@ def requisitions(ds: Dataset, plan: PlanResult) -> list[Requisition]:
         out.append(Requisition(
             id=o.id, location=o.location, product=o.product, qty=o.qty, need_date=o.need_date,
             order_date=o.start_date, due_date=o.due_date, source_id=pu.id, supplier=pu.supplier, price=price,
-            currency=_currency(ds, pu.currency), value=o.qty * price * fx(ds, pu.currency) * (1.0 + pu.duty_rate),
+            currency=_currency(ds, ds.price_currency(pu)), value=o.qty * price * fx(ds, ds.price_currency(pu)) * (1.0 + pu.duty_rate),
             due_now=(o.start_date - start).days <= window, late=o.start_in_past or o.start_date < start,
             choices=choices, open_later=list(o.open_later)))
     out.sort(key=lambda r: (r.order_date, r.supplier, r.product, r.id))
@@ -194,7 +194,7 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
                 notes.append(f"{o.product}: {pu.supplier} can deliver {earliest.isoformat()}, "
                              f"{(earliest - due).days} d after it is needed there")
                 due = earliest
-        groups[(pu.supplier, o.location, _currency(ds, pu.currency))].append((rid, pu, qty, due, notes))
+        groups[(pu.supplier, o.location, _currency(ds, ds.price_currency(pu)))].append((rid, pu, qty, due, notes))
 
     num = next_numbers(ds)
     receipts = list(ds.receipts)
@@ -536,8 +536,8 @@ def _view(ds: Dataset, pid: str, header: bool, po: PurchaseOrder | None, supplie
     if v.blocked and open_lines:
         attention.append(f"{supplier} is blocked for purchasing")
     cur = (po.currency if po else None) or next(
-        (ds.purchasing_source_by_id[x.source].currency for x in lines
-         if x.source in ds.purchasing_source_by_id and ds.purchasing_source_by_id[x.source].currency), None)
+        (ds.price_currency(ds.purchasing_source_by_id[x.source]) for x in lines
+         if x.source in ds.purchasing_source_by_id and ds.price_currency(ds.purchasing_source_by_id[x.source])), None)
     return PoView(id=pid, header=header, supplier=supplier, location=location, order_date=po.order_date if po else None,
                   currency=_currency(ds, cur), approved=po.approved if po else True, sent_on=po.sent_on if po else None,
                   vendor_reference=po.vendor_reference if po else "", note=po.note if po else "", status=status,
@@ -563,7 +563,7 @@ def vendor_rows(ds: Dataset, orders: list[PoView]) -> list[VendorRow]:
                          for p in mine for x in p.lines if not x.closed and x.open > EPS)
         confirmed_late = sum(1 for p in mine for x in p.lines if x.confirmed_date is not None and x.confirmed_date > x.due_date)
         recs = [InfoRecord(source_id=pu.id, product=pu.product, location=pu.location, price=pu.price,
-                           currency=_currency(ds, pu.currency), price_scales=pu.price_scales, moq=pu.moq,
+                           currency=_currency(ds, ds.price_currency(pu)), price_scales=pu.price_scales, moq=pu.moq,
                            rounding_qty=pu.rounding_qty, lead_time_days=pu.lead_time_days, valid_from=pu.valid_from,
                            valid_to=pu.valid_to, fixed=pu.fixed, blocked=pu.blocked, priority=pu.priority,
                            quota=pu.quota, vendor_material=pu.vendor_material)

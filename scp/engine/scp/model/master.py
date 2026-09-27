@@ -4,13 +4,14 @@ small and mid-sized organisations. Object-local invariants are enforced here; cr
 """
 from __future__ import annotations
 
+import math
 from datetime import date
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
 from .common import (
-    BucketSize, Id, LocationType, LotSizePolicy, Model, MrpType, ProcurementType, ProductType, Ref, ResourceKind,
+    COUNT_UNITS, BucketSize, Id, LocationType, LotSizePolicy, Model, MrpType, ProcurementType, ProductType, Ref, ResourceKind,
     SafetyStockMethod, Strategy, TransportMode, Unit,
 )
 from .purchasing import PriceScale
@@ -40,6 +41,11 @@ class Settings(Model):
     capacity_direction: Literal["earlier", "later"] = Field(
         "earlier", description="Levelling: an order that does not fit first tries earlier days (builds ahead, stock) "
                                "or later days (accepts a delay, reported), then the other way")
+    default_lot_policy: LotSizePolicy = Field(
+        LotSizePolicy.L4L, description="How much an order covers where a product's planning policy leaves it empty: "
+                                       "L4L = exactly what is needed that day, POQ = the need of the next "
+                                       "`default_lot_periods` buckets (one week by default)")
+    default_lot_periods: int = Field(1, ge=1, le=52, description="POQ default: buckets each order covers")
     capacity_max_early_days: int | None = Unit(
         "days", ge=0, le=365, default=None,
         description="Levelling: move an order at most this many days earlier to fit; empty = as far as today")
@@ -53,6 +59,14 @@ class Settings(Model):
     @classmethod
     def _upper(cls, v: str) -> str:
         return v.upper()
+
+    @field_validator("default_lot_policy")
+    @classmethod
+    def _default_lot(cls, v: LotSizePolicy) -> LotSizePolicy:
+        if v not in (LotSizePolicy.L4L, LotSizePolicy.POQ):
+            raise ValueError("the company default is exactly what's needed (L4L) or a period's need (POQ); "
+                             "fixed batches, EOQ and min–max are set per product and place")
+        return v
 
     @field_validator("fx_rates")
     @classmethod
@@ -113,11 +127,19 @@ class Product(Model):
     weight_kg: float | None = Unit("kg", default=None, description="Gross weight per base unit")
     volume_m3: float | None = Unit("m3", default=None, description="Volume per base unit")
     shelf_life_days: int | None = Field(None, gt=0)
+    whole_units: bool | None = Field(
+        None, description="Planned in whole units (no 25.9 tins). Empty: from the unit, whole for EA, PC, box, "
+                          "case, tin, pail, bag, drum, bottle, …; fractional for kg, L, m, …")
     standard_cost: float | None = Unit("money_per_unit", default=None,
                                        description="Override for the computed cost roll-up")
     price: float | None = Unit("money_per_unit", default=None, description="Default selling price")
     setup_group: str | None = Field(None, max_length=40,
                                     description="Sequence-dependent setup family (colour, allergen, grade…)")
+
+    @property
+    def whole(self) -> bool:
+        """Quantities of this product are whole numbers."""
+        return self.whole_units if self.whole_units is not None else self.base_uom.strip().upper() in COUNT_UNITS
 
     @field_validator("conversions")
     @classmethod
@@ -129,7 +151,7 @@ class Product(Model):
 
 
 class LotSizing(Model):
-    policy: LotSizePolicy = LotSizePolicy.L4L
+    policy: LotSizePolicy | None = Field(None, description="Empty: the company default (settings)")
     fixed_qty: float | None = Unit("qty", gt=0, default=None, description="FIXED: lot size")
     periods: int | None = Field(None, ge=1, le=52, description="POQ: number of buckets each order covers")
     min_qty: float = Unit("qty", default=0.0, description="Minimum lot size")
@@ -394,6 +416,12 @@ class Operation(Model):
     resource: str | None = Ref("resource", default=None, description="Machine or line (empty only when done outside)")
     setup_hours: float = Unit("hours", default=0.0, description="Per order")
     run_hours_per_unit: float = Unit("hours", default=0.0, description="Machine hours per output base unit")
+    batch_qty: float | None = Unit(
+        "qty", gt=0, default=None,
+        description="Process step: units one batch holds (a 2,000 L mixer), counted like the units entering the "
+                    "step; the step runs in whole batches")
+    batch_hours: float = Unit("hours", default=0.0,
+                              description="Process step: machine hours one batch takes, however full it is")
     labor_resource: str | None = Ref("resource", default=None)
     labor_hours_per_unit: float = Unit("hours", default=0.0, description="Worker hours per output unit")
     queue_workdays: float = Unit("workdays", default=0.0, description="Wait + move time after the operation")
@@ -408,8 +436,23 @@ class Operation(Model):
                                     description="Other machines that can do this step with the same times")
     subcontract: Subcontract | None = Field(None, description="Done outside by a supplier instead of on a resource")
 
+    def batches(self, qty: float) -> int:
+        """Batches the step runs for ``qty`` units (none when it is not a batch step)."""
+        return math.ceil(qty / self.batch_qty - 1e-9) if self.batch_qty and qty > 0 else 0
+
+    def run_hours(self, qty: float) -> float:
+        """Machine hours to run ``qty`` units, setup excluded: per unit, plus per batch for a process step."""
+        return self.run_hours_per_unit * qty + self.batch_hours * self.batches(qty)
+
+    @property
+    def run_hours_per_unit_avg(self) -> float:
+        """Machine hours per unit over full batches (for rates and costs, which do not see order sizes)."""
+        return self.run_hours_per_unit + (self.batch_hours / self.batch_qty if self.batch_qty else 0.0)
+
     @model_validator(mode="after")
     def _labor(self) -> Operation:
+        if self.batch_hours > 0 and not self.batch_qty:
+            raise ValueError("hours per batch need the batch size")
         if self.labor_hours_per_unit > 0 and not self.labor_resource:
             raise ValueError("labour hours per unit need a labour resource")
         if not self.resource and self.subcontract is None:
@@ -438,6 +481,8 @@ class ProductionSource(Model):
         "workdays", default=None, description="Override the routing-derived production lead time")
     min_lot: float = Unit("qty", default=0.0)
     max_lot: float | None = Unit("qty", gt=0, default=None)
+    full_batches: bool = Field(True, description="Orders are planned in whole batches of the steps that run in "
+                                                 "batches (a half-filled mixer still takes a batch's time)")
     conversion_cost_per_unit: float = Unit("money_per_unit", default=0.0,
                                            description="Cost not captured by resource rates (energy, overhead)")
     priority: int = Field(1, ge=1, le=99, description="Lower wins when several sources exist")

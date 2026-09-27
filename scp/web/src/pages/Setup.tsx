@@ -6,12 +6,14 @@
 //                                    (made here from these parts on this line / bought from / shipped from)
 // Every form writes ordinary master-data records, so Master data stays the place for bulk edits and depth.
 import { useMemo, useState, type ReactNode } from "react";
+import { api } from "../api/client";
 import type { Dataset, LocationProduct, NetworkView, ProductionSource, ValidationResult } from "../api/types";
 import { Checklist } from "../components/Checklist";
 import { Badge, Panel, StageHeader } from "../components/ui";
 import { TYPE_LABEL } from "../lib/format";
 import { go, href } from "../lib/router";
 import { store, useStore } from "../state/store";
+import { applyCompany, CompanyPanel, coverLabel } from "./Company";
 
 /** A stable empty list: a fresh `[]` from a store selector would re-render forever. */
 const NO_SETUP: NonNullable<ValidationResult["setup"]> = [];
@@ -46,6 +48,11 @@ const MODES: { mode: string; label: string }[] = [
 ];
 const modeLabel = (m: string) => MODES.find((x) => x.mode === m)?.label ?? m;
 const STOCKING = ["plant", "dc", "warehouse", "store"];
+/** Units counted in whole pieces (as the engine's COUNT_UNITS): a product in one is planned in whole units. */
+const WHOLE = new Set(["EA", "EACH", "PC", "PCS", "PCE", "PIECE", "PIECES", "ST", "NO", "NOS", "NR", "UN", "UNIT", "UNITS", "ITEM",
+  "BOX", "BX", "CS", "CASE", "CAR", "CTN", "CARTON", "PK", "PAC", "PACK", "PKT", "PACKET", "BAG", "BG", "SACK",
+  "BOT", "BTL", "BOTTLE", "CAN", "TIN", "DR", "DRUM", "PAIL", "BKT", "BUCKET", "JAR", "TUB", "TUBE", "ROL", "ROLL",
+  "SET", "KIT", "PAL", "PALLET", "PR", "PAIR", "DZ", "DOZ", "DOZEN", "SHEET", "REEL", "COIL", "BALE", "CRATE"]);
 /** Append a record to a dataset collection. The engine fills every default, so a record needs only what the planner said
  *  (the generated types list defaulted fields as required, since responses always carry them). */
 function add(d: Dataset, coll: string, rec: Record<string, unknown>) {
@@ -69,6 +76,7 @@ export function Setup({ route }: { route: string[] }) {
   const ds = useStore((s) => s.dataset);
   if (!ds) return null;
   const sub = route[1] ?? "";
+  if (sub === "company") return <CompanySetup ds={ds} />;
   if (sub === "network") return <NetworkBuilder ds={ds} />;
   if (sub === "products") return <Products ds={ds} />;
   if (sub === "product") return <ProductWizard ds={ds} product={route[2]} place={route[3]} />;
@@ -85,6 +93,9 @@ function SetupHome({ ds }: { ds: Dataset }) {
         data, so you can refine any record later in Master data.</>} />
       <div className="content stack">
         <div className="setup-cards">
+          <a className="setup-card" href={href("setup", "company")}><b>Your company</b>
+            <span>Name, currency, when planning starts, the working week, how much each order covers, exchange rates.</span>
+            <span className="faint small">{ds.settings.currency} · orders cover {coverLabel(ds.settings as never)}</span></a>
           <a className="setup-card" href={href("setup", "network")}><b>1. Places and routes</b>
             <span>Plants, warehouses, suppliers and customers, and which routes goods take between them.</span>
             <span className="faint small">{n("locations")} places · {n("lanes")} routes</span></a>
@@ -99,6 +110,21 @@ function SetupHome({ ds }: { ds: Dataset }) {
             <span className="faint small">{n("demand")} demand rows · {n("history")} history rows</span></a>
         </div>
         <Panel title="What's missing">{setup.length ? <Checklist items={setup} /> : <p className="muted">Checking…</p>}</Panel>
+      </div>
+    </div>
+  );
+}
+
+function CompanySetup({ ds }: { ds: Dataset }) {
+  const [saved, setSaved] = useState(false);
+  return (
+    <div>
+      <StageHeader title="Your company" kicker="The settings every plan starts from. Change them any time; the plan goes out of date and is worked out again."
+        right={<a className="btn" href={href("setup")}>Back to setup</a>} />
+      <div className="content stack">
+        {saved && <div className="banner ok" role="status">Saved. <a href={href("setup")}>Back to setup</a></div>}
+        <CompanyPanel ds={ds} onSave={(v, alsoExact) => { store.update((d) => applyCompany(d, v, alsoExact)); setSaved(true); }} />
+        <p className="faint small">More settings (horizon, cost of capital, service level, capacity rules) are in <a href={href("data", "settings")}>Master data → Company settings</a>.</p>
       </div>
     </div>
   );
@@ -283,12 +309,24 @@ function Products({ ds }: { ds: Dataset }) {
   const [name, setName] = useState("");
   const [type, setType] = useState("FG");
   const [uom, setUom] = useState("EA");
+  const [price, setPrice] = useState("");
   const prods = ds.products ?? [];
+  const cur = ds.settings.currency;
   const addProduct = () => {
     if (!name.trim()) return;
     const id = newId(name, prods.map((p) => p.id), type);
-    store.update((d) => add(d, "products", { id, name: name.trim(), type, base_uom: uom.trim() || "EA" }));
-    setName("");
+    const pr = num(price);
+    store.update((d) => add(d, "products", { id, name: name.trim(), type, base_uom: uom.trim() || "EA", ...(pr > 0 ? { price: pr } : {}) }));
+    setName(""); setPrice("");
+  };
+  const setProd = (id: string, f: (p: Record<string, unknown>) => void) => store.update((d) => {
+    const p = (d.products ?? []).find((x) => x.id === id);
+    if (p) f(p as unknown as Record<string, unknown>);
+  });
+  /** What a bought product costs: its cheapest supplier price, else the cost typed here. */
+  const bought = (id: string) => {
+    const ps = (ds.purchasing_sources ?? []).filter((x) => x.product === id);
+    return ps.length ? Math.min(...ps.map((x) => x.price * (x.currency && x.currency !== cur ? ((ds.settings.fx_rates ?? {})[x.currency] ?? NaN) : 1))) : null;
   };
   const status = (id: string) => {
     const nm = prods.find((p) => p.id === id)?.name || id;
@@ -306,21 +344,38 @@ function Products({ ds }: { ds: Dataset }) {
               onKeyDown={(e) => e.key === "Enter" && addProduct()} /></Field>
             <Field label="What it is"><select className="select" value={type} onChange={(e) => setType(e.target.value)}>
               {PRODUCT_TYPES.map((t) => <option key={t.type} value={t.type}>{t.label}: {t.what}</option>)}</select></Field>
-            <Field label="Counted in"><input className="input" value={uom} onChange={(e) => setUom(e.target.value)} style={{ width: 80 }} aria-label="Unit" /></Field>
+            <Field label="Counted in" hint={WHOLE.has(uom.trim().toUpperCase()) ? "planned in whole units" : "planned in fractions"}>
+              <input className="input" value={uom} onChange={(e) => setUom(e.target.value)} style={{ width: 80 }} aria-label="Unit" list="units" />
+              <datalist id="units">{["EA", "BOX", "CASE", "BAG", "DRUM", "KG", "L", "M", "TON"].map((u) => <option key={u} value={u} />)}</datalist></Field>
+            {(type === "FG" || type === "SFG") && <Field label={`Selling price (${cur})`} hint="optional; revenue and margin need it">
+              <input className="input" type="number" min={0} step="any" value={price} onChange={(e) => setPrice(e.target.value)} style={{ width: 100 }} aria-label="Selling price" /></Field>}
             <button className="btn primary" onClick={addProduct}>Add product</button>
           </div>
           <p className="faint small">Have a list already? <a href={href("data", "products")}>Upload products from a spreadsheet</a>.</p>
         </Panel>
         {prods.length > 0 && <Panel flush>
           <div className="table-wrap"><table className="t">
-            <thead><tr><th>Product</th><th>What it is</th><th>Unit</th><th>How it's supplied</th><th /></tr></thead>
+            <thead><tr><th>Product</th><th>What it is</th><th>Unit</th><th title="Planned in whole units">Whole</th>
+              <th className="num">Selling price ({cur})</th><th className="num" title="Its standard cost; a bought product costs its supplier's price">Cost ({cur})</th>
+              <th>How it's supplied</th><th /></tr></thead>
             <tbody>{prods.map((p) => {
               const made = (ds.production_sources ?? []).filter((x) => x.product === p.id).length;
-              const bought = (ds.purchasing_sources ?? []).filter((x) => x.product === p.id).length;
+              const buys = bought(p.id);
+              const bought_ = (ds.purchasing_sources ?? []).filter((x) => x.product === p.id).length;
+              const whole = p.whole_units ?? WHOLE.has((p.base_uom ?? "EA").trim().toUpperCase());
+              const sells = p.type === "FG" || p.type === "SFG";
               return <tr key={p.id}>
                 <td><b>{p.name || p.id}</b> <span className="faint small mono">{p.id}</span></td>
                 <td>{PRODUCT_TYPES.find((t) => t.type === p.type)?.label}</td><td>{p.base_uom ?? "EA"}</td>
-                <td className="small">{[made && `made in ${made} place${made > 1 ? "s" : ""}`, bought && `bought from ${bought} supplier${bought > 1 ? "s" : ""}`].filter(Boolean).join(", ") || <span className="faint">not yet</span>} {status(p.id)}</td>
+                <td><input type="checkbox" checked={whole} aria-label={`${p.name || p.id} in whole units`}
+                  onChange={(e) => setProd(p.id, (x) => { x.whole_units = e.target.checked; })} /></td>
+                <td className="num">{sells ? <input className="input num" type="number" min={0} step="any" defaultValue={p.price ?? ""} placeholder="none" style={{ width: 90 }}
+                  aria-label={`Selling price of ${p.name || p.id}`} onBlur={(e) => { const n = num(e.target.value); setProd(p.id, (x) => { x.price = n > 0 ? n : null; }); }} />
+                  : <span className="faint">–</span>}</td>
+                <td className="num">{buys !== null && p.standard_cost == null ? <span className="small" title="From its supplier's price">{isNaN(buys) ? "no rate" : buys.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                  : <input className="input num" type="number" min={0} step="any" defaultValue={p.standard_cost ?? ""} placeholder={made ? "auto" : "none"} title={made ? "Empty: worked out from its parts and machine time" : undefined} style={{ width: 90 }}
+                  aria-label={`Cost of ${p.name || p.id}`} onBlur={(e) => { const n = num(e.target.value); setProd(p.id, (x) => { x.standard_cost = n > 0 ? n : null; }); }} />}</td>
+                <td className="small">{[made && `made in ${made} place${made > 1 ? "s" : ""}`, bought_ && `bought from ${bought_} supplier${bought_ > 1 ? "s" : ""}`].filter(Boolean).join(", ") || <span className="faint">not yet</span>} {status(p.id)}</td>
                 <td className="nowrap"><a className="btn sm" href={href("setup", "product", p.id)}>Set up</a></td>
               </tr>;
             })}</tbody>
@@ -476,7 +531,7 @@ function Parts({ ds, net, ps }: { ds: Dataset; net: NetworkView | null; ps: Prod
 // each row keeps the record it came from, so fields this form does not show (queue time, labour, validity dates,
 // alternatives…) survive an edit here
 interface CompRow { product: string; newName: string; qty: string; scrap: string; orig?: Record<string, unknown> }
-interface StepRow { resource: string; newName: string; setup: string; runMin: string; outDays: string; orig?: Record<string, unknown> }
+interface StepRow { resource: string; newName: string; setup: string; runMin: string; outDays: string; batch: boolean; batchQty: string; batchHours: string; orig?: Record<string, unknown> }
 
 function MakeForm({ ds, product, place, existing, index, done }: { ds: Dataset; product: string; place: string; existing?: ProductionSource; index?: number; done: () => void }) {
   const nm = names(ds);
@@ -484,6 +539,7 @@ function MakeForm({ ds, product, place, existing, index, done }: { ds: Dataset; 
   const [steps, setSteps] = useState<StepRow[]>(() => (existing?.operations ?? []).map((o) => ({
     resource: o.subcontract ? `out:${o.subcontract.supplier}` : o.resource ?? "", newName: "", setup: String(o.setup_hours ?? 0),
     runMin: String(Math.round((o.run_hours_per_unit ?? 0) * 60 * 1000) / 1000), outDays: String(o.subcontract?.workdays ?? 1),
+    batch: !!o.batch_qty, batchQty: String(o.batch_qty ?? ""), batchHours: String(o.batch_hours ?? ""),
     orig: o as unknown as Record<string, unknown> })));
   const suppliers = (ds.locations ?? []).filter((l) => l.type === "supplier");
   const [lead, setLead] = useState(existing?.fixed_lead_time_workdays != null ? String(existing.fixed_lead_time_workdays) : "");
@@ -501,6 +557,7 @@ function MakeForm({ ds, product, place, existing, index, done }: { ds: Dataset; 
       if (s.resource === "" || (s.resource === "+new" && !s.newName.trim())) return setErr("Choose the machine or line for each step, or name a new one.");
       if (!(num(s.runMin || "0") >= 0) || !(num(s.setup || "0") >= 0)) return setErr("Times must be 0 or more.");
       if (s.resource.startsWith("out:") && !(num(s.outDays || "0") >= 0)) return setErr("Days outside must be 0 or more.");
+      if (s.batch && !s.resource.startsWith("out:") && (!(num(s.batchQty) > 0) || !(num(s.batchHours) >= 0))) return setErr("A batch step needs its batch size (above 0) and the hours one batch takes.");
     }
     if (lead !== "" && !(num(lead) >= 0)) return setErr("The lead time must be 0 or more working days.");
     store.update((d) => {
@@ -528,7 +585,9 @@ function MakeForm({ ds, product, place, existing, index, done }: { ds: Dataset; 
           resIds.push(id);
           add(d, "resources", { id, name: s.newName.trim(), location: place });
         }
-        return { ...base, resource: id, subcontract: null, setup_hours: num(s.setup || "0"), run_hours_per_unit: num(s.runMin || "0") / 60 };
+        return { ...base, resource: id, subcontract: null, setup_hours: num(s.setup || "0"),
+          ...(s.batch ? { run_hours_per_unit: 0, batch_qty: num(s.batchQty), batch_hours: num(s.batchHours) }
+            : { run_hours_per_unit: num(s.runMin || "0") / 60, batch_qty: null, batch_hours: 0 }) };
       });
       const next: ProductionSource = {
         ...(existing ?? { id: newId(`${product}-${place}`, (d.production_sources ?? []).map((x) => x.id), "MAKE"), location: place, product }),
@@ -563,11 +622,17 @@ function MakeForm({ ds, product, place, existing, index, done }: { ds: Dataset; 
           {suppliers.length > 0 && <optgroup label="Done outside by a supplier">{suppliers.map((l) => <option key={l.id} value={`out:${l.id}`}>{l.name || l.id}</option>)}</optgroup>}</select></Field>
         {s.resource === "+new" && <Field label="Its name"><input className="input" value={s.newName} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, newName: e.target.value } : x))} placeholder="e.g. Line 1" /></Field>}
         {s.resource.startsWith("out:") ? <Field label="Working days there and back"><input className="input" type="number" min={0} step="any" value={s.outDays} style={{ width: 90 }} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, outDays: e.target.value } : x))} /></Field> : <>
-        <Field label="Minutes per unit"><input className="input" type="number" min={0} step="any" value={s.runMin} style={{ width: 90 }} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, runMin: e.target.value } : x))} /></Field>
+        <Field label="Runs" hint={s.batch ? "a batch takes its time however full it is; orders are made in whole batches" : undefined}>
+          <select className="select" value={s.batch ? "batch" : "unit"} aria-label="How the step runs" onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, batch: e.target.value === "batch" } : x))}>
+          <option value="unit">unit by unit</option><option value="batch">in batches (a mixer, a kiln, a reactor)</option></select></Field>
+        {s.batch ? <>
+          <Field label={`Batch size (${(ds.products ?? []).find((x) => x.id === product)?.base_uom ?? "units"})`}><input className="input" type="number" min={0} step="any" value={s.batchQty} style={{ width: 90 }} aria-label="Batch size" onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, batchQty: e.target.value } : x))} /></Field>
+          <Field label="Hours per batch"><input className="input" type="number" min={0} step="any" value={s.batchHours} style={{ width: 80 }} aria-label="Hours per batch" onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, batchHours: e.target.value } : x))} /></Field>
+        </> : <Field label="Minutes per unit"><input className="input" type="number" min={0} step="any" value={s.runMin} style={{ width: 90 }} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, runMin: e.target.value } : x))} /></Field>}
         <Field label="Setup hours per run"><input className="input" type="number" min={0} step="any" value={s.setup} style={{ width: 90 }} onChange={(e) => setSteps(steps.map((x, j) => j === i ? { ...x, setup: e.target.value } : x))} /></Field></>}
         <button className="btn sm ghost danger" onClick={() => setSteps(steps.filter((_, j) => j !== i))} aria-label="Remove step">Remove</button>
       </div>)}
-      <button className="btn sm" onClick={() => setSteps([...steps, { resource: lines.length === 1 ? lines[0].id : lines.length ? "" : "+new", newName: "", setup: "0", runMin: "1", outDays: "2" }])}>+ Add a step</button>
+      <button className="btn sm" onClick={() => setSteps([...steps, { resource: lines.length === 1 ? lines[0].id : lines.length ? "" : "+new", newName: "", setup: "0", runMin: "1", outDays: "2", batch: false, batchQty: "", batchHours: "" }])}>+ Add a step</button>
       {!steps.length && <p className="faint small">With no steps, no machine time is planned. Give a lead time instead, or add the steps to check capacity.</p>}
       <div className="qrow">
         <Field label="Fixed lead time" hint="working days; leave empty to take it from the steps"><input className="input" type="number" min={0} step="any" value={lead} style={{ width: 90 }} onChange={(e) => setLead(e.target.value)} /></Field>
@@ -584,6 +649,12 @@ function BuyForm({ ds, product, place, done }: { ds: Dataset; product: string; p
   const [sup, setSup] = useState(sups.length === 1 ? sups[0].id : sups.length ? "" : "+new");
   const [newName, setNewName] = useState("");
   const [price, setPrice] = useState("");
+  const own = ds.settings.currency;
+  const vendorCur = (id: string) => (ds.vendors ?? []).find((v) => v.supplier === id)?.currency ?? "";
+  const [cur, setCur] = useState(() => vendorCur(sup) || own);
+  const [rate, setRate] = useState("");
+  const known = [...new Set([own, ...Object.keys(ds.settings.fx_rates ?? {}), ...(ds.purchasing_sources ?? []).map((x) => x.currency ?? ""), "USD", "EUR"])].filter(Boolean);
+  const needRate = cur !== own && !((ds.settings.fx_rates ?? {})[cur] > 0);
   const [lt, setLt] = useState("7");
   const [moq, setMoq] = useState("0");
   const [err, setErr] = useState<string | null>(null);
@@ -592,24 +663,33 @@ function BuyForm({ ds, product, place, done }: { ds: Dataset; product: string; p
     if (!(num(price) >= 0)) return setErr("Enter the price per unit.");
     if (!(num(lt) >= 0)) return setErr("Enter the lead time in days (0 or more).");
     if (!(num(moq || "0") >= 0)) return setErr("The minimum order must be 0 or more.");
+    if (!/^[A-Z]{3}$/.test(cur)) return setErr("The currency is a three-letter code, e.g. USD.");
+    if (needRate && !(num(rate) > 0)) return setErr(`Enter what one ${cur} costs in ${own}.`);
     store.update((d) => {
+      if (needRate) d.settings.fx_rates = { ...(d.settings.fx_rates ?? {}), [cur]: num(rate) };
       let s = sup;
       if (s === "+new") {
         s = newId(newName, (d.locations ?? []).map((x) => x.id), "SUPPLIER");
         add(d, "locations", { id: s, name: newName.trim(), type: "supplier" });
       }
       const id = newId(`${product}-${s}`, (d.purchasing_sources ?? []).map((x) => x.id), "BUY");
-      add(d, "purchasing_sources", { id, supplier: s, product, location: place, price: num(price), lead_time_days: num(lt), moq: num(moq || "0") });
+      add(d, "purchasing_sources", { id, supplier: s, product, location: place, price: num(price), lead_time_days: num(lt), moq: num(moq || "0"),
+        ...(cur !== own ? { currency: cur } : {}) });
     });
     done();
   };
   return (
     <div className="wz-form">
       <div className="qrow">
-        <Field label="Supplier"><select className="select" value={sup} onChange={(e) => setSup(e.target.value)}>
+        <Field label="Supplier"><select className="select" value={sup} onChange={(e) => { setSup(e.target.value); setCur(vendorCur(e.target.value) || cur); }}>
           <option value="">Choose…</option>{sups.map((l) => <option key={l.id} value={l.id}>{l.name || l.id}</option>)}<option value="+new">+ a new supplier…</option></select></Field>
         {sup === "+new" && <Field label="Supplier's name"><input className="input" value={newName} onChange={(e) => setNewName(e.target.value)} /></Field>}
-        <Field label={`Price per unit (${ds.settings.currency})`}><input className="input" type="number" min={0} step="any" value={price} style={{ width: 100 }} onChange={(e) => setPrice(e.target.value)} /></Field>
+        <Field label={`Price per unit (${cur})`}><input className="input" type="number" min={0} step="any" value={price} style={{ width: 100 }} onChange={(e) => setPrice(e.target.value)} /></Field>
+        <Field label="In" hint="the currency the supplier invoices in"><input className="input" list="buy-currencies" value={cur} maxLength={3} style={{ width: 70, textTransform: "uppercase" }}
+          onChange={(e) => setCur(e.target.value.toUpperCase())} aria-label="Price currency" />
+          <datalist id="buy-currencies">{known.map((c) => <option key={c} value={c} />)}</datalist></Field>
+        {needRate && /^[A-Z]{3}$/.test(cur) && <Field label={`1 ${cur} =`} hint={`${own}; kept in the company's exchange rates`}>
+          <input className="input" type="number" min={0} step="any" value={rate} style={{ width: 90 }} onChange={(e) => setRate(e.target.value)} aria-label={`${own} per ${cur}`} /></Field>}
         <Field label="Lead time" hint="days from order to dispatch"><input className="input" type="number" min={0} step="any" value={lt} style={{ width: 80 }} onChange={(e) => setLt(e.target.value)} /></Field>
         <Field label="Minimum order"><input className="input" type="number" min={0} step="any" value={moq} style={{ width: 90 }} onChange={(e) => setMoq(e.target.value)} /></Field>
       </div>
@@ -669,11 +749,16 @@ function ShipForm({ ds, product, place, done }: { ds: Dataset; product: string; 
   );
 }
 
-/** Stock and simple rules at this place: on hand, safety stock, lot size. The full MRP settings are on the product-at-place page. */
+/** Stock and simple rules at this place: on hand, safety stock, lot size. The full MRP settings are on the product-at-place page.
+ *  Once the place has goods movements for the product, stock is the journal's: a new figure is posted as a count (N46). */
 function StockForm({ ds, product, place, lp }: { ds: Dataset; product: string; place: string; lp?: LocationProduct }) {
   const nm = names(ds);
   const ss = lp?.safety_stock?.method ?? "none";
-  const lot = lp?.lot_sizing?.policy ?? "L4L";
+  const pol = lp?.lot_sizing?.policy ?? null;
+  const lot = pol === null ? "" : pol === "POQ" ? `POQ${lp?.lot_sizing?.periods ?? 1}` : pol;
+  const journal = (ds.movements ?? []).some((m) => m.location === place && m.product === product);
+  const [count, setCount] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
   type Loose = { on_hand?: number; safety_stock?: Record<string, unknown>; lot_sizing?: Record<string, unknown> };
   const write = (patch: (x: Loose) => void) => store.update((d) => {
     const list = (d.location_products ??= []);
@@ -682,12 +767,30 @@ function StockForm({ ds, product, place, lp }: { ds: Dataset; product: string; p
     patch(x);
   });
   const setNum = (v: string, f: (x: Loose, n: number) => void) => { const n = num(v); if (n >= 0) write((x) => f(x, n)); };
+  const setLot = (v: string) => write((x) => {
+    const keep = { ...(x.lot_sizing ?? {}) };
+    x.lot_sizing = v === "" ? { ...keep, policy: null } : v.startsWith("POQ") ? { ...keep, policy: "POQ", periods: Number(v.slice(3)) }
+      : v === "FIXED" ? { ...keep, policy: "FIXED", fixed_qty: keep.fixed_qty ?? 100 } : { ...keep, policy: v };
+  });
+  const postCount = async () => {
+    const n = num(count);
+    if (!(n >= 0)) return setMsg("Enter the quantity counted (0 or more).");
+    try {
+      const out = await api.postActual(ds, "count", { counts: [{ location: place, product, qty: n }] });
+      store.replace(out.dataset);
+      setMsg(out.report.message); setCount("");
+    } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }
+  };
   return (
     <div className="wz-form wz-stock">
       <h4>Stock and ordering at {nm.loc(place)}</h4>
       <div className="qrow">
-        <Field label="On hand today"><input className="input" type="number" min={0} step="any" defaultValue={lp?.on_hand ?? 0} style={{ width: 100 }}
-          onBlur={(e) => setNum(e.target.value, (x, n) => { x.on_hand = n; })} aria-label={`On hand of ${nm.prod(product)} at ${nm.loc(place)}`} /></Field>
+        {journal ? <Field label="Counted today" hint={<>stock follows the goods movements here ({(lp?.on_hand ?? 0).toLocaleString()} now); a count posts the difference</>}>
+          <span className="row"><input className="input" type="number" min={0} step="any" value={count} style={{ width: 100 }} onChange={(e) => setCount(e.target.value)}
+            aria-label={`Counted ${nm.prod(product)} at ${nm.loc(place)}`} />
+          <button className="btn sm" disabled={count.trim() === ""} onClick={postCount}>Post the count</button></span></Field>
+        : <Field label="On hand today"><input className="input" type="number" min={0} step="any" defaultValue={lp?.on_hand ?? 0} style={{ width: 100 }}
+          onBlur={(e) => setNum(e.target.value, (x, n) => { x.on_hand = n; })} aria-label={`On hand of ${nm.prod(product)} at ${nm.loc(place)}`} /></Field>}
         <Field label="Safety stock"><select className="select" value={ss} onChange={(e) => write((x) => { x.safety_stock = { method: e.target.value, ...(e.target.value === "fixed" ? { qty: 0 } : e.target.value === "days_of_supply" ? { days: 7 } : {}) }; })}>
           <option value="none">None</option><option value="fixed">A fixed quantity</option><option value="days_of_supply">Days of cover</option>
           {!["none", "fixed", "days_of_supply"].includes(ss) && <option value={ss}>{ss.replace(/_/g, " ")}</option>}</select></Field>
@@ -695,13 +798,16 @@ function StockForm({ ds, product, place, lp }: { ds: Dataset; product: string; p
           onBlur={(e) => setNum(e.target.value, (x, n) => { x.safety_stock = { ...(x.safety_stock ?? {}), method: "fixed", qty: n }; })} /></Field>}
         {ss === "days_of_supply" && <Field label="Days"><input className="input" type="number" min={0} step="any" defaultValue={lp?.safety_stock?.days ?? 7} style={{ width: 80 }}
           onBlur={(e) => setNum(e.target.value, (x, n) => { x.safety_stock = { ...(x.safety_stock ?? {}), method: "days_of_supply", days: n }; })} /></Field>}
-        <Field label="Order in"><select className="select" value={lot} onChange={(e) => write((x) => { x.lot_sizing = { policy: e.target.value, ...(e.target.value === "FIXED" ? { fixed_qty: 100 } : {}) }; })}>
-          <option value="L4L">Exactly what's needed</option><option value="FIXED">Fixed batches</option>
-          {!["L4L", "FIXED"].includes(lot) && <option value={lot}>{lot}</option>}</select></Field>
+        <Field label="Each order covers"><select className="select" value={lot} onChange={(e) => setLot(e.target.value)} aria-label="Each order covers">
+          <option value="">The company's default ({coverLabel(ds.settings as never)})</option>
+          <option value="L4L">Exactly what's needed</option><option value="POQ1">A week's need</option>
+          <option value="POQ2">Two weeks' need</option><option value="POQ4">Four weeks' need</option><option value="FIXED">Fixed batches</option>
+          {!["", "L4L", "POQ1", "POQ2", "POQ4", "FIXED"].includes(lot) && <option value={lot}>{lot}</option>}</select></Field>
         {lot === "FIXED" && <Field label="Batch size"><input className="input" type="number" min={1} step="any" defaultValue={lp?.lot_sizing?.fixed_qty ?? 100} style={{ width: 90 }}
           onBlur={(e) => { const n = num(e.target.value); if (n > 0) write((x) => { x.lot_sizing = { ...(x.lot_sizing ?? {}), policy: "FIXED", fixed_qty: n }; }); }} /></Field>}
         <a className="btn sm ghost" href={href("material", product, place, "mrp1")}>All planning settings (MRP 1–4)</a>
       </div>
+      {msg && <p className="small muted" role="status">{msg}</p>}
     </div>
   );
 }

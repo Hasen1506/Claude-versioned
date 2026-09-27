@@ -642,6 +642,9 @@ details.fold:not([open]) > summary { border-bottom: 0; }
 .qf-l { font: 600 12px var(--font); color: var(--text-2); }
 .qf-h { font-size: 11.5px; color: var(--text-3); max-width: 200px; }
 .qf .select { max-width: 320px; }
+.company-form .qrow { align-items: flex-start; }
+.company-form .qf-h { max-width: 62ch; }
+.company-form > .qf { align-self: flex-start; }
 .wz-card.attn { border: var(--rule) solid var(--ink); box-shadow: inset 5px 0 0 var(--hl); }
 button.linkish.wz-head { text-decoration: none; color: var(--text); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; text-align: left; font-size: 14.5px; }
 .wz-opts { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }

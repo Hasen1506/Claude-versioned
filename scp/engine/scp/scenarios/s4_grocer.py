@@ -135,9 +135,10 @@ def run(ctx: Ctx, c: Client, ds: Dataset) -> None:
         ctx.eq("records released", rel.records, 7 * 7 - 2, "NEW has nothing before its launch.")
         flat = sorted((r.date, round(r.qty, 3), r.period_days) for r in rel_ds.demand if r.product == "FLAT")
         ctx.eq("FLAT first and last records", [flat[0], flat[-1]],
-               [(d("2026-06-03"), 71.429, 5), (d("2026-07-13"), 25.714, 2)],
-               "Wed 3 Jun – Sun 7 Jun is 5 of the week's 7 days: 100 × 5/7. The horizon ends Wed 15 Jul, so the "
-               "last week holds 13–14 Jul: 90 × 2/7.")
+               [(d("2026-06-03"), 71.0, 5), (d("2026-07-13"), 26.0, 2)],
+               "Wed 3 Jun – Sun 7 Jun is 5 of the week's 7 days: 100 × 5/7 = 71.43. The horizon ends Wed 15 Jul, so "
+               "the last week holds 13–14 Jul: 90 × 2/7 = 25.71. Counted in each, so released in whole units with the "
+               "running total kept within half a unit: 71, then 562.14 − 536 → 26.")
         released = {p: sum(r.qty for r in rel_ds.demand if r.product == p) for p in PRICES}
 
     with ctx.step("Complete the supply side and plan", "plan", "POST /api/plan",

@@ -36,7 +36,7 @@ from ..validate import has_errors, validate
 from . import costing, rates
 from .consumption import effective_demand
 from .leadtime import (
-    Schedule, gr_days, lead_time_std_days, location_calendar, nominal_lead_time_days, resource_calendar,
+    Schedule, batch_multiple, gr_days, lead_time_std_days, location_calendar, nominal_lead_time_days, resource_calendar,
     schedule, schedule_make, supplier_lane,
 )
 from .lotsize import apply_modifiers, base_lot
@@ -98,8 +98,7 @@ class _Planner:
 
     # ------------------------------------------------------------------ setup
     def lp(self, node: Node) -> LocationProduct:
-        lp = self.ds.location_product_by_key.get(node)
-        return lp or LocationProduct(location=node[0], product=node[1])
+        return self.ds.planning_lp(node)
 
     def is_customer(self, node: Node) -> bool:
         return self.ds.location_type(node[0]) is LocationType.CUSTOMER
@@ -374,8 +373,14 @@ class _Planner:
             ps = self.ds.production_source_by_id[opt.source_id]
             mins.append(ps.min_lot)
             maxes.append(ps.max_lot)
+        whole = [1.0] if self.ds.whole(node[1]) else []
+        batch: list[float | None] = []
+        if opt.kind == "make" and ps.full_batches and (m := batch_multiple(ps)):
+            # whole batches; a product counted in each takes the whole units a batch holds
+            batch = [math.floor(m + 1e-9) if whole and m >= 1 else m]
+        rounds += batch + whole   # a product counted in each is never planned as 25.9 tins
         if st.lp.strategy is Strategy.MTO:
-            lots = apply_modifiers(qty, mins=[], roundings=[], maxes=maxes)
+            lots = apply_modifiers(qty, mins=[], roundings=batch + whole, maxes=maxes)
         else:
             lots = apply_modifiers(qty, mins=mins, roundings=rounds, maxes=maxes)
             step = max((r for r in rounds if r), default=None)
@@ -660,7 +665,7 @@ class _Planner:
         total = 0.0
         if opt.kind == "buy":
             pu = ds.purchasing_source_by_id[opt.source_id]
-            price = pu.price_for(qty) * costing.fx(ds, pu.currency) * (1.0 + pu.duty_rate)
+            price = pu.price_for(qty) * costing.fx(ds, ds.price_currency(pu)) * (1.0 + pu.duty_rate)
             lane = supplier_lane(ds, pu.supplier, pu.location, pu.product)
             freight = 0.0
             if lane:

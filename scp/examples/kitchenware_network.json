@@ -1187,7 +1187,7 @@
    "location": "CUS-ECOM",
    "product": "KT-15",
    "date": "2026-12-28",
-   "qty": 495,
+   "qty": 494,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1211,7 +1211,7 @@
    "location": "CUS-ECOM",
    "product": "KT-15",
    "date": "2027-01-18",
-   "qty": 452,
+   "qty": 453,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1219,7 +1219,7 @@
    "location": "CUS-ECOM",
    "product": "KT-15",
    "date": "2027-01-25",
-   "qty": 449,
+   "qty": 448,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1227,7 +1227,7 @@
    "location": "CUS-ECOM",
    "product": "KT-15",
    "date": "2027-02-01",
-   "qty": 446,
+   "qty": 447,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1243,7 +1243,7 @@
    "location": "CUS-ECOM",
    "product": "KT-15",
    "date": "2027-02-15",
-   "qty": 444,
+   "qty": 443,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1251,7 +1251,7 @@
    "location": "CUS-ECOM",
    "product": "KT-15",
    "date": "2027-02-22",
-   "qty": 443,
+   "qty": 444,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1339,7 +1339,7 @@
    "location": "CUS-ECOM",
    "product": "MG-500",
    "date": "2026-11-09",
-   "qty": 277,
+   "qty": 278,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1403,7 +1403,7 @@
    "location": "CUS-ECOM",
    "product": "MG-500",
    "date": "2027-01-04",
-   "qty": 231,
+   "qty": 232,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1411,7 +1411,7 @@
    "location": "CUS-ECOM",
    "product": "MG-500",
    "date": "2027-01-11",
-   "qty": 260,
+   "qty": 259,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1419,7 +1419,7 @@
    "location": "CUS-ECOM",
    "product": "MG-500",
    "date": "2027-01-18",
-   "qty": 247,
+   "qty": 248,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1539,7 +1539,7 @@
    "location": "CUS-ECOM",
    "product": "MG-750",
    "date": "2026-11-02",
-   "qty": 264,
+   "qty": 263,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1547,7 +1547,7 @@
    "location": "CUS-ECOM",
    "product": "MG-750",
    "date": "2026-11-09",
-   "qty": 256,
+   "qty": 257,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1563,7 +1563,7 @@
    "location": "CUS-ECOM",
    "product": "MG-750",
    "date": "2026-11-23",
-   "qty": 235,
+   "qty": 234,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1595,7 +1595,7 @@
    "location": "CUS-ECOM",
    "product": "MG-750",
    "date": "2026-12-21",
-   "qty": 195,
+   "qty": 194,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1603,7 +1603,7 @@
    "location": "CUS-ECOM",
    "product": "MG-750",
    "date": "2026-12-28",
-   "qty": 190,
+   "qty": 191,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1611,7 +1611,7 @@
    "location": "CUS-ECOM",
    "product": "MG-750",
    "date": "2027-01-04",
-   "qty": 189,
+   "qty": 188,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1731,7 +1731,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "KT-15",
    "date": "2026-11-02",
-   "qty": 516,
+   "qty": 515,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1819,7 +1819,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "KT-15",
    "date": "2027-01-18",
-   "qty": 537,
+   "qty": 536,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1827,7 +1827,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "KT-15",
    "date": "2027-01-25",
-   "qty": 525,
+   "qty": 526,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1867,7 +1867,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "KT-15",
    "date": "2027-03-01",
-   "qty": 475,
+   "qty": 476,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1907,7 +1907,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "MG-500",
    "date": "2026-10-05",
-   "qty": 467,
+   "qty": 466,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1915,7 +1915,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "MG-500",
    "date": "2026-10-12",
-   "qty": 491,
+   "qty": 492,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1931,7 +1931,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "MG-500",
    "date": "2026-10-26",
-   "qty": 427,
+   "qty": 426,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1963,7 +1963,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "MG-500",
    "date": "2026-11-23",
-   "qty": 449,
+   "qty": 450,
    "kind": "forecast",
    "period_days": 7
   },
@@ -1979,7 +1979,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "MG-500",
    "date": "2026-12-07",
-   "qty": 360,
+   "qty": 359,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2003,7 +2003,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "MG-500",
    "date": "2026-12-28",
-   "qty": 359,
+   "qty": 360,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2019,7 +2019,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "MG-500",
    "date": "2027-01-11",
-   "qty": 336,
+   "qty": 335,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2035,7 +2035,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "MG-500",
    "date": "2027-01-25",
-   "qty": 336,
+   "qty": 335,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2043,7 +2043,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "MG-500",
    "date": "2027-02-01",
-   "qty": 354,
+   "qty": 355,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2051,7 +2051,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "MG-500",
    "date": "2027-02-08",
-   "qty": 346,
+   "qty": 345,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2075,7 +2075,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "MG-500",
    "date": "2027-03-01",
-   "qty": 419,
+   "qty": 418,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2235,7 +2235,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "MG-750",
    "date": "2027-01-18",
-   "qty": 179,
+   "qty": 180,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2291,7 +2291,7 @@
    "location": "CUS-NORTH-TRADE",
    "product": "MG-750",
    "date": "2027-03-08",
-   "qty": 211,
+   "qty": 210,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2339,7 +2339,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "KT-15",
    "date": "2026-10-19",
-   "qty": 679,
+   "qty": 680,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2379,7 +2379,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "KT-15",
    "date": "2026-11-23",
-   "qty": 616,
+   "qty": 615,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2403,7 +2403,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "KT-15",
    "date": "2026-12-14",
-   "qty": 683,
+   "qty": 682,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2451,7 +2451,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "KT-15",
    "date": "2027-01-25",
-   "qty": 657,
+   "qty": 656,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2515,7 +2515,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "KT-15",
    "date": "2027-03-22",
-   "qty": 575,
+   "qty": 576,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2539,7 +2539,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "MG-500",
    "date": "2026-10-12",
-   "qty": 648,
+   "qty": 649,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2555,7 +2555,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "MG-500",
    "date": "2026-10-26",
-   "qty": 670,
+   "qty": 669,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2563,7 +2563,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "MG-500",
    "date": "2026-11-02",
-   "qty": 668,
+   "qty": 669,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2571,7 +2571,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "MG-500",
    "date": "2026-11-09",
-   "qty": 659,
+   "qty": 658,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2579,7 +2579,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "MG-500",
    "date": "2026-11-16",
-   "qty": 641,
+   "qty": 642,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2587,7 +2587,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "MG-500",
    "date": "2026-11-23",
-   "qty": 618,
+   "qty": 617,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2595,7 +2595,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "MG-500",
    "date": "2026-11-30",
-   "qty": 590,
+   "qty": 591,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2619,7 +2619,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "MG-500",
    "date": "2026-12-21",
-   "qty": 510,
+   "qty": 511,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2691,7 +2691,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "MG-500",
    "date": "2027-02-22",
-   "qty": 553,
+   "qty": 552,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2803,7 +2803,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "MG-750",
    "date": "2026-11-30",
-   "qty": 335,
+   "qty": 336,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2811,7 +2811,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "MG-750",
    "date": "2026-12-07",
-   "qty": 318,
+   "qty": 317,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2851,7 +2851,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "MG-750",
    "date": "2027-01-11",
-   "qty": 267,
+   "qty": 266,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2875,7 +2875,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "MG-750",
    "date": "2027-02-01",
-   "qty": 280,
+   "qty": 281,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2899,7 +2899,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "MG-750",
    "date": "2027-02-22",
-   "qty": 306,
+   "qty": 307,
    "kind": "forecast",
    "period_days": 7
   },
@@ -2907,7 +2907,7 @@
    "location": "CUS-WEST-TRADE",
    "product": "MG-750",
    "date": "2027-03-01",
-   "qty": 313,
+   "qty": 312,
    "kind": "forecast",
    "period_days": 7
   },
@@ -8977,8 +8977,8 @@
    "product": "KT-15",
    "start": "2026-08-24",
    "end": "2026-08-31",
-   "forecast": 675,
-   "actual": 781
+   "forecast": 676,
+   "actual": 782
   },
   {
    "location": "CUS-WEST-TRADE",
@@ -8993,8 +8993,8 @@
    "product": "KT-15",
    "start": "2026-09-07",
    "end": "2026-09-14",
-   "forecast": 612,
-   "actual": 581
+   "forecast": 613,
+   "actual": 582
   },
   {
    "location": "CUS-WEST-TRADE",
@@ -9025,8 +9025,8 @@
    "product": "MG-500",
    "start": "2026-08-10",
    "end": "2026-08-17",
-   "forecast": 669,
-   "actual": 988
+   "forecast": 670,
+   "actual": 989
   },
   {
    "location": "CUS-WEST-TRADE",
@@ -9041,16 +9041,16 @@
    "product": "MG-500",
    "start": "2026-08-24",
    "end": "2026-08-31",
-   "forecast": 707,
-   "actual": 724
+   "forecast": 708,
+   "actual": 725
   },
   {
    "location": "CUS-WEST-TRADE",
    "product": "MG-500",
    "start": "2026-08-31",
    "end": "2026-09-07",
-   "forecast": 719,
-   "actual": 753
+   "forecast": 720,
+   "actual": 754
   },
   {
    "location": "CUS-WEST-TRADE",

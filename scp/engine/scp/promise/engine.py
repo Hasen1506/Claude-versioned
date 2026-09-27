@@ -386,7 +386,7 @@ class Promiser:
         for op in sorted(ps.operations, key=lambda o: o.seq):
             if not op.resource or op.subcontract is not None:
                 continue
-            h = op.setup_hours + op.run_hours_per_unit * qty * enter[op.seq]
+            h = op.setup_hours + op.run_hours(qty * enter[op.seq])
             machines = [m for m in (op.resource, *op.alternatives) if m in ds.resource_by_id]
             if any(m not in self.free for m in machines):
                 continue                          # a machine without a capacity limit can run it

@@ -3243,8 +3243,8 @@ export interface components {
         LotSizePolicy: "L4L" | "FIXED" | "EOQ" | "POQ" | "MIN_MAX";
         /** LotSizing */
         LotSizing: {
-            /** @default L4L */
-            policy: components["schemas"]["LotSizePolicy"];
+            /** @description Empty: the company default (settings) */
+            policy?: components["schemas"]["LotSizePolicy"] | null;
             /**
              * Fixed Qty
              * @description FIXED: lot size
@@ -3686,6 +3686,17 @@ export interface components {
              * @default 0
              */
             run_hours_per_unit: number;
+            /**
+             * Batch Qty
+             * @description Process step: units one batch holds (a 2,000 L mixer), counted like the units entering the step; the step runs in whole batches
+             */
+            batch_qty?: number | null;
+            /**
+             * Batch Hours
+             * @description Process step: machine hours one batch takes, however full it is
+             * @default 0
+             */
+            batch_hours: number;
             /** Labor Resource */
             labor_resource?: string | null;
             /**
@@ -4369,6 +4380,11 @@ export interface components {
             /** Shelf Life Days */
             shelf_life_days?: number | null;
             /**
+             * Whole Units
+             * @description Planned in whole units (no 25.9 tins). Empty: from the unit, whole for EA, PC, box, case, tin, pail, bag, drum, bottle, …; fractional for kg, L, m, …
+             */
+            whole_units?: boolean | null;
+            /**
              * Standard Cost
              * @description Override for the computed cost roll-up
              */
@@ -4433,6 +4449,12 @@ export interface components {
             min_lot: number;
             /** Max Lot */
             max_lot?: number | null;
+            /**
+             * Full Batches
+             * @description Orders are planned in whole batches of the steps that run in batches (a half-filled mixer still takes a batch's time)
+             * @default true
+             */
+            full_batches: boolean;
             /**
              * Conversion Cost Per Unit
              * @description Cost not captured by resource rates (energy, overhead)
@@ -5286,6 +5308,11 @@ export interface components {
              */
             promo: boolean;
             /**
+             * Period Days
+             * @description The row is a total over [date, date + period_days), e.g. a month of sales: it is spread evenly over those days. Empty = sold on `date`.
+             */
+            period_days?: number | null;
+            /**
              * From Journal
              * @description Written by the roll-forward from sale movements, and rebuilt from the whole journal on every roll (so a late posting reaches it)
              * @default false
@@ -6130,6 +6157,17 @@ export interface components {
              * @enum {string}
              */
             capacity_direction: "earlier" | "later";
+            /**
+             * @description How much an order covers where a product's planning policy leaves it empty: L4L = exactly what is needed that day, POQ = the need of the next `default_lot_periods` buckets (one week by default)
+             * @default L4L
+             */
+            default_lot_policy: components["schemas"]["LotSizePolicy"];
+            /**
+             * Default Lot Periods
+             * @description POQ default: buckets each order covers
+             * @default 1
+             */
+            default_lot_periods: number;
             /**
              * Capacity Max Early Days
              * @description Levelling: move an order at most this many days earlier to fit; empty = as far as today

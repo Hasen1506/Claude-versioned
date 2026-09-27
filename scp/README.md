@@ -122,6 +122,21 @@ network, or import a dataset JSON. The dataset is saved in your browser and can 
 - **One road to a purchase order.** Firming groups purchases per supplier as Buying does, and a planned purchase that
   an open order would cover if it came sooner says so.
 
+## Sensible defaults (Phase H)
+
+- **The company first.** A new company starts with its name, currency, planning start, working days and how much
+  an order covers; *Set up → Your company* changes them and keeps the exchange rates.
+- **A week's need per order.** Where a product's planning policy leaves the lot size empty, the company default
+  applies: a week's need for a new company, instead of a new order for every day's need.
+- **Whole units.** Products counted in pieces (EA, box, case, tin, pail, …) are planned and forecast in whole units;
+  products in kg, litres or metres keep their fractions. The product list can override either way.
+- **Batch steps.** A step can run in batches (a 2,000 L mixer, 3 hours a batch however full); orders come in whole
+  batches and capacity, scheduling and lead times use the batch time.
+- **Sales sheets as they are.** Demand and history uploads read customer, month and units-sold columns; a month or a
+  week is a total spread over its days, and months across the top become one row each.
+- **Prices and currencies in setup.** Selling prices and costs on the product list; a supplier's price in the
+  currency it invoices in, turned into the company's with the rate kept once.
+
 What real use turned up, and what was done about it, is logged in [docs/USABILITY_LOG.md](docs/USABILITY_LOG.md).
 
 ## What is here (P0–P10)
@@ -131,7 +146,7 @@ What real use turned up, and what was done about it, is logged in [docs/USABILIT
 | Data model | `engine/scp/model` | Typed master and transactional data. Fractions are 0–1, and quantities are in base UoM. Units are enforced by the schema, not by convention. |
 | Readiness gate | `engine/scp/validate` | 37 coded master-data and execution-data checks with fix hints. Errors block planning. Unfinished records (a schema error, or a reference left empty) are set aside with a plain reason instead of rejecting the dataset (`lenient.py`), and a setup checklist says what is still missing, in setup order (`setup.py`). |
 | Network | `engine/scp/network` | Supply options per (location, product), low-level codes across BOM and transport edges, cycle detection. |
-| Supply planning | `engine/scp/plan` | Network MRP/DRP: forecast consumption by strategy, PIR splitting, safety stock (fixed / coverage / α / β), lot sizing (L4L / FIXED / EOQ / POQ / MIN_MAX + MOQ / rounding / max split), quota sourcing, working-day scheduling, firming fence, BOM explosion with scrap, capacity / supplier / lane load, pegging, delay propagation, exceptions, cost KPIs. |
+| Supply planning | `engine/scp/plan` | Network MRP/DRP: forecast consumption by strategy, PIR splitting, safety stock (fixed / coverage / α / β), lot sizing (L4L / FIXED / EOQ / POQ / MIN_MAX + MOQ / rounding / max split, a company default where a product sets none, whole units, whole batches), quota sourcing, working-day scheduling, firming fence, BOM explosion with scrap, capacity / supplier / lane load, pegging, delay propagation, exceptions, cost KPIs. |
 | Demand planning | `engine/scp/demand` | History to periods, cleansing (event baseline, robust outliers), ABC/XYZ and demand-pattern segmentation, a 12-model competition on a rolling backtest (MASE / WAPE / bias / value added), prediction ranges, events with measured lifts, NPI like-modelling with ramp and cannibalisation, consensus overrides, and release as forecast demand. Google TimesFM is an optional candidate model ([docs/TIMESFM.md](docs/TIMESFM.md)). |
 | Inventory optimisation | `engine/scp/inventory` | Demand and its variability flowed up the network (risk pooling), the single-echelon α baseline with lead-time variance, multi-echelon placement with the Graves–Willems guaranteed-service model solved exactly as a MILP (HiGHS), DDMRP buffer zones and net-flow position, and a pooling (square-root law) analysis. Recommendations reach the plan only after the planner approves them. |
 | S&OP | `engine/scp/sop` | A time-phased network LP over the same master data (HiGHS): production, purchases, transfers, stock, late and lost demand, overtime; limits on resource hours, overtime, suppliers, lanes, storage and shelf life; cost or profit mode; shadow prices with their validity ranges; demand and capacity scenario levers; release of the constrained volumes to MRP. |

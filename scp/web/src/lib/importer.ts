@@ -75,6 +75,9 @@ export function columnsFor(schema: JsonSchema, ckey: CollectionKey, kind: Import
   return [...out.filter((c) => c.required), ...out.filter((c) => !c.required)];
 }
 
+/** Tables whose date may be a month or a week (a total over it). */
+const PERIODS = new Set<CollectionKey>(["demand", "history"]);
+
 const BOM_COLS: Col[] = [
   { path: "location", header: "plant", label: "Plant", kind: "string", required: true, ref: "location" },
   { path: "product", header: "product", label: "Product made", kind: "string", required: true, ref: "product" },
@@ -91,6 +94,8 @@ const ROUTING_COLS: Col[] = [
   { path: "setup_hours", header: "setup_hours", label: "Setup hours per run", kind: "number", required: false },
   { path: "run_hours_per_unit", header: "run_hours_per_unit", label: "Run hours per unit", kind: "number", required: false },
   { path: "run_minutes_per_unit", header: "run_minutes_per_unit", label: "Run minutes per unit (instead of hours)", kind: "number", required: false },
+  { path: "batch_qty", header: "batch_size", label: "Batch size (a process step runs in whole batches)", kind: "number", required: false },
+  { path: "batch_hours", header: "hours_per_batch", label: "Hours per batch, however full", kind: "number", required: false },
   { path: "name", header: "step_name", label: "Step name", kind: "string", required: false },
   { path: "source", header: "source_id", label: "Production source id (optional)", kind: "string", required: false },
 ];
@@ -98,8 +103,15 @@ const ROUTING_COLS: Col[] = [
 // ---- header matching -----------------------------------------------------------------------------------------------
 const norm = (s: string) => s.toLowerCase().replace(/%/g, "").replace(/[^a-z0-9]/g, "");
 const SYNONYMS: Record<string, string[]> = {
-  qty: ["quantity", "units", "volume", "demand", "amount"], location: ["place", "site", "plant", "warehouse", "dc", "locationid"],
-  product: ["item", "material", "sku", "productid", "article"], date: ["day", "week", "weekof", "period", "deliverydate", "duedate"],
+  qty: ["quantity", "units", "volume", "demand", "amount", "qtysold", "unitssold", "sales", "salesqty", "salesunits", "sold",
+    "forecast", "forecastqty", "orderqty", "orderquantity", "ordered", "pcs", "cases", "totalqty"],
+  location: ["place", "site", "plant", "warehouse", "dc", "locationid", "customer", "customername", "customerid", "shipto",
+    "store", "branch", "depot", "market", "account", "dealer", "distributor", "outlet"],
+  product: ["item", "material", "sku", "productid", "article", "productname", "itemname", "itemcode", "skucode", "productcode",
+    "partnumber", "materialcode", "materialnumber"],
+  date: ["day", "week", "weekof", "period", "deliverydate", "duedate", "month", "monthof", "orderdate", "invoicedate",
+    "shipdate", "requesteddate", "requireddate", "salesdate", "billingdate"],
+  period_days: ["days", "perioddays", "spreadover"], batch_qty: ["batchsize", "batch"], batch_hours: ["hoursperbatch", "batchtime", "batchhours"],
   lead_time_days: ["leadtime", "lt", "leadtimedays"], supplier: ["vendor", "supplierid", "vendorid"], price: ["unitprice", "cost"],
   origin: ["from"], destination: ["to"], on_hand: ["stock", "onhand", "inventory", "stockonhand"], id: ["code", "number", "no"],
   name: ["description", "desc"], type: ["kind", "category"], component: ["part", "componentid", "material"],
@@ -145,6 +157,56 @@ export function parseDate(v: string, dayFirst: boolean): string | null {
   }
   return null;
 }
+/** A month or a week instead of a day: "Oct 2026", "October-26", "2026-10", "10/2026", "2026-W41", "W41 2026". The
+ *  quantity is then a total over that period, spread over its days (Q11). */
+export function parsePeriod(v: string): { start: string; days: number } | null {
+  const s = v.trim();
+  const month = (y: number, m: number) => {
+    if (m < 1 || m > 12 || y < 1900) return null;
+    return { start: iso(y, m, 1)!, days: new Date(Date.UTC(y, m, 0)).getUTCDate() };
+  };
+  const year = (t: string) => (t.length === 2 ? 2000 + +t : +t);
+  let m = s.match(/^([A-Za-z]{3,})\.?[ \-/',]*(\d{4}|\d{2})$/);
+  if (m) { const mon = MONTHS.indexOf(m[1].slice(0, 3).toLowerCase()) + 1; if (mon) return month(year(m[2]), mon); }
+  m = s.match(/^(\d{4})[-/.](\d{1,2})$/);
+  if (m) return month(+m[1], +m[2]);
+  m = s.match(/^(\d{1,2})[-/.](\d{4})$/);
+  if (m) return month(+m[2], +m[1]);
+  let yw: [number, number] | null = null;
+  m = s.match(/^(\d{4})[- ]?W(\d{1,2})$/i);
+  if (m) yw = [+m[1], +m[2]];
+  m = s.match(/^W(?:eek)?\s*(\d{1,2})[ \-/,]+(\d{4})$/i);
+  if (m) yw = [+m[2], +m[1]];
+  if (yw) {
+    const [y, w] = yw;
+    if (w < 1 || w > 53) return null;
+    const jan4 = new Date(Date.UTC(y, 0, 4));
+    const monday = new Date(jan4.getTime() - ((jan4.getUTCDay() + 6) % 7) * 86400000 + (w - 1) * 7 * 86400000);
+    return { start: monday.toISOString().slice(0, 10), days: 7 };
+  }
+  return null;
+}
+
+/** A sales sheet with the months (or weeks, or days) across the top: one row per product and customer, one column per
+ *  period. Turned into one row per period with a date and a quantity; null when the grid isn't laid out that way. */
+export function unpivotPeriods(grid: Grid, dayFirst: boolean): { grid: Grid; periods: number } | null {
+  const [header = [], ...body] = grid;
+  const isPeriod = header.map((h) => !!h.trim() && (parsePeriod(h) !== null || parseDate(h, dayFirst) !== null));
+  const n = isPeriod.filter(Boolean).length;
+  if (n < 2) return null;
+  const keep = header.map((_, i) => i).filter((i) => !isPeriod[i]);
+  const out: Grid = [[...keep.map((i) => header[i]), "date", "qty"]];
+  for (const row of body) {
+    header.forEach((h, i) => {
+      if (!isPeriod[i]) return;
+      const q = (row[i] ?? "").trim();
+      if (q === "") return;
+      out.push([...keep.map((k) => row[k] ?? ""), h, q]);
+    });
+  }
+  return { grid: out, periods: n };
+}
+
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 function iso(y: number, m: number, d: number): string | null {
   const dt = new Date(Date.UTC(y, m - 1, d));
@@ -211,6 +273,7 @@ export function readRows(grid: Grid, cols: Col[], ds: Dataset, ckey: CollectionK
   const rows: RowResult[] = body.map((cells, bi) => {
     const rec: Obj = {};
     const problems: string[] = [];
+    let period = 0;
     mapped.forEach((c, i) => {
       if (!c) return;
       const raw = (cells[i] ?? "").trim();
@@ -226,8 +289,10 @@ export function readRows(grid: Grid, cols: Col[], ds: Dataset, ckey: CollectionK
         }
         case "date": {
           const d = parseDate(raw, opt.dayFirst);
-          if (!d) { problems.push(`${c.label}: “${raw}” is not a date`); return; }
-          v = d;
+          const per = d || !PERIODS.has(ckey) || c.path !== "date" ? null : parsePeriod(raw);
+          if (!d && !per) { problems.push(`${c.label}: “${raw}” is not a date${PERIODS.has(ckey) ? " or a month" : ""}`); return; }
+          if (per) period = per.days;
+          v = d ?? per!.start;
           break;
         }
         case "boolean": {
@@ -260,6 +325,11 @@ export function readRows(grid: Grid, cols: Col[], ds: Dataset, ckey: CollectionK
       setPath(rec, c.path, v);
     });
     for (const c of cols) if (c.required && getPath(rec, c.path) === undefined && mapped.includes(c) && !problems.some((p) => p.startsWith(c.label))) problems.push(`${c.label} is empty`);
+    // a month (or week) is a total over its days: a forecast spread over them, history spread when forecasting
+    if (period && rec.period_days === undefined) {
+      if (ckey === "demand" && rec.kind !== undefined && rec.kind !== "forecast") problems.push("a customer order needs its day, not a month");
+      else rec.period_days = period;
+    }
     if (kind === "routing" && rec.run_minutes_per_unit !== undefined) {
       rec.run_hours_per_unit = (rec.run_minutes_per_unit as number) / 60;
       delete rec.run_minutes_per_unit;
@@ -319,6 +389,7 @@ export function applyRows(d: Dataset, ckey: CollectionKey, kind: ImportKind, row
     else src.operations = [...recs].sort((a, b) => (a.seq as number) - (b.seq as number)).map((r) => ({
       seq: r.seq, resource: r.resource, ...(r.name ? { name: r.name } : {}),
       setup_hours: r.setup_hours ?? 0, run_hours_per_unit: r.run_hours_per_unit ?? 0,
+      ...(r.batch_qty ? { batch_qty: r.batch_qty, batch_hours: r.batch_hours ?? 0 } : {}),
     }));
   }
 }

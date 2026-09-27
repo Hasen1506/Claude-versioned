@@ -49,7 +49,7 @@ def landed_unit_cost(ds: Dataset, src_id: str) -> float:
     pu = ds.purchasing_source_by_id[src_id]
     lane = supplier_lane(ds, pu.supplier, pu.location, pu.product)
     fr = freight_per_unit(ds, lane.planning_mode, pu.product) if lane else 0.0
-    return pu.price * fx(ds, pu.currency) * (1.0 + pu.duty_rate) + fr + handling(ds, pu.location)
+    return pu.price * fx(ds, ds.price_currency(pu)) * (1.0 + pu.duty_rate) + fr + handling(ds, pu.location)
 
 
 def conversion_unit_cost(ds: Dataset, src_id: str) -> float:
@@ -63,7 +63,7 @@ def conversion_unit_cost(ds: Dataset, src_id: str) -> float:
         if op.subcontract is not None:
             per_unit += op.subcontract.cost_per_unit
         r = ds.resource_by_id.get(op.resource) if op.resource else None
-        per_unit += op.run_hours_per_unit * (r.cost_per_hour if r else 0.0)
+        per_unit += op.run_hours_per_unit_avg * (r.cost_per_hour if r else 0.0)
         if op.labor_resource:
             lr = ds.resource_by_id.get(op.labor_resource)
             per_unit += op.labor_hours_per_unit * (lr.cost_per_hour if lr else 0.0)

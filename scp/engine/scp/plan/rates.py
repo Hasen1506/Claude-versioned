@@ -47,7 +47,7 @@ def _overlap(rec_start: date, rec_days: int, lo: date, hi: date) -> float:
 
 
 def _lp(ds: Dataset, node: Node) -> LocationProduct:
-    return ds.location_product_by_key.get(node) or LocationProduct(location=node[0], product=node[1])
+    return ds.planning_lp(node)
 
 
 def independent_demand(ds: Dataset) -> dict[Node, list[tuple[IndependentReq, int]]]:

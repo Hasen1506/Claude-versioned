@@ -2,7 +2,7 @@
 // then apply. Also: download a template, or the table as it is.
 import { useMemo, useState } from "react";
 import type { Dataset } from "../api/types";
-import { applyRows, columnsFor, exportRows, readRows, templateRows, type ImportKind } from "../lib/importer";
+import { applyRows, columnsFor, exportRows, readRows, templateRows, unpivotPeriods, type ImportKind } from "../lib/importer";
 import { download, parseDelimited, readFile, toCsv, type Grid } from "../lib/tabular";
 import { byKey, type CollectionKey } from "../model/collections";
 import { useSchema } from "../schema/SchemaForm";
@@ -26,7 +26,10 @@ export function ImportPanel({ ds, ckey, onClose, kinds }: { ds: Dataset; ckey: C
   const [replace, setReplace] = useState(false);
   const [done, setDone] = useState<string | null>(null);
   const cols = useMemo(() => (schema ? columnsFor(schema, ckey, kind) : []), [schema, ckey, kind]);
-  const res = useMemo(() => (grid && cols.length ? readRows(grid, cols, ds, ckey, kind, { dayFirst }) : null), [grid, cols, ds, ckey, kind, dayFirst]);
+  // months (or weeks) across the top of a sales sheet become one row per period
+  const wide = useMemo(() => (grid && (ckey === "demand" || ckey === "history") ? unpivotPeriods(grid, dayFirst) : null), [grid, ckey, dayFirst]);
+  const table = wide?.grid ?? grid;
+  const res = useMemo(() => (table && cols.length ? readRows(table, cols, ds, ckey, kind, { dayFirst }) : null), [table, cols, ds, ckey, kind, dayFirst]);
   if (!schema) return null;
 
   const base = kind === "records" ? def.label.toLowerCase().replace(/\s+/g, "-") : kind;
@@ -49,11 +52,11 @@ export function ImportPanel({ ds, ckey, onClose, kinds }: { ds: Dataset; ckey: C
     ((k === "product" ? ds.products : ds.locations) ?? []).find((x) => x.id === id)?.name || id;
   // products the file names that don't exist yet: offer to add them (as parts when they appear only as components)
   const missingProducts = new Map<string, "FG" | "RM">();
-  if (res && grid) {
+  if (res && table) {
     res.mapped.forEach((c, i) => {
       if (c?.ref !== "product") return;
       for (const [n, r] of res.rows.entries()) {
-        const v = (grid[n + 1]?.[i] ?? "").trim();
+        const v = (table[n + 1]?.[i] ?? "").trim();
         if (v && r.problems.some((p) => p.includes(`no product “${v}”`)))
           missingProducts.set(v, c.path === "component" || missingProducts.get(v) === "RM" ? "RM" : "FG");
       }
@@ -82,7 +85,7 @@ export function ImportPanel({ ds, ckey, onClose, kinds }: { ds: Dataset; ckey: C
             Columns can be in any order; names like “Qty”, “Quantity” or “Item” are recognised, and places and products can be given by id or name.</p>
           <details><summary className="small">The columns</summary>
             <table className="t small"><tbody>{cols.map((c) => <tr key={c.path}><td className="mono">{c.header}</td><td>{c.label}{c.required && <b> (required)</b>}</td>
-              <td className="faint">{c.enum ? `one of ${c.enum.join(", ")}` : c.kind === "date" ? "a date, e.g. 2026-10-05" : c.percent ? "a percentage, e.g. 5" : c.kind === "list" ? "several, separated by ;" : c.ref ? `a ${c.ref} id or name` : c.help ?? ""}</td></tr>)}</tbody></table>
+              <td className="faint">{c.enum ? `one of ${c.enum.join(", ")}` : c.kind === "date" ? (ckey === "demand" || ckey === "history" ? "a date, e.g. 2026-10-05, or a month (Oct 2026) or week (2026-W41): the quantity is spread over it" : "a date, e.g. 2026-10-05") : c.percent ? "a percentage, e.g. 5" : c.kind === "list" ? "several, separated by ;" : c.ref ? `a ${c.ref} id or name` : c.help ?? ""}</td></tr>)}</tbody></table>
           </details>
           <div className="row wrap">
             <button className="btn sm" onClick={() => download(`${base}-template.csv`, toCsv(templateRows(ds, ckey, cols, kind)))}>Download a template</button>
@@ -104,25 +107,27 @@ export function ImportPanel({ ds, ckey, onClose, kinds }: { ds: Dataset; ckey: C
         {res && <>
           {res.missing.length > 0 && <div className="banner error" role="alert">The file has no {res.missing.map((c) => `“${c.header}”`).join(", ")} column{res.missing.length > 1 ? "s" : ""}, which {res.missing.length > 1 ? "are" : "is"} needed.
             Rename a column to match, or start from the template.</div>}
-          <div className="small">Columns read: {grid![0].map((h, i) => <span key={i} className={`chip ${res.mapped[i] ? "" : "faint"}`} title={res.mapped[i] ? res.mapped[i]!.label : "not used"}>
+          {wide && <div className="banner info">The file has {wide.periods} periods across the top: each becomes its own row, with a month or
+            week spread over its days.</div>}
+          <div className="small">Columns read: {table![0].map((h, i) => <span key={i} className={`chip ${res.mapped[i] ? "" : "faint"}`} title={res.mapped[i] ? res.mapped[i]!.label : "not used"}>
             {h}{res.mapped[i] ? ` → ${res.mapped[i]!.label}` : " (not used)"}</span>)}</div>
           {dates && <label className="row small"><input type="checkbox" checked={dayFirst} onChange={(e) => setDayFirst(e.target.checked)} />
             Dates like 05/10/2026 are day/month/year</label>}
           {missingProducts.size > 0 && <div className="banner warning">
             {missingProducts.size === 1 ? "One product in the file doesn't exist yet" : `${missingProducts.size} products in the file don't exist yet`}: {[...missingProducts.keys()].slice(0, 6).join(", ")}{missingProducts.size > 6 ? "…" : ""}.
             <button className="btn sm" onClick={addMissing}>Add {missingProducts.size === 1 ? "it" : "them"} as {[...missingProducts.values()].every((t) => t === "RM") ? "raw materials" : "products"}</button></div>}
-          <div className="row wrap">
+          {!res.missing.length && <div className="row wrap">
             <Badge sev="ok">{kind === "records" ? `${adds} new` : `${good.length} ${kind === "bom" ? "parts" : "steps"}`}</Badge>{ups > 0 && <Badge sev="info">{ups} update existing</Badge>}{bad > 0 && <Badge sev="error">{bad} can't be read</Badge>}
-          </div>
+          </div>}
           <div className="table-wrap" style={{ maxHeight: 320 }}>
             <table className="t small">
-              <thead><tr><th>Row</th><th>What happens</th>{grid![0].map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
+              <thead><tr><th>Row</th><th>What happens</th>{table![0].map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
               <tbody>{res.rows.slice(0, 300).map((r, n) => <tr key={n} className={r.problems.length ? "bad" : ""}>
                 <td className="num">{r.line}</td>
-                <td>{r.problems.length ? <span className="err-text">{r.problems.join("; ")}</span>
+                <td>{res.missing.length ? <span className="faint">not imported: a column is missing</span> : r.problems.length ? <span className="err-text">{r.problems.join("; ")}</span>
                   : kind !== "records" ? `${kind === "bom" ? "a part" : "a step"} of ${name("product", r.record!.product as string)} at ${name("location", r.record!.location as string)}`
-                  : r.action === "update" ? "updates " + r.key : "added"}</td>
-                {grid![n + 1]?.map((c, i) => <td key={i}>{c}</td>)}
+                  : (r.action === "update" ? "updates " + r.key : "added") + (typeof r.record?.period_days === "number" && r.record.period_days > 1 && !grid![0].some((h) => /period|days|spread/i.test(h)) ? `, spread over ${r.record.period_days} days` : "")}</td>
+                {table![n + 1]?.map((c, i) => <td key={i}>{c}</td>)}
               </tr>)}</tbody>
             </table>
           </div>

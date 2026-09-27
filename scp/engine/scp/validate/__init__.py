@@ -301,10 +301,10 @@ def _references(ds: Dataset, c: _Collector) -> None:
 def _currency(ds: Dataset, c: _Collector) -> None:
     s = ds.settings
     for pu in ds.purchasing_sources:
-        cur = pu.currency
+        cur = ds.price_currency(pu)
         if cur and cur != s.currency and cur not in s.fx_rates:
             c.add("FX_MISSING", "purchasing_source", pu.id, f"No exchange rate for {cur}",
-                  f"Add settings.fx_rates['{cur}'] ({s.currency} per 1 {cur})", "currency")
+                  f"Enter what one {cur} costs in {s.currency} (company settings → exchange rates)", "currency")
 
 
 def _calendars(ds: Dataset, c: _Collector) -> None:

@@ -77,6 +77,13 @@ class Schedule:
     component_dates: dict[str, date] | None = None
 
 
+def batch_multiple(ps: ProductionSource) -> float | None:
+    """The good quantity one full batch of the largest batch step yields (orders are planned in multiples of it)."""
+    enter = entering(ps)
+    sizes = [op.batch_qty / enter[op.seq] for op in ps.operations if op.batch_qty and enter[op.seq] > 0]
+    return max(sizes) if sizes else None
+
+
 def started_qty(ps: ProductionSource, good_qty: float) -> float:
     """Units an order starts to end with ``good_qty`` good ones (step scrap and whole-order scrap)."""
     return good_qty * started_factor(ps)
@@ -93,7 +100,7 @@ def _op_workdays(ds: Dataset, ps: ProductionSource, good_qty: float) -> list[tup
             out.append((op.seq, op.subcontract.workdays, 0.0, 0.0))
             continue
         res = ds.resource_by_id.get(op.resource or "")
-        hours = op.setup_hours + op.run_hours_per_unit * q
+        hours = op.setup_hours + op.run_hours(q)
         units = min(op.parallel_units or res.units, res.units) if res else 1
         rate = res.hours_per_workday_per_unit * units if res else 8.0
         out.append((op.seq, hours / rate if rate > 0 else 0.0, hours, op.labor_hours_per_unit * q))

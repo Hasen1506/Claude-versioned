@@ -136,7 +136,7 @@ export const COLLECTIONS: CollectionDef[] = [
     columns: [
       { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
       { label: "Strategy", get: (o) => s(o.strategy ?? "MTS_CONSUME") },
-      { label: "Lot", get: (o) => s((o.lot_sizing as Obj | undefined)?.policy ?? "L4L") },
+      { label: "Lot", get: (o) => s((o.lot_sizing as Obj | undefined)?.policy ?? "company default") },
       { label: "Safety stock", get: (o) => s((o.safety_stock as Obj | undefined)?.method ?? "none") },
       { label: "On hand", get: (o) => (o.on_hand as number) ?? 0, num: true },
     ],

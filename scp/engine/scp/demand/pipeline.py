@@ -73,23 +73,25 @@ def _aggregate(ds: Dataset, period: ForecastPeriod, cutoff: date) -> dict[tuple[
     horizon_start = period_start(cutoff, period, ws)
     # History runs through the period holding the latest row of the whole dataset (never into the
     # period in which planning starts). A series without rows in a period inside that range sold zero.
-    usable = [r.date for r in ds.history if period_start(r.date, period, ws) < horizon_start]
+    # a row that totals several days (a month of sales) counts in the periods of each of those days
+    spans = [(r, _spread(r.date, r.qty, r.period_days, period, ws)) for r in ds.history]
+    usable = [ps for _, parts in spans for ps, _ in parts if ps < horizon_start]
     if not usable:
         return {}
-    data_end = min(next_start(period_start(max(usable), period, ws), period), horizon_start)
-    for r in ds.history:
+    data_end = min(next_start(max(usable), period), horizon_start)
+    for r, parts in spans:
         k = (r.location, r.product)
-        ps = period_start(r.date, period, ws)
-        if ps >= horizon_start:
-            continue
-        qty[k][ps] += r.qty
-        if r.promo:
-            promo[k].add(ps)
         prod = ds.product_by_id.get(r.product)
         price = r.price if r.price is not None else (prod.price or prod.standard_cost or 0.0) if prod else 0.0
-        revenue[k] += r.qty * price
-        if r.qty > 0 and (k not in first or ps < first[k]):
-            first[k] = ps
+        for ps, q in parts:
+            if ps >= horizon_start:
+                continue
+            qty[k][ps] += q
+            if r.promo:
+                promo[k].add(ps)
+            revenue[k] += q * price
+            if q > 0 and (k not in first or ps < first[k]):
+                first[k] = ps
     out: dict[tuple[str, str], _Hist] = {}
     for k, by_period in qty.items():
         if k not in first:
@@ -107,6 +109,16 @@ def _aggregate(ds: Dataset, period: ForecastPeriod, cutoff: date) -> dict[tuple[
                 h.events[i].append(HISTORY_PROMO)
         out[k] = h
     return out
+
+
+def _spread(day: date, qty: float, days: int | None, period: ForecastPeriod, ws: int) -> list[tuple[date, float]]:
+    """A history row's quantity by forecast period: all on its day, or spread evenly over its ``days``."""
+    if not days or days <= 1:
+        return [(period_start(day, period, ws), qty)]
+    out: dict[date, float] = defaultdict(float)
+    for i in range(days):
+        out[period_start(day + timedelta(days=i), period, ws)] += qty / days
+    return sorted(out.items())
 
 
 def _mark_events(ds: Dataset, h: _Hist, period: ForecastPeriod) -> None:
@@ -303,6 +315,9 @@ def run_forecast(ds: Dataset) -> ForecastResult:
             continue
         series[k] = _npi_series(ctx, rule, series, pooled, hists.get(k))
     _apply_overrides(ds, series, fut)
+    for (_, prod), s in series.items():
+        if ds.whole(prod):
+            _whole(s)
 
     out = sorted(series.values(), key=lambda s: (s.location, s.product))
     return ForecastResult(ok=True, period=period.value, season_length=m, periods=[p.label for p in fut], issues=issues,
@@ -477,6 +492,18 @@ def _apply_overrides(ds: Dataset, series: dict[tuple[str, str], Series], fut: li
                 pt.final = pt.override
                 pt.released_qty = pt.final * pt.share
                 break
+
+
+def _whole(s: Series) -> None:
+    """A product counted in each is forecast in whole units: each period's forecast is rounded so the running total
+    stays within half a unit of the exact one (no 203.23 pails a week, and no units lost to rounding)."""
+    exact = done = 0.0
+    for p in s.forecast:
+        exact += p.released_qty
+        q = max(0.0, float(round(exact - done)))
+        done += q
+        p.released_qty = q
+        p.final = q if p.share >= 1 else float(round(p.final))
 
 
 def _summary(series: list[Series]) -> Summary:

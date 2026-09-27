@@ -7,7 +7,7 @@ import {
 import { Situations } from "../components/Situations";
 import { situations, codeLabel } from "../lib/situations";
 import { day, humanize, money, ORDER_LABEL, pct, plural, qty } from "../lib/format";
-import { Loc, Prod } from "../lib/names";
+import { Loc, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { isStale, store, useStore } from "../state/store";
 
@@ -318,8 +318,10 @@ function OrdersView({ plan, sel }: { plan: PlanResult; sel?: string }) {
   const [kind, setKind] = useState("");
   const [q, setQ] = useState("");
   const [late, setLate] = useState(false);
+  const nm = useNames();
+  // by id or by name: "White base" finds WHITE-BASE-BULK
   const rows = plan.orders.filter((o) => (!kind || o.kind === kind) && (!late || (o.delay_days ?? 0) !== 0)
-    && (!q || `${o.id} ${o.product} ${o.location} ${o.origin ?? ""}`.toLowerCase().includes(q.toLowerCase())))
+    && (!q || `${o.id} ${o.product} ${nm.prod(o.product)} ${o.location} ${nm.loc(o.location)} ${o.origin ?? ""} ${o.origin ? nm.loc(o.origin) : ""}`.toLowerCase().includes(q.toLowerCase())))
     .sort((a, b) => a.start_date.localeCompare(b.start_date) || a.id.localeCompare(b.id));
   const LIMIT = 1000;
   return (

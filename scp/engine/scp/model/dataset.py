@@ -21,7 +21,7 @@ from .promise import Allocation, Confirmation, PromiseSettings
 from .schedule import Changeover, ScheduleSettings
 from .sop import SopSettings, StockTarget
 from .master import (
-    Calendar, Location, LocationProduct, Product, ProductionSource, PurchasingSource, Resource,
+    Calendar, Location, LocationProduct, LotSizing, Product, ProductionSource, PurchasingSource, Resource,
     Settings, TransportLane,
 )
 from .transactional import DemandRecord, SalesHistory, ScheduledReceipt
@@ -112,6 +112,11 @@ class Dataset(Model):
         """The supplier's purchasing data, or the defaults when none is kept."""
         return self.vendor_by_supplier.get(supplier) or Vendor(supplier=supplier)
 
+    def price_currency(self, pu: PurchasingSource) -> str | None:
+        """The currency a source's price is in: its own, else the supplier's order currency (empty = the company's)."""
+        cur = pu.currency or self.vendor(pu.supplier).currency
+        return None if cur == self.settings.currency else cur
+
     def source_blocked(self, pu: PurchasingSource) -> bool:
         """A source planning and new orders may not use: blocked in the source list, or its supplier blocked."""
         return pu.blocked or self.vendor(pu.supplier).blocked
@@ -126,6 +131,27 @@ class Dataset(Model):
         for lp in self.location_products:
             out.setdefault((lp.location, lp.product), lp)
         return out
+
+    def lot_sizing(self, lp: LocationProduct) -> LotSizing:
+        """The lot-sizing rule planning uses at a node: its own, or the company default where it leaves it empty."""
+        ls = lp.lot_sizing
+        if ls.policy is not None:
+            return ls
+        s = self.settings
+        return ls.model_copy(update={"policy": s.default_lot_policy, "periods": ls.periods or s.default_lot_periods})
+
+    def planning_lp(self, node: tuple[str, str]) -> LocationProduct:
+        """The node's planning policy as planning uses it: its record (or the defaults) with the company's lot size
+        filled in."""
+        lp = self.location_product_by_key.get(node) or LocationProduct(location=node[0], product=node[1])
+        if lp.lot_sizing.policy is None:
+            lp = lp.model_copy(update={"lot_sizing": self.lot_sizing(lp)})
+        return lp
+
+    def whole(self, product: str) -> bool:
+        """Quantities of this product are planned in whole units."""
+        p = self.product_by_id.get(product)
+        return p.whole if p else False
 
     def location_type(self, loc_id: str) -> LocationType | None:
         loc = self.location_by_id.get(loc_id)
