@@ -4,6 +4,8 @@ from __future__ import annotations
 import datetime as dt
 from typing import Literal
 
+from pydantic import Field
+
 from ..model import ForecastModelId
 from ..model.common import Out
 from ..validate import Issue
@@ -131,8 +133,15 @@ class CvSuggestion(Out):
     suggested: float
 
 
+class DroppedSeries(Out):
+    location: str
+    product: str
+
+
 class ReleaseResult(Out):
     records: int
     series: int
     replaced: int
     cv_suggestions: list[CvSuggestion]
+    dropped: list[DroppedSeries] = Field(default_factory=list, description="Series an earlier release wrote that "
+                                         "this forecast no longer has: their forecast was removed from demand")

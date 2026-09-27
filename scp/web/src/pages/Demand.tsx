@@ -9,7 +9,7 @@ import {
   Badge, cols, Edits, Empty, Panel, Provenance, Reading, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
 } from "../components/ui";
 import { day, pct, plural, qty } from "../lib/format";
-import { Loc, namesOf, Prod } from "../lib/names";
+import { Loc, namesOf, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -105,11 +105,13 @@ export function Demand({ route }: { route: string[] }) {
 
 // ------------------------------------------------------------------------------------------------
 interface ReleaseInfo {
-  records: number; series: number; replaced: number; at: string;
+  records: number; series: number; replaced: number; at: string; dropped?: { location: string; product: string }[];
   cv_suggestions: { location: string; product: string; current: number | null; suggested: number }[];
 }
 
 function ReleaseBanner({ info, ds, onClose }: { info: ReleaseInfo; ds: Dataset; onClose: () => void }) {
+  const nm = useNames();
+  const gone = info.dropped ?? [];
   const apply = () => store.update((d) => {
     for (const c of info.cv_suggestions) {
       const lp = d.location_products?.find((x) => x.location === c.location && x.product === c.product);
@@ -121,7 +123,9 @@ function ReleaseBanner({ info, ds, onClose }: { info: ReleaseInfo; ds: Dataset; 
     <div className="banner info">
       <Badge sev="ok">Released</Badge>
       <span>{info.records} forecast records for {info.series} series written to demand at {info.at} (replaced {info.replaced}).
-        The supply plan is now stale. Undo reverts the release.</span>
+        {gone.length > 0 && <> Removed the forecast an earlier release wrote for {gone.length === 1 ? "a series" : `${gone.length} series`} this
+          one no longer has: {gone.map((g) => `${nm.prod(g.product)} at ${nm.loc(g.location)}`).join(", ")}.</>}
+        {" "}The supply plan is now stale. Undo reverts the release.</span>
       <span className="spacer" />
       {applicable.length > 0 && <Edits><button className="btn sm" onClick={apply}>Size safety stock from forecast error ({applicable.length} item{applicable.length === 1 ? "" : "s"})</button></Edits>}
       <a className="btn sm" href={href("plan")}>Open supply plan</a>

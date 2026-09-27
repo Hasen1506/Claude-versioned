@@ -2355,6 +2355,19 @@ export interface components {
              * @description Forecast only: the record covers [date, date + period_days) and is spread evenly over the working days of that window (PIR splitting). Empty = the whole quantity is due on `date`.
              */
             period_days?: number | null;
+            /**
+             * Released
+             * @description Forecast only: written by a forecast release. Releasing every series again replaces it, so a series the new forecast no longer has does not stay in demand
+             * @default false
+             */
+            released: boolean;
+        };
+        /** DroppedSeries */
+        DroppedSeries: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
         };
         /** Economics */
         Economics: {
@@ -5410,6 +5423,11 @@ export interface components {
             replaced: number;
             /** Cv Suggestions */
             cv_suggestions: components["schemas"]["CvSuggestion"][];
+            /**
+             * Dropped
+             * @description Series an earlier release wrote that this forecast no longer has: their forecast was removed from demand
+             */
+            dropped: components["schemas"]["DroppedSeries"][];
         };
         /** Requirement */
         Requirement: {

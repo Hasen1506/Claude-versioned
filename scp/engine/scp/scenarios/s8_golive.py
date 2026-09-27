@@ -134,6 +134,7 @@ ERRORS = {
 WARNINGS = {
     ("CONFIRMATION_ORPHAN", "confirmation", "#0"), ("DEMAND_OUTSIDE_HORIZON", "demand", "*"),
     ("DEMAND_PAST_DUE", "demand", "*"), ("HISTORY_AFTER_START", "history", "*"),
+    ("FORECAST_TWICE", "demand", "DC/JAM"),  # the DC's trade counter sells jam too: both are meant
     ("LOCATION_PRODUCT_DEFAULTED", "location_product", "PLANT/JAR"), ("MOVEMENT_REF_UNKNOWN", "movement", "GM-2"),
     ("MTO_WITH_FORECAST", "location_product", "PLANT/LABEL"), ("NEGATIVE_STOCK", "location_product", "PLANT/JAR"),
     ("NPI_DUPLICATE", "npi", "CUST/GIFT"), ("NPI_LIKE_WITHOUT_HISTORY", "npi", "CUST/GIFT"),

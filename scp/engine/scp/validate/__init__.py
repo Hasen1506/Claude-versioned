@@ -55,6 +55,7 @@ RULES: dict[str, tuple[Severity, str]] = {
     "DEMAND_OUTSIDE_HORIZON": ("warning", "Demand outside the planning horizon is ignored"),
     "DEMAND_PAST_DUE": ("warning", "Demand before planning start is treated as backlog"),
     "MTO_WITH_FORECAST": ("warning", "Forecast on an MTO product is ignored"),
+    "FORECAST_TWICE": ("warning", "Forecast at a place and at a customer it supplies: both are planned"),
     "STOCK_AT_CUSTOMER": ("warning", "Stock maintained at a customer location is not planned"),
     "RESOURCE_UNUSED": ("warning", "Resource not used by any operation"),
     "LOCATION_PRODUCT_DEFAULTED": ("warning", "Planning node without a location-product: defaults used"),
@@ -499,6 +500,34 @@ def _demand(ds: Dataset, c: _Collector) -> None:
     for loc, prod in sorted(mto_fc):
         c.add("MTO_WITH_FORECAST", "location_product", f"{loc}/{prod}",
               "Forecast exists but the strategy is MTO", "Use MTS_CONSUME or ATO to pre-plan")
+    fc = {(d.location, d.product) for d in ds.demand if d.kind is DemandKind.FORECAST}
+    for loc, prod in sorted(fc):
+        if ds.location_type(loc) in (None, LocationType.CUSTOMER):
+            continue
+        below = sorted(x for x in _served_customers(ds, loc, prod) if (x, prod) in fc)
+        if below:
+            c.add("FORECAST_TWICE", "demand", f"{loc}/{prod}",
+                  f"{prod} has a forecast at {loc} and at {', '.join(below)}, which {loc} supplies: the plan makes "
+                  "both", f"Right if {loc} also sells {prod} itself (a trade counter). If not, the same sales are "
+                  f"counted twice: remove the forecast at {loc}, and give its sales their customer")
+
+
+def _served_customers(ds: Dataset, loc: str, prod: str) -> set[str]:
+    """The customer places a product reaches from ``loc`` along the routes that carry it."""
+    out: set[str] = set()
+    seen, level = {loc}, [loc]
+    while level:
+        nxt: list[str] = []
+        for ln in ds.lanes:
+            if ln.origin not in level or ln.destination in seen or (ln.products and prod not in ln.products):
+                continue
+            seen.add(ln.destination)
+            if ds.location_type(ln.destination) is LocationType.CUSTOMER:
+                out.add(ln.destination)
+            else:
+                nxt.append(ln.destination)
+        level = nxt
+    return out
 
 
 def _forecasting(ds: Dataset, c: _Collector) -> None:

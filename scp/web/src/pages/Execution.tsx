@@ -248,6 +248,24 @@ function stockNodes(ds: Dataset): [string, string][] {
   for (const pu of ds.purchasing_sources ?? []) add(pu.location, pu.product);
   for (const ln of ds.lanes ?? []) for (const p of ln.products ?? []) { add(ln.origin, p); add(ln.destination, p); }
   for (const m of ds.movements ?? []) add(m.location, m.product);
+  // A route that names no products carries all of them: its destination holds what its origin has and is sold at
+  // or beyond it (not the plant's raw materials, not another channel's goods).
+  const demand = new Set((ds.demand ?? []).map((d) => `${d.location}|${d.product}`));
+  const sold = (l: string, p: string, seen = new Set<string>()): boolean => {
+    if (demand.has(`${l}|${p}`)) return true;
+    seen.add(l);
+    return (ds.lanes ?? []).some((ln) => ln.origin === l && !seen.has(ln.destination)
+      && (!(ln.products ?? []).length || ln.products!.includes(p)) && sold(ln.destination, p, seen));
+  };
+  const open = (ds.lanes ?? []).filter((ln) => !(ln.products ?? []).length);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const ln of open) for (const [l, p] of [...out.values()]) {
+      if (l !== ln.origin || out.has(`${ln.destination}|${p}`) || !sold(ln.destination, p)) continue;
+      add(ln.destination, p);
+      grew ||= out.has(`${ln.destination}|${p}`);
+    }
+  }
   return [...out.values()];
 }
 

@@ -249,7 +249,8 @@ export const COLLECTIONS: CollectionDef[] = [
     columns: [
       { label: "Id", get: (o) => s(o.id) }, { label: "Date", get: (o) => s(o.date) }, { label: "Type", get: (o) => s(o.type) },
       { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
-      { label: "Reference", get: (o) => s(o.reference) }, { label: "Qty", get: (o) => o.qty as number, num: true },
+      { label: "Reference", get: (o) => s(o.reference) }, { label: "Customer or supplier", get: (o) => s(o.counterparty) },
+      { label: "Qty", get: (o) => o.qty as number, num: true }, { label: "Note", get: (o) => s(o.note) },
     ],
   },
   {

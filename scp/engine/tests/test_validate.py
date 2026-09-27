@@ -121,6 +121,12 @@ def _mto_fc(d):
     lp(d, "P", "A")["strategy"] = "MTO"
 
 
+def _forecast_twice(d):
+    d["locations"].append({"id": "K", "type": "customer"})
+    d["lanes"].append({"id": "L-PK", "origin": "P", "destination": "K", "modes": [{"mode": "truck_ftl", "transit_days": 1}]})
+    d["demand"].append(demand("K", "A", "2026-01-12", 30))
+
+
 def _stock_at_customer(d):
     d["locations"].append({"id": "K", "type": "customer"})
     d["location_products"].append({"location": "K", "product": "A", "on_hand": 5})
@@ -209,7 +215,7 @@ MUTATORS = {
     "SOURCE_NOT_VALID_IN_HORIZON": _validity, "PRODUCTION_NO_OPERATIONS": _no_ops,
     "PRODUCTION_NO_LEAD_TIME": _no_ops, "PURCHASE_ZERO_LEAD_TIME": _zero_lt, "SS_AND_SAFETY_TIME": _ss_and_time,
     "QUOTA_SUM": _quota, "DEMAND_OUTSIDE_HORIZON": _outside, "DEMAND_PAST_DUE": _past,
-    "MTO_WITH_FORECAST": _mto_fc, "STOCK_AT_CUSTOMER": _stock_at_customer, "RESOURCE_UNUSED": _unused,
+    "MTO_WITH_FORECAST": _mto_fc, "FORECAST_TWICE": _forecast_twice, "STOCK_AT_CUSTOMER": _stock_at_customer, "RESOURCE_UNUSED": _unused,
     "LOCATION_PRODUCT_DEFAULTED": _defaulted, "SHELF_LIFE_VS_LEAD_TIME": _shelf,
     "HISTORY_AFTER_START": _history_late, "NPI_LIKE_WITHOUT_HISTORY": _npi_like, "NPI_DUPLICATE": _npi_dup,
     "OVERRIDE_OUTSIDE_HORIZON": _override_outside, "OVERRIDE_WITHOUT_FORECAST": _override_no_fc,

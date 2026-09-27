@@ -11,6 +11,8 @@ import { store, useStore, NO_ISSUES } from "../state/store";
 
 type Obj = Record<string, unknown>;
 const NO_ASIDE: NonNullable<ValidationResult["set_aside"]> = [];
+/** Collections other records point at by id: removed one at a time, each with its "used by" check. */
+const REFERENCED: CollectionKey[] = ["locations", "products", "resources", "calendars"];
 
 export function MasterData({ route }: { route: string[] }) {
   const ds = useStore((s) => s.dataset);
@@ -85,6 +87,15 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
     return out;
   };
   const issueCount = (o: Obj, i: number) => issuesFor(issues, def.issueType, def.keyOf(o, i));
+  // records nothing else points at can go many at a time: search for them, then delete what the search found
+  const bulk = q.trim() !== "" && rows.length > 0 && !REFERENCED.includes(ckey);
+  const removeFound = () => {
+    if (!window.confirm(`Delete the ${rows.length} ${rows.length === 1 ? def.singular : def.label.toLowerCase()} that match “${q.trim()}”? Undo brings them back.`)) return;
+    const drop = rows.map((r) => r.i).sort((a, b) => b - a);
+    store.update((d) => { const l = items(d, ckey); for (const i of drop) l.splice(i, 1); });
+    setQ("");
+    go("data", ckey);
+  };
 
   const add = () => {
     if (!schema) return;
@@ -140,7 +151,8 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
             onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 280, minWidth: 140 }} aria-label="Search" />
           <span className="faint small nowrap">{rows.length === list.length ? list.length : `${rows.length} of ${list.length}`}</span>
         </div>} actions={<>
-          <Edits><button className="btn" onClick={() => setUpload(!upload)} aria-expanded={upload}>Upload CSV / Excel</button>
+          <Edits>{bulk && <button className="btn danger" onClick={removeFound}>Delete these {rows.length}</button>}
+          <button className="btn" onClick={() => setUpload(!upload)} aria-expanded={upload}>Upload CSV / Excel</button>
           <button className="btn primary" onClick={add} disabled={!schema}>+ New {def.singular}</button></Edits></>}>
           <div className="table-wrap" style={{ maxHeight: "calc(100vh - 230px)" }}>
             <table className="t">
@@ -222,7 +234,7 @@ function Editor({ ds, ckey, index, obj, errors, issues }: {
           {issues.map((i, n) => (
             <div key={n} className={`banner ${i.severity === "error" ? "error" : "warning"}`} style={{ margin: 0 }}>
               <Badge sev={i.severity === "error" ? "error" : "warning"}>{checkTitle(i.code)}</Badge>
-              <div><div><Msg text={i.message} /></div>{i.hint && <div className="small">{i.hint}</div>}</div>
+              <div><div><Msg text={i.message} /></div>{i.hint && <div className="small"><Msg text={i.hint} /></div>}</div>
             </div>
           ))}
         </div>

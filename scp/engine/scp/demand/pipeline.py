@@ -27,8 +27,8 @@ from .periods import (
     Period, default_season, future_periods, history_periods, label, mean_days, next_start, period_start,
 )
 from .result import (
-    BacktestPoint, CvSuggestion, ForecastPoint, ForecastResult, FoundationStatus, HistoryPoint, ModelScore,
-    ReleaseResult, Segment, Series, Summary,
+    BacktestPoint, CvSuggestion, DroppedSeries, ForecastPoint, ForecastResult, FoundationStatus, HistoryPoint,
+    ModelScore, ReleaseResult, Segment, Series, Summary,
 )
 
 ADI_CUT = 1.32   # Syntetos, Boylan & Croston (2005) demand-pattern boundaries
@@ -531,11 +531,18 @@ def _summary(series: list[Series]) -> Summary:
 # ---- release --------------------------------------------------------------------------------------
 def release(ds: Dataset, result: ForecastResult, keys: list[str] | None = None) -> tuple[Dataset, ReleaseResult]:
     """Write the consensus forecast into the dataset as forecast demand (≈ PIRs), replacing the
-    forecast records of the released series. Sales orders are never touched."""
+    forecast records of the released series. Releasing every series also removes what earlier releases wrote for a
+    series the forecast no longer has (sales that were wrongly attributed and have since been corrected), so it is
+    not planned on top of the right one. Forecasts typed or uploaded by hand, and sales orders, are never touched."""
     chosen = [s for s in result.series if keys is None or s.key in keys]
     released = {(s.location, s.product) for s in chosen}
-    kept = [d for d in ds.demand if not (d.kind is DemandKind.FORECAST and (d.location, d.product) in released)]
+
+    def replace(d: DemandRecord) -> bool:
+        return d.kind is DemandKind.FORECAST and ((d.location, d.product) in released or (keys is None and d.released))
+
+    kept = [d for d in ds.demand if not replace(d)]
     replaced = len(ds.demand) - len(kept)
+    dropped = sorted({(d.location, d.product) for d in ds.demand if replace(d)} - released)
     new: list[DemandRecord] = []
     for s in chosen:
         for p in s.forecast:
@@ -545,7 +552,7 @@ def release(ds: Dataset, result: ForecastResult, keys: list[str] | None = None) 
             frm = max(p.start, ds.settings.planning_start)
             days = max(1, round(p.share * (p.end - p.start).days))
             new.append(DemandRecord(location=s.location, product=s.product, date=frm, qty=qty,
-                                    kind=DemandKind.FORECAST, period_days=days))
+                                    kind=DemandKind.FORECAST, period_days=days, released=True))
     out = ds.model_copy(update={"demand": kept + new})
     cv: list[CvSuggestion] = []
     for s in chosen:
@@ -554,4 +561,6 @@ def release(ds: Dataset, result: ForecastResult, keys: list[str] | None = None) 
             cv.append(CvSuggestion(location=s.location, product=s.product, current=lp.safety_stock.demand_cv,
                                    suggested=round(s.demand_cv_weekly, 4)))
     return Dataset.model_validate(out.model_dump()), ReleaseResult(records=len(new), series=len(chosen),
-                                                                  replaced=replaced, cv_suggestions=cv)
+                                                                  replaced=replaced, cv_suggestions=cv,
+                                                                  dropped=[DroppedSeries(location=loc, product=prod)
+                                                                           for loc, prod in dropped])

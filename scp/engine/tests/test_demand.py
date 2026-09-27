@@ -15,6 +15,7 @@ from scp.demand.models import (
 from scp.demand.periods import future_periods, history_periods, period_start
 from scp.model import DemandKind, ForecastModelId as M, ForecastPeriod, SelectionMetric
 from scp.plan import run_mrp
+from scp.validate import validate
 
 from .factory import base, ds, load_example
 
@@ -178,6 +179,28 @@ def test_forecast_runs_and_releases_as_pirs():
     assert info.replaced == 1 and info.records == 8 and len(so) == 1 and all(x.period_days == 7 for x in fc)
     assert sum(x.qty for x in fc) == pytest.approx(sum(p.released_qty for p in s.forecast), abs=0.01)
     assert run_mrp(new).ok  # the released forecast plans
+
+
+def test_releasing_every_series_removes_what_earlier_releases_wrote_for_a_series_gone_since():
+    # K: sales wrongly booked at the cold store made a series there; once they are booked to the customer again, the
+    # next release takes the cold store's released forecast out instead of planning it on top of the customer's
+    d = dataset(weekly("K", "A", smooth()))
+    d["locations"].append({"id": "K", "type": "customer"})
+    d["lanes"] = [{"id": "L1", "origin": "P", "destination": "K", "modes": [{"mode": "truck_ftl", "transit_days": 1}]}]
+    d["demand"] = [{"location": "P", "product": "A", "date": "2026-01-12", "qty": 500, "kind": "forecast",
+                    "period_days": 7, "released": True},
+                   {"location": "P", "product": "A", "date": "2026-01-19", "qty": 40, "kind": "forecast"}]
+    assert any(i.code == "FORECAST_TWICE" for i in validate(ds({**d, "demand": d["demand"] + [
+        {"location": "K", "product": "A", "date": "2026-01-12", "qty": 1, "kind": "forecast"}]})))
+    r = run_forecast(ds(d))
+    new, info = release(ds(d), r)
+    left = {(x.location, x.qty) for x in new.demand if x.location == "P"}
+    assert left == {("P", 40)}  # the hand-kept forecast stays; the released one is gone
+    assert [(x.location, x.product) for x in info.dropped] == [("P", "A")] and info.replaced == 1
+    assert all(x.released for x in new.demand if x.location == "K")
+    # releasing one chosen series leaves every other forecast alone
+    _, part = release(ds(d), r, [r.series[0].key])
+    assert part.dropped == [] and part.replaced == 0
 
 
 def test_history_promos_are_cleansed_and_their_lift_measured():
