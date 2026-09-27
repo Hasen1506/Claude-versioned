@@ -13,6 +13,8 @@ from typing import Annotated, Any, Literal
 
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
+from contextlib import asynccontextmanager
+
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -53,13 +55,27 @@ ROOT = Path(__file__).resolve().parents[3]          # scp/
 EXAMPLES = ROOT / "examples"
 WEB_DIST = ROOT / "web" / "dist"
 
-app = FastAPI(title="SCP — Supply Chain Planning", version=__version__,
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """With SCP_BACKUP_DIR set, the database is copied there every night (scp.backup)."""
+    from ..backup import start_nightly
+    from ..versions.store import get_store
+
+    store = get_store()
+    start_nightly(store.db, store.lock)
+    yield
+
+
+app = FastAPI(title="SCP — Supply Chain Planning", version=__version__, lifespan=lifespan,
               description="Typed network master data, readiness gate, demand planning, network MRP/DRP.")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "https://hasen1506.github.io"],
                    allow_methods=["*"], allow_headers=["*"])
 
 
 app.middleware("http")(gate)
+
 app.add_exception_handler(CompanyError, company_error)  # type: ignore[arg-type]
 app.include_router(companies_router)
 

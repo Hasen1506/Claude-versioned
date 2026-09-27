@@ -261,6 +261,188 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/companies/{cid}/approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Company Approval
+         * @description An owner turns master-data approval on or off (on needs a second person who can change the data).
+         */
+        put: operations["set_company_approval_api_companies__cid__approval_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/held": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Company Held Changes
+         * @description Master-data changes waiting for approval (or decided), newest first, each with every field it changes.
+         */
+        get: operations["company_held_changes_api_companies__cid__held_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/held/{rid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decide Held Change
+         * @description Approve (someone other than who asked; the change is saved), reject, or withdraw (who asked) a held change.
+         *     An approval answers with the company as saved.
+         */
+        post: operations["decide_held_change_api_companies__cid__held__rid__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Company Changes
+         * @description Change documents: every field changed with its old and new value, newest first; ``q`` finds records by key.
+         */
+        get: operations["company_changes_api_companies__cid__changes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/reset/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Reset Request
+         * @description Mail a link to set a new password, if the address has an account and the server sends mail. The answer is
+         *     the same either way, so nobody learns which addresses have accounts.
+         */
+        post: operations["auth_reset_request_api_auth_reset_request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Reset
+         * @description Set a new password with a reset link's token; signs out every other session of the account.
+         */
+        post: operations["auth_reset_api_auth_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/members/{email}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Member Reset Link
+         * @description An owner makes a link for a planner or viewer to set a new password (valid 24 hours), to hand over.
+         */
+        post: operations["member_reset_link_api_companies__cid__members__email__reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/sso/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auth Sso Start
+         * @description Send the browser to the company's identity provider to sign in.
+         */
+        get: operations["auth_sso_start_api_auth_sso_start_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/sso/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auth Sso Callback
+         * @description The identity provider sends the browser back here: sign in, and open the application signed in.
+         */
+        get: operations["auth_sso_callback_api_auth_sso_callback_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -1319,6 +1501,11 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** ApprovalSetting */
+        ApprovalSetting: {
+            /** Approval */
+            approval: boolean;
+        };
         /** AtpNode */
         AtpNode: {
             /** Location */
@@ -1360,6 +1547,13 @@ export interface components {
             require_signin: boolean;
             /** First Account */
             first_account: boolean;
+            /**
+             * Mail
+             * @default false
+             */
+            mail: boolean;
+            /** Sso */
+            sso: string | null;
         };
         /** BacktestPoint */
         BacktestPoint: {
@@ -1890,6 +2084,26 @@ export interface components {
             created_at: string;
             /** Size */
             size: number;
+            /**
+             * Approval
+             * @default false
+             */
+            approval: boolean;
+            /**
+             * Pending
+             * @default 0
+             */
+            pending: number;
+            /**
+             * Places
+             * @default []
+             */
+            places: string[];
+            /**
+             * Families
+             * @default []
+             */
+            families: string[];
         };
         /** CompareRequest */
         CompareRequest: {
@@ -2257,6 +2471,19 @@ export interface components {
             /** Average Value */
             average_value: number;
         };
+        /** Decision */
+        Decision: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "reject" | "withdraw";
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
         /**
          * DemandEvent
          * @description Something that moves demand for a period: a promotion, a price change, a competitor launch…
@@ -2473,6 +2700,39 @@ export interface components {
             a: unknown;
             /** B */
             b: unknown;
+        };
+        /**
+         * FieldChangeRow
+         * @description One field of one record changed (a change document).
+         */
+        FieldChangeRow: {
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /** Revision */
+            revision: number | null;
+            /**
+             * At
+             * @default
+             */
+            at: string;
+            /**
+             * User
+             * @default
+             */
+            user: string;
+            /** List */
+            list: string;
+            /** Record */
+            record: string;
+            /** Field */
+            field: string;
+            /** Old */
+            old: unknown;
+            /** New */
+            new: unknown;
         };
         /** FieldClash */
         FieldClash: {
@@ -2883,6 +3143,44 @@ export interface components {
             status: string;
             /** Version */
             version: string;
+        };
+        /**
+         * HeldChange
+         * @description A master-data change waiting for a second person's approval.
+         */
+        HeldChange: {
+            /** Id */
+            id: number;
+            /** At */
+            at: string;
+            /** By */
+            by: string;
+            /** By Me */
+            by_me: boolean;
+            /** Summary */
+            summary: string;
+            /** Status */
+            status: string;
+            /**
+             * Decided By
+             * @default
+             */
+            decided_by: string;
+            /**
+             * Decided At
+             * @default
+             */
+            decided_at: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /**
+             * Changes
+             * @default []
+             */
+            changes: components["schemas"]["FieldChangeRow"][];
         };
         /** Heuristic */
         Heuristic: {
@@ -3761,6 +4059,16 @@ export interface components {
             role: string;
             /** Since */
             since: string;
+            /**
+             * Places
+             * @default []
+             */
+            places: string[];
+            /**
+             * Families
+             * @default []
+             */
+            families: string[];
         };
         /** MemberChange */
         MemberChange: {
@@ -3771,6 +4079,10 @@ export interface components {
              * @enum {string}
              */
             role: "owner" | "planner" | "viewer";
+            /** Places */
+            places?: string[] | null;
+            /** Families */
+            families?: string[] | null;
         };
         /** MergeCompany */
         MergeCompany: {
@@ -3839,6 +4151,7 @@ export interface components {
              * @default true
              */
             saved: boolean;
+            held: components["schemas"]["HeldChange"] | null;
         };
         /** ModelInfo */
         ModelInfo: {
@@ -5636,6 +5949,25 @@ export interface components {
              */
             required_qty?: number | null;
         };
+        /** ResetLink */
+        ResetLink: {
+            /** Link */
+            link: string;
+            /** Expires At */
+            expires_at: string;
+        };
+        /** ResetPassword */
+        ResetPassword: {
+            /** Token */
+            token: string;
+            /** Password */
+            password: string;
+        };
+        /** ResetRequest */
+        ResetRequest: {
+            /** Email */
+            email: string;
+        };
         /**
          * Resource
          * @description A work center: machine, line, labour pool or tool (≈ S/4 work center / PP-DS resource).
@@ -6020,6 +6352,11 @@ export interface components {
              * @default false
              */
             own: boolean;
+            held: components["schemas"]["HeldChange"] | null;
+            /** Dataset */
+            dataset: {
+                [key: string]: unknown;
+            } | null;
         };
         /** ScenarioInfo */
         ScenarioInfo: {
@@ -8432,6 +8769,312 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Member"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_company_approval_api_companies__cid__approval_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalSetting"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    company_held_changes_api_companies__cid__held_get: {
+        parameters: {
+            query?: {
+                status?: "pending" | "approved" | "rejected" | "withdrawn" | "all";
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeldChange"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_held_change_api_companies__cid__held__rid__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                rid: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Decision"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SaveReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    company_changes_api_companies__cid__changes_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                list?: string;
+                limit?: number;
+                before?: number | null;
+            };
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldChangeRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_reset_request_api_auth_reset_request_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_reset_api_auth_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetPassword"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    member_reset_link_api_companies__cid__members__email__reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                email: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResetLink"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_sso_start_api_auth_sso_start_get: {
+        parameters: {
+            query?: {
+                next?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_sso_callback_api_auth_sso_callback_get: {
+        parameters: {
+            query?: {
+                code?: string;
+                state?: string;
+                error?: string;
+                error_description?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

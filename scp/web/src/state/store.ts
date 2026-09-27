@@ -8,7 +8,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { api, ApiError, SchemaRejected, setAuth, setPlanningView, setWriteGuard } from "../api/client";
 import { makePatch, patchIsSmall } from "../lib/patch";
 import { keepSteps, stepsFor } from "./undoStore";
-import type { CompanyDoc, User, ActualsView, PurchasingView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
+import type { CompanyDoc, CompanyMeta, User, ActualsView, PurchasingView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
 
 export interface RunResults {
   forecast: ForecastResult;
@@ -53,7 +53,14 @@ export interface OpenCompany {
   revision: number;       // the server revision the working copy is based on
   savedRevision: number;  // working-copy revision that equals the server's content
   live: boolean;
+  approval?: boolean;     // master-data changes wait for a second person's approval
+  pending?: number;       // changes waiting for approval
+  places?: string[];      // this person's rights are limited to these places (empty: all)
+  families?: string[];    // … and these product groups
 }
+
+/** What the company's meta says about approval and one's own limits. */
+const fromMeta = (m: CompanyMeta) => ({ approval: !!m.approval, pending: m.pending ?? 0, places: m.places ?? [], families: m.families ?? [] });
 
 /** Where saving stands. "local": no server company, the working copy is kept in this browser only. */
 export interface SaveState {
@@ -287,8 +294,15 @@ async function saveNow(note = ""): Promise<void> {
         throw e;
       });
       if (state.company?.id !== c.id) return;
+      if (r.held && r.dataset) {
+        // master data waits for approval: the server kept the rest; carry on from what it saved
+        if (state.revision === rev) adopt(r.dataset as unknown as Dataset, r.meta, heldNote(r.held.summary));
+        else { setBase(r.dataset as unknown as Dataset, r.meta.revision); set({ company: { ...state.company, revision: r.meta.revision, ...fromMeta(r.meta) },
+          save: { ...state.save, status: "saved", at: now(), merged: heldNote(r.held.summary) } }); }
+        return;
+      }
       setBase(ds, r.meta.revision);
-      set({ company: { ...state.company, revision: r.meta.revision, name: r.meta.name, role: r.meta.role, savedRevision: rev },
+      set({ company: { ...state.company, revision: r.meta.revision, name: r.meta.name, role: r.meta.role, savedRevision: rev, ...fromMeta(r.meta) },
         save: { ...state.save, status: "saved", at: now(), error: null, newer: null } });
       persistCompany();
     } catch (e) {
@@ -343,21 +357,28 @@ async function mergeQuietly(c: OpenCompany, ds: Dataset, rev: number): Promise<b
       : [`${r.merged_with || "Someone"} saved while you were working; both sets of changes are kept (${rep.summary}).`,
         rep.renumbered.length ? `Renumbered: ${rep.renumbered.join(", ")}.` : ""].filter(Boolean).join(" ");
     // undo would bring back a copy without the colleague's changes, and autosave would then undo them on the server
-    past.length = 0;
-    future.length = 0;
-    const merged = r.dataset as unknown as Dataset;
-    setBase(merged, r.meta.revision);
-    persist(merged);
-    advance(merged);
-    set({ company: { ...state.company, revision: r.meta.revision, savedRevision: state.revision },
-      save: { ...state.save, status: "saved", at: now(), error: null, conflict: null, newer: null, merged: note } });
-    persistCompany();
-    scheduleCheck();
+    adopt(r.dataset as unknown as Dataset, r.meta, r.held ? `${note} ${heldNote(r.held.summary)}` : note);
     return true;
   } catch {
     return false;
   }
 }
+
+/** Take the company as the server saved it as the working copy (it differs from what was sent: a merge, or master
+ *  data held for approval), with a note for the planner. Undo is cleared: it would bring back a copy without it. */
+function adopt(ds: Dataset, meta: CompanyMeta, note: string | null) {
+  past.length = 0;
+  future.length = 0;
+  setBase(ds, meta.revision);
+  persist(ds);
+  advance(ds);
+  set({ company: { ...state.company!, revision: meta.revision, savedRevision: state.revision, ...fromMeta(meta) },
+    save: { ...state.save, status: "saved", at: now(), error: null, conflict: null, newer: null, merged: note } });
+  persistCompany();
+  scheduleCheck();
+}
+
+const heldNote = (summary: string) => `Your master data change (${summary}) waits for a second person's approval (History → Waiting for approval); until then the company keeps what it had.`;
 
 /** Merge on the server: the working copy as what changed since `base` (the save it was made from) when the server
  *  keeps that save, else whole with its base. */
@@ -382,7 +403,9 @@ async function checkNewer() {
   try {
     const m = (await api.companies()).find((x) => x.id === c.id);
     if (!m || state.company?.id !== c.id) return;
-    if (m.role !== state.company.role) set({ company: { ...state.company, role: m.role } });
+    if (m.role !== state.company.role || (m.pending ?? 0) !== (state.company.pending ?? 0) || !!m.approval !== !!state.company.approval) {
+      set({ company: { ...state.company, role: m.role, ...fromMeta(m) } });
+    }
     if (m.revision > state.company.revision && !saving) {
       // a viewer has nothing of their own to lose: show them the latest plan, not the one they opened
       if (m.role === "viewer") {
@@ -540,11 +563,24 @@ export const store = {
     const m = doc.meta;
     setBase(ds, m.revision);
     set({ dataset: ds, version: null, revision: rev, runs: emptyRuns(), validation: null, network: null,
-      company: { id: m.id, name: m.name, role: m.role, revision: m.revision, savedRevision: rev, live: true },
+      company: { id: m.id, name: m.name, role: m.role, revision: m.revision, savedRevision: rev, live: true, ...fromMeta(m) },
       save: { ...localSave(), status: m.role === "viewer" ? "readonly" : "saved", at: null, localError: state.save.localError } });
     persistCompany();
     scheduleCheck();
     setTimeout(() => { void store.planAll(); }, 0);   // no page opens empty
+  },
+
+  /** The server saved the company differently from this working copy (an approval made here): carry on from it. */
+  async adoptServerSave(meta: CompanyMeta, ds: Record<string, unknown>) {
+    if (!state.company || state.company.id !== meta.id) return;
+    if (unsaved(state)) await saveNow();
+    if (unsaved(state)) return;          // not saved here: the next check shows the newer save instead
+    adopt(ds as unknown as Dataset, meta, null);
+  },
+
+  /** What a company's meta says now (approval, changes waiting). */
+  noteCompany(meta: CompanyMeta) {
+    if (state.company?.id === meta.id) set({ company: { ...state.company, ...fromMeta(meta) } });
   },
 
   /** The planner has read what an automatic merge did. */

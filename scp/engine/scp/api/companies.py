@@ -16,18 +16,22 @@ from __future__ import annotations
 import os
 from typing import Annotated, Any, Literal
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from ..companies import (
-    CAN_EDIT, CompanyDoc, CompanyError, CompanyMeta, LogRow, Member, MergeResult, SaveReport, Session, User,
-    get_companies,
+    CAN_EDIT, CompanyDoc, CompanyError, CompanyMeta, FieldChangeRow, HeldChange, LogRow, Member, MergeResult,
+    SaveReport, Session, User, get_companies,
 )
+from ..companies import mail, sso
 from ..model.common import Out
 
 router = APIRouter(prefix="/api", tags=["companies"])
 
-OPEN_PATHS = ("/api/health", "/api/auth/config", "/api/auth/signin", "/api/auth/signup")
+OPEN_PATHS = ("/api/health", "/api/auth/config", "/api/auth/signin", "/api/auth/signup", "/api/auth/reset",
+              "/api/auth/reset/request", "/api/auth/sso/start", "/api/auth/sso/callback")
 
 
 def signup_policy() -> str:
@@ -104,6 +108,22 @@ class AuthConfig(Out):
     signup: Literal["open", "invite", "closed"]
     require_signin: bool
     first_account: bool           # nobody has an account yet: the first one can always be made
+    mail: bool = False            # the server sends mail: a forgotten password is reset by a link sent to the address
+    sso: str | None = None        # single sign-on is set up: "Sign in with <sso>"
+
+
+class ResetRequest(Out):
+    email: str
+
+
+class ResetPassword(Out):
+    token: str
+    password: str
+
+
+class ResetLink(Out):
+    link: str                     # to hand to the colleague: opening it lets them choose a new password
+    expires_at: str
 
 
 class SignUp(Out):
@@ -129,7 +149,8 @@ class PasswordChange(Out):
 
 @router.get("/auth/config", response_model=AuthConfig)
 def auth_config() -> AuthConfig:
-    return AuthConfig(signup=signup_policy(), require_signin=require_signin(), first_account=get_companies().users() == 0)  # type: ignore[arg-type]
+    return AuthConfig(signup=signup_policy(), require_signin=require_signin(),  # type: ignore[arg-type]
+                      first_account=get_companies().users() == 0, mail=mail.mail_on(), sso=sso.button())
 
 
 @router.post("/auth/signup", response_model=Session)
@@ -192,6 +213,17 @@ class RestoreCompany(Out):
 class MemberChange(Out):
     email: str
     role: Literal["owner", "planner", "viewer"]
+    places: list[str] | None = None      # limit a planner's rights to these places ([] = every place; None = as it was)
+    families: list[str] | None = None    # … and these product groups
+
+
+class ApprovalSetting(Out):
+    approval: bool                       # master-data changes wait for a second person's approval
+
+
+class Decision(Out):
+    decision: Literal["approve", "reject", "withdraw"]
+    note: str = ""
 
 
 @router.get("/companies", response_model=list[CompanyMeta])
@@ -257,9 +289,99 @@ def company_members(cid: str, user: Signed) -> list[Member]:
 @router.post("/companies/{cid}/members", response_model=list[Member])
 def set_company_member(cid: str, body: MemberChange, user: Signed) -> list[Member]:
     """Add a member or change their role; an e-mail without an account is invited."""
-    return get_companies().set_member(user, cid, body.email, body.role)
+    return get_companies().set_member(user, cid, body.email, body.role, body.places, body.families)
 
 
 @router.delete("/companies/{cid}/members/{email}", response_model=list[Member])
 def remove_company_member(cid: str, email: str, user: Signed) -> list[Member]:
     return get_companies().remove_member(user, cid, email)
+
+
+@router.put("/companies/{cid}/approval", response_model=CompanyMeta)
+def set_company_approval(cid: str, body: ApprovalSetting, user: Signed) -> CompanyMeta:
+    """An owner turns master-data approval on or off (on needs a second person who can change the data)."""
+    return get_companies().set_approval(user, cid, body.approval)
+
+
+@router.get("/companies/{cid}/held", response_model=list[HeldChange])
+def company_held_changes(cid: str, user: Signed, status: Literal["pending", "approved", "rejected", "withdrawn", "all"] = "pending",
+                         limit: int = 50) -> list[HeldChange]:
+    """Master-data changes waiting for approval (or decided), newest first, each with every field it changes."""
+    return get_companies().held_changes(user, cid, status, min(max(limit, 1), 200))
+
+
+@router.post("/companies/{cid}/held/{rid}", response_model=SaveReport)
+def decide_held_change(cid: str, rid: int, body: Decision, user: Signed, request: Request) -> SaveReport:
+    """Approve (someone other than who asked; the change is saved), reject, or withdraw (who asked) a held change.
+    An approval answers with the company as saved."""
+    return get_companies().decide(user, cid, rid, body.decision, body.note, client=client_of(request))
+
+
+@router.get("/companies/{cid}/changes", response_model=list[FieldChangeRow])
+def company_changes(cid: str, user: Signed, q: str = "", list: str = "", limit: int = 200,  # noqa: A002
+                    before: int | None = None) -> list[FieldChangeRow]:
+    """Change documents: every field changed with its old and new value, newest first; ``q`` finds records by key."""
+    return get_companies().changes(user, cid, q, list, min(max(limit, 1), 1000), before)
+
+
+# ---- a forgotten password (Phase L) ---------------------------------------------------------------------------
+def base_url(request: Request) -> str:
+    """Where people open the application: SCP_PUBLIC_URL, else the address this request came to."""
+    return mail.public_url() or str(request.base_url).rstrip("/")
+
+
+def reset_link(request: Request, token: str) -> str:
+    return f"{base_url(request)}/#/account/reset/{token}"
+
+
+@router.post("/auth/reset/request")
+def auth_reset_request(body: ResetRequest, request: Request) -> dict:
+    """Mail a link to set a new password, if the address has an account and the server sends mail. The answer is
+    the same either way, so nobody learns which addresses have accounts."""
+    if mail.mail_on():
+        get_companies().request_reset(body.email, lambda t: reset_link(request, t), lambda *a: mail.send(*a))
+    return {"ok": True, "mail": mail.mail_on()}
+
+
+@router.post("/auth/reset", response_model=Session)
+def auth_reset(body: ResetPassword) -> Session:
+    """Set a new password with a reset link's token; signs out every other session of the account."""
+    return get_companies().reset_password(body.token, body.password)
+
+
+@router.post("/companies/{cid}/members/{email}/reset", response_model=ResetLink)
+def member_reset_link(cid: str, email: str, user: Signed, request: Request) -> ResetLink:
+    """An owner makes a link for a planner or viewer to set a new password (valid 24 hours), to hand over."""
+    token, expires = get_companies().member_reset(user, cid, email)
+    return ResetLink(link=reset_link(request, token), expires_at=expires)
+
+
+# ---- single sign-on (Phase L) ---------------------------------------------------------------------------------
+def _callback(request: Request) -> str:
+    return f"{base_url(request)}/api/auth/sso/callback"
+
+
+@router.get("/auth/sso/start")
+def auth_sso_start(request: Request, next: str = "") -> RedirectResponse:  # noqa: A002
+    """Send the browser to the company's identity provider to sign in."""
+    if not sso.configured():
+        raise CompanyError("single sign-on is not set up on this server", 404)
+    url, state, verifier, nonce = sso.begin(_callback(request))
+    get_companies().keep_state(state, verifier, nonce, next[:200])
+    return RedirectResponse(url, status_code=302)
+
+
+@router.get("/auth/sso/callback")
+def auth_sso_callback(request: Request, code: str = "", state: str = "", error: str = "",
+                      error_description: str = "") -> RedirectResponse:
+    """The identity provider sends the browser back here: sign in, and open the application signed in."""
+    home = base_url(request)
+    try:
+        if error:
+            raise CompanyError(error_description or error, 401)
+        verifier, _nonce, _next = get_companies().take_state(state)
+        subject, email, name = sso.finish(code, verifier, _callback(request))
+        s = get_companies().sso_session(subject, email, name, signup_policy())
+    except CompanyError as e:
+        return RedirectResponse(f"{home}/#/account/sso-failed/{quote(str(e), safe='')}", status_code=302)
+    return RedirectResponse(f"{home}/#/account/sso/{s.token}", status_code=302)

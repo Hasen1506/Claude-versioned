@@ -867,3 +867,59 @@ test("company on the server: sign up → keep it there → saves itself → a co
   await meera.goto("/#/buying");
   await expect(meera.locator(".stage-head .answer")).toContainText("should be ordered in the next 7 days");
 });
+
+test("rights and four eyes: a planner limited to a place is refused elsewhere; master data waits for a second person, who approves it; every field is on record", async ({ page, browser }) => {
+  page.on("dialog", (d) => d.accept());
+  await openExample(page, "Kaveri Kitchenware");
+  await page.locator(".save-chip .save-long").click();
+  await page.getByRole("tab", { name: "Make an account" }).click();
+  await page.getByLabel("E-mail").fill("owner@kaveri.in");
+  await page.getByLabel("Your name").fill("Nisha Owner");
+  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByRole("button", { name: "Make the account" }).click();
+  await page.getByRole("button", { name: "Keep it on the server" }).click();
+  await page.getByLabel("Colleague's e-mail").fill("plan@kaveri.in");
+  await page.getByRole("button", { name: "Add" }).click();
+  const p = await (await browser.newContext()).newPage();
+  p.on("dialog", (d) => d.accept());
+  await p.goto("/#/account");
+  await p.getByRole("tab", { name: "Make an account" }).click();
+  await p.getByLabel("E-mail").fill("plan@kaveri.in");
+  await p.getByLabel("Your name").fill("Om Planner");
+  await p.getByLabel(/^Password/).fill("colleague-1");
+  await p.getByRole("button", { name: "Make the account" }).click();
+  await p.getByRole("button", { name: /Open Kaveri Kitchenware/ }).click();
+
+  // limited to the Delhi warehouse, he may not change the company's settings
+  await page.reload();
+  await page.locator("tr", { hasText: "plan@kaveri.in" }).getByRole("button", { name: "limit" }).click();
+  await page.getByLabel("Places plan@kaveri.in may change").fill("DC-DELHI");
+  await page.getByRole("button", { name: "Save limits" }).click();
+  await expect(page.locator("tr", { hasText: "plan@kaveri.in" })).toContainText("Changes only Delhi");
+  const address = async (text: string) => {
+    await p.goto("/#/setup/company");
+    await p.getByLabel("Company address").fill(text);
+    await p.getByRole("button", { name: "Save", exact: true }).click();
+  };
+  await address("Plot 1, Chakan");
+  await expect(p.locator(".save-banner")).toContainText("your rights cover the places DC-DELHI; this change also touches company settings");
+  await p.getByRole("button", { name: "Undo the last change" }).click();
+  await expect(p.locator(".save-chip .save-long")).toHaveText(/^Saved/);
+
+  // no limit, but master data needs a second person: his change waits, the owner approves it
+  await page.locator("tr", { hasText: "plan@kaveri.in" }).getByRole("button", { name: "limit" }).click();
+  await page.getByLabel("Places plan@kaveri.in may change").fill("");
+  await page.getByRole("button", { name: "Save limits" }).click();
+  await page.getByLabel(/Master data changes need a second person/).check();
+  await address("Plot 2, Chakan");
+  await expect(p.locator(".save-banner")).toContainText("Your master data change (company settings changed) waits for a second person's approval");
+  await page.goto("/#/history");
+  const waiting = page.locator(".panel", { hasText: "Master data changes wait here" });
+  await expect(waiting).toContainText("Om Planner");
+  await expect(waiting.locator("tr", { hasText: "company address" })).toContainText("Plot 2, Chakan");
+  await waiting.getByRole("button", { name: "Approve" }).click();
+  await expect(page.locator(".banner.ok")).toContainText("Om Planner's change #1 approved and saved");
+  await page.getByLabel("Record to find changes of").fill("");
+  await page.getByRole("button", { name: "Find" }).click();
+  await expect(page.locator(".panel", { hasText: "Changes to a record" }).locator("tbody tr").first()).toContainText("Plot 2, Chakan");
+});

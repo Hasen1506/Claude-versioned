@@ -55,6 +55,7 @@ export function SaveBanner() {
   const [merged, setMerged] = useState<string | null>(null);
   const [clashes, setClashes] = useState<Clash[] | null>(null);
   const [refusedShown, setRefusedShown] = useState(false);
+  const canUndo = useStore((s) => s.canUndo);
   const revision = company?.revision;
   useEffect(() => { setMerged(null); setClashes(null); }, [revision]);   // what a merge did is news until the next save
   useEffect(() => {
@@ -144,6 +145,18 @@ export function SaveBanner() {
       <span>{news}</span><span className="spacer" />
       <a href={href("history")}>History</a>
       <button className="btn sm ghost" onClick={() => { setMerged(null); store.clearMerged(); }}>OK</button>
+    </div>;
+  }
+  if (save.status === "failed" && save.error?.includes("your rights cover")) {
+    return <div className="banner error save-banner" role="alert">
+      <span><b>Not saved:</b> {save.error}.</span>
+      <span className="spacer" />
+      {canUndo && <button className="btn sm" onClick={() => store.undo()}>Undo the last change</button>}
+      <button className="btn sm" disabled={busy} onClick={async () => {
+        if (!window.confirm(`Drop every change not yet saved and open ${company.name} as it was last saved?`)) return;
+        await reopen();
+      }}>Drop my unsaved changes</button>
+      <button className="btn sm ghost" onClick={download}>Download them</button>
     </div>;
   }
   if (save.status === "failed") {

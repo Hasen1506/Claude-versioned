@@ -83,8 +83,12 @@ export function applyCompany(d: Dataset, v: CompanyValues, alsoExact: boolean) {
     cals.push(cal);
     s.default_calendar = cal.id;
   }
-  cal.workdays = [...v.workdays].sort((a, b) => a - b);
-  cal.name = workweekName(cal.workdays);
+  const days = [...v.workdays].sort((a, b) => a - b);
+  // the calendar is named after its week only when the week changes: a saved form must not rename "India Mon–Sat"
+  if (JSON.stringify(days) !== JSON.stringify(cal.workdays) || !cal.name) {
+    cal.workdays = days;
+    cal.name = workweekName(days);
+  }
   if (alsoExact) for (const lp of d.location_products ?? []) {
     const ls = lp.lot_sizing as Obj | undefined;
     if (ls && (ls.policy ?? "L4L") === "L4L") ls.policy = null;

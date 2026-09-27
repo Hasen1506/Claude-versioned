@@ -166,3 +166,6 @@ export type LogRow = S["LogRow"];
 export type ListChange = S["ListChange"];
 export type MergeResult = S["MergeResult"];
 export type Clash = S["Clash"];
+export type HeldChange = S["HeldChange"];
+export type FieldChangeRow = S["FieldChangeRow"];
+export type ResetLink = S["ResetLink"];

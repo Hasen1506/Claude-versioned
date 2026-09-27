@@ -2,7 +2,7 @@ import type {
   Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
   PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoLineInput, RequisitionPick, PostAction, CountInput, UsageInput, SalesOrderChange, SalesOrderResponse,
-  AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult,
+  AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
 } from "./types";
 import type { Patch } from "../lib/patch";
 
@@ -43,6 +43,8 @@ export const CLIENT_ID = (() => {
 })();
 
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
+/** Where the browser goes to sign in with the company's identity provider. */
+export const SSO_START = `${API_ORIGIN}/api/auth/sso/start`;
 /** A proof run answers only when it is done; on a small server the generated flow takes minutes. */
 export const RUN_TIMEOUT_MS = 15 * 60_000;
 
@@ -207,8 +209,23 @@ export const api = {
   restoreCompany: (id: string, revision: number, baseRevision: number) =>
     call<SaveReport>(`/api/companies/${encodeURIComponent(id)}/restore`, { method: "POST", body: JSON.stringify({ revision, base_revision: baseRevision }) }),
   members: (id: string) => call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members`),
-  setMember: (id: string, email: string, role: string) =>
-    call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members`, { method: "POST", body: JSON.stringify({ email, role }) }),
+  setMember: (id: string, email: string, role: string, limits?: { places?: string[]; families?: string[] }) =>
+    call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members`, { method: "POST", body: JSON.stringify({ email, role, ...limits }) }),
+  /** A link for a planner or viewer to set a new password (an owner hands it over). */
+  memberResetLink: (id: string, email: string) =>
+    call<ResetLink>(`/api/companies/${encodeURIComponent(id)}/members/${encodeURIComponent(email)}/reset`, { method: "POST" }),
+  setApproval: (id: string, approval: boolean) =>
+    call<CompanyMeta>(`/api/companies/${encodeURIComponent(id)}/approval`, { method: "PUT", body: JSON.stringify({ approval }) }),
+  heldChanges: (id: string, status = "pending") => call<HeldChange[]>(`/api/companies/${encodeURIComponent(id)}/held?status=${status}`),
+  decideHeld: (id: string, rid: number, decision: "approve" | "reject" | "withdraw", note = "") =>
+    call<SaveReport>(`/api/companies/${encodeURIComponent(id)}/held/${rid}`, { method: "POST", body: JSON.stringify({ decision, note }) }),
+  /** Change documents: every field changed, newest first; `q` finds records by (part of) their key. */
+  changes: (id: string, q = "", list = "", before?: number) =>
+    call<FieldChangeRow[]>(`/api/companies/${encodeURIComponent(id)}/changes?q=${encodeURIComponent(q)}&list=${encodeURIComponent(list)}${before ? `&before=${before}` : ""}`),
+  resetRequest: (email: string) => call<{ ok: boolean; mail: boolean }>("/api/auth/reset/request", { method: "POST", body: JSON.stringify({ email }) }),
+  resetPassword: (token: string, password: string) => call<Session>("/api/auth/reset", { method: "POST", body: JSON.stringify({ token, password }) }),
+  /** Who a sign-on token belongs to (the provider's sign-in brings the browser back with one). */
+  meWith: (token: string) => call<Me>("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } }),
   removeMember: (id: string, email: string) =>
     call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members/${encodeURIComponent(email)}`, { method: "DELETE" }),
 

@@ -80,7 +80,7 @@ export function App() {
         {item?.tabs && <SectionTabs item={item} page={page} />}
         <SaveBanner />
         {page === "proof" ? <Proof route={route} />
-          : page === "account" ? <Account />
+          : page === "account" ? <Account route={route} />
           : !ds ? <div className="content"><Welcome /></div>
           : page === "data" ? <MasterData route={route} />
           : page === "settings" ? <MasterData route={["data", "settings"]} />

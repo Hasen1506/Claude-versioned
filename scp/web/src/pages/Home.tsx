@@ -287,6 +287,11 @@ export function Home({ ds }: { ds: Dataset }) {
       </header>
 
       <Status />
+      {!!s.company?.pending && <div className="banner info" role="status">
+        <span><b>{plural(s.company.pending, "master data change")} {s.company.pending === 1 ? "waits" : "wait"} for approval.</b>{" "}
+          {s.company.role === "viewer" ? "A planner or owner approves them." : "Someone other than who made each one approves it."}</span>
+        <a href={href("history")}>See {s.company.pending === 1 ? "it" : "them"}</a>
+      </div>}
       {locations.length > 0 && !settingUp && <StockAlert ds={ds} />}
       {locations.length > 0 && !settingUp && <Guide planned={planned !== "none"} />}
 
