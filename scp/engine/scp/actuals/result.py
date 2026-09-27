@@ -7,6 +7,15 @@ from ..model import AccuracyRecord, ClosedOrder
 from ..model.common import Out
 
 
+class LotRow(Out):
+    batch: str | None                     # None: stock without a batch
+    stock_type: str                       # unrestricted | quality | blocked
+    qty: float
+    made_on: dt.date | None = None
+    expires_on: dt.date | None = None
+    expired: bool = False                 # past its last day on the as-of date: planning no longer counts it
+
+
 class StockRow(Out):
     location: str
     product: str
@@ -18,6 +27,16 @@ class StockRow(Out):
     by_type: dict[str, float]             # signed quantity per movement type
     negative_on: dt.date | None = None    # when the balance went below zero: still is, or did in the last week
     opening_from_setup: bool = False      # on-hand typed at setup counts as the opening balance (journalled at the next roll)
+    # the stock there is now (at the planning start: this week's postings included), by kind:
+    unrestricted: float = 0.0             # free to use (expired batches included: see ``expired``)
+    quality: float = 0.0                  # in quality inspection
+    blocked: float = 0.0
+    expired: float = 0.0                  # unrestricted or inspection stock of batches past their last day
+    lots: list[LotRow] = []               # by batch and stock type (only when there is more than plain unrestricted)
+    serials: list[str] = []               # serial numbers here
+    in_transit: float = 0.0               # shipped to this place on a transfer and not yet received
+    planning_stock: float | None = None   # what the plan starts from: usable stock before the as-of date (None: no movements)
+    counting: str | None = None           # an open physical inventory document that counts it
 
 
 class OpenOrderRow(Out):

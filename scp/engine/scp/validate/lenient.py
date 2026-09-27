@@ -41,7 +41,7 @@ COLLECTION_TYPES: dict[str, str] = {
     "confirmations": "confirmation", "changeovers": "changeover", "movements": "movement",
     "closed_orders": "closed_order", "accuracy": "accuracy", "rolled_weeks": "rolled_week",
     "stock_targets": "stock_target", "vendors": "vendor", "purchase_orders": "purchase_order",
-    "customer_prices": "customer_price",
+    "customer_prices": "customer_price", "batches": "batch", "inventory_docs": "inventory_doc",
 }
 _TYPE_COLLECTION = {v: k for k, v in COLLECTION_TYPES.items()}
 
@@ -52,7 +52,8 @@ SINGULAR: dict[str, str] = {
     "allocations": "Allocation", "confirmations": "Confirmation", "changeovers": "Changeover",
     "movements": "Goods movement", "closed_orders": "Closed order", "accuracy": "Accuracy record",
     "rolled_weeks": "Rolled week", "stock_targets": "Stock target", "vendors": "Supplier purchasing data",
-    "purchase_orders": "Purchase order", "customer_prices": "Customer price",
+    "purchase_orders": "Purchase order", "customer_prices": "Customer price", "batches": "Batch",
+    "inventory_docs": "Physical inventory document",
 }
 
 # validate._ref's message: "<field> refers to unknown <kind> '<value>'"
@@ -94,6 +95,8 @@ def client_key(collection: str, rec: Any, index: int) -> str:
         return f"{r.get('kind')}|{r.get('id')}"
     if collection == "customer_prices":
         return f"{r.get('customer')}/{r.get('product')}"
+    if collection == "batches":
+        return f"{r.get('product')}/{r.get('id')}"
     if collection == "vendors":
         return str(r.get("supplier") or f"#{index}")
     if collection in ("history", "confirmations", "changeovers", "overrides", "accuracy", "rolled_weeks", "stock_targets"):

@@ -7,7 +7,7 @@ type Obj = Record<string, unknown>;
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
   | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides"
-  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices";
+  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches";
 
 export interface Column {
   label: string;
@@ -251,6 +251,15 @@ export const COLLECTIONS: CollectionDef[] = [
       { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
       { label: "Reference", get: (o) => s(o.reference) }, { label: "Customer or supplier", get: (o) => s(o.counterparty) },
       { label: "Qty", get: (o) => o.qty as number, num: true }, { label: "Note", get: (o) => s(o.note) },
+    ],
+  },
+  {
+    key: "batches", label: "Batches", singular: "batch", defName: "Batch", issueType: "batch",
+    group: "Execution", keyOf: (o) => `${s(o.product)}/${s(o.id)}`,
+    blurb: "Batches of products kept by batch, with the day each expires. A receipt makes one; correct an expiry date here, and planning and the stock follow.",
+    columns: [
+      { label: "Product", get: (o) => s(o.product) }, { label: "Batch", get: (o) => s(o.id) }, { label: "Made", get: (o) => s(o.made_on) },
+      { label: "Expires", get: (o) => s(o.expires_on) }, { label: "Supplier's batch", get: (o) => s(o.supplier_batch) },
     ],
   },
   {

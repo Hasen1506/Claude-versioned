@@ -135,6 +135,12 @@ class Product(Model):
     weight_kg: float | None = Unit("kg", default=None, description="Gross weight per base unit")
     volume_m3: float | None = Unit("m3", default=None, description="Volume per base unit")
     shelf_life_days: int | None = Field(None, gt=0)
+    batches: bool | None = Field(None, description="Stock kept by batch with an expiry date, issued first expiring, "
+                                                   "first out. Empty: when the product has a shelf life")
+    inspect_on_receipt: bool = Field(False, description="Receipts go into quality inspection until released")
+    serial_numbers: bool = Field(False, description="Every unit has its own serial number, given at receipt and at "
+                                                    "delivery")
+    cold_chain: bool = Field(False, description="Kept chilled or frozen: routes need a refrigerated mode")
     whole_units: bool | None = Field(
         None, description="Planned in whole units (no 25.9 tins). Empty: from the unit, whole for EA, PC, box, "
                           "case, tin, pail, bag, drum, bottle, …; fractional for kg, L, m, …")
@@ -143,6 +149,10 @@ class Product(Model):
     price: float | None = Unit("money_per_unit", default=None, description="Default selling price")
     setup_group: str | None = Field(None, max_length=40,
                                     description="Sequence-dependent setup family (colour, allergen, grade…)")
+
+    @property
+    def batch_managed(self) -> bool:
+        return self.batches if self.batches is not None else bool(self.shelf_life_days)
 
     @property
     def whole(self) -> bool:

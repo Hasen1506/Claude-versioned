@@ -212,6 +212,34 @@ def _open_po_blocked(d):
                       "due_date": "2026-01-09", "po": "PO-1", "source": "PIR-B"}]
 
 
+def _stock_expired(d):
+    d["movements"] = [{"id": "GM-1", "date": "2026-01-01", "type": "receipt", "location": "P", "product": "B",
+                       "qty": 5, "batch": "OLD"}]
+    d["batches"] = [{"product": "B", "id": "OLD", "expires_on": "2026-01-03"}]
+
+
+def _batch_unknown(d):
+    d["movements"] = [{"id": "GM-1", "date": "2026-01-01", "type": "receipt", "location": "P", "product": "B",
+                       "qty": 5, "batch": "NO-RECORD"}]
+
+
+def _reversal_unknown(d):
+    d["movements"] = [{"id": "GM-1", "date": "2026-01-01", "type": "receipt", "location": "P", "product": "B",
+                       "qty": 5, "reversal_of": "GM-0"}]
+
+
+def _serials_count(d):
+    d["products"][0]["serial_numbers"] = True
+    d["movements"] = [{"id": "GM-1", "date": "2026-01-01", "type": "receipt", "location": "P", "product": "A",
+                       "qty": 3, "serials": ["A-1"]}]
+
+
+def _cold_chain(d):
+    d["products"][0]["cold_chain"] = True
+    d["locations"].append({"id": "DC", "type": "dc"})
+    d["lanes"] = [{"id": "P-DC", "origin": "P", "destination": "DC", "products": ["A"], "modes": [{"transit_days": 1}]}]
+
+
 MUTATORS = {
     "DUP_ID": _dup_id, "DUP_LOCATION_PRODUCT": _dup_lp, "REF_UNKNOWN": _ref_unknown,
     "REF_WRONG_TYPE": _ref_wrong_type, "FX_MISSING": _fx_missing, "CALENDAR_NO_WORKDAY_IN_HORIZON": _calendar,
@@ -228,6 +256,8 @@ MUTATORS = {
     "NEGATIVE_STOCK": _negative_stock, "MOVEMENT_REF_UNKNOWN": _movement_ref,
     "PHANTOM_NOT_MADE": _phantom_not_made, "PO_LINE_MISMATCH": _po_line_mismatch,
     "FIXED_SOURCE_TWICE": _fixed_twice, "OPEN_PO_BLOCKED_SUPPLIER": _open_po_blocked,
+    "STOCK_EXPIRED": _stock_expired, "BATCH_UNKNOWN": _batch_unknown, "REVERSAL_UNKNOWN": _reversal_unknown,
+    "SERIALS_COUNT": _serials_count, "COLD_CHAIN_LANE": _cold_chain,
 }
 
 

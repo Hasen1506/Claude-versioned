@@ -1,15 +1,18 @@
 import { Fragment, useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { AccuracySeries, ActualsView, Dataset, GoodsMovement, OpenOrderRow, PlannedOrder, PostAction, RollReport, StockRow, UsageInput } from "../api/types";
+import type { AccuracySeries, ActualsView, Dataset, GoodsMovement, OpenOrderRow, PlannedOrder, PostAction, RollReport, ShortOrder, StockRow } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, Edits, Empty, Panel, Provenance, Reading, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
+  Badge, Edits, Empty, MoreRows, Panel, Provenance, Reading, ROW_LIMIT, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
 } from "../components/ui";
 import { day, pct, plural, qty } from "../lib/format";
 import { Loc, Msg, namesOf, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useFreshResult, useStore } from "../state/store";
+import {
+  daysBetween, hasDetail, LotFields, lotExtra, LotsDetail, NO_LOT, PhysicalInventory, postAct, ShortOrders, StockRules, StockTypeCells, type LotInput,
+} from "./ExecutionStock";
 
 type View = "stock" | "count" | "orders" | "journal" | "roll" | "accuracy";
 
@@ -47,10 +50,7 @@ function post(m: Omit<GoodsMovement, "id">) {
 
 /** Post through the engine (ship, receive with parts issued, count), keep the new dataset and re-read the journal. */
 async function postActual(ds: Dataset, action: PostAction, extra: Parameters<typeof api.postActual>[2]): Promise<string> {
-  const out = await api.postActual(ds, action, extra);
-  store.replace(out.dataset);
-  await store.run("actuals");
-  return namesOf(out.dataset).text(out.report.message);
+  return (await postAct(ds, action, extra)).text;
 }
 
 /** Book the journal into the starting position again without moving the planning start (a late posting, a count). */
@@ -133,9 +133,20 @@ function actualsAnswer(res: ActualsView, last: string) {
 }
 
 function Stock({ res, ds }: { res: ActualsView; ds: Dataset }) {
+  const nm = useNames();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const [find, setFind] = useState("");
+  const [only, setOnly] = useState<"" | "held" | "expiring">("");
   const off = res.stock.filter((r) => Math.abs(r.difference) > 1e-6);
+  const held = res.stock.filter((r) => r.quality > 1e-6 || r.blocked > 1e-6);
+  const expired = res.stock.filter((r) => r.expired > 1e-6);
+  const soon = res.stock.filter((r) => r.lots.some((l) => l.expires_on && !l.expired && l.qty > 1e-6 && daysBetween(res.as_of, l.expires_on) <= 7));
+  const q = find.trim().toLowerCase();
+  const shown = res.stock.filter((r) => (!q || nm.loc(r.location).toLowerCase().includes(q) || nm.prod(r.product).toLowerCase().includes(q)
+    || r.lots.some((l) => (l.batch ?? "").toLowerCase().includes(q)) || r.serials.some((s) => s.toLowerCase() === q))
+    && (only !== "held" || held.includes(r)) && (only !== "expiring" || expired.includes(r) || soon.includes(r)));
   const neg = res.stock.filter((r) => r.negative_on);
   const setup = res.stock.filter((r) => r.opening_from_setup).length;
   const sync = async () => {
@@ -153,45 +164,62 @@ function Stock({ res, ds }: { res: ActualsView; ds: Dataset }) {
     <div className="stack">
       <div className="grid-auto">
         <StatTile label="Movements" value={qty(res.movements)} sub={setup ? `plus ${plural(setup, "opening balance")} from setup` : `${qty(res.stock.reduce((a, r) => a + r.movements, 0))} before ${day(res.as_of)} are in stock`} />
-        <StatTile label="Places in the journal" value={qty(res.stock.filter((r) => r.movements > (r.opening_from_setup ? 1 : 0)).length)} sub={`of ${res.stock.length} holding stock`} />
         <StatTile label="Out of sync" value={qty(off.length)} sub="on-hand ≠ Σ movements" tone={off.length ? "hl" : undefined} />
         <StatTile label="Negative stock" value={qty(neg.length)} sub="a receipt missing or late" />
         <StatTile label="Unmatched references" value={qty(res.unmatched.length)} sub="no open or closed order" />
+        <StatTile label="In inspection or blocked" value={qty(held.length)} sub="places planning counts less at" />
+        <StatTile label="Expired or expiring" value={qty(expired.length + soon.length)} sub={expired.length ? `${plural(expired.length, "place")} past the date` : "within 7 days"}
+          tone={expired.length ? "hl" : undefined} />
       </div>
+      {done && <div className="banner info"><Badge sev="ok">Posted</Badge><span>{done}</span><span className="spacer" />
+        <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setDone(null)}>✕</button></div>}
       {err && <div className="banner error"><Badge sev="error">Sync failed</Badge>{err}</div>}
       {off.length > 0 && !res.unbooked?.needed && (
         <div className="banner warning"><Badge sev="warning">{off.length} nodes out of sync</Badge>
           <span>On-hand in the planning policies differs from the journal. Syncing adopts the journal without moving the planning start.</span>
           <span className="spacer" /><Edits><button className="btn sm" onClick={sync} disabled={busy}>{busy ? "Syncing…" : "Sync stock from journal"}</button></Edits></div>
       )}
-      <Panel flush title="On-hand reconciliation">
+      <Panel flush title="On-hand reconciliation" actions={<div className="row" style={{ gap: 8 }}>
+        <input className="input" style={{ width: 220 }} placeholder="Place, product, batch or serial" value={find} onChange={(e) => setFind(e.target.value)} aria-label="Find stock" />
+        <select className="input" style={{ width: 190 }} value={only} onChange={(e) => setOnly(e.target.value as typeof only)} aria-label="Show">
+          <option value="">Every place</option><option value="held">In inspection or blocked</option><option value="expiring">Expired or expiring</option>
+        </select></div>}>
         <div className="table-wrap" style={{ maxHeight: 560 }}>
           <table className="t">
-            <thead><tr><th>Location</th><th>Product</th><th className="num">Planning on-hand</th><th className="num">Σ movements</th>
-              <th className="num">Difference</th><th>In / out</th><th className="num">Movements</th><th>Last</th></tr></thead>
+            <thead><tr><th style={{ width: 24 }} /><th>Location</th><th>Product</th><th className="num">Planning on-hand</th><th className="num">Σ movements</th>
+              <th className="num">Difference</th><th className="num" title="Now, this week's postings included: received, not yet released from quality inspection">Inspection</th>
+              <th className="num" title="Now: held back, planning does not count it">Blocked</th><th className="num" title="Now: past its expiry date, planning does not count it">Expired</th>
+              <th className="num" title="Shipped to this place and not yet received">In transit</th><th>In / out</th><th className="num">Movements</th><th>Last</th></tr></thead>
             <tbody>
-              {res.stock.map((r) => <StockLine key={`${r.location}|${r.product}`} r={r} />)}
+              {shown.slice(0, ROW_LIMIT).map((r) => <StockLine key={`${r.location}|${r.product}`} r={r} ds={ds} asOf={res.as_of} onDone={setDone} />)}
             </tbody>
           </table>
         </div>
+        <MoreRows shown={Math.min(shown.length, ROW_LIMIT)} total={shown.length} what="places" how="Find a place, product, batch or serial to narrow the list." />
       </Panel>
-      <Reading formula="on-hand(node) = Σ signed movements dated before the planning start: + opening, receipt; − issue, sale, transfer issue, scrap; ± count adjustment. Stock entered at setup at a place with no earlier movement is its opening balance."
+      <Reading formula="on-hand(node) = Σ signed movements dated before the planning start: + opening, receipt; − issue, sale, transfer issue, scrap; ± count adjustment. Planning counts the stock that is free to use and not past its expiry date, and stock in quality inspection unless the company says otherwise; blocked stock never."
         soWhat="Once a place has movements, change its stock with a count, not by typing on-hand: post what happened, then start a new week and the plan starts from the physical truth." />
+      <StockRules ds={ds} />
     </div>
   );
 }
 
-function StockLine({ r }: { r: StockRow }) {
+function StockLine({ r, ds, asOf, onDone }: { r: StockRow; ds: Dataset; asOf: string; onDone: (msg: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const detail = hasDetail(r);
   const inflow = Object.entries(r.by_type).filter(([t]) => INFLOW.has(t)).reduce((a, [, v]) => a + v, 0) + Math.max(0, r.by_type.adjustment ?? 0);
   const outflow = -Object.entries(r.by_type).filter(([t]) => !INFLOW.has(t) && t !== "adjustment").reduce((a, [, v]) => a + v, 0) + Math.max(0, -(r.by_type.adjustment ?? 0));
   const scale = Math.max(inflow, outflow, 1);
-  return (
+  return (<>
     <tr>
-      <td><Loc id={r.location} /></td><td><Prod id={r.product} /></td>
+      <td>{detail && <button className="btn sm ghost" style={{ padding: "0 6px" }} onClick={() => setOpen(!open)} aria-expanded={open}
+        aria-label={`Batches and stock of ${r.product} at ${r.location}`}>{open ? "▾" : "▸"}</button>}</td>
+      <td><Loc id={r.location} /></td><td><Prod id={r.product} />{r.counting && <> <Badge sev="info">counting</Badge></>}</td>
       <td className="num">{qty(r.master_on_hand)}{r.opening_from_setup && <> <span title="Stock entered at setup is the opening balance; starting a new week writes it into the journal"><Badge sev="info">opening</Badge></span></>}</td>
       <td className="num">{r.movement_stock === null ? <span className="faint">—</span> : qty(r.movement_stock)}</td>
       <td className="num">{Math.abs(r.difference) > 1e-6 ? <Badge sev="warning">{r.difference > 0 ? "+" : ""}{qty(r.difference)}</Badge> : <span className="faint">0</span>}
         {r.negative_on && <> <Badge sev="error">negative {day(r.negative_on)}</Badge></>}</td>
+      <StockTypeCells r={r} />
       <td style={{ minWidth: 140 }} title={Object.entries(r.by_type).map(([t, v]) => `${t}: ${qty(v)}`).join(" · ")}>
         {r.movements > 0 && <div className="flowbar">
           <span style={{ width: `${(inflow / scale) * 100}%`, background: "var(--series-1)" }} />
@@ -200,7 +228,8 @@ function StockLine({ r }: { r: StockRow }) {
       </td>
       <td className="num">{r.movements || ""}</td><td>{r.last_date ? day(r.last_date) : ""}</td>
     </tr>
-  );
+    {open && <tr className="sub"><td colSpan={13}><LotsDetail r={r} ds={ds} asOf={asOf} onDone={onDone} /></td></tr>}
+  </>);
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -309,7 +338,8 @@ function Count({ ds, res }: { ds: Dataset; res: ActualsView | null }) {
   const shown = rows.filter((r) => !place || r[0] === place);
   return (
     <div className="stack">
-      <Panel title="Count stock" actions={
+      <PhysicalInventory ds={ds} nodes={rows} />
+      <Panel title="Quick count" actions={
         <Edits><button className="btn sm accent" onClick={save} disabled={busy || !changed.length || below.length > 0}
           title={below.length ? "A count is what is there: 0 or more" : undefined}>{busy ? "Saving…" : changed.length ? `Save ${plural(changed.length, "count")}` : "Save counts"}</button></Edits>}>
         <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
@@ -387,6 +417,7 @@ function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [short, setShort] = useState<ShortOrder[]>([]);
   const receipts = res.open_orders.filter((o) => o.kind !== "sales");
   const sales = res.open_orders.filter((o) => o.kind === "sales");
   const closed = [...(ds.closed_orders ?? [])].reverse().slice(0, 30);
@@ -394,7 +425,9 @@ function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
     setBusy(id);
     setErr(null);
     try {
-      setMsg(await postActual(ds, action, { order: id, date: postDate, ...extra }));
+      const out = await postAct(ds, action, { order: id, date: postDate, ...extra });
+      setMsg(out.text);
+      setShort(out.report.short_orders ?? []);
       setOpen(null);
     } catch (e) {
       setErr(String(e));
@@ -414,6 +447,7 @@ function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
       {msg && <div className="banner info"><Badge sev="ok">Posted</Badge><span>{msg}</span><span className="spacer" />
         <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
       {err && <div className="banner error"><Badge sev="error">Not posted</Badge>{err}</div>}
+      <ShortOrders list={short} ds={ds} onDone={setMsg} />
       <Firming ds={ds} />
       <Panel flush title="Firm receipts: purchase, production and transfer orders">
         {receipts.length === 0 ? <Empty title="No firm receipts">Firm planned orders above, or order on Buying.</Empty> : (
@@ -441,7 +475,7 @@ function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
                       </td>
                     </tr>
                     {open === o.id && <tr className="sub"><td colSpan={12}><PostForm o={o} ds={ds} busy={busy === o.id}
-                      onPost={(extra) => act(o.id, "receive", extra)} onShip={(q) => act(o.id, "ship", { qty: q })} /></td></tr>}
+                      onPost={(extra) => act(o.id, "receive", extra)} onShip={(q, lot) => act(o.id, "ship", { qty: q, ...lotExtra(lot) })} /></td></tr>}
                   </Fragment>
                 ))}
               </tbody>
@@ -503,8 +537,9 @@ const KIND: Record<string, string> = { purchase: "purchase", production: "produc
 
 /** Post part of an order, close it short, or (production) the parts actually used instead of the backflush. */
 function PostForm({ o, ds, busy, onPost, onShip }: { o: OpenOrderRow; ds: Dataset; busy: boolean;
-  onPost: (extra: { qty: number; final: boolean; usage: UsageInput[] | null }) => void; onShip: (qty: number) => void }) {
+  onPost: (extra: Parameters<typeof api.postActual>[2]) => void; onShip: (qty: number, lot: LotInput) => void }) {
   const rc = (ds.receipts ?? []).find((r) => r.id === o.id);
+  const [lot, setLot] = useState<LotInput>(NO_LOT);
   const [q, setQ] = useState(String(Math.round(o.open * 1000) / 1000));
   const [final, setFinal] = useState(false);
   const [actual, setActual] = useState(false);
@@ -522,11 +557,13 @@ function PostForm({ o, ds, busy, onPost, onShip }: { o: OpenOrderRow; ds: Datase
         <label className="small"><input type="checkbox" checked={final} onChange={(e) => setFinal(e.target.checked)} /> Last delivery: close the order even if short</label>
         {o.kind === "production" && parts.length > 0 && <label className="small"><input type="checkbox" checked={actual} onChange={(e) => setActual(e.target.checked)} /> Enter the parts actually used</label>}
         <span className="spacer" />
-        {o.kind === "transfer" && <button className="btn sm" disabled={busy || !(n > 0)} onClick={() => onShip(n)}>Ship {qty(n || 0)}</button>}
+        {o.kind === "transfer" && <button className="btn sm" disabled={busy || !(n > 0)} onClick={() => onShip(n, lot)}>Ship {qty(n || 0)}</button>}
         <button className="btn sm accent" disabled={busy || !(n > 0)}
-          onClick={() => onPost({ qty: n, final, usage: actual ? parts.map((r) => ({ product: r.product, qty: Number(usage[r.product] ?? guess(r).toFixed(3)) || 0 })) : null })}>
+          onClick={() => onPost({ qty: n, final, ...lotExtra(lot),
+            usage: actual ? parts.map((r) => ({ product: r.product, qty: Number(usage[r.product] ?? guess(r).toFixed(3)) || 0 })) : null })}>
           {o.kind === "production" ? "Confirm" : "Receive"} {qty(n || 0)}</button>
       </div>
+      <LotFields ds={ds} product={o.product} value={lot} onChange={setLot} receiving={o.kind !== "transfer"} />
       {o.kind === "production" && parts.length > 0 && (
         <div className="small muted">{actual ? "Parts used:" : "Parts issued with it (in proportion to what is made):"}{" "}
           {parts.map((r) => (
@@ -618,40 +655,71 @@ function Firming({ ds }: { ds: Dataset }) {
 }
 
 // ------------------------------------------------------------------------------------------------
-const TYPES = ["all", "opening", "receipt", "issue", "sale", "transfer_out", "scrap", "adjustment"] as const;
+const TYPES = ["all", "opening", "receipt", "issue", "sale", "transfer_out", "scrap", "adjustment", "status"] as const;
+const TYPE_TEXT: Record<string, string> = { transfer_out: "transfer out", adjustment: "count difference", status: "stock change" };
+const STOCK_TEXT: Record<string, string> = { quality: "inspection", blocked: "blocked" };
+
+/** The quantity as it counts in stock: + in, − out, count differences and stock changes as signed; a reversal the other way. */
+function signedQty(m: GoodsMovement): number {
+  const s = m.type === "adjustment" || m.type === "status" ? m.qty : INFLOW.has(m.type) ? m.qty : -m.qty;
+  return m.reversal_of ? -s : s;
+}
 
 function Journal({ ds }: { ds: Dataset }) {
   const [type, setType] = useState<(typeof TYPES)[number]>("all");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const [find, setFind] = useState("");
+  const reversed = useMemo(() => new Set((ds.movements ?? []).map((m) => m.reversal_of).filter(Boolean) as string[]), [ds.movements]);
+  const reverse = async (m: GoodsMovement) => {
+    setBusy(m.id);
+    setErr(null);
+    try { setDone(await postActual(ds, "reverse", { movement: m.id })); } catch (e) { setErr(String(e)); } finally { setBusy(null); }
+  };
   const [draft, setDraft] = useState<Obj>(() => ({ date: ds.settings.planning_start, type: "receipt", location: "", product: "", qty: 0, final: false, note: "" }));
   const [err, setErr] = useState<string | null>(null);
-  const rows = [...(ds.movements ?? [])].filter((m) => type === "all" || m.type === type).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id.localeCompare(a.id)));
+  const q = find.trim().toLowerCase();
+  const rows = [...(ds.movements ?? [])].filter((m) => (type === "all" || m.type === type)
+    && (!q || [m.id, m.doc, m.batch, m.reference, m.product, m.location, ...(m.serials ?? [])].some((x) => (x ?? "").toLowerCase().includes(q))))
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id.localeCompare(a.id)));
   const submit = () => {
     const m = draft as unknown as GoodsMovement;
     if (!m.location || !m.product || !m.qty) { setErr("Location, product and a non-zero quantity are required."); return; }
-    if (m.type !== "adjustment" && m.qty < 0) { setErr("Only count adjustments take a negative quantity."); return; }
+    if (m.type !== "adjustment" && m.type !== "status" && m.qty < 0) { setErr("Only count differences and stock changes take a negative quantity."); return; }
     setErr(null);
     post({ ...m, reference: m.reference || null, counterparty: m.counterparty || null });
     setDraft({ ...draft, qty: 0, reference: "", note: "" });
   };
   return (
     <div className="grid-2" style={{ alignItems: "start", gridTemplateColumns: "minmax(0, 1.6fr) minmax(300px, 1fr)" }}>
-      <Panel flush title="Goods movements" actions={
+      <Panel flush title="Goods movements" actions={<div className="row" style={{ gap: 8 }}>
+        <input className="input" style={{ width: 200 }} placeholder="Document, batch, order, serial" value={find} onChange={(e) => setFind(e.target.value)} aria-label="Find movements" />
         <select className="input" style={{ width: 150 }} value={type} onChange={(e) => setType(e.target.value as (typeof TYPES)[number])} aria-label="Movement type filter">
-          {TYPES.map((t) => <option key={t} value={t}>{t === "all" ? "All types" : t.replace("_", " ")}</option>)}
-        </select>}>
+          {TYPES.map((t) => <option key={t} value={t}>{t === "all" ? "All types" : TYPE_TEXT[t] ?? t}</option>)}
+        </select></div>}>
+        {done && <div className="banner info" style={{ margin: 12 }}><Badge sev="ok">Reversed</Badge><span>{done}</span><span className="spacer" />
+          <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setDone(null)}>✕</button></div>}
         {rows.length === 0 ? <Empty title="No movements">Post the first one on the right.</Empty> : (
           <div className="table-wrap" style={{ maxHeight: 620 }}>
             <table className="t nowrap">
-              <thead><tr><th>Id</th><th>Date</th><th>Type</th><th>Location</th><th>Product</th><th className="num">Qty</th><th>Reference</th><th>Counterparty</th></tr></thead>
+              <thead><tr><th>Id</th><th>Document</th><th>Date</th><th>Type</th><th>Location</th><th>Product</th><th className="num">Qty</th><th>Batch</th>
+                <th>Reference</th><th>Counterparty</th><th /></tr></thead>
               <tbody>
                 {rows.slice(0, 400).map((m) => {
-                  const signed = m.type === "adjustment" ? m.qty : INFLOW.has(m.type) ? m.qty : -m.qty;
+                  const signed = signedQty(m);
+                  const gone = reversed.has(m.id);
                   return (
                     <tr key={m.id} className={m.date >= ds.settings.planning_start ? "" : "dim"}>
-                      <td className="faint">{m.id}</td><td>{day(m.date)}</td><td>{m.type.replace("_", " ")}{m.final && <> <Badge sev="info">final</Badge></>}</td>
+                      <td className="faint">{m.id}</td><td className="faint">{m.doc ?? ""}</td><td>{day(m.date)}</td>
+                      <td>{TYPE_TEXT[m.type] ?? m.type}{m.final && <> <Badge sev="info">final</Badge></>}
+                        {m.reversal_of && <> <Badge sev="info">reverses {m.reversal_of}</Badge></>}{gone && <> <Badge sev="warning">reversed</Badge></>}</td>
                       <td><Loc id={m.location} /></td><td><Prod id={m.product} /></td>
-                      <td className="num" style={{ color: signed < 0 ? "var(--warning-text)" : undefined }}>{signed > 0 ? "+" : ""}{qty(signed)}</td>
+                      <td className="num" style={{ color: signed < 0 ? "var(--warning-text)" : undefined }}
+                        title={m.serials?.length ? `Serial numbers: ${m.serials.join(", ")}` : undefined}>{signed > 0 ? "+" : ""}{qty(signed)}</td>
+                      <td>{m.batch ?? ""}{m.stock_type && m.stock_type !== "unrestricted" && <span className="faint small"> {STOCK_TEXT[m.stock_type]}</span>}</td>
                       <td>{m.reference ?? ""}</td><td>{m.counterparty ? <Loc id={m.counterparty} /> : ""}</td>
+                      <td>{!m.reversal_of && !gone && <Edits><button className="btn sm ghost" disabled={!!busy} onClick={() => reverse(m)}
+                        aria-label={`Reverse ${m.id}`} title={m.doc ? `Take back every movement of ${m.doc}` : "Take this movement back"}>Reverse</button></Edits>}</td>
                     </tr>
                   );
                 })}
@@ -662,7 +730,7 @@ function Journal({ ds }: { ds: Dataset }) {
       </Panel>
       <div className="stack">
         <Panel title="Post a movement">
-          <SchemaForm defName="GoodsMovement" value={draft} onChange={setDraft} hide={["id"]} compact />
+          <SchemaForm defName="GoodsMovement" value={draft} onChange={setDraft} hide={["id", "doc", "reversal_of", "serials"]} compact />
           {err && <div className="banner error" style={{ marginTop: 8 }}>{err}</div>}
           <div className="row" style={{ marginTop: 10 }}><Edits><button className="btn accent" onClick={submit}>Post movement</button></Edits></div>
         </Panel>

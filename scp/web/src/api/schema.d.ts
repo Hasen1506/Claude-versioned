@@ -1385,6 +1385,13 @@ export interface components {
              * @default []
              */
             movements: string[];
+            /** Doc */
+            doc: string | null;
+            /**
+             * Short Orders
+             * @default []
+             */
+            short_orders: components["schemas"]["ShortOrder"][];
         };
         /** ActualsRequest */
         ActualsRequest: {
@@ -1590,6 +1597,41 @@ export interface components {
             actual: number;
             /** Forecast */
             forecast: number;
+        };
+        /**
+         * Batch
+         * @description A batch of a product (≈ a batch master record): made or received together, with one expiry date. Stock of a
+         *     batch-managed product is kept by batch; issues take the batch that expires first (first expiring, first out).
+         */
+        Batch: {
+            /** Product */
+            product: string;
+            /**
+             * Id
+             * @description Batch number, unique per product
+             */
+            id: string;
+            /**
+             * Made On
+             * @description Made or received
+             */
+            made_on?: string | null;
+            /**
+             * Expires On
+             * @description Last day it may be used, sold or shipped
+             */
+            expires_on?: string | null;
+            /**
+             * Supplier Batch
+             * @description The supplier's own batch number
+             * @default
+             */
+            supplier_batch: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /**
          * Binding
@@ -2229,7 +2271,31 @@ export interface components {
             /** Product */
             product: string;
             /** Qty */
-            qty: number;
+            qty: number | null;
+            /** Batch */
+            batch?: string | null;
+            stock_type?: components["schemas"]["StockType"] | null;
+        };
+        /** CountItem */
+        CountItem: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Batch */
+            batch?: string | null;
+            /** @default unrestricted */
+            stock_type: components["schemas"]["StockType"];
+            /**
+             * Book Qty
+             * @description The journal's stock when the document was made (frozen)
+             */
+            book_qty: number;
+            /**
+             * Counted
+             * @description What was found; empty until counted
+             */
+            counted?: number | null;
         };
         /** CreatePoRequest */
         CreatePoRequest: {
@@ -2410,6 +2476,10 @@ export interface components {
             promising?: components["schemas"]["PromiseSettings"];
             /** Movements */
             movements?: components["schemas"]["GoodsMovement"][];
+            /** Batches */
+            batches?: components["schemas"]["Batch"][];
+            /** Inventory Docs */
+            inventory_docs?: components["schemas"]["InventoryDoc"][];
             /** Closed Orders */
             closed_orders?: components["schemas"]["ClosedOrder"][];
             /** Accuracy */
@@ -2715,6 +2785,17 @@ export interface components {
              * @default 0.02
              */
             delivery_tolerance: number;
+            /**
+             * @description A posting that takes stock below zero: refuse it, allow it and ask for a count, or count the missing stock as found
+             * @default allow
+             */
+            negative_stock: components["schemas"]["NegativeStock"];
+            /**
+             * Quality In Planning
+             * @description Stock in quality inspection counts as available in planning
+             * @default true
+             */
+            quality_in_planning: boolean;
         };
         /** FieldChange */
         FieldChange: {
@@ -3159,6 +3240,31 @@ export interface components {
              * @default
              */
             note: string;
+            /**
+             * Batch
+             * @description The batch moved (batch-managed products)
+             */
+            batch?: string | null;
+            /**
+             * @description The stock the quantity comes from or goes to
+             * @default unrestricted
+             */
+            stock_type: components["schemas"]["StockType"];
+            /**
+             * Doc
+             * @description Material document: the movements posted together
+             */
+            doc?: string | null;
+            /**
+             * Reversal Of
+             * @description The movement this one takes back: its quantity counts with the opposite sign
+             */
+            reversal_of?: string | null;
+            /**
+             * Serials
+             * @description Serial numbers moved (serialised products: one per unit)
+             */
+            serials?: string[];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -3278,6 +3384,45 @@ export interface components {
             quota: number | null;
             /** Vendor Material */
             vendor_material: string;
+        };
+        /**
+         * InventoryDoc
+         * @description A physical inventory document (≈ MI01/MI04/MI07): places and products to count on a day, their book stock
+         *     frozen when the document is made, the counts entered, and the differences posted against the frozen stock.
+         *     With ``block``, postings for its places and products are refused until it is posted or cancelled.
+         */
+        InventoryDoc: {
+            /** Id */
+            id: string;
+            /**
+             * Date
+             * Format: date
+             * @description Count date: the differences are posted at the end of this day
+             */
+            date: string;
+            /**
+             * Status
+             * @default open
+             */
+            status: string;
+            /**
+             * Block
+             * @description Refuse postings for these places and products while open
+             * @default false
+             */
+            block: boolean;
+            /** Items */
+            items?: components["schemas"]["CountItem"][];
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /**
+             * Posted Doc
+             * @description The material document of the differences
+             */
+            posted_doc?: string | null;
         };
         /** InventoryResult */
         InventoryResult: {
@@ -4027,6 +4172,24 @@ export interface components {
             /** Kept */
             kept: boolean;
         };
+        /** LotRow */
+        LotRow: {
+            /** Batch */
+            batch: string | null;
+            /** Stock Type */
+            stock_type: string;
+            /** Qty */
+            qty: number;
+            /** Made On */
+            made_on: string | null;
+            /** Expires On */
+            expires_on: string | null;
+            /**
+             * Expired
+             * @default false
+             */
+            expired: boolean;
+        };
         /**
          * LotSizePolicy
          * @enum {string}
@@ -4222,12 +4385,18 @@ export interface components {
          * MovementType
          * @enum {string}
          */
-        MovementType: "opening" | "receipt" | "issue" | "sale" | "transfer_out" | "scrap" | "adjustment";
+        MovementType: "opening" | "receipt" | "issue" | "sale" | "transfer_out" | "scrap" | "adjustment" | "status";
         /**
          * MrpType
          * @enum {string}
          */
         MrpType: "deterministic" | "reorder_point" | "none";
+        /**
+         * NegativeStock
+         * @description What happens when a posting would take stock below zero (R17).
+         * @enum {string}
+         */
+        NegativeStock: "refuse" | "allow" | "found";
         /** NetEdge */
         NetEdge: {
             /** Origin */
@@ -4332,6 +4501,11 @@ export interface components {
              */
             gross_dependent: number;
             /**
+             * Expiring
+             * @default 0
+             */
+            expiring: number;
+            /**
              * Scheduled Receipts
              * @default 0
              */
@@ -4376,6 +4550,13 @@ export interface components {
              * @default 0
              */
             at_risk: number;
+        };
+        /** NodeInput */
+        NodeInput: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
         };
         /** NodeInventory */
         NodeInventory: {
@@ -5182,6 +5363,14 @@ export interface components {
              * @default false
              */
             final: boolean;
+            /** Batch */
+            batch?: string | null;
+            /** Expires On */
+            expires_on?: string | null;
+            /** Supplier Batch */
+            supplier_batch?: string | null;
+            /** Serials */
+            serials?: string[] | null;
         };
         /** PoView */
         PoView: {
@@ -5247,7 +5436,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ship" | "receive" | "deliver" | "count";
+            action: "ship" | "receive" | "deliver" | "count" | "move" | "scrap" | "scrap_expired" | "reverse" | "shorten" | "count_doc" | "count_enter" | "count_post" | "count_cancel";
             /** Order */
             order?: string | null;
             /** Qty */
@@ -5270,6 +5459,36 @@ export interface components {
              * @default
              */
             note: string;
+            /** Batch */
+            batch?: string | null;
+            /** Expires On */
+            expires_on?: string | null;
+            /** Supplier Batch */
+            supplier_batch?: string | null;
+            /** Serials */
+            serials?: string[] | null;
+            stock_type?: components["schemas"]["StockType"] | null;
+            to_type?: components["schemas"]["StockType"] | null;
+            /** Location */
+            location?: string | null;
+            /** Product */
+            product?: string | null;
+            /** Movement */
+            movement?: string | null;
+            /** Doc */
+            doc?: string | null;
+            /** Nodes */
+            nodes?: components["schemas"]["NodeInput"][] | null;
+            /**
+             * Block
+             * @default true
+             */
+            block: boolean;
+            /**
+             * Uncounted Zero
+             * @default false
+             */
+            uncounted_zero: boolean;
         };
         /**
          * PriceScale
@@ -5321,6 +5540,29 @@ export interface components {
             volume_m3?: number | null;
             /** Shelf Life Days */
             shelf_life_days?: number | null;
+            /**
+             * Batches
+             * @description Stock kept by batch with an expiry date, issued first expiring, first out. Empty: when the product has a shelf life
+             */
+            batches?: boolean | null;
+            /**
+             * Inspect On Receipt
+             * @description Receipts go into quality inspection until released
+             * @default false
+             */
+            inspect_on_receipt: boolean;
+            /**
+             * Serial Numbers
+             * @description Every unit has its own serial number, given at receipt and at delivery
+             * @default false
+             */
+            serial_numbers: boolean;
+            /**
+             * Cold Chain
+             * @description Kept chilled or frozen: routes need a refrigerated mode
+             * @default false
+             */
+            cold_chain: boolean;
             /**
              * Whole Units
              * @description Planned in whole units (no 25.9 tins). Empty: from the unit, whole for EA, PC, box, case, tin, pail, bag, drum, bottle, …; fractional for kg, L, m, …
@@ -5894,7 +6136,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "forecast" | "sales_order" | "dependent" | "transfer";
+            kind: "forecast" | "sales_order" | "dependent" | "transfer" | "expiry";
             /** Parent Order */
             parent_order: string | null;
             /**
@@ -7345,6 +7587,28 @@ export interface components {
              */
             weekdays?: number[] | null;
         };
+        /**
+         * ShortOrder
+         * @description A firm order the parts no longer cover in full after a short or late receipt (R16).
+         */
+        ShortOrder: {
+            /** Order */
+            order: string;
+            /** Product */
+            product: string;
+            /** Part */
+            part: string;
+            /** Location */
+            location: string;
+            /** Needs */
+            needs: number;
+            /** Available */
+            available: number;
+            /** Can Make */
+            can_make: number;
+            /** Qty */
+            qty: number;
+        };
         /** SignIn */
         SignIn: {
             /** Email */
@@ -7665,6 +7929,45 @@ export interface components {
              * @default false
              */
             opening_from_setup: boolean;
+            /**
+             * Unrestricted
+             * @default 0
+             */
+            unrestricted: number;
+            /**
+             * Quality
+             * @default 0
+             */
+            quality: number;
+            /**
+             * Blocked
+             * @default 0
+             */
+            blocked: number;
+            /**
+             * Expired
+             * @default 0
+             */
+            expired: number;
+            /**
+             * In Transit
+             * @default 0
+             */
+            in_transit: number;
+            /** Planning Stock */
+            planning_stock: number | null;
+            /**
+             * Lots
+             * @default []
+             */
+            lots: components["schemas"]["LotRow"][];
+            /**
+             * Serials
+             * @default []
+             */
+            serials: string[];
+            /** Counting */
+            counting: string | null;
         };
         /**
          * StockTarget
@@ -7691,6 +7994,13 @@ export interface components {
              */
             source: string;
         };
+        /**
+         * StockType
+         * @description What stock may be used for (≈ SAP's stock types). Only unrestricted stock is issued, sold or shipped; stock in
+         *     quality inspection counts in planning when the company says so (as SAP's MRP does by default); blocked stock never.
+         * @enum {string}
+         */
+        StockType: "unrestricted" | "quality" | "blocked";
         /**
          * Strategy
          * @description Planning strategy (S/4 guide §5.2).
@@ -7938,7 +8248,7 @@ export interface components {
          * TransportMode
          * @enum {string}
          */
-        TransportMode: "truck_ftl" | "truck_ltl" | "rail" | "sea" | "air" | "courier" | "pipeline";
+        TransportMode: "truck_ftl" | "truck_ltl" | "reefer" | "rail" | "sea" | "air" | "courier" | "pipeline";
         /**
          * Unbooked
          * @description Postings dated before the planning start that the starting position does not reflect yet (a late posting, or

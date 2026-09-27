@@ -230,7 +230,8 @@ const ENUM_WORDS: Record<string, string> = {
   distributioncentre: "dc", distributioncenter: "dc", finishedgood: "FG", finished: "FG", semifinished: "SFG", subassembly: "SFG",
   rawmaterial: "RM", raw: "RM", packaging: "PKG", salesorder: "sales_order", order: "sales_order", so: "sales_order", fc: "forecast",
   lotforlot: "L4L", exact: "L4L", fixedlot: "FIXED", daysofsupply: "days_of_supply", daysofcover: "days_of_supply",
-  truck: "truck_ftl", fullload: "truck_ftl", partload: "truck_ltl", ftl: "truck_ftl", ltl: "truck_ltl", ship: "sea", ocean: "sea",
+  truck: "truck_ftl", fullload: "truck_ftl", partload: "truck_ltl", ftl: "truck_ftl", ltl: "truck_ltl", reefer: "reefer",
+  refrigerated: "reefer", refrigeratedtruck: "reefer", chilled: "reefer", coldchain: "reefer", frozen: "reefer", ship: "sea", ocean: "sea",
   vendor: "supplier", maketostock: "MTS", maketoorder: "MTO", assembletoorder: "ATO",
 };
 

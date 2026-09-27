@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from .actuals import AccuracyRecord, ClosedOrder, ExecutionSettings, GoodsMovement, RolledWeek
+from .actuals import AccuracyRecord, Batch, ClosedOrder, ExecutionSettings, GoodsMovement, InventoryDoc, RolledWeek
 from .common import LocationType, Model
 from .finance import FinanceSettings
 from .tower import TowerSettings
@@ -60,6 +60,8 @@ class Dataset(Model):
     confirmations: list[Confirmation] = Field(default_factory=list)
     promising: PromiseSettings = Field(default_factory=PromiseSettings)
     movements: list[GoodsMovement] = Field(default_factory=list)
+    batches: list[Batch] = Field(default_factory=list)
+    inventory_docs: list[InventoryDoc] = Field(default_factory=list)
     closed_orders: list[ClosedOrder] = Field(default_factory=list)
     accuracy: list[AccuracyRecord] = Field(default_factory=list)
     rolled_weeks: list[RolledWeek] = Field(default_factory=list)

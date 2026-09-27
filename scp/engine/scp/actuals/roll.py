@@ -25,8 +25,10 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from ..model import (
-    ClosedOrder, Dataset, DemandKind, LocationProduct, MovementType, RolledWeek, SalesHistory,
+    ClosedOrder, Dataset, DemandKind, GoodsMovement, LocationProduct, MovementType, NegativeStock, RolledWeek,
+    SalesHistory, StockType,
 )
+from .lots import batch_index, lots, planning_stock
 from .result import OrderChange, RollReport, StockChange
 from .stock import (
     EPS, _sum, accuracy_records, arrival, before, by_ref, counterparty, demand_keys, pending_openings, refresh_actuals,
@@ -43,17 +45,26 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
         return ds, rep
     tol = ds.execution.delivery_tolerance
     openings = pending_openings(ds)          # setup stock enters the journal as the opening balance
+    found = _found(ds, openings, as_of)      # the company counts stock below zero as found (R17)
+    if found:
+        ds = ds.model_copy(update={"movements": [*ds.movements, *found]})
     movs = before(ds, as_of)
 
-    # ① stock ------------------------------------------------------------------------------------------
+    # ① stock: what planning may count on (unrestricted and unexpired, and in inspection if the company says so) --
     lps = [lp.model_copy() for lp in ds.location_products]
     by_key = {(lp.location, lp.product): lp for lp in lps}
-    for node, q in sorted(stock(movs).items()):
+    usable_now = planning_stock(ds, movs, as_of)
+    free = unrestricted(movs)
+    for m in found:
+        rep.warnings.append(f"{m.qty:,.2f} of {m.product} at {m.location} counted as found: stock had gone below zero "
+                            "(the company's rule)")
+    for node in sorted(set(stock(movs)) | set(usable_now)):
+        q = usable_now.get(node, 0.0)
         lp = by_key.get(node)
         before_q = lp.on_hand if lp else 0.0
-        if q < -EPS:
-            rep.warnings.append(f"Negative stock {q:,.2f} for {node[1]} at {node[0]}: set to 0 — post the missing receipt "
-                                "or a count adjustment")
+        if free.get(node, 0.0) < -EPS:
+            rep.warnings.append(f"Negative stock {free[node]:,.2f} for {node[1]} at {node[0]} by the journal: the plan "
+                                "starts from 0 — post the missing receipt, or count it")
         after_q = max(0.0, round(q, 6))
         if lp is None:
             lp = LocationProduct(location=node[0], product=node[1])
@@ -168,7 +179,7 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
             continue
         (loc, prod), day = sale_point(ds, m, keys)
         if day < as_of and (loc, prod, day) not in have:
-            journal[(loc, prod, day)] += m.qty
+            journal[(loc, prod, day)] += m.net
     history = imported + [SalesHistory(location=k[0], product=k[1], date=k[2], qty=round(q, 6),
                                        price=ds.selling_price(k[0], k[1]), from_journal=True)
                           for k, q in sorted(journal.items())]
@@ -194,14 +205,53 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
         "settings": ds.settings.model_copy(update={"planning_start": as_of}),
         "location_products": lps, "receipts": receipts, "demand": demand, "confirmations": keep_confs,
         "history": history, "accuracy": acc, "rolled_weeks": rolled, "closed_orders": closed_log,
-        "movements": [*ds.movements, *openings],
+        "movements": [*ds.movements, *openings],          # the found stock is in ds.movements already
     })
+    gone = expired_now(ds, movs, as_of)
+    if gone:
+        rep.warnings.append(f"{len(gone)} batch{'es' if len(gone) != 1 else ''} expired and no longer counted: "
+                            + ", ".join(f"{b} of {p} at {lo} ({q:,.2f})" for lo, p, b, q in gone[:4])
+                            + ("…" if len(gone) > 4 else "") + " — scrap them")
     past_due = [r.id for r in receipts if r.due_date < as_of]
     if past_due:
         rep.warnings.append(f"{len(past_due)} open receipt(s) past due: {', '.join(past_due[:6])}"
                             + ("…" if len(past_due) > 6 else ""))
     rep.ok = True
     return Dataset.model_validate(new.model_dump()), rep
+
+
+def unrestricted(movs) -> dict[tuple[str, str], float]:
+    out: dict[tuple[str, str], float] = defaultdict(float)
+    for m in movs:
+        if m.stock_type is StockType.UNRESTRICTED:
+            out[(m.location, m.product)] += m.signed
+    return out
+
+
+def _found(ds: Dataset, openings: list[GoodsMovement], as_of: date) -> list[GoodsMovement]:
+    """With the rule "count it as found", a count difference that brings unrestricted stock below zero back to zero,
+    on the day before ``as_of``: the journal and the plan then agree without waiting for a count."""
+    if NegativeStock(ds.execution.negative_stock) is not NegativeStock.FOUND:
+        return []
+    from .stock import movement_ids
+    movs = [m for m in [*ds.movements, *openings] if m.date < as_of]
+    ids = movement_ids(ds, [m.id for m in openings])
+    day = as_of - timedelta(days=1)
+    return [GoodsMovement(id=next(ids), date=day, type=MovementType.ADJUSTMENT, location=n[0], product=n[1],
+                          qty=round(-q, 6), note="Counted as found: stock had gone below zero")
+            for n, q in sorted(unrestricted(movs).items()) if q < -EPS]
+
+
+def expired_now(ds: Dataset, movs, as_of: date) -> list[tuple[str, str, str, float]]:
+    """Batches holding stock that is past its last day on ``as_of`` (blocked stock aside): place, product, batch, qty."""
+    bi = batch_index(ds)
+    out = []
+    for (loc, prod), by in sorted(lots(movs).items()):
+        for (b, t), q in sorted(by.items(), key=lambda kv: (kv[0][0] or "", kv[0][1].value)):
+            rec = bi.get((prod, b)) if b else None
+            if rec and rec.expires_on and rec.expires_on < as_of and q > EPS and t is not StockType.BLOCKED:
+                out.append((loc, prod, b, round(q, 6)))
+    return out
 
 
 def _redeliver(ds: Dataset, c: ClosedOrder, receipts: tuple[dict, dict, dict], sales: tuple[dict, dict, dict],

@@ -73,7 +73,7 @@ def received(ds: Dataset) -> dict[str, float]:
     out: dict[str, float] = defaultdict(float)
     for m in ds.movements:
         if m.type is MovementType.RECEIPT and m.reference:
-            out[m.reference] += m.qty
+            out[m.reference] += m.net
     return out
 
 
@@ -317,13 +317,17 @@ def confirm(ds: Dataset, po_id: str, lines: list[dict] | None, reference: str = 
 
 
 def receive(ds: Dataset, po_id: str, lines: list[dict] | None, on: date | None = None,
-            delivery_note: str = "") -> tuple[Dataset, ActionReport]:
+            delivery_note: str = "", lot: dict | None = None) -> tuple[Dataset, ActionReport]:
     """Goods receipt against an order (≈ MIGO 101): one receipt movement per line. ``lines``: ``{"id", "qty"?,
-    "final"?}``; the default receives each line's open quantity. The supplier's over-delivery tolerance is enforced;
-    a delivery within their under-delivery tolerance is marked final and closes the line."""
+    "final"?, "batch"?, "expires_on"?, "supplier_batch"?, "serials"?}``; the default receives each line's open
+    quantity. The supplier's over-delivery tolerance is enforced; a delivery within their under-delivery tolerance is
+    marked final and closes the line. ``lot``: the batch and serials of a one-line receipt. Batches, inspection and
+    serial numbers follow the products (:func:`scp.actuals.documents.complete`)."""
+    from ..actuals.documents import StockError, complete
     on = on or ds.settings.planning_start
     got = received(ds)
     moves: list[GoodsMovement] = []
+    per: dict[int, dict] = {}
     taken: set[str] = set()
     notes = []
     for r, w in _pick(_po_lines(ds, po_id), lines, po_id):
@@ -342,6 +346,8 @@ def receive(ds: Dataset, po_id: str, lines: list[dict] | None, on: date | None =
                                          and v.under_delivery_tolerance > 0)
         mid = _next_movement(ds, taken)
         taken.add(mid)
+        per[len(moves)] = {**{k: w.get(k) for k in ("batch", "expires_on", "supplier_batch", "serials")},
+                           **({k: v for k, v in (lot or {}).items() if v is not None} if lines and len(lines) == 1 else {})}
         moves.append(GoodsMovement(id=mid, date=on, type=MovementType.RECEIPT, location=r.location, product=r.product,
                                    qty=q, reference=r.id, counterparty=sup if sup in ds.location_by_id else None,
                                    final=final, note=delivery_note[:200]))
@@ -353,10 +359,19 @@ def receive(ds: Dataset, po_id: str, lines: list[dict] | None, on: date | None =
             notes.append(f"{r.id}: {ordered - total:,.0f} still to come")
     if not moves:
         raise PurchasingError(f"nothing to receive on {po_id}")
-    msg = (f"Goods received on {po_id} ({on.isoformat()}): " + "; ".join(notes)
+    try:
+        moves, batches, more = complete(ds, moves, on, per=per)
+    except StockError as e:
+        raise PurchasingError(str(e)) from e
+    got_in = sorted({m.batch for m in moves if m.batch})
+    msg = (f"Goods received on {po_id} ({on.isoformat()})"
+           + (f" in batch{'es' if len(got_in) != 1 else ''} {', '.join(got_in)}" if got_in else "") + ": "
+           + "; ".join(notes + more)
            + ". Stock and the order are updated when the plan moves past this date (Actuals → Start a new week).")
-    return (ds.model_copy(update={"movements": [*ds.movements, *moves]}),
-            ActionReport(ok=True, message=msg, movements=[m.id for m in moves]))
+    new = ds.model_copy(update={"movements": [*ds.movements, *moves], "batches": [*ds.batches, *batches]})
+    rep = ActionReport(ok=True, message=msg, movements=[m.id for m in moves], doc=moves[0].doc)
+    from ..actuals.post import with_short
+    return new, with_short(new, rep, {(m.location, m.product) for m in moves if m.type is MovementType.RECEIPT}, on)
 
 
 def change(ds: Dataset, po_id: str, lines: list[dict]) -> tuple[Dataset, ActionReport]:

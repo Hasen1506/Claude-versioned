@@ -100,6 +100,7 @@ class _Planner:
         self.supplier_load: dict[str, list[float]] = defaultdict(lambda: [0.0] * len(self.b))
         self.lane_load: dict[str, list[float]] = defaultdict(lambda: [0.0] * len(self.b))
         self.kpi = Kpis()
+        self._expiring: dict[Node, list[tuple[date, float, str]]] | None = None
 
     # ------------------------------------------------------------------ setup
     def lp(self, node: Node) -> LocationProduct:
@@ -239,6 +240,7 @@ class _Planner:
         onhand = 0.0 if self.is_customer(node) else lp.on_hand
         if onhand > 0:
             st.supplies.insert(0, _Supply("on_hand", f"OH:{node[0]}:{node[1]}", self.start, onhand, self.start))
+            self._expiry(node, st, onhand)
         if lp.mrp_type is MrpType.NONE:
             self._peg(node, st)
             return
@@ -295,6 +297,32 @@ class _Planner:
                                    below_zero=min(shortage, max(0.0, -avail)))
             avail += created
         self._peg(node, st)
+
+    def _expiry(self, node: Node, st: _NodeState, onhand: float) -> None:
+        """Batch stock the requirements will not use before it expires is gone the day after (R15): a requirement
+        of its own, so the plan replaces it instead of counting on it."""
+        lots = self.expiring.get(node)
+        if not lots:
+            return
+        from ..actuals.lots import spoilage
+        used: dict[date, float] = defaultdict(float)
+        for r in st.reqs:
+            used[r.date] += r.qty
+        for day, q, batch in spoilage(lots, onhand, used):
+            if day >= self.b.end:
+                continue
+            day = max(day, self.start)
+            self._add_req(node, Requirement(id=f"EXP:{node[0]}:{node[1]}:{batch}", location=node[0], product=node[1],
+                                            date=day, qty=q, kind="expiry", priority=9))
+            self._exc("STOCK_EXPIRES", "warning", f"{q:,.1f} of batch {batch} expire unused on "
+                      f"{(day - timedelta(days=1)).isoformat()}", node=node, when=day, qty=q)
+
+    @property
+    def expiring(self) -> dict[Node, list[tuple[date, float, str]]]:
+        if self._expiring is None:
+            from ..actuals.lots import expiring
+            self._expiring = expiring(self.ds, self.b.end)
+        return self._expiring
 
     def _lot(self, lp: LocationProduct, mto: bool, shortage: float, d: date, avail: float, req_on: dict[date, float],
              rec_on: dict[date, float], eoq_qty: float | None) -> tuple[float, float | None]:
@@ -857,6 +885,8 @@ class _Planner:
                 if 0 <= bi < n:
                     if r.kind in ("forecast", "sales_order"):
                         bks[bi].gross_independent += r.qty
+                    elif r.kind == "expiry":
+                        bks[bi].expiring += r.qty
                     else:
                         bks[bi].gross_dependent += r.qty
             for sp in st.supplies:
@@ -871,7 +901,7 @@ class _Planner:
             onhand = 0.0 if self.is_customer(node) else lp.on_hand
             poh = onhand
             for bk, meta in zip(bks, self.b, strict=True):
-                poh += bk.scheduled_receipts + bk.planned_receipts - bk.gross_independent - bk.gross_dependent
+                poh += bk.scheduled_receipts + bk.planned_receipts - bk.gross_independent - bk.gross_dependent - bk.expiring
                 bk.projected_on_hand = poh
                 bk.shortage = max(0.0, -poh)
                 bk.below_safety = max(0.0, bk.safety_stock - max(poh, 0.0)) if bk.safety_stock > 0 else 0.0

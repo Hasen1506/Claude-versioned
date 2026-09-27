@@ -202,6 +202,7 @@ function NodeDetail({ plan, node }: { plan: PlanResult; node: PlanResult["nodes"
   const rows: [string, (x: typeof b[number]) => number, string?][] = [
     ["Independent demand", (x) => x.gross_independent ?? 0],
     ["Dependent / transfer demand", (x) => x.gross_dependent ?? 0],
+    ...(b.some((x) => (x.expiring ?? 0) > 1e-9) ? [["Expires unused", (x: typeof b[number]) => x.expiring ?? 0, "risk"] as [string, (x: typeof b[number]) => number, string]] : []),
     ["Scheduled receipts", (x) => x.scheduled_receipts ?? 0],
     ["Planned receipts", (x) => x.planned_receipts ?? 0],
     ["Projected on hand", (x) => x.projected_on_hand ?? 0, "emph"],

@@ -1,7 +1,7 @@
 import type {
   Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   PlanTrace, ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
-  PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoLineInput, RequisitionPick, PostAction, CountInput, UsageInput, SalesOrderChange, SalesOrderResponse,
+  PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoLineInput, RequisitionPick, PostAction, CountInput, UsageInput, StockType, SalesOrderChange, SalesOrderResponse,
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
@@ -187,6 +187,15 @@ async function write<T extends ChangeAnswer>(path: string, dataset: Dataset, ext
 const withDataset = <T>(path: string, dataset: Dataset, extra: Record<string, unknown> = {}) =>
   send<T>(path, dataset, true, (d) => ({ dataset: d, ...extra }));
 
+/** What a posting may say besides its action (scp/api/app.py PostRequest). */
+export interface PostExtra {
+  order?: string; qty?: number | null; date?: string; final?: boolean; usage?: UsageInput[] | null; counts?: CountInput[];
+  note?: string; ship_from?: string | null; batch?: string | null; expires_on?: string | null; supplier_batch?: string | null;
+  serials?: string[] | null; stock_type?: StockType | null; to_type?: StockType | null; location?: string | null;
+  product?: string | null; movement?: string | null; doc?: string | null; nodes?: { location: string; product: string }[] | null;
+  block?: boolean; uncounted_zero?: boolean;
+}
+
 export const api = {
   examples: () => call<ExampleInfo[]>("/api/examples"),
   example: (name: string) => call<Dataset>(`/api/examples/${encodeURIComponent(name)}`),
@@ -234,11 +243,13 @@ export const api = {
   roll: (dataset: Dataset, asOf: string) =>
     write<RollResponse>("/api/actuals/roll", dataset, { as_of: asOf }),
   /** Post what happened: ship a transfer, receive an order (a production order issues its parts), or count stock. */
-  postActual: (dataset: Dataset, action: PostAction, extra: { order?: string; qty?: number | null; date?: string; final?: boolean;
-    usage?: UsageInput[] | null; counts?: CountInput[]; note?: string; ship_from?: string | null } = {}) =>
+  postActual: (dataset: Dataset, action: PostAction, extra: PostExtra = {}) =>
     write<PoActionResponse>("/api/actuals/post", dataset, { action, order: extra.order ?? null, qty: extra.qty ?? null,
       date: extra.date ?? null, final: extra.final ?? false, usage: extra.usage ?? null, counts: extra.counts ?? null, note: extra.note ?? "",
-      ship_from: extra.ship_from ?? null }),
+      ship_from: extra.ship_from ?? null, batch: extra.batch ?? null, expires_on: extra.expires_on ?? null,
+      supplier_batch: extra.supplier_batch ?? null, serials: extra.serials ?? null, stock_type: extra.stock_type ?? null,
+      to_type: extra.to_type ?? null, location: extra.location ?? null, product: extra.product ?? null, movement: extra.movement ?? null,
+      doc: extra.doc ?? null, nodes: extra.nodes ?? null, block: extra.block ?? true, uncounted_zero: extra.uncounted_zero ?? false }),
   /** Take a checked customer order (with its promise), change one (promised again), or cancel what is still open. */
   salesOrder: (dataset: Dataset, action: "accept" | "change" | "cancel",
     extra: { order?: DemandRecord; id?: string; changes?: Partial<SalesOrderChange>; date?: string; reason?: string }) =>

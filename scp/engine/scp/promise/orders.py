@@ -184,7 +184,7 @@ def cancel(ds: Dataset, oid: str, on: dt.date | None = None, reason: str = "") -
     d = _open(ds, oid)
     ordered = ordered_now(ds, d)
     sales = [m for m in ds.movements if m.type is MovementType.SALE and m.reference == oid]
-    done = sum(m.qty for m in sales)
+    done = sum(m.net for m in sales)
     arrive = [arrival(ds, m.location, d.location, d.product, m.date) for m in sales]
     cf = [c for c in ds.confirmations if c.order == oid]
     closed = ClosedOrder(kind="sales", id=oid, location=d.location, product=d.product,

@@ -233,15 +233,33 @@ calculation (5½ minutes the first time, 13 s again for the same data).
 - **Engine.** Safety stock places buffers group by group on every core (30 s at the solver's limit → 11 s, optimal);
   a forecast after a change competes only the series whose history changed; a large company is planned one at a time.
 
-The next plan (phases O, P, M, N, Q) is at the end of
-[docs/USABILITY_LOG.md](docs/USABILITY_LOG.md#the-next-plan-after-phase-s).
+## Stock you can trace (Phase O)
+
+Stock is kept the way a food or parts business needs it, in `engine/scp/actuals/lots.py` and `documents.py`:
+
+- **Batches with an expiry date.** A product with a shelf life is kept by batch (unless it says otherwise). A receipt
+  makes a batch, dated and expiring after the shelf life unless told; issues, sales, transfers and scrap take the batch
+  that expires first, and a transfer arrives in the batches it shipped. Stock that will expire before the plan uses it
+  is a requirement of its own ("Expires unused"); expired stock is no longer counted and is flagged to scrap.
+- **Stock types.** A product inspected on receipt goes into quality inspection until it is released; stock can be
+  blocked and unblocked and scrapped. Planning counts free stock, and stock in inspection unless the company says
+  otherwise; never blocked or expired stock. Stock in transit shows at the place it is going to.
+- **Short receipts** name the firm orders the part no longer covers, with what each can still make, and shorten them.
+- **Stock below zero** is a company rule: refuse the posting, allow it and ask for a count, or count it as found.
+- **Material documents** number the movements posted together; a reversal takes a whole document back.
+- **Physical inventory documents** freeze the book stock, hold postings for what is counted, and post the differences.
+- **Serial numbers**, one per unit, given at receipt (or numbered) and leaving first in, first out.
+- **The cold chain**: a refrigerated route mode, and a check for chilled products on routes without one.
+
+The next plan (phases P, M, N, Q) is at the end of
+[docs/USABILITY_LOG.md](docs/USABILITY_LOG.md#the-next-plan-after-phase-o).
 
 ## What is here (P0–P10)
 
 | Area | Where | What it does |
 |---|---|---|
 | Data model | `engine/scp/model` | Typed master and transactional data. Fractions are 0–1, and quantities are in base UoM. Units are enforced by the schema, not by convention. |
-| Readiness gate | `engine/scp/validate` | 37 coded master-data and execution-data checks with fix hints. Errors block planning. Unfinished records (a schema error, or a reference left empty) are set aside with a plain reason instead of rejecting the dataset (`lenient.py`), and a setup checklist says what is still missing, in setup order (`setup.py`). |
+| Readiness gate | `engine/scp/validate` | 44 coded master-data and execution-data checks with fix hints. Errors block planning. Unfinished records (a schema error, or a reference left empty) are set aside with a plain reason instead of rejecting the dataset (`lenient.py`), and a setup checklist says what is still missing, in setup order (`setup.py`). |
 | Network | `engine/scp/network` | Supply options per (location, product), low-level codes across BOM and transport edges, cycle detection. |
 | Supply planning | `engine/scp/plan` | Network MRP/DRP: forecast consumption by strategy, PIR splitting, safety stock (fixed / coverage / α / β), lot sizing (L4L / FIXED / EOQ / POQ / MIN_MAX + MOQ / rounding / max split, a company default where a product sets none, whole units, whole batches), quota sourcing, working-day scheduling, firming fence, BOM explosion with scrap, capacity / supplier / lane load, pegging, delay propagation, exceptions, cost KPIs. |
 | Demand planning | `engine/scp/demand` | History to periods, cleansing (event baseline, robust outliers), ABC/XYZ and demand-pattern segmentation, a 12-model competition on a rolling backtest (MASE / WAPE / bias / value added), prediction ranges, events with measured lifts, NPI like-modelling with ramp and cannibalisation, consensus overrides, and release as forecast demand. Google TimesFM is an optional candidate model ([docs/TIMESFM.md](docs/TIMESFM.md)). |

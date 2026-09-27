@@ -19,13 +19,20 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, timedelta
+from typing import TypedDict
 
 from ..model import (
     Dataset, DemandKind, DemandRecord, GoodsMovement, LocationProduct, MovementType, ReceiptKind, ScheduledReceipt,
+    StockType,
 )
 from ..model.common import STOCKING_LOCATION_TYPES
 from ..purchasing import PurchasingError, receive as receive_purchase
 from ..purchasing.result import ActionReport
+from .documents import (
+    StockError, cancel_counts, complete, count_doc, enter_counts, move_stock, post_counts, reverse, scrap, short_orders,
+    shorten,
+)
+from .lots import planning_stock
 from .stock import EPS, counterparty, movement_ids, pending_openings
 
 
@@ -50,11 +57,11 @@ def _posted(ds: Dataset, oid: str) -> tuple[dict, dict, dict]:
             continue
         k = (m.location, m.product)
         if m.type is MovementType.RECEIPT:
-            got[k] += m.qty
+            got[k] += m.net
         elif m.type is MovementType.TRANSFER_OUT:
-            shipped[k] += m.qty
+            shipped[k] += m.net
         elif m.type is MovementType.ISSUE:
-            issued[k] += m.qty
+            issued[k] += m.net
     return got, shipped, issued
 
 
@@ -87,8 +94,10 @@ def _at(ds: Dataset, loc: str | None) -> str:
     return (lo.name or lo.id) if lo else (loc or "?")
 
 
-def ship(ds: Dataset, oid: str, qty: float | None = None, on: date | None = None) -> tuple[Dataset, ActionReport]:
-    """Dispatch a stock transfer: a goods issue at the sending place, referenced to the transfer."""
+def ship(ds: Dataset, oid: str, qty: float | None = None, on: date | None = None, lot: Lot | None = None
+         ) -> tuple[Dataset, ActionReport]:
+    """Dispatch a stock transfer: a goods issue at the sending place, referenced to the transfer (the batches first
+    expiring first, unless one is given)."""
     rc = _order(ds, oid)
     if rc.kind is not ReceiptKind.TRANSFER:
         raise PostingError(f"{oid} is a {rc.kind.value} order; only a stock transfer is shipped from one place to another")
@@ -103,12 +112,14 @@ def ship(ds: Dataset, oid: str, qty: float | None = None, on: date | None = None
     on = _on(ds, on)
     ids = movement_ids(ds)
     m = GoodsMovement(id=next(ids), date=on, type=MovementType.TRANSFER_OUT, location=frm, product=rc.product, qty=_q(q),
-                      reference=oid, counterparty=rc.location, note="Shipped")
+                      reference=oid, counterparty=rc.location, note="Shipped", batch=(lot or {}).get("batch"))
+    moves, _, notes = _complete(ds, [m], on, lot)
     transit = shipped[(frm, rc.product)] + q - got[(rc.location, rc.product)]
-    return (ds.model_copy(update={"movements": [*ds.movements, m]}),
-            ActionReport(ok=True, movements=[m.id],
-                         message=f"{oid}: {_n(q)} shipped from {_at(ds, frm)} on {on.isoformat()}; {_n(transit)} now in "
-                                 f"transit to {_at(ds, rc.location)}."))
+    return (ds.model_copy(update={"movements": [*ds.movements, *moves]}),
+            ActionReport(ok=True, movements=[x.id for x in moves], doc=moves[0].doc,
+                         message=f"{oid}: {_n(q)} shipped from {_at(ds, frm)} on {on.isoformat()}{_batches(moves)}; "
+                                 f"{_n(transit)} now in transit to {_at(ds, rc.location)}"
+                                 + ("; " + "; ".join(notes) if notes else "") + "."))
 
 
 def _bom_parts(ds: Dataset, rc: ScheduledReceipt, made: float, first: bool) -> list[tuple[str, str, float]]:
@@ -131,31 +142,47 @@ def _bom_parts(ds: Dataset, rc: ScheduledReceipt, made: float, first: bool) -> l
     return out
 
 
-def _below_zero(ds: Dataset, moves: list[GoodsMovement], on: date) -> list[tuple[tuple[str, str], float]]:
-    """Places an issue in ``moves`` takes below zero on ``on``, by the journal (setup stock included)."""
-    out = []
-    for m in moves:
-        if m.type not in (MovementType.ISSUE, MovementType.TRANSFER_OUT, MovementType.SALE):
-            continue
-        k = (m.location, m.product)
-        bal = sum(x.signed for x in [*ds.movements, *pending_openings(ds), *moves]
-                  if (x.location, x.product) == k and x.date <= on)
-        if bal < -EPS and k not in dict(out):
-            out.append((k, bal))
-    return out
+class Lot(TypedDict, total=False):
+    """What a posting says about the goods: the batch (and, received, its expiry and the supplier's number), the
+    serial numbers, and the stock type it goes to or comes from."""
+
+    batch: str | None
+    expires_on: date | None
+    supplier_batch: str
+    serials: list[str] | None
+    stock_type: StockType | None
+
+
+def _complete(ds: Dataset, moves: list[GoodsMovement], on: date, lot: Lot | None, **kw
+              ) -> tuple[list[GoodsMovement], list, list[str]]:
+    lot = lot or {}
+    try:
+        return complete(ds, moves, on, batch=lot.get("batch"), expires_on=lot.get("expires_on"),
+                        supplier_batch=lot.get("supplier_batch") or "", serials=lot.get("serials"),
+                        stock_type=lot.get("stock_type"), **kw)
+    except StockError as e:
+        raise PostingError(str(e)) from e
+
+
+def _batches(moves: list[GoodsMovement]) -> str:
+    bs = list(dict.fromkeys(m.batch for m in moves[:1] + [x for x in moves[1:] if x.product == moves[0].product
+                                                            and x.type is moves[0].type] if m.batch))
+    return f" (batch{'es' if len(bs) != 1 else ''} {', '.join(bs)})" if bs else ""
 
 
 def receive(ds: Dataset, oid: str, qty: float | None = None, on: date | None = None, final: bool = False,
-            usage: list[dict] | None = None, note: str = "") -> tuple[Dataset, ActionReport]:
+            usage: list[dict] | None = None, note: str = "", lot: Lot | None = None) -> tuple[Dataset, ActionReport]:
     """Goods receipt against a firm order (see the module docstring). ``usage``: ``[{"product", "qty"}]`` actual parts
     used by a production order, instead of the backflush."""
     rc = _order(ds, oid)
     on = _on(ds, on)
     if rc.kind is ReceiptKind.PURCHASE:
         try:
-            return receive_purchase(ds, rc.po or rc.id, [{"id": rc.id, "qty": qty, "final": final}], on, note)
+            new, rep = receive_purchase(ds, rc.po or rc.id, [{"id": rc.id, "qty": qty, "final": final}], on, note,
+                                        lot=dict(lot or {}))
         except PurchasingError as e:
             raise PostingError(str(e)) from e
+        return new, rep
     got, shipped, issued = _posted(ds, oid)
     ordered = _ordered(rc)
     before_q = got[(rc.location, rc.product)]
@@ -216,19 +243,28 @@ def receive(ds: Dataset, oid: str, qty: float | None = None, on: date | None = N
                     add(MovementType.RECEIPT, rc.location, co.product, n, f"Co-product of {rc.product}")
             if ps.co_products:
                 notes.append(f"{len(ps.co_products)} co-product{'s' if len(ps.co_products) != 1 else ''} received")
-    short = _below_zero(ds, moves, on)
-    if short:
-        notes.append("not enough in stock by the journal: " + ", ".join(
-            f"{ds.product_by_id[p].name or p} at {_at(ds, lo)} goes to {_n(q)}" for (lo, p), q in short[:3])
-            + " (post the missing receipt, or a count)")
+    moves, batches, more = _complete(ds, moves, on, lot)
+    notes += more
     left = ordered - total
     status = ("closed short" if left > EPS else "complete") if closes else f"{_n(left)} still to come"
     msg = (f"{oid}: {_n(q)} {'made' if rc.kind is ReceiptKind.PRODUCTION else 'received'} at {_at(ds, rc.location)} on "
-           f"{on.isoformat()} ({status})"
+           f"{on.isoformat()}{_batches(moves)} ({status})"
            + ("; " + "; ".join(notes) if notes else "")
            + ". Stock and the order are updated when the plan moves past this date.")
-    return (ds.model_copy(update={"movements": [*ds.movements, *moves]}),
-            ActionReport(ok=True, message=msg, movements=[m.id for m in moves]))
+    new = ds.model_copy(update={"movements": [*ds.movements, *moves], "batches": [*ds.batches, *batches]})
+    rep = ActionReport(ok=True, message=msg, movements=[m.id for m in moves], doc=moves[0].doc)
+    return new, with_short(new, rep, {(rc.location, rc.product)}, on)
+
+
+def with_short(ds: Dataset, rep: ActionReport, parts: set[tuple[str, str]], on: date) -> ActionReport:
+    """A receipt that leaves firm orders short of the part names them (R16)."""
+    short = short_orders(ds, parts, on)
+    if not short:
+        return rep
+    names = ", ".join(s.order for s in short[:4]) + ("…" if len(short) > 4 else "")
+    return rep.model_copy(update={"short_orders": short, "message": rep.message + (
+        f" {len(short)} firm order{'s' if len(short) != 1 else ''} can no longer run in full: {names}; shorten "
+        f"{'them' if len(short) != 1 else 'it'} to what the parts cover, or find the rest.")})
 
 
 def sales_order(ds: Dataset, oid: str) -> DemandRecord:
@@ -240,7 +276,7 @@ def sales_order(ds: Dataset, oid: str) -> DemandRecord:
 
 def delivered(ds: Dataset, oid: str) -> float:
     """What the journal has delivered on a sales order (every posting, before and after the planning start)."""
-    return sum(m.qty for m in ds.movements if m.type is MovementType.SALE and m.reference == oid)
+    return sum(m.net for m in ds.movements if m.type is MovementType.SALE and m.reference == oid)
 
 
 def ordered_now(ds: Dataset, d: DemandRecord) -> float:
@@ -263,7 +299,7 @@ def ship_point(ds: Dataset, d: DemandRecord) -> str | None:
 
 
 def deliver(ds: Dataset, oid: str, qty: float | None = None, on: date | None = None, final: bool = False,
-            ship_from: str | None = None, note: str = "") -> tuple[Dataset, ActionReport]:
+            ship_from: str | None = None, note: str = "", lot: Lot | None = None) -> tuple[Dataset, ActionReport]:
     """Goods issue of a sales order to its customer (≈ VL01N + PGI)."""
     d = sales_order(ds, oid)
     frm = ship_from or ship_point(ds, d)
@@ -278,19 +314,16 @@ def deliver(ds: Dataset, oid: str, qty: float | None = None, on: date | None = N
     on = _on(ds, on)
     m = GoodsMovement(id=next(movement_ids(ds)), date=on, type=MovementType.SALE, location=frm, product=d.product,
                       qty=_q(q), reference=oid, counterparty=d.location, final=bool(final),
-                      note=(note or ("Delivered, rest cancelled" if final else "Delivered"))[:200])
+                      note=(note or ("Delivered, rest cancelled" if final else "Delivered"))[:200],
+                      batch=(lot or {}).get("batch"))
     left = ordered - done - q
     status = ("closed short" if left > EPS else "complete") if final or left <= EPS else f"{_n(left)} still open"
-    notes = []
-    short = _below_zero(ds, [m], on)
-    if short:
-        (lo, p), b = short[0]
-        notes.append(f"not enough in stock by the journal: {ds.product_by_id[p].name or p} at {_at(ds, lo)} goes to "
-                     f"{_n(b)} (post the missing receipt, or a count)")
-    msg = (f"{oid}: {_n(q)} delivered to {_at(ds, d.location)} from {_at(ds, frm)} on {on.isoformat()} ({status})"
-           + ("; " + "; ".join(notes) if notes else "")
+    moves, _, notes = _complete(ds, [m], on, lot)
+    msg = (f"{oid}: {_n(q)} delivered to {_at(ds, d.location)} from {_at(ds, frm)} on {on.isoformat()}{_batches(moves)} "
+           f"({status})" + ("; " + "; ".join(notes) if notes else "")
            + ". Stock and the order are updated when the plan moves past this date.")
-    return ds.model_copy(update={"movements": [*ds.movements, m]}), ActionReport(ok=True, message=msg, movements=[m.id])
+    return (ds.model_copy(update={"movements": [*ds.movements, *moves]}),
+            ActionReport(ok=True, message=msg, movements=[x.id for x in moves], doc=moves[0].doc))
 
 
 def count_stock(ds: Dataset, counts: list[dict], on: date | None = None, note: str = "") -> tuple[Dataset, ActionReport]:
@@ -306,6 +339,8 @@ def count_stock(ds: Dataset, counts: list[dict], on: date | None = None, note: s
     moves: list[GoodsMovement] = []
     at: list[tuple[str, str]] = []
     for c in counts:
+        if c.get("qty") is None:
+            continue
         loc, prod, n = str(c.get("location") or ""), str(c.get("product") or ""), float(c.get("qty") or 0)
         if loc not in ds.location_by_id or prod not in ds.product_by_id:
             raise PostingError(f"there is no place {loc!r} or product {prod!r}")
@@ -323,13 +358,12 @@ def count_stock(ds: Dataset, counts: list[dict], on: date | None = None, note: s
         else:
             moves.append(GoodsMovement(id=next(ids), date=day, type=MovementType.ADJUSTMENT, location=loc, product=prod,
                                        qty=_q(diff), note=(note or f"Stock count: {_n(have)} → {_n(n)}")[:200]))
+    if moves:
+        moves, _, _ = _complete(ds, moves, day, None)
     new = ds.model_copy(update={"movements": [*ds.movements, *moves]})
     if early:
-        # the plan starts from the journal: on-hand at every counted place follows it
-        bal: dict[tuple[str, str], float] = defaultdict(float)
-        for m in new.movements:
-            if m.date < start and (m.location, m.product) in set(at):
-                bal[(m.location, m.product)] += m.signed
+        # the plan starts from the journal: on-hand at every counted place follows it (the stock it may use)
+        bal = planning_stock(new, [m for m in new.movements if m.date < start], start)
         lps = [lp.model_copy() for lp in ds.location_products]
         by = {(lp.location, lp.product): lp for lp in lps}
         for k in dict.fromkeys(at):
@@ -343,20 +377,50 @@ def count_stock(ds: Dataset, counts: list[dict], on: date | None = None, note: s
            + (f"{opened} opening balance{'s' if opened != 1 else ''} and {len(moves) - opened} count "
               f"difference{'s' if len(moves) - opened != 1 else ''} posted" if moves else "the journal already agrees")
            + ("." if early else "; they count when the plan moves past this date."))
-    return Dataset.model_validate(new.model_dump()), ActionReport(ok=True, message=msg, movements=[m.id for m in moves])
+    return (Dataset.model_validate(new.model_dump()),
+            ActionReport(ok=True, message=msg, movements=[m.id for m in moves], doc=moves[0].doc if moves else None))
 
 
 def post(ds: Dataset, action: str, *, order: str | None = None, qty: float | None = None, on: date | None = None,
          final: bool = False, usage: list[dict] | None = None, counts: list[dict] | None = None,
-         note: str = "", ship_from: str | None = None) -> tuple[Dataset, ActionReport]:
-    if action == "count":
-        return count_stock(ds, counts or [], on, note)
+         note: str = "", ship_from: str | None = None, lot: Lot | None = None, location: str | None = None,
+         product: str | None = None, to_type: StockType | None = None, movement: str | None = None,
+         doc: str | None = None, nodes: list[tuple[str, str]] | None = None, block: bool = True,
+         uncounted_zero: bool = False) -> tuple[Dataset, ActionReport]:
+    lot = lot or {}
+    try:
+        if action == "count":
+            return count_stock(ds, counts or [], on, note)
+        if action == "move":
+            return move_stock(ds, location or "", product or "", qty, lot.get("stock_type") or StockType.UNRESTRICTED,
+                              to_type or StockType.UNRESTRICTED, lot.get("batch"), on, note, lot.get("serials"))
+        if action == "scrap":
+            return scrap(ds, location or "", product or "", qty, lot.get("stock_type") or StockType.UNRESTRICTED,
+                         lot.get("batch"), on, note)
+        if action == "scrap_expired":
+            return scrap(ds, location or "", product or "", None, on=on, note=note, expired_only=True)
+        if action == "reverse":
+            return reverse(ds, movement or "", on, note)
+        if action == "count_doc":
+            return count_doc(ds, nodes or [], on, block, note)
+        if action == "count_enter":
+            return enter_counts(ds, doc or "", counts or [])
+        if action == "count_post":
+            return post_counts(ds, doc or "", uncounted_zero)
+        if action == "count_cancel":
+            return cancel_counts(ds, doc or "")
+        if action == "shorten":
+            if qty is None:
+                raise PostingError("say how many the order should be for")
+            return shorten(ds, order or "", qty)
+    except StockError as e:
+        raise PostingError(str(e)) from e
     if not order:
         raise PostingError("say which order to post against")
     if action == "ship":
-        return ship(ds, order, qty, on)
+        return ship(ds, order, qty, on, lot)
     if action == "receive":
-        return receive(ds, order, qty, on, final, usage, note)
+        return receive(ds, order, qty, on, final, usage, note, lot)
     if action == "deliver":
-        return deliver(ds, order, qty, on, final, ship_from, note)
+        return deliver(ds, order, qty, on, final, ship_from, note, lot)
     raise PostingError(f"unknown posting {action!r}")

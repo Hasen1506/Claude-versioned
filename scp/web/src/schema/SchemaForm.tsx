@@ -80,10 +80,22 @@ const TITLE: Record<string, string> = {
   min_history_periods: "History needed before methods compete (periods)", outlier_method: "Unusual values",
   outlier_threshold: "Unusual beyond (robust z-score)", interval: "Range shown around the forecast",
   shelf_life_days: "Keeps for (days)", family: "Product group",
+  // stock you can trace (Phase O)
+  batches: "Kept by batch, first expiring first out", inspect_on_receipt: "Inspected on receipt",
+  serial_numbers: "Serial number per unit", cold_chain: "Kept chilled (needs a refrigerated route)",
+  negative_stock: "When a posting takes stock below zero", quality_in_planning: "Stock in inspection counts in planning",
+  firm_zone_days: "Firm zone (days)", delivery_tolerance: "Short delivery still counted in full",
+  batch: "Batch", expires_on: "Expires on", made_on: "Made on", supplier_batch: "Supplier's batch number",
+  stock_type: "Stock", serials: "Serial numbers", reversal_of: "Takes back movement", doc: "Material document",
 };
 
 /** Plain words for enum values; the stored value stays the code. */
 const ENUM_LABEL: Record<string, string> = {
+  refuse: "Refuse the posting: post the missing receipt or a count first",
+  allow: "Allow it, and ask for a count (the plan starts from zero)",
+  found: "Allow it, and count the missing stock as found when the week moves on",
+  unrestricted: "Unrestricted", quality: "In quality inspection", status: "stock change",
+  reefer: "Refrigerated truck",
   any: "Made here or got from outside", make: "Made here only (in-house)", external: "Bought or shipped in only (external)",
   deterministic: "Plan to requirements (PD)", reorder_point: "Reorder point (VB)", none: "None",
   MTS: "Make to stock, orders don't consume the forecast (10)", MTS_CONSUME: "Make to stock, orders consume the forecast (40)",

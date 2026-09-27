@@ -1,5 +1,6 @@
 from .actuals import (
-    AccuracyRecord, ClosedOrder, ExecutionSettings, GoodsMovement, MovementType, RolledWeek,
+    AccuracyRecord, Batch, ClosedOrder, CountItem, ExecutionSettings, GoodsMovement, InventoryDoc, MovementType,
+    NegativeStock, RolledWeek, StockType,
 )
 from .common import (
     BucketSize, DemandKind, LocationType, LotSizePolicy, MrpType, ProcurementType, ProductType, ReceiptKind,
@@ -28,7 +29,7 @@ from .transactional import DemandRecord, Reservation, SalesHistory, ScheduledRec
 
 __all__ = [
     "PriceScale", "PurchaseOrder", "PurchasingSettings", "Vendor",
-    "AccuracyRecord", "OwnerRule", "TowerSettings", "CapacityOption", "FinanceSettings", "ClosedOrder", "ExecutionSettings", "GoodsMovement", "MovementType", "RolledWeek", "Reservation",
+    "AccuracyRecord", "OwnerRule", "TowerSettings", "CapacityOption", "FinanceSettings", "ClosedOrder", "ExecutionSettings", "GoodsMovement", "MovementType", "RolledWeek", "Batch", "CountItem", "InventoryDoc", "NegativeStock", "StockType", "Reservation",
     "DEFAULT_MODELS", "Allocation", "BopSegment", "Confirmation", "ConfirmationStrategy", "PromiseSettings", "DemandEvent", "EventKind", "ForecastModelId", "ForecastOverride", "ForecastPeriod",
     "ForecastSettings", "InventorySettings", "NpiRule", "OutlierMethod", "SelectionMetric",
     "BomItem", "BucketSize", "Calendar", "CapacityChange", "CoProduct", "CustomerPrice", "ProcurementType", "Subcontract", "Changeover", "Dataset", "DemandKind", "DemandRecord", "LaneMode",

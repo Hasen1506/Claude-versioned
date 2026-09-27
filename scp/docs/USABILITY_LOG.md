@@ -231,6 +231,28 @@ the server is planned by reference in the browser tests.
 | N100 | A large company is not kept in the browser: a change made less than the autosave's 1.2 s before a reload is lost (the page asks before closing). | Minor | Open, accepted: the window is the autosave's. |
 | N101 | A change still has every other step worked out again: the answers are kept by the whole company's data, so after any change the plan (about 75 s) and the checks (7 s) are the floor at 5,000 products. | Minor | Open: keys per step by what each reads, and a plan that re-plans only what a change reaches (with P). |
 
+## Found while building Phase O
+
+O was built against the tests' small plants and used in a real browser on the kitchenware company, whose heating element
+keeps 720 days and so is now kept by batch. The heating elements at the plant were counted to zero, the zone firmed, and
+the next delivery came in short (10 of 10,000) in the supplier's batch and closed the line: the receipt named the kettle
+order it left short (1,450 needing 1,462 elements, 10 there) and offered to shorten it to 9, which it did. The batch was
+then found in stock, blocked, its receipt reversed from the journal, and the plant counted on a physical inventory
+document that held its postings until it was cancelled.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N102 | Goods received today (the planning start) were not in the stock tab until the next week began: a batch received into quality inspection could not be found, let alone released, the week it came. | Serious | **Fixed (O).** The stock tab shows the batches, stock types and serial numbers there are now, this week's postings included; what the plan starts from stays as it was, beside it. |
+| N103 | A stock change dated today (a release, a block, a scrap) would change the plan only a week later, though the goods were on the shelf before today. | Serious | **Fixed (O).** A stock change is dated the day before the start when the goods were there then, and the plan starts from it at once, as a count does; goods that came in this week change this week. |
+| N104 | The physical inventory sat below the quick count's grid of every product at every place: at a real company, a long scroll away. | Minor | **Fixed (O).** It comes first on Count stock; the grid is the quick count. |
+| N105 | Seven stock tiles left one alone on a second row. | Minor | **Fixed (O).** The least used one is gone. |
+| N106 | A product with a shelf life is now kept by batch unless it says otherwise (the kitchenware heater, the jam jar maker's fruit): its receipts get batch numbers and its issues take the first expiring. | Minor | By design, recorded: SAP needs a batch for an expiry date too. *Kept by batch* on the product turns it off. |
+| N107 | A quick count that finds less of a batch-managed product takes the difference from the first-expiring batches; one that finds more puts it in stock without a batch, since the count does not say which. | Minor | By design, recorded: count a batch on a physical inventory document to say which. |
+| N108 | The Buying page's goods receipt had no batch, expiry or serial numbers, and did not say which orders a short delivery left short. | Serious | **Fixed (O).** The same fields and the same offer as Actuals. |
+| N109 | Expired stock is dropped from the plan and flagged, but lot sizes and batch sizes still ignore shelf life (a batch covering ten days of a seven-day product). | Serious | Open: **P** (R15's second half). |
+| N110 | A short receipt names the orders it leaves short, but a late one does not: an order whose parts arrive after it starts is not named. | Minor | Open: the plan's DEMAND_AT_RISK and the shop floor's waiting for parts show it; naming it here is **P**. |
+| N111 | The browser tests' server log showed "cannot commit – no transaction is active" from the worklist: each Performance request made the worklist anew, and making it runs a script that commits whatever transaction the shared database connection has open, another request's included. Found in the log, not on screen; a worklist sync could be half written. | Serious | **Fixed (O).** The worklist is made once per store, its tables under the store's lock; a test holds a transaction open while another thread makes one. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution
@@ -331,9 +353,9 @@ Ranked: the critical ones first (all fixed in K), then what is open, with the ph
 | R12 | Capable-to-promise took a component's availability even when it came months out (standardised milk free in March) and never tried making it (milk bought today, standardised by Tuesday): 20 of a 60-unit hotel order were promised 3 days late on the lead time. | Critical | **Fixed (K).** The earlier of the component's stock and new supply. |
 | R13 | A promise on new production does not make that production: the run stayed planned (Monday's firming came before the order), was never made, and the order went late at the roll. Nothing on Home pointed to backorder processing, which then brought the order on time. | Serious | **Fixed (K).** Taking an order made to order, or promised on new supply, says it must be made firm and where; Home links *Try to bring late orders forward* when an order is late. SAP's CTP creates the planned order itself: **P**. |
 | R14 | Home repeated "3 places would go below zero" every week for dips weeks old that the stock had come back from, and for dips a count had settled. | Serious | **Fixed (K).** A dip is reported while it lasts, or when it began in the week just closed and no count ended it. |
-| R15 | Shelf life never limits the plan: catering paneer (7 days) made in batches of 100 covering 10 days; "May expire" is a tag, but lot sizes, batch rounding and "a week's need" ignore it, and nothing expires in stock. | Serious | Open: **O** (expiry in stock, first expiring first out) and **P** (lot sizes within shelf life). |
-| R16 | A short milk delivery (85 %) is posted "closed 769 short", but the firm runs that needed it are not flagged; posting them in full takes raw milk to −2,307, and the roll sets it to 0. | Serious | Open: **O**. |
-| R17 | Raw milk ends every week slightly negative (−306): the plan buys exactly what the runs need and any yield or rounding takes it below zero; nothing suggests a buffer. The roll's "set to 0" leaves the journal and the plan disagreeing until someone counts. | Serious | Open: **O** (stock below zero as a policy: refuse, allow, or count), **P** (yield in the bill of materials). |
+| R15 | Shelf life never limits the plan: catering paneer (7 days) made in batches of 100 covering 10 days; "May expire" is a tag, but lot sizes, batch rounding and "a week's need" ignore it, and nothing expires in stock. | Serious | **Half fixed (O):** a product with a shelf life is kept by batch with its expiry date, issued first expiring first out; stock that will expire before it is used is a requirement in the plan ("Expires unused", STOCK_EXPIRES), expired stock is no longer counted and is flagged to scrap. Open: **P** (lot sizes within shelf life, N109). |
+| R16 | A short milk delivery (85 %) is posted "closed 769 short", but the firm runs that needed it are not flagged; posting them in full takes raw milk to −2,307, and the roll sets it to 0. | Serious | **Fixed (O).** A receipt names the firm orders the part no longer covers, in the order they start, with what each can still make, and shortens one with a click (its parts in proportion); on Actuals and on Buying. |
+| R17 | Raw milk ends every week slightly negative (−306): the plan buys exactly what the runs need and any yield or rounding takes it below zero; nothing suggests a buffer. The roll's "set to 0" leaves the journal and the plan disagreeing until someone counts. | Serious | **Half fixed (O):** stock below zero is a company rule: refuse the posting, allow it and ask for a count (the plan starts from zero and says so), or count the missing stock as found when the week moves on, so the journal and the plan agree. Open: **P** (yield in the bill of materials). |
 | R18 | A person conflicts with their own save: a reload while a save is in flight is refused next time as "Ravi saved … after your changes began", shown to Ravi. | Serious | **Fixed (L).** Each browser window has its own id sent with every save; a save refused only because of saves from the same window (a reload while one was in flight) is taken as one's own, and the same person in another window is merged, never shown as a colleague. |
 | R19 | History keeps a state to put back only every ~10 minutes per person, so "just before the release" was not there; *Undo* is gone after a reload. | Serious | **Fixed (L).** Every save is kept (as the changes from the one before, with a full copy every 25), so *History* can put back any of them; undo steps are kept in the browser and survive a reload. |
 | R20 | Firming makes purchase orders after the day's orders were sent on *Buying*; they wait "to send" until someone goes back. | Serious | Open: **N** (firming offers to send what it created). |
@@ -346,7 +368,7 @@ Ranked: the critical ones first (all fixed in K), then what is open, with the ph
 | R27 | Master data tables and record headers show ids; the index shows a table's problem count where its row count goes ("Planning policies 3" for 16 rows); "Where used" truncates a source id. | Minor | **Fixed (L).** Tables show names (the id on hover), the index shows each table's row count with its problems beside it, and *Where used* names records in words. |
 | R28 | Signed in, *Create the company* still makes a browser-only company; keeping it on the server is a second step. | Minor | **Fixed (L).** Signed in, *Create the company* makes it on the server. |
 | R29 | Setup never asks shelf life or make to order; forecast settings are labelled "Abc a", "Xyz x" and list models by code; *Upload sales history* opens a table where the upload is another button. | Minor | **Fixed (L).** Setup asks a product's group, how many days it keeps and, for a finished good, whether it is made to order; forecast settings and models are in words; *Upload sales history* opens the upload. |
-| R30 | No refrigerated route mode; the cold chain is "Truck (full load)". | Minor | Open: **O**. |
+| R30 | No refrigerated route mode; the cold chain is "Truck (full load)". | Minor | **Fixed (O).** *Refrigerated truck* is a mode; a product *kept chilled* on a route planned without one is flagged (COLD_CHAIN_LANE). |
 | R31 | Smaller: Actuals before a roll says movements run "up to" the start when they run to the week's end; the merge banner takes the page's own message slot; an order promised in two lines on the same day lists the day twice; a raw-milk PO line keeps 12 decimals in the data; the promotion check starts only with the first release after it existed. | Minor | **Fixed (L).** Actuals names the latest movement date and the weeks; one line per promised day; purchase quantities are rounded to three decimals. The promotion check still starts with the first release after K (by design: an older release does not record its inputs). The merge note taking a page's message slot did not come back in L's use (not reproduced). |
 
 What held up: building a dairy from nothing (network, products with batches and a made-to-order line, suppliers with
@@ -354,13 +376,14 @@ currencies, two years of history), buying and sending every week, firming, posti
 transfers in minutes, the weekly roll, the promotion once it was in, backorder processing, the viewer on a phone (no
 sideways scroll, no change buttons), and three people working on one company without losing a change once R6 was fixed.
 
-## The next plan (after Phase S)
+## The next plan (after Phase O)
 
 Every finding of the first two reality checks is fixed, and every critical one of the third (K). L made the platform
 fit for a real company of a few hundred products, S for one of thousands: a company of 5,000 products at 20 places
 opens in a second and a half, every page in seconds, and *Plan everything* is the server's calculation and little else.
-What is left is K's open findings (R13–R17, R20, R21, R30) and breadth against SAP (the gaps below). Proposed, in the
-order recommended:
+O made stock traceable: batches that expire, stock types, short receipts, stock below zero as a rule, reversals and
+physical inventory. What is left is K's open findings (R13, R15 and R17's planning halves, R20, R21) and breadth
+against SAP (the gaps below). Proposed, in the order recommended:
 
 - **K: third reality check, over weeks, not a day**: **done**, see R1–R31 above.
 - **L: platform for real use**: **done**, see R18, R19, R22, R27–R29, R31, N63–N65, N76 and N77–N91. A save is never
@@ -376,12 +399,12 @@ order recommended:
   without its pegging, which a page asks for; long lists draw their first rows with a search; names, edits and local
   copies no longer cost the whole company each time; safety stock by independent groups on every core; a forecast
   after a change competes only the series whose history changed; a large company is planned one at a time.
-- **O: stock you can trace** (R15–R17, R30 and the inventory gaps). Batch numbers with an expiry date, and first
-  expiring, first out, so shelf life shows in stock (R15); a short receipt names the firm orders that can no longer
-  run in full, and offers to shorten them (R16); stock below zero as a company rule — refuse the posting, allow it and
-  ask for a count, or count it as found — instead of the roll setting it to 0 (R17); stock in quality inspection and
-  blocked; reversal of a posting; a physical inventory document with a freeze; stock in transit as its own stock
-  type; a refrigerated route mode (R30); serial numbers.
+- **O: stock you can trace**: **done**, see R15–R17, R30 and N102–N110. Batches with an expiry date, issued first
+  expiring first out, and stock that will expire unused a requirement in the plan (R15); a short receipt names the firm
+  orders it leaves short and shortens them (R16); stock below zero as a company rule (R17); stock in quality inspection
+  and blocked, released, blocked and scrapped; stock in transit shown at the place it goes to; material documents and
+  their reversal; physical inventory documents with the book frozen and postings held; serial numbers; a refrigerated
+  route mode and the cold-chain check (R30).
 - **P: planning depth** (R13, R15, R17, R21 and the remaining MRP, BOM, capacity and PP/DS gaps).
   Capable-to-promise that creates the planned order it promised on, firm, as SAP does (R13); lot sizes and batches
   that stay within shelf life (R15); yield in the bill of materials so a part is bought with the loss in it (R17);
@@ -399,7 +422,7 @@ order recommended:
   movements and to take back purchase and production orders; e-mail sent from the application (orders to suppliers,
   confirmations to customers, the worklist's reminders).
 
-Order after S: **O, P, M, N, Q**. O and P stay ahead of M and N for K's reasons: every open serious finding of K is about
+Order after O: **P, M, N, Q**. P stays ahead of M and N for K's reasons: every open serious finding of K left is about
 stock that is really there (shelf life, short receipts, stock below zero) or a plan that acts on it.
 
 ## Gaps against SAP recorded for later phases
@@ -423,10 +446,13 @@ stock that is really there (shelf life, short receipts, stock below zero) or a p
   (not only group), multi-resource steps (machine and tool together), pegging-aware re-scheduling of dependent
   orders when one moves.
 - Inventory management: opening balances, counts with differences, transfers shipped and received with stock in
-  transit, production confirmations with backflush or actual usage and co-products (**F**, done). Still missing: batch
-  and serial numbers, stock types (quality inspection, blocked), stock in transit as its own stock type, physical
-  inventory documents with a freeze, reversal of a posting (today: undo, or a counter-movement). Goods issue for a
-  sales order is a posting on the order (**G**, done); a delivery document with picking and packing is still missing.
+  transit, production confirmations with backflush or actual usage and co-products (**F**, done). Batches with an
+  expiry date (first expiring first out), serial numbers, stock types (quality inspection, blocked) with release,
+  block and scrap, stock in transit at the receiving place, material documents and their reversal, physical inventory
+  documents with a freeze and a posting block, stock below zero as a company rule (**O**, done). Still missing: batch
+  classification and characteristics, restricted-use batches, a batch where-used list beyond the journal's search,
+  storage locations and bins inside a place, handling units. Goods issue for a sales order is a posting on the order
+  (**G**, done); a delivery document with picking and packing is still missing.
 - SD: taking an order with the availability check's promise, order changes promised again, cancelling the rest with
   the order logged, deliveries in part or in full, and customer-specific prices (**G**, done). Still missing:
   several lines per order, pricing conditions with discounts, surcharges and quantity scales, payment terms and a

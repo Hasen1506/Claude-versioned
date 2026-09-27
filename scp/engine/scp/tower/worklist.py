@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import threading
 import sqlite3
 from dataclasses import dataclass
 
@@ -147,7 +148,9 @@ class Tracker:
     def __init__(self, store: Store) -> None:
         self.store = store
         self.db = store.db
-        self.db.executescript(SCHEMA)
+        # a script commits whatever transaction the shared connection has open: never while another request writes
+        with store.lock:
+            self.db.executescript(SCHEMA)
 
     def _log(self, iid: str, at: str, action: str, detail: str = "") -> None:
         self.db.execute("INSERT INTO tower_log (item_id, at, action, detail) VALUES (?, ?, ?, ?)", (iid, at, action, detail))
@@ -259,5 +262,15 @@ class Tracker:
                 self.db.execute("SELECT at, action, detail FROM tower_log WHERE item_id = ? ORDER BY seq", (iid,))]
 
 
+_tracker: Tracker | None = None
+_tracker_lock = threading.Lock()
+
+
 def get_tracker() -> Tracker:
-    return Tracker(get_store())
+    """The process-wide worklist, made once per store (its tables are made when it is)."""
+    global _tracker
+    store = get_store()
+    with _tracker_lock:
+        if _tracker is None or _tracker.store is not store:
+            _tracker = Tracker(store)
+        return _tracker

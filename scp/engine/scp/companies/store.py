@@ -109,6 +109,7 @@ LABELS = {
     "demand": "orders and forecasts", "receipts": "open orders", "history": "sales history", "events": "events",
     "npi": "new products", "overrides": "forecast overrides", "stock_targets": "stock targets",
     "changeovers": "changeovers", "allocations": "allocations", "confirmations": "promises", "movements": "goods movements",
+    "batches": "batches", "inventory_docs": "physical inventory documents",
     "closed_orders": "closed orders", "accuracy": "forecast accuracy", "rolled_weeks": "weeks moved forward",
     "calendars": "calendars", "settings": "company settings", "forecasting": "forecast settings",
     "inventory": "stock settings", "sop": "capacity plan settings", "scheduling": "shop floor settings",

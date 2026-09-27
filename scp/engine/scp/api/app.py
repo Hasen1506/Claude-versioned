@@ -27,7 +27,7 @@ from ..demand import foundation
 from ..demand.models import SPECS
 from ..demand.result import FoundationStatus
 from ..inventory import InventoryResult, PlacementApplied, apply_placement, run_inventory
-from ..model import Dataset, DemandRecord, ForecastModelId
+from ..model import Dataset, DemandRecord, ForecastModelId, StockType
 from ..model.common import Out
 from ..network import build_graph, location_edges, location_layers
 from ..plan import PlanResult, run_mrp
@@ -624,6 +624,10 @@ class PoLineInput(Out):
     date: dt.date | None = None
     price: float | None = None
     final: bool = False
+    batch: str | None = None                        # receive: the batch (default: a new one for batch-managed products)
+    expires_on: dt.date | None = None               # receive: its expiry (default: today + the shelf life)
+    supplier_batch: str | None = None
+    serials: list[str] | None = None                # receive: serial numbers, one per unit (default: numbered)
 
 
 class PoActionRequest(Out):
@@ -661,20 +665,41 @@ class UsageInput(Out):
 class CountInput(Out):
     location: str
     product: str
-    qty: float
+    qty: float | None                               # None: not counted yet (a physical inventory line)
+    batch: str | None = None                        # a physical inventory line: the batch and stock type counted
+    stock_type: StockType | None = None
+
+
+class NodeInput(Out):
+    location: str
+    product: str
 
 
 class PostRequest(Out):
     dataset: PlanData
-    action: Literal["ship", "receive", "deliver", "count"]
-    order: str | None = None                        # the firm order (ship / receive) or sales order (deliver)
-    qty: float | None = None                        # default: everything still open
+    action: Literal["ship", "receive", "deliver", "count", "move", "scrap", "scrap_expired", "reverse", "shorten",
+                    "count_doc", "count_enter", "count_post", "count_cancel"]
+    order: str | None = None                        # the firm order (ship / receive / shorten) or sales order (deliver)
+    qty: float | None = None                        # default: everything still open (shorten: the new quantity)
     date: dt.date | None = None                     # posting date (default: the planning start; a count: the day before)
     final: bool = False                             # last delivery: closes the order even if short
     usage: list[UsageInput] | None = None           # production: parts actually used, instead of the backflush
-    counts: list[CountInput] | None = None          # count: stock counted per place and product
+    counts: list[CountInput] | None = None          # count / count_enter: stock counted per place and product
     ship_from: str | None = None                    # deliver: the place it ships from (default: where it was promised)
     note: str = ""
+    batch: str | None = None                        # the batch received, shipped, delivered, moved or scrapped
+    expires_on: dt.date | None = None               # receive: the batch's expiry (default: today + the shelf life)
+    supplier_batch: str | None = None               # receive: the supplier's batch number
+    serials: list[str] | None = None                # serial numbers, one per unit
+    stock_type: StockType | None = None             # receive: the stock it goes to; move / scrap: the stock it leaves
+    to_type: StockType | None = None                # move: the stock it goes to
+    location: str | None = None                     # move / scrap: the place
+    product: str | None = None                      # move / scrap: the product
+    movement: str | None = None                     # reverse: a movement of the document to take back
+    doc: str | None = None                          # count_enter / count_post / count_cancel: the inventory document
+    nodes: list[NodeInput] | None = None            # count_doc: places and products to count
+    block: bool = True                              # count_doc: refuse postings for them until the count is posted
+    uncounted_zero: bool = False                    # count_post: lines not counted are posted as zero
 
 
 @app.post("/api/actuals/post", response_model=PoActionResponse)
@@ -684,6 +709,11 @@ def post_posting(req: PostRequest) -> PoActionResponse:
         new, rep = post(req.dataset, req.action, order=req.order, qty=req.qty, on=req.date, final=req.final,
                         usage=None if req.usage is None else [u.model_dump() for u in req.usage],
                         counts=None if req.counts is None else [c.model_dump() for c in req.counts], note=req.note,
+                        lot={"batch": req.batch, "expires_on": req.expires_on, "supplier_batch": req.supplier_batch or "",
+                             "serials": req.serials, "stock_type": req.stock_type},
+                        location=req.location, product=req.product, to_type=req.to_type, movement=req.movement,
+                        doc=req.doc, nodes=None if req.nodes is None else [(n.location, n.product) for n in req.nodes],
+                        block=req.block, uncounted_zero=req.uncounted_zero,
                         ship_from=req.ship_from)
     except PostingError as e:
         raise HTTPException(409, str(e)) from e

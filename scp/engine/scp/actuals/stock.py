@@ -6,9 +6,10 @@ from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from datetime import date, timedelta
 
-from ..model import AccuracyRecord, Dataset, DemandKind, GoodsMovement, LocationType, MovementType
+from ..model import AccuracyRecord, Dataset, DemandKind, GoodsMovement, LocationType, MovementType, StockType
 from ..plan.leadtime import transit_whole_days
-from .result import AccuracyReport, AccuracySeries, AccuracyWeek, OpenOrderRow, StockRow
+from .lots import Lot, batch_index, usable
+from .result import AccuracyReport, AccuracySeries, AccuracyWeek, LotRow, OpenOrderRow, StockRow
 
 EPS = 1e-6
 Node = tuple[str, str]
@@ -58,12 +59,24 @@ COUNTED = {MovementType.ADJUSTMENT, MovementType.OPENING}   # what a stock count
 
 
 def stock_rows(ds: Dataset, as_of: date) -> list[StockRow]:
+    """Stock per place and product: what the plan starts from (the journal before ``as_of``) and, at the planning start,
+    the batches, stock types and serial numbers there are now, this week's postings included (they are what a
+    release, a block or a scrap acts on)."""
     movs = sorted(before(ds, as_of), key=lambda m: (m.date, m.id))
     by_node: dict[Node, list[GoodsMovement]] = defaultdict(list)
     for m in movs:
         by_node[(m.location, m.product)].append(m)
-    nodes = set(by_node) | {(lp.location, lp.product) for lp in ds.location_products if lp.on_hand > 0}
+    now_node: dict[Node, list[GoodsMovement]] = by_node
+    if as_of == ds.settings.planning_start:
+        now_node = defaultdict(list)
+        for m in sorted([*ds.movements, *pending_openings(ds)], key=lambda m: (m.date, m.id)):
+            now_node[(m.location, m.product)].append(m)
+    transit = in_transit(ds)
+    nodes = (set(by_node) | set(now_node) | {(lp.location, lp.product) for lp in ds.location_products if lp.on_hand > 0}
+             | set(transit))
     setup = {(m.location, m.product) for m in pending_openings(ds)}
+    bi = batch_index(ds)
+    counting = {(it.location, it.product): d.id for d in ds.inventory_docs if d.status == "open" for it in d.items}
     rows = []
     for n in sorted(nodes):
         lp = ds.location_product_by_key.get(n)
@@ -71,12 +84,27 @@ def stock_rows(ds: Dataset, as_of: date) -> list[StockRow]:
         ms = by_node.get(n, [])
         # a dip below zero is reported while it lasts, or when it began in the week just closed (a late receipt
         # can still be posted for it); an older dip the stock came back from has had its say at that week's roll,
-        # and one a count ended is settled: the count says what is there
+        # and one a count ended is settled: the count says what is there. Only unrestricted stock can be issued,
+        # so that is the stock that dips
         bal, neg, dip = 0.0, None, None
         by_type: dict[str, float] = defaultdict(float)
+        by_lot: dict[tuple[str | None, StockType], float] = defaultdict(float)
+        serials: dict[str, float] = defaultdict(float)
+        total = plan = 0.0
         for m in ms:
-            bal += m.signed
+            total += m.signed
+            rec = bi.get((n[1], m.batch)) if m.batch else None
+            if usable(ds, Lot(m.batch, m.stock_type, m.signed, rec.expires_on if rec else None), as_of):
+                plan += m.signed
+        for m in now_node.get(n, []):
+            by_lot[(m.batch, m.stock_type)] += m.signed
+            for sn in m.serials:
+                serials[sn] += 1.0 if m.signed > 0 else -1.0
+        for m in ms:
             by_type[m.type.value] += m.signed
+            if m.stock_type is not StockType.UNRESTRICTED:
+                continue
+            bal += m.signed
             if bal < -EPS:
                 dip = dip or m.date
             elif dip is not None:
@@ -85,12 +113,47 @@ def stock_rows(ds: Dataset, as_of: date) -> list[StockRow]:
                 dip = None
         if neg is None and dip is not None:
             neg = dip
+        lots = []
+        kinds = {"unrestricted": 0.0, "quality": 0.0, "blocked": 0.0}
+        expired = 0.0
+        for (b, t), q in sorted(by_lot.items(), key=lambda kv: (kv[0][0] is not None, kv[0][0] or "", kv[0][1].value)):
+            if abs(q) <= EPS:
+                continue
+            rec = bi.get((n[1], b)) if b else None
+            lot = Lot(b, t, q, rec.expires_on if rec else None)
+            kinds[t.value] += q
+            gone = lot.expired(as_of) and t is not StockType.BLOCKED
+            expired += q if gone else 0.0
+            lots.append(LotRow(batch=b, stock_type=t.value, qty=round(q, 6), made_on=rec.made_on if rec else None,
+                               expires_on=lot.expires_on, expired=lot.expired(as_of)))
+        plain = len(lots) == 1 and lots[0].batch is None and lots[0].stock_type == "unrestricted"
         rows.append(StockRow(location=n[0], product=n[1], master_on_hand=master,
-                             movement_stock=round(bal, 6) if ms else None,
-                             difference=round(max(0.0, bal) - master, 6) if ms else 0.0, movements=len(ms),
+                             movement_stock=round(total, 6) if ms else None,
+                             difference=round(max(0.0, plan) - master, 6) if ms else 0.0, movements=len(ms),
                              last_date=ms[-1].date if ms else None, by_type=dict(by_type), negative_on=neg,
-                             opening_from_setup=n in setup))
+                             opening_from_setup=n in setup, unrestricted=round(kinds["unrestricted"], 6),
+                             quality=round(kinds["quality"], 6), blocked=round(kinds["blocked"], 6),
+                             expired=round(expired, 6), in_transit=round(transit.get(n, 0.0), 6),
+                             planning_stock=round(plan, 6) if ms else None, lots=[] if plain else lots,
+                             serials=sorted(k for k, v in serials.items() if v > 0.5), counting=counting.get(n)))
     return rows
+
+
+def in_transit(ds: Dataset) -> dict[Node, float]:
+    """Stock in transit to each place: shipped on an open transfer and not yet received there (every posting, as the
+    open orders show it). It belongs to the receiving place: planning counts it as the transfer's open receipt."""
+    moved: dict[tuple[str, str], float] = defaultdict(float)
+    for m in ds.movements:
+        if m.reference and m.type in (MovementType.TRANSFER_OUT, MovementType.RECEIPT):
+            moved[(m.reference, m.type.value)] += m.net
+    out: dict[Node, float] = defaultdict(float)
+    for rc in ds.receipts:
+        if rc.kind.value != "transfer":
+            continue
+        q = moved.get((rc.id, "transfer_out"), 0.0) - moved.get((rc.id, "receipt"), 0.0)
+        if q > EPS:
+            out[(rc.location, rc.product)] += q
+    return dict(out)
 
 
 def _sum(movs: list[GoodsMovement], types: set[MovementType]) -> tuple[dict, dict, dict, set]:
@@ -103,7 +166,7 @@ def _sum(movs: list[GoodsMovement], types: set[MovementType]) -> tuple[dict, dic
         if m.type not in types or not m.reference:
             continue
         k = (m.reference, m.location, m.product)
-        qty[k] += m.qty
+        qty[k] += m.net
         first[k] = min(first.get(k, m.date), m.date)
         last[k] = max(last.get(k, m.date), m.date)
         if m.final:
@@ -228,7 +291,7 @@ def sales_arrived(ds: Dataset, start: date, end: date, keys: set[Node]) -> dict[
         if m.type is MovementType.SALE:
             node, day = sale_point(ds, m, keys)
             if start <= day < end:
-                act[node] += m.qty
+                act[node] += m.net
     return act
 
 

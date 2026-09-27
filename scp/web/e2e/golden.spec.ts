@@ -500,6 +500,69 @@ test("posting: count stock → firm → ship and receive a transfer → confirm 
   await expect(page.getByText("Not counted yet")).toHaveCount(0);
 });
 
+test("stock you can trace: a short receipt names the order it leaves short → shorten it → batches in stock → block → reverse → physical inventory", async ({ page }) => {
+  await openExample(page, "Kaveri Kitchenware");
+  const posted = page.locator(".banner.info", { hasText: "Posted" });
+
+  // no heating elements left at the plant, so the kettles made there depend on the next delivery
+  await page.goto("/#/execution/count");
+  await page.getByLabel("Counted Concealed heating element at Pune plant (Chakan)").fill("0");
+  await page.getByRole("button", { name: "Save 1 count" }).click();
+  await expect(page.locator(".banner", { hasText: "Saved" })).toContainText("1 count difference");
+
+  // firm the zone, then the heater delivery comes in short, in the supplier's batch, and closes the line
+  await page.goto("/#/execution/orders");
+  await page.getByRole("button", { name: /^(Recalculate the supply plan|Calculate the supply plan)$/ }).click();
+  await page.getByRole("button", { name: /Make \d+ orders? firm/ }).click();
+  await expect(page.getByText(/planned orders? firmed/)).toBeVisible();
+  const line = page.locator("tr", { hasText: "Concealed heating element" }).filter({ hasText: "purchase" }).first();
+  const po = (await line.locator("td").first().innerText()).trim().split(/\s+/)[0];
+  await page.getByRole("button", { name: `Post part of ${po}` }).click();
+  await page.getByLabel(`Quantity for ${po}`).fill("10");
+  await page.getByText("Last delivery: close the order even if short").click();
+  await page.getByLabel(/^Batch of/).fill("HT-1");
+  await page.getByRole("button", { name: /^Receive [0-9,.]+$/ }).click();
+  await expect(posted).toContainText("in batch HT-1");
+  await expect(posted).toContainText("closed 9,990 short");
+  const short = page.locator(".banner.warning", { hasText: "Can no longer run in full" });
+  await expect(short).toContainText("Concealed heating element");
+  await short.getByRole("button", { name: /^Shorten to \d+$/ }).first().click();
+  await expect(short.getByText("shortened")).toBeVisible();
+  await expect(posted).toContainText(/shortened from 1,450 to \d+/);
+
+  // the batch is in stock now, this week's postings included; block it
+  await page.goto("/#/execution/stock");
+  await page.getByLabel("Find stock").fill("HT-1");
+  await page.getByRole("button", { name: "Batches and stock of RM-HEATER at PLT-PUNE" }).click();
+  const lot = page.locator("tr.sub tr", { hasText: "HT-1" }).filter({ hasText: "free to use" });
+  await expect(lot).toContainText("10");
+  await lot.getByRole("button", { name: "Block" }).click();
+  await expect(posted).toContainText("blocked");
+  await expect(page.locator("tr.sub tr", { hasText: "HT-1" }).filter({ hasText: "blocked" })).toBeVisible();
+
+  // the receipt is taken back from the journal: its material document, and the order is open again
+  await page.goto("/#/execution/journal");
+  await page.getByLabel("Find movements").fill("HT-1");
+  const receipt = page.locator("tr", { hasText: "HT-1" }).filter({ hasText: "receipt" }).first();
+  await receipt.getByRole("button", { name: /^Reverse / }).click();
+  await expect(page.locator(".banner", { hasText: "Reversed" })).toContainText(`${po} is open again`);
+  await expect(page.locator("tr", { hasText: "HT-1" }).filter({ hasText: "reversed" }).first()).toBeVisible();
+
+  // a physical inventory of the plant: the book is frozen, postings for it wait, the count is cancelled
+  await page.goto("/#/execution/count");
+  await page.selectOption('select[aria-label="Place to count"]', { label: "Pune plant (Chakan)" });
+  await page.getByRole("button", { name: /^Start counting \d+ products$/ }).click();
+  await expect(page.locator(".banner", { hasText: "Done" })).toContainText("book stock frozen");
+  await expect(page.getByRole("button", { name: "Post differences" })).toBeDisabled();
+  await page.getByRole("button", { name: "Cancel the count" }).click();
+  await expect(page.locator(".banner", { hasText: "Done" })).toContainText("cancelled");
+
+  // the company's rule for stock below zero
+  await page.goto("/#/execution/stock");
+  await page.getByText("Stock rules").click();
+  await expect(page.locator("select#negative_stock option", { hasText: "Refuse the posting" })).toHaveCount(1);
+});
+
 test("buying: requisitions → purchase order → approve → send → confirm late and short → plan warns → receive part → block a supplier → undo", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/buying");

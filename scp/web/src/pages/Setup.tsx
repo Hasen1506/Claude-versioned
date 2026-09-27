@@ -44,7 +44,7 @@ const PRODUCT_TYPES: { type: string; label: string; what: string }[] = [
   { type: "PKG", label: "Packaging", what: "bought packing material" },
 ];
 const MODES: { mode: string; label: string }[] = [
-  { mode: "truck_ftl", label: "Truck (full load)" }, { mode: "truck_ltl", label: "Truck (part load)" }, { mode: "rail", label: "Rail" },
+  { mode: "truck_ftl", label: "Truck (full load)" }, { mode: "truck_ltl", label: "Truck (part load)" }, { mode: "reefer", label: "Refrigerated truck" }, { mode: "rail", label: "Rail" },
   { mode: "sea", label: "Sea" }, { mode: "air", label: "Air" }, { mode: "courier", label: "Courier" },
 ];
 const modeLabel = (m: string) => MODES.find((x) => x.mode === m)?.label ?? m;

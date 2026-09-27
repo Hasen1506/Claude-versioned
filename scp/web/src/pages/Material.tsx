@@ -204,13 +204,14 @@ function elements(ds: Dataset, plan: PlanResult, reqs: Requirement[], prod: stri
         detail: co.cost_share ? "co-product" : "by-product", qty: o.qty * co.qty / (ps.output_qty ?? 1), link: ["plan", "orders", o.id] });
     }
   }
-  const KIND: Record<string, string> = { forecast: "Forecast", sales_order: "Customer order", dependent: "Needed to make", transfer: "Shipped out for" };
+  const KIND: Record<string, string> = { forecast: "Forecast", sales_order: "Customer order", dependent: "Needed to make", transfer: "Shipped out for", expiry: "Expires unused (batch)" };
   for (const r of reqs) {
     if (r.location !== loc || r.product !== prod) continue;
     const parent = r.parent_order ? byId.get(r.parent_order) : undefined;
     const what = r.kind === "dependent" && parent ? `Needed to make ${nm.prod(parent.product)} (${parent.id})`
       : r.kind === "transfer" && parent ? `Shipped to ${nm.loc(parent.location)} (${parent.id})`
-      : r.kind === "dependent" || r.kind === "transfer" ? `${KIND[r.kind]} ${r.parent_order ?? ""}` : KIND[r.kind] ?? r.kind;
+      : r.kind === "dependent" || r.kind === "transfer" ? `${KIND[r.kind]} ${r.parent_order ?? ""}`
+      : r.kind === "expiry" ? `Batch ${r.id.split(":").pop()} expires unused` : KIND[r.kind] ?? r.kind;
     out.push({ date: r.date, kind: "out", what, detail: r.past_due ? "overdue: due before today" : undefined, qty: -r.qty,
       link: parent ? ["plan", "orders", parent.id] : undefined });
   }

@@ -118,6 +118,14 @@ export type CustomerPrice = S["CustomerPrice"];
 export type CountInput = S["CountInput"];
 export type UsageInput = S["UsageInput"];
 export type ClosedOrder = S["ClosedOrder"];
+export type LotRow = S["LotRow"];
+export type ShortOrder = S["ShortOrder"];
+export type ActionReport = S["ActionReport"];
+export type Batch = S["Batch"];
+export type InventoryDoc = S["InventoryDoc"];
+export type CountItem = S["CountItem"];
+export type StockType = S["StockType"];
+export type NegativeStock = S["NegativeStock"];
 
 export type FinanceResult = S["FinanceResult"];
 export type ServeRow = S["ServeRow"];

@@ -12,7 +12,7 @@ from ..model.common import Out
 KEYS: dict[str, tuple[str, ...]] = {
     "calendars": ("id",), "locations": ("id",), "products": ("id",), "resources": ("id",),
     "production_sources": ("id",), "purchasing_sources": ("id",), "lanes": ("id",), "receipts": ("id",),
-    "events": ("id",), "allocations": ("id",), "movements": ("id",),
+    "events": ("id",), "allocations": ("id",), "movements": ("id",), "batches": ("product", "id"), "inventory_docs": ("id",),
     "location_products": ("location", "product"), "npi": ("location", "product"),
     "history": ("location", "product", "date"), "overrides": ("location", "product", "date"),
     "demand": ("id", "location", "product", "date", "kind"), "confirmations": ("order", "ship_from", "ship_date"),
