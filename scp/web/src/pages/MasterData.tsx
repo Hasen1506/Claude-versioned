@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 import type { Dataset, Issue, ValidationResult } from "../api/types";
-import { Badge, Empty, Panel, StageHeader } from "../components/ui";
+import { Badge, Edits, Empty, Panel, StageHeader } from "../components/ui";
 import { byKey, COLLECTIONS, items, whereUsed, type CollectionKey } from "../model/collections";
 import { ImportPanel } from "../components/Import";
 import { checkTitle } from "../lib/checks";
-import { humanize } from "../lib/format";
+import { Msg } from "../lib/names";
 import { go, href } from "../lib/router";
 import { defaults, SchemaForm, useSchema, type FieldErrors } from "../schema/SchemaForm";
 import { store, useStore, NO_ISSUES } from "../state/store";
@@ -140,8 +140,8 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
             onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 280, minWidth: 140 }} aria-label="Search" />
           <span className="faint small nowrap">{rows.length === list.length ? list.length : `${rows.length} of ${list.length}`}</span>
         </div>} actions={<>
-          <button className="btn" onClick={() => setUpload(!upload)} aria-expanded={upload}>Upload CSV / Excel</button>
-          <button className="btn primary" onClick={add} disabled={!schema}>+ New {def.singular}</button></>}>
+          <Edits><button className="btn" onClick={() => setUpload(!upload)} aria-expanded={upload}>Upload CSV / Excel</button>
+          <button className="btn primary" onClick={add} disabled={!schema}>+ New {def.singular}</button></Edits></>}>
           <div className="table-wrap" style={{ maxHeight: "calc(100vh - 230px)" }}>
             <table className="t">
               <thead><tr>{def.columns.map((c) => <th key={c.label} className={c.num ? "num" : ""}>{c.label}</th>)}<th /></tr></thead>
@@ -214,15 +214,15 @@ function Editor({ ds, ckey, index, obj, errors, issues }: {
         {ckey === "resources" && <a className="btn sm" href={href("machines", String(obj.id))}>Shifts and capacity</a>}
         {ckey === "location_products" && <a className="btn sm" href={href("material", String(obj.product), String(obj.location))}>Open as MRP 1–4</a>}
         {ckey === "production_sources" && <a className="btn sm" href={href("material", String(obj.product), String(obj.location), "mrp4")}>See the structure</a>}
-        <button className="btn sm" onClick={duplicate}>Duplicate</button>
-        <button className="btn sm danger" onClick={remove}>Delete</button>
+        <Edits><button className="btn sm" onClick={duplicate}>Duplicate</button>
+        <button className="btn sm danger" onClick={remove}>Delete</button></Edits>
       </>}>
       {issues.length > 0 && (
         <div className="stack" style={{ gap: 6, marginBottom: 10 }}>
           {issues.map((i, n) => (
             <div key={n} className={`banner ${i.severity === "error" ? "error" : "warning"}`} style={{ margin: 0 }}>
               <Badge sev={i.severity === "error" ? "error" : "warning"}>{checkTitle(i.code)}</Badge>
-              <div><div>{humanize(i.message)}</div>{i.hint && <div className="small">{i.hint}</div>}</div>
+              <div><div><Msg text={i.message} /></div>{i.hint && <div className="small">{i.hint}</div>}</div>
             </div>
           ))}
         </div>

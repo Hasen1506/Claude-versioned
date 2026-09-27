@@ -4131,6 +4131,8 @@ export interface components {
              * @default 0
              */
             reservations_open: number;
+            /** Planned As */
+            planned_as: string | null;
         };
         /** Operation */
         Operation: {
@@ -4563,6 +4565,8 @@ export interface components {
              * @default false
              */
             start_in_past: boolean;
+            /** Wanted Start */
+            wanted_start: string | null;
             /**
              * Fence Shifted
              * @default false
@@ -5475,6 +5479,8 @@ export interface components {
             due_now: boolean;
             /** Late */
             late: boolean;
+            /** Wanted Order Date */
+            wanted_order_date: string | null;
             /** Choices */
             choices: components["schemas"]["SourceChoice"][];
             /**
@@ -6414,6 +6420,11 @@ export interface components {
              * @description Purchase: the purchase order (header) this line is on
              */
             po?: string | null;
+            /**
+             * Planned As
+             * @description The planned order it was firmed from (for reference: planned numbers are handed out again on every plan)
+             */
+            planned_as?: string | null;
             /**
              * Price
              * @description Purchase: net price per base unit, in the order's currency

@@ -1,5 +1,6 @@
 import { GLOSSARY } from "../lib/glossary";
 import { useState, type CSSProperties, type ReactNode } from "react";
+import { useReadOnly } from "../state/store";
 
 export type Severity = "error" | "warning" | "info" | "ok";
 
@@ -32,6 +33,13 @@ export function Badge({ sev, children }: { sev?: Severity; children?: ReactNode 
       {children ?? (sev ? SEV_LABEL[sev] : null)}
     </span>
   );
+}
+
+/** Controls that change the company's data: disabled for a viewer, with the reason on hover (N62). Takes no room of its
+ * own in the layout. */
+export function Edits({ children }: { children: ReactNode }) {
+  const ro = useReadOnly();
+  return <fieldset className="edits" disabled={ro} title={ro ? "View only: you are a viewer of this company" : undefined}>{children}</fieldset>;
 }
 
 export function Panel({ title, actions, children, flush, className }: {

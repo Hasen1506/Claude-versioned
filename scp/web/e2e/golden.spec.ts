@@ -291,7 +291,7 @@ test("scheduling: schedule → select order → resequence → reset → edit se
 
   // follow an order across resources, then push it one place later on its first resource
   await page.locator('.gantt svg g[data-order="MO-00024"]').first().dispatchEvent("click");
-  await expect(page.getByText("MO-00024 · MG-500")).toBeVisible();
+  await expect(page.getByText("MO-00024 · Mixer grinder 500 W")).toBeVisible();
   await page.getByRole("button", { name: "later ▶" }).first().click();
   await expect(page.getByText("Your sequence")).toBeVisible();
   await page.getByRole("button", { name: "Undo my changes to the order" }).click();
@@ -447,7 +447,8 @@ test("execution: journal → stock in sync → ship → roll forward → accurac
   await page.getByRole("button", { name: /^(Recalculate the supply plan|Calculate the supply plan)$/ }).click();
   await page.getByRole("button", { name: /^Make \d+ orders? firm$/ }).click();
   await expect(page.getByText(/planned orders firmed/)).toBeVisible();
-  await expect(page.locator("td", { hasText: /^PRD-\d{5}$/ }).first()).toBeVisible();
+  await expect(page.locator("td b", { hasText: /^PRD-\d{5}$/ }).first()).toBeVisible();
+  await expect(page.getByText(/^was MO-\d{5}$/).first()).toBeVisible();     // the planned number it came from (Q22)
 });
 
 test("posting: count stock → firm → ship and receive a transfer → confirm production with its parts → a late posting is offered", async ({ page }) => {
@@ -514,7 +515,7 @@ test("buying: requisitions → purchase order → approve → send → confirm l
   await expect(page.getByRole("button", { name: "Mark as sent" })).toHaveCount(0);      // not before approval
   await page.getByRole("button", { name: "Approve" }).click();
   await page.getByRole("button", { name: "Mark as sent" }).click();
-  await expect(page.locator(".banner.ok")).toContainText("sent to SUP-JARS");
+  await expect(page.locator(".banner.ok")).toContainText("sent to Rajkot jar works");
 
   // the supplier confirms four days late and 300 short: the plan expects that, and says so
   await page.getByRole("button", { name: "Record confirmation" }).click();
@@ -612,7 +613,7 @@ test("control tower: KPIs graded → drill into OTIF → worklist → assign & a
   await expect(page.locator(".kpi-card")).toHaveCount(13);
   await page.getByRole("button", { name: /^OTIF to requested date:/ }).click();
   await expect(page.locator(".section-band h2", { hasText: "OTIF to requested date" })).toBeVisible();
-  await expect(page.locator("td", { hasText: "CUS-ECOM" }).first()).toBeVisible();
+  await expect(page.locator("td", { hasText: "E-commerce marketplaces" }).first()).toBeVisible();
 
   await page.getByRole("tab", { name: /Exception worklist/ }).click();
   const owner = page.getByLabel(/^Owner of DEMAND_AT_RISK/).first();
@@ -821,6 +822,11 @@ test("company on the server: sign up → keep it there → saves itself → a co
   // Meera, a viewer, can look but changes nothing
   const meera = await colleague("meera@kaveri.in", "Meera");
   await expect(meera.locator(".save-chip .save-long")).toHaveText("View only");
-  await take(meera, 5, "MEERA-1");
-  await expect(meera.getByText(/Nothing was changed: you are a viewer of Kaveri Kitchenware/)).toBeVisible();
+  // the buttons that change data are shown disabled (N62); anything else that tries is refused with the reason
+  await meera.goto("/#/promise/simulate");
+  await meera.getByLabel("Quantity").fill("5");
+  await meera.getByRole("button", { name: "Check availability" }).click();
+  await expect(meera.getByRole("button", { name: "Take this order" })).toBeDisabled();
+  await meera.goto("/#/data/products");
+  await expect(meera.getByRole("button", { name: /New product/ })).toBeDisabled();
 });

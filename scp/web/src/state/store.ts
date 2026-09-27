@@ -4,7 +4,7 @@
 // was computed on, so the UI can show "stale" the moment any input it reads changes — the legacy STALE
 // cascade, done by construction: every result reads the whole dataset except the parts only the shop floor
 // schedule reads (its settings and the changeover matrix), which leave the other results fresh.
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { api, ApiError, SchemaRejected, setAuth, setPlanningView, setWriteGuard } from "../api/client";
 import type { CompanyDoc, User, ActualsView, PurchasingView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
 
@@ -652,6 +652,20 @@ export const store = {
 
 export function useStore<T>(select: (s: State) => T): T {
   return useSyncExternalStore(store.subscribe, () => select(state));
+}
+
+/** A viewer of the open company: controls that change data are shown disabled (N62). */
+export const useReadOnly = () => useStore((s) => s.company?.role === "viewer" && s.company.live);
+
+/** Results that take a moment to rebuild: a page showing one recalculates it when it opens out of date (N56), instead
+ * of showing the earlier result (the open orders before the order just taken) behind an "out of date" mark. */
+const QUICK: ReadonlySet<RunKey> = new Set<RunKey>(["actuals", "purchasing", "finance", "promise"]);
+
+export function useFreshResult(key: RunKey) {
+  useEffect(() => {
+    const r = state.runs[key];
+    if (QUICK.has(key) && isStale(state, key) && !r.running && !r.error) void store.run(key);
+  }, [key]);   // on opening the page only: edits made on it keep their "out of date" mark until recalculated
 }
 
 /** A result exists but a part of the dataset it reads changed after it was computed. */

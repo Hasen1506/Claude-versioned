@@ -2,6 +2,7 @@
 // they need, what do I do this week, what does it cost, what is off track) from the results "Plan
 // everything" calculates, and links each answer to the page where you act on it.
 import { useState, type ReactNode } from "react";
+import { Edits } from "../components/ui";
 import { api } from "../api/client";
 import type { Dataset, Kpi, PlannedOrder } from "../api/types";
 import { addDays, dayName, money, pct, plural, qty, unitMoney } from "../lib/format";
@@ -369,7 +370,7 @@ function StockAlert({ ds }: { ds: Dataset }) {
         {neg > 0 && <> {plural(neg, "place")} would go below zero: a receipt is missing or posted late.</>}</p>
       <p className="muted">Every answer below starts from this stock, so it comes first.</p>
       <div className="links">
-        {(u?.needed || off > 0) && <button className="btn sm accent" onClick={book} disabled={busy}>{busy ? "Counting…" : "Count the movements now"}</button>}
+        {(u?.needed || off > 0) && <Edits><button className="btn sm accent" onClick={book} disabled={busy}>{busy ? "Counting…" : "Count the movements now"}</button></Edits>}
         <a href={href("execution", "stock")}>See which places</a><a href={href("execution", "count")}>Count stock</a>
       </div>
       {err && <p className="small" style={{ color: "var(--error-text)" }}>{err}</p>}

@@ -4,7 +4,7 @@
 // shop floor schedule use.
 import { useMemo, useState } from "react";
 import type { Dataset, Resource } from "../api/types";
-import { Badge, Empty, Panel, StageHeader } from "../components/ui";
+import { Badge, Edits, Empty, Panel, StageHeader } from "../components/ui";
 import { day, qty } from "../lib/format";
 import { useNames } from "../lib/names";
 import { go, href } from "../lib/router";
@@ -91,7 +91,7 @@ function MachinesPage({ ds, sel }: { ds: Dataset; sel?: string }) {
         how={<>Like a work centre's capacity in SAP: named shifts with their clock times and breaks, the weekdays each runs,
           and <b>capacity changes</b> for a period (a second shift from November, a week of maintenance). Productive hours =
           shift hours × efficiency × machines or people.</>} />
-      <div className="content split" style={{ display: "grid", gridTemplateColumns: "minmax(220px, 300px) minmax(0, 1fr)", gap: 16 }}>
+      <div className="content split" style={{ "--split-cols": "minmax(220px, 300px) minmax(0, 1fr)" } as React.CSSProperties}>
         <Panel flush title="Machines, lines and crews">
           {!list.length ? <div style={{ padding: 14 }} className="muted small">None yet. Add one when you say how a product is made
             (<a href={href("setup", "products")}>Set up → Products</a>), or in <a href={href("data", "resources")}>Master data</a>.</div> : (
@@ -106,7 +106,7 @@ function MachinesPage({ ds, sel }: { ds: Dataset; sel?: string }) {
             </table>
           )}
         </Panel>
-        {r ? <ResourceDetail ds={ds} r={r} /> : <Panel><Empty title="Choose one">
+        {r ? <Edits><ResourceDetail ds={ds} r={r} /></Edits> : <Panel><Empty title="Choose one">
           <p>Pick a machine, line or crew to see and change when it works.</p></Empty></Panel>}
       </div>
     </div>

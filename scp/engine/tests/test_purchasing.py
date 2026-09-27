@@ -9,7 +9,7 @@
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -125,6 +125,7 @@ def test_create_orders_groups_by_supplier_and_replanning_buys_nothing_more():
     po = rep.created[0]
     assert po.id == "PO-00001" and po.supplier == "S" and po.lines == ["PO-00001-10", "PO-00001-20"] and po.approved
     assert {r.po for r in new.receipts} == {"PO-00001"} and [h.id for h in new.purchase_orders] == ["PO-00001"]
+    assert sorted(r.planned_as for r in new.receipts) == sorted(r.id for r in reqs)     # "was PR-00001" (Q22)
     assert validate(new) == []
     again = run_mrp(new)
     assert not [o for o in again.orders if o.kind == "buy"]
@@ -294,3 +295,12 @@ def test_firming_a_purchase_gives_it_an_order_document():
     views = {p.id: p for p in purchase_orders(new)}
     assert views[po].header and views[po].status == "awaiting approval"
     assert validate(new) == []
+
+
+def test_a_late_requisition_says_when_it_should_have_been_ordered():
+    d = _buying()
+    start = date.fromisoformat(d["settings"]["planning_start"])
+    d["demand"][0]["date"] = (start + timedelta(days=1)).isoformat()     # sooner than any supplier can deliver
+    dset = ds(d)
+    r = next(r for r in requisitions(dset, run_mrp(dset)) if r.late)
+    assert r.order_date == start and r.wanted_order_date is not None and r.wanted_order_date < start

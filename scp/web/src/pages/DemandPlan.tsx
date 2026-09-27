@@ -1,10 +1,10 @@
 // The demand plan: exactly the demand the supply plan works to, product by place and week. Type into the grid, upload a
 // spreadsheet, or release a forecast into it. A forecast record that covers several weeks (a monthly bucket) is shown
-// spread over its days; editing one of its weeks splits it into weekly records first, so nothing is lost.
+// spread over its working days, as planning spreads it; editing one of its weeks splits it into weekly records first, so nothing is lost.
 import { useMemo, useState } from "react";
 import type { Dataset, DemandRecord } from "../api/types";
 import { ImportPanel } from "../components/Import";
-import { Badge, Empty, Panel } from "../components/ui";
+import { Badge, Edits, Empty, Panel } from "../components/ui";
 import { addDays, day, qty } from "../lib/format";
 import { href } from "../lib/router";
 import { store } from "../state/store";
@@ -25,13 +25,33 @@ export function weeks(ds: Dataset): string[] {
   return out;
 }
 
-/** How much of a record falls in [from, to): a spread forecast by the share of its calendar days. */
-function share(r: DemandRecord, from: number, to: number): number {
+/** Whether a day is a working day at a place: its calendar, else the company's default one, else Monday to Friday, as
+ * the supply plan reads it. */
+function workdays(ds: Dataset): (loc: string) => (t: number) => boolean {
+  const cals = new Map((ds.calendars ?? []).map((c) => [c.id, c]));
+  const locs = new Map((ds.locations ?? []).map((l) => [l.id, l]));
+  return (loc: string) => {
+    const c = cals.get(locs.get(loc)?.calendar ?? ds.settings.default_calendar ?? "");
+    const days = new Set(c?.workdays ?? [0, 1, 2, 3, 4]);
+    const off = new Set(c?.holidays ?? []);
+    return (t: number) => days.has((new Date(t).getUTCDay() + 6) % 7) && !off.has(iso(t));
+  };
+}
+
+/** How much of a record falls in [from, to): a forecast over several days is spread evenly over the working days in
+ * it, as the supply plan spreads it (N8); with no working day in it, all of it falls on its first day. */
+function share(r: DemandRecord, from: number, to: number, isWork: (t: number) => boolean): number {
   const a = toDate(r.date);
   const days = r.kind === "forecast" && r.period_days ? r.period_days : 1;
-  const b = a + days * DAY;
-  const overlap = Math.max(0, Math.min(b, to) - Math.max(a, from));
-  return (r.qty * overlap) / (b - a);
+  if (days <= 1) return a >= from && a < to ? r.qty : 0;
+  let n = 0, k = 0;
+  for (let i = 0, t = a; i < days; i++, t += DAY) {
+    if (!isWork(t)) continue;
+    n++;
+    if (t >= from && t < to) k++;
+  }
+  if (!n) return a >= from && a < to ? r.qty : 0;
+  return (r.qty * k) / n;
 }
 
 interface Series { location: string; product: string; fc: number[]; so: number[]; before: number; after: number }
@@ -55,14 +75,16 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
       return m.get(k)!;
     };
     const first = toDate(cols[0] ?? ds.settings.planning_start), end = first + cols.length * 7 * DAY;
+    const cal = workdays(ds);
     for (const r of ds.demand ?? []) {
       const s = get(r.location, r.product);
+      const isWork = cal(r.location);
       cols.forEach((w, i) => {
-        const v = share(r, toDate(w), toDate(w) + 7 * DAY);
+        const v = share(r, toDate(w), toDate(w) + 7 * DAY, isWork);
         if (v) (r.kind === "sales_order" ? s.so : s.fc)[i] += v;
       });
-      s.before += share(r, -Infinity, first);
-      s.after += share(r, end, Infinity);
+      s.before += share(r, -Infinity, first, isWork);
+      s.after += share(r, end, Infinity, isWork);
     }
     for (const k of extra) { const [l, p] = k.split("|"); get(l, p); }
     return [...m.values()].sort((a, b) => (names.prod[a.product] ?? a.product).localeCompare(names.prod[b.product] ?? b.product)
@@ -76,10 +98,11 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
   /** Set the forecast of one product at one place in one week. Records spanning other weeks are split into weekly ones. */
   const setWeek = (s: Series, i: number, value: number) => {
     const from = toDate(cols[i]), to = from + 7 * DAY;
+    const isWork = workdays(ds)(s.location);
     store.update((d) => {
       const list = (d.demand ??= []);
       const mine = (r: DemandRecord) => r.location === s.location && r.product === s.product && r.kind === "forecast";
-      const touching = list.filter((r) => mine(r) && share(r, from, to) > 0);
+      const touching = list.filter((r) => mine(r) && share(r, from, to, isWork) > 0);
       // split any record that also covers other weeks into its weekly parts
       for (const r of touching) {
         const a = toDate(r.date), b = a + (r.period_days ?? 1) * DAY;
@@ -87,7 +110,7 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
         list.splice(list.indexOf(r), 1);
         const W = 7 * DAY;
         for (let t = from + Math.floor((a - from) / W) * W; t < b; t += W) {
-          const part = share(r, t, t + W);
+          const part = share(r, t, t + W, isWork);
           if (part <= 0 || t === from) continue;
           const lo = Math.max(t, a), hi = Math.min(t + W, b);
           list.push({ location: r.location, product: r.product, date: iso(lo), qty: +part.toFixed(6), kind: "forecast",
@@ -112,7 +135,7 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
   return (
     <div className="stack">
       <Panel title={<h3>What the supply plan works to</h3>} actions={<>
-        <button className="btn" onClick={() => setUpload(!upload)} aria-expanded={upload}>Upload CSV / Excel</button>
+        <Edits><button className="btn" onClick={() => setUpload(!upload)} aria-expanded={upload}>Upload CSV / Excel</button></Edits>
         <a className="btn ghost" href={href("data", "demand")}>Every demand record</a></>}>
         <p className="muted" style={{ marginTop: 0 }}>
           {total > 0 ? <>{qty(Math.round(total))} units over the next {cols.length} weeks, {qty(Math.round(orders))} of them on customer orders.{" "}
@@ -173,7 +196,7 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
         <span className="small muted">at</span>
         <select className="select" style={{ width: "auto" }} value={addLoc} onChange={(e) => setAddLoc(e.target.value)} aria-label="Place">
           <option value="">place…</option>{places.map((l) => <option key={l.id} value={l.id}>{l.name || l.id}</option>)}</select>
-        <button className="btn sm" disabled={!addLoc || !addProd} onClick={addSeries}>Add</button>
+        <Edits><button className="btn sm" disabled={!addLoc || !addProd} onClick={addSeries}>Add</button></Edits>
       </div>
     </div>
   );

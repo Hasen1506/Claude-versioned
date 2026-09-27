@@ -497,7 +497,7 @@ button.tile.choice.on { border: 1px solid var(--ink); box-shadow: inset 4px 0 0 
   }
   .nav-scrim { position: fixed; inset: 54px 0 0 0; z-index: 29; background: color-mix(in srgb, var(--ink) 35%, transparent); }
   .rail-item { padding: 10px 16px; font-size: 15px; }
-  .split { grid-template-columns: 1fr; }
+  .split { grid-template-columns: minmax(0, 1fr); }
   .split .editor { position: static; max-height: none; }
   .main .content { padding: 14px 16px 0; }
   .stage-head { padding: 12px 16px; }
@@ -727,3 +727,8 @@ ol.history > li > .btn.ghost { align-self: flex-start; }
   .save-chip .save-long { display: none; }
   .save-chip .save-short { display: inline; }
 }
+.gantt-lane-label .lane-name { font-family: var(--font); overflow: hidden; text-overflow: ellipsis; }
+/* controls that change data, disabled together for a viewer (N62) */
+fieldset.edits { display: contents; }
+fieldset.edits-form { border: 0; margin: 0; padding: 0; min-width: 0; }
+fieldset:disabled .btn, fieldset:disabled button { cursor: not-allowed; }

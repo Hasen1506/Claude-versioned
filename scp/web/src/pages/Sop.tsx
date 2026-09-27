@@ -3,10 +3,10 @@ import { api } from "../api/client";
 import type { Dataset, SopResult } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, cols, Empty, Panel, Provenance, Reading, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
+  Badge, cols, Edits, Empty, Panel, Provenance, Reading, RunButton, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
 } from "../components/ui";
-import { money, pct, qty } from "../lib/format";
-import { Loc, Prod } from "../lib/names";
+import { bucketWords, money, pct, qty } from "../lib/format";
+import { Loc, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -59,9 +59,9 @@ export function Sop({ route }: { route: string[] }) {
           the difference is timing inside the month, not capacity.</>}</>}
       right={<>
       {res && <Provenance kind="solved" at={run.at} stale={stale} />}
-      {res?.ok && <button className="btn" onClick={release} disabled={releasing || stale}
+      {res?.ok && <Edits><button className="btn" onClick={release} disabled={releasing || stale}
         title={stale ? "Recalculate first: the data changed" : "Replaces the forecast demand in your data with this plan's constrained demand and stock targets. Undo reverts it."}>
-        {releasing ? "Saving…" : "Use this plan in the supply plan"}</button>}
+        {releasing ? "Saving…" : "Use this plan in the supply plan"}</button></Edits>}
       <RunButton running={run.running} has={!!res} onClick={() => store.run("sop")} disabled={blocking} /></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
@@ -137,6 +137,9 @@ function Overview({ res }: { res: SopResult }) {
   const late = sum((t) => res.demand.reduce((a, d) => a + d.backlog[t], 0));
   const delta = (now: number, was: number | undefined, fmt: (v: number) => string) =>
     was === undefined ? undefined : `${now - was >= 0 ? "+" : "−"}${fmt(Math.abs(now - was))} vs ${base!.label}`;
+  const nm = useNames();
+  const peak = res.resources.filter((r) => r.finite).flatMap((r) => r.utilization.map((u, t) => ({ r, u, t })))
+    .filter((x) => Number.isFinite(x.u)).sort((a, b) => b.u - a.u)[0];
   return (
     <div className="stack">
       <div className="grid-auto">
@@ -145,7 +148,7 @@ function Overview({ res }: { res: SopResult }) {
         <StatTile label={res.mode === "profit" ? "Profit" : "Total cost"} value={money(res.mode === "profit" ? e.profit : e.total_cost, c)}
           sub={delta(res.mode === "profit" ? e.profit : e.total_cost, base ? (res.mode === "profit" ? base.res.economics!.profit : base.res.economics!.total_cost) : undefined, (v) => money(v, c))
             ?? (e.unpriced?.length ? (e.revenue > 0 ? `revenue ${money(e.revenue, c)} on priced products` : "no revenue: no selling prices") : `revenue ${money(e.revenue, c)}`)} />
-        <StatTile label="Peak utilisation" value={pct(k.max_utilization, 0)} sub="of regular hours, busiest resource-bucket" />
+        <StatTile label="Peak utilisation" value={pct(k.max_utilization, 0)} sub={peak ? `${nm.res(peak.r.resource)}, ${res.buckets[peak.t] ? bucketWords(res.buckets[peak.t]) : ""}: load ÷ regular hours` : "of regular hours"} />
         <StatTile label="Binding limits" value={res.binding.length} sub={res.binding[0] ? `top: ${res.binding[0].label}` : "none: the plan is unconstrained"} />
       </div>
       {(e.unpriced?.length ?? 0) > 0 && <div className="banner info"><Badge sev="info">No price</Badge>
@@ -208,6 +211,7 @@ const otHours = (r: SopResult) => r.resources.reduce((a, x) => a + x.overtime.re
 
 // ------------------------------------------------------------------------------------------------
 function DemandView({ res, sel }: { res: SopResult; sel?: string }) {
+  const nm = useNames();
   const c = res.currency;
   const key = (d: { location: string; product: string }) => `${d.location}|${d.product}`;
   const cur = res.demand.find((d) => key(d) === sel) ?? res.demand[0];
@@ -235,7 +239,7 @@ function DemandView({ res, sel }: { res: SopResult; sel?: string }) {
         </div>
       </Panel>
       <div className="stack">
-        <Panel title={`${cur.product} at ${cur.location}`}>
+        <Panel title={`${nm.prod(cur.product)} at ${nm.loc(cur.location)}`}>
           <BucketChart labels={labels} series={[
             { name: "Demand", color: "var(--series-1)", values: cur.demand, kind: "column" },
             { name: "Delivered", color: "var(--series-3)", values: cur.sales, kind: "column" },
@@ -268,6 +272,7 @@ function DemandView({ res, sel }: { res: SopResult; sel?: string }) {
 
 // ------------------------------------------------------------------------------------------------
 function CapacityView({ res, sel }: { res: SopResult; sel?: string }) {
+  const nm = useNames();
   const c = res.currency;
   const finite = res.resources.filter((r) => r.finite);
   const cur = finite.find((r) => r.resource === sel) ?? [...finite].sort((a, b) => Math.max(...b.utilization) - Math.max(...a.utilization))[0];
@@ -282,7 +287,7 @@ function CapacityView({ res, sel }: { res: SopResult; sel?: string }) {
           </button>
         ))}
       </div>
-      <Panel title={`${cur.resource} at ${cur.location}: hours`}>
+      <Panel title={`${nm.res(cur.resource)} at ${nm.loc(cur.location)}: hours`}>
         <BucketChart labels={labels} unit=" h" series={[
           { name: "Load", color: "var(--series-1)", values: cur.load, kind: "column" },
           { name: "Regular capacity", color: "var(--text-2)", values: cur.capacity, kind: "step" },

@@ -177,8 +177,10 @@ def test_firm_zone_and_explicit_ids():
     x = ds(_plannable())
     plan = run_mrp(x)
     zone = x.settings.planning_start + timedelta(days=x.execution.firm_zone_days)
-    _, rep = firm_orders(x, plan)
+    firmed, rep = firm_orders(x, plan)
     assert {f.planned_id for f in rep.firmed} == {o.id for o in plan.orders if o.start_date < zone}
+    by_id = {r.id: r for r in firmed.receipts}
+    assert all(by_id[f.receipt_id].planned_as == f.planned_id for f in rep.firmed)          # the planned number is kept
     _, rep = firm_orders(x, plan, ids=[plan.orders[-1].id, "MO9999"])
     assert [f.planned_id for f in rep.firmed] == [plan.orders[-1].id] and "MO9999" in rep.skipped
 

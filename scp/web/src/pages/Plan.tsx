@@ -6,8 +6,8 @@ import {
 } from "../components/ui";
 import { Situations } from "../components/Situations";
 import { situations, codeLabel } from "../lib/situations";
-import { day, humanize, money, ORDER_LABEL, pct, plural, qty } from "../lib/format";
-import { Loc, Prod, useNames } from "../lib/names";
+import { bucketWords, day, money, ORDER_LABEL, pct, plural, qty } from "../lib/format";
+import { Loc, Msg, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { isStale, store, useStore } from "../state/store";
 
@@ -76,6 +76,11 @@ function Overview({ plan, ds }: { plan: PlanResult; ds: Dataset }) {
     ["Inventory holding", k.holding_cost ?? 0],
   ];
   const maxCost = Math.max(...costs.map(([, v]) => v), 1);
+  const nm = useNames();
+  // the busiest machine in its busiest planning bucket: the measure is named, as the capacity plan and the shop floor
+  // measure over other periods (a month of the capacity plan, the scheduling window)
+  const peak = plan.resources.flatMap((r) => r.buckets.map((b) => ({ r, b }))).sort((x, y) => y.b.utilization - x.b.utilization)[0];
+  const peakBucket = peak ? plan.buckets[peak.b.bucket] : undefined;
   const ex = plan.exceptions.filter((e) => !sev || e.severity === sev);
   const counts = { error: 0, warning: 0, info: 0 } as Record<string, number>;
   plan.exceptions.forEach((e) => counts[e.severity]++);
@@ -88,7 +93,7 @@ function Overview({ plan, ds }: { plan: PlanResult; ds: Dataset }) {
           sub={`${k.orders_make} make · ${k.orders_buy} buy · ${k.orders_transfer} move`} />
         <StatTile label="Total plan cost" value={money(k.total_cost, c)} sub={`over ${plan.buckets.length} weeks`} />
         <StatTile label="Average stock value" value={money(k.inventory_value_avg, c)} sub={`start ${money(k.inventory_value_start, c)} → end ${money(k.inventory_value_end, c)}`} />
-        <StatTile label="Busiest machine's load" value={pct(k.max_utilization, 0)} sub="of its regular capacity" />
+        <StatTile label="Busiest machine's load" value={pct(k.max_utilization, 0)} sub={peak && peakBucket ? `${nm.res(peak.r.resource)}, ${bucketWords(peakBucket)}: load ÷ regular hours` : "of its regular capacity"} />
       </div>
       <Situations list={sits} />
       <div className="grid-2">
@@ -126,6 +131,7 @@ function Overview({ plan, ds }: { plan: PlanResult; ds: Dataset }) {
 }
 
 function ExceptionTable({ rows }: { rows: PlanResult["exceptions"] }) {
+  const nm = useNames();
   if (!rows.length) return <div className="faint">No exceptions.</div>;
   return (
     <table className="t">
@@ -137,8 +143,8 @@ function ExceptionTable({ rows }: { rows: PlanResult["exceptions"] }) {
           return (
             <tr key={i}>
               <td><Badge sev={e.severity as Severity}>{codeLabel(e.code)}</Badge></td>
-              <td className="small">{where ? <a href={where}>{e.resource ?? `${e.product} @ ${e.location}`}</a> : "—"}</td>
-              <td className="small">{humanize(e.message)}</td>
+              <td className="small">{where ? <a href={where}>{e.resource ? nm.res(e.resource) : `${nm.prod(e.product ?? "")} at ${nm.loc(e.location ?? "")}`}</a> : "—"}</td>
+              <td className="small"><Msg text={e.message} /></td>
             </tr>
           );
         })}
@@ -247,7 +253,7 @@ function NodeDetail({ plan, node }: { plan: PlanResult; node: PlanResult["nodes"
           </table>
         </div>
       </Panel>
-      <Panel flush title={`Planned orders (${orders.length})`}>
+      <Panel flush title={`Planned orders (${orders.length})`} actions={<span className="faint small">Numbers are temporary: each plan hands them out again</span>}>
         <div className="split" style={cols(sel ? "minmax(0,1fr) minmax(0,1fr)" : "minmax(0,1fr)", { gap: 0 })}>
           <div className="table-wrap" style={{ maxHeight: 420 }}>
             <OrderTable plan={plan} orders={orders} sel={sel} onSelect={setSel} compact />
@@ -379,6 +385,7 @@ function OrderTable({ plan, orders, sel, onSelect, compact }: {
 // ------------------------------------------------------------------------------------------------
 /** Pegging tree: what this order serves (upstream to the customer) and what it depends on. */
 function PegTree({ plan, orderId }: { plan: PlanResult; orderId: string }) {
+  const nm = useNames();
   const idx = useMemo(() => {
     const orders = new Map(plan.orders.map((o) => [o.id, o]));
     const reqs = new Map(plan.requirements.map((r) => [r.id, r]));
@@ -422,7 +429,7 @@ function PegTree({ plan, orderId }: { plan: PlanResult; orderId: string }) {
             return (
               <li key={i}>
                 <b className="num">{qty(p.qty)}</b> from {so
-                  ? <><a href={href("plan", "orders", so.id)}>{so.id}</a> ({ORDER_LABEL[so.kind]}{so.origin ? ` from ${so.origin}` : ""}, available {day(so.available_date)})
+                  ? <><a href={href("plan", "orders", so.id)}>{so.id}</a> ({ORDER_LABEL[so.kind]}{so.origin ? ` from ${nm.loc(so.origin)}` : ""}, available {day(so.available_date)})
                     {depth < 6 && <ul>{needs(so.id, depth + 1)}</ul>}</>
                   : p.supply_kind === "on_hand" ? "stock on hand" : `scheduled receipt ${p.supply_id}`}
               </li>

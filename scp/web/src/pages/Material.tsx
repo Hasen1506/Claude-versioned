@@ -3,7 +3,7 @@
 // with the stock after each. The index lists every product at every place, filterable by who plans it.
 import { useMemo, useState } from "react";
 import type { Dataset, LocationProduct, PlanResult, ProductionSource } from "../api/types";
-import { Badge, Empty, Panel, StageHeader, Tabs } from "../components/ui";
+import { Badge, Edits, Empty, Panel, StageHeader, Tabs } from "../components/ui";
 import { day, ORDER_LABEL, qty, TYPE_LABEL } from "../lib/format";
 import { useNames } from "../lib/names";
 import { go, href } from "../lib/router";
@@ -153,7 +153,7 @@ function MaterialPage({ ds, prod, loc, tab }: { ds: Dataset; prod: string; loc: 
     <div className="stack">
       <p className="muted">There is no planning record for {nm.prod(prod)} at {nm.loc(loc)} yet, so it is planned with the defaults:
         ordered exactly as needed, no safety stock, nothing on hand.</p>
-      <div><button className="btn primary" onClick={create}>Create its planning record</button></div>
+      <div><Edits><button className="btn primary" onClick={create}>Create its planning record</button></Edits></div>
     </div>
   );
 

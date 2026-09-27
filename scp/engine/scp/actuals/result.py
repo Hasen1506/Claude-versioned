@@ -33,6 +33,7 @@ class OpenOrderRow(Out):
     due_date: dt.date
     past_due: bool
     reservations_open: float = 0.0        # components / goods at the origin still to be issued
+    planned_as: str | None = None         # the planned order it was firmed from
 
 
 class AccuracyWeek(Out):

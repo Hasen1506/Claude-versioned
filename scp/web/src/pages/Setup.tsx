@@ -9,8 +9,9 @@ import { useMemo, useState, type ReactNode } from "react";
 import { api } from "../api/client";
 import type { Dataset, LocationProduct, NetworkView, ProductionSource, ValidationResult } from "../api/types";
 import { Checklist } from "../components/Checklist";
-import { Badge, Panel, StageHeader } from "../components/ui";
+import { Badge, Edits, Panel, StageHeader } from "../components/ui";
 import { TYPE_LABEL } from "../lib/format";
+import { namesOf } from "../lib/names";
 import { go, href } from "../lib/router";
 import { store, useStore } from "../state/store";
 import { applyCompany, CompanyPanel, coverLabel } from "./Company";
@@ -76,11 +77,11 @@ export function Setup({ route }: { route: string[] }) {
   const ds = useStore((s) => s.dataset);
   if (!ds) return null;
   const sub = route[1] ?? "";
-  if (sub === "company") return <CompanySetup ds={ds} />;
-  if (sub === "network") return <NetworkBuilder ds={ds} />;
-  if (sub === "products") return <Products ds={ds} />;
-  if (sub === "product") return <ProductWizard ds={ds} product={route[2]} place={route[3]} />;
-  return <SetupHome ds={ds} />;
+  if (sub === "company") return <Edits><CompanySetup ds={ds} /></Edits>;
+  if (sub === "network") return <Edits><NetworkBuilder ds={ds} /></Edits>;
+  if (sub === "products") return <Edits><Products ds={ds} /></Edits>;
+  if (sub === "product") return <Edits><ProductWizard ds={ds} product={route[2]} place={route[3]} /></Edits>;
+  return <Edits><SetupHome ds={ds} /></Edits>;
 }
 
 function SetupHome({ ds }: { ds: Dataset }) {
@@ -166,7 +167,7 @@ function NetworkBuilder({ ds }: { ds: Dataset }) {
     if (p) return setMsg(p);
     const id = newId(`${from}-${to}`, (ds.lanes ?? []).map((l) => l.id), "LANE");
     store.update((d) => add(d, "lanes", { id, origin: from, destination: to, modes: [{ mode, transit_days: num(days) }] }));
-    setFrom(""); setTo(""); setMsg(null);
+    setFrom(""); setTo(""); setMode("truck_ftl"); setDays("2"); setMsg(null);   // the next route starts from the defaults
   };
   const pick = (id: string) => {
     if (!from || (from && to)) { setFrom(id); setTo(""); }
@@ -780,7 +781,7 @@ function StockForm({ ds, product, place, lp }: { ds: Dataset; product: string; p
     try {
       const out = await api.postActual(ds, "count", { counts: [{ location: place, product, qty: n }] });
       store.replace(out.dataset);
-      setMsg(out.report.message); setCount("");
+      setMsg(namesOf(out.dataset).text(out.report.message)); setCount("");
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }
   };
   return (

@@ -124,7 +124,7 @@ def open_orders(ds: Dataset, as_of: date) -> list[OpenOrderRow]:
                                  counterparty=counterparty(ds, rc), ordered=ordered, delivered=delivered,
                                  open=max(0.0, ordered - delivered), in_transit=transit, due_date=rc.due_date,
                                  past_due=rc.due_date < as_of and ordered - delivered > EPS,
-                                 reservations_open=open_rv))
+                                 reservations_open=open_rv, planned_as=rc.planned_as))
     for d in ds.demand:
         if d.kind is not DemandKind.SALES_ORDER or not d.id:
             continue

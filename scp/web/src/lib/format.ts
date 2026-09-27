@@ -82,3 +82,12 @@ export const plural = (n: number, one: string, many = `${one}s`) => `${qty(n)} $
 export function humanize(message: string): string {
   return message.replace(/\b(\d{4}-\d{2}-\d{2})\b/g, (_, iso: string) => day(iso)).replace(/(\d)\.0\b/g, "$1");
 }
+
+/** A planning bucket in words: "the week of Mon 5 Oct", "Mon 5 Oct", "October", "the 10 days from Mon 5 Oct". */
+export function bucketWords(b: { start: string; end: string; label?: string }): string {
+  const days = Math.round((Date.parse(b.end) - Date.parse(b.start)) / 86_400_000);   // end is exclusive
+  if (days === 1) return day(b.start);
+  if (days === 7) return `the week of ${day(b.start)}`;
+  if (days >= 28 && days <= 31 && b.start.endsWith("-01")) return new Date(b.start + "T00:00:00").toLocaleDateString("en-GB", { month: "long" });
+  return `the ${days} days from ${day(b.start)}`;
+}

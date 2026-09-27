@@ -6,7 +6,7 @@ import type { Dataset, ForecastModels, ForecastPoint, ForecastResult, ForecastSe
 import { BucketChart, type Mark, type Span } from "../components/charts";
 import { DemandPlan } from "./DemandPlan";
 import {
-  Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
+  Badge, cols, Edits, Empty, Panel, Provenance, Reading, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
 } from "../components/ui";
 import { day, pct, plural, qty } from "../lib/format";
 import { Loc, Prod } from "../lib/names";
@@ -61,10 +61,10 @@ export function Demand({ route }: { route: string[] }) {
       right={view === "plan" ? undefined : <>
       {fc && <Provenance kind="solved" at={run.at} stale={stale} />}
       <RunButton running={run.running} has={!!fc} onClick={() => store.run("forecast")} disabled={blocking} />
-      <button className="btn primary" onClick={release} disabled={!fc || !fc.ok || !fc.series.length || stale || releasing || run.running}
+      <Edits><button className="btn primary" onClick={release} disabled={!fc || !fc.ok || !fc.series.length || stale || releasing || run.running}
         title={stale ? "Recalculate first: the data changed" : "Writes this forecast into your demand data, replacing the forecast records there. Undo reverts it."}>
         {releasing ? "Saving…" : "Use this forecast in the supply plan"}
-      </button></>} />
+      </button></Edits></>} />
   );
   const tabs = <Tabs<View> value={view} onChange={(v) => go("demand", v)} tabs={[
     { id: "plan", label: "Demand plan" },
@@ -123,7 +123,7 @@ function ReleaseBanner({ info, ds, onClose }: { info: ReleaseInfo; ds: Dataset; 
       <span>{info.records} forecast records for {info.series} series written to demand at {info.at} (replaced {info.replaced}).
         The supply plan is now stale. Undo reverts the release.</span>
       <span className="spacer" />
-      {applicable.length > 0 && <button className="btn sm" onClick={apply}>Size safety stock from forecast error ({applicable.length} item{applicable.length === 1 ? "" : "s"})</button>}
+      {applicable.length > 0 && <Edits><button className="btn sm" onClick={apply}>Size safety stock from forecast error ({applicable.length} item{applicable.length === 1 ? "" : "s"})</button></Edits>}
       <a className="btn sm" href={href("plan")}>Open supply plan</a>
       <button className="btn sm ghost" onClick={onClose} aria-label="Dismiss">✕</button>
     </div>

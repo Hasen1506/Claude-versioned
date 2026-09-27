@@ -139,6 +139,7 @@ def requisitions(ds: Dataset, plan: PlanResult) -> list[Requisition]:
             order_date=o.start_date, due_date=o.due_date, source_id=pu.id, supplier=pu.supplier, price=price,
             currency=_currency(ds, ds.price_currency(pu)), value=o.qty * price * fx(ds, ds.price_currency(pu)) * (1.0 + pu.duty_rate),
             due_now=(o.start_date - start).days <= window, late=o.start_in_past or o.start_date < start,
+            wanted_order_date=o.wanted_start if o.start_in_past else (o.start_date if o.start_date < start else None),
             choices=choices, open_later=list(o.open_later)))
     out.sort(key=lambda r: (r.order_date, r.supplier, r.product, r.id))
     return out
@@ -209,7 +210,8 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
             lid = f"{pid}-{i * 10}"
             price = pu.price_for(qty)
             receipts.append(ScheduledReceipt(id=lid, kind=ReceiptKind.PURCHASE, location=loc, product=pu.product, qty=qty,
-                                             due_date=due, start_date=today, source=pu.id, po=pid, price=price))
+                                             due_date=due, start_date=today, source=pu.id, po=pid, price=price,
+                                             planned_as=rid))
             created.lines.append(lid)
             created.value += qty * price
             created.notes += notes

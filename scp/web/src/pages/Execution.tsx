@@ -3,13 +3,13 @@ import { api } from "../api/client";
 import type { AccuracySeries, ActualsView, Dataset, GoodsMovement, OpenOrderRow, PlannedOrder, PostAction, RollReport, StockRow, UsageInput } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
+  Badge, Edits, Empty, Panel, Provenance, Reading, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
 } from "../components/ui";
 import { day, pct, plural, qty } from "../lib/format";
-import { Loc, Prod, useNames } from "../lib/names";
+import { Loc, Msg, namesOf, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
-import { isStale, store, useStore } from "../state/store";
+import { isStale, store, useFreshResult, useStore } from "../state/store";
 
 type View = "stock" | "count" | "orders" | "journal" | "roll" | "accuracy";
 
@@ -23,6 +23,12 @@ const addDays = (iso: string, n: number) => {
 };
 
 const INFLOW = new Set(["opening", "receipt"]);
+
+/** Where a planned order comes from, by its source record: the supplier of a purchasing source, the start of a lane. */
+function SourceFrom({ ds, id }: { ds: Dataset; id?: string | null }) {
+  const from = (ds.purchasing_sources ?? []).find((x) => x.id === id)?.supplier ?? (ds.lanes ?? []).find((x) => x.id === id)?.origin;
+  return from ? <Loc id={from} /> : <span className="faint">—</span>;
+}
 
 function nextMovementId(ds: Dataset): string {
   let n = 0;
@@ -44,7 +50,7 @@ async function postActual(ds: Dataset, action: PostAction, extra: Parameters<typ
   const out = await api.postActual(ds, action, extra);
   store.replace(out.dataset);
   await store.run("actuals");
-  return out.report.message;
+  return namesOf(out.dataset).text(out.report.message);
 }
 
 /** Book the journal into the starting position again without moving the planning start (a late posting, a count). */
@@ -57,6 +63,7 @@ async function rebook(ds: Dataset) {
 
 export function Execution({ route }: { route: string[] }) {
   const run = useStore((s) => s.runs.actuals);
+  useFreshResult("actuals");
   const res = run.data;
   const ds = useStore((s) => s.dataset)!;
   const stale = useStore((s) => isStale(s, "actuals"));
@@ -153,7 +160,7 @@ function Stock({ res, ds }: { res: ActualsView; ds: Dataset }) {
       {off.length > 0 && !res.unbooked?.needed && (
         <div className="banner warning"><Badge sev="warning">{off.length} nodes out of sync</Badge>
           <span>On-hand in the planning policies differs from the journal. Syncing adopts the journal without moving the planning start.</span>
-          <span className="spacer" /><button className="btn sm" onClick={sync} disabled={busy}>{busy ? "Syncing…" : "Sync stock from journal"}</button></div>
+          <span className="spacer" /><Edits><button className="btn sm" onClick={sync} disabled={busy}>{busy ? "Syncing…" : "Sync stock from journal"}</button></Edits></div>
       )}
       <Panel flush title="On-hand reconciliation">
         <div className="table-wrap" style={{ maxHeight: 560 }}>
@@ -216,7 +223,7 @@ function UnbookedBanner({ res, ds }: { res: ActualsView; ds: Dataset }) {
       <span>Movements dated before {day(ds.settings.planning_start)} were posted after the plan started from them. Counting them
         changes {what}. The planning start stays where it is.</span>
       <span className="spacer" />
-      <button className="btn sm accent" onClick={book} disabled={busy}>{busy ? "Counting…" : "Count them now"}</button>
+      <Edits><button className="btn sm accent" onClick={book} disabled={busy}>{busy ? "Counting…" : "Count them now"}</button></Edits>
       {err && <span className="small" style={{ color: "var(--error-text)" }}>{err}</span>}
     </div>
   );
@@ -282,7 +289,7 @@ function Count({ ds, res }: { ds: Dataset; res: ActualsView | null }) {
   return (
     <div className="stack">
       <Panel title="Count stock" actions={
-        <button className="btn sm accent" onClick={save} disabled={busy || !changed.length}>{busy ? "Saving…" : changed.length ? `Save ${plural(changed.length, "count")}` : "Save counts"}</button>}>
+        <Edits><button className="btn sm accent" onClick={save} disabled={busy || !changed.length}>{busy ? "Saving…" : changed.length ? `Save ${plural(changed.length, "count")}` : "Save counts"}</button></Edits>}>
         <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
           <label className="small muted" htmlFor="count-date">Counted at the end of</label>
           <input id="count-date" type="date" className="input" style={{ width: 170 }} value={on} onChange={(e) => setOn(e.target.value)} />
@@ -380,19 +387,19 @@ function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
                 {receipts.map((o) => (
                   <Fragment key={o.id}>
                     <tr>
-                      <td><b>{o.id}</b></td><td>{KIND[o.kind] ?? o.kind}</td><td><Loc id={o.location} /></td><td><Prod id={o.product} /></td>
+                      <td><b>{o.id}</b>{o.planned_as && <div className="faint small" title="The planned order it was firmed from">was {o.planned_as}</div>}</td><td>{KIND[o.kind] ?? o.kind}</td><td><Loc id={o.location} /></td><td><Prod id={o.product} /></td>
                       <td>{o.kind === "production" ? <span className="faint">made here</span> : o.counterparty ? <Loc id={o.counterparty} /> : ""}</td>
                       <td className="num">{qty(o.ordered)}</td><td className="num">{o.delivered ? qty(o.delivered) : ""}</td><td className="num">{qty(o.open)}</td>
                       <td className="num">{o.in_transit ? qty(o.in_transit) : ""}</td><td className="num">{o.reservations_open ? qty(o.reservations_open) : ""}</td>
                       <td>{day(o.due_date)} {o.past_due && <Badge sev="warning">past due</Badge>}</td>
                       <td className="nowrap">
-                        {o.kind === "transfer" && <button className="btn sm" onClick={() => act(o.id, "ship")} disabled={!!busy || toShip(o) <= 1e-6}
+                        <Edits>{o.kind === "transfer" && <button className="btn sm" onClick={() => act(o.id, "ship")} disabled={!!busy || toShip(o) <= 1e-6}
                           aria-label={`Ship ${o.id}`} title="Goods issue at the sending place: the goods are then in transit">Ship</button>}{" "}
                         <button className="btn sm" onClick={() => act(o.id, "receive")} disabled={!!busy || o.open <= 1e-6} aria-label={`Receive ${o.id}`}
                           title={o.kind === "production" ? "Post what was made and issue its parts" : o.kind === "transfer" ? "Post the arrival (and the dispatch, if it was not posted)" : "Goods receipt of the open quantity"}>
                           {o.kind === "production" ? "Confirm" : "Receive"}</button>{" "}
                         <button className="btn sm ghost" onClick={() => setOpen(open === o.id ? null : o.id)} aria-expanded={open === o.id}
-                          aria-label={`Post part of ${o.id}`} title="Part of it, a final delivery, or the parts actually used">…</button>
+                          aria-label={`Post part of ${o.id}`} title="Part of it, a final delivery, or the parts actually used">…</button></Edits>
                       </td>
                     </tr>
                     {open === o.id && <tr className="sub"><td colSpan={12}><PostForm o={o} ds={ds} busy={busy === o.id}
@@ -416,8 +423,8 @@ function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
                     <td><b>{o.id}</b></td><td><Loc id={o.location} /></td><td><Prod id={o.product} /></td><td className="num">{qty(o.ordered)}</td>
                     <td className="num">{o.delivered ? qty(o.delivered) : ""}</td><td className="num">{qty(o.open)}</td>
                     <td>{day(o.due_date)} {o.past_due && <Badge sev="warning">past due</Badge>}</td>
-                    <td className="nowrap"><button className="btn sm" onClick={() => act(o.id, "deliver")} disabled={!!busy || o.open <= 1e-6 || !shipFrom(ds, o.location, o.id)}
-                      aria-label={`Deliver ${o.id}`} title="Goods issue of the open quantity to the customer, from where it was promised">Deliver</button>{" "}
+                    <td className="nowrap"><Edits><button className="btn sm" onClick={() => act(o.id, "deliver")} disabled={!!busy || o.open <= 1e-6 || !shipFrom(ds, o.location, o.id)}
+                      aria-label={`Deliver ${o.id}`} title="Goods issue of the open quantity to the customer, from where it was promised">Deliver</button></Edits>{" "}
                       <a className="btn sm ghost" href={href("promise", "orders", o.id)} aria-label={`Open ${o.id}`} title="Part of it, change or cancel">…</a></td>
                   </tr>
                 ))}
@@ -466,7 +473,7 @@ function PostForm({ o, ds, busy, onPost, onShip }: { o: OpenOrderRow; ds: Datase
   const issued = (prod: string) => (ds.movements ?? []).filter((m) => m.reference === o.id && m.type === "issue" && m.product === prod).reduce((a, m) => a + m.qty, 0);
   const guess = (r: (typeof parts)[number]) => Math.max(0, (r.required_qty ?? r.qty) * share - issued(r.product));
   return (
-    <div className="stack" style={{ gap: 8, padding: "6px 4px" }}>
+    <Edits><div className="stack" style={{ gap: 8, padding: "6px 4px" }}>
       <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
         <label className="small muted">Quantity <input className="input" type="number" min={0} step="any" value={q} onChange={(e) => setQ(e.target.value)}
           style={{ width: 110 }} aria-label={`Quantity for ${o.id}`} /></label>
@@ -489,7 +496,7 @@ function PostForm({ o, ds, busy, onPost, onShip }: { o: OpenOrderRow; ds: Datase
         </div>
       )}
       {o.kind === "production" && !parts.length && <div className="small faint">This order has no parts reserved: they are issued from the bill of materials.</div>}
-    </div>
+    </div></Edits>
   );
 }
 
@@ -516,7 +523,7 @@ function Firming({ ds }: { ds: Dataset }) {
       const r = out.report;
       const pos = r.purchase_orders ?? [];
       setMsg(`${plural(r.firmed.length, "planned order")} firmed: ${r.firmed.slice(0, 4).map((f) => `${f.planned_id} → ${f.receipt_id}`).join(", ")}${r.firmed.length > 4 ? "…" : ""}.`
-        + (pos.length ? ` Purchases went onto ${plural(pos.length, "purchase order")} (${pos.join(", ")}), grouped per supplier as on Buying${(r.notes ?? []).length ? `: ${(r.notes ?? []).join("; ")}` : ""}.` : "")
+        + (pos.length ? ` Purchases went onto ${plural(pos.length, "purchase order")} (${pos.join(", ")}), grouped per supplier as on Buying${(r.notes ?? []).length ? `: ${(r.notes ?? []).map(namesOf(ds).text).join("; ")}` : ""}.` : "")
         + (Object.keys(r.skipped).length ? ` Not firmed: ${Object.entries(r.skipped).slice(0, 3).map(([k, v]) => `${k} (${v})`).join(", ")}.` : "")
         + " Re-plan to see the rest move around them.");
       await Promise.all([store.run("plan"), store.run("actuals")]);
@@ -534,16 +541,18 @@ function Firming({ ds }: { ds: Dataset }) {
   };
   return (
     <Panel flush title={`Firm zone: planned orders starting before ${day(limit)} (${zone} days)`} actions={
-      plan.data ? <><button className="btn sm ghost" disabled={busy || planStale || !cands.length} onClick={() => setPick(new Set(chosen.size ? [] : cands.map((o) => o.id)))}>
+      plan.data ? <Edits><><button className="btn sm ghost" disabled={busy || planStale || !cands.length} onClick={() => setPick(new Set(chosen.size ? [] : cands.map((o) => o.id)))}>
         {chosen.size ? "Select none" : "Select all"}</button><button className="btn sm accent" disabled={busy || planStale || chosen.size === 0} onClick={firm}
         title={planStale ? "Recalculate the supply plan first" : "Turns these planned orders into firm purchase, production and transfer orders in your data. Undo reverts it."}>
-        {busy ? "Saving…" : `Make ${chosen.size} order${chosen.size === 1 ? "" : "s"} firm`}</button></> : null}>
+        {busy ? "Saving…" : `Make ${chosen.size} order${chosen.size === 1 ? "" : "s"} firm`}</button></></Edits> : null}>
       {msg && <div className="banner info" style={{ margin: 12 }}><Badge sev="ok">Firmed</Badge><span>{msg}</span><span className="spacer" />
         <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
       {err && <div className="banner error" style={{ margin: 12 }}><Badge sev="error">Firming failed</Badge>{err}</div>}
       {!plan.data ? <Empty title="No supply plan yet"><button className="btn" onClick={() => store.run("plan")} disabled={plan.running}>Calculate the supply plan</button></Empty>
         : planStale ? <Empty title="The supply plan is out of date"><button className="btn" onClick={() => store.run("plan")} disabled={plan.running}>{plan.running ? "Calculating…" : "Recalculate the supply plan"}</button></Empty>
         : cands.length === 0 ? <Empty title="Nothing to firm">No convertible planned order starts inside the firm zone.</Empty> : (
+          <><p className="small muted" style={{ margin: "10px 12px 0" }}>Planned numbers are temporary: every plan hands them out again.
+            A firm order gets its own number and keeps the planned one as “was …”.</p>
           <div className="table-wrap" style={{ maxHeight: 320 }}>
             <table className="t">
               <thead><tr><th style={{ width: 28 }} /><th>Planned order</th><th>Becomes</th><th>Location</th><th>Product</th><th>From</th><th className="num">Qty</th><th>Start</th><th>Due</th></tr></thead>
@@ -554,13 +563,13 @@ function Firming({ ds }: { ds: Dataset }) {
                     <td><b>{o.id}</b></td><td>{o.kind === "make" ? "production order" : o.kind === "buy" ? "purchase order line" : "stock transfer"}
                       {!!o.open_later?.length && <div className="small" style={{ color: "var(--warning-text)" }}>{o.open_later.join(", ")} is already on order but arrives
                         later; expediting it may do instead</div>}</td>
-                    <td><Loc id={o.location} /></td><td><Prod id={o.product} /></td><td>{o.kind === "make" ? <span className="faint">made here</span> : o.origin ? <Loc id={o.origin} /> : o.source_id}</td><td className="num">{qty(o.qty)}</td>
+                    <td><Loc id={o.location} /></td><td><Prod id={o.product} /></td><td>{o.kind === "make" ? <span className="faint">made here</span> : o.origin ? <Loc id={o.origin} /> : <SourceFrom ds={ds} id={o.source_id} />}</td><td className="num">{qty(o.qty)}</td>
                     <td>{day(o.start_date)} {o.start_in_past && <Badge sev="warning">late start</Badge>}</td><td>{day(o.due_date)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </div></>
         )}
     </Panel>
   );
@@ -613,7 +622,7 @@ function Journal({ ds }: { ds: Dataset }) {
         <Panel title="Post a movement">
           <SchemaForm defName="GoodsMovement" value={draft} onChange={setDraft} hide={["id"]} compact />
           {err && <div className="banner error" style={{ marginTop: 8 }}>{err}</div>}
-          <div className="row" style={{ marginTop: 10 }}><button className="btn accent" onClick={submit}>Post movement</button></div>
+          <div className="row" style={{ marginTop: 10 }}><Edits><button className="btn accent" onClick={submit}>Post movement</button></Edits></div>
         </Panel>
         <Reading formula="Receipts, issues and transfer issues carry the firm order they belong to as reference; sales carry the sales order and the customer. Mark the last delivery ‘final’ to close an order short."
           soWhat="Movements dated before the planning start are history already counted; later ones take effect when you roll forward past them." />
@@ -652,7 +661,7 @@ function Roll({ ds }: { ds: Dataset }) {
         <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
           <span className="muted">From <b>{day(start)}</b> to</span>
           <input type="date" className="input" style={{ width: 170 }} value={to} min={start} onChange={(e) => setTo(e.target.value)} aria-label="Roll forward to" />
-          <button className="btn accent" onClick={roll} disabled={busy || to < start}>{busy ? "Moving…" : "Move the plan to this date"}</button>
+          <Edits><button className="btn accent" onClick={roll} disabled={busy || to < start}>{busy ? "Moving…" : "Move the plan to this date"}</button></Edits>
           <span className="faint small">{pending.length} movement{pending.length === 1 ? "" : "s"} fall in this window. Undo reverts the roll.</span>
         </div>
         {err && <div className="banner error" style={{ marginTop: 10 }}><Badge sev="error">Roll failed</Badge>{err}</div>}
@@ -675,7 +684,7 @@ function RollResult({ rep }: { rep: RollReport }) {
         <StatTile label="History added" value={qty(rep.history_added)} sub="sales days, now forecast input" />
         <StatTile label="Accuracy logged" value={qty(rep.accuracy.length)} sub="series-weeks" />
       </div>
-      {rep.warnings.map((w, i) => <div key={i} className="banner warning"><Badge sev="warning">Check</Badge>{w}</div>)}
+      {rep.warnings.map((w, i) => <div key={i} className="banner warning"><Badge sev="warning">Check</Badge><Msg text={w} /></div>)}
       <div className="grid-2" style={{ alignItems: "start" }}>
         <Panel flush title="Stock">
           {rep.stock.length === 0 ? <Empty title="No stock changes" /> : (
@@ -703,6 +712,7 @@ function RollResult({ rep }: { rep: RollReport }) {
 
 // ------------------------------------------------------------------------------------------------
 function Accuracy({ res, sel }: { res: ActualsView; sel?: string }) {
+  const nm = useNames();
   const a = res.accuracy;
   const key = (s: AccuracySeries) => `${s.location}|${s.product}`;
   const cur = a.series.find((s) => key(s) === sel) ?? a.series[0];
@@ -720,7 +730,7 @@ function Accuracy({ res, sel }: { res: ActualsView; sel?: string }) {
         <StatTile label="Weeks measured" value={qty(a.periods)} sub={`${qty(a.actual)} units sold vs ${qty(a.forecast)} forecast`} />
       </div>
       {cur && (
-        <Panel title={`${cur.product} at ${cur.location}: forecast against actual`}>
+        <Panel title={`${nm.prod(cur.product)} at ${nm.loc(cur.location)}: forecast against actual`}>
           <BucketChart labels={cur.weeks.map((w) => day(w.start))} height={220} series={[
             { name: "Actual sales", color: "var(--series-1)", values: cur.weeks.map((w) => w.actual), kind: "column" },
             { name: "Forecast", color: "var(--series-2)", values: cur.weeks.map((w) => w.forecast), kind: cur.weeks.length > 1 ? "line" : "dots", dash: true },

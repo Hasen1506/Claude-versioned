@@ -172,6 +172,22 @@ any time); signed in, it is kept on the server (see Phase I below).
 
 What real use turned up, and what was done about it, is logged in [docs/USABILITY_LOG.md](docs/USABILITY_LOG.md).
 
+## Polish (Phase J)
+
+- **Names, not ids.** Messages from planning, the data check, postings and purchasing, the shop-floor board, the firm
+  zone and the performance breakdowns name places, products and machines ("Emulsion white 20 L at Vapi paint plant");
+  pickers lead with the name. Dates in messages read "Mon 28 Sep".
+- **Which utilisation.** The supply plan, the capacity plan and the shop floor each say whose load it is and over what
+  period (the busiest week, month or scheduling window), so their percentages can be told apart.
+- **Order numbers that hold.** Planned numbers are marked temporary (every plan hands them out again); a firm order
+  shows the planned number it came from ("was MO-00430"). A late requisition says when it should have been ordered.
+- **A purchase order to send.** *Print or PDF*, *Download* and *E-mail* on a purchase order give the supplier a
+  document with the lines, prices, dates and the supplier's terms.
+- **Pages that keep up.** Actuals, Buying, Money and customer orders recalculate when opened out of date. A viewer sees
+  the buttons and forms that change data disabled, with the reason on hover. The demand grid spreads a monthly
+  forecast over working days as planning does; *Machines & shifts* stacks at phone width; the bottling example has an
+  alternative line to move steps onto.
+
 ## What is here (P0–P10)
 
 | Area | Where | What it does |

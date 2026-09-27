@@ -5,7 +5,8 @@ import {
   Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, type Severity, RunButton,
 } from "../components/ui";
 import { codeLabel } from "../lib/situations";
-import { day, humanize, money, pct, plural, qty, unitMoney } from "../lib/format";
+import { day, money, pct, plural, qty, unitMoney } from "../lib/format";
+import { Msg } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -23,6 +24,12 @@ const GROUPS: { title: string; ids: string[] }[] = [
 
 const STATUS_SEV: Record<string, Severity | undefined> = { good: "ok", warning: "warning", critical: "error" };
 const STATUS_LABEL: Record<string, string> = { good: "On target", warning: "Near target", critical: "Off target", none: "No data" };
+/** Why a measure has no grade: nothing to measure yet, no target set, or a measure that is neither better high nor low. */
+function gradeLabel(k: Pick<Kpi, "status" | "value" | "target" | "direction">): string {
+  if (k.status !== "none") return STATUS_LABEL[k.status];
+  if (k.value === null || k.value === undefined) return "No data";
+  return k.direction === "none" ? "For reading" : "No target";
+}
 const ITEM_SEV: Record<string, Severity> = { error: "error", warning: "warning", info: "info" };
 
 function fmtKpi(k: Pick<Kpi, "unit">, v: number | null | undefined, cur: string): string {
@@ -109,7 +116,7 @@ function Kpis({ res, cur, sel }: { res: TowerResult; cur: string; sel?: string }
         <StatTile label="On target" value={count("good")} sub={`of ${res.kpis.length} KPIs`} />
         <StatTile label="Near target" value={count("warning")} />
         <StatTile label="Off target" value={count("critical")} tone={count("critical") ? "hl" : undefined} />
-        <StatTile label="No data yet" value={count("none")} sub="not graded" />
+        <StatTile label="Not graded" value={count("none")} sub="no data yet, no target, or read only" />
         <StatTile label="Measured up to" value={day(res.as_of)} sub="the planning start" />
       </div>
       {GROUPS.map((g) => (
@@ -120,11 +127,11 @@ function Kpis({ res, cur, sel }: { res: TowerResult; cur: string; sel?: string }
               const k = by[id];
               return (
                 <button key={id} className={`kpi-card ${k.status} ${cur_?.id === id ? "on" : ""}`} onClick={() => go("tower", "kpis", id)}
-                  aria-pressed={cur_?.id === id} aria-label={`${k.name}: ${fmtKpi(k, k.value, cur)}, ${STATUS_LABEL[k.status]}`}>
+                  aria-pressed={cur_?.id === id} aria-label={`${k.name}: ${fmtKpi(k, k.value, cur)}, ${gradeLabel(k)}`}>
                   <span className="kpi-name">{k.name}</span>
                   <span className="kpi-value">{fmtKpi(k, k.value, cur)}</span>
                   <span className="kpi-foot">
-                    {STATUS_SEV[k.status] ? <Badge sev={STATUS_SEV[k.status]}>{STATUS_LABEL[k.status]}</Badge> : <span className="faint">{STATUS_LABEL[k.status]}</span>}
+                    {STATUS_SEV[k.status] ? <Badge sev={STATUS_SEV[k.status]}>{gradeLabel(k)}</Badge> : <span className="faint">{gradeLabel(k)}</span>}
                     <span className="faint">{targetText(k, cur)}</span>
                   </span>
                   <span className="kpi-n faint">{k.n ? `${qty(k.n)} observations` : k.note ? "—" : ""}</span>
@@ -162,7 +169,7 @@ function KpiDetail({ k, cur }: { k: Kpi; cur: string }) {
                       || (k.direction === "zero" && Math.abs(r.value) > k.target));
                     return (
                       <tr key={r.label}>
-                        <td>{r.label}</td>
+                        <td title={r.label}><Msg text={r.label} /></td>
                         <td className={`num ${bad ? "neg" : ""}`}>{k.id === "excess_obsolete" ? money(r.value, cur) : fmtKpi(k, r.value, cur)}</td>
                         <td>
                           <div className="bar-track" style={{ position: "relative" }}>
@@ -294,7 +301,7 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
                 <tr key={w.id} className={`${sel?.id === w.id ? "selected" : ""} ${w.status === "resolved" ? "dim" : ""}`}>
                   <td><Badge sev={ITEM_SEV[w.severity]} /></td>
                   <td><a href={href(...(CAT_LINK[w.category] ?? ["plan"]))}>{w.category}</a></td>
-                  <td><b>{codeLabel(w.code)}</b> <span className="mono faint small">{w.code}</span><div className="small clamp2" title={humanize(w.message)}>{humanize(w.message)}</div></td>
+                  <td><b>{codeLabel(w.code)}</b> <span className="mono faint small">{w.code}</span><div className="small clamp2"><Msg text={w.message} /></div></td>
                   <td className="small nowrap">{[w.location, w.product].filter(Boolean).join(" · ") || w.resource}{w.order_id && <div className="faint">{w.order_id}</div>}</td>
                   <td>
                     <input className="input" list="tower-owners" aria-label={`Owner of ${w.code} ${w.location ?? ""} ${w.product ?? ""}`.trim()} defaultValue={w.owner}
@@ -333,7 +340,7 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
             <table className="t">
               <thead><tr><th>Exception</th><th>Where</th><th>Owner</th><th className="num">Was open</th></tr></thead>
               <tbody>{res.cleared.map((w) => (
-                <tr key={w.id}><td><b>{codeLabel(w.code)}</b> <span className="mono faint small">{w.code}</span> <span className="small">{humanize(w.message)}</span></td>
+                <tr key={w.id}><td><b>{codeLabel(w.code)}</b> <span className="mono faint small">{w.code}</span> <span className="small"><Msg text={w.message} /></span></td>
                   <td className="small">{[w.location, w.product].filter(Boolean).join(" · ") || w.resource}</td><td>{w.owner}</td><td className="num">{w.age_days} d</td></tr>
               ))}</tbody>
             </table>
@@ -356,7 +363,7 @@ function ItemDetail({ w, onNote }: { w: WorkItem; onNote: (note: string) => void
   return (
     <div className="grid-2" style={{ alignItems: "start" }}>
       <Panel title={`${codeLabel(w.code)} · ${[w.location, w.product].filter(Boolean).join(" · ") || w.resource || ""}`}>
-        <p style={{ marginTop: 0 }}>{humanize(w.message)}</p>
+        <p style={{ marginTop: 0 }}><Msg text={w.message} /></p>
         <div className="small faint" style={{ marginBottom: 8 }}>
           {w.date && <>Date {day(w.date)} · </>}{w.qty !== null && <>qty {qty(w.qty)} · </>}first seen {day(w.first_seen)} · last seen {day(w.last_seen)}
         </div>

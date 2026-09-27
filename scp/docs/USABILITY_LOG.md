@@ -34,7 +34,7 @@ Phases: **A** get your own company in · **B** master-data depth · **C** capaci
 | N5 | The network map led with ids (SUPPLIER-A) instead of names. | Minor | **Fixed (A).** |
 | N6 | Data-check problems for a product at a place that has no planning record linked to a record that does not exist. | Minor | **Fixed (A).** Links to that product's setup page, where the record is made. |
 | N7 | A company with no opening stock gets 11 purchase orders "should already have started" on day one. True, but alarming for a first plan. | Minor | **Fixed (A).** Home says the plan starts every place from zero and links to entering today's stock. |
-| N8 | Forecast records that cover a month are shown spread over its weeks by calendar days, while the engine spreads them over working days. Totals agree; single weeks can differ slightly. | Minor | Open (documented in the grid's code). |
+| N8 | Forecast records that cover a month are shown spread over its weeks by calendar days, while the engine spreads them over working days. Totals agree; single weeks can differ slightly. | Minor | **Fixed (J).** The grid spreads a forecast over the working days of its place's calendar, as planning does; totals and single weeks agree. |
 | N10 | Opening *Set up* before the first data check had answered froze the page (a selector returned a new empty list on every render). Found only at phone width, where the page opened first. | Critical | **Fixed (A).** |
 | N11 | At phone width the places and routes tables ran past their panel. | Minor | **Fixed (A).** |
 | N9 | Lanes created by the wizard carry all products. Right for most companies, but a lane for one product needs Master data. | Minor | **Fixed (B).** The wizard asks whether a new route is for every product or only this one. |
@@ -72,7 +72,7 @@ Phases: **A** get your own company in · **B** master-data depth · **C** capaci
 | N28 | After a hand change to the sequence the banner said to use “Reset to optimised”, a button that does not exist (it is *Undo my changes to the order*). | Minor | **Fixed (D).** The banner names the real button and says what was moved and how late orders, changeovers and the score changed. |
 | N29 | *Shortest job first* and *least slack first*, taken literally, left machines idle waiting for an order whose parts or earlier step were not ready, and made 19 to 21 of 24 orders late on the example. | Serious | **Fixed (D).** Both rules dispatch without delay: a machine that comes free takes the most urgent step that can start then. On the example they now leave 10 late. |
 | N30 | The optimiser's first model averaged each step's time and never beat the local search on the example (it proposed schedules 4× worse once timed on the shifts). | Serious | **Fixed (D).** The model takes each step's elapsed time from the starting schedule, sequences single machines with changeovers and parallel units as a pool, and is run in rounds from the best schedule so far. On the example it wins: 1669 against 1728 for the local search. It still only proposes; the shift-calendar timing decides and keeps it only if better. |
-| N31 | The kitchenware example has no alternative machines, so dragging a step onto another machine and the optimiser's choice of machine cannot be seen on it. | Minor | Open. Covered by engine tests; an example with alternative machines would show it. |
+| N31 | The kitchenware example has no alternative machines, so dragging a step onto another machine and the optimiser's choice of machine cannot be seen on it. | Minor | **Fixed (J).** The bottling example has an old second line as the alternative for its one step, so the board's machine choice and dragging onto another row can be tried. |
 | N32 | *Campaigns by setup group* gains little on the example: its orders are spread over weeks, so few same-group orders are ready at once. | By design | The comparison on *Methods & profiles* shows this for each company; campaigns win where many orders of a group are ready together. |
 | N33 | A phone cannot drag a bar on the board: a drag there scrolls the board. | By design | A tap selects the order; its panel moves a step earlier or later, or onto another machine that can run it. |
 
@@ -96,7 +96,7 @@ Phases: **A** get your own company in · **B** master-data depth · **C** capaci
 | N42 | *Open orders* counted only postings dated before the planning start, so an order received this week still showed its whole quantity open; a second *Receive* then had nothing to post. | Serious | **Fixed (F).** Open orders count every posting against them, whatever its date. |
 | N43 | The posting date on *Open orders* defaulted to the day before the planning start, which made every quick post a late posting for a period already planned from. | Serious | **Fixed (F).** It defaults to the planning start; an earlier date is offered as a late posting to count. |
 | N44 | The firm zone preselects everything (110 orders with the default daily lot size) and had no way to clear the selection. | Minor | **Fixed (F).** *Select none* / *Select all*. |
-| N45 | Posting messages named places by id and printed six significant digits ("35.6631 still to come", "shipped from MUMBAI-WAREHOUSE"); the firm zone and open orders showed a production version's id as *From*. | Minor | **Fixed (F)** for posting and firming (names, at most two decimals, "made here"). The roll-forward's warnings still name ids ("WHITE-BASE-BULK at VAPI-PAINT-PLANT"): **J**, with Q17. |
+| N45 | Posting messages named places by id and printed six significant digits ("35.6631 still to come", "shipped from MUMBAI-WAREHOUSE"); the firm zone and open orders showed a production version's id as *From*. | Minor | **Fixed (F)** for posting and firming; the roll-forward's warnings and the firm zone's notes name places and products since **J**. |
 | N46 | The product wizard's *On hand today* and the planning-policy table still set on-hand directly. At a place that already has movements this makes stock disagree with the journal until it is counted or re-booked (Home now says so at once). | Minor | **Fixed (H)** in the product wizard: at a place with goods movements *On hand today* becomes *Counted today*, which posts a count. The planning-policy table in Master data still edits on-hand directly; Home and the data check flag the difference at once (**J**). |
 | N47 | Receiving by quantity only: there is no batch or serial number, no stock in quality inspection, and a transfer's goods in transit are a quantity on the order, not a stock type of their own. | Minor | Open: SAP gap below. |
 
@@ -107,7 +107,7 @@ Phases: **A** get your own company in · **B** master-data depth · **C** capaci
 | N48 | A missing exchange rate for a supplier's order currency went unnoticed: the rate check looked only at a source's own currency, and money pages counted the foreign price one to one. | Serious | **Fixed (H)** with N40: the check covers the supplier's currency. |
 | N49 | The supply plan's order search matched ids only: "White base" found nothing, "WHITE-BASE-BULK" found the orders. | Minor | **Fixed (H).** It matches product and place names too. |
 | N50 | Company settings in Master data had no way to enter exchange rates (a map the generic form skips). | Minor | **Fixed (H).** *Your company* lists every currency a supplier prices in, with its rate. |
-| N51 | Planned-order numbers still change on every plan and firm orders still get new numbers (Q22), which the week's-need default makes less noisy but does not fix. | Minor | Open (**J**, Q22). |
+| N51 | Planned-order numbers still change on every plan and firm orders still get new numbers (Q22), which the week's-need default makes less noisy but does not fix. | Minor | **Fixed (J)**, see Q22. |
 
 ## Found while building Phase G
 
@@ -117,8 +117,8 @@ Phases: **A** get your own company in · **B** master-data depth · **C** capaci
 | N53 | An order's value counted a missing price as zero: "₹0 of sales on backorder", and a product without a price looked like a free giveaway in the backorder total. | Minor | **Fixed (G).** An order without a price has no value, and the backorder total says how many orders have none. |
 | N54 | Two sales orders with the same number were not flagged by the data check (only receipts, movements and purchase orders were). | Serious | **Fixed (G).** A duplicate sales-order number is an error. |
 | N55 | Removing a sales order (Master data → Demand) left its deliveries without an order and its promise as an orphan confirmation, a blocking error. | Serious | **Fixed (G)** by *Cancel*, which keeps the order in the closed-order log and drops its promise. |
-| N56 | After an action on one page (taking an order), another page's earlier result (Actuals' open orders) stays until it is recalculated; its tab shows it is out of date, but the new order is not in its list yet. | Minor | Open (**J**): recalculate on opening a page whose result is out of date and cheap to rebuild. |
-| N57 | Posting messages give dates as 2026-09-28 while order messages say Mon 5 Oct. | Minor | Open (**J**). |
+| N56 | After an action on one page (taking an order), another page's earlier result (Actuals' open orders) stays until it is recalculated; its tab shows it is out of date, but the new order is not in its list yet. | Minor | **Fixed (J).** Actuals, Buying, Money and customer orders recalculate when opened out of date; edits made on the page itself keep the *out of date* mark until recalculated. |
+| N57 | Posting messages give dates as 2026-09-28 while order messages say Mon 5 Oct. | Minor | **Fixed (J).** Every engine message shown (postings, orders, purchasing, the data check, the worklist) reads dates as "Mon 28 Sep". |
 
 ## Found while building Phase I
 
@@ -128,10 +128,21 @@ Phases: **A** get your own company in · **B** master-data depth · **C** capaci
 | N59 | Plan versions and the worklist were one pool on the server: anyone reaching it could list and open every version, and two companies with the same name shared one worklist. | Serious | **Fixed (I).** Both are kept per company (`X-Company`), for its members only; the browser's own stay separate. |
 | N60 | A viewer's order check went through to *Take this order*; nothing was saved, but the page moved on as if it had been. | Minor | **Fixed (I).** Every engine call that changes the company is refused before it is sent, with the reason; direct edits are refused with a notice. |
 | N61 | Opening a company, merging or putting back left every result empty until *Plan everything*. | Minor | **Fixed (I).** Opening a company plans it. |
-| N62 | A viewer still sees the buttons that change data (they are refused with a reason, not hidden or disabled). | Minor | Open (**J**). |
+| N62 | A viewer still sees the buttons that change data (they are refused with a reason, not hidden or disabled). | Minor | **Fixed (J).** Buttons and forms that change data are disabled for a viewer, with the reason on hover; anything left is still refused with a notice. |
 | N63 | No password reset: a forgotten password needs the server's administrator (there is no mail sending), and an owner cannot reset a colleague's. | Minor | Open: needs a mail setup or single sign-on (SAP gap below). |
 | N64 | Each save sends the whole company, as every planning call already does. A company of tens of megabytes saves slowly; saving only what changed would be lighter. | Minor | Open. |
 | N65 | Where both people changed the same record, the merge keeps the latest save's version and lists the record; there is no side-by-side choice per record. | Minor | Open. |
+
+## Found while building Phase J
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N66 | *Performance*'s breakdown by series named them by ids ("DEALERS-WEST · EMULSION-WHITE-20-L"). | Minor | **Fixed (J)** with Q17. |
+| N67 | On a phone, a list-and-detail page could still be widened by its detail (a table or chart), clipping it on the right. | Minor | **Fixed (J).** The stacked column is never wider than the screen; wide tables scroll in their own box. |
+| N68 | At phone width the save chip read "This bro". | Minor | **Fixed (J).** Its short form is *Local*. |
+| N69 | The purchase order document has no addresses: places have no postal address, and the supplier's contact and terms appear only when its purchasing data is filled in. | Minor | Open: an address on places (SAP gap: business partner addresses). |
+| N70 | A viewer can still type into the stock count and the demand grid (they are not forms); nothing is saved, and the change is refused with a notice. | Minor | Open. |
+| N71 | A result that was never calculated (after reopening the browser) still waits for *Plan everything* or *Calculate*; only out-of-date results recalculate on opening a page. | Minor | Open: calculate a missing result on opening when it is quick. |
 
 ## Found in the second reality check (after Phase E)
 
@@ -160,15 +171,15 @@ on a desktop and at phone width. Phases F–J are the proposal at the end of thi
 | Q14 | The working company exists only in this browser's local storage: no sign-in, nothing shared with a colleague, gone if site data is cleared. A real company with a year of history will outgrow the browser's roughly 5 MB, and a failed save is swallowed without a word. | Serious | **Fixed (I).** Companies kept on the server (`engine/scp/companies`, `/api/auth/*`, `/api/companies/*`): accounts, members as owner, planner or viewer (invited by e-mail), every change saved a moment later with the top bar saying so, a save on top of an older revision refused with who saved and when, *Merge both* record by record, a history of every save with what changed, compare and put back. Plan versions and the worklist are kept per company. A browser-only company whose save fails now says so (storage full or blocked) and offers the server or a download. |
 | Q15 | A late posting goes nowhere visible. Sales posted after the week was rolled are dated before the new start, so forecast accuracy still reads "0 units sold vs 2,732 forecast" and nothing asks for a re-roll. Home kept saying 98% on time while four places disagreed with the journal; the data check calls that a warning. | Serious | **Fixed (F).** The actuals view says what re-booking the current start would change (stock, orders, accuracy weeks, history, closed orders); *Actuals* shows *Not counted yet · Count them now*, and Home leads with *Is the stock the plan starts from right?* whenever postings are not counted, stock disagrees with the journal or a place would go negative. |
 | Q16 | The buy form takes a price only in the company currency, so the importer's USD pigment has to be converted by hand. | Minor | **Fixed (H).** The buy form takes the price in the supplier's currency and asks for the exchange rate once. |
-| Q17 | Raw ids are still on screen: the data check's problem text ("EMULSION-WHITE-20-L at VAPI-PAINT-PLANT is needed…"), the shop-floor board's rows, legend and busiest-resource tile, *Buying*'s "PO-00001 to PIGMENT-IMPORTER", the firm zone's *From* column (truncated source ids), and the new-order drop-downs, which lead with the id. | Minor | Open (**J**). |
+| Q17 | Raw ids are still on screen: the data check's problem text ("EMULSION-WHITE-20-L at VAPI-PAINT-PLANT is needed…"), the shop-floor board's rows, legend and busiest-resource tile, *Buying*'s "PO-00001 to PIGMENT-IMPORTER", the firm zone's *From* column (truncated source ids), and the new-order drop-downs, which lead with the id. | Minor | **Fixed (J).** Engine messages are shown with names for ids (places, products, machines) wherever they appear; the shop-floor board, its legend and tiles, Buying, the firm zone, panel titles and the performance breakdowns name them; pickers lead with the name. |
 | Q18 | An import preview marks every row "added" while a required column is missing and the import button is disabled; the reason is one line above the table. | Minor | **Fixed (H).** While a required column is missing, no row says *added* and the counts are hidden. |
-| Q19 | *Machines & shifts* at phone width: the detail panel stays beside the list, one word per line. | Minor | Open (**J**). |
-| Q20 | *Performance* shows "Days of supply 9.28 d" graded "No data". | Minor | Open (**J**). |
-| Q21 | Three pages give three utilisations with no word on why: the supply plan's busiest machine 65%, the capacity plan's peak 15%, the shop floor's 29%. | Minor | Open (**J**). Name the measure on each (day vs month, regular hours vs window). |
-| Q22 | Planned-order numbers are handed out again on every plan (PR-00006 was later a different requisition), and firming renames them (MO-00430 became PRD-00008), so the shop-floor board, the firm zone and *Actuals* don't match up. | Minor | Open (**J**). Show "was MO-00430" on firm orders; say planned numbers are temporary. |
-| Q23 | *Mark as sent* only records a date: there is no purchase order document to download, print or send. | Minor | Open (**J**). |
-| Q24 | A late requisition shows "Order by Mon 28 Sep · late", which is today, not the date it should have been ordered. | Minor | Open (**J**). |
-| Q25 | The new-route form keeps the previous route's days in transit. | Minor | Open (**J**). |
+| Q19 | *Machines & shifts* at phone width: the detail panel stays beside the list, one word per line. | Minor | **Fixed (J).** List-and-detail pages stack at phone width and the detail no longer widens the page. |
+| Q20 | *Performance* shows "Days of supply 9.28 d" graded "No data". | Minor | **Fixed (J).** A measure without a grade says why: *No data*, *No target*, or *For reading* (days of supply, cost to serve: neither better high nor low). |
+| Q21 | Three pages give three utilisations with no word on why: the supply plan's busiest machine 65%, the capacity plan's peak 15%, the shop floor's 29%. | Minor | **Fixed (J).** Each names the machine and the period: the supply plan's busiest week, the capacity plan's busiest month, the shop floor's scheduling window. |
+| Q22 | Planned-order numbers are handed out again on every plan (PR-00006 was later a different requisition), and firming renames them (MO-00430 became PRD-00008), so the shop-floor board, the firm zone and *Actuals* don't match up. | Minor | **Fixed (J).** A firm order keeps the planned number it came from (`planned_as`), shown as "was MO-00430" on Actuals and the shop floor; the plan's orders and the firm zone say planned numbers are temporary. |
+| Q23 | *Mark as sent* only records a date: there is no purchase order document to download, print or send. | Minor | **Fixed (J).** *Print or PDF*, *Download* and *E-mail* on a purchase order: a document with the supplier's terms, the lines, prices and delivery dates. |
+| Q24 | A late requisition shows "Order by Mon 28 Sep · late", which is today, not the date it should have been ordered. | Minor | **Fixed (J).** It reads "Now · late, should have been Mon 21 Sep" (`wanted_order_date`). |
+| Q25 | The new-route form keeps the previous route's days in transit. | Minor | **Fixed (J).** The form starts from the defaults after each route. |
 
 What held up: the network builder, product wizard, stock and demand uploads (once the columns matched), the
 checklist, plan everything, requisitions to a purchase order with a late confirmation that planning used at once, the
@@ -188,7 +199,7 @@ roll-forward report, and every page at phone width except *Machines & shifts* (n
   setup. Supplier currency.
 - **I: a real place to keep the company** (Q14): **done**, see the status above and N58–N65. Server-side storage,
   sign-in and roles, autosave with conflicts caught and merged, an audit trail with compare and put back.
-- **J: polish sweep** (Q17–Q25, N8, N31).
+- **J: polish sweep** (Q17–Q25, N8, N31, N56, N57, N62): **done**, see the statuses above and N66–N71.
 
 ## Gaps against SAP recorded for later phases
 

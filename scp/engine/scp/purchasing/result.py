@@ -42,6 +42,7 @@ class Requisition(Out):
     value: float                      # company currency, duty included
     due_now: bool                     # to order within the release window
     late: bool                        # should already have been ordered
+    wanted_order_date: dt.date | None = None   # late: when it should have been ordered to arrive when needed
     choices: list[SourceChoice]
     open_later: list[str] = []        # open order lines for the same product and place that arrive after it is needed
 

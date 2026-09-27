@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { Dataset, DdmrpRow, InventoryResult, NodeInventory, PoolingRow } from "../api/types";
 import {
-  Badge, Empty, Panel, Provenance, Reading, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
+  Badge, Edits, Empty, Panel, Provenance, Reading, RunButton, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
 } from "../components/ui";
 import { money, pct, qty } from "../lib/format";
 import { Loc, Prod } from "../lib/names";
@@ -220,13 +220,13 @@ function Placement({ res, ds }: { res: InventoryResult; ds: Dataset }) {
           <span>Set {changes.length} safety-stock polic{changes.length === 1 ? "y" : "ies"} to the multi-echelon recommendation as a fixed quantity
             ({changes.filter((n) => target(n) === 0).length} to none). Safety-stock value changes by <b>{money(delta, c)}</b>. The supply plan becomes stale; undo reverts it.</span>
           <span className="spacer" />
-          <button className="btn sm accent" onClick={apply} disabled={applying}>{applying ? "Saving…" : "Use these buffers in the plan"}</button>
+          <Edits><button className="btn sm accent" onClick={apply} disabled={applying}>{applying ? "Saving…" : "Use these buffers in the plan"}</button></Edits>
           <button className="btn sm ghost" onClick={() => setConfirm(false)}>Cancel</button>
         </div>
       )}
       <Panel flush title="Recommendations" actions={<div className="row">
         <button className="btn sm" onClick={() => setSel(new Set(differs.map(key)))} disabled={!differs.length}>Select all that differ ({differs.length})</button>
-        <button className="btn sm primary" disabled={!changes.length} onClick={() => setConfirm(true)}>Review {changes.length || ""} change{changes.length === 1 ? "" : "s"}…</button>
+        <Edits><button className="btn sm primary" disabled={!changes.length} onClick={() => setConfirm(true)}>Review {changes.length || ""} change{changes.length === 1 ? "" : "s"}…</button></Edits>
       </div>}>
         <div className="table-wrap" style={{ maxHeight: 520 }}>
           <table className="t nowrap">

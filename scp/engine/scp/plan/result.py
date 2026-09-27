@@ -47,6 +47,7 @@ class PlannedOrder(Out):
     due_date: dt.date
     available_date: dt.date
     start_in_past: bool = False
+    wanted_start: dt.date | None = None   # start in the past: when it should have started to arrive in time
     fence_shifted: bool = False
     convertible: bool = True      # False: ATO forecast-driven FG supply
     unit_cost: float = 0.0

@@ -1,6 +1,7 @@
 // Upload a table from CSV or Excel (or paste it), see exactly which rows will be added, updated or skipped and why,
 // then apply. Also: download a template, or the table as it is.
 import { useMemo, useState } from "react";
+import { Edits } from "../components/ui";
 import type { Dataset } from "../api/types";
 import { applyRows, columnsFor, exportRows, readRows, templateRows, unpivotPeriods, type ImportKind } from "../lib/importer";
 import { download, parseDelimited, readFile, toCsv, type Grid } from "../lib/tabular";
@@ -115,7 +116,7 @@ export function ImportPanel({ ds, ckey, onClose, kinds }: { ds: Dataset; ckey: C
             Dates like 05/10/2026 are day/month/year</label>}
           {missingProducts.size > 0 && <div className="banner warning">
             {missingProducts.size === 1 ? "One product in the file doesn't exist yet" : `${missingProducts.size} products in the file don't exist yet`}: {[...missingProducts.keys()].slice(0, 6).join(", ")}{missingProducts.size > 6 ? "…" : ""}.
-            <button className="btn sm" onClick={addMissing}>Add {missingProducts.size === 1 ? "it" : "them"} as {[...missingProducts.values()].every((t) => t === "RM") ? "raw materials" : "products"}</button></div>}
+            <Edits><button className="btn sm" onClick={addMissing}>Add {missingProducts.size === 1 ? "it" : "them"} as {[...missingProducts.values()].every((t) => t === "RM") ? "raw materials" : "products"}</button></Edits></div>}
           {!res.missing.length && <div className="row wrap">
             <Badge sev="ok">{kind === "records" ? `${adds} new` : `${good.length} ${kind === "bom" ? "parts" : "steps"}`}</Badge>{ups > 0 && <Badge sev="info">{ups} update existing</Badge>}{bad > 0 && <Badge sev="error">{bad} can't be read</Badge>}
           </div>}
@@ -136,7 +137,7 @@ export function ImportPanel({ ds, ckey, onClose, kinds }: { ds: Dataset; ckey: C
             Replace every {def.singular} now in the table ({((ds as unknown as Record<string, unknown[]>)[ckey] ?? []).length}) with the file's rows</label>}
           {kind !== "records" && <p className="small muted">Each product's {kind === "bom" ? "components" : "steps"} in the file replace the ones it has now; a product made nowhere yet gets a new production source.</p>}
           <div className="row">
-            <button className="btn primary" disabled={!good.length || res.missing.length > 0} onClick={apply}>Import {good.length} row{good.length === 1 ? "" : "s"}</button>
+            <Edits><button className="btn primary" disabled={!good.length || res.missing.length > 0} onClick={apply}>Import {good.length} row{good.length === 1 ? "" : "s"}</button></Edits>
             <button className="btn ghost" onClick={() => { setGrid(null); setFile(""); }}>Start again</button>
           </div>
         </>}

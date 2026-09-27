@@ -28,6 +28,7 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
   const d = (x: string | null | undefined) => dayName(x, year);
   const loc = Object.fromEntries((ds.locations ?? []).map((l) => [l.id, l.name])) as Record<string, string>;
   const prod = Object.fromEntries((ds.products ?? []).map((p) => [p.id, p.name])) as Record<string, string>;
+  const res = Object.fromEntries((ds.resources ?? []).map((r) => [r.id, r.name || r.id])) as Record<string, string>;
   const where = (e: PlanException) => `${prod[e.product ?? ""] ?? e.product ?? ""} at ${loc[e.location ?? ""] ?? e.location ?? ""}`;
   const node = (e: PlanException) => (e.location && e.product ? href("plan", "node", e.location, e.product) : undefined);
   const orders = new Map(plan.orders.map((o) => [o.id, o]));
@@ -112,7 +113,7 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
         s = {
           title: `${plural(l.length, "step")} moved to an alternative machine`,
           why: "Their own machine is full on those days, and the routing allows another one.",
-          items: l.map((e) => ({ label: `${e.order_id}: ${where(e)}`, detail: `on ${e.resource}`, to: e.order_id ? href("plan", "orders", e.order_id) : undefined })),
+          items: l.map((e) => ({ label: `${e.order_id}: ${where(e)}`, detail: `on ${res[e.resource ?? ""] ?? e.resource}`, to: e.order_id ? href("plan", "orders", e.order_id) : undefined })),
           actions: [{ label: "See the load day by day", to: href("capacity") }],
         };
         break;

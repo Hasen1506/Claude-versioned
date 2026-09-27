@@ -27,7 +27,7 @@ export function SaveChip() {
   if (!company) {
     return <a className={`save-chip ${save.localError ? "bad" : ""}`} href={href("account")}
       title="This company is kept only in this browser. Sign in to keep it on the server, where colleagues can work on it too.">
-      {save.localError ? label("Not kept · this browser's storage failed", "Not kept") : label("In this browser only", "This browser")}</a>;
+      {save.localError ? label("Not kept · this browser's storage failed", "Not kept") : label("In this browser only", "Local")}</a>;
   }
   if (!company.live) {
     return <a className="save-chip warn" href={href("versions")} title="A plan version is open, not the company's live data">

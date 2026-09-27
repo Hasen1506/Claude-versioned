@@ -442,6 +442,7 @@ class _Planner:
             target = fence_end
         sch: Schedule = schedule(ds, opt, qty, available=target)
         past = sch.start_date < self.start
+        wanted = sch.start_date if past else None
         if past:
             sch = schedule(ds, opt, qty, start=self.start)
         placed: dict[int, str] | None = None
@@ -458,7 +459,8 @@ class _Planner:
             origin = ds.purchasing_source_by_id[opt.source_id].supplier
         order = PlannedOrder(id=oid, kind=opt.kind, location=loc, product=prod, qty=qty, source_id=opt.source_id,
                              origin=origin, need_date=need, start_date=sch.start_date, due_date=sch.due_date,
-                             available_date=sch.available_date, start_in_past=past, fence_shifted=fenced)
+                             available_date=sch.available_date, start_in_past=past, fence_shifted=fenced,
+                             wanted_start=wanted if past else None)
         if placed is not None:
             order.capacity_shift_days = (sch.available_date - base_avail).days
             order.step_resources = {seq: r for seq, r in placed.items() if r != self._primary(opt.source_id, seq)}

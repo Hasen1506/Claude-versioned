@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { Dataset, LevelPreview, PlannedOrder, PlanResult, Resource, ResourcePlan } from "../api/types";
 import { BucketChart } from "../components/charts";
-import { Badge, Empty, Panel, Provenance, Reading, RunButton, StageHeader, StatTile } from "../components/ui";
+import { Badge, Edits, Empty, Panel, Provenance, Reading, RunButton, StageHeader, StatTile } from "../components/ui";
 import { day, pct, plural, qty } from "../lib/format";
 import { Prod } from "../lib/names";
 import { go, href } from "../lib/router";
@@ -221,10 +221,10 @@ function Levelling({ ds, plan, on, stale }: { ds: Dataset; plan: PlanResult; on:
   return (
     <Panel title={<h3>Plan within capacity <Badge sev={on ? "ok" : undefined}>{on ? "on" : "off"}</Badge></h3>} actions={<div className="row wrap">
       <button className="btn sm" onClick={show} disabled={busy}>{busy && !asking ? "Working…" : "Show what levelling moves"}</button>
-      {on ? <button className="btn sm ghost" onClick={() => toggle(false)} disabled={busy}>Go back to unlimited capacity</button>
-        : <button className="btn sm accent" onClick={() => toggle(true)} disabled={busy}>Plan within capacity</button>}
-      {on && moved.length > 0 && <button className="btn sm" onClick={() => setAsking(true)} disabled={busy || stale}
-        title={stale ? "Recalculate the supply plan first" : "Make the moved orders firm production orders at their levelled dates"}>Keep these dates</button>}
+      {on ? <Edits><button className="btn sm ghost" onClick={() => toggle(false)} disabled={busy}>Go back to unlimited capacity</button></Edits>
+        : <Edits><button className="btn sm accent" onClick={() => toggle(true)} disabled={busy}>Plan within capacity</button></Edits>}
+      {on && moved.length > 0 && <Edits><button className="btn sm" onClick={() => setAsking(true)} disabled={busy || stale}
+        title={stale ? "Recalculate the supply plan first" : "Make the moved orders firm production orders at their levelled dates"}>Keep these dates</button></Edits>}
     </div>}>
       <p className="small" style={{ marginTop: 0 }}>{on
         ? <>The supply plan keeps every limited machine and crew within its day. An order that doesn't fit goes to an alternative machine, else starts earlier
@@ -250,7 +250,7 @@ function Levelling({ ds, plan, on, stale }: { ds: Dataset; plan: PlanResult; on:
         <Badge sev="warning">Check</Badge>
         <span>This makes {plural(moved.length, "planned order")} firm production orders at the dates levelling gave them, so they stay there even if you
           switch levelling off. Undo reverts it.</span><span className="spacer" />
-        <button className="btn sm accent" onClick={keep} disabled={busy}>{busy ? "Saving…" : "Keep the dates"}</button>
+        <Edits><button className="btn sm accent" onClick={keep} disabled={busy}>{busy ? "Saving…" : "Keep the dates"}</button></Edits>
         <button className="btn sm ghost" onClick={() => setAsking(false)} disabled={busy}>Cancel</button>
       </div>}
       {preview && preview.ok && <>

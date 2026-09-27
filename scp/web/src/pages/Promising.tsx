@@ -3,13 +3,13 @@ import { api } from "../api/client";
 import type { AtpNode, CtpStep, Dataset, DemandRecord, OrderPromise, PromiseResult, ScheduleLine } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, useTooltip, type Severity, RunButton, Term,
+  Badge, cols, Edits, Empty, Panel, Provenance, Reading, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term, type Severity, useTooltip,
 } from "../components/ui";
 import { day, money, pct, plural, qty, unitMoney } from "../lib/format";
-import { Loc, Prod, useNames } from "../lib/names";
+import { Loc, Prod, namesOf, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
-import { isStale, store, useStore } from "../state/store";
+import { isStale, store, useFreshResult, useStore } from "../state/store";
 
 type View = "orders" | "atp" | "simulate" | "bop" | "allocations" | "settings";
 
@@ -25,6 +25,7 @@ const CHANGE: Record<OrderPromise["change"], Severity | undefined> = {
 
 export function Promising({ route }: { route: string[] }) {
   const run = useStore((s) => s.runs.promise);
+  useFreshResult("promise");
   const res = run.data;
   const ds = useStore((s) => s.dataset)!;
   const stale = useStore((s) => isStale(s, "promise"));
@@ -64,8 +65,8 @@ export function Promising({ route }: { route: string[] }) {
         {res.kpis.at_risk_orders > 0 && <> {plural(res.kpis.at_risk_orders, "earlier promise")} {res.kpis.at_risk_orders === 1 ? "is" : "are"} now at risk.</>}</> : <>There are no open customer orders.</>)}
       right={<>
       {res && <Provenance kind="solved" at={run.at} stale={stale} />}
-      {res?.ok && <button className="btn" onClick={() => commitPromises("entry")} disabled={busy || stale}
-        title={stale ? "Recalculate first" : "Saves every promised date and quantity on the orders in your data, so later checks keep them. Undo reverts it."}>Save these promised dates</button>}
+      {res?.ok && <Edits><button className="btn" onClick={() => commitPromises("entry")} disabled={busy || stale}
+        title={stale ? "Recalculate first" : "Saves every promised date and quantity on the orders in your data, so later checks keep them. Undo reverts it."}>Save these promised dates</button></Edits>}
       <RunButton running={run.running} has={!!res} onClick={() => store.run("promise")} disabled={blocking} /></>} />
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
@@ -274,6 +275,7 @@ function CtpTimeline({ steps }: { steps: CtpStep[] }) {
 const WINDOWS: [string, number][] = [["4 weeks", 28], ["8 weeks", 56], ["Horizon", 400]];
 
 function Atp({ res, sel }: { res: PromiseResult; sel?: string }) {
+  const nm = useNames();
   const key = (n: AtpNode) => `${n.location}|${n.product}`;
   const cur = res.nodes.find((n) => key(n) === sel) ?? res.nodes[0];
   const [win, setWin] = useState(56);
@@ -298,7 +300,7 @@ function Atp({ res, sel }: { res: PromiseResult; sel?: string }) {
         </div>
       </Panel>
       <div className="stack">
-        <Panel title={`${cur.product} at ${cur.location}`} actions={<div className="row">
+        <Panel title={`${nm.prod(cur.product)} at ${nm.loc(cur.location)}`} actions={<div className="row">
           {WINDOWS.map(([l, w]) => <button key={l} className={`btn sm ${win === w ? "primary" : ""}`} onClick={() => setWin(w)}>{l}</button>)}</div>}>
           <BucketChart labels={labels} height={260} series={[
             { name: "Receipts", color: "var(--series-2)", values: cur.receipts.slice(0, n), kind: "column" },
@@ -375,7 +377,7 @@ function OrderActions({ o, ds, currency, onDone }: { o: OrderPromise; ds: Datase
     try {
       const out = await f();
       store.replace(out.dataset);
-      onDone(out.report.message);
+      onDone(namesOf(out.dataset).text(out.report.message));
       setMode(null);
       void store.run("promise");
     } catch (e) {
@@ -385,7 +387,7 @@ function OrderActions({ o, ds, currency, onDone }: { o: OrderPromise; ds: Datase
     }
   };
   const tab = (m: typeof mode, label: string) => (
-    <button className={`btn sm ${mode === m ? "primary" : ""}`} aria-pressed={mode === m} onClick={() => { setErr(null); setMode(mode === m ? null : m); }}>{label}</button>);
+    <Edits><button className={`btn sm ${mode === m ? "primary" : ""}`} aria-pressed={mode === m} onClick={() => { setErr(null); setMode(mode === m ? null : m); }}>{label}</button></Edits>);
   return (
     <div className="stack" style={{ marginBottom: 12 }}>
       <div className="row wrap">
@@ -470,7 +472,7 @@ function Simulate({ ds, onDone }: { ds: Dataset; onDone: (m: string) => void }) 
     try {
       const r = await api.salesOrder(ds, "accept", { order });
       store.replace(r.dataset);
-      onDone(r.report.message);
+      onDone(namesOf(r.dataset).text(r.report.message));
       go("promise", "orders", r.report.order);
       void store.run("promise");
     } catch (e) {
@@ -505,7 +507,7 @@ function Simulate({ ds, onDone }: { ds: Dataset; onDone: (m: string) => void }) 
           <label className="row small"><input type="checkbox" checked={!!order.complete_delivery} onChange={(e) => set({ complete_delivery: e.target.checked })} />Complete delivery only</label>
           <div className="row wrap">
             <button className="btn" onClick={check} disabled={busy || !order.qty || !order.location || !order.product}>{busy && !fresh ? "Checking…" : "Check availability"}</button>
-            <button className="btn accent" onClick={take} disabled={busy || !fresh} title={fresh ? "Save it as a sales order with this promise" : "Check it first"}>Take this order</button>
+            <Edits><button className="btn accent" onClick={take} disabled={busy || !fresh} title={fresh ? "Save it as a sales order with this promise" : "Check it first"}>Take this order</button></Edits>
           </div>
         </div>
         <p className="faint small">Checking saves nothing: it comes after every order already promised. <b>Take this order</b> saves it as a
@@ -574,7 +576,7 @@ function Bop({ ds, busy, onCommit }: { ds: Dataset; busy: boolean; onCommit: () 
           <StatTile label="Lost" value={qty(cur.bop.filter((b) => b.outcome === "lost").length)} sub="orders to call" />
           <StatTile label="On time after BOP" value={`${cur.kpis.on_time_orders} / ${cur.kpis.orders}`} sub={pct(cur.kpis.qty ? cur.kpis.on_time_qty / cur.kpis.qty : 1)} />
         </div>
-        <Panel flush title="Gain / loss log" actions={<button className="btn sm accent" onClick={onCommit} disabled={busy} title="Saves the new promised dates on the orders in your data. Undo reverts it.">Save these new promised dates</button>}>
+        <Panel flush title="Gain / loss log" actions={<Edits><button className="btn sm accent" onClick={onCommit} disabled={busy} title="Saves the new promised dates on the orders in your data. Undo reverts it.">Save these new promised dates</button></Edits>}>
           <div className="table-wrap" style={{ maxHeight: 520 }}>
             <table className="t nowrap">
               <thead><tr><th>Order</th><th>Customer</th><th>Product</th><th className="num">Prio</th><th>Segment</th><th>Strategy</th>

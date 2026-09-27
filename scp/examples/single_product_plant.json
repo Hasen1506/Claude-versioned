@@ -126,6 +126,16 @@
    "cost_per_hour": 2200,
    "overtime_hours_per_day": 4,
    "overtime_cost_per_hour": 3300
+  },
+  {
+   "id": "BLOW-FILL-OLD",
+   "name": "Old blow-fill line",
+   "location": "PLANT",
+   "kind": "line",
+   "shifts_per_day": 1,
+   "hours_per_shift": 8,
+   "efficiency": 0.65,
+   "cost_per_hour": 2600
   }
  ],
  "production_sources": [
@@ -151,7 +161,10 @@
      "name": "Blow, fill, cap, label",
      "resource": "BLOW-FILL",
      "setup_hours": 0.5,
-     "run_hours_per_unit": 0.0002
+     "run_hours_per_unit": 0.0002,
+     "alternatives": [
+      "BLOW-FILL-OLD"
+     ]
     }
    ],
    "assembly_scrap": 0.003,

@@ -9,7 +9,7 @@ import { earnings, listNames } from "../lib/earnings";
 import { useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
-import { isStale, store, useStore } from "../state/store";
+import { isStale, store, useFreshResult, useStore } from "../state/store";
 
 type View = "overview" | "serve" | "inventory" | "capacity";
 
@@ -29,6 +29,7 @@ const TYPE_COLORS = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "v
 
 export function Finance({ route }: { route: string[] }) {
   const run = useStore((s) => s.runs.finance);
+  useFreshResult("finance");
   const res = run.data;
   const ds = useStore((s) => s.dataset)!;
   const stale = useStore((s) => isStale(s, "finance"));

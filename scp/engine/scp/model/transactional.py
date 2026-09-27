@@ -70,6 +70,9 @@ class ScheduledReceipt(Model):
                                                "needed, planning counts it where it is needed and reports the delay "
                                                "instead of adding an order in front of it")
     po: str | None = Field(None, max_length=64, description="Purchase: the purchase order (header) this line is on")
+    planned_as: str | None = Field(None, max_length=64,
+                                   description="The planned order it was firmed from (for reference: planned numbers "
+                                               "are handed out again on every plan)")
     price: float | None = Unit("money_per_unit", default=None,
                                description="Purchase: net price per base unit, in the order's currency")
     confirmed_date: dt.date | None = Field(None, description="Purchase: delivery date the supplier confirmed; "

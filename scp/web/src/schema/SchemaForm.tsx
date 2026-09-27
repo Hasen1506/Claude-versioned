@@ -4,7 +4,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api, type JsonSchema, type JsonSchemaNode } from "../api/client";
 import type { Dataset } from "../api/types";
-import { useStore } from "../state/store";
+import { useReadOnly, useStore } from "../state/store";
 
 let schemaPromise: Promise<JsonSchema> | null = null;
 
@@ -141,7 +141,7 @@ function refOptions(ds: Dataset | null, kind: string): { id: string; label: stri
       : kind === "calendar" ? ds.calendars ?? [] : [];
   return (list ?? []).map((x) => {
     const o = x as { id: string; name?: string; type?: string };
-    return { id: o.id, label: o.name && o.name !== o.id ? `${o.id} — ${o.name}` : o.id };
+    return { id: o.id, label: o.name && o.name !== o.id ? `${o.name} · ${o.id}` : o.id };
   });
 }
 
@@ -153,13 +153,14 @@ export function SchemaForm({ defName, value, onChange, errors = {}, path = "", h
   only?: string[];
 }) {
   const schema = useSchema();
+  const ro = useReadOnly();
   if (!schema) return <div className="faint small">Loading form…</div>;
   const def = schema.$defs[defName];
   if (!def) return <div className="faint">Unknown object type {defName}</div>;
   const props = def.properties ?? {};
   const entries = only ? only.filter((k) => k in props).map((k) => [k, props[k]] as const) : Object.entries(props);
   return (
-    <div className={compact ? "form compact" : "form"}>
+    <fieldset className={compact ? "form compact edits-form" : "form edits-form"} disabled={ro} title={ro ? "View only: you are a viewer of this company" : undefined}>
       {entries.filter(([k]) => !hide.includes(k)).map(([key, raw]) => (
         <FieldFor key={key} schema={schema} name={key} raw={raw} required={!!def.required?.includes(key)}
           value={value[key]} errors={errors} path={path ? `${path}.${key}` : key}
@@ -170,7 +171,7 @@ export function SchemaForm({ defName, value, onChange, errors = {}, path = "", h
             onChange(next);
           }} />
       ))}
-    </div>
+    </fieldset>
   );
 }
 

@@ -503,12 +503,17 @@ def single_product() -> dict:
              "safety_stock": {"method": "fixed", "qty": 20000}}],
         "resources": [{"id": "BLOW-FILL", "name": "Blow-fill-cap line", "location": "PLANT", "kind": "line",
                        "shifts_per_day": 2, "hours_per_shift": 8, "efficiency": 0.8, "cost_per_hour": 2200,
-                       "overtime_hours_per_day": 4, "overtime_cost_per_hour": 3300}],
+                       "overtime_hours_per_day": 4, "overtime_cost_per_hour": 3300},
+                      # the old line, one shift and slower: the step can run on it when the main line is full, and the
+                      # shop-floor board and the optimiser can move a batch onto it
+                      {"id": "BLOW-FILL-OLD", "name": "Old blow-fill line", "location": "PLANT", "kind": "line",
+                       "shifts_per_day": 1, "hours_per_shift": 8, "efficiency": 0.65, "cost_per_hour": 2600}],
         "production_sources": [{"id": "PV-BTL-1L", "location": "PLANT", "product": "BTL-1L",
                                 "components": [{"product": "PREFORM", "qty": 1, "scrap": 0.005},
                                                {"product": "CAP-LABEL", "qty": 1, "scrap": 0.01}],
                                 "operations": [{"seq": 10, "name": "Blow, fill, cap, label", "resource": "BLOW-FILL",
-                                                "setup_hours": 0.5, "run_hours_per_unit": 0.0002}],
+                                                "setup_hours": 0.5, "run_hours_per_unit": 0.0002,
+                                                "alternatives": ["BLOW-FILL-OLD"]}],
                                 "assembly_scrap": 0.003, "conversion_cost_per_unit": 0.9}],
         "purchasing_sources": [
             {"id": "PIR-PREFORM", "supplier": "SUP-PREFORM", "product": "PREFORM", "location": "PLANT", "price": 2.6,

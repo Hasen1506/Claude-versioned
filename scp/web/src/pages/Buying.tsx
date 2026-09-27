@@ -2,13 +2,15 @@ import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { Dataset, PoLineInput, PoView, PurchasingView, Requisition, VendorRow } from "../api/types";
 import {
-  Badge, Empty, Panel, Provenance, Reading, RunButton, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
+  Badge, Edits, Empty, Panel, Provenance, Reading, RunButton, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
 } from "../components/ui";
 import { day, money, pct, plural, qty, unitMoney } from "../lib/format";
-import { Loc, Prod } from "../lib/names";
+import { Loc, Prod, namesOf } from "../lib/names";
+import { poDocument, poEmail } from "../lib/podoc";
+import { download } from "../lib/tabular";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
-import { isStale, store, useStore } from "../state/store";
+import { isStale, store, useFreshResult, useStore } from "../state/store";
 
 type View = "order" | "orders" | "suppliers";
 type Sev = "error" | "warning" | "info" | "ok";
@@ -29,6 +31,7 @@ async function apply<T extends { dataset: Dataset }>(fn: () => Promise<T>): Prom
 
 export function Buying({ route }: { route: string[] }) {
   const run = useStore((s) => s.runs.purchasing);
+  useFreshResult("purchasing");
   const res = run.data;
   const ds = useStore((s) => s.dataset)!;
   const stale = useStore((s) => isStale(s, "purchasing"));
@@ -108,9 +111,9 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
       setPick(null); setSource({});
       setMsg(<>
         {rep.created.length ? <>{plural(rep.created.length, "purchase order")} created: {rep.created.map((p, i) => (
-          <span key={p.id}>{i > 0 && ", "}<a href={href("buying", "orders", p.id)}><b>{p.id}</b></a> to {p.supplier} ({plural(p.lines.length, "line")}, {money(p.value, p.currency)}{!p.approved && ", needs approval"})</span>))}.</> : "No purchase order created."}
-        {rep.created.flatMap((p) => p.notes).map((n, i) => <div key={i} className="small">• {n}</div>)}
-        {Object.entries(rep.skipped).map(([id, why]) => <div key={id} className="small">• {id} not ordered: {why}</div>)}
+          <span key={p.id}>{i > 0 && ", "}<a href={href("buying", "orders", p.id)}><b>{p.id}</b></a> to {namesOf(ds).loc(p.supplier)} ({plural(p.lines.length, "line")}, {money(p.value, p.currency)}{!p.approved && ", needs approval"})</span>))}.</> : "No purchase order created."}
+        {rep.created.flatMap((p) => p.notes).map((n, i) => <div key={i} className="small">• {namesOf(ds).text(n)}</div>)}
+        {Object.entries(rep.skipped).map(([id, why]) => <div key={id} className="small">• {id} not ordered: {namesOf(ds).text(why)}</div>)}
       </>);
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e));
@@ -133,8 +136,8 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
         <label className="row small"><input type="checkbox" checked={all} onChange={(e) => { setAll(e.target.checked); setPick(null); }} /> Show later ones too</label>
         <label className="row small" htmlFor="po-date">Order date <input id="po-date" type="date" className="input" style={{ width: 150 }} value={orderDate}
           min={ds.settings.planning_start} onChange={(e) => setOrderDate(e.target.value || ds.settings.planning_start)} /></label>
-        <button className="btn accent" disabled={busy || picked.length === 0} onClick={create}>
-          {busy ? "Ordering…" : `Create purchase orders (${picked.length})`}</button>
+        <Edits><button className="btn accent" disabled={busy || picked.length === 0} onClick={create}>
+          {busy ? "Ordering…" : `Create purchase orders (${picked.length})`}</button></Edits>
       </>}>
         {rows.length === 0 ? <Empty title={res.requisitions.length ? "Nothing due this week" : "Nothing to buy"}>
           {res.requisitions.length ? <>The next purchase is due to be ordered on {day(res.requisitions[0].order_date)}. Tick “Show later ones too” to order ahead.</>
@@ -153,13 +156,13 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
                         {!!r.open_later?.length && <div className="small" style={{ color: "var(--warning-text)" }}>{r.open_later.join(", ")} is already on order
                           but arrives later: expedite it instead?</div>}</td><td><Loc id={r.location} /></td>
                       <td className="num">{qty(c?.qty ?? r.qty)}</td><td>{day(r.need_date)}</td>
-                      <td>{day(r.order_date)} {r.late && <Badge sev="warning">late</Badge>}</td>
+                      <td>{r.late ? <><b>Now</b> <Badge sev="warning">late</Badge><div className="faint small">should have been {day(r.wanted_order_date ?? r.order_date)}</div></> : day(r.order_date)}</td>
                       <td>
                         {r.choices.length > 1 ? (
                           <select className="input" aria-label={`Supplier for ${r.id}`} value={c?.source_id}
                             onChange={(e) => setSource({ ...source, [r.id]: e.target.value })}>
                             {r.choices.map((x) => <option key={x.source_id} value={x.source_id} disabled={!!x.blocked}>
-                              {x.supplier}{x.assigned ? " (planned)" : ""}{x.fixed ? " · fixed" : ""}{x.blocked ? " · blocked" : ""}</option>)}
+                              {namesOf(ds).loc(x.supplier)}{x.assigned ? " (planned)" : ""}{x.fixed ? " · fixed" : ""}{x.blocked ? " · blocked" : ""}</option>)}
                           </select>
                         ) : <Loc id={r.supplier} />}
                         {c?.blocked && <div className="small">{c.blocked}</div>}
@@ -272,7 +275,7 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
       if (lines && lines.length === 0) throw new Error("Tick at least one line");
       const out = await apply(() => api.poAction(ds, action, po.id, { lines, date: action === "send" || action === "receive" ? on : undefined,
         reference: action === "confirm" ? text : undefined, note: action === "receive" ? text : undefined }));
-      setMsg(out.report.message);
+      setMsg(namesOf(out.dataset).text(out.report.message));
       setMode(null);
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e));
@@ -283,14 +286,14 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
   const set = (id: string, patch: Partial<(typeof edit)[string]>) => setEdit({ ...edit, [id]: { ...edit[id], ...patch } });
   const hasOpen = open.some((x) => x.open > 1e-6);
   return (
-    <Panel title={<h3>{po.id} <span className="muted">to {po.supplier ?? "—"}</span> <Badge sev={STATUS_SEV[po.status]}>{po.status}</Badge></h3>}
+    <Panel title={<h3>{po.id} <span className="muted">to {po.supplier ? namesOf(ds).loc(po.supplier) : "—"}</span> <Badge sev={STATUS_SEV[po.status]}>{po.status}</Badge></h3>}
       actions={<>
-        {po.header && !po.approved && <button className="btn accent" disabled={busy} onClick={() => act("approve")}>Approve</button>}
+        <Edits>{po.header && !po.approved && <button className="btn accent" disabled={busy} onClick={() => act("approve")}>Approve</button>}
         {po.header && po.approved && !po.sent_on && hasOpen && <button className="btn accent" disabled={busy} onClick={() => act("send")}>Mark as sent</button>}
         {hasOpen && <button className="btn" disabled={busy} onClick={() => start("confirm")}>Record confirmation</button>}
         {hasOpen && <button className="btn" disabled={busy} onClick={() => start("receive")}>Receive goods</button>}
         {hasOpen && <button className="btn ghost" disabled={busy} onClick={() => start("change")}>Change</button>}
-        {open.some((x) => x.received <= 1e-6) && <button className="btn ghost" disabled={busy} onClick={() => start("cancel")}>Cancel lines</button>}
+        {open.some((x) => x.received <= 1e-6) && <button className="btn ghost" disabled={busy} onClick={() => start("cancel")}>Cancel lines</button>}</Edits>
       </>}>
       <div className="row wrap small muted" style={{ gap: 16, marginBottom: 10 }}>
         <span>To <Loc id={po.location} /></span>
@@ -298,6 +301,7 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
         <span>{po.sent_on ? `Sent ${day(po.sent_on)}` : po.header ? "Not sent yet" : "Imported open order"}</span>
         {po.vendor_reference && <span>Supplier ref. {po.vendor_reference}</span>}
         <span>{money(po.value, po.currency)}</span>
+        {po.header && <PoDocButtons po={po} ds={ds} />}
       </div>
       {po.attention.length > 0 && <div className="banner warning" style={{ marginBottom: 10 }}><div>{po.attention.map((a) => <div key={a}>• {a}</div>)}</div></div>}
       {msg && <div className="banner ok" role="status" style={{ marginBottom: 10 }}>{msg}</div>}
@@ -365,6 +369,27 @@ const MODE_HINT: Record<Exclude<Mode, null>, string> = {
 };
 
 // ------------------------------------------------------------------------------------------------
+/** The order as a document: print it (or save it as PDF from the print dialog), download it, or start an e-mail. */
+function PoDocButtons({ po, ds }: { po: PoView; ds: Dataset }) {
+  const file = `${po.id}.html`;
+  const print = () => {
+    const html = poDocument(po, ds);
+    const w = window.open("", "_blank");
+    if (!w) return download(file, html, "text/html");      // pop-ups blocked: the file instead
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 250);
+  };
+  const mail = poEmail(po, ds);
+  const mailto = `mailto:${encodeURIComponent(mail.to)}?subject=${encodeURIComponent(mail.subject)}&body=${encodeURIComponent(mail.body)}`;
+  return <span className="row" style={{ gap: 6 }}>
+    <button className="btn sm ghost" onClick={print} title="Opens the order as a page and the print dialog, where it can be saved as PDF">Print or PDF</button>
+    <button className="btn sm ghost" onClick={() => download(file, poDocument(po, ds), "text/html")}>Download</button>
+    <a className="btn sm ghost" href={mailto} title={mail.to ? `An e-mail to ${mail.to} with the order in its text` : "An e-mail with the order in its text (no e-mail address on the supplier's purchasing data)"}>E-mail</a>
+  </span>;
+}
+
 function Suppliers({ res, ds }: { res: PurchasingView; ds: Dataset }) {
   const [open, setOpen] = useState<string | null>(null);
   if (res.vendors.length === 0) return <Panel><Empty title="No suppliers">Add a place of type supplier in <a href={href("setup")}>Set up</a>.</Empty></Panel>;
@@ -414,7 +439,7 @@ function SupplierDetail({ v, currency, ds }: { v: VendorRow; currency: string; d
   return (
     <Panel title={<h3>{v.name} {v.blocked && <Badge sev="error">blocked{v.block_reason ? `: ${v.block_reason}` : ""}</Badge>}</h3>}
       actions={<>
-        <button className="btn sm" onClick={toggleBlock}>{v.blocked ? "Lift the purchasing block" : "Block for purchasing"}</button>
+        <Edits><button className="btn sm" onClick={toggleBlock}>{v.blocked ? "Lift the purchasing block" : "Block for purchasing"}</button></Edits>
         <a className="btn sm ghost" href={href("data", "vendors", recordIndex >= 0 ? v.supplier : undefined)}>{v.has_record ? "Edit purchasing data" : "Add purchasing data"}</a></>}>
       <div className="row wrap small muted" style={{ gap: 16, marginBottom: 10 }}>
         <span>{v.confirmation_required ? "Confirms every order" : "Does not confirm orders"}</span>

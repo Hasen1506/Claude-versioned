@@ -5,10 +5,10 @@ import type {
 } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
-  Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, useTooltip, RunButton, Term,
+  Badge, cols, Edits, Empty, Panel, Provenance, Reading, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term, useTooltip,
 } from "../components/ui";
 import { day, pct, plural, qty } from "../lib/format";
-import { Prod } from "../lib/names";
+import { Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -120,8 +120,8 @@ export function Schedule({ route }: { route: string[] }) {
           : <> Parts are assumed to be there (the parts check is off in Settings).</>}</> : <>No production orders fall in the window.</>)}
       right={<>
       {res && <Provenance kind="solved" at={run.at} stale={stale} />}
-      {res?.ok && res.orders.length > 0 && <button className="btn" onClick={() => setAsking(true)} disabled={busy || stale || run.running}
-        title={stale ? "Schedule again first" : "Give the orders on this schedule its dates, so the supply plan and promises use them"}>Use these dates in the plan</button>}
+      {res?.ok && res.orders.length > 0 && <Edits><button className="btn" onClick={() => setAsking(true)} disabled={busy || stale || run.running}
+        title={stale ? "Schedule again first" : "Give the orders on this schedule its dates, so the supply plan and promises use them"}>Use these dates in the plan</button></Edits>}
       {res?.search.mode === "manual" && <button className="btn" onClick={() => store.run("schedule")} disabled={run.running}>Undo my changes to the order</button>}
       <RunButton running={run.running} has={!!res} onClick={() => store.run("schedule")} disabled={blocking} /></>} />
   );
@@ -178,7 +178,7 @@ function UseDates({ res, busy, onYes, onNo }: { res: ScheduleResult; busy: boole
         each starting and finishing when this schedule says{late ? `; ${plural(late, "order")} will then show as late in the supply plan` : ""}.
         Undo reverts it.</span>
       <span className="spacer" />
-      <button className="btn sm accent" onClick={onYes} disabled={busy}>{busy ? "Saving…" : "Use the dates"}</button>
+      <Edits><button className="btn sm accent" onClick={onYes} disabled={busy}>{busy ? "Saving…" : "Use the dates"}</button></Edits>
       <button className="btn sm ghost" onClick={onNo} disabled={busy}>Cancel</button>
     </div>
   );
@@ -214,7 +214,7 @@ function Kpis({ res }: { res: ScheduleResult }) {
         sub={k.waiting_for_parts ? `${hours(res.orders.reduce((a, o) => a + o.held_for_parts, 0))} held in total` : "every step had its parts"}
         tone={k.waiting_for_parts ? "hl" : undefined} />
       <StatTile label="Changeover time" value={hours(k.setup_hours)} sub={`${k.changeovers} changeovers · ${delta(k.setup_hours, b.setup_hours, hours)}`} />
-      {busiest && <StatTile label="Busiest resource" value={pct(busiest.utilization, 0)} sub={`${busiest.id} over the window`} />}
+      {busiest && <StatTile label="Busiest resource" value={pct(busiest.utilization, 0)} sub={`${busiest.name || busiest.id}: busy ÷ shift hours over the ${Math.round(res.span_hours / 24)}-day window`} />}
       {k.earliness_hours > 0.05 && <StatTile label="Finished early" value={hours(k.earliness_hours)}
         sub={`order hours before due${(res.kpis.orders && Object.keys(res.holds).length) ? ` · ${plural(Object.keys(res.holds).length, "order")} held back` : ""}`} />}
       <Sequencer res={res} />
@@ -252,6 +252,7 @@ function Board({ res, sel, busy, onMove }: {
   const [zoom, setZoom] = useState(2.6);
   const order = res.orders.find((o) => o.id === sel) ?? null;
   const colors = useMemo(() => groupColors(res), [res]);
+  const nm = useNames();
   return (
     <div className="stack">
       <Kpis res={res} />
@@ -261,7 +262,7 @@ function Board({ res, sel, busy, onMove }: {
         </div>}>
         <Gantt res={res} pxh={zoom} sel={order?.id ?? null} colors={colors} busy={busy} onMove={onMove} />
         <div className="legend" style={{ padding: "8px 12px" }}>
-          {Object.entries(colors).map(([g, c]) => <span key={g}><span className="key box" style={{ background: c }} />{g}</span>)}
+          {Object.entries(colors).map(([g, c]) => <span key={g}><span className="key box" style={{ background: c }} />{nm.any(g)}</span>)}
           <span><span className="key box gantt-setup-key" />changeover</span>
           <span><span className="key box gantt-off-key" />off shift</span>
           <span><span className="key box" style={{ background: "transparent", outline: "2px solid var(--critical)" }} />late order</span>
@@ -303,6 +304,7 @@ function Gantt({ res, pxh, sel, colors, busy, onMove }: {
   res: ScheduleResult; pxh: number; sel: string | null; colors: Record<string, string>; busy: boolean; onMove: Move;
 }) {
   const tip = useTooltip();
+  const nm = useNames();
   const [drag, setDrag] = useState<Drag | null>(null);
   const dragged = useRef(false);
   const origin = res.origin!;
@@ -360,7 +362,7 @@ function Gantt({ res, pxh, sel, colors, busy, onMove }: {
         <div style={{ height: TOP }} />
         {lanes.map((l) => (
           <div key={`${l.resource.id}-${l.unit}`} className={`gantt-lane-label ${l.first ? "first" : ""}`} style={{ height: RH }}>
-            {l.first ? <><b>{l.resource.id}</b><span className="faint small"> {pct(l.resource.utilization, 0)}</span></> : <span className="faint small">unit {l.unit + 1}</span>}
+            {l.first ? <><b className="lane-name" title={l.resource.id}>{l.resource.name || l.resource.id}</b><span className="faint small"> {pct(l.resource.utilization, 0)}</span></> : <span className="faint small">unit {l.unit + 1}</span>}
           </div>
         ))}
       </div>
@@ -416,10 +418,10 @@ function Gantt({ res, pxh, sel, colors, busy, onMove }: {
             const locked = !!ord?.frozen;
             const alts = (op.machines ?? []).filter((m) => m !== op.resource);
             const show = (e: React.MouseEvent) => tip.show(e, <div>
-              <b>{op.order}</b> · {op.product} {ord?.firm && <Badge>firm</Badge>}
-              <div className="faint small">{op.resource} unit {op.unit + 1} · operation {op.seq}{op.sub > 0 || res.ops.some((o) => o.key === op.key && o.sub > 0) ? ` · sublot ${op.sub + 1}` : ""}</div>
+              <b>{op.order}</b> · {nm.prod(op.product)} {ord?.firm && <Badge>firm</Badge>}
+              <div className="faint small">{nm.res(op.resource)} unit {op.unit + 1} · operation {op.seq}{op.sub > 0 || res.ops.some((o) => o.key === op.key && o.sub > 0) ? ` · sublot ${op.sub + 1}` : ""}</div>
               <div className="small">{qty(op.qty)} units</div>
-              {op.setup_hours > 0 && <div className="small">Setup {hours(op.setup_hours)} {op.setup_from ? `(${op.setup_from} → ${op.group})` : "(first on unit)"}</div>}
+              {op.setup_hours > 0 && <div className="small">Setup {hours(op.setup_hours)} {op.setup_from ? `(${nm.any(op.setup_from)} → ${nm.any(op.group)})` : "(first on unit)"}</div>}
               <div className="small">Run {hours(op.run_hours)} · {when(origin, op.run_start)} → {when(origin, op.end)}</div>
               {ord && <div className="small">Order due {when(origin, ord.due)} · {ord.tardy ? <b style={{ color: "var(--critical)" }}>late {hours(ord.lateness_hours)}</b> : `${hours(-ord.lateness_hours)} early`}</div>}
               {ord?.hold != null && <div className="small">Held back until {when(origin, ord.hold)} (so it isn't built early)</div>}
@@ -488,6 +490,7 @@ function OrderDetail({ res, id, busy, onMove }: {
 }) {
   const o = res.orders.find((x) => x.id === id)!;
   const origin = res.origin!;
+  const nm = useNames();
   const ops = res.ops.filter((x) => x.order === id).sort((a, b) => a.seq - b.seq || a.sub - b.sub);
   const keys = [...new Set(ops.map((x) => x.key))];
   /** One place earlier or later on its machine. */
@@ -507,7 +510,7 @@ function OrderDetail({ res, id, busy, onMove }: {
     onMove(key, to, seq.find((k) => (starts.get(k) ?? Infinity) > at) ?? null);
   };
   return (
-    <Panel title={`${o.id} · ${o.product} · ${qty(o.qty)} units`} actions={<button className="btn sm ghost" onClick={() => go("schedule", "board")}>Close</button>}>
+    <Panel title={`${o.id} · ${nm.prod(o.product)} · ${qty(o.qty)} units`} actions={<button className="btn sm ghost" onClick={() => go("schedule", "board")}>Close</button>}>
       <div className="grid-auto" style={{ marginBottom: 12 }}>
         <StatTile label="Released" value={when(origin, o.release)} sub={o.firm ? "firm production order" : `MRP start ${o.mrp_start_date}`} />
         <StatTile label="Due" value={when(origin, o.due)} sub={`MRP due ${o.mrp_due_date}`} />
@@ -532,9 +535,9 @@ function OrderDetail({ res, id, busy, onMove }: {
                 <td className="num">{parts[0].seq}{parts.length > 1 && <span className="faint small"> ×{parts.length}</span>}</td>
                 <td>{(parts[0].machines ?? []).length > 1 && !o.frozen
                   ? <select aria-label={`Machine for step ${parts[0].seq}`} value={parts[0].resource} disabled={busy} onChange={(e) => onto(k, e.target.value)}>
-                    {(parts[0].machines ?? []).map((m) => <option key={m} value={m}>{m}{m !== parts[0].machines![0] ? " (alternative)" : ""}</option>)}
+                    {(parts[0].machines ?? []).map((m) => <option key={m} value={m}>{nm.res(m)}{m !== parts[0].machines![0] ? " (alternative)" : ""}</option>)}
                   </select>
-                  : parts[0].resource}</td>
+                  : nm.res(parts[0].resource)}</td>
                 <td className="num">{pos + 1} / {r?.sequence.length}</td>
                 <td>{when(origin, Math.min(...parts.map((p) => p.setup_start)))}</td>
                 <td>{when(origin, Math.max(...parts.map((p) => p.end)))}</td>
@@ -583,6 +586,8 @@ function Parts({ res, id }: { res: ScheduleResult; id: string }) {
 
 // ------------------------------------------------------------------------------------------------
 function Orders({ res }: { res: ScheduleResult }) {
+  const receipts = useStore((s) => s.dataset?.receipts);
+  const was = useMemo(() => new Map((receipts ?? []).filter((r) => r.planned_as).map((r) => [r.id, r.planned_as!])), [receipts]);
   const origin = res.origin!;
   const maxAbs = Math.max(1, ...res.orders.map((o) => Math.abs(o.lateness_hours)));
   return (
@@ -598,7 +603,7 @@ function Orders({ res }: { res: ScheduleResult }) {
                 const w = (Math.abs(o.lateness_hours) / maxAbs) * 50;
                 return (
                   <tr key={o.id} className="clickable" onClick={() => go("schedule", "board", o.id)}>
-                    <td><b>{o.id}</b> {o.firm && <Badge>firm</Badge>}</td><td><Prod id={o.product} /></td><td className="num">{qty(o.qty)}</td>
+                    <td><b>{o.id}</b> {o.firm && <Badge>firm</Badge>}{was.get(o.id) && <div className="faint small">was {was.get(o.id)}</div>}</td><td><Prod id={o.product} /></td><td className="num">{qty(o.qty)}</td>
                     <td>{when(origin, o.release)}</td>
                     <td>{o.missing_parts.length ? <Badge sev="error">missing</Badge> : o.held_for_parts > 0 ? <Badge sev="warning">waited {hours(o.held_for_parts)}</Badge> : <span className="faint">·</span>}</td>
                     <td>{when(origin, o.due)}</td><td>{when(origin, o.completion)}</td>
@@ -626,6 +631,7 @@ function Orders({ res }: { res: ScheduleResult }) {
 
 // ------------------------------------------------------------------------------------------------
 function Resources({ res }: { res: ScheduleResult }) {
+  const nm = useNames();
   const labour = [...new Set(res.labour.map((l) => l.resource))];
   const [pool, setPool] = useState(labour[0] ?? "");
   const days = res.labour.filter((l) => l.resource === pool);
@@ -640,7 +646,7 @@ function Resources({ res }: { res: ScheduleResult }) {
             <tbody>
               {res.resources.map((r) => (
                 <tr key={r.id}>
-                  <td><b>{r.id}</b><div className="faint small">{r.name}</div></td><td>{r.kind}{!r.finite && <> · <Badge>infinite</Badge></>}</td>
+                  <td><b>{r.name || r.id}</b><div className="faint small mono">{r.id}</div></td><td>{r.kind}{!r.finite && <> · <Badge>infinite</Badge></>}</td>
                   <td className="num">{r.units}</td><td className="num">{pct(r.efficiency, 0)}</td>
                   <td><div className="row"><div className="bar-track" style={{ flex: 1, minWidth: 90 }}><div className="bar-fill" style={{ width: `${Math.min(100, r.utilization * 100)}%`,
                     background: r.utilization > 0.85 ? "var(--warning)" : "var(--series-1)" }} /></div><span className="num small">{pct(r.utilization, 0)}</span></div></td>
@@ -654,7 +660,7 @@ function Resources({ res }: { res: ScheduleResult }) {
       </Panel>
       <SectionBand step="L" title="Labour pools" right={over.length ? <Badge sev="warning">{over.length} overloaded days</Badge> : <Badge sev="ok">within headcount</Badge>} />
       {labour.length === 0 ? <Panel><Empty title="No labour on the scheduled operations" /></Panel> : <>
-        <div className="row wrap">{labour.map((l) => <button key={l} className={`btn sm ${l === pool ? "primary" : ""}`} onClick={() => setPool(l)}>{l}</button>)}</div>
+        <div className="row wrap">{labour.map((l) => <button key={l} className={`btn sm ${l === pool ? "primary" : ""}`} onClick={() => setPool(l)}>{nm.res(l)}</button>)}</div>
         <Panel title={`${pool}: operator hours per day`}>
           <BucketChart labels={days.map((d) => d.date.slice(5))} unit=" h" series={[
             { name: "Required by the schedule", color: "var(--series-1)", values: days.map((d) => d.required), kind: "column" },
