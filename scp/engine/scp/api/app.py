@@ -32,6 +32,9 @@ from ..plan.level import LevelPreview, level_preview
 from ..purchasing import PurchasingError, act as purchasing_act, create_purchase_orders, purchasing_view
 from ..purchasing.result import ActionReport, CreateReport, PurchasingView
 from ..promise import PromiseResult, check_order, commit, run_bop, run_promise
+from ..promise.orders import (
+    OrderError, SalesOrderReport, accept as accept_order, cancel as cancel_order, change as change_order,
+)
 from ..scenarios import BY_ID as SCENARIOS, EngineClient, ScenarioInfo, ScenarioReport
 from ..schedule import (
     HEURISTICS, PROFILES, ApplyReport, Heuristic, Profile, ScheduleComparison, ScheduleResult, apply_schedule,
@@ -402,6 +405,51 @@ def post_promise_commit(req: PromiseCommitRequest) -> PromiseCommitResponse:
     return PromiseCommitResponse(dataset=new, result=res)
 
 
+class SalesOrderChange(Out):
+    qty: float | None = None                        # the whole ordered quantity, delivered included
+    date: dt.date | None = None
+    priority: int | None = None
+    price: float | None = None                      # sent as null: the price list's price again
+    complete_delivery: bool | None = None
+    customer_ref: str | None = None
+
+
+class SalesOrderRequest(Out):
+    dataset: Dataset
+    action: Literal["accept", "change", "cancel"]
+    order: DemandRecord | None = None               # accept: the checked order (no number: the next one)
+    id: str | None = None                           # change / cancel: the order
+    changes: SalesOrderChange | None = None
+    date: dt.date | None = None                     # cancel: the day (default: the planning start)
+    reason: str = ""
+
+
+class SalesOrderResponse(Out):
+    dataset: Dataset
+    report: SalesOrderReport
+
+
+@app.post("/api/orders/sales", response_model=SalesOrderResponse)
+def post_sales_order(req: SalesOrderRequest) -> SalesOrderResponse:
+    """Take a checked customer order, change one (it is promised again), or cancel what is still open."""
+    try:
+        if req.action == "accept":
+            if req.order is None:
+                raise OrderError("send the order to take")
+            new, rep = accept_order(req.dataset, req.order)
+        elif not req.id:
+            raise OrderError("say which order")
+        elif req.action == "change":
+            ch = req.changes or SalesOrderChange()
+            given = {k: getattr(ch, k) for k in ch.model_fields_set if getattr(ch, k) is not None or k == "price"}
+            new, rep = change_order(req.dataset, req.id, given)
+        else:
+            new, rep = cancel_order(req.dataset, req.id, req.date, req.reason)
+    except (OrderError, ValueError) as e:
+        raise HTTPException(409, str(e)) from e
+    return SalesOrderResponse(dataset=new, report=rep)
+
+
 @app.post("/api/plan", response_model=PlanResult)
 def post_plan(ds: Dataset) -> PlanResult:
     return run_mrp(ds)
@@ -547,13 +595,14 @@ class CountInput(Out):
 
 class PostRequest(Out):
     dataset: Dataset
-    action: Literal["ship", "receive", "count"]
-    order: str | None = None                        # the firm order (ship / receive)
+    action: Literal["ship", "receive", "deliver", "count"]
+    order: str | None = None                        # the firm order (ship / receive) or sales order (deliver)
     qty: float | None = None                        # default: everything still open
     date: dt.date | None = None                     # posting date (default: the planning start; a count: the day before)
     final: bool = False                             # last delivery: closes the order even if short
     usage: list[UsageInput] | None = None           # production: parts actually used, instead of the backflush
     counts: list[CountInput] | None = None          # count: stock counted per place and product
+    ship_from: str | None = None                    # deliver: the place it ships from (default: where it was promised)
     note: str = ""
 
 
@@ -563,7 +612,8 @@ def post_posting(req: PostRequest) -> PoActionResponse:
     try:
         new, rep = post(req.dataset, req.action, order=req.order, qty=req.qty, on=req.date, final=req.final,
                         usage=None if req.usage is None else [u.model_dump() for u in req.usage],
-                        counts=None if req.counts is None else [c.model_dump() for c in req.counts], note=req.note)
+                        counts=None if req.counts is None else [c.model_dump() for c in req.counts], note=req.note,
+                        ship_from=req.ship_from)
     except PostingError as e:
         raise HTTPException(409, str(e)) from e
     return PoActionResponse(dataset=new, report=rep)

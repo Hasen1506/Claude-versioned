@@ -7,6 +7,7 @@ import type { Dataset, Kpi, PlannedOrder } from "../api/types";
 import { addDays, dayName, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { href } from "../lib/router";
 import { earliestArrival } from "../lib/situations";
+import { earnings } from "../lib/earnings";
 import { Checklist, setupTodo } from "../components/Checklist";
 import { freshness, planFreshness, store, useStore, type RunKey } from "../state/store";
 
@@ -222,14 +223,15 @@ export function Home({ ds }: { ds: Dataset }) {
   // --- money
   let moneyBody: ReactNode = null;
   if (plan) {
-    const rev = fin ? fin.serve.reduce((a, r) => a + r.revenue, 0) : 0;
-    const mar = fin ? fin.serve.reduce((a, r) => a + r.margin, 0) : 0;
+    const { revenue: rev, margin: mar, unpriced } = fin ? earnings(fin.serve) : { revenue: 0, margin: 0, unpriced: [] as string[] };
     const t = inv?.totals;
     moneyBody = (<>
       <dl className="kv">
         <dt>Plan cost, whole horizon</dt><dd>{money(plan.kpis.total_cost, cur)}</dd>
         {fin && rev > 0 && <><dt>Revenue</dt><dd>{money(rev, cur)}</dd>
           <dt>Margin</dt><dd>{money(mar, cur)} · {pct(mar / rev, 0)}</dd></>}
+        {fin && unpriced.length > 0 && <><dt>{rev > 0 ? "Not in revenue" : "Revenue"}</dt>
+          <dd>{plural(unpriced.length, "product")} without a selling price · <a href={href("setup", "products")}>set prices</a></dd></>}
         <dt>Average stock value</dt><dd>{money(plan.kpis.inventory_value_avg, cur)}</dd>
       </dl>
       {t && t.saving_vs_current > 0.5 && <p className="muted">Safety stock worth {money(t.current_ss_value, cur)} today could be{" "}

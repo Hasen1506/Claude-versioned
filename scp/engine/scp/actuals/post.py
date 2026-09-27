@@ -10,6 +10,8 @@ them to close orders. So an action is always safe to undo and never double count
     the same goods are never in two places;
   - a production order posts the quantity made, issues its parts (backflush: the order's reservations in proportion
     to what is made, or the actual usage when given) and receives any co-products.
+* **Deliver** a sales order: a goods issue to the customer from the place it ships from (its promise, else the
+  customer's first route, else the order's own place), for what is still open or part of it; *final* closes it short.
 * **Count stock**: set the stock at a place. Where the journal has nothing yet this is the opening balance, otherwise a
   count difference; on-hand in the planning policies follows, so planning, the journal and the count agree.
 """
@@ -18,7 +20,10 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, timedelta
 
-from ..model import Dataset, GoodsMovement, LocationProduct, MovementType, ReceiptKind, ScheduledReceipt
+from ..model import (
+    Dataset, DemandKind, DemandRecord, GoodsMovement, LocationProduct, MovementType, ReceiptKind, ScheduledReceipt,
+)
+from ..model.common import STOCKING_LOCATION_TYPES
 from ..purchasing import PurchasingError, receive as receive_purchase
 from ..purchasing.result import ActionReport
 from .stock import EPS, counterparty, movement_ids, pending_openings
@@ -130,7 +135,7 @@ def _below_zero(ds: Dataset, moves: list[GoodsMovement], on: date) -> list[tuple
     """Places an issue in ``moves`` takes below zero on ``on``, by the journal (setup stock included)."""
     out = []
     for m in moves:
-        if m.type not in (MovementType.ISSUE, MovementType.TRANSFER_OUT):
+        if m.type not in (MovementType.ISSUE, MovementType.TRANSFER_OUT, MovementType.SALE):
             continue
         k = (m.location, m.product)
         bal = sum(x.signed for x in [*ds.movements, *pending_openings(ds), *moves]
@@ -226,6 +231,68 @@ def receive(ds: Dataset, oid: str, qty: float | None = None, on: date | None = N
             ActionReport(ok=True, message=msg, movements=[m.id for m in moves]))
 
 
+def sales_order(ds: Dataset, oid: str) -> DemandRecord:
+    d = next((d for d in ds.demand if d.kind is DemandKind.SALES_ORDER and d.id == oid), None)
+    if d is None:
+        raise PostingError(f"{oid} is not an open sales order")
+    return d
+
+
+def delivered(ds: Dataset, oid: str) -> float:
+    """What the journal has delivered on a sales order (every posting, before and after the planning start)."""
+    return sum(m.qty for m in ds.movements if m.type is MovementType.SALE and m.reference == oid)
+
+
+def ordered_now(ds: Dataset, d: DemandRecord) -> float:
+    """A sales order's whole quantity: its ordered quantity once a roll has booked deliveries, else its quantity."""
+    return d.ordered_qty if d.ordered_qty is not None else d.qty
+
+
+def ship_point(ds: Dataset, d: DemandRecord) -> str | None:
+    """Where a sales order ships from: where it was promised from, else the customer's first route, else the order's
+    own place when it is one that holds stock."""
+    cf = sorted((c for c in ds.confirmations if c.order == d.id), key=lambda c: (c.ship_date, c.date))
+    if cf:
+        return cf[0].ship_from
+    lanes = sorted((ln for ln in ds.lanes if ln.destination == d.location
+                    and (not ln.products or d.product in ln.products)
+                    and ds.location_type(ln.origin) in STOCKING_LOCATION_TYPES), key=lambda ln: ln.priority)
+    if lanes:
+        return lanes[0].origin
+    return d.location if ds.location_type(d.location) in STOCKING_LOCATION_TYPES else None
+
+
+def deliver(ds: Dataset, oid: str, qty: float | None = None, on: date | None = None, final: bool = False,
+            ship_from: str | None = None, note: str = "") -> tuple[Dataset, ActionReport]:
+    """Goods issue of a sales order to its customer (≈ VL01N + PGI)."""
+    d = sales_order(ds, oid)
+    frm = ship_from or ship_point(ds, d)
+    if not frm or ds.location_type(frm) not in STOCKING_LOCATION_TYPES:
+        raise PostingError(f"{oid} has no place to ship from: give {_at(ds, d.location)} a route from a plant or "
+                           "warehouse, or promise the order first")
+    ordered = ordered_now(ds, d)
+    done = delivered(ds, oid)
+    q = float(qty) if qty is not None else ordered - done
+    if q <= EPS:
+        raise PostingError(f"everything on {oid} has already been delivered")
+    on = _on(ds, on)
+    m = GoodsMovement(id=next(movement_ids(ds)), date=on, type=MovementType.SALE, location=frm, product=d.product,
+                      qty=_q(q), reference=oid, counterparty=d.location, final=bool(final),
+                      note=(note or ("Delivered, rest cancelled" if final else "Delivered"))[:200])
+    left = ordered - done - q
+    status = ("closed short" if left > EPS else "complete") if final or left <= EPS else f"{_n(left)} still open"
+    notes = []
+    short = _below_zero(ds, [m], on)
+    if short:
+        (lo, p), b = short[0]
+        notes.append(f"not enough in stock by the journal: {ds.product_by_id[p].name or p} at {_at(ds, lo)} goes to "
+                     f"{_n(b)} (post the missing receipt, or a count)")
+    msg = (f"{oid}: {_n(q)} delivered to {_at(ds, d.location)} from {_at(ds, frm)} on {on.isoformat()} ({status})"
+           + ("; " + "; ".join(notes) if notes else "")
+           + ". Stock and the order are updated when the plan moves past this date.")
+    return ds.model_copy(update={"movements": [*ds.movements, m]}), ActionReport(ok=True, message=msg, movements=[m.id])
+
+
 def count_stock(ds: Dataset, counts: list[dict], on: date | None = None, note: str = "") -> tuple[Dataset, ActionReport]:
     """Stock counted at places (``[{"location", "product", "qty"}]``) at the end of ``on`` (default: the day before the
     planning start, i.e. the stock the plan starts from). A place with nothing in the journal gets an opening balance,
@@ -281,7 +348,7 @@ def count_stock(ds: Dataset, counts: list[dict], on: date | None = None, note: s
 
 def post(ds: Dataset, action: str, *, order: str | None = None, qty: float | None = None, on: date | None = None,
          final: bool = False, usage: list[dict] | None = None, counts: list[dict] | None = None,
-         note: str = "") -> tuple[Dataset, ActionReport]:
+         note: str = "", ship_from: str | None = None) -> tuple[Dataset, ActionReport]:
     if action == "count":
         return count_stock(ds, counts or [], on, note)
     if not order:
@@ -290,4 +357,6 @@ def post(ds: Dataset, action: str, *, order: str | None = None, qty: float | Non
         return ship(ds, order, qty, on)
     if action == "receive":
         return receive(ds, order, qty, on, final, usage, note)
+    if action == "deliver":
+        return deliver(ds, order, qty, on, final, ship_from, note)
     raise PostingError(f"unknown posting {action!r}")

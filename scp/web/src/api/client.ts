@@ -1,7 +1,7 @@
 import type {
   Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
-  PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoLineInput, RequisitionPick, PostAction, CountInput, UsageInput,
+  PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoLineInput, RequisitionPick, PostAction, CountInput, UsageInput, SalesOrderChange, SalesOrderResponse,
 } from "./types";
 
 /** Thrown when the engine rejects the dataset shape (HTTP 422). Carries field-level errors. */
@@ -112,9 +112,15 @@ export const api = {
     write<RollResponse>("/api/actuals/roll", dataset, { as_of: asOf }),
   /** Post what happened: ship a transfer, receive an order (a production order issues its parts), or count stock. */
   postActual: (dataset: Dataset, action: PostAction, extra: { order?: string; qty?: number | null; date?: string; final?: boolean;
-    usage?: UsageInput[] | null; counts?: CountInput[]; note?: string } = {}) =>
+    usage?: UsageInput[] | null; counts?: CountInput[]; note?: string; ship_from?: string | null } = {}) =>
     write<PoActionResponse>("/api/actuals/post", dataset, { action, order: extra.order ?? null, qty: extra.qty ?? null,
-      date: extra.date ?? null, final: extra.final ?? false, usage: extra.usage ?? null, counts: extra.counts ?? null, note: extra.note ?? "" }),
+      date: extra.date ?? null, final: extra.final ?? false, usage: extra.usage ?? null, counts: extra.counts ?? null, note: extra.note ?? "",
+      ship_from: extra.ship_from ?? null }),
+  /** Take a checked customer order (with its promise), change one (promised again), or cancel what is still open. */
+  salesOrder: (dataset: Dataset, action: "accept" | "change" | "cancel",
+    extra: { order?: DemandRecord; id?: string; changes?: Partial<SalesOrderChange>; date?: string; reason?: string }) =>
+    write<SalesOrderResponse>("/api/orders/sales", dataset, { action, order: extra.order ?? null, id: extra.id ?? null,
+      changes: extra.changes ?? null, date: extra.date ?? null, reason: extra.reason ?? "" }),
   /** Requisitions from the supply plan, every purchase order and the supplier scorecard. */
   purchasing: (ds: Dataset) => planPost<PurchasingView>("/api/purchasing", ds),
   /** Turn requisitions into purchase orders (`lines` = which, on which source; none = everything due now). */

@@ -23,6 +23,11 @@ class DemandRecord(Model):
         "qty", default=None,
         description="Sales order: the originally ordered quantity; `qty` is what is still open. Set by the roll-forward "
                     "on the first delivery (empty = nothing delivered yet)")
+    price: float | None = Unit(
+        "money_per_unit", default=None,
+        description="Sales order: the agreed net price per unit, in the company currency. Empty = the customer's "
+                    "price, else the product's")
+    customer_ref: str = Field("", max_length=64, description="Sales order: the customer's own order number")
     period_days: int | None = Field(
         None, ge=1, le=366,
         description="Forecast only: the record covers [date, date + period_days) and is spread evenly over the "

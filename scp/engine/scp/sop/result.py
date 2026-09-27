@@ -86,7 +86,7 @@ class Binding(Out):
 
 
 class Economics(Out):
-    revenue: float
+    revenue: float                   # sales of products with a selling price only
     purchase: float
     production: float
     transport: float
@@ -96,7 +96,9 @@ class Economics(Out):
     lost_penalty: float
     ss_penalty: float
     total_cost: float
-    profit: float
+    profit: float                    # revenue + valued_at_cost − total cost (the profit-mode objective)
+    valued_at_cost: float = 0.0      # sales of products without a price, valued at their cost (no margin, no revenue)
+    unpriced: list[str] = []         # sold products without a selling price
 
 
 class SopKpis(Out):

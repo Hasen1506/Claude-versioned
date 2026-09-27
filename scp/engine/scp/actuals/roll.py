@@ -170,7 +170,7 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
         if day < as_of and (loc, prod, day) not in have:
             journal[(loc, prod, day)] += m.qty
     history = imported + [SalesHistory(location=k[0], product=k[1], date=k[2], qty=round(q, 6),
-                                       price=(p.price if (p := ds.product_by_id.get(k[1])) else None), from_journal=True)
+                                       price=ds.selling_price(k[0], k[1]), from_journal=True)
                           for k, q in sorted(journal.items())]
     rep.history_added = sum(1 for k, q in journal.items() if abs(was.get(k, 0.0) - round(q, 6)) > EPS)
 

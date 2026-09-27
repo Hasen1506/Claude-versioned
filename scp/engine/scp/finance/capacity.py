@@ -24,7 +24,7 @@ def objective(r: SopResult) -> float:
 def cash(r: SopResult) -> float:
     e = r.economics
     assert e is not None
-    return e.revenue - sum(getattr(e, c) for c in CASH)
+    return e.revenue + e.valued_at_cost - sum(getattr(e, c) for c in CASH)
 
 
 def npv(flows: list[float], rate: float) -> float:

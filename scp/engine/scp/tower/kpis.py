@@ -36,7 +36,9 @@ class Kpis:
         self.cfg = ds.tower
         self.as_of = ds.settings.planning_start
         self.since = self.as_of - dt.timedelta(days=self.cfg.kpi_window_days)
-        self.closed = [c for c in ds.closed_orders if self.since <= c.closed_on <= self.as_of]
+        # an order cancelled before anything was delivered is not a delivery to measure
+        self.closed = [c for c in ds.closed_orders if self.since <= c.closed_on <= self.as_of
+                       and not (c.cancelled and c.delivered_qty <= EPS)]
         self.out: list[Kpi] = []
 
     def add(self, k: Kpi) -> Kpi:
@@ -64,6 +66,8 @@ class Kpis:
         return value, num, den, brk
 
     def _in_full(self, c: ClosedOrder) -> bool:
+        if c.cancelled:     # the rest was cancelled: what was delivered is what the customer still wanted
+            return True
         return c.delivered_qty >= c.ordered_qty * (1.0 - self.ds.execution.delivery_tolerance) - EPS
 
     # ---- demand ------------------------------------------------------------------------------------
@@ -89,7 +93,7 @@ class Kpis:
     def confirmation(self) -> None:
         rows: list[tuple[str, float, float]] = []   # (customer, requested qty, confirmed on the requested date)
         for c in self.closed:
-            if c.kind == "sales" and c.promised_date is not None:
+            if c.kind == "sales" and c.promised_date is not None and not c.cancelled:
                 rows.append((c.location, c.ordered_qty, c.ordered_qty if c.promised_date <= c.due_date else 0.0))
         conf: dict[str, list] = defaultdict(list)
         for cf in self.ds.confirmations:

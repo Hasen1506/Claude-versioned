@@ -384,6 +384,42 @@ test("promising: check → CTP simulation → commit → supply shrinks → at r
   await expect(page.getByText(/promises at risk/)).toHaveCount(0);
 });
 
+test("customer orders: check a new order → take it → change it → deliver part → cancel the rest", async ({ page }) => {
+  await openExample(page, "Kaveri Kitchenware");
+  await page.goto("/#/promise/simulate");
+  await page.getByLabel("Quantity").fill("40");
+  await page.getByLabel("Customer's order number").fill("PO-7781");
+  await expect(page.getByRole("button", { name: "Take this order" })).toBeDisabled();       // check it first
+  await page.getByRole("button", { name: "Check availability" }).click();
+  await page.getByRole("button", { name: "Take this order" }).click();
+  const saved = page.locator(".banner.info", { hasText: "Saved" });
+  await expect(saved).toContainText(/SO-88222 taken: 40 /);   // the company's own numbering, continued
+  await expect(page).toHaveURL(/#\/promise\/orders\/SO-88222$/);
+  await expect(page.locator("tr", { hasText: "SO-88222" }).first()).toContainText("PO-7781");
+
+  await page.getByRole("button", { name: "Change", exact: true }).click();
+  await page.getByLabel("Ordered quantity").fill("50");
+  await page.getByLabel("Price a unit").fill("999");
+  await page.getByRole("button", { name: "Save and promise again" }).click();
+  await expect(saved).toContainText("SO-88222 changed (quantity 40 → 50, price 999)");
+  await expect(page.locator(".tile", { hasText: "Order value" })).toContainText("999");
+
+  await page.getByRole("button", { name: "Deliver", exact: true }).click();
+  await page.getByLabel("Quantity to deliver").fill("20");
+  await page.getByRole("button", { name: "Post the delivery" }).click();
+  await expect(saved).toContainText("SO-88222: 20 delivered");
+  await expect(saved).toContainText("30 still open");
+
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("button", { name: "Cancel the 30 still open" }).click();
+  await expect(saved).toContainText("SO-88222 cancelled: 20 delivered, 30 no longer wanted");
+  await page.goto("/#/data/closed_orders");
+  await expect(page.locator("tr", { hasText: "SO-88222" })).toBeVisible();
+  await page.getByRole("button", { name: "Undo" }).first().click();
+  await page.goto("/#/data/demand");
+  await expect(page.locator("tr", { hasText: "SO-88222" })).toBeVisible();                          // undo brings it back
+});
+
 test("execution: journal → stock in sync → ship → roll forward → accuracy → firm planned orders", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/execution");
@@ -394,8 +430,8 @@ test("execution: journal → stock in sync → ship → roll forward → accurac
   // deliver the rest of SO-88190 inside the coming week
   await page.goto("/#/execution/orders");
   await page.locator('input[id="post-date"]').fill("2026-10-03");
-  await page.getByRole("button", { name: "Ship SO-88190" }).click();
-  await expect(freshness(page, "execution")).toHaveAttribute("data-fresh", "stale");
+  await page.getByRole("button", { name: "Deliver SO-88190" }).click();
+  await expect(page.locator(".banner.info", { hasText: "Posted" })).toContainText("SO-88190");
 
   // roll one week: orders close, the week is measured
   await page.goto("/#/execution/roll");

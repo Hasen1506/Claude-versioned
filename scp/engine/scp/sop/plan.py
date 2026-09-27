@@ -112,10 +112,11 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
     demand_nodes = [n for n in nodes if n in dem]
 
     def price(n: Node) -> float:
-        p = ds.product_by_id.get(n[1])
-        return p.price if p and p.price is not None else val.unit_value.get(n, 0.0)
+        p = ds.selling_price(*n)
+        return p if p is not None else val.unit_value.get(n, 0.0)
 
-    no_price = sorted({n[1] for n in demand_nodes if (p := ds.product_by_id.get(n[1])) is None or p.price is None})
+    no_price = sorted({n[1] for n in demand_nodes if ds.selling_price(*n) is None})
+    priced = {n for n in demand_nodes if ds.selling_price(*n) is not None}
 
     lp = LinearProgram()
     # ---- columns ---------------------------------------------------------------------------------------
@@ -449,14 +450,15 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
         if n in gap:
             econ["ss"] += sum(lp.cost[j] * xv(j) for j in gap[n])
     for n in demand_nodes:
-        econ["revenue"] += sum(price(n) * xv(j) for j in sales[n])
+        econ["revenue" if n in priced else "at_cost"] += sum(price(n) * xv(j) for j in sales[n])
         econ["backlog"] += sum(lp.cost[j] * xv(j) for j in back[n])
         econ["lost"] += sum(lp.cost[j] * xv(j) for j in lost[n])
     total = sum(econ[k] for k in ("purchase", "production", "transport", "holding", "overtime", "backlog", "lost", "ss"))
     res.economics = Economics(
         revenue=econ["revenue"], purchase=econ["purchase"], production=econ["production"], transport=econ["transport"],
         holding=econ["holding"], overtime=econ["overtime"], backlog_penalty=econ["backlog"], lost_penalty=econ["lost"],
-        ss_penalty=econ["ss"], total_cost=total, profit=econ["revenue"] - total)
+        ss_penalty=econ["ss"], total_cost=total, profit=econ["revenue"] + econ["at_cost"] - total,
+        valued_at_cost=econ["at_cost"], unpriced=no_price)
     d_tot = sum(sum(v) for v in dem.values())
     s_tot = sum(sum(dl.sales) for dl in res.demand)
     on_time = sum(min(dl.demand[t], max(0.0, dl.sales[t] - (dl.backlog[t - 1] if t else 0.0)))
@@ -474,8 +476,9 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
         "Setups, lot sizes and minimum order quantities are left to MRP and scheduling: the LP plans volumes.",
         "Safety-stock targets are each node's configured policy; falling below costs the shortfall penalty.",
     ]
-    if profit and no_price:
-        res.notes.append(f"No selling price for {', '.join(no_price)}: valued at cost, so serving it earns no margin.")
+    if no_price:
+        res.notes.append(f"No selling price for {', '.join(no_price)}: its sales are valued at cost, so they earn no "
+                         "margin and are left out of revenue.")
     res.ok = True
     return res
 

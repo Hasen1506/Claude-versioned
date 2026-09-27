@@ -331,7 +331,9 @@ function shipFrom(ds: Dataset, customer: string, order: string): string | null {
   const c = (ds.confirmations ?? []).find((x) => x.order === order);
   if (c) return c.ship_from;
   const lanes = (ds.lanes ?? []).filter((l) => l.destination === customer).sort((a, b) => (a.priority ?? 1) - (b.priority ?? 1));
-  return lanes[0]?.origin ?? null;
+  if (lanes[0]) return lanes[0].origin;
+  const own = (ds.locations ?? []).find((l) => l.id === customer);
+  return own && own.type !== "customer" && own.type !== "supplier" ? customer : null;
 }
 
 function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
@@ -354,12 +356,6 @@ function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
     } finally {
       setBusy(null);
     }
-  };
-  const ship = (o: OpenOrderRow) => {
-    const from = shipFrom(ds, o.location, o.id);
-    if (!from) return;
-    post({ date: postDate, type: "sale", location: from, product: o.product, qty: Math.round(o.open * 1000) / 1000, reference: o.id,
-      counterparty: o.location, final: false, note: "" });
   };
   const toShip = (o: OpenOrderRow) => o.ordered - o.delivered - o.in_transit;
   return (
@@ -420,7 +416,9 @@ function Orders({ res, ds }: { res: ActualsView; ds: Dataset }) {
                     <td><b>{o.id}</b></td><td><Loc id={o.location} /></td><td><Prod id={o.product} /></td><td className="num">{qty(o.ordered)}</td>
                     <td className="num">{o.delivered ? qty(o.delivered) : ""}</td><td className="num">{qty(o.open)}</td>
                     <td>{day(o.due_date)} {o.past_due && <Badge sev="warning">past due</Badge>}</td>
-                    <td><button className="btn sm" onClick={() => ship(o)} disabled={o.open <= 1e-6 || !shipFrom(ds, o.location, o.id)} aria-label={`Ship ${o.id}`}>Ship</button></td>
+                    <td className="nowrap"><button className="btn sm" onClick={() => act(o.id, "deliver")} disabled={!!busy || o.open <= 1e-6 || !shipFrom(ds, o.location, o.id)}
+                      aria-label={`Deliver ${o.id}`} title="Goods issue of the open quantity to the customer, from where it was promised">Deliver</button>{" "}
+                      <a className="btn sm ghost" href={href("promise", "orders", o.id)} aria-label={`Open ${o.id}`} title="Part of it, change or cancel">…</a></td>
                   </tr>
                 ))}
               </tbody>

@@ -380,6 +380,8 @@ function Products({ ds }: { ds: Dataset }) {
               </tr>;
             })}</tbody>
           </table></div>
+          <p className="faint small" style={{ padding: "8px 12px", margin: 0 }}>A customer who pays a different price?{" "}
+            <a href={href("data", "customer_prices")}>Prices per customer</a> ({(ds.customer_prices ?? []).length} set). An order can also carry its own price.</p>
         </Panel>}
       </div>
     </div>

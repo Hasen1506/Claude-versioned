@@ -394,6 +394,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/orders/sales": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Sales Order
+         * @description Take a checked customer order, change one (it is promised again), or cancel what is still open.
+         */
+        post: operations["post_sales_order_api_orders_sales_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/plan": {
         parameters: {
             query?: never;
@@ -1508,6 +1528,12 @@ export interface components {
              * @description Purchase: the date the supplier confirmed, if any
              */
             confirmed_date?: string | null;
+            /**
+             * Cancelled
+             * @description Sales: cancelled before it was delivered in full; what was delivered is `delivered_qty`, and only that counts in OTIF
+             * @default false
+             */
+            cancelled: boolean;
         };
         /**
          * CoProduct
@@ -1717,6 +1743,25 @@ export interface components {
              */
             note: string;
         };
+        /**
+         * CustomerPrice
+         * @description What a customer pays for a product (≈ a customer-specific condition record, PR00 per customer and material).
+         *     A sales order's own price wins; without either, the product's selling price.
+         */
+        CustomerPrice: {
+            /**
+             * Customer
+             * @description The customer (or selling location) the price is agreed with
+             */
+            customer: string;
+            /** Product */
+            product: string;
+            /**
+             * Price
+             * @description Net price per base unit, in the company currency
+             */
+            price: number;
+        };
         /** CvSuggestion */
         CvSuggestion: {
             /** Location */
@@ -1759,6 +1804,8 @@ export interface components {
             locations?: components["schemas"]["Location"][];
             /** Products */
             products?: components["schemas"]["Product"][];
+            /** Customer Prices */
+            customer_prices?: components["schemas"]["CustomerPrice"][];
             /** Location Products */
             location_products?: components["schemas"]["LocationProduct"][];
             /** Resources */
@@ -1999,6 +2046,17 @@ export interface components {
              */
             ordered_qty?: number | null;
             /**
+             * Price
+             * @description Sales order: the agreed net price per unit, in the company currency. Empty = the customer's price, else the product's
+             */
+            price?: number | null;
+            /**
+             * Customer Ref
+             * @description Sales order: the customer's own order number
+             * @default
+             */
+            customer_ref: string;
+            /**
              * Period Days
              * @description Forecast only: the record covers [date, date + period_days) and is spread evenly over the working days of that window (PIR splitting). Empty = the whole quantity is due on `date`.
              */
@@ -2028,6 +2086,16 @@ export interface components {
             total_cost: number;
             /** Profit */
             profit: number;
+            /**
+             * Valued At Cost
+             * @default 0
+             */
+            valued_at_cost: number;
+            /**
+             * Unpriced
+             * @default []
+             */
+            unpriced: string[];
         };
         /**
          * EventKind
@@ -3873,11 +3941,10 @@ export interface components {
              * @default
              */
             reason: string;
-            /**
-             * Value
-             * @default 0
-             */
-            value: number;
+            /** Price */
+            price: number | null;
+            /** Value */
+            value: number | null;
         };
         /**
          * OutlierMethod
@@ -4307,7 +4374,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ship" | "receive" | "count";
+            action: "ship" | "receive" | "deliver" | "count";
             /** Order */
             order?: string | null;
             /** Qty */
@@ -4323,6 +4390,8 @@ export interface components {
             usage?: components["schemas"]["UsageInput"][] | null;
             /** Counts */
             counts?: components["schemas"]["CountInput"][] | null;
+            /** Ship From */
+            ship_from?: string | null;
             /**
              * Note
              * @default
@@ -4547,6 +4616,11 @@ export interface components {
              * @default 0
              */
             value_unconfirmed: number;
+            /**
+             * Unpriced Unconfirmed
+             * @default 0
+             */
+            unpriced_unconfirmed: number;
             /**
              * Rlt Lines
              * @default 0
@@ -5319,6 +5393,56 @@ export interface components {
              */
             from_journal: boolean;
         };
+        /** SalesOrderChange */
+        SalesOrderChange: {
+            /** Qty */
+            qty?: number | null;
+            /** Date */
+            date?: string | null;
+            /** Priority */
+            priority?: number | null;
+            /** Price */
+            price?: number | null;
+            /** Complete Delivery */
+            complete_delivery?: boolean | null;
+            /** Customer Ref */
+            customer_ref?: string | null;
+        };
+        /** SalesOrderReport */
+        SalesOrderReport: {
+            /** Ok */
+            ok: boolean;
+            /** Order */
+            order: string;
+            /** Message */
+            message: string;
+            promise: components["schemas"]["OrderPromise"] | null;
+        };
+        /** SalesOrderRequest */
+        SalesOrderRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "accept" | "change" | "cancel";
+            order?: components["schemas"]["DemandRecord"] | null;
+            /** Id */
+            id?: string | null;
+            changes?: components["schemas"]["SalesOrderChange"] | null;
+            /** Date */
+            date?: string | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
+        /** SalesOrderResponse */
+        SalesOrderResponse: {
+            dataset: components["schemas"]["Dataset"];
+            report: components["schemas"]["SalesOrderReport"];
+        };
         /** SaveBaseRequest */
         SaveBaseRequest: {
             dataset: components["schemas"]["Dataset"];
@@ -6054,11 +6178,8 @@ export interface components {
              * @default 0
              */
             cost_per_unit: number;
-            /**
-             * Margin
-             * @default 0
-             */
-            margin: number;
+            /** Margin */
+            margin: number | null;
             /** Margin Pct */
             margin_pct: number | null;
         };
@@ -7792,6 +7913,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PromiseCommitResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_sales_order_api_orders_sales_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SalesOrderRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SalesOrderResponse"];
                 };
             };
             /** @description Validation Error */

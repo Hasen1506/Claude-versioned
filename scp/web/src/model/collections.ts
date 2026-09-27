@@ -7,7 +7,7 @@ type Obj = Record<string, unknown>;
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
   | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides"
-  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders";
+  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices";
 
 export interface Column {
   label: string;
@@ -172,6 +172,15 @@ export const COLLECTIONS: CollectionDef[] = [
     ],
   },
   {
+    key: "customer_prices", label: "Customer prices", singular: "customer price", defName: "CustomerPrice",
+    issueType: "customer_price", group: "Demand inputs", keyOf: (o) => `${s(o.customer)}/${s(o.product)}`,
+    blurb: "What a customer pays for a product, where it differs from the product's selling price. An order's own price wins over both; without any price, sales show no revenue or margin.",
+    columns: [
+      { label: "Customer", get: (o) => s(o.customer) }, { label: "Product", get: (o) => s(o.product) },
+      { label: "Price", get: (o) => o.price as number, num: true },
+    ],
+  },
+  {
     key: "allocations", label: "Allocations", singular: "allocation", defName: "Allocation", issueType: "allocation",
     group: "Planning data", keyOf: (o) => s(o.id),
     blurb: "Product allocation: the most that may be promised to a product (and customers) in a period, whatever the stock.",
@@ -297,6 +306,8 @@ export function whereUsed(ds: Dataset, kind: "location" | "product" | "resource"
     add(hs > 0, `${hs} history row(s)`);
     for (const n of ds.npi ?? []) add(n.location === id || n.like_location === id, `NPI rule ${n.location}|${n.product}`);
     for (const e of ds.events ?? []) add(!!e.locations?.includes(id), `event ${e.id}`);
+    const cp = (ds.customer_prices ?? []).filter((x) => x.customer === id).length;
+    add(cp > 0, `${cp} customer price(s)`);
   }
   if (kind === "product") {
     for (const p of ds.production_sources ?? []) {
@@ -313,6 +324,8 @@ export function whereUsed(ds: Dataset, kind: "location" | "product" | "resource"
     add(hs > 0, `${hs} history row(s)`);
     for (const n of ds.npi ?? []) add(n.product === id || n.like_product === id, `NPI rule ${n.location}|${n.product}`);
     for (const e of ds.events ?? []) add(!!e.products?.includes(id), `event ${e.id}`);
+    const cp = (ds.customer_prices ?? []).filter((x) => x.product === id).length;
+    add(cp > 0, `${cp} customer price(s)`);
   }
   if (kind === "resource") {
     for (const p of ds.production_sources ?? [])

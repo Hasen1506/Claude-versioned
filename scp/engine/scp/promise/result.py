@@ -52,7 +52,8 @@ class OrderPromise(Out):
     change: Literal["new", "kept", "gained", "lost", "changed", "unchanged"] = "new"
     at_risk: bool = False            # persisted promise no longer covered by supply
     reason: str = ""                 # why (part of) the order could not be confirmed
-    value: float = 0.0               # qty × price
+    price: float | None = None       # per unit: the order's own, else the customer's, else the product's
+    value: float | None = None       # qty × price (empty without a price)
 
 
 class AtpNode(Out):
@@ -102,7 +103,8 @@ class PromiseKpis(Out):
     confirmed_qty: float = 0.0
     unconfirmed_qty: float = 0.0
     on_time_orders: int = 0
-    value_unconfirmed: float = 0.0
+    value_unconfirmed: float = 0.0          # of the orders with a price
+    unpriced_unconfirmed: int = 0           # orders with something unconfirmed and no price
     rlt_lines: int = 0
     ctp_lines: int = 0
     alternative_lines: int = 0

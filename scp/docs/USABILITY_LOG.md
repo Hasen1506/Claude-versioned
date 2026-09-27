@@ -5,8 +5,8 @@ screens (not by opening the prepared examples). Each entry: what happened, why i
 Open items name the roadmap phase that addresses them.
 
 Phases: **A** get your own company in · **B** master-data depth · **C** capacity and material together ·
-**D** PP/DS-class scheduling · **E** procure-to-pay · **F** execution you can trust · **H** defaults and onboarding.
-Proposed after the second reality check: **G** order to cash · **I** a real place to keep the company · **J** polish.
+**D** PP/DS-class scheduling · **E** procure-to-pay · **F** execution you can trust · **H** defaults and onboarding ·
+**G** order to cash. Proposed after the second reality check: **I** a real place to keep the company · **J** polish.
 
 ## Found in the reality check (before Phase A)
 
@@ -109,6 +109,17 @@ Proposed after the second reality check: **G** order to cash · **I** a real pla
 | N50 | Company settings in Master data had no way to enter exchange rates (a map the generic form skips). | Minor | **Fixed (H).** *Your company* lists every currency a supplier prices in, with its rate. |
 | N51 | Planned-order numbers still change on every plan and firm orders still get new numbers (Q22), which the week's-need default makes less noisy but does not fix. | Minor | Open (**J**, Q22). |
 
+## Found while building Phase G
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N52 | *Ship* on an open sales order (Actuals) posted the sale in the browser: no stock check, nothing for an order at a warehouse (no route to it), no part delivery, and it skipped the engine's posting rules. | Serious | **Fixed (G).** *Deliver* goes through the engine: from where the order was promised, else the customer's first route, else the order's own place; it says when the place goes below zero. *…* opens the order for a part delivery, a change or a cancellation. |
+| N53 | An order's value counted a missing price as zero: "₹0 of sales on backorder", and a product without a price looked like a free giveaway in the backorder total. | Minor | **Fixed (G).** An order without a price has no value, and the backorder total says how many orders have none. |
+| N54 | Two sales orders with the same number were not flagged by the data check (only receipts, movements and purchase orders were). | Serious | **Fixed (G).** A duplicate sales-order number is an error. |
+| N55 | Removing a sales order (Master data → Demand) left its deliveries without an order and its promise as an orphan confirmation, a blocking error. | Serious | **Fixed (G)** by *Cancel*, which keeps the order in the closed-order log and drops its promise. |
+| N56 | After an action on one page (taking an order), another page's earlier result (Actuals' open orders) stays until it is recalculated; its tab shows it is out of date, but the new order is not in its list yet. | Minor | Open (**J**): recalculate on opening a page whose result is out of date and cheap to rebuild. |
+| N57 | Posting messages give dates as 2026-09-28 while order messages say Mon 5 Oct. | Minor | Open (**J**). |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution
@@ -124,12 +135,12 @@ on a desktop and at phone width. Phases F–J are the proposal at the end of thi
 | Q2 | *Receive* on a stock transfer posts only its arrival: nothing takes the goods out of the sending place, and there is no *Ship* button for a transfer. The same tins then sit in the plant and the warehouse at once. | Critical | **Fixed (F).** A transfer has *Ship* (goods issue at the sending place; the goods are in transit) and *Receive*; receiving what was never shipped posts the dispatch with it, so the same goods are never in two places (`engine/scp/actuals/post.py`). |
 | Q3 | *Receive* on a production order adds the product but never issues its parts: resin, pigment and tins stay at their opening stock however much is made, unless each issue is posted by hand in the journal. | Critical | **Fixed (F).** *Confirm* on a production order posts what was made, issues its parts in proportion (its reservations, or the bill of materials for an imported order), receives co-products, and says when a part goes below zero; *…* posts part of it, closes it short, or takes the parts actually used instead. |
 | Q4 | The goods-movement upload refuses a file without an *id* column, which no dispatch register or stock report has. | Critical | **Fixed (F).** The id column is optional on a movement upload; new movements are numbered GM-00001, GM-00002, … after the journal's last. |
-| Q5 | There is no way to take a customer order. *Check a new order* is a simulation ("Nothing is saved"); an order has to be typed into *Master data → Demand* with its kind set to sales order. | Critical | Open (**G**). Accept a checked order as a sales order; an order list to change, cancel and deliver. |
+| Q5 | There is no way to take a customer order. *Check a new order* is a simulation ("Nothing is saved"); an order has to be typed into *Master data → Demand* with its kind set to sales order. | Critical | **Fixed (G).** *Customer orders → New order*: check it, then *Take this order* saves it as a sales order with the next number in the company's own series (SO-00001, or SO-88222 after SO-88221) and keeps the promise it was given, so later orders cannot take its stock. It takes a price and the customer's own order number. Each open order has *Deliver* (all or part, from where it was promised or another place, last delivery closes it), *Change* (quantity, date, priority, price, delivery rule; promised again) and *Cancel* (the rest; logged as a cancelled closed order that OTIF leaves out). `engine/scp/promise/orders.py`, `POST /api/orders/sales`, posting action `deliver`. |
 | Q6 | Products counted in each are planned in fractions: production orders for 25.9 tins, a transfer of 2.22 pails, 203.23 pails a week in the demand grid. | Serious | **Fixed (H).** A product in a unit counted in pieces (EA, box, case, tin, pail, bag, drum, …) is planned in whole units: planned orders round up, forecasts are released as whole units with the running total kept within half a unit. *Whole* on the product list overrides the unit either way (`Product.whole_units`). |
 | Q7 | The default lot size is exactly what's needed, day by day: 2,032 planned orders over 26 weeks for four products (573 production runs, 1,184 shipments), four batches of base in four days, 61 orders to start in one week. | Serious | **Fixed (H).** The company says how much an order covers where a product leaves it empty (`settings.default_lot_policy`): a new company starts at a week's need. On the paint company that is 363 orders over 26 weeks instead of 1,901. The company step can move products set to *exactly what's needed* over to it. |
 | Q8 | A process plant cannot be described: a batch of paint is mixed in fixed batches (e.g. 2,000 L in 3 hours whatever the fill), but a step only takes minutes per unit and setup hours. | Serious | **Fixed (H).** A step can run in batches: batch size and hours per batch, however full (`Operation.batch_qty`, `batch_hours`). Orders are planned in whole batches (counting the units entering the step) unless the production source allows part batches; scheduling, lead times, promising and capacity use the batch time. In the make form and the routing upload. |
 | Q9 | Two roads to a purchase order disagree. *Buying* groups lines per supplier and applies approval and minimum order value; *Actuals → firm zone* firms each purchase as its own order and skips both. Firming "everything" there also re-ordered 200 kg of pigment already on order (the confirmed-late line), without saying so. | Serious | **Fixed (F).** Firming a purchase goes through Buying's own order creation: one order per supplier, place and currency, approval limit and minimum order value on the whole order, the supplier's earliest delivery on a late start. A planned purchase that an open order would cover if it came sooner names that order in the firm zone and on *To order*, and the firm zone leaves it unticked. |
-| Q10 | *Capacity plan* reports revenue of ₹4.01 Cr when no selling price is set (it values each sale at its cost), while *Money* says revenue ₹0 and a margin of −₹4.19 Cr. | Serious | Open (**G**). Without prices, show no revenue or margin anywhere; say which products need a price. |
+| Q10 | *Capacity plan* reports revenue of ₹4.01 Cr when no selling price is set (it values each sale at its cost), while *Money* says revenue ₹0 and a margin of −₹4.19 Cr. | Serious | **Fixed (G).** Revenue and margin count only sales with a price (the order's own, else the customer's, else the product's). Without one, a cost-to-serve row has no margin, an order no value, and the capacity plan leaves its sales out of revenue (it still values them at cost in the model, so serving them earns nothing). *Money*, *Home* and the capacity plan name the products without a price and link to setting them. On the paint company: "Emulsion white 20 L, Emulsion white 4 L and Enamel red 1 L have no selling price". |
 | Q11 | The demand upload does not read the columns a sales spreadsheet has: *Customer* is not taken as the place, *Month* is not taken as the date, and "Oct 2026" is "not a date". A monthly forecast needs an ISO date plus a *period_days* column that nothing mentions. | Serious | **Fixed (H).** A demand or history upload reads *Customer*, *Month*, *Units sold*, *Item name* and other sales-sheet columns; a month ("Oct 2026", "2026-10", "10/2026", "Oct-26") or a week ("2026-W41") is a total spread over its days (`period_days`, now on history too), and a sheet with the months across the top becomes one row per month. |
 | Q12 | An empty company never asks its name, currency, planning start or working week (the header says "My Company", Monday to Saturday is imposed), and setup never asks for selling prices or costs. | Serious | **Fixed (H).** *Start with an empty company* asks the company's name, currency, planning start, working days and how much an order covers; *Set up → Your company* changes them and the exchange rates later, and the checklist starts with it. The product list takes selling prices and costs, marks the whole-unit products and shows a bought product's supplier price; the checklist notes sold products without a price. |
 | Q13 | *Enter stock on hand* opens an empty planning-policy table (the side list shows a warning count of 15 next to it). Stock can only be typed once a policy row exists for each product and place. | Serious | **Fixed (F).** *Actuals → Count stock*: every product at every place it is kept (planning policies, production and its parts, purchasing, routes, the journal) with its stock now and a *Counted* column. A place with nothing recorded gets an opening balance, any other a count difference, and on-hand follows the journal; a count after the start counts at the next new week. The checklist's stock step opens it. |
@@ -156,8 +167,9 @@ roll-forward report, and every page at phone width except *Machines & shifts* (n
   order confirms with its parts issued. A transfer ships and arrives, with stock in transit between. Movements
   upload without ids. There is one road to a purchase order. Late postings offer a re-roll. Home leads with stock
   that disagrees with the journal.
-- **G: order to cash, first steps** (Q5, Q10). Accept a checked order. A sales-order list to change, cancel and
-  deliver from. Customer prices and terms. Revenue and margin appear only where prices exist.
+- **G: order to cash, first steps** (Q5, Q10): **done**, see the statuses above and N52–N55. Take a checked order. A
+  sales-order list to deliver, change and cancel from. Customer prices and an order's own price. Revenue and margin
+  only where prices exist. Payment terms, credit checks and invoices are SAP gaps below.
 - **H: sensible defaults and a second onboarding pass** (Q6–Q8, Q11, Q12, Q16, N40): **done**, see the statuses above and N48–N51. The company's own settings
   come first. Whole units. A weekly default lot size. Batch steps. Monthly demand upload. Prices and costs in
   setup. Supplier currency.
@@ -187,8 +199,13 @@ roll-forward report, and every page at phone width except *Machines & shifts* (n
 - Inventory management: opening balances, counts with differences, transfers shipped and received with stock in
   transit, production confirmations with backflush or actual usage and co-products (**F**, done). Still missing: batch
   and serial numbers, stock types (quality inspection, blocked), stock in transit as its own stock type, physical
-  inventory documents with a freeze, reversal of a posting (today: undo, or a counter-movement), goods issue for a
-  sales order through a delivery (**G**).
+  inventory documents with a freeze, reversal of a posting (today: undo, or a counter-movement). Goods issue for a
+  sales order is a posting on the order (**G**, done); a delivery document with picking and packing is still missing.
+- SD: taking an order with the availability check's promise, order changes promised again, cancelling the rest with
+  the order logged, deliveries in part or in full, and customer-specific prices (**G**, done). Still missing:
+  several lines per order, pricing conditions with discounts, surcharges and quantity scales, payment terms and a
+  credit check, delivery documents (picking, packing, proof of delivery), billing and invoices, returns and credit
+  notes, quotations and contracts, and output (an order confirmation to send the customer).
 - MM: supplier purchasing data with a purchasing block, info records with price scales, the source list (fixed
   and blocked), requisitions from MRP, purchase orders with an approval limit, supplier confirmations that planning
   uses, and goods receipts with delivery tolerances (**E**, done). Still missing: invoice verification (three-way

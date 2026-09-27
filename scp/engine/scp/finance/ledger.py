@@ -217,10 +217,9 @@ class _Ledger:
                 key = (r.location, r.product)
                 if key not in rows:
                     loc = self.ds.location_by_id.get(r.location)
-                    prod = self.ds.product_by_id.get(r.product)
                     rows[key] = ServeRow(location=r.location, location_type=loc.type.value if loc else "",
                                          region=loc.region if loc else "", product=r.product, demand=0.0, served=0.0,
-                                         price=prod.price if prod else None, revenue=0.0, costs={})
+                                         price=self.ds.selling_price(r.location, r.product), revenue=0.0, costs={})
                 row = rows[key]
                 row.demand += r.qty
                 row.served += sum(p.qty for p in self.pegs_by_req.get(r.id, []))
@@ -235,8 +234,8 @@ class _Ledger:
             row.plan_cost = sum(x for k, x in row.costs.items() if k in PLAN_COSTS)
             row.total_cost = sum(row.costs.values())
             row.cost_per_unit = row.total_cost / row.served if row.served > 0 else 0.0
-            row.margin = row.revenue - row.total_cost
-            row.margin_pct = row.margin / row.revenue if row.revenue > 0 else None
+            row.margin = None if row.price is None else row.revenue - row.total_cost
+            row.margin_pct = row.margin / row.revenue if row.margin is not None and row.revenue > 0 else None
             out.append(row)
         return sorted(out, key=lambda x: (x.region, x.location, x.product))
 

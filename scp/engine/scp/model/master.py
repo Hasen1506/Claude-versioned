@@ -150,6 +150,15 @@ class Product(Model):
         return v
 
 
+class CustomerPrice(Model):
+    """What a customer pays for a product (≈ a customer-specific condition record, PR00 per customer and material).
+    A sales order's own price wins; without either, the product's selling price."""
+
+    customer: str = Ref("location", description="The customer (or selling location) the price is agreed with")
+    product: str = Ref("product")
+    price: float = Unit("money_per_unit", description="Net price per base unit, in the company currency")
+
+
 class LotSizing(Model):
     policy: LotSizePolicy | None = Field(None, description="Empty: the company default (settings)")
     fixed_qty: float | None = Unit("qty", gt=0, default=None, description="FIXED: lot size")

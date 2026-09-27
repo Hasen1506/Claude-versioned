@@ -46,7 +46,8 @@ def _entry(ds: Dataset, P: Promiser) -> list[OrderPromise]:
             lines = [P.register(d, c) for c in persisted[key]]
             r = OrderPromise(order=key, location=d.location, product=d.product, qty=d.qty, requested=d.date,
                              priority=d.priority, complete_delivery=d.complete_delivery, lines=lines, previous=list(lines),
-                             change="kept", value=d.qty * _price(ds, d))
+                             change="kept")
+            _value(ds, d, r)
             out[key] = finish(r)
     # which persisted promises does the current supply no longer cover? Promises shipping before the first day the
     # cumulative balance goes negative are covered (everything up to that day is); those shipping inside a
@@ -62,13 +63,15 @@ def _entry(ds: Dataset, P: Promiser) -> list[OrderPromise]:
                 r.at_risk = True
     for key, d in orders:
         if key not in out:
-            out[key] = P.check(d, key)
+            out[key] = _value(ds, d, P.check(d, key))
     return [out[k] for k, _ in orders]
 
 
-def _price(ds: Dataset, d: DemandRecord) -> float:
-    p = ds.product_by_id.get(d.product)
-    return (p.price or 0.0) if p else 0.0
+def _value(ds: Dataset, d: DemandRecord, r: OrderPromise) -> OrderPromise:
+    """The order's price and value: its own price, else the customer's, else the product's; empty without one."""
+    r.price = ds.selling_price(d.location, d.product, d.price)
+    r.value = None if r.price is None else d.qty * r.price
+    return r
 
 
 def _summary(lines: list[ScheduleLine]) -> tuple[float, float]:
@@ -148,7 +151,7 @@ def _bop(ds: Dataset, P: Promiser) -> tuple[list[OrderPromise], list[BopRow]]:
             r = finish(OrderPromise(order=key, location=d.location, product=d.product, qty=d.qty, requested=d.date,
                                     priority=d.priority, complete_delivery=d.complete_delivery))
         r.previous = prev_lines
-        r.value = d.qty * _price(ds, d)
+        _value(ds, d, r)
         b_on, b_conf = _summary(prev_lines)
         a_on, a_conf = r.on_time, r.confirmed
         if a_on > b_on + EPS or (abs(a_on - b_on) <= EPS and a_conf > b_conf + EPS):
@@ -189,7 +192,10 @@ def _finish(ds: Dataset, P: Promiser, res: PromiseResult, orders: list[OrderProm
         k.confirmed_qty += o.confirmed
         k.unconfirmed_qty += o.unconfirmed
         k.on_time_orders += o.status == "on_time"
-        k.value_unconfirmed += o.unconfirmed * (o.value / o.qty if o.qty else 0.0)
+        if o.price is not None:
+            k.value_unconfirmed += o.unconfirmed * o.price
+        elif o.unconfirmed > EPS:
+            k.unpriced_unconfirmed += 1
         k.rlt_lines += sum(x.method == "rlt" for x in o.lines)
         k.ctp_lines += sum(x.method == "ctp" for x in o.lines)
         primary = P.ships(_rec(o))[0].node[0] if P.ships(_rec(o)) else None
@@ -228,7 +234,7 @@ def check_order(ds: Dataset, order: DemandRecord) -> PromiseResult:
     orders = _entry(ds, P)
     rec = order.model_copy(update={"kind": DemandKind.SALES_ORDER})
     checked = P.check(rec, rec.id or "SIMULATION")
-    checked.value = rec.qty * _price(ds, rec)
+    _value(ds, rec, checked)
     res = _finish(ds, P, res, orders)
     res.checked = checked
     res.mode = "check"

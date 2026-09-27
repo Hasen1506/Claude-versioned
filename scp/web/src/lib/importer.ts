@@ -438,7 +438,7 @@ export function templateRows(ds: Dataset, ckey: CollectionKey, cols: Col[], kind
   const start = ds.settings.planning_start;
   const example = (c: Col): string | number => {
     const f = c.path.split(".").pop()!;
-    if (c.ref === "location") return (f === "supplier" ? loc(["supplier"]) : f === "destination" ? loc(["dc", "warehouse", "store", "customer"]) : loc(["plant", "dc", "warehouse"])) ?? "PLANT-1";
+    if (c.ref === "location") return (f === "supplier" ? loc(["supplier"]) : f === "customer" ? loc(["customer"]) : f === "destination" ? loc(["dc", "warehouse", "store", "customer"]) : loc(["plant", "dc", "warehouse"])) ?? "PLANT-1";
     if (c.ref === "product") return (kind === "bom" && f === "component" ? prod(["RM", "PKG", "SFG"]) : prod(["FG"])) ?? "PRODUCT-1";
     if (c.ref === "resource") return (ds.resources ?? [])[0]?.id ?? "LINE-1";
     if (c.kind === "date") return start;

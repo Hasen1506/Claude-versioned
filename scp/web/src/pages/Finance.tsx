@@ -4,8 +4,10 @@ import { BucketChart } from "../components/charts";
 import {
   Badge, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, RunButton, Term,
 } from "../components/ui";
-import { money, pct, qty, unitMoney } from "../lib/format";
-import { go } from "../lib/router";
+import { money, pct, plural, qty, unitMoney } from "../lib/format";
+import { earnings, listNames } from "../lib/earnings";
+import { useNames } from "../lib/names";
+import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
 
@@ -39,7 +41,7 @@ export function Finance({ route }: { route: string[] }) {
         absorbs is kept separate, so the totals reconcile category by category. Stock is valued week by week. Capacity investments
         are appraised on the capacity plan: <Term t="Shadow price">shadow prices</Term> first, confirmed by solving again with the
         extra capacity, then <Term t="NPV" />.</>}
-      answer={res?.reconciliation && moneyAnswer(res, cur, ds.settings.horizon_days)}
+      answer={res?.reconciliation && <MoneyAnswer res={res} cur={cur} days={ds.settings.horizon_days} />}
       right={<>
       {res && <Provenance kind="derived" at={run.at} stale={stale} />}
       <RunButton running={run.running} has={!!res} onClick={() => store.run("finance")} /></>} />
@@ -78,20 +80,20 @@ export function Finance({ route }: { route: string[] }) {
   </>);
 }
 
-function moneyAnswer(res: FinanceResult, cur: string, days: number) {
-  const revenue = res.serve.reduce((a, r) => a + r.revenue, 0);
-  const margin = res.serve.reduce((a, r) => a + r.margin, 0);
+function MoneyAnswer({ res, cur, days }: { res: FinanceResult; cur: string; days: number }) {
+  const n = useNames();
+  const { revenue, margin, unpriced } = earnings(res.serve);
   return <>The plan costs {money(res.reconciliation!.total_plan, cur)} over {days} days.{revenue > 0
-    ? <> The demand it serves brings in {money(revenue, cur)}, leaving a margin of {money(margin, cur)} ({pct(margin / revenue, 0)}).</>
-    : <> Set selling prices on products to see revenue and margin.</>}</>;
+    && <> The demand {unpriced.length ? "with a selling price" : "it serves"} brings in {money(revenue, cur)}, leaving a margin of {money(margin, cur)} ({pct(margin / revenue, 0)}).</>}
+    {unpriced.length > 0 && <> {listNames(unpriced, n.prod)} {unpriced.length === 1 ? "has" : "have"} no selling price, so {unpriced.length === 1 ? "its" : "their"} sales
+      show no revenue or margin: <a href={href("setup", "products")}>set prices</a>.</>}</>;
 }
 
 // ------------------------------------------------------------------------------------------------
 function Overview({ res, cur, ds }: { res: FinanceResult; cur: string; ds: Dataset }) {
   const rec = res.reconciliation!;
   const inv = res.inventory!;
-  const revenue = res.serve.reduce((a, r) => a + r.revenue, 0);
-  const margin = res.serve.reduce((a, r) => a + r.margin, 0);
+  const { revenue, margin, unpriced } = earnings(res.serve);
   const servedCost = res.serve.reduce((a, r) => a + r.total_cost, 0);
   const turns = inv.avg > 0 ? (servedCost * 365) / ds.settings.horizon_days / inv.avg : null;
   const maxPlan = Math.max(1, ...rec.lines.map((l) => l.plan));
@@ -102,8 +104,9 @@ function Overview({ res, cur, ds }: { res: FinanceResult; cur: string; ds: Datas
         <StatTile label="Plan cost" value={money(rec.total_plan, cur)} sub={`${ds.settings.horizon_days} days`} tone="ink" />
         <StatTile label="Serves demand" value={money(rec.total_served, cur)} sub={`${pct(rec.total_plan ? rec.total_served / rec.total_plan : 0, 1)} of plan cost`} />
         <StatTile label="Unabsorbed" value={money(rec.total_unabsorbed, cur)} sub="no demand pegged to it" />
-        <StatTile label="Revenue served" value={money(revenue, cur)} sub={`${res.serve.length} demand points`} />
-        <StatTile label="Margin" value={money(margin, cur)} sub={revenue > 0 ? `${pct(margin / revenue, 1)} of revenue` : "no prices set"} />
+        <StatTile label="Revenue served" value={revenue > 0 || !unpriced.length ? money(revenue, cur) : "—"}
+          sub={unpriced.length ? `${plural(unpriced.length, "product")} without a price left out` : `${res.serve.length} demand points`} />
+        <StatTile label="Margin" value={revenue > 0 || !unpriced.length ? money(margin, cur) : "—"} sub={revenue > 0 ? `${pct(margin / revenue, 1)} of revenue` : "no prices set"} />
         <StatTile label="Avg inventory value" value={money(inv.avg, cur)} sub={turns !== null ? `${turns.toFixed(1)} turns a year` : "—"} />
       </div>
       {rec.reconciled
@@ -197,20 +200,23 @@ function Serve({ res, cur }: { res: FinanceResult; cur: string }) {
       const revenue = sum((r) => r.revenue);
       const total = sum((r) => r.total_cost);
       const served = sum((r) => r.served);
+      const noPrice = g.rows.some((r) => r.margin === null);
+      // a margin only where every row has a price: part-priced groups would understate it
       return { ...g, demand: sum((r) => r.demand), served, revenue, plan: sum((r) => r.plan_cost), total,
-        margin: revenue - total, unit: served > 0 ? total / served : 0, noPrice: g.rows.some((r) => r.price === null) };
-    }).sort((a, b) => b.margin - a.margin);
+        margin: noPrice ? null : revenue - total, unit: served > 0 ? total / served : 0, noPrice };
+    }).sort((a, b) => (b.margin ?? -Infinity) - (a.margin ?? -Infinity));
   }, [res.serve, by]);
-  const revenue = groups.reduce((a, g) => a + g.revenue, 0);
-  const margin = groups.reduce((a, g) => a + g.margin, 0);
-  const worst = groups.length ? groups[groups.length - 1] : null;
+  const { revenue, margin, unpriced } = earnings(res.serve);
+  const priced = groups.filter((g) => g.margin !== null);
+  const worst = priced.length ? priced[priced.length - 1] : null;
   return (
     <div className="stack">
       <div className="grid-auto">
-        <StatTile label="Revenue served" value={money(revenue, cur)} />
+        <StatTile label="Revenue served" value={revenue > 0 || !unpriced.length ? money(revenue, cur) : "—"}
+          sub={unpriced.length ? `${plural(unpriced.length, "product")} without a price left out` : undefined} />
         <StatTile label="Cost to serve" value={money(groups.reduce((a, g) => a + g.total, 0), cur)} sub="plan cost + stock & firm consumed" />
-        <StatTile label="Margin" value={money(margin, cur)} sub={revenue > 0 ? pct(margin / revenue, 1) : "—"} />
-        {worst && <StatTile label={`Thinnest ${by}`} value={worst.key} sub={worst.revenue > 0 ? `margin ${pct(worst.margin / worst.revenue, 1)}` : "no revenue"} />}
+        <StatTile label="Margin" value={revenue > 0 || !unpriced.length ? money(margin, cur) : "—"} sub={revenue > 0 ? `${pct(margin / revenue, 1)}${unpriced.length ? " on priced sales" : ""}` : "no prices set"} />
+        {worst && <StatTile label={`Thinnest ${by}`} value={worst.key} sub={worst.revenue > 0 ? `margin ${pct(worst.margin! / worst.revenue, 1)}` : "no revenue"} />}
       </div>
       <SectionBand title="Cost to serve and margin" right={
         <div className="seg" role="group" aria-label="Group by">
@@ -234,12 +240,12 @@ function Serve({ res, cur }: { res: FinanceResult; cur: string }) {
                   <td><b>{g.key}</b>{g.sub && <div className="faint small">{g.sub}</div>}</td>
                   <td className="num">{qty(g.demand)}</td>
                   <td className={`num ${g.served < g.demand - 1e-6 ? "neg" : ""}`}>{qty(g.served)}</td>
-                  <td className="num">{g.noPrice && g.revenue === 0 ? <span className="faint">no price</span> : money(g.revenue, cur)}</td>
+                  <td className="num">{g.noPrice && g.revenue === 0 ? <span className="faint">no price</span> : <>{money(g.revenue, cur)}{g.noPrice && <div className="faint small">some without a price</div>}</>}</td>
                   <td className="num">{money(g.plan, cur)}</td>
                   <td className="num">{money(g.total, cur)}</td>
                   <td className="num">{unitMoney(g.unit, cur)}</td>
-                  <td className={`num ${g.margin < 0 ? "neg" : ""}`}>{money(g.margin, cur)}</td>
-                  <td className={`num ${g.margin < 0 ? "neg" : ""}`}>{g.revenue > 0 ? pct(g.margin / g.revenue, 1) : "—"}</td>
+                  <td className={`num ${(g.margin ?? 0) < 0 ? "neg" : ""}`}>{g.margin === null ? <span className="faint">no price</span> : money(g.margin, cur)}</td>
+                  <td className={`num ${(g.margin ?? 0) < 0 ? "neg" : ""}`}>{g.margin !== null && g.revenue > 0 ? pct(g.margin / g.revenue, 1) : "—"}</td>
                   <td><Composition costs={g.costs} total={g.total} /></td>
                 </tr>
               ))}

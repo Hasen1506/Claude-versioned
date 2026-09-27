@@ -143,10 +143,15 @@ function Overview({ res }: { res: SopResult }) {
         <StatTile label="Demand served" value={pct(k.fill_rate)} sub={delta(k.fill_rate * 100, base ? base.res.kpis!.fill_rate * 100 : undefined, (v) => `${v.toFixed(1)} pts`) ?? `${qty(k.sales)} of ${qty(k.demand)} units`} />
         <StatTile label="On time" value={pct(k.on_time_rate)} sub={`${qty(k.backlog_end)} still open at the end`} />
         <StatTile label={res.mode === "profit" ? "Profit" : "Total cost"} value={money(res.mode === "profit" ? e.profit : e.total_cost, c)}
-          sub={delta(res.mode === "profit" ? e.profit : e.total_cost, base ? (res.mode === "profit" ? base.res.economics!.profit : base.res.economics!.total_cost) : undefined, (v) => money(v, c)) ?? `revenue ${money(e.revenue, c)}`} />
+          sub={delta(res.mode === "profit" ? e.profit : e.total_cost, base ? (res.mode === "profit" ? base.res.economics!.profit : base.res.economics!.total_cost) : undefined, (v) => money(v, c))
+            ?? (e.unpriced?.length ? (e.revenue > 0 ? `revenue ${money(e.revenue, c)} on priced products` : "no revenue: no selling prices") : `revenue ${money(e.revenue, c)}`)} />
         <StatTile label="Peak utilisation" value={pct(k.max_utilization, 0)} sub="of regular hours, busiest resource-bucket" />
         <StatTile label="Binding limits" value={res.binding.length} sub={res.binding[0] ? `top: ${res.binding[0].label}` : "none: the plan is unconstrained"} />
       </div>
+      {(e.unpriced?.length ?? 0) > 0 && <div className="banner info"><Badge sev="info">No price</Badge>
+        <span>{e.unpriced!.length === 1 ? "One product has" : `${e.unpriced!.length} products have`} no selling price ({e.unpriced!.slice(0, 4).map((id, i) => <span key={id}>{i ? ", " : ""}<Prod id={id} /></span>)}{e.unpriced!.length > 4 ? ", …" : ""}):
+          {" "}their sales are valued at cost, so they earn no margin and are left out of revenue.</span>
+        <span className="spacer" /><a className="btn sm" href={href("setup", "products")}>Set prices</a></div>}
       <div className="grid-2">
         <Panel title="Demand and the constrained plan">
           <BucketChart labels={labels} series={[

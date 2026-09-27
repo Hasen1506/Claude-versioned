@@ -137,6 +137,14 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         if n > 1:
             c.add("DUP_ID", "vendor", sup, f"supplier '{sup}' has {n} purchasing records; the first is used",
                   "Keep one record per supplier")
+    for oid, n in Counter(d.id for d in ds.demand if d.kind is DemandKind.SALES_ORDER and d.id).items():
+        if n > 1:
+            c.add("DUP_ID", "demand", oid, f"sales order '{oid}' is used {n} times",
+                  "Give each sales order its own number")
+    for (cu, prod), n in Counter((cp.customer, cp.product) for cp in ds.customer_prices).items():
+        if n > 1:
+            c.add("DUP_ID", "customer_price", f"{cu}/{prod}", f"{prod} has {n} prices for {cu}; the first is used",
+                  "Keep one price per customer and product")
     for (loc, prod), n in Counter((lp.location, lp.product) for lp in ds.location_products).items():
         if n > 1:
             c.add("DUP_LOCATION_PRODUCT", "location_product", f"{loc}/{prod}",
@@ -225,6 +233,12 @@ def _references(ds: Dataset, c: _Collector) -> None:
             _loc_type(ds, c, d.location, STOCKING_LOCATION_TYPES | {LocationType.CUSTOMER}, "demand", oid,
                       "location", "demand cannot occur at a supplier")
         _ref(ds, c, "product", d.product, "demand", oid, "product")
+    for cp in ds.customer_prices:
+        oid = f"{cp.customer}/{cp.product}"
+        if _ref(ds, c, "location", cp.customer, "customer_price", oid, "customer"):
+            _loc_type(ds, c, cp.customer, STOCKING_LOCATION_TYPES | {LocationType.CUSTOMER}, "customer_price", oid,
+                      "customer", "a selling price belongs to a customer (or a place that sells)")
+        _ref(ds, c, "product", cp.product, "customer_price", oid, "product")
     for i, hr in enumerate(ds.history):
         oid = f"#{i}"
         if _ref(ds, c, "location", hr.location, "history", oid, "location"):

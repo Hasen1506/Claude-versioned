@@ -64,13 +64,13 @@ class ServeRow(Out):
     product: str
     demand: float
     served: float                    # pegged to supply within the horizon
-    price: float | None
+    price: float | None              # the customer's price, else the product's (empty: no revenue or margin)
     revenue: float
     costs: dict[str, float] = {}     # plan categories + stock + firm
     plan_cost: float = 0.0           # Σ plan categories: the cost this plan spends to serve it
     total_cost: float = 0.0          # plan cost + value of stock and firm receipts consumed
     cost_per_unit: float = 0.0
-    margin: float = 0.0              # revenue − total cost
+    margin: float | None = None      # revenue − total cost (empty without a price)
     margin_pct: float | None = None
 
 

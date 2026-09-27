@@ -21,7 +21,7 @@ from .promise import Allocation, Confirmation, PromiseSettings
 from .schedule import Changeover, ScheduleSettings
 from .sop import SopSettings, StockTarget
 from .master import (
-    Calendar, Location, LocationProduct, LotSizing, Product, ProductionSource, PurchasingSource, Resource,
+    Calendar, CustomerPrice, Location, LocationProduct, LotSizing, Product, ProductionSource, PurchasingSource, Resource,
     Settings, TransportLane,
 )
 from .transactional import DemandRecord, SalesHistory, ScheduledReceipt
@@ -33,6 +33,7 @@ class Dataset(Model):
     calendars: list[Calendar] = Field(default_factory=list)
     locations: list[Location] = Field(default_factory=list)
     products: list[Product] = Field(default_factory=list)
+    customer_prices: list[CustomerPrice] = Field(default_factory=list)
     location_products: list[LocationProduct] = Field(default_factory=list)
     resources: list[Resource] = Field(default_factory=list)
     production_sources: list[ProductionSource] = Field(default_factory=list)
@@ -147,6 +148,24 @@ class Dataset(Model):
         if lp.lot_sizing.policy is None:
             lp = lp.model_copy(update={"lot_sizing": self.lot_sizing(lp)})
         return lp
+
+    @cached_property
+    def customer_price_by_key(self) -> dict[tuple[str, str], float]:
+        out: dict[tuple[str, str], float] = {}
+        for cp in self.customer_prices:
+            out.setdefault((cp.customer, cp.product), cp.price)
+        return out
+
+    def selling_price(self, location: str, product: str, order_price: float | None = None) -> float | None:
+        """What one unit sells for: the order's own price, else the customer's, else the product's (empty = no
+        price: no revenue or margin is shown for it)."""
+        if order_price is not None:
+            return order_price
+        cp = self.customer_price_by_key.get((location, product))
+        if cp is not None:
+            return cp
+        p = self.product_by_id.get(product)
+        return p.price if p else None
 
     def whole(self, product: str) -> bool:
         """Quantities of this product are planned in whole units."""

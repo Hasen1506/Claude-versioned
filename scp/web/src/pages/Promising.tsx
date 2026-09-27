@@ -5,7 +5,7 @@ import { BucketChart } from "../components/charts";
 import {
   Badge, cols, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, useTooltip, type Severity, RunButton, Term,
 } from "../components/ui";
-import { day, money, pct, plural, qty } from "../lib/format";
+import { day, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
@@ -33,6 +33,7 @@ export function Promising({ route }: { route: string[] }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
 
   const commitPromises = async (mode: "entry" | "bop") => {
     setBusy(true);
@@ -58,7 +59,8 @@ export function Promising({ route }: { route: string[] }) {
         could it be moved, made or bought in time? Beyond the <Term t="RLT">replenishment lead time</Term> anything can be promised.
         {" "}<Term t="BOP" /> re-decides who gets scarce stock after a shortage.</>}
       answer={res?.kpis && (res.kpis.orders ? <>{res.kpis.on_time_orders === res.kpis.orders ? "All" : res.kpis.on_time_orders} of {plural(res.kpis.orders, "customer order")} can
-        ship in full on the date asked.{res.kpis.unconfirmed_qty > 0.5 && <> {qty(Math.round(res.kpis.unconfirmed_qty))} units worth {money(res.kpis.value_unconfirmed, res.currency)} can't be confirmed yet.</>}
+        ship in full on the date asked.{res.kpis.unconfirmed_qty > 0.5 && <> {qty(Math.round(res.kpis.unconfirmed_qty))} units{res.kpis.value_unconfirmed > 0.5 && !res.kpis.unpriced_unconfirmed
+          ? <> worth {money(res.kpis.value_unconfirmed, res.currency)}</> : null} can't be confirmed yet.</>}
         {res.kpis.at_risk_orders > 0 && <> {plural(res.kpis.at_risk_orders, "earlier promise")} {res.kpis.at_risk_orders === 1 ? "is" : "are"} now at risk.</>}</> : <>There are no open customer orders.</>)}
       right={<>
       {res && <Provenance kind="solved" at={run.at} stale={stale} />}
@@ -72,9 +74,11 @@ export function Promising({ route }: { route: string[] }) {
       <a className="btn sm" href={href("data", "confirmations")}>View confirmations</a>
       <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setNote(null)}>✕</button></div>}
     {err && <div className="banner error"><Badge sev="error">Commit failed</Badge>{err}</div>}
+    {done && <div className="banner info" role="status"><Badge sev="ok">Saved</Badge><span>{done}</span><span className="spacer" />
+      <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setDone(null)}>✕</button></div>}
   </>;
   if (view === "settings") return body(<><Nav view={view} res={res} /><SettingsView ds={ds} /></>);
-  if (view === "simulate") return body(<><Nav view={view} res={res} /><Simulate ds={ds} /></>);
+  if (view === "simulate") return body(<><Nav view={view} res={res} /><Simulate ds={ds} onDone={setDone} /></>);
   if (view === "bop") return body(<>{banners}<Nav view={view} res={res} /><Bop ds={ds} busy={busy} onCommit={() => commitPromises("bop")} /></>);
   if (run.error) return body(<div className="banner error"><Badge sev="error">Check failed</Badge>{run.error}</div>);
   if (!res) {
@@ -102,7 +106,7 @@ export function Promising({ route }: { route: string[] }) {
         <span className="spacer" /><a className="btn sm" href={href("promise", "bop")}>Open BOP</a></div>
     )}
     <Nav view={view} res={res} />
-    {view === "orders" && <Orders res={res} sel={route[2]} />}
+    {view === "orders" && <Orders res={res} sel={route[2]} ds={ds} onDone={setDone} />}
     {view === "atp" && <Atp res={res} sel={route[2]} />}
     {view === "allocations" && <Allocations res={res} />}
   </>);
@@ -113,7 +117,7 @@ function Nav({ view, res }: { view: View; res: PromiseResult | null }) {
     <Tabs<View> value={view} onChange={(v) => go("promise", v)} tabs={[
       { id: "orders", label: "Sales orders", count: res?.orders.length },
       { id: "atp", label: "ATP picture", count: res?.nodes.length },
-      { id: "simulate", label: "Check a new order" },
+      { id: "simulate", label: "New order" },
       { id: "bop", label: "Backorder processing" },
       { id: "allocations", label: "Allocations", count: res?.allocations.length },
       { id: "settings", label: "Rules & segments" },
@@ -139,7 +143,8 @@ function Kpis({ res }: { res: PromiseResult }) {
     <div className="grid-auto">
       <StatTile label="Orders on time" value={`${k.on_time_orders} / ${k.orders}`} sub={`${pct(k.qty ? k.on_time_qty / k.qty : 1)} of the quantity on the requested date`} tone={k.on_time_orders < k.orders ? "hl" : undefined} />
       <StatTile label="Confirmed" value={pct(k.qty ? k.confirmed_qty / k.qty : 1)} sub={`${qty(k.confirmed_qty)} of ${qty(k.qty)} units`} />
-      <StatTile label="Unconfirmed" value={qty(k.unconfirmed_qty)} sub={`${money(k.value_unconfirmed, res.currency)} of sales on backorder`} />
+      <StatTile label="Unconfirmed" value={qty(k.unconfirmed_qty)} sub={k.unpriced_unconfirmed && !k.value_unconfirmed ? "units on backorder (no prices set)"
+        : `${money(k.value_unconfirmed, res.currency)} of sales on backorder${k.unpriced_unconfirmed ? `, plus ${plural(k.unpriced_unconfirmed, "order")} without a price` : ""}`} />
       <StatTile label="Beyond RLT" value={qty(k.rlt_lines)} sub="lines confirmed without supply behind them" />
       <StatTile label="Capable-to-promise" value={qty(k.ctp_lines)} sub="lines quoted on new supply" />
       <StatTile label="Alternative location" value={qty(k.alternative_lines)} sub="lines shipped from a second choice" />
@@ -147,7 +152,7 @@ function Kpis({ res }: { res: PromiseResult }) {
   );
 }
 
-function Orders({ res, sel }: { res: PromiseResult; sel?: string }) {
+function Orders({ res, sel, ds, onDone }: { res: PromiseResult; sel?: string; ds: Dataset; onDone: (m: string) => void }) {
   const n = useNames();
   const [filter, setFilter] = useState<"all" | "issues">("all");
   const rows = res.orders.filter((o) => filter === "all" || o.status !== "on_time" || o.at_risk);
@@ -157,25 +162,28 @@ function Orders({ res, sel }: { res: PromiseResult; sel?: string }) {
       <Kpis res={res} />
       <Panel flush title="Open sales orders in entry sequence" actions={
         <div className="row">
+          <a className="btn sm accent" href={href("promise", "simulate")}>New order</a>
           <button className={`btn sm ${filter === "all" ? "primary" : ""}`} onClick={() => setFilter("all")}>All</button>
           <button className={`btn sm ${filter === "issues" ? "primary" : ""}`} onClick={() => setFilter("issues")}>Not on time</button>
         </div>}>
         <div className="table-wrap" style={{ maxHeight: 560 }}>
           <table className="t">
             <thead><tr><th>Order</th><th>Customer</th><th>Product</th><th className="num">Prio</th><th className="num">Qty</th><th>Requested</th>
-              <th>Status</th><th>Schedule lines</th></tr></thead>
+              <th>Status</th><th>Schedule lines</th><th className="num">Value</th></tr></thead>
             <tbody>
               {rows.map((o) => {
                 const [sev, label] = STATUS[o.status];
                 return (
                   <tr key={o.order} className={`clickable ${o.order === sel ? "selected" : ""}`} onClick={() => go("promise", "orders", o.order === sel ? undefined : o.order)}>
-                    <td><b>{o.order}</b>{o.complete_delivery && <div className="faint small">complete delivery</div>}</td>
+                    <td><b>{o.order}</b>{refOf(ds, o.order) && <div className="faint small">{refOf(ds, o.order)}</div>}
+                      {o.complete_delivery && <div className="faint small">complete delivery</div>}</td>
                     <td title={o.location}>{n.loc(o.location)}</td><td title={o.product}>{n.prod(o.product)}</td><td className="num">{o.priority}</td><td className="num">{qty(o.qty)}</td>
                     <td>{day(o.requested)}</td>
                     <td><Badge sev={sev}>{label}</Badge> {o.at_risk && <Badge sev="error">at risk</Badge>}
                       {CHANGE[o.change] && o.change !== "new" && <> <Badge sev={CHANGE[o.change]}>{o.change}</Badge></>}</td>
                     <td><div className="chips">{o.lines.map((l, i) => <LineChip key={i} l={l} />)}
                       {o.unconfirmed > 1e-6 && <span className="chip" style={{ borderColor: "var(--critical)" }}><b>{qty(o.unconfirmed)}</b>&nbsp;open</span>}</div></td>
+                    <td className="num">{o.value === null || o.value === undefined ? <span className="faint">no price</span> : money(o.value, res.currency)}</td>
                   </tr>
                 );
               })}
@@ -183,21 +191,25 @@ function Orders({ res, sel }: { res: PromiseResult; sel?: string }) {
           </table>
         </div>
       </Panel>
-      {cur && <OrderCard o={cur} currency={res.currency} />}
+      {sel && !cur && <Panel><Empty title={`${sel} is not open`}>It was delivered or cancelled: see <a href={href("execution", "orders")}>Actuals → orders</a>.</Empty></Panel>}
+      {cur && <OrderCard o={cur} currency={res.currency} actions={<OrderActions o={cur} ds={ds} currency={res.currency} onDone={onDone} />} />}
       <Reading formula="ATP(d) = min over later days e of [Σ receipts(≤ e) − Σ outflows(≤ e)] — the look-ahead keeps a new promise from taking stock an earlier promise needs later. Beyond the replenishment lead time everything is confirmable."
         soWhat="Commit promises to persist the schedule lines; after that, every check (and MRP's supply changes) is measured against them, and backorder processing decides who gives way in a shortage." />
     </div>
   );
 }
 
-function OrderCard({ o, currency }: { o: OrderPromise; currency: string }) {
+function OrderCard({ o, currency, actions }: { o: OrderPromise; currency: string; actions?: React.ReactNode }) {
+  const n = useNames();
   return (
-    <Panel title={`${o.order}: ${qty(o.qty)} ${o.product} for ${o.location} on ${day(o.requested)}`}
-      actions={<button className="btn sm ghost" onClick={() => go("promise", "orders")}>Close</button>}>
+    <Panel title={`${o.order}: ${qty(o.qty)} ${n.prod(o.product)} for ${n.loc(o.location)}, asked for ${day(o.requested)}`}
+      actions={actions ? <button className="btn sm ghost" onClick={() => go("promise", "orders")}>Close</button> : undefined}>
+      {actions}
       <div className="grid-auto" style={{ marginBottom: 12 }}>
         <StatTile label="On time" value={qty(o.on_time)} sub={pct(o.qty ? o.on_time / o.qty : 0)} />
         <StatTile label="Confirmed" value={qty(o.confirmed)} sub={o.unconfirmed > 1e-6 ? `${qty(o.unconfirmed)} open` : "complete"} />
-        <StatTile label="Order value" value={money(o.value, currency)} sub={`priority ${o.priority}`} />
+        <StatTile label="Order value" value={o.value === null || o.value === undefined ? "—" : money(o.value, currency)}
+          sub={o.price === null || o.price === undefined ? `no selling price · priority ${o.priority}` : `${unitMoney(o.price, currency)} a unit · priority ${o.priority}`} />
         {o.allocation_capped > 0 && <StatTile label="Held back by allocation" value={qty(o.allocation_capped)} sub="on the requested date" />}
       </div>
       {o.reason && <div className="banner warning"><Badge sev="warning">Why not</Badge>{o.reason}</div>}
@@ -206,7 +218,7 @@ function OrderCard({ o, currency }: { o: OrderPromise; currency: string }) {
         <thead><tr><th>Ships from</th><th>Ship date</th><th>Delivery</th><th className="num">Qty</th><th>Method</th><th>On time</th></tr></thead>
         <tbody>
           {o.lines.map((l, i) => (
-            <tr key={i}><td>{l.ship_from}</td><td>{day(l.ship_date)}</td><td>{day(l.date)}</td><td className="num">{qty(l.qty)}</td>
+            <tr key={i}><td><Loc id={l.ship_from} /></td><td>{day(l.ship_date)}</td><td>{day(l.date)}</td><td className="num">{qty(l.qty)}</td>
               <td>{l.method === "atp" ? "available-to-promise" : l.method === "rlt" ? <Badge sev="warning">beyond RLT</Badge> : <Badge sev="info">capable-to-promise</Badge>}</td>
               <td>{l.on_time ? <Badge sev="ok">yes</Badge> : <Badge sev="warning">late</Badge>}</td></tr>
           ))}
@@ -318,56 +330,192 @@ function Atp({ res, sel }: { res: PromiseResult; sel?: string }) {
 }
 
 // ------------------------------------------------------------------------------------------------
-function Simulate({ ds }: { ds: Dataset }) {
-  const demandLocs = useMemo(() => (ds.locations ?? []).filter((l) => ["customer", "dc", "warehouse", "store", "plant"].includes(l.type)), [ds]);
+/** The customer's own order number on a sales order, if any. */
+function refOf(ds: Dataset, id: string): string {
+  return ds.demand?.find((d) => d.id === id && d.kind === "sales_order")?.customer_ref ?? "";
+}
+
+/** Places an order can come from: customers first, then places that sell directly. */
+function orderPlaces(ds: Dataset) {
+  const order = ["customer", "store", "dc", "warehouse", "plant"];
+  return (ds.locations ?? []).filter((l) => order.includes(l.type)).sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type));
+}
+
+const TYPE_WORD: Record<string, string> = { customer: "", store: "store", dc: "distribution centre", warehouse: "warehouse", plant: "plant" };
+
+/** Stocking places a delivery can leave from. */
+function shipPlaces(ds: Dataset) {
+  return (ds.locations ?? []).filter((l) => ["plant", "dc", "warehouse", "store"].includes(l.type));
+}
+
+function listPrice(ds: Dataset, location: string, product: string): number | null {
+  const cp = (ds.customer_prices ?? []).find((c) => c.customer === location && c.product === product);
+  if (cp) return cp.price;
+  return ds.products?.find((p) => p.id === product)?.price ?? null;
+}
+
+function OrderActions({ o, ds, currency, onDone }: { o: OrderPromise; ds: Dataset; currency: string; onDone: (m: string) => void }) {
+  const rec = ds.demand?.find((d) => d.id === o.order && d.kind === "sales_order");
+  const n = useNames();
+  const [mode, setMode] = useState<null | "change" | "deliver" | "cancel">(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const done = (ds.movements ?? []).filter((m) => m.type === "sale" && m.reference === o.order).reduce((a, m) => a + m.qty, 0);
+  const ordered = rec ? rec.ordered_qty ?? rec.qty : o.qty;
+  const open = Math.max(0, ordered - done);
+  const list = listPrice(ds, o.location, o.product);
+  const [ch, setCh] = useState({ qty: ordered, date: rec?.date ?? o.requested, priority: rec?.priority ?? o.priority,
+    price: rec?.price ?? null as number | null, complete_delivery: !!rec?.complete_delivery, customer_ref: rec?.customer_ref ?? "" });
+  const [dl, setDl] = useState({ qty: open, date: ds.settings.planning_start, final: false, from: o.lines[0]?.ship_from ?? "" });
+  const [reason, setReason] = useState("");
+  if (!rec) return null;
+  const act = async (f: () => Promise<{ dataset: Dataset; report: { message: string } }>) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const out = await f();
+      store.replace(out.dataset);
+      onDone(out.report.message);
+      setMode(null);
+      void store.run("promise");
+    } catch (e) {
+      setErr(String(e).replace(/^Error:\s*/, ""));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const tab = (m: typeof mode, label: string) => (
+    <button className={`btn sm ${mode === m ? "primary" : ""}`} aria-pressed={mode === m} onClick={() => { setErr(null); setMode(mode === m ? null : m); }}>{label}</button>);
+  return (
+    <div className="stack" style={{ marginBottom: 12 }}>
+      <div className="row wrap">
+        {tab("deliver", "Deliver")}{tab("change", "Change")}{tab("cancel", "Cancel")}
+        <span className="faint small">{done > 0 ? `${qty(done)} of ${qty(ordered)} delivered · ` : ""}{rec.customer_ref ? `customer's number ${rec.customer_ref}` : ""}</span>
+      </div>
+      {mode === "deliver" && <div className="qrow" role="group" aria-label="Deliver">
+        <label className="qf"><span className="qf-l">Quantity</span>
+          <input className="input num" type="number" min={0} step="any" value={dl.qty} onChange={(e) => setDl({ ...dl, qty: Number(e.target.value) })} aria-label="Quantity to deliver" />
+          <span className="qf-h">{qty(open)} still open</span></label>
+        <label className="qf"><span className="qf-l">Ships from</span>
+          <select className="select" value={dl.from} onChange={(e) => setDl({ ...dl, from: e.target.value })} aria-label="Ships from">
+            <option value="">{o.lines[0] ? `Where it was promised (${n.loc(o.lines[0].ship_from)})` : "The customer's first route"}</option>
+            {shipPlaces(ds).map((l) => <option key={l.id} value={l.id}>{l.name || l.id}</option>)}</select></label>
+        <label className="qf"><span className="qf-l">Goods leave on</span>
+          <input className="input" type="date" value={dl.date} onChange={(e) => setDl({ ...dl, date: e.target.value })} aria-label="Delivery date" /></label>
+        <label className="row small"><input type="checkbox" checked={dl.final} onChange={(e) => setDl({ ...dl, final: e.target.checked })} />Last delivery (close the rest)</label>
+        <button className="btn accent" disabled={busy || !(dl.qty > 0)} onClick={() => act(() => api.postActual(ds, "deliver",
+          { order: o.order, qty: dl.qty, date: dl.date, final: dl.final, ship_from: dl.from || null }))}>Post the delivery</button>
+      </div>}
+      {mode === "change" && <div className="qrow" role="group" aria-label="Change the order">
+        <label className="qf"><span className="qf-l">Ordered</span>
+          <input className="input num" type="number" min={0} step="any" value={ch.qty} onChange={(e) => setCh({ ...ch, qty: Number(e.target.value) })} aria-label="Ordered quantity" />
+          {done > 0 && <span className="qf-h">{qty(done)} already delivered</span>}</label>
+        <label className="qf"><span className="qf-l">Wanted on</span>
+          <input className="input" type="date" value={ch.date} onChange={(e) => setCh({ ...ch, date: e.target.value })} aria-label="Wanted on" /></label>
+        <label className="qf"><span className="qf-l">Priority</span>
+          <input className="input num" type="number" min={1} max={9} value={ch.priority} style={{ width: 70 }} onChange={(e) => setCh({ ...ch, priority: Number(e.target.value) })} aria-label="Priority" />
+          <span className="qf-h">1 = first</span></label>
+        <label className="qf"><span className="qf-l">Price a unit</span>
+          <input className="input num" type="number" min={0} step="any" value={ch.price ?? ""} placeholder={list !== null ? String(list) : "no price"}
+            onChange={(e) => setCh({ ...ch, price: e.target.value === "" ? null : Number(e.target.value) })} aria-label="Price a unit" />
+          <span className="qf-h">{list !== null ? `empty = price list, ${unitMoney(list, currency)}` : "no price list for this customer"}</span></label>
+        <label className="qf"><span className="qf-l">Customer's number</span>
+          <input className="input" value={ch.customer_ref} maxLength={64} onChange={(e) => setCh({ ...ch, customer_ref: e.target.value })} aria-label="Customer's order number" /></label>
+        <label className="row small"><input type="checkbox" checked={ch.complete_delivery} onChange={(e) => setCh({ ...ch, complete_delivery: e.target.checked })} />Complete delivery only</label>
+        <button className="btn accent" disabled={busy || !(ch.qty > 0)} onClick={() => act(() => api.salesOrder(ds, "change", { id: o.order, changes: ch }))}>Save and promise again</button>
+      </div>}
+      {mode === "cancel" && <div className="qrow" role="group" aria-label="Cancel the order">
+        <label className="qf" style={{ flex: 1 }}><span className="qf-l">Why (optional)</span>
+          <input className="input" value={reason} maxLength={120} onChange={(e) => setReason(e.target.value)} placeholder="e.g. customer changed their mind" aria-label="Why" /></label>
+        <button className="btn danger" disabled={busy} onClick={() => act(() => api.salesOrder(ds, "cancel", { id: o.order, reason }))}>
+          {done > 0 ? `Cancel the ${qty(open)} still open` : "Cancel the order"}</button>
+        <span className="faint small">{done > 0 ? "What was delivered stays on the order's record." : "Its promised stock goes back to other orders."} Undo reverses it.</span>
+      </div>}
+      {err && <div className="banner error"><Badge sev="error">Not saved</Badge>{err}</div>}
+    </div>
+  );
+}
+
+function Simulate({ ds, onDone }: { ds: Dataset; onDone: (m: string) => void }) {
+  const places = useMemo(() => orderPlaces(ds), [ds]);
   const products = useMemo(() => (ds.products ?? []).filter((p) => p.type === "FG" || p.type === "SFG"), [ds]);
   const start = ds.settings.planning_start;
   const plus = (iso: string, n: number) => new Date(new Date(iso + "T00:00:00").getTime() + n * 86400_000).toISOString().slice(0, 10);
   const [order, setOrder] = useState<DemandRecord>({
-    location: demandLocs.find((l) => l.type === "customer")?.id ?? demandLocs[0]?.id ?? "", product: products[0]?.id ?? "",
-    date: plus(start, 7), qty: 500, kind: "sales_order", priority: 5, complete_delivery: false,
+    location: places[0]?.id ?? "", product: products[0]?.id ?? "",
+    date: plus(start, 7), qty: 100, kind: "sales_order", priority: 5, complete_delivery: false, price: null, customer_ref: "",
   } as DemandRecord);
   const [out, setOut] = useState<PromiseResult | null>(null);
+  const [checked, setChecked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const set = (patch: Partial<DemandRecord>) => setOrder((o) => ({ ...o, ...patch }));
+  const key = JSON.stringify(order);
+  const list = listPrice(ds, order.location, order.product);
   const check = async () => {
     setBusy(true);
     setErr(null);
     try {
       setOut(await api.promiseCheck(ds, order));
+      setChecked(key);
     } catch (e) {
       setErr(String(e));
     } finally {
       setBusy(false);
     }
   };
+  const take = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api.salesOrder(ds, "accept", { order });
+      store.replace(r.dataset);
+      onDone(r.report.message);
+      go("promise", "orders", r.report.order);
+      void store.run("promise");
+    } catch (e) {
+      setErr(String(e).replace(/^Error:\s*/, ""));
+    } finally {
+      setBusy(false);
+    }
+  };
   const c = out?.checked;
+  const fresh = !!c && checked === key;
   return (
     <div className="split" style={cols("minmax(260px, 340px) minmax(0, 1fr)")}>
-      <Panel title="New order (simulation)">
+      <Panel title="New order">
         <div className="form">
-          <label className="field"><span className="label">Customer / location</span>
-            <select value={order.location} onChange={(e) => set({ location: e.target.value })}>
-              {demandLocs.map((l) => <option key={l.id} value={l.id}>{l.id}{l.name ? ` — ${l.name}` : ""}</option>)}</select></label>
+          <label className="field"><span className="label">Customer</span>
+            <select value={order.location} onChange={(e) => set({ location: e.target.value })} aria-label="Customer">
+              {places.map((l) => <option key={l.id} value={l.id}>{l.name || l.id}{TYPE_WORD[l.type] ? ` (${TYPE_WORD[l.type]})` : ""}</option>)}</select></label>
           <label className="field"><span className="label">Product</span>
-            <select value={order.product} onChange={(e) => set({ product: e.target.value })}>
-              {products.map((p) => <option key={p.id} value={p.id}>{p.id}{p.name ? ` — ${p.name}` : ""}</option>)}</select></label>
+            <select value={order.product} onChange={(e) => set({ product: e.target.value })} aria-label="Product">
+              {products.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}</select></label>
           <label className="field"><span className="label">Quantity</span>
-            <input type="number" min={0} value={order.qty} onChange={(e) => set({ qty: Number(e.target.value) })} /></label>
-          <label className="field"><span className="label">Requested delivery</span>
-            <input type="date" value={order.date} onChange={(e) => set({ date: e.target.value })} /></label>
-          <label className="field"><span className="label">Priority (1 = highest)</span>
-            <input type="number" min={1} max={9} value={order.priority} onChange={(e) => set({ priority: Number(e.target.value) })} /></label>
+            <input type="number" min={0} value={order.qty} onChange={(e) => set({ qty: Number(e.target.value) })} aria-label="Quantity" /></label>
+          <label className="field"><span className="label">Wanted on</span>
+            <input type="date" value={order.date} onChange={(e) => set({ date: e.target.value })} aria-label="Wanted on" /></label>
+          <label className="field"><span className="label">Price a unit</span>
+            <input type="number" min={0} step="any" value={order.price ?? ""} placeholder={list !== null ? `${list} (price list)` : "no price"}
+              onChange={(e) => set({ price: e.target.value === "" ? null : Number(e.target.value) })} aria-label="Price a unit" /></label>
+          <label className="field"><span className="label">Customer's order number</span>
+            <input value={order.customer_ref ?? ""} maxLength={64} onChange={(e) => set({ customer_ref: e.target.value })} aria-label="Customer's order number" /></label>
+          <label className="field"><span className="label">Priority (1 = first)</span>
+            <input type="number" min={1} max={9} value={order.priority} onChange={(e) => set({ priority: Number(e.target.value) })} aria-label="Priority" /></label>
           <label className="row small"><input type="checkbox" checked={!!order.complete_delivery} onChange={(e) => set({ complete_delivery: e.target.checked })} />Complete delivery only</label>
-          <button className="btn accent" onClick={check} disabled={busy || !order.qty}>{busy ? "Checking…" : "Check availability"}</button>
+          <div className="row wrap">
+            <button className="btn" onClick={check} disabled={busy || !order.qty || !order.location || !order.product}>{busy && !fresh ? "Checking…" : "Check availability"}</button>
+            <button className="btn accent" onClick={take} disabled={busy || !fresh} title={fresh ? "Save it as a sales order with this promise" : "Check it first"}>Take this order</button>
+          </div>
         </div>
-        <p className="faint small">Checked after every open order already promised (entry sequence). Nothing is saved.</p>
+        <p className="faint small">Checking saves nothing: it comes after every order already promised. <b>Take this order</b> saves it as a
+          sales order with the promise shown, so later orders can't take its stock.</p>
       </Panel>
       <div className="stack">
-        {err && <div className="banner error"><Badge sev="error">Check failed</Badge>{err}</div>}
-        {!c ? <Panel><Empty title="Enter an order and check it">The answer shows what can ship on the requested date, when the rest follows, and — when ATP falls short — the
-          capable-to-promise chain behind a quoted date.</Empty></Panel> : <>
+        {err && <div className="banner error"><Badge sev="error">Not taken</Badge>{err}</div>}
+        {!c ? <Panel><Empty title="Enter an order and check it">The answer shows what can ship on the date asked, when the rest follows, and — when stock falls short — how
+          new supply would get there in time.</Empty></Panel> : <>
+          {!fresh && <div className="banner warning"><Badge sev="warning">Changed</Badge>The order changed since it was checked: check it again before taking it.</div>}
           <div className="grid-auto">
             <StatTile label="Answer" value={STATUS[c.status][1]} sub={`${qty(c.on_time)} on ${day(c.requested)}`} tone={c.status === "on_time" ? undefined : "hl"} />
             <StatTile label="Confirmed" value={qty(c.confirmed)} sub={c.unconfirmed > 1e-6 ? `${qty(c.unconfirmed)} cannot be promised` : "full quantity"} />

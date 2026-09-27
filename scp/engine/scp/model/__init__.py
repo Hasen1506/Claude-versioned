@@ -20,7 +20,7 @@ from .purchasing import PriceScale, PurchaseOrder, PurchasingSettings, Vendor
 from .schedule import Changeover, ScheduleSettings
 from .sop import SopMode, SopSettings, StockTarget
 from .master import (
-    BomItem, Calendar, CapacityChange, CoProduct, LaneMode, Location, LocationProduct, LotSizing, Operation, Product,
+    BomItem, Calendar, CapacityChange, CoProduct, CustomerPrice, LaneMode, Location, LocationProduct, LotSizing, Operation, Product,
     ProductionSource, PurchasingSource, Resource, SafetyStockPolicy, Settings, Shift, Subcontract, TransportLane,
     UomConversion,
 )
@@ -31,7 +31,7 @@ __all__ = [
     "AccuracyRecord", "OwnerRule", "TowerSettings", "CapacityOption", "FinanceSettings", "ClosedOrder", "ExecutionSettings", "GoodsMovement", "MovementType", "RolledWeek", "Reservation",
     "DEFAULT_MODELS", "Allocation", "BopSegment", "Confirmation", "ConfirmationStrategy", "PromiseSettings", "DemandEvent", "EventKind", "ForecastModelId", "ForecastOverride", "ForecastPeriod",
     "ForecastSettings", "InventorySettings", "NpiRule", "OutlierMethod", "SelectionMetric",
-    "BomItem", "BucketSize", "Calendar", "CapacityChange", "CoProduct", "ProcurementType", "Subcontract", "Changeover", "Dataset", "DemandKind", "DemandRecord", "LaneMode",
+    "BomItem", "BucketSize", "Calendar", "CapacityChange", "CoProduct", "CustomerPrice", "ProcurementType", "Subcontract", "Changeover", "Dataset", "DemandKind", "DemandRecord", "LaneMode",
     "Location", "LocationProduct", "LocationType", "LotSizePolicy", "LotSizing", "MrpType",
     "Operation", "Product", "ProductType", "ProductionSource", "PurchasingSource", "ReceiptKind",
     "Resource", "ResourceKind", "SafetyStockMethod", "SafetyStockPolicy", "SalesHistory",
