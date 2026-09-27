@@ -45,7 +45,7 @@ from ..schedule import (
 )
 from ..sop import SopRelease, SopResult, release_sop, run_sop
 from ..validate import RULES, Issue, validate
-from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, plain_errors
+from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, lenient_checked, plain_errors
 from ..validate.setup import SetupItem, checklist
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
 from ..companies import CompanyError
@@ -209,12 +209,12 @@ def schema() -> dict:
 def post_validate(raw: RawDataset) -> ValidationResult:
     """The readiness gate on everything that can be planned; unfinished records are set aside and listed,
     each also as a SET_ASIDE warning, instead of making the whole dataset unreadable."""
-    ds, aside = lenient(raw)
+    ds, aside, checked = lenient_checked(raw)
     issues = [Issue(code="SET_ASIDE", severity="warning", object_type=a.object_type, object_id=a.object_id,
                     message=f"{SINGULAR[a.collection]} {a.label} is left out of planning until it is fixed: {a.reason}",
                     hint="Fix it or delete it; it comes back into the plan as soon as it is complete", field=a.field)
               for a in aside]
-    issues += validate(ds)
+    issues += validate(ds) if checked is None else checked
     return ValidationResult(issues=issues, blocking=any(i.severity == "error" for i in issues), set_aside=aside,
                             setup=checklist(ds, aside))
 

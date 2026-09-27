@@ -55,18 +55,19 @@ def supply_options(ds: Dataset, node: Node) -> list[SupplyOption]:
     lp = ds.location_product_by_key.get(node)
     proc = lp.procurement if lp else ProcurementType.ANY
     out: list[SupplyOption] = []
-    for ps in ds.production_sources:
-        if ps.location == loc and ps.product == prod and proc is not ProcurementType.EXTERNAL:
+    makes, buys = ds.sources_at.get(node, ((), ()))
+    for ps in makes:
+        if proc is not ProcurementType.EXTERNAL:
             ups = tuple((loc, n.product) for n in needs(ds, ps))
             out.append(SupplyOption("make", ps.id, node, ups, ps.priority, ps.quota))
     if proc is ProcurementType.MAKE:
         out.sort(key=lambda o: (o.priority, _KIND_RANK[o.kind], o.source_id))
         return out
-    for pu in ds.purchasing_sources:
-        if pu.location == loc and pu.product == prod and not ds.source_blocked(pu):
+    for pu in buys:
+        if not ds.source_blocked(pu):
             out.append(SupplyOption("buy", pu.id, node, ((pu.supplier, prod),), pu.priority, pu.quota))
-    for ln in ds.lanes:
-        if ln.destination != loc or not ln.carries(prod):
+    for ln in ds.lanes_into.get(loc, ()):
+        if not ln.carries(prod):
             continue
         otype = ds.location_type(ln.origin)
         if otype in (LocationType.SUPPLIER, LocationType.CUSTOMER):
@@ -99,7 +100,15 @@ def seed_nodes(ds: Dataset) -> list[Node]:
 
 
 def build_graph(ds: Dataset) -> NetworkGraph:
-    """Expand upstream from the seed nodes through every supply option."""
+    """Expand upstream from the seed nodes through every supply option (worked out once per dataset: the readiness
+    checks, the checklist and the plan all ask for it)."""
+    g = ds.memo.get("graph")
+    if g is None:
+        g = ds.memo["graph"] = _build_graph(ds)
+    return g
+
+
+def _build_graph(ds: Dataset) -> NetworkGraph:
     options: dict[Node, list[SupplyOption]] = {}
     consumers: dict[Node, set[Node]] = defaultdict(set)
     suppliers_of: dict[Node, set[Node]] = defaultdict(set)

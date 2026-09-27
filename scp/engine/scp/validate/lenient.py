@@ -24,11 +24,14 @@ in the next round, with that as its reason.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ValidationError
 
 from ..model import Dataset
+
+if TYPE_CHECKING:
+    from . import Issue
 
 # collection → the object type the readiness gate and the web client use for it
 COLLECTION_TYPES: dict[str, str] = {
@@ -254,10 +257,17 @@ def lenient(raw: dict[str, Any] | Dataset) -> tuple[Dataset, list[SetAside]]:
     Raises :class:`DatasetRejected` when something that cannot be set aside is invalid (settings,
     a location, a product, a calendar). The returned list gives each set-aside record's position in ``raw``.
     """
+    ds, aside, _ = lenient_checked(raw)
+    return ds, aside
+
+
+def lenient_checked(raw: dict[str, Any] | Dataset) -> tuple[Dataset, list[SetAside], list[Issue] | None]:
+    """:func:`lenient`, and the readiness checks of the dataset it returns when it ran them on the way (a large
+    company's checks take seconds, so the readiness gate does not run them twice)."""
     from . import validate  # the package imports this module lazily, so no import cycle
 
     if isinstance(raw, Dataset):  # already parsed (the in-process scenario client calls the endpoints directly)
-        return raw, []
+        return raw, [], None
 
     work = {k: (list(v) if k in COLLECTION_TYPES and isinstance(v, list) else v) for k, v in raw.items()}
     # position of each surviving record in the caller's lists
@@ -306,7 +316,8 @@ def lenient(raw: dict[str, Any] | Dataset) -> tuple[Dataset, list[SetAside]]:
         #    exist at all, or to the wrong kind of place, is a real inconsistency, not an unfinished record: it stays
         #    an error in the readiness gate.
         marks = {}
-        for iss in validate(ds):
+        issues = validate(ds)
+        for iss in issues:
             coll = _TYPE_COLLECTION.get(iss.object_type)
             if coll is None or iss.code != "REF_UNKNOWN":
                 continue
@@ -319,10 +330,10 @@ def lenient(raw: dict[str, Any] | Dataset) -> tuple[Dataset, list[SetAside]]:
                 marks.setdefault(coll, set()).add(i)
                 drop(coll, i, iss.field, _ref_reason(iss.message, aside))
         if not marks:
-            return ds, aside
+            return ds, aside, issues
         remove(marks)
     try:
-        return Dataset.model_validate(work), aside
+        return Dataset.model_validate(work), aside, None
     except ValidationError as exc:
         raise DatasetRejected(plain_errors(exc.errors())) from None
 

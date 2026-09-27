@@ -332,13 +332,21 @@ def _compete_job(job: tuple) -> Outcome:
     return compete(y, horizon, m, candidates, k=k, h=h, metric=metric, foundation=fpreds)
 
 
+def _cores() -> int:
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:                      # not on Linux
+        return os.cpu_count() or 1
+
+
 def _compete_all(jobs: dict[tuple[str, str], tuple]) -> dict[tuple[str, str], Outcome]:
     """Series are independent, so large portfolios compete in parallel processes."""
-    workers = min(os.cpu_count() or 1, 8)
+    workers = min(_cores(), 8)
     if len(jobs) < PARALLEL_MIN_SERIES or workers < 2:
         return {k: _compete_job(j) for k, j in jobs.items()}
     with ProcessPoolExecutor(max_workers=workers) as pool:
-        return dict(zip(jobs, pool.map(_compete_job, jobs.values(), chunksize=4), strict=True))
+        chunk = max(1, min(32, len(jobs) // (workers * 4)))
+        return dict(zip(jobs, pool.map(_compete_job, jobs.values(), chunksize=chunk), strict=True))
 
 
 def _candidates(ds: Dataset, pattern: str, foundation_ok: bool) -> list[ForecastModelId]:

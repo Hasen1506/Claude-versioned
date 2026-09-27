@@ -21,7 +21,10 @@ on-time inputs cover stays on time (as promising would split the shipment), and 
 """
 from __future__ import annotations
 
+import hashlib
 import math
+import threading
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -1092,8 +1095,36 @@ def target_at(points: list[tuple[date, float]], d: date) -> float:
     return points[-1][1] if d == points[-1][0] else 0.0
 
 
+# "Plan everything" asks for the supply plan in six of its steps (the plan, promising, capacity, buying, money,
+# performance), each with the same data: a large company's plan takes a minute and a half, so the last one that took
+# long is kept, by the data's content, and handed out again. Callers only read a plan.
+_KEEP_AFTER_S = 2.0
+_last: tuple[str, PlanResult] | None = None
+_last_lock = threading.Lock()
+
+
+def _fingerprint(ds: Dataset) -> str:
+    return hashlib.sha256(ds.model_dump_json().encode()).hexdigest()
+
+
 def run_mrp(ds: Dataset) -> PlanResult:
     """Validate, then plan. With blocking issues the result carries only the issues."""
+    global _last
+    key = None
+    if _last is not None:
+        key = _fingerprint(ds)
+        with _last_lock:
+            if _last is not None and _last[0] == key:
+                return _last[1]
+    t = time.perf_counter()
+    res = _run_mrp(ds)
+    if time.perf_counter() - t >= _KEEP_AFTER_S:
+        with _last_lock:
+            _last = (key or _fingerprint(ds), res)
+    return res
+
+
+def _run_mrp(ds: Dataset) -> PlanResult:
     issues = validate(ds)
     if has_errors(issues):
         return PlanResult(ok=False, currency=ds.settings.currency, carrying_rate=ds.settings.carrying_rate,

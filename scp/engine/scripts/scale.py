@@ -67,6 +67,22 @@ def main() -> int:
     step("forecast", lambda: run_forecast(ds))
     from scp.promise import run_promise
     step("promising", lambda: run_promise(ds))
+    # the rest of "Plan everything", in its order (each reuses the supply plan made above)
+    from scp.actuals import actuals_view
+    from scp.finance import run_finance
+    from scp.inventory import run_inventory
+    from scp.plan import run_mrp as plan_again
+    from scp.purchasing import purchasing_view
+    from scp.schedule import run_schedule
+    from scp.sop import run_sop
+    from scp.tower import run_tower
+    step("safety stock", lambda: run_inventory(ds))
+    step("capacity (S&OP)", lambda: run_sop(ds))
+    step("schedule", lambda: run_schedule(ds))
+    step("buying", lambda: purchasing_view(ds, plan_again(ds)))
+    step("actuals", lambda: actuals_view(ds))
+    step("money", lambda: run_finance(ds))
+    step("performance", lambda: run_tower(ds))
 
     from scp.companies import store as cs
     from scp.companies.patch import make_patch
