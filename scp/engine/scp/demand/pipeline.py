@@ -7,7 +7,10 @@ so a planner can see why a number is what it is.
 """
 from __future__ import annotations
 
+import copy
+import hashlib
 import os
+import threading
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
@@ -339,14 +342,39 @@ def _cores() -> int:
         return os.cpu_count() or 1
 
 
+#: The last forecast's outcomes by what each series competed on (Phase S): a change elsewhere in the company (a week
+#: of demand, a price) leaves a series' history and settings as they were, and its competition is not run again.
+_last_outcomes: dict[str, Outcome] = {}
+_last_lock = threading.Lock()
+
+
+def _job_key(job: tuple) -> str | None:
+    """What a series' competition depends on, as a key; None for one with a foundation model's forecast in it."""
+    y, n, m, cands, origins, horizon, metric, fb = job
+    if fb is not None:
+        return None
+    return hashlib.sha1(repr((tuple(y), n, m, tuple(str(c) for c in cands), origins, horizon, str(metric))).encode()).hexdigest()
+
+
 def _compete_all(jobs: dict[tuple[str, str], tuple]) -> dict[tuple[str, str], Outcome]:
-    """Series are independent, so large portfolios compete in parallel processes."""
+    """Series are independent, so large portfolios compete in parallel processes; a series whose competition is the
+    last forecast's takes its outcome from there."""
+    keys = {k: _job_key(j) for k, j in jobs.items()}
+    with _last_lock:
+        known = {k: copy.deepcopy(_last_outcomes[h]) for k, h in keys.items() if h is not None and h in _last_outcomes}
+    todo = {k: j for k, j in jobs.items() if k not in known}
     workers = min(_cores(), 8)
-    if len(jobs) < PARALLEL_MIN_SERIES or workers < 2:
-        return {k: _compete_job(j) for k, j in jobs.items()}
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        chunk = max(1, min(32, len(jobs) // (workers * 4)))
-        return dict(zip(jobs, pool.map(_compete_job, jobs.values(), chunksize=chunk), strict=True))
+    if len(todo) < PARALLEL_MIN_SERIES or workers < 2:
+        made = {k: _compete_job(j) for k, j in todo.items()}
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            chunk = max(1, min(32, len(todo) // (workers * 4)))
+            made = dict(zip(todo, pool.map(_compete_job, todo.values(), chunksize=chunk), strict=True))
+    out = {**known, **made}
+    with _last_lock:
+        _last_outcomes.clear()
+        _last_outcomes.update({h: copy.deepcopy(out[k]) for k, h in keys.items() if h is not None})
+    return {k: out[k] for k in jobs}
 
 
 def _candidates(ds: Dataset, pattern: str, foundation_ok: bool) -> list[ForecastModelId]:

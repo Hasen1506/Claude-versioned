@@ -17,7 +17,7 @@ from scp.model import DemandKind, ForecastModelId as M, ForecastPeriod, Selectio
 from scp.plan import run_mrp
 from scp.validate import validate
 
-from .factory import base, ds, load_example
+from .factory import base, ds, example_dict, load_example
 
 
 # ---- periods --------------------------------------------------------------------------------------
@@ -410,3 +410,29 @@ def test_a_product_made_to_order_where_it_is_sold_gets_no_released_forecast():
     assert info.records == 0 and info.dropped == []
     assert [(x.location, x.product) for x in info.made_to_order] == [("P", "A")]
     assert not [i for i in validate(new) if i.code == "MTO_WITH_FORECAST"]
+
+
+def test_a_series_whose_history_did_not_change_is_not_competed_again(monkeypatch):
+    """Phase S: the model competition of a series depends on its history and the settings only; a forecast after a
+    change elsewhere takes the last one's outcome, and the answer is the one a fresh forecast gives."""
+    from scp.demand import pipeline
+    d = ds(example_dict("kitchenware_network"))
+    monkeypatch.setattr(pipeline, "_last_outcomes", {})
+    first = pipeline.run_forecast(d)
+    ran: list[int] = []
+    real = pipeline._compete_job
+    monkeypatch.setattr(pipeline, "_compete_job", lambda j: ran.append(1) or real(j))
+    monkeypatch.setattr(pipeline, "PARALLEL_MIN_SERIES", 10**9)
+    dearer = d.model_copy(update={"products": [p.model_copy(update={"price": (p.price or 0) * 2}) for p in d.products]})
+    again = pipeline.run_forecast(dearer)
+    assert ran == []                                          # nothing competed again
+    pipeline._last_outcomes.clear()
+    fresh = pipeline.run_forecast(dearer)
+    assert ran and again == fresh                             # the same answer as competing afresh
+    assert first.series[0].forecast == again.series[0].forecast
+    # a changed history is competed again
+    ran.clear()
+    h = d.history[0]
+    shorter = d.model_copy(update={"history": [x for x in d.history if not (x.location == h.location and x.product == h.product and x.date == h.date)]})
+    pipeline.run_forecast(shorter)
+    assert len(ran) == 1
