@@ -60,6 +60,7 @@ Everything is set by environment variables. None is needed to try it; the ones m
 | `SCP_OIDC_CLIENT_ID`, `SCP_OIDC_CLIENT_SECRET` | The application registered with the provider. | none |
 | `SCP_OIDC_NAME` | The button says "Sign in with …". | "your company account" |
 | `OPENBLAS_NUM_THREADS` | Threads of the maths library per process. Leave it at 1: the forecast runs one process per core. | `1` |
+| `SCP_LARGE_AT_ONCE` | How many large companies (200,000 records or more) are calculated at once. Each plan of 5,000 products takes about 5.5 GB: raise it only with the memory for it. | `1` |
 
 Keep the secrets (`SCP_SMTP_PASSWORD`, `SCP_OIDC_CLIENT_SECRET`) out of the image: pass them with `--env-file`
 or your platform's secrets.
@@ -93,8 +94,10 @@ e-mail is the same person, whichever way they sign in.
 
 ## 3. The reverse proxy
 
-The proxy adds HTTPS and must allow large requests and long answers: a company travels with each planning request
-(a company of 5,000 products and 20 places is about 70 MB), and planning it takes minutes.
+The proxy adds HTTPS and must allow large requests and long answers: a company travels whole when it is first kept on
+the server, when a save cannot be sent as what changed, and with each planning request of a company that is not kept
+on the server (a company of 5,000 products and 20 places is about 70 MB); planning it takes minutes. A company kept on
+the server is planned by reference: its planning requests are small, and large answers come compressed.
 
 Caddy (`deploy/Caddyfile`):
 
@@ -167,16 +170,17 @@ Other administrator commands: `python -m scp.admin users` (the accounts and thei
 
 Measured on a 4-core machine with a generated company of 5,000 products at 20 places (two plants, eighteen
 warehouses; 11,635 planning policies), two years of weekly sales history (624,000 rows) and 26 weeks of forecast
-(156,000 rows): a 71 MB company.
+(156,000 rows): a 71 MB company, kept on the server and used in a browser.
 
 | Step (as *Plan everything* runs them) | Time | Peak memory of the server process |
 |---|---|---|
-| Reading the company | 3.6 s | 1.4 GB |
+| Opening the company in the browser | 1.4 s | |
+| Reading the company (once per save, and once per set of unsaved changes) | 3.6 s | 1.4 GB |
 | Data checks and network view (after each change) | 7 s each | 2.1 GB |
 | Supply plan | 66–78 s | 5.5 GB |
-| Forecast (6,000 series, 4 cores) | 136 s | 6.1 GB |
+| Forecast (6,000 series, 4 cores; after a change, only series whose history changed) | 136 s | 6.1 GB |
 | Promising (the plan is kept, not made again) | 3 s | |
-| Safety stock | 30 s | |
+| Safety stock | 11 s | |
 | Capacity (S&OP) | 14 s | |
 | Schedule | 5 s | |
 | Buying | 4 s | |
@@ -185,14 +189,17 @@ warehouses; 11,635 planning policies), two years of weekly sales history (624,00
 | Performance | 12 s | 6.7 GB |
 | Saving a change (only what changed is sent) | 5–7 s | |
 
-*Plan everything* takes about five minutes for a company that size; `engine/scripts/scale.py` measures your own
-machine (`python scripts/scale.py --products 1000`).
+*Plan everything* takes about five and a half minutes the first time for a company that size, and seconds when asked
+again for the same data: the server keeps every answer beside the company it was worked out on. After a change, the
+steps are worked out again (the forecast only for the series whose history changed). In the browser every page opens
+within five seconds with under a gigabyte of memory. `engine/scripts/scale.py` measures your own machine
+(`python scripts/scale.py --products 1000`).
 
-So for a company that size: **4 cores and 8 GB of memory**, and one company planned at a time. The browser is the
-limit before the server is: it receives every result whole (the supply plan alone is about 130 MB at 1,000 products),
-so until results are sent in pages (the next phase), keep companies to a few hundred products. A company of a few
-hundred products needs 2 cores and 2 GB. The database grows by about the company's size every 25 saves (each save
-keeps only what changed, with a full copy every 25), so give the data volume some room and keep an eye on it.
+So for a company that size: **4 cores and 8 GB of memory**. A large company's calculations run one at a time
+(`SCP_LARGE_AT_ONCE`), so two planners planning at once wait for each other instead of running out of memory; smaller
+companies are not held up. A company of a few hundred products needs 2 cores and 2 GB. The database grows by about the
+company's size every 25 saves (each save keeps only what changed, with a full copy every 25), so give the data volume
+some room and keep an eye on it.
 
 Run **one** server process (`--workers 1`, as the image does): a save is checked against the company's latest
 revision under a lock inside the process, and a second process would not see it. The forecast uses every core by

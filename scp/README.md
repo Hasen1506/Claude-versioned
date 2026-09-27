@@ -210,13 +210,31 @@ What real use turned up, and what was done about it, is logged in [docs/USABILIT
   restore | users | reset-link`.
 - **Scale.** Measured at 5,000 products × 20 places with two years of history: the forecast runs one maths thread
   per worker (about 40 minutes → 2¼), the checks after each change are indexed and run once (22 s → 7 s), and the
-  supply plan is made once per *Plan everything*, not six times. The browser is still the limit at that size (N77,
-  next phase).
+  supply plan is made once per *Plan everything*, not six times.
 - **Deployment.** A `Dockerfile`, `deploy/compose.yaml` with Caddy for HTTPS, and [docs/DEPLOY.md](docs/DEPLOY.md):
   settings, mail, single sign-on, the reverse proxy, backups and putting one back, the size of the machine, updating.
 
-The next plan (phases S, O, P, M, N, Q, starting with large companies) is at the end of
-[docs/USABILITY_LOG.md](docs/USABILITY_LOG.md#the-next-plan-after-phase-l).
+## Large companies (Phase S)
+
+A company of 5,000 products at 20 places (two years of weekly history, 71 MB) works in the browser: it opens in
+1.4 s, every page in seconds with under a gigabyte of script memory, and *Plan everything* is the server's own
+calculation (5½ minutes the first time, 13 s again for the same data).
+
+- **Planning on the server's copy.** For a company kept on the server, a planning call names the save its working copy
+  was made from and sends only the unsaved changes (`{"$ref": {"revision", "patch"}}`, `engine/scp/api/working.py`);
+  the server reads the company once, sharing every unchanged list between the save and the changes on it, and a change
+  the engine makes comes back as what changed.
+- **Answers kept and light.** Read-only answers are kept beside the data they were worked out on, written straight to
+  JSON, compressed, and sent with their lists as rows (the browser unpacks them). The plan comes without its
+  requirements and pegging (`/api/plan?pegging=false`); the pegging tree and the stock list ask for theirs
+  (`/api/plan/trace`).
+- **Pages at scale.** Long lists draw their first rows with a search; names are made once per working copy; an edit
+  copies only the parts it touches; a company too large for the browser's storage is not copied there.
+- **Engine.** Safety stock places buffers group by group on every core (30 s at the solver's limit → 11 s, optimal);
+  a forecast after a change competes only the series whose history changed; a large company is planned one at a time.
+
+The next plan (phases O, P, M, N, Q) is at the end of
+[docs/USABILITY_LOG.md](docs/USABILITY_LOG.md#the-next-plan-after-phase-s).
 
 ## What is here (P0–P10)
 

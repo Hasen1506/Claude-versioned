@@ -185,8 +185,8 @@ rows, a company of 71 MB), each step as *Plan everything* and a change ask for i
 
 | # | Finding | Severity | Status |
 |---|---|---|---|
-| N77 | A large company does not fit the browser. The web client holds the whole company and every result, sends the whole company with each planning call and with the checks after every change (71 MB each time at 5,000 products), and receives every result whole: the supply plan's answer is about 131 MB at 1,000 products (requirements 50 MB, orders 36 MB, pegging 25 MB, places 19 MB) and would be about 650 MB at 5,000. The browser's storage cannot keep it ("storage is full" is shown). Saving is light since N64; planning is not. At 1,000 products (a 14 MB company) the browser still copes: opening in 2 s, the first calculation in 27 s, *Plan everything* in 64 s, at most 200 MB of script memory. | Critical (at scale) | Open: **S**, next. Results kept on the server by company and plan, pages and totals sent instead of every row; checks and planning run on the server's copy of the company, so a change sends only itself. |
-| N78 | The supply plan of 5,000 products at 20 places takes 66–78 s and 5.5 GB in one process, so one server plans one such company at a time and needs 8 GB. | Serious | Open: **S** (a leaner plan result, pegging on demand; planning in a worker process). Measured and written into the deployment guide's sizing. |
+| N77 | A large company does not fit the browser. The web client holds the whole company and every result, sends the whole company with each planning call and with the checks after every change (71 MB each time at 5,000 products), and receives every result whole: the supply plan's answer is about 131 MB at 1,000 products (requirements 50 MB, orders 36 MB, pegging 25 MB, places 19 MB) and would be about 650 MB at 5,000. The browser's storage cannot keep it ("storage is full" is shown). Saving is light since N64; planning is not. At 1,000 products (a 14 MB company) the browser still copes: opening in 2 s, the first calculation in 27 s, *Plan everything* in 64 s, at most 200 MB of script memory. | Critical (at scale) | **Fixed (S)**, see N92–N99. Planning calls name the company's save and send only unsaved changes; answers are kept on the server, compressed and sent as rows; the plan comes without its pegging, which a page asks for. At 5,000 products every page opens in seconds with under 0.9 GB of script memory. |
+| N78 | The supply plan of 5,000 products at 20 places takes 66–78 s and 5.5 GB in one process, so one server plans one such company at a time and needs 8 GB. | Serious | Partly **(S)**: the plan still takes 66–78 s and 5.5 GB, but it is worked out once per data (answers kept), a large company's calculations run one at a time so two never meet in memory, and the answer to the browser is a third of its size. A worker process per plan is left for later. |
 | N79 | The forecast ran 20 times slower in parallel than one series after another: each worker's maths library started a thread per core (300 series: 113 s instead of 6 s; 6,000 series would have taken about 40 minutes). | Serious | **Fixed (L).** One maths thread per worker, set before the library loads; workers as many as the cores the server may use. 6,000 series in 136 s. |
 | N80 | The data checks after every change ran twice (once for the readiness gate), copied each planning policy per row and looked up sources by scanning every source for every product at every place. | Serious | **Fixed (L).** Indexed sources and routes, policies worked out once per company, the gate reuses the checks: 22 s → 6.7 s; the network view 16 s → 6.7 s. |
 | N81 | *Plan everything* planned the company six times (the plan, promising, capacity, buying, money and performance each asked for it with the same data). | Serious | **Fixed (L).** The last plan that took long is kept by the data's content and handed out again for the same data only; promising 99 s → 3.1 s. |
@@ -197,9 +197,39 @@ rows, a company of 71 MB), each step as *Plan everything* and a change ask for i
 | N86 | Rights by product group need products to have a group, and setup never asked for one. | Minor | **Fixed (L)** with R29. |
 | N87 | An edit the person's rights do not cover was refused by the server, and after a reload the page kept trying to save it while *Undo* had nothing to undo. | Minor | **Fixed (L).** The refusal offers *Drop my unsaved changes* (back to the latest save), *Undo the last change* and *Download them*. |
 | N88 | Changing a member to the role they already had was logged in *History*. | Minor | **Fixed (L).** |
-| N89 | Safety stock for 5,000 products at 20 places takes 30 s: the placement is one optimisation over every place and product. | Minor | Open: **S** (placement per product family, in parallel). |
+| N89 | Safety stock for 5,000 products at 20 places takes 30 s: the placement is one optimisation over every place and product. | Minor | **Fixed (S).** Stages that do not supply each other are solved apart, small groups bundled, on every core: 11 s, and optimal (before, the one optimisation stopped at its 30 s limit). |
 | N90 | Opening another company while *Plan everything* ran for the first one: the run went on, its later steps with the new company's data, and a result that came back after the switch was taken as the new company's and shown as up to date (the bottler's Demand page listed Kaveri's nine forecast series). Opening the new company did not plan it, because a run was going. Found with the 1,000-product company, where a run takes a minute. | Serious | **Fixed (L).** Opening a company, a file or a version drops every result asked for before it and stops that run at its next step; the new company is then planned. |
 | N91 | The first requests to a newly started server, arriving together (a browser asks for the sign-in settings and the company list at once), each set up the company store: both added the new columns and one failed ("duplicate column name", an error page); on an in-memory database two stores could be made, one of them lost. Seen in the end-to-end tests' server log. | Serious | **Fixed (L).** The store and the company store are made once, under a lock. |
+
+## Found while building Phase S
+
+S was built against L's generated company of 5,000 products at 20 places (71 MB) in a real browser: opened, planned,
+every page visited, a week of demand changed on the grid and everything planned again. The kitchenware company kept on
+the server is planned by reference in the browser tests.
+
+| At 5,000 products, 20 places | Before S | After S |
+|---|---|---|
+| Opening the company | 3.7–22 s | 1.4 s |
+| First *Plan everything* | 439 s, and the supply plan never arrived | 326–357 s, every step (the forecast 136 s and the plan about 75 s of it) |
+| *Plan everything* again, nothing changed | 373 s | 13 s |
+| A week of demand changed, saved and checked | not measured (each cell copied and compared the whole company) | 18 s |
+| *Plan everything* after that change | as the first | 252 s (346 s before a forecast took the unchanged series' competitions from the last) |
+| Safety stock | 30 s, stopped at the solver's time limit | 11 s, optimal |
+| Pages | Buying crashed the tab; Demand 36 s; the orders page 4.8 s and 1.2 GB; the pegging tree never showed | every page within 5 s, most under 1 s |
+| Script memory kept | up to 1.2 GB, 2.6 GB with the pegging tree | at most 0.85 GB |
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N92 | At 5,000 products the supply plan's answer, about 600 MB, could not be read by the browser ("Unexpected end of JSON input"), and Home then said "The data changed after the last calculation": a step that failed looked like data that had changed. | Critical | **Fixed (S).** The plan comes without its requirements and pegging, its lists as rows (a third as long) and compressed (at 1,000 products 120 MB became 20 MB to read and 2 MB over the wire); Home names a step that did not finish and why, in plain words. |
+| N93 | Every product or place name on a page built the names of the whole company, and a pattern over every id, afresh: a table of a thousand orders did it three thousand times (the orders page 4.8 s and 1.2 GB; the pegging tree never showed). | Serious | **Fixed (S).** Made once per working copy: the orders page in 0.9 s. |
+| N94 | Long lists drew every row: the requisitions, each with its supplier choice, crashed the browser tab; the demand grid, the consensus grid and the series lists drew thousands of rows of inputs (Demand 36 s). | Serious | **Fixed (S).** The first rows (500; 200 and 100 for grids of inputs), a search to reach the others, and how many there are. The demand grid also spreads each record over its own days only. Demand: 0.9 s. |
+| N95 | Each edit copied the whole company and compared it with the one before as text, twice (seconds per cell at 5,000 products); the browser tried on every change to keep the company and its base in its storage, which holds a few megabytes, and kept thirty undo steps of it in its database. | Serious | **Fixed (S).** An edit copies and compares the parts it touches. A company the server keeps that is too large for the browser is not copied there (a reload opens it from the server), and its undo steps are not kept across a reload. |
+| N96 | Opening a company read it into objects on the server and wrote it out again the slow way. | Minor | **Fixed (S).** Sent as it is kept, compressed: 1.4 s at 5,000 products. |
+| N97 | Every planning call sent the whole company, eleven times for *Plan everything*, and the server read it anew each time; every answer went out through the slow generic writer, uncompressed. | Serious | **Fixed (S)** with N77: a call names the save and sends the unsaved changes (a few hundred bytes); unsaved changes are read on top of the kept save, sharing every unchanged list; a change the engine makes comes back as what changed. |
+| N98 | Any change made the forecast run its model competition for every series again (136 s for 6,000 series), though a week of demand or a price leaves every history as it was. | Serious | **Fixed (S).** A series whose history and settings did not change takes the last competition's outcome, and the answer is the one a fresh forecast gives. |
+| N99 | Two planners' unsaved changes planned at once would each take the plan's memory (5.5 GB at 5,000 products): more than a server sized for one. | Serious | **Fixed (S).** A large company's calculations run one at a time (`SCP_LARGE_AT_ONCE`); a step that runs long shows how long it has run. |
+| N100 | A large company is not kept in the browser: a change made less than the autosave's 1.2 s before a reload is lost (the page asks before closing). | Minor | Open, accepted: the window is the autosave's. |
+| N101 | A change still has every other step worked out again: the answers are kept by the whole company's data, so after any change the plan (about 75 s) and the checks (7 s) are the floor at 5,000 products. | Minor | Open: keys per step by what each reads, and a plan that re-plans only what a change reaches (with P). |
 
 ## Found in the second reality check (after Phase E)
 
@@ -324,12 +354,13 @@ currencies, two years of history), buying and sending every week, firming, posti
 transfers in minutes, the weekly roll, the promotion once it was in, backorder processing, the viewer on a phone (no
 sideways scroll, no change buttons), and three people working on one company without losing a change once R6 was fixed.
 
-## The next plan (after Phase L)
+## The next plan (after Phase S)
 
 Every finding of the first two reality checks is fixed, and every critical one of the third (K). L made the platform
-fit for a real company of a few hundred products: saving that can be trusted, accounts and control, backups, a
-container and a deployment guide. What is left is K's open findings (R13–R17, R20, R21, R30), use at the scale of
-thousands of products (N77, N78, N89) and breadth against SAP (the gaps below). Proposed, in the order recommended:
+fit for a real company of a few hundred products, S for one of thousands: a company of 5,000 products at 20 places
+opens in a second and a half, every page in seconds, and *Plan everything* is the server's calculation and little else.
+What is left is K's open findings (R13–R17, R20, R21, R30) and breadth against SAP (the gaps below). Proposed, in the
+order recommended:
 
 - **K: third reality check, over weeks, not a day**: **done**, see R1–R31 above.
 - **L: platform for real use**: **done**, see R18, R19, R22, R27–R29, R31, N63–N65, N76 and N77–N91. A save is never
@@ -340,12 +371,11 @@ thousands of products (N77, N78, N89) and breadth against SAP (the gaps below). 
   on the server when signed in (R28); the minor sweep (R22, R27, R29, R31, N76). At 5,000 products × 20 places the
   forecast went from about 40 minutes to 2¼, the checks after each change from 22 s to 7 s, and *Plan everything*
   plans once instead of six times. A container, Compose with HTTPS, and [the deployment guide](DEPLOY.md).
-- **S: large companies** (N77, N78, N89; new, first). The engine copes with 5,000 products; the browser does not.
-  Results kept on the server by company and plan, with pages, totals and a product's own detail sent on request
-  instead of every row; the checks and every planning call run on the server's copy of the company, so a change
-  sends only itself; a leaner plan result (pegging worked out when asked); planning in a worker process, with its
-  progress shown and one plan per company at a time; safety stock placed per product family in parallel. Then the
-  browser test of L repeated at 5,000 products: *Plan everything* and every page within a minute and a gigabyte.
+- **S: large companies**: **done**, see N77–N78, N89 and N92–N101. Planning calls name the company's save and send
+  only unsaved changes; the server keeps the company read and every answer, compressed and packed; the plan comes
+  without its pegging, which a page asks for; long lists draw their first rows with a search; names, edits and local
+  copies no longer cost the whole company each time; safety stock by independent groups on every core; a forecast
+  after a change competes only the series whose history changed; a large company is planned one at a time.
 - **O: stock you can trace** (R15–R17, R30 and the inventory gaps). Batch numbers with an expiry date, and first
   expiring, first out, so shelf life shows in stock (R15); a short receipt names the firm orders that can no longer
   run in full, and offers to shorten them (R16); stock below zero as a company rule — refuse the posting, allow it and
@@ -369,9 +399,7 @@ thousands of products (N77, N78, N89) and breadth against SAP (the gaps below). 
   movements and to take back purchase and production orders; e-mail sent from the application (orders to suppliers,
   confirmations to customers, the worklist's reminders).
 
-Order after L: **S, O, P, M, N, Q**. S comes first because it is the one finding that stops a company from using
-the rest: at a thousand products *Plan everything* moves over a hundred megabytes into the browser, and the browser
-cannot keep what it gets. O and P stay ahead of M and N for K's reasons: every open serious finding of K is about
+Order after S: **O, P, M, N, Q**. O and P stay ahead of M and N for K's reasons: every open serious finding of K is about
 stock that is really there (shelf life, short receipts, stock below zero) or a plan that acts on it.
 
 ## Gaps against SAP recorded for later phases
