@@ -5,7 +5,7 @@ import {
   Badge, Edits, Empty, Panel, Provenance, Reading, RunButton, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
 } from "../components/ui";
 import { money, pct, qty } from "../lib/format";
-import { Loc, Prod } from "../lib/names";
+import { Loc, namesOf, Prod } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -184,6 +184,7 @@ function PlacementChart({ nodes }: { nodes: NodeInventory[] }) {
 }
 
 function Placement({ res, ds }: { res: InventoryResult; ds: Dataset }) {
+  const nm = namesOf(ds);
   const c = res.currency;
   const stages = useMemo(() => [...res.nodes].filter((n) => n.role !== "customer").reverse(), [res]);
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -240,7 +241,7 @@ function Placement({ res, ds }: { res: InventoryResult; ds: Dataset }) {
                 const lpExists = ds.location_products?.some((x) => x.location === n.location && x.product === n.product);
                 return (
                   <tr key={k} className={sel.has(k) ? "selected" : ""}>
-                    <td>{n.role === "stocking" && <input type="checkbox" aria-label={`Select ${n.location} ${n.product}`} checked={sel.has(k)} onChange={() => toggle(k)} />}</td>
+                    <td>{n.role === "stocking" && <input type="checkbox" aria-label={`Select ${nm.prod(n.product)} at ${nm.loc(n.location)}`} checked={sel.has(k)} onChange={() => toggle(k)} />}</td>
                     <td>{n.location}{n.demand_facing && <span className="faint small"> · faces demand</span>}</td>
                     <td><b><Prod id={n.product} /></b>{!lpExists && <span className="faint small"> · no policy yet</span>}</td>
                     <td>{n.decision === "buffer" ? <Badge sev="ok">buffer</Badge> : n.decision === "no_stock" ? <Badge>make to order</Badge> : <Badge>pass through</Badge>}</td>
@@ -285,6 +286,7 @@ function ZoneBar({ r, scale }: { r: DdmrpRow; scale: number }) {
 }
 
 function Ddmrp({ res, ds }: { res: InventoryResult; ds: Dataset }) {
+  const nm = namesOf(ds);
   const [all, setAll] = useState(false);
   // the checkbox shows the dataset (what you set), the zones show the last run (what was computed)
   const isPos = (r: DdmrpRow) => ds.location_products?.find((x) => x.location === r.location && x.product === r.product)?.ddmrp_buffer ?? false;
@@ -320,7 +322,7 @@ function Ddmrp({ res, ds }: { res: InventoryResult; ds: Dataset }) {
             <tbody>
               {rows.map((r) => (
                 <tr key={key(r)}>
-                  <td><Edits><input type="checkbox" aria-label={`Position buffer at ${r.location} ${r.product}`} checked={isPos(r)} onChange={(e) => setPos(r, e.target.checked)} /></Edits></td>
+                  <td><Edits><input type="checkbox" aria-label={`Position a buffer of ${nm.prod(r.product)} at ${nm.loc(r.location)}`} checked={isPos(r)} onChange={(e) => setPos(r, e.target.checked)} /></Edits></td>
                   <td><Loc id={r.location} /></td><td><b><Prod id={r.product} /></b></td>
                   <td className="num">{qty(r.adu)}</td>
                   <td className="num">{days(r.dlt)}</td>

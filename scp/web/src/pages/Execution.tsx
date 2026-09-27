@@ -75,7 +75,7 @@ export function Execution({ route }: { route: string[] }) {
       how={<>Every goods movement (receipts, issues, deliveries, scrap, counts) is added up into stock; firm orders are received and
         closed as their goods arrive; past forecast is measured against actual sales. Moving the plan to a new start date recomputes
         all of it from the full journal. Planned orders inside the <Term t="Firm zone">firm zone</Term> can be turned into firm orders.</>}
-      answer={res && actualsAnswer(res)}
+      answer={res && actualsAnswer(res, (ds.movements ?? []).reduce((m, x) => (x.date > m ? x.date : m), ""))}
       right={<>
       {res && <Provenance kind="derived" at={run.at} stale={stale} />}
       <RunButton running={run.running} has={!!res} onClick={() => store.run("actuals")} /></>} />
@@ -120,14 +120,16 @@ function Nav({ view, res, ds }: { view: View; res: ActualsView | null; ds: Datas
 }
 
 // ------------------------------------------------------------------------------------------------
-function actualsAnswer(res: ActualsView) {
+/** `last`: the latest movement's date (movements of the week under way run past the plan's start). */
+function actualsAnswer(res: ActualsView, last: string) {
+  const upTo = day(last > res.as_of ? last : res.as_of);
   const off = res.stock.filter((r) => Math.abs(r.difference) > 1e-6).length;
   const neg = res.stock.filter((r) => r.negative_on).length;
   const acc = res.accuracy && res.accuracy.periods > 0 ? res.accuracy.accuracy : null;
   const books = !res.movements ? "No goods movements are recorded yet."
-    : off || neg ? `${plural(res.movements, "goods movement")} recorded up to ${day(res.as_of)}; ${[off && `${plural(off, "place")} ${off === 1 ? "has" : "have"} stock that doesn't match them`, neg && `${plural(neg, "place")} would go negative`].filter(Boolean).join(" and ")}.`
-    : `${plural(res.movements, "goods movement")} recorded up to ${day(res.as_of)}, and stock matches them everywhere.`;
-  return <>{books}{acc !== null && <> The forecast was {pct(acc, 0)} accurate against real sales.</>}</>;
+    : off || neg ? `${plural(res.movements, "goods movement")} recorded up to ${upTo}; ${[off && `${plural(off, "place")} ${off === 1 ? "has" : "have"} stock that doesn't match them`, neg && `${plural(neg, "place")} would go negative`].filter(Boolean).join(" and ")}.`
+    : `${plural(res.movements, "goods movement")} recorded up to ${upTo}, and stock matches them everywhere.`;
+  return <>{books}{acc !== null && <> The forecast was {pct(acc, 0)} accurate against real sales over {plural(res.accuracy.periods, "week")}.</>}</>;
 }
 
 function Stock({ res, ds }: { res: ActualsView; ds: Dataset }) {
@@ -530,7 +532,7 @@ function PostForm({ o, ds, busy, onPost, onShip }: { o: OpenOrderRow; ds: Datase
           {parts.map((r) => (
             <span key={r.product} style={{ marginRight: 14, whiteSpace: "nowrap" }}><Prod id={r.product} />{" "}
               {actual ? <input className="input" type="number" min={0} step="any" style={{ width: 90 }} value={usage[r.product] ?? guess(r).toFixed(3)}
-                onChange={(e) => setUsage({ ...usage, [r.product]: e.target.value })} aria-label={`Used ${r.product}`} />
+                onChange={(e) => setUsage({ ...usage, [r.product]: e.target.value })} aria-label={`Used ${namesOf(ds).prod(r.product)}`} />
                 : <b>{qty(guess(r))}</b>}</span>
           ))}
         </div>

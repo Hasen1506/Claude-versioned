@@ -231,21 +231,21 @@ test("inventory: optimise → placement → approve recommendation → policies 
 
   await page.goto("/#/inventory/placement");
   await expect(page.getByRole("img", { name: "Service-time placement per stage" })).toBeVisible();
-  await page.getByLabel("Select PLT-PUNE RM-SWITCH").check();
+  await page.getByLabel("Select Rotary switch + PCB at Pune plant (Chakan)").check();
   await page.getByRole("button", { name: /Review 1 change/ }).click();
   await page.getByRole("button", { name: "Use these buffers in the plan" }).click();
   await expect(freshness(page, "inventory")).toHaveAttribute("data-fresh", "stale");
   await page.getByRole("button", { name: "Recalculate now" }).click();
   await expect(freshness(page, "inventory")).toHaveAttribute("data-fresh", "fresh");
-  const row = page.locator("tr", { has: page.getByLabel("Select PLT-PUNE RM-SWITCH") });
+  const row = page.locator("tr", { has: page.getByLabel("Select Rotary switch + PCB at Pune plant (Chakan)") });
   await expect(row.locator("td").nth(10)).toContainText("fixed");
 
   await page.goto("/#/inventory/ddmrp");
   await page.getByLabel("Show every stocking stage").check();
-  await page.getByLabel("Position buffer at DC-DELHI MG-500").check();
+  await page.getByLabel("Position a buffer of Mixer grinder 500 W at Delhi NCR DC").check();
   await page.getByRole("button", { name: "Recalculate now" }).click();
   await page.getByLabel("Show every stocking stage").uncheck();
-  await expect(page.getByLabel("Position buffer at DC-DELHI MG-500")).toBeChecked();
+  await expect(page.getByLabel("Position a buffer of Mixer grinder 500 W at Delhi NCR DC")).toBeChecked();
 });
 
 test("S&OP: solve → pin → cut capacity → shadow prices → release to MRP → undo", async ({ page }) => {

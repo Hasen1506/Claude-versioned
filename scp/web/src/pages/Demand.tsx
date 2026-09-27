@@ -91,7 +91,7 @@ export function Demand({ route }: { route: string[] }) {
         {blocking ? <a className="btn" href={href("readiness")}>Open readiness</a>
           : (ds.history?.length ?? 0) === 0 ? <><p>A forecast needs past sales: one row per place, product, date and quantity sold. Upload them in
             Sales history, or skip the forecast and <a href={href("demand", "plan")}>enter the demand plan directly</a>.</p>
-            <a className="btn" href={href("data", "history")}>Upload sales history</a></>
+            <a className="btn" href={href("data", "history", "upload")}>Upload sales history</a></>
           : <p>Run the forecast to see every series' leaderboard, cleansed history, forecast range and consensus grid.</p>}
       </Empty></Panel>
       <ForecastSettingsPanel ds={ds} />

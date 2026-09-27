@@ -5,6 +5,7 @@ import { byKey, COLLECTIONS, items, whereUsed, type CollectionKey } from "../mod
 import { ImportPanel } from "../components/Import";
 import { checkTitle } from "../lib/checks";
 import { Msg } from "../lib/names";
+import { namesOf } from "../lib/names";
 import { go, href } from "../lib/router";
 import { defaults, SchemaForm, useSchema, type FieldErrors } from "../schema/SchemaForm";
 import { store, useStore, NO_ISSUES } from "../state/store";
@@ -45,7 +46,9 @@ function DataIndex({ ds, current, issues }: { ds: Dataset; current: string; issu
             {COLLECTIONS.filter((c) => c.group === g).map((c) => {
               const n = problems(c.issueType);
               return <a key={c.key} className={current === c.key ? "on" : ""} href={href("data", c.key)}>
-                <span>{c.label}</span>{n > 0 ? <Badge sev="warning">{n}</Badge> : <span className="faint">{items(ds, c.key).length}</span>}</a>;
+                <span>{c.label}</span><span className="row" style={{ gap: 4 }}>
+                  {n > 0 && <span title={`${n} data-check problem${n === 1 ? "" : "s"}`}><Badge sev="warning">{n} ⚠</Badge></span>}
+                  <span className="faint" title={`${items(ds, c.key).length} records`}>{items(ds, c.key).length}</span></span></a>;
             })}
           </div>
         ))}
@@ -65,7 +68,7 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
   const schema = useSchema();
   const schemaErrors = useStore((s) => s.schemaErrors);
   const [q, setQ] = useState("");
-  const [upload, setUpload] = useState(false);
+  const [upload, setUpload] = useState(selected === "upload");   // a link straight to the upload (e.g. Demand → Upload sales history)
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return list.map((o, i) => ({ o, i, k: def.keyOf(o, i) })).filter(({ o }) =>
@@ -87,6 +90,7 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
     return out;
   };
   const issueCount = (o: Obj, i: number) => issuesFor(issues, def.issueType, def.keyOf(o, i));
+  const nm = namesOf(ds);
   // records nothing else points at can go many at a time: search for them, then delete what the search found
   const bulk = q.trim() !== "" && rows.length > 0 && !REFERENCED.includes(ckey);
   const removeFound = () => {
@@ -164,7 +168,12 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
                   return (
                     <tr key={`${k}-${i}`} className={`clickable ${k === selected ? "selected" : ""}`}
                       onClick={() => go("data", ckey, k)}>
-                      {def.columns.map((c) => <td key={c.label} className={c.num ? "num" : ""}>{c.get(o, ds) ?? ""}</td>)}
+                      {def.columns.map((c) => {
+                        const v = c.get(o, ds) ?? "";
+                        // a place, product or machine reads by its name (the id on hover); the record's own id stays
+                        const named = typeof v === "string" && c.label !== "Id" ? nm.any(v) : v;
+                        return <td key={c.label} className={c.num ? "num" : ""} title={named !== v ? String(v) : undefined}>{named}</td>;
+                      })}
                       <td>{errs > 0 ? <Badge sev="error">{errs}</Badge> : iss.length > 0 ? <Badge sev="warning">{iss.length}</Badge> : null}</td>
                     </tr>
                   );
@@ -198,6 +207,7 @@ function Editor({ ds, ckey, index, obj, errors, issues }: {
   const refKind = ckey === "locations" ? "location" : ckey === "products" ? "product" : ckey === "resources" ? "resource"
     : ckey === "calendars" ? "calendar" : null;
   const used = refKind ? whereUsed(ds, refKind, String(obj.id)) : [];
+  const nm = namesOf(ds);
 
   const onChange = (next: Obj) => {
     store.update((d) => { items(d, ckey)[index] = next; });
@@ -221,7 +231,9 @@ function Editor({ ds, ckey, index, obj, errors, issues }: {
   };
 
   return (
-    <Panel title={<div className="context-bar"><a href={href("data", ckey)}>{def.label}</a><span>›</span><b>{k}</b></div>}
+    <Panel title={<div className="context-bar"><a href={href("data", ckey)}>{def.label}</a><span>›</span>
+      <b title={k}>{typeof obj.name === "string" && obj.name ? obj.name : k.split(/[|/]/).map((x) => nm.any(x)).join(" · ")}</b>
+      {typeof obj.name === "string" && obj.name && obj.name !== k && <span className="faint small">{k}</span>}</div>}
       actions={<>
         {ckey === "resources" && <a className="btn sm" href={href("machines", String(obj.id))}>Shifts and capacity</a>}
         {ckey === "location_products" && <a className="btn sm" href={href("material", String(obj.product), String(obj.location))}>Open as MRP 1–4</a>}
@@ -243,7 +255,7 @@ function Editor({ ds, ckey, index, obj, errors, issues }: {
       {refKind && (
         <div className="fieldset">
           <div className="legend">Where used</div>
-          {used.length ? <ul className="small" style={{ margin: "4px 0", paddingLeft: 18 }}>{used.map((u) => <li key={u}>{u}</li>)}</ul>
+          {used.length ? <ul className="small" style={{ margin: "4px 0", paddingLeft: 18, overflowWrap: "anywhere" }}>{used.map((u) => <li key={u}>{nm.text(u)}</li>)}</ul>
             : <div className="faint small">Not referenced anywhere yet.</div>}
         </div>
       )}

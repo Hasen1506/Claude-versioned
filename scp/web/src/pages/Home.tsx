@@ -124,6 +124,26 @@ function targetText(k: Kpi, cur: string): string {
 
 // ---- the page ----------------------------------------------------------------------------------------
 
+/** Promise lines on the same day read as one (two ship-from places, one date). */
+function byDay<T extends { date: string; qty: number; on_time: boolean }>(lines: T[]): T[] {
+  const out: T[] = [];
+  for (const l of lines) {
+    const same = out.find((x) => x.date === l.date);
+    if (same) same.qty += l.qty;
+    else out.push({ ...l });
+  }
+  return out;
+}
+
+/** Forecast accuracy against real sales, from the weeks moved forward (as Actuals shows it). */
+function realAccuracy(ds: Dataset): { accuracy: number; bias: number; weeks: number } | null {
+  const recs = ds.accuracy ?? [];
+  const f = recs.reduce((t, r) => t + r.forecast, 0), a = recs.reduce((t, r) => t + r.actual, 0);
+  const e = recs.reduce((t, r) => t + Math.abs(r.forecast - r.actual), 0);
+  if (!recs.length || a <= 0) return null;
+  return { accuracy: Math.max(0, 1 - e / a), bias: (f - a) / a, weeks: new Set(recs.map((r) => r.start)).size };
+}
+
 export function Home({ ds }: { ds: Dataset }) {
   const s = useStore((x) => x);
   const planned = planFreshness(s);
@@ -191,7 +211,7 @@ export function Home({ ds }: { ds: Dataset }) {
     orders = k.orders === 0 ? <p className="answer">No open customer orders.</p> : (<>
       <p className="answer">{k.on_time_orders === k.orders ? `All ${k.orders} on time.` : <><em>{k.on_time_orders} of {k.orders}</em> on time.</>}</p>
       {o && <p className="muted"><b>{o.order}</b>, {qty(o.qty)} {prodName[o.product] ?? o.product} for {locName[o.location] ?? o.location}:{" "}
-        {o.lines.map((l, i) => <span key={i}>{i > 0 && ", "}{qty(l.qty)} on {dayName(l.date, year)}{l.on_time ? " as asked" : ""}</span>)}
+        {byDay(o.lines).map((l, i) => <span key={i}>{i > 0 && ", "}{qty(l.qty)} on {dayName(l.date, year)}{l.on_time ? " as asked" : ""}</span>)}
         {o.unconfirmed > 0 && <>{o.lines.length ? ", " : ""}{qty(o.unconfirmed)} can't be promised yet</>}.
         {off.length > 1 && <> {plural(off.length - 1, "other order")} also can't be met in full on time.</>}</p>}
       {k.at_risk_orders > 0 && <p className="muted">{plural(k.at_risk_orders, "promised order")} would now be at risk.</p>}
@@ -270,8 +290,19 @@ export function Home({ ds }: { ds: Dataset }) {
         : <p className="answer">Yes.{warnings ? ` ${plural(warnings, "warning")} worth a look.` : " No problems found."}</p>}
       {(s.validation?.set_aside?.length ?? 0) > 0 && <p className="muted">{plural(s.validation!.set_aside!.length, "unfinished record")} {s.validation!.set_aside!.length === 1 ? "is" : "are"} left
         out of the plan until {s.validation!.set_aside!.length === 1 ? "it is" : "they are"} finished.</p>}
-      {fc && fc.summary.wape !== null && (ds.history ?? []).length > 0 && <p className="muted">The forecast is {pct(1 - fc.summary.wape, 0)} accurate on past weeks
-        {fc.summary.bias !== null && Math.abs(fc.summary.bias) >= 0.005 ? `, ${pct(Math.abs(fc.summary.bias), 0)} on the ${fc.summary.bias > 0 ? "high" : "low"} side` : ""}.</p>}
+      {(() => {
+        // two different numbers (R22): against the sales that really happened once weeks were moved forward, and a
+        // backtest (the forecast made again for weeks already in the history)
+        const real = realAccuracy(ds);
+        const test = fc && fc.summary.wape !== null && (ds.history ?? []).length > 0 ? fc.summary : null;
+        const side = (b: number | null | undefined) => b !== null && b !== undefined && Math.abs(b) >= 0.005 ? `, ${pct(Math.abs(b), 0)} on the ${b > 0 ? "high" : "low"} side` : "";
+        if (!real && !test) return null;
+        return <p className="muted">
+          {real && <>Against real sales the forecast was <b>{pct(real.accuracy, 0)}</b> accurate over {plural(real.weeks, "week")}{side(real.bias)}. </>}
+          {test && <>Tried on past weeks of the sales history (a backtest) it scores {pct(1 - test.wape!, 0)}{side(test.bias)}.</>}
+          {!real && test && <> Its accuracy against real sales shows once weeks are moved forward (Actuals).</>}
+        </p>;
+      })()}
     </Card>
   );
 

@@ -195,6 +195,7 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
                 notes.append(f"{o.product}: {pu.supplier} can deliver {earliest.isoformat()}, "
                              f"{(earliest - due).days} d after it is needed there")
                 due = earliest
+        qty = round(qty, 3)                     # no 12-decimal quantities on a purchase order
         groups[(pu.supplier, o.location, _currency(ds, ds.price_currency(pu)))].append((rid, pu, qty, due, notes))
 
     num = next_numbers(ds)

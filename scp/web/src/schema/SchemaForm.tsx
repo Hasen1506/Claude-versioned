@@ -72,6 +72,14 @@ const TITLE: Record<string, string> = {
   release_window_days: "Show as due to order within (days)", sent_on: "Sent on", vendor_reference: "Supplier's confirmation number",
   po: "Purchase order", confirmed_date: "Confirmed delivery date", confirmed_qty: "Confirmed quantity",
   block_reason: "Why blocked", incoterms: "Delivery terms (Incoterms)",
+  // forecast settings (R29)
+  abc_a: "A items: the top share of revenue", abc_b: "A and B items together: share of revenue",
+  xyz_x: "X items (steady): forecast error up to", xyz_y: "X and Y items: forecast error up to",
+  models: "Forecast methods that compete", selection_metric: "Best method chosen by", season_length: "Periods in a season",
+  backtest_origins: "Test forecasts made on past weeks", backtest_horizon: "Periods ahead each test forecasts",
+  min_history_periods: "History needed before methods compete (periods)", outlier_method: "Unusual values",
+  outlier_threshold: "Unusual beyond (robust z-score)", interval: "Range shown around the forecast",
+  shelf_life_days: "Keeps for (days)", family: "Product group",
 };
 
 /** Plain words for enum values; the stored value stays the code. */
@@ -87,6 +95,13 @@ const ENUM_LABEL: Record<string, string> = {
   earlier: "Start earlier (build ahead)", later: "Finish later (delay)",
   edd: "Earliest due date first", spt: "Shortest job first", slack: "Least slack first",
   campaign: "Campaigns by setup group", backward: "Backward from the due date (just in time)",
+  // forecast methods and choices (R29)
+  naive: "Last value (naive)", seasonal_naive: "Same week last season", moving_average: "Moving average",
+  ses: "Exponential smoothing", holt_damped: "Trend, damped (Holt)", holt_winters: "Trend and season (Holt-Winters)",
+  croston: "Intermittent demand (Croston)", sba: "Intermittent demand (SBA)", tsb: "Intermittent, fading (TSB)",
+  regression: "Trend and season regression", combination: "Average of the best methods", timesfm: "TimesFM (foundation model)",
+  mase: "Error against a naive forecast (MASE)", wape: "Error share of volume (WAPE)", rmse: "Root mean squared error (RMSE)",
+  mad: "Clip beyond the robust z-score (median/MAD)",
 };
 
 /** Sentence-case label from a field name: `gr_processing_days` → "GR processing days". */
@@ -213,7 +228,7 @@ function FieldFor({ schema, name, raw, required, value, onChange, errors, path }
             <label key={opt} className="chip" style={{ cursor: "pointer" }}>
               <input type="checkbox" checked={list.includes(opt)}
                 onChange={(e) => onChange(e.target.checked ? [...list, opt] : list.filter((x) => x !== opt))} />
-              {opt}
+              {ENUM_LABEL[opt] ?? opt}
             </label>
           ))}
         </div>

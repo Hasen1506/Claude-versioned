@@ -311,14 +311,19 @@ function Products({ ds }: { ds: Dataset }) {
   const [type, setType] = useState("FG");
   const [uom, setUom] = useState("EA");
   const [price, setPrice] = useState("");
+  const [group, setGroup] = useState("");
+  const [life, setLife] = useState("");
   const prods = ds.products ?? [];
+  const groups = [...new Set(prods.map((p) => p.family).filter(Boolean))];
   const cur = ds.settings.currency;
   const addProduct = () => {
     if (!name.trim()) return;
     const id = newId(name, prods.map((p) => p.id), type);
     const pr = num(price);
-    store.update((d) => add(d, "products", { id, name: name.trim(), type, base_uom: uom.trim() || "EA", ...(pr > 0 ? { price: pr } : {}) }));
-    setName(""); setPrice("");
+    const days = Math.round(num(life));
+    store.update((d) => add(d, "products", { id, name: name.trim(), type, base_uom: uom.trim() || "EA", ...(pr > 0 ? { price: pr } : {}),
+      ...(group.trim() ? { family: group.trim() } : {}), ...(days > 0 ? { shelf_life_days: days } : {}) }));
+    setName(""); setPrice(""); setLife("");
   };
   const setProd = (id: string, f: (p: Record<string, unknown>) => void) => store.update((d) => {
     const p = (d.products ?? []).find((x) => x.id === id);
@@ -350,6 +355,11 @@ function Products({ ds }: { ds: Dataset }) {
               <datalist id="units">{["EA", "BOX", "CASE", "BAG", "DRUM", "KG", "L", "M", "TON"].map((u) => <option key={u} value={u} />)}</datalist></Field>
             {(type === "FG" || type === "SFG") && <Field label={`Selling price (${cur})`} hint="optional; revenue and margin need it">
               <input className="input" type="number" min={0} step="any" value={price} onChange={(e) => setPrice(e.target.value)} style={{ width: 100 }} aria-label="Selling price" /></Field>}
+            <Field label="Product group" hint="optional; rights and reports by group">
+              <input className="input" value={group} onChange={(e) => setGroup(e.target.value)} list="product-groups" style={{ width: 140 }} aria-label="Product group" />
+              <datalist id="product-groups">{groups.map((g) => <option key={g} value={g} />)}</datalist></Field>
+            <Field label="Keeps for (days)" hint="empty: does not spoil">
+              <input className="input" type="number" min={1} step={1} value={life} onChange={(e) => setLife(e.target.value)} style={{ width: 80 }} aria-label="Shelf life in days" /></Field>
             <button className="btn primary" onClick={addProduct}>Add product</button>
           </div>
           <p className="faint small">Have a list already? <a href={href("data", "products")}>Upload products from a spreadsheet</a>.</p>
@@ -357,6 +367,7 @@ function Products({ ds }: { ds: Dataset }) {
         {prods.length > 0 && <Panel flush>
           <div className="table-wrap"><table className="t">
             <thead><tr><th>Product</th><th>What it is</th><th>Unit</th><th title="Planned in whole units">Whole</th>
+              <th>Group</th><th className="num" title="Shelf life: how many days it keeps">Keeps (days)</th>
               <th className="num">Selling price ({cur})</th><th className="num" title="Its standard cost; a bought product costs its supplier's price">Cost ({cur})</th>
               <th>How it's supplied</th><th /></tr></thead>
             <tbody>{prods.map((p) => {
@@ -370,6 +381,10 @@ function Products({ ds }: { ds: Dataset }) {
                 <td>{PRODUCT_TYPES.find((t) => t.type === p.type)?.label}</td><td>{p.base_uom ?? "EA"}</td>
                 <td><input type="checkbox" checked={whole} aria-label={`${p.name || p.id} in whole units`}
                   onChange={(e) => setProd(p.id, (x) => { x.whole_units = e.target.checked; })} /></td>
+                <td><input className="input" defaultValue={p.family ?? ""} list="product-groups" placeholder="none" style={{ width: 120 }}
+                  aria-label={`Product group of ${p.name || p.id}`} onBlur={(e) => { const g = e.target.value.trim(); if (g !== (p.family ?? "")) setProd(p.id, (x) => { x.family = g; }); }} /></td>
+                <td className="num"><input className="input num" type="number" min={1} step={1} defaultValue={p.shelf_life_days ?? ""} placeholder="—" style={{ width: 70 }}
+                  aria-label={`Shelf life of ${p.name || p.id} in days`} onBlur={(e) => { const n = Math.round(num(e.target.value)); setProd(p.id, (x) => { x.shelf_life_days = n > 0 ? n : null; }); }} /></td>
                 <td className="num">{sells ? <input className="input num" type="number" min={0} step="any" defaultValue={p.price ?? ""} placeholder="none" style={{ width: 90 }}
                   aria-label={`Selling price of ${p.name || p.id}`} onBlur={(e) => { const n = num(e.target.value); setProd(p.id, (x) => { x.price = n > 0 ? n : null; }); }} />
                   : <span className="faint">–</span>}</td>
@@ -762,7 +777,8 @@ function StockForm({ ds, product, place, lp }: { ds: Dataset; product: string; p
   const journal = (ds.movements ?? []).some((m) => m.location === place && m.product === product);
   const [count, setCount] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
-  type Loose = { on_hand?: number; safety_stock?: Record<string, unknown>; lot_sizing?: Record<string, unknown> };
+  type Loose = { on_hand?: number; safety_stock?: Record<string, unknown>; lot_sizing?: Record<string, unknown>; strategy?: string | null };
+  const sells = ["FG", "SFG"].includes((ds.products ?? []).find((x) => x.id === product)?.type ?? "");
   const write = (patch: (x: Loose) => void) => store.update((d) => {
     const list = (d.location_products ??= []);
     let x = list.find((r) => r.location === place && r.product === product) as Loose | undefined;
@@ -801,6 +817,15 @@ function StockForm({ ds, product, place, lp }: { ds: Dataset; product: string; p
           onBlur={(e) => setNum(e.target.value, (x, n) => { x.safety_stock = { ...(x.safety_stock ?? {}), method: "fixed", qty: n }; })} /></Field>}
         {ss === "days_of_supply" && <Field label="Days"><input className="input" type="number" min={0} step="any" defaultValue={lp?.safety_stock?.days ?? 7} style={{ width: 80 }}
           onBlur={(e) => setNum(e.target.value, (x, n) => { x.safety_stock = { ...(x.safety_stock ?? {}), method: "days_of_supply", days: n }; })} /></Field>}
+        {sells && <Field label="Planned from" hint={lp?.strategy === "MTO" ? "made or bought only for orders taken; free stock is used first" : undefined}>
+          <select className="select" value={lp?.strategy ?? ""} aria-label={`How ${nm.prod(product)} at ${nm.loc(place)} is planned`}
+            onChange={(e) => write((x) => { x.strategy = e.target.value || null; })}>
+            <option value="">the forecast and orders (the company's default)</option>
+            <option value="MTS_CONSUME">the forecast, orders using it up</option>
+            <option value="MTS">the forecast only (orders do not change it)</option>
+            <option value="MTO">orders only: made to order</option>
+            <option value="ATO">parts from the forecast, assembled to order</option>
+          </select></Field>}
         <Field label="Each order covers"><select className="select" value={lot} onChange={(e) => setLot(e.target.value)} aria-label="Each order covers">
           <option value="">The company's default ({coverLabel(ds.settings as never)})</option>
           <option value="L4L">Exactly what's needed</option><option value="POQ1">A week's need</option>
