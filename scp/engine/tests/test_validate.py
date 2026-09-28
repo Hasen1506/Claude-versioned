@@ -121,6 +121,17 @@ def _mto_fc(d):
     lp(d, "P", "A")["strategy"] = "MTO"
 
 
+def _forecast_twice(d):
+    d["locations"].append({"id": "K", "type": "customer"})
+    d["lanes"].append({"id": "L-PK", "origin": "P", "destination": "K", "modes": [{"mode": "truck_ftl", "transit_days": 1}]})
+    d["demand"].append(demand("K", "A", "2026-01-12", 30))
+
+
+def _inputs_changed(d):
+    d["demand"].append({**demand("P", "A", "2026-01-12", 30), "released": True})
+    d["forecasting"] = {"released_inputs": "made-with-other-inputs"}
+
+
 def _stock_at_customer(d):
     d["locations"].append({"id": "K", "type": "customer"})
     d["location_products"].append({"location": "K", "product": "A", "on_hand": 5})
@@ -201,6 +212,34 @@ def _open_po_blocked(d):
                       "due_date": "2026-01-09", "po": "PO-1", "source": "PIR-B"}]
 
 
+def _stock_expired(d):
+    d["movements"] = [{"id": "GM-1", "date": "2026-01-01", "type": "receipt", "location": "P", "product": "B",
+                       "qty": 5, "batch": "OLD"}]
+    d["batches"] = [{"product": "B", "id": "OLD", "expires_on": "2026-01-03"}]
+
+
+def _batch_unknown(d):
+    d["movements"] = [{"id": "GM-1", "date": "2026-01-01", "type": "receipt", "location": "P", "product": "B",
+                       "qty": 5, "batch": "NO-RECORD"}]
+
+
+def _reversal_unknown(d):
+    d["movements"] = [{"id": "GM-1", "date": "2026-01-01", "type": "receipt", "location": "P", "product": "B",
+                       "qty": 5, "reversal_of": "GM-0"}]
+
+
+def _serials_count(d):
+    d["products"][0]["serial_numbers"] = True
+    d["movements"] = [{"id": "GM-1", "date": "2026-01-01", "type": "receipt", "location": "P", "product": "A",
+                       "qty": 3, "serials": ["A-1"]}]
+
+
+def _cold_chain(d):
+    d["products"][0]["cold_chain"] = True
+    d["locations"].append({"id": "DC", "type": "dc"})
+    d["lanes"] = [{"id": "P-DC", "origin": "P", "destination": "DC", "products": ["A"], "modes": [{"transit_days": 1}]}]
+
+
 MUTATORS = {
     "DUP_ID": _dup_id, "DUP_LOCATION_PRODUCT": _dup_lp, "REF_UNKNOWN": _ref_unknown,
     "REF_WRONG_TYPE": _ref_wrong_type, "FX_MISSING": _fx_missing, "CALENDAR_NO_WORKDAY_IN_HORIZON": _calendar,
@@ -209,7 +248,7 @@ MUTATORS = {
     "SOURCE_NOT_VALID_IN_HORIZON": _validity, "PRODUCTION_NO_OPERATIONS": _no_ops,
     "PRODUCTION_NO_LEAD_TIME": _no_ops, "PURCHASE_ZERO_LEAD_TIME": _zero_lt, "SS_AND_SAFETY_TIME": _ss_and_time,
     "QUOTA_SUM": _quota, "DEMAND_OUTSIDE_HORIZON": _outside, "DEMAND_PAST_DUE": _past,
-    "MTO_WITH_FORECAST": _mto_fc, "STOCK_AT_CUSTOMER": _stock_at_customer, "RESOURCE_UNUSED": _unused,
+    "MTO_WITH_FORECAST": _mto_fc, "FORECAST_TWICE": _forecast_twice, "FORECAST_INPUTS_CHANGED": _inputs_changed, "STOCK_AT_CUSTOMER": _stock_at_customer, "RESOURCE_UNUSED": _unused,
     "LOCATION_PRODUCT_DEFAULTED": _defaulted, "SHELF_LIFE_VS_LEAD_TIME": _shelf,
     "HISTORY_AFTER_START": _history_late, "NPI_LIKE_WITHOUT_HISTORY": _npi_like, "NPI_DUPLICATE": _npi_dup,
     "OVERRIDE_OUTSIDE_HORIZON": _override_outside, "OVERRIDE_WITHOUT_FORECAST": _override_no_fc,
@@ -217,6 +256,8 @@ MUTATORS = {
     "NEGATIVE_STOCK": _negative_stock, "MOVEMENT_REF_UNKNOWN": _movement_ref,
     "PHANTOM_NOT_MADE": _phantom_not_made, "PO_LINE_MISMATCH": _po_line_mismatch,
     "FIXED_SOURCE_TWICE": _fixed_twice, "OPEN_PO_BLOCKED_SUPPLIER": _open_po_blocked,
+    "STOCK_EXPIRED": _stock_expired, "BATCH_UNKNOWN": _batch_unknown, "REVERSAL_UNKNOWN": _reversal_unknown,
+    "SERIALS_COUNT": _serials_count, "COLD_CHAIN_LANE": _cold_chain,
 }
 
 

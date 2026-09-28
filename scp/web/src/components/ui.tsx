@@ -87,6 +87,16 @@ export function StatTile({ label, value, sub, tone }: {
   );
 }
 
+/** How many rows a long list draws (Phase S): a large company's lists run to tens of thousands of rows, more than a
+ *  page can draw; the rest are reached by narrowing the list. */
+export const ROW_LIMIT = 500;
+
+/** Under a list cut at `shown` of `total` rows: says so, and how to reach the rest. */
+export function MoreRows({ shown, total, what = "rows", how = "Filter to narrow the list." }: { shown: number; total: number; what?: string; how?: string }) {
+  if (total <= shown) return null;
+  return <div className="faint small" role="status" style={{ padding: 10 }}>Showing the first {shown.toLocaleString("en-US")} of {total.toLocaleString("en-US")} {what}. {how}</div>;
+}
+
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div className="empty">
@@ -198,7 +208,7 @@ export function StaleMark({ what, onRerun, busy }: { what: string; onRerun?: () 
   return (
     <div className="stale-mark" role="status">
       <b>⚠ Out of date</b>
-      <span className="spacer">You changed the data after this {what} was calculated, so these numbers may be wrong.</span>
+      <span className="spacer">The data changed after this {what} was calculated, so these numbers may be wrong.</span>
       {onRerun && <button className="btn sm" onClick={onRerun} disabled={busy}>{busy ? "Calculating…" : "Recalculate now"}</button>}
     </div>
   );

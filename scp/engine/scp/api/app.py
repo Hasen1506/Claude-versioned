@@ -13,8 +13,10 @@ from typing import Annotated, Any, Literal
 
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
+from contextlib import asynccontextmanager
+
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from .. import __version__
 from ..actuals import ActualsView, FirmReport, PostingError, RollReport, actuals_view, firm_orders, post, roll_forward
@@ -25,10 +27,12 @@ from ..demand import foundation
 from ..demand.models import SPECS
 from ..demand.result import FoundationStatus
 from ..inventory import InventoryResult, PlacementApplied, apply_placement, run_inventory
-from ..model import Dataset, DemandRecord, ForecastModelId
+from ..model import Dataset, DemandRecord, ForecastModelId, StockType
 from ..model.common import Out
 from ..network import build_graph, location_edges, location_layers
 from ..plan import PlanResult, run_mrp
+from ..plan.mrp import with_kept_plan
+from ..plan.trace import PlanTrace, index as trace_index, trace
 from ..plan.level import LevelPreview, level_preview
 from ..purchasing import PurchasingError, act as purchasing_act, create_purchase_orders, purchasing_view
 from ..purchasing.result import ActionReport, CreateReport, PurchasingView
@@ -43,23 +47,38 @@ from ..schedule import (
 )
 from ..sop import SopRelease, SopResult, release_sop, run_sop
 from ..validate import RULES, Issue, validate
-from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, plain_errors
+from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, lenient_checked, plain_errors
 from ..validate.setup import SetupItem, checklist
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
 from ..companies import CompanyError
 from .companies import EditScope, Scope, company_error, gate, router as companies_router
+from .working import PlanData, answer, is_ref, read as read_ref, respond, send
 
 ROOT = Path(__file__).resolve().parents[3]          # scp/
 EXAMPLES = ROOT / "examples"
 WEB_DIST = ROOT / "web" / "dist"
 
-app = FastAPI(title="SCP — Supply Chain Planning", version=__version__,
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """With SCP_BACKUP_DIR set, the database is copied there every night (scp.backup)."""
+    from ..backup import start_nightly
+    from ..versions.store import get_store
+
+    store = get_store()
+    start_nightly(store.db, store.lock)
+    yield
+
+
+app = FastAPI(title="SCP — Supply Chain Planning", version=__version__, lifespan=lifespan,
               description="Typed network master data, readiness gate, demand planning, network MRP/DRP.")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "https://hasen1506.github.io"],
-                   allow_methods=["*"], allow_headers=["*"])
+                   allow_methods=["*"], allow_headers=["*"], expose_headers=["X-Rows"])
 
 
 app.middleware("http")(gate)
+
 app.add_exception_handler(CompanyError, company_error)  # type: ignore[arg-type]
 app.include_router(companies_router)
 
@@ -189,23 +208,25 @@ def schema() -> dict:
     return Dataset.model_json_schema()
 
 
-@app.post("/api/validate", response_model=ValidationResult)
-def post_validate(raw: RawDataset) -> ValidationResult:
+def validation_view(raw: RawDataset) -> ValidationResult:
     """The readiness gate on everything that can be planned; unfinished records are set aside and listed,
     each also as a SET_ASIDE warning, instead of making the whole dataset unreadable."""
-    ds, aside = lenient(raw)
+    if is_ref(raw):
+        r = read_ref(raw)
+        ds, aside, checked = r.ds, r.aside, r.checked
+    else:
+        ds, aside, checked = lenient_checked(raw)
     issues = [Issue(code="SET_ASIDE", severity="warning", object_type=a.object_type, object_id=a.object_id,
                     message=f"{SINGULAR[a.collection]} {a.label} is left out of planning until it is fixed: {a.reason}",
                     hint="Fix it or delete it; it comes back into the plan as soon as it is complete", field=a.field)
               for a in aside]
-    issues += validate(ds)
+    issues += validate(ds) if checked is None else checked
     return ValidationResult(issues=issues, blocking=any(i.severity == "error" for i in issues), set_aside=aside,
                             setup=checklist(ds, aside))
 
 
-@app.post("/api/network", response_model=NetworkView)
-def post_network(raw: RawDataset) -> NetworkView:
-    ds, _ = lenient(raw)
+def network_view(raw: RawDataset) -> NetworkView:
+    ds = read_ref(raw).ds if is_ref(raw) else lenient(raw)[0]
     g = build_graph(ds)
     layers = location_layers(ds)
     prods: dict[str, set[str]] = {}
@@ -238,6 +259,20 @@ def post_network(raw: RawDataset) -> NetworkView:
     return NetworkView(locations=locs, edges=edges, nodes=nodes, cycles=g.cycles)
 
 
+@app.post("/api/validate", response_model=ValidationResult)
+def post_validate(raw: RawDataset) -> Response:
+    if is_ref(raw):
+        return respond("validate", read_ref(raw).ds, lambda: validation_view(raw))
+    return send(validation_view(raw))
+
+
+@app.post("/api/network", response_model=NetworkView)
+def post_network(raw: RawDataset) -> Response:
+    if is_ref(raw):
+        return respond("network", read_ref(raw).ds, lambda: network_view(raw))
+    return send(network_view(raw))
+
+
 class ModelInfo(Out):
     id: ForecastModelId
     label: str
@@ -251,12 +286,13 @@ class ForecastModels(Out):
 
 
 class ReleaseRequest(Out):
-    dataset: Dataset
+    dataset: PlanData
     keys: list[str] | None = None
 
 
 class ReleaseResponse(Out):
-    dataset: Dataset
+    dataset: Dataset | None = None        # the changed company whole, or
+    patch: dict[str, Any] | None = None   # what changed, when it came by reference (scp.api.working)
     release: ReleaseResult
 
 
@@ -269,8 +305,8 @@ def forecast_models() -> ForecastModels:
 
 
 @app.post("/api/forecast", response_model=ForecastResult)
-def post_forecast(ds: Dataset) -> ForecastResult:
-    return run_forecast(ds)
+def post_forecast(ds: PlanData) -> Response:
+    return respond("forecast", ds, lambda: run_forecast(ds))
 
 
 @app.post("/api/forecast/release", response_model=ReleaseResponse)
@@ -279,21 +315,22 @@ def post_release(req: ReleaseRequest) -> ReleaseResponse:
     if not result.ok:
         raise HTTPException(409, "the readiness gate has errors; fix them before releasing a forecast")
     new, info = release(req.dataset, result, req.keys)
-    return ReleaseResponse(dataset=new, release=info)
+    return ReleaseResponse(**answer(req.dataset, new), release=info)
 
 
 @app.post("/api/inventory", response_model=InventoryResult)
-def post_inventory(ds: Dataset) -> InventoryResult:
-    return run_inventory(ds)
+def post_inventory(ds: PlanData) -> Response:
+    return respond("inventory", ds, lambda: run_inventory(ds))
 
 
 class PlacementRequest(Out):
-    dataset: Dataset
+    dataset: PlanData
     keys: list[str] | None = None     # "location|product"; None: every stage whose recommendation differs
 
 
 class PlacementResponse(Out):
-    dataset: Dataset
+    dataset: Dataset | None = None        # the changed company whole, or
+    patch: dict[str, Any] | None = None   # what changed, when it came by reference (scp.api.working)
     applied: PlacementApplied
 
 
@@ -306,38 +343,40 @@ def post_inventory_apply(req: PlacementRequest) -> PlacementResponse:
         new, info = apply_placement(req.dataset, result, req.keys)
     except KeyError as e:
         raise HTTPException(404, str(e.args[0])) from None
-    return PlacementResponse(dataset=new, applied=info)
+    return PlacementResponse(**answer(req.dataset, new), applied=info)
 
 
 @app.post("/api/sop", response_model=SopResult)
-def post_sop(ds: Dataset) -> SopResult:
-    return run_sop(ds)
+def post_sop(ds: PlanData) -> Response:
+    return respond("sop", ds, lambda: run_sop(ds))
 
 
 class SopReleaseResponse(Out):
-    dataset: Dataset
+    dataset: Dataset | None = None        # the changed company whole, or
+    patch: dict[str, Any] | None = None   # what changed, when it came by reference (scp.api.working)
     release: SopRelease
 
 
 @app.post("/api/sop/release", response_model=SopReleaseResponse)
-def post_sop_release(ds: Dataset) -> SopReleaseResponse:
+def post_sop_release(ds: PlanData) -> SopReleaseResponse:
     result = run_sop(ds)
     if not result.ok:
         raise HTTPException(409, "the S&OP plan did not solve; fix the readiness issues first")
     new, info = release_sop(ds, result)
-    return SopReleaseResponse(dataset=new, release=info)
+    return SopReleaseResponse(**answer(ds, new), release=info)
 
 
 class ScheduleRequest(Out):
-    dataset: Dataset
+    dataset: PlanData
     sequence: dict[str, list[str]] | None = None   # resource → operation keys, each run where it is listed;
                                                    # None = the start rule, local search and optimiser per settings
     hold: dict[str, float] | None = None           # order → not-before clock hour (the result's holds)
 
 
 @app.post("/api/schedule", response_model=ScheduleResult)
-def post_schedule(req: ScheduleRequest) -> ScheduleResult:
-    return run_schedule(req.dataset, req.sequence, hold=req.hold)
+def post_schedule(req: ScheduleRequest) -> Response:
+    return respond("schedule", req.dataset, lambda: run_schedule(req.dataset, req.sequence, hold=req.hold), req.sequence,
+                   req.hold)
 
 
 class ScheduleCatalogue(Out):
@@ -352,9 +391,9 @@ def get_schedule_catalogue() -> ScheduleCatalogue:
 
 
 @app.post("/api/schedule/compare", response_model=ScheduleComparison)
-def post_schedule_compare(ds: Dataset) -> ScheduleComparison:
+def post_schedule_compare(ds: PlanData) -> Response:
     """Every start rule, the local search and the optimiser on the same window, scored with the current weights."""
-    return compare_schedules(ds)
+    return respond("compare", ds, lambda: compare_schedules(ds))
 
 
 class ScheduleApplyRequest(ScheduleRequest):
@@ -362,7 +401,8 @@ class ScheduleApplyRequest(ScheduleRequest):
 
 
 class ScheduleApplyResponse(Out):
-    dataset: Dataset
+    dataset: Dataset | None = None        # the changed company whole, or
+    patch: dict[str, Any] | None = None   # what changed, when it came by reference (scp.api.working)
     report: ApplyReport
 
 
@@ -372,21 +412,21 @@ def post_schedule_apply(req: ScheduleApplyRequest) -> ScheduleApplyResponse:
     new, rep = apply_schedule(req.dataset, req.sequence, req.ids, req.hold)
     if not rep.ok:
         raise HTTPException(409, "the readiness gate has errors; fix them before using the schedule's dates")
-    return ScheduleApplyResponse(dataset=new, report=rep)
+    return ScheduleApplyResponse(**answer(req.dataset, new), report=rep)
 
 
 @app.post("/api/promise", response_model=PromiseResult)
-def post_promise(ds: Dataset) -> PromiseResult:
-    return run_promise(ds)
+def post_promise(ds: PlanData) -> Response:
+    return respond("promise", ds, lambda: run_promise(ds))
 
 
 @app.post("/api/promise/bop", response_model=PromiseResult)
-def post_bop(ds: Dataset) -> PromiseResult:
-    return run_bop(ds)
+def post_bop(ds: PlanData) -> Response:
+    return respond("bop", ds, lambda: run_bop(ds))
 
 
 class PromiseCheckRequest(Out):
-    dataset: Dataset
+    dataset: PlanData
     order: DemandRecord
 
 
@@ -396,12 +436,13 @@ def post_promise_check(req: PromiseCheckRequest) -> PromiseResult:
 
 
 class PromiseCommitRequest(Out):
-    dataset: Dataset
+    dataset: PlanData
     mode: Literal["entry", "bop"] = "entry"
 
 
 class PromiseCommitResponse(Out):
-    dataset: Dataset
+    dataset: Dataset | None = None        # the changed company whole, or
+    patch: dict[str, Any] | None = None   # what changed, when it came by reference (scp.api.working)
     result: PromiseResult
 
 
@@ -410,7 +451,7 @@ def post_promise_commit(req: PromiseCommitRequest) -> PromiseCommitResponse:
     new, res = commit(req.dataset, req.mode)
     if not res.ok:
         raise HTTPException(409, "the readiness gate has errors; fix them before committing promises")
-    return PromiseCommitResponse(dataset=new, result=res)
+    return PromiseCommitResponse(**answer(req.dataset, new), result=res)
 
 
 class SalesOrderChange(Out):
@@ -423,7 +464,7 @@ class SalesOrderChange(Out):
 
 
 class SalesOrderRequest(Out):
-    dataset: Dataset
+    dataset: PlanData
     action: Literal["accept", "change", "cancel"]
     order: DemandRecord | None = None               # accept: the checked order (no number: the next one)
     id: str | None = None                           # change / cancel: the order
@@ -433,7 +474,8 @@ class SalesOrderRequest(Out):
 
 
 class SalesOrderResponse(Out):
-    dataset: Dataset
+    dataset: Dataset | None = None        # the changed company whole, or
+    patch: dict[str, Any] | None = None   # what changed, when it came by reference (scp.api.working)
     report: SalesOrderReport
 
 
@@ -455,43 +497,61 @@ def post_sales_order(req: SalesOrderRequest) -> SalesOrderResponse:
             new, rep = cancel_order(req.dataset, req.id, req.date, req.reason)
     except (OrderError, ValueError) as e:
         raise HTTPException(409, str(e)) from e
-    return SalesOrderResponse(dataset=new, report=rep)
+    return SalesOrderResponse(**answer(req.dataset, new), report=rep)
 
 
 @app.post("/api/plan", response_model=PlanResult)
-def post_plan(ds: Dataset) -> PlanResult:
-    return run_mrp(ds)
+def post_plan(ds: PlanData, pegging: bool = True) -> Response:
+    """The supply plan. ``pegging=false`` leaves out the requirements and the pegging (two thirds of a large plan):
+    ``/api/plan/trace`` gives an order's or a product's part of them when it is looked at."""
+    return respond("plan", ds, lambda: run_mrp(ds), exclude=None if pegging else {"requirements", "pegs"})
+
+
+class TraceRequest(Out):
+    dataset: PlanData
+    order: str | None = None          # an order: what it serves, up to the customer, and what it depends on
+    location: str | None = None       # or a product at a place: its requirements and what covers them
+    product: str | None = None
+
+
+@app.post("/api/plan/trace", response_model=PlanTrace)
+def post_plan_trace(req: TraceRequest) -> Response:
+    """Part of the plan's requirements and pegging: an order's chain, or one product's at one place."""
+    plan = run_mrp(req.dataset)
+    ix = with_kept_plan(req.dataset, plan, "trace", lambda: trace_index(plan))
+    return send(trace(ix, req.order, req.location, req.product))
 
 
 @app.post("/api/capacity/level", response_model=LevelPreview)
-def post_level(ds: Dataset) -> LevelPreview:
+def post_level(ds: PlanData) -> Response:
     """What planning within machine capacity moves: earlier, onto alternative machines, or later."""
-    return level_preview(ds)
+    return respond("level", ds, lambda: level_preview(ds))
 
 
 @app.post("/api/finance", response_model=FinanceResult)
-def post_finance(ds: Dataset) -> FinanceResult:
+def post_finance(ds: PlanData) -> Response:
     """The plan in money: cost reconciliation, inventory value, cost to serve, capacity investment NPV."""
-    return run_finance(ds)
+    return respond("finance", ds, lambda: run_finance(ds))
 
 
 class ActualsRequest(Out):
-    dataset: Dataset
+    dataset: PlanData
     as_of: dt.date | None = None
 
 
 @app.post("/api/actuals", response_model=ActualsView)
-def post_actuals(req: ActualsRequest) -> ActualsView:
-    return actuals_view(req.dataset, req.as_of)
+def post_actuals(req: ActualsRequest) -> Response:
+    return respond("actuals", req.dataset, lambda: actuals_view(req.dataset, req.as_of), req.as_of)
 
 
 class RollRequest(Out):
-    dataset: Dataset
+    dataset: PlanData
     as_of: dt.date
 
 
 class RollResponse(Out):
-    dataset: Dataset
+    dataset: Dataset | None = None        # the changed company whole, or
+    patch: dict[str, Any] | None = None   # what changed, when it came by reference (scp.api.working)
     report: RollReport
 
 
@@ -500,17 +560,18 @@ def post_roll(req: RollRequest) -> RollResponse:
     new, rep = roll_forward(req.dataset, req.as_of)
     if not rep.ok:
         raise HTTPException(409, "; ".join(rep.warnings))
-    return RollResponse(dataset=new, report=rep)
+    return RollResponse(**answer(req.dataset, new), report=rep)
 
 
 class FirmRequest(Out):
-    dataset: Dataset
+    dataset: PlanData
     ids: list[str] | None = None          # planned order ids; None = everything starting in the firm zone
     within_days: int | None = None        # overrides the dataset's firm zone
 
 
 class FirmResponse(Out):
-    dataset: Dataset
+    dataset: Dataset | None = None        # the changed company whole, or
+    patch: dict[str, Any] | None = None   # what changed, when it came by reference (scp.api.working)
     report: FirmReport
 
 
@@ -519,14 +580,14 @@ def post_firm(req: FirmRequest) -> FirmResponse:
     new, rep = firm_orders(req.dataset, run_mrp(req.dataset), req.ids, req.within_days)
     if not rep.ok:
         raise HTTPException(409, "the readiness gate has errors; fix them before firming orders")
-    return FirmResponse(dataset=new, report=rep)
+    return FirmResponse(**answer(req.dataset, new), report=rep)
 
 
 # --- procure-to-pay (Phase E) --------------------------------------------------------------------
 @app.post("/api/purchasing", response_model=PurchasingView)
-def post_purchasing(ds: Dataset) -> PurchasingView:
+def post_purchasing(ds: PlanData) -> Response:
     """Requisitions from the supply plan, every purchase order with its lines' status, and the supplier scorecard."""
-    return purchasing_view(ds, run_mrp(ds))
+    return respond("purchasing", ds, lambda: purchasing_view(ds, run_mrp(ds)))
 
 
 class RequisitionPick(Out):
@@ -536,13 +597,14 @@ class RequisitionPick(Out):
 
 
 class CreatePoRequest(Out):
-    dataset: Dataset
+    dataset: PlanData
     lines: list[RequisitionPick] | None = None      # None = every requisition due now, on its planned source
     order_date: dt.date | None = None
 
 
 class CreatePoResponse(Out):
-    dataset: Dataset
+    dataset: Dataset | None = None        # the changed company whole, or
+    patch: dict[str, Any] | None = None   # what changed, when it came by reference (scp.api.working)
     report: CreateReport
 
 
@@ -553,7 +615,7 @@ def post_create_pos(req: CreatePoRequest) -> CreatePoResponse:
     new, rep = create_purchase_orders(req.dataset, plan, lines, req.order_date)
     if not rep.ok:
         raise HTTPException(409, "the readiness gate has errors; fix them before ordering")
-    return CreatePoResponse(dataset=new, report=rep)
+    return CreatePoResponse(**answer(req.dataset, new), report=rep)
 
 
 class PoLineInput(Out):
@@ -562,10 +624,14 @@ class PoLineInput(Out):
     date: dt.date | None = None
     price: float | None = None
     final: bool = False
+    batch: str | None = None                        # receive: the batch (default: a new one for batch-managed products)
+    expires_on: dt.date | None = None               # receive: its expiry (default: today + the shelf life)
+    supplier_batch: str | None = None
+    serials: list[str] | None = None                # receive: serial numbers, one per unit (default: numbered)
 
 
 class PoActionRequest(Out):
-    dataset: Dataset
+    dataset: PlanData
     action: Literal["approve", "send", "confirm", "receive", "change", "cancel"]
     po: str
     lines: list[PoLineInput] | None = None          # None = every open line, as ordered
@@ -575,7 +641,8 @@ class PoActionRequest(Out):
 
 
 class PoActionResponse(Out):
-    dataset: Dataset
+    dataset: Dataset | None = None        # the changed company whole, or
+    patch: dict[str, Any] | None = None   # what changed, when it came by reference (scp.api.working)
     report: ActionReport
 
 
@@ -587,7 +654,7 @@ def post_po_action(req: PoActionRequest) -> PoActionResponse:
                                   note=req.note)
     except PurchasingError as e:
         raise HTTPException(409, str(e)) from e
-    return PoActionResponse(dataset=new, report=rep)
+    return PoActionResponse(**answer(req.dataset, new), report=rep)
 
 
 class UsageInput(Out):
@@ -598,20 +665,41 @@ class UsageInput(Out):
 class CountInput(Out):
     location: str
     product: str
-    qty: float
+    qty: float | None                               # None: not counted yet (a physical inventory line)
+    batch: str | None = None                        # a physical inventory line: the batch and stock type counted
+    stock_type: StockType | None = None
+
+
+class NodeInput(Out):
+    location: str
+    product: str
 
 
 class PostRequest(Out):
-    dataset: Dataset
-    action: Literal["ship", "receive", "deliver", "count"]
-    order: str | None = None                        # the firm order (ship / receive) or sales order (deliver)
-    qty: float | None = None                        # default: everything still open
+    dataset: PlanData
+    action: Literal["ship", "receive", "deliver", "count", "move", "scrap", "scrap_expired", "reverse", "shorten",
+                    "count_doc", "count_enter", "count_post", "count_cancel"]
+    order: str | None = None                        # the firm order (ship / receive / shorten) or sales order (deliver)
+    qty: float | None = None                        # default: everything still open (shorten: the new quantity)
     date: dt.date | None = None                     # posting date (default: the planning start; a count: the day before)
     final: bool = False                             # last delivery: closes the order even if short
     usage: list[UsageInput] | None = None           # production: parts actually used, instead of the backflush
-    counts: list[CountInput] | None = None          # count: stock counted per place and product
+    counts: list[CountInput] | None = None          # count / count_enter: stock counted per place and product
     ship_from: str | None = None                    # deliver: the place it ships from (default: where it was promised)
     note: str = ""
+    batch: str | None = None                        # the batch received, shipped, delivered, moved or scrapped
+    expires_on: dt.date | None = None               # receive: the batch's expiry (default: today + the shelf life)
+    supplier_batch: str | None = None               # receive: the supplier's batch number
+    serials: list[str] | None = None                # serial numbers, one per unit
+    stock_type: StockType | None = None             # receive: the stock it goes to; move / scrap: the stock it leaves
+    to_type: StockType | None = None                # move: the stock it goes to
+    location: str | None = None                     # move / scrap: the place
+    product: str | None = None                      # move / scrap: the product
+    movement: str | None = None                     # reverse: a movement of the document to take back
+    doc: str | None = None                          # count_enter / count_post / count_cancel: the inventory document
+    nodes: list[NodeInput] | None = None            # count_doc: places and products to count
+    block: bool = True                              # count_doc: refuse postings for them until the count is posted
+    uncounted_zero: bool = False                    # count_post: lines not counted are posted as zero
 
 
 @app.post("/api/actuals/post", response_model=PoActionResponse)
@@ -621,10 +709,15 @@ def post_posting(req: PostRequest) -> PoActionResponse:
         new, rep = post(req.dataset, req.action, order=req.order, qty=req.qty, on=req.date, final=req.final,
                         usage=None if req.usage is None else [u.model_dump() for u in req.usage],
                         counts=None if req.counts is None else [c.model_dump() for c in req.counts], note=req.note,
+                        lot={"batch": req.batch, "expires_on": req.expires_on, "supplier_batch": req.supplier_batch or "",
+                             "serials": req.serials, "stock_type": req.stock_type},
+                        location=req.location, product=req.product, to_type=req.to_type, movement=req.movement,
+                        doc=req.doc, nodes=None if req.nodes is None else [(n.location, n.product) for n in req.nodes],
+                        block=req.block, uncounted_zero=req.uncounted_zero,
                         ship_from=req.ship_from)
     except PostingError as e:
         raise HTTPException(409, str(e)) from e
-    return PoActionResponse(dataset=new, report=rep)
+    return PoActionResponse(**answer(req.dataset, new), report=rep)
 
 
 # --- versions & scenarios (P8) -------------------------------------------------------------------
@@ -677,9 +770,9 @@ def branch_version(vid: str, req: BranchRequest, sc: EditScope) -> VersionMeta:
 
 
 @app.post("/api/tower", response_model=TowerResult)
-def post_tower(ds: Dataset, sc: Scope) -> TowerResult:
+def post_tower(ds: PlanData, sc: Scope) -> Response:
     """KPIs, the exception worklist (recorded in the version store: first seen, owner, status) and data quality."""
-    return run_tower(ds, scope=sc or None)
+    return send(run_tower(ds, scope=sc or None))   # records the worklist: made anew each time
 
 
 class WorkItemUpdate(Out):

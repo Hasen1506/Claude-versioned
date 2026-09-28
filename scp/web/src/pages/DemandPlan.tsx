@@ -4,12 +4,14 @@
 import { useMemo, useState } from "react";
 import type { Dataset, DemandRecord } from "../api/types";
 import { ImportPanel } from "../components/Import";
-import { Badge, Edits, Empty, Panel } from "../components/ui";
+import { Badge, Edits, Empty, MoreRows, Panel } from "../components/ui";
 import { addDays, day, qty } from "../lib/format";
 import { href } from "../lib/router";
 import { store } from "../state/store";
 
 const DAY = 86400000;
+/** Rows of the grid drawn at once: each has an input per week. */
+const DP_ROWS = 200;
 const toDate = (iso: string) => new Date(iso + "T00:00:00Z").getTime();
 const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
 
@@ -26,15 +28,21 @@ export function weeks(ds: Dataset): string[] {
 }
 
 /** Whether a day is a working day at a place: its calendar, else the company's default one, else Monday to Friday, as
- * the supply plan reads it. */
+ * the supply plan reads it. Worked out once per place. */
 function workdays(ds: Dataset): (loc: string) => (t: number) => boolean {
   const cals = new Map((ds.calendars ?? []).map((c) => [c.id, c]));
   const locs = new Map((ds.locations ?? []).map((l) => [l.id, l]));
+  const made = new Map<string, (t: number) => boolean>();
   return (loc: string) => {
-    const c = cals.get(locs.get(loc)?.calendar ?? ds.settings.default_calendar ?? "");
-    const days = new Set(c?.workdays ?? [0, 1, 2, 3, 4]);
-    const off = new Set(c?.holidays ?? []);
-    return (t: number) => days.has((new Date(t).getUTCDay() + 6) % 7) && !off.has(iso(t));
+    let f = made.get(loc);
+    if (!f) {
+      const c = cals.get(locs.get(loc)?.calendar ?? ds.settings.default_calendar ?? "");
+      const days = new Set(c?.workdays ?? [0, 1, 2, 3, 4]);
+      const off = new Set((c?.holidays ?? []).map(toDate));
+      f = (t: number) => days.has((new Date(t).getUTCDay() + 6) % 7) && !off.has(t);
+      made.set(loc, f);
+    }
+    return f;
   };
 }
 
@@ -76,21 +84,32 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
     };
     const first = toDate(cols[0] ?? ds.settings.planning_start), end = first + cols.length * 7 * DAY;
     const cal = workdays(ds);
+    // each record visits its own days only (a large company has a hundred thousand records): as `share` spreads it
     for (const r of ds.demand ?? []) {
       const s = get(r.location, r.product);
+      const into = r.kind === "sales_order" ? s.so : s.fc;
+      const add = (t: number, v: number) => {
+        if (t < first) s.before += v;
+        else if (t >= end) s.after += v;
+        else into[Math.floor((t - first) / (7 * DAY))] += v;
+      };
+      const a = toDate(r.date);
+      const days = r.kind === "forecast" && r.period_days ? r.period_days : 1;
+      if (days <= 1) { add(a, r.qty); continue; }
       const isWork = cal(r.location);
-      cols.forEach((w, i) => {
-        const v = share(r, toDate(w), toDate(w) + 7 * DAY, isWork);
-        if (v) (r.kind === "sales_order" ? s.so : s.fc)[i] += v;
-      });
-      s.before += share(r, -Infinity, first, isWork);
-      s.after += share(r, end, Infinity, isWork);
+      const work: number[] = [];
+      for (let i = 0, t = a; i < days; i++, t += DAY) if (isWork(t)) work.push(t);
+      if (!work.length) add(a, r.qty);
+      else for (const t of work) add(t, r.qty / work.length);
     }
     for (const k of extra) { const [l, p] = k.split("|"); get(l, p); }
     return [...m.values()].sort((a, b) => (names.prod[a.product] ?? a.product).localeCompare(names.prod[b.product] ?? b.product)
       || (names.loc[a.location] ?? a.location).localeCompare(names.loc[b.location] ?? b.location));
   }, [ds, cols, extra, names]);
 
+  const [q, setQ] = useState("");
+  const shown = useMemo(() => (q ? series.filter((s) => `${s.product} ${names.prod[s.product] ?? ""} ${s.location} ${names.loc[s.location] ?? ""}`
+    .toLowerCase().includes(q.toLowerCase())) : series), [series, q, names]);
   const total = series.reduce((a, s) => a + s.fc.reduce((x, y) => x + y, 0) + s.so.reduce((x, y) => x + y, 0), 0);
   const orders = series.reduce((a, s) => a + s.so.reduce((x, y) => x + y, 0), 0);
   const places = (ds.locations ?? []).filter((l) => l.type !== "supplier");
@@ -149,7 +168,8 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
           <p>Say which product is sold where, then enter how many per week. Or upload a file with one row per product, place, date and quantity.</p>
         </Empty></Panel>
       ) : series.length > 0 && (
-        <Panel flush>
+        <Panel flush title={series.length > DP_ROWS ? <input className="input" placeholder="Find a product or place…" value={q}
+          onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 260 }} aria-label="Find a product or place" /> : undefined}>
           <Edits><div className="table-wrap dp-wrap">
             <table className="t dp">
               <thead><tr>
@@ -158,7 +178,7 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
                 {cols.map((w) => <th key={w} className="num" title={`Week of ${day(w)} to ${day(addDays(w, 6))}`}>{day(w)}</th>)}
                 <th className="num">Total</th>
               </tr></thead>
-              <tbody>{series.map((s) => {
+              <tbody>{shown.slice(0, DP_ROWS).map((s) => {
                 const fcT = s.fc.reduce((a, b) => a + b, 0), soT = s.so.reduce((a, b) => a + b, 0);
                 return [
                   <tr key={`${s.location}|${s.product}`}>
@@ -185,6 +205,7 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
                 ];
               })}</tbody>
             </table>
+            <MoreRows shown={DP_ROWS} total={shown.length} what="products at places" how="Find a product or place to see its row." />
           </div></Edits>
           {series.some((s) => s.after > 0) && <p className="faint small" style={{ padding: "0 14px" }}>Demand after the end of the plan is kept but not planned.</p>}
         </Panel>

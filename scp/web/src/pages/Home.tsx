@@ -1,7 +1,7 @@
 // Home: the page a dataset opens on. It answers the questions people come with (will customers get what
 // they need, what do I do this week, what does it cost, what is off track) from the results "Plan
 // everything" calculates, and links each answer to the page where you act on it.
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Edits } from "../components/ui";
 import { api } from "../api/client";
 import type { Dataset, Kpi, PlannedOrder } from "../api/types";
@@ -10,7 +10,7 @@ import { href } from "../lib/router";
 import { earliestArrival } from "../lib/situations";
 import { earnings } from "../lib/earnings";
 import { Checklist, setupTodo } from "../components/Checklist";
-import { freshness, planFreshness, store, useStore, type RunKey } from "../state/store";
+import { freshness, PLAN_STEPS, planFreshness, store, useStore, type RunKey } from "../state/store";
 
 // ---- first-run guide: remembers which pages this browser has visited --------------------------------
 const VISITED_KEY = "scp.visited.v1";
@@ -124,6 +124,26 @@ function targetText(k: Kpi, cur: string): string {
 
 // ---- the page ----------------------------------------------------------------------------------------
 
+/** Promise lines on the same day read as one (two ship-from places, one date). */
+function byDay<T extends { date: string; qty: number; on_time: boolean }>(lines: T[]): T[] {
+  const out: T[] = [];
+  for (const l of lines) {
+    const same = out.find((x) => x.date === l.date);
+    if (same) same.qty += l.qty;
+    else out.push({ ...l });
+  }
+  return out;
+}
+
+/** Forecast accuracy against real sales, from the weeks moved forward (as Actuals shows it). */
+function realAccuracy(ds: Dataset): { accuracy: number; bias: number; weeks: number } | null {
+  const recs = ds.accuracy ?? [];
+  const f = recs.reduce((t, r) => t + r.forecast, 0), a = recs.reduce((t, r) => t + r.actual, 0);
+  const e = recs.reduce((t, r) => t + Math.abs(r.forecast - r.actual), 0);
+  if (!recs.length || a <= 0) return null;
+  return { accuracy: Math.max(0, 1 - e / a), bias: (f - a) / a, weeks: new Set(recs.map((r) => r.start)).size };
+}
+
 export function Home({ ds }: { ds: Dataset }) {
   const s = useStore((x) => x);
   const planned = planFreshness(s);
@@ -191,7 +211,7 @@ export function Home({ ds }: { ds: Dataset }) {
     orders = k.orders === 0 ? <p className="answer">No open customer orders.</p> : (<>
       <p className="answer">{k.on_time_orders === k.orders ? `All ${k.orders} on time.` : <><em>{k.on_time_orders} of {k.orders}</em> on time.</>}</p>
       {o && <p className="muted"><b>{o.order}</b>, {qty(o.qty)} {prodName[o.product] ?? o.product} for {locName[o.location] ?? o.location}:{" "}
-        {o.lines.map((l, i) => <span key={i}>{i > 0 && ", "}{qty(l.qty)} on {dayName(l.date, year)}{l.on_time ? " as asked" : ""}</span>)}
+        {byDay(o.lines).map((l, i) => <span key={i}>{i > 0 && ", "}{qty(l.qty)} on {dayName(l.date, year)}{l.on_time ? " as asked" : ""}</span>)}
         {o.unconfirmed > 0 && <>{o.lines.length ? ", " : ""}{qty(o.unconfirmed)} can't be promised yet</>}.
         {off.length > 1 && <> {plural(off.length - 1, "other order")} also can't be met in full on time.</>}</p>}
       {k.at_risk_orders > 0 && <p className="muted">{plural(k.at_risk_orders, "promised order")} would now be at risk.</p>}
@@ -270,8 +290,19 @@ export function Home({ ds }: { ds: Dataset }) {
         : <p className="answer">Yes.{warnings ? ` ${plural(warnings, "warning")} worth a look.` : " No problems found."}</p>}
       {(s.validation?.set_aside?.length ?? 0) > 0 && <p className="muted">{plural(s.validation!.set_aside!.length, "unfinished record")} {s.validation!.set_aside!.length === 1 ? "is" : "are"} left
         out of the plan until {s.validation!.set_aside!.length === 1 ? "it is" : "they are"} finished.</p>}
-      {fc && fc.summary.wape !== null && (ds.history ?? []).length > 0 && <p className="muted">The forecast is {pct(1 - fc.summary.wape, 0)} accurate on past weeks
-        {fc.summary.bias !== null && Math.abs(fc.summary.bias) >= 0.005 ? `, ${pct(Math.abs(fc.summary.bias), 0)} on the ${fc.summary.bias > 0 ? "high" : "low"} side` : ""}.</p>}
+      {(() => {
+        // two different numbers (R22): against the sales that really happened once weeks were moved forward, and a
+        // backtest (the forecast made again for weeks already in the history)
+        const real = realAccuracy(ds);
+        const test = fc && fc.summary.wape !== null && (ds.history ?? []).length > 0 ? fc.summary : null;
+        const side = (b: number | null | undefined) => b !== null && b !== undefined && Math.abs(b) >= 0.005 ? `, ${pct(Math.abs(b), 0)} on the ${b > 0 ? "high" : "low"} side` : "";
+        if (!real && !test) return null;
+        return <p className="muted">
+          {real && <>Against real sales the forecast was <b>{pct(real.accuracy, 0)}</b> accurate over {plural(real.weeks, "week")}{side(real.bias)}. </>}
+          {test && <>Tried on past weeks of the sales history (a backtest) it scores {pct(1 - test.wape!, 0)}{side(test.bias)}.</>}
+          {!real && test && <> Its accuracy against real sales shows once weeks are moved forward (Actuals).</>}
+        </p>;
+      })()}
     </Card>
   );
 
@@ -287,6 +318,11 @@ export function Home({ ds }: { ds: Dataset }) {
       </header>
 
       <Status />
+      {!!s.company?.pending && <div className="banner info" role="status">
+        <span><b>{plural(s.company.pending, "master data change")} {s.company.pending === 1 ? "waits" : "wait"} for approval.</b>{" "}
+          {s.company.role === "viewer" ? "A planner or owner approves them." : "Someone other than who made each one approves it."}</span>
+        <a href={href("history")}>See {s.company.pending === 1 ? "it" : "them"}</a>
+      </div>}
       {locations.length > 0 && !settingUp && <StockAlert ds={ds} />}
       {locations.length > 0 && !settingUp && <Guide planned={planned !== "none"} />}
 
@@ -314,7 +350,9 @@ export function Home({ ds }: { ds: Dataset }) {
             {staleNote(["plan"])}{serve}
           </Card>
           <Card q="Customer orders" loading={loading("promise")}
-            links={[{ to: href("promise"), label: "Open orders" }, { to: href("promise", "simulate"), label: "Check a new order" }]}>
+            links={[{ to: href("promise"), label: "Open orders" },
+              ...(prom && prom.kpis.on_time_orders < prom.kpis.orders ? [{ to: href("promise", "bop"), label: "Try to bring late orders forward" }] : []),
+              { to: href("promise", "simulate"), label: "Check a new order" }]}>
             {staleNote(["promise"])}{orders}
           </Card>
           <Card q="What to do this week" attn={weekAttn} loading={loading("plan")}
@@ -378,6 +416,15 @@ function StockAlert({ ds }: { ds: Dataset }) {
   );
 }
 
+/** How long a step has run, once it runs long (a large company's forecast takes minutes): the page is not stuck. */
+function Elapsed({ since }: { since: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const s = Math.floor((now - since) / 1000);
+  if (s < 5) return null;
+  return <>, {s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`} so far</>;
+}
+
 /** One line under the page title: what "Plan everything" is doing, or whether the results are current. */
 function Status() {
   const s = useStore((x) => x);
@@ -389,7 +436,7 @@ function Status() {
     return (
       <div className="status running" role="status">
         <div className="progress" aria-hidden><i style={{ width: `${(p.done / p.of) * 100}%` }} /></div>
-        <span>{p.label}… <span className="faint">step {p.done + 1} of {p.of}</span></span>
+        <span>{p.label}… <span className="faint">step {p.done + 1} of {p.of}<Elapsed since={p.since} /></span></span>
       </div>
     );
   }
@@ -403,12 +450,25 @@ function Status() {
     <div className="status" role="status">Not ready to plan yet: {plural(todo.length, "thing")} still to set up.
       <a href={href("readiness")}>Open the checklist</a></div>
   );
+  if (f === "none" && Object.values(s.runs).some((r) => r.running)) return (
+    <div className="status" role="status">Calculating the plan from the latest save…</div>
+  );
   if (f === "none") return (
     <div className="status" role="status">Nothing calculated yet.
       <button className="btn sm" onClick={() => store.planAll()}>Plan everything</button></div>
   );
+  // a step that failed is said as such, not as data that changed (at scale a failed answer was shown that way)
+  const failed = PLAN_STEPS.filter((p) => s.runs[p.key].error && !s.runs[p.key].running);
+  if (failed.length) return (
+    <div className="status bad" role="status">{failed.map((p) => p.label).join(", ")} did not finish: {s.runs[failed[0].key].error}
+      <button className="btn sm" onClick={() => store.planAll()}>Plan everything again</button></div>
+  );
+  if (f === "stale" && PLAN_STEPS.some((p) => !s.runs[p.key].data)) return (
+    <div className="status warn" role="status">Some answers are not calculated yet.
+      <button className="btn sm" onClick={() => store.planAll()}>Plan everything</button></div>
+  );
   if (f === "stale") return (
-    <div className="status warn" role="status">You changed the data after the last calculation, so some answers are out of date.
+    <div className="status warn" role="status">The data changed after the last calculation, so some answers are out of date.
       <button className="btn sm" onClick={() => store.planAll()}>Plan everything again</button></div>
   );
   const at = s.runs.tower.at ?? s.runs.plan.at;

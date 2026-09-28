@@ -32,6 +32,9 @@ class DemandRecord(Model):
         None, ge=1, le=366,
         description="Forecast only: the record covers [date, date + period_days) and is spread evenly over the "
                     "working days of that window (PIR splitting). Empty = the whole quantity is due on `date`.")
+    released: bool = Field(
+        False, description="Forecast only: written by a forecast release. Releasing every series again replaces it, "
+                           "so a series the new forecast no longer has does not stay in demand")
 
 
 class Reservation(Model):

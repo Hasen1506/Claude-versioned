@@ -5,12 +5,14 @@ snapshots. Lookup helpers build id indices lazily; they never mutate the data.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from functools import cached_property
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 
-from .actuals import AccuracyRecord, ClosedOrder, ExecutionSettings, GoodsMovement, RolledWeek
+from .actuals import AccuracyRecord, Batch, ClosedOrder, ExecutionSettings, GoodsMovement, InventoryDoc, RolledWeek
 from .common import LocationType, Model
 from .finance import FinanceSettings
 from .tower import TowerSettings
@@ -58,12 +60,23 @@ class Dataset(Model):
     confirmations: list[Confirmation] = Field(default_factory=list)
     promising: PromiseSettings = Field(default_factory=PromiseSettings)
     movements: list[GoodsMovement] = Field(default_factory=list)
+    batches: list[Batch] = Field(default_factory=list)
+    inventory_docs: list[InventoryDoc] = Field(default_factory=list)
     closed_orders: list[ClosedOrder] = Field(default_factory=list)
     accuracy: list[AccuracyRecord] = Field(default_factory=list)
     rolled_weeks: list[RolledWeek] = Field(default_factory=list)
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
     finance: FinanceSettings = Field(default_factory=FinanceSettings)
     tower: TowerSettings = Field(default_factory=TowerSettings)
+
+    def forecast_inputs(self) -> str:
+        """A fingerprint of what a forecast is made from besides sales history: demand events, new-product rules,
+        consensus overrides and the forecast settings. A release records it; a change after that is not in the plan."""
+        parts = {"events": [e.model_dump(mode="json") for e in self.events],
+                 "npi": [n.model_dump(mode="json") for n in self.npi],
+                 "overrides": [o.model_dump(mode="json") for o in self.overrides],
+                 "settings": self.forecasting.model_dump(mode="json", exclude={"released_inputs"})}
+        return hashlib.sha1(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]
 
     def model_copy(self, *, update: dict | None = None, deep: bool = False) -> Dataset:
         """A copy without the lookup indices below: pydantic copies the instance dict, cached indices included, so
@@ -133,6 +146,11 @@ class Dataset(Model):
             out.setdefault((lp.location, lp.product), lp)
         return out
 
+    @cached_property
+    def demand_nodes(self) -> set[tuple[str, str]]:
+        """Every (location, product) with a demand record: forecast or customer order."""
+        return {(d.location, d.product) for d in self.demand}
+
     def lot_sizing(self, lp: LocationProduct) -> LotSizing:
         """The lot-sizing rule planning uses at a node: its own, or the company default where it leaves it empty."""
         ls = lp.lot_sizing
@@ -141,12 +159,74 @@ class Dataset(Model):
         s = self.settings
         return ls.model_copy(update={"policy": s.default_lot_policy, "periods": ls.periods or s.default_lot_periods})
 
+    @cached_property
+    def sources_at(self) -> dict[tuple[str, str], tuple[list[ProductionSource], list[PurchasingSource]]]:
+        """Ways to make and ways to buy by (place, product), in list order."""
+        out: dict[tuple[str, str], tuple[list[ProductionSource], list[PurchasingSource]]] = {}
+        for ps in self.production_sources:
+            out.setdefault((ps.location, ps.product), ([], []))[0].append(ps)
+        for pu in self.purchasing_sources:
+            out.setdefault((pu.location, pu.product), ([], []))[1].append(pu)
+        return out
+
+    @cached_property
+    def lanes_into(self) -> dict[str, list[TransportLane]]:
+        """Routes by the place they arrive at, in list order."""
+        out: dict[str, list[TransportLane]] = {}
+        for ln in self.lanes:
+            out.setdefault(ln.destination, []).append(ln)
+        return out
+
+    @cached_property
+    def memo(self) -> dict[str, Any]:
+        """Results worked out from this dataset once and asked for by several steps (the supply network)."""
+        return {}
+
+    @cached_property
+    def lp_memo(self) -> dict[tuple[str, tuple[str, str]], LocationProduct]:
+        """planning_lp and demand_lp worked out once per node (they are asked for every demand row)."""
+        return {}
+
     def planning_lp(self, node: tuple[str, str]) -> LocationProduct:
         """The node's planning policy as planning uses it: its record (or the defaults) with the company's lot size
         filled in."""
+        hit = self.lp_memo.get(("p", node))
+        if hit is not None:
+            return hit
         lp = self.location_product_by_key.get(node) or LocationProduct(location=node[0], product=node[1])
         if lp.lot_sizing.policy is None:
             lp = lp.model_copy(update={"lot_sizing": self.lot_sizing(lp)})
+        self.lp_memo[("p", node)] = lp
+        return lp
+
+    def demand_lp(self, node: tuple[str, str]) -> LocationProduct:
+        """The planning policy whose strategy decides how demand at a node is planned (forecast, orders, or orders
+        consuming the forecast). A customer channel without a record of its own follows the nearest place upstream that
+        has one: the strategy is set where the product is kept (make to order at the plant), not on every channel."""
+        hit = self.lp_memo.get(("d", node))
+        if hit is None:
+            hit = self.lp_memo[("d", node)] = self._demand_lp(node)
+        return hit
+
+    def _demand_lp(self, node: tuple[str, str]) -> LocationProduct:
+        lp = self.planning_lp(node)
+        if node in self.location_product_by_key or self.location_type(node[0]) is not LocationType.CUSTOMER:
+            return lp
+        seen, level = {node[0]}, [node[0]]
+        while level:
+            nxt: list[str] = []
+            for dest in level:
+                for ln in self.lanes:
+                    if ln.destination != dest or ln.origin in seen or (ln.products and node[1] not in ln.products):
+                        continue
+                    up = self.location_product_by_key.get((ln.origin, node[1]))
+                    if up is not None:
+                        return lp.model_copy(update={"strategy": up.strategy,
+                                                     "consumption_backward_days": up.consumption_backward_days,
+                                                     "consumption_forward_days": up.consumption_forward_days})
+                    seen.add(ln.origin)
+                    nxt.append(ln.origin)
+            level = nxt
         return lp
 
     @cached_property

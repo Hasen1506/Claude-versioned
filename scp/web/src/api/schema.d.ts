@@ -138,8 +138,9 @@ export interface paths {
         get: operations["open_company_api_companies__cid__get"];
         /**
          * Save Company
-         * @description Save the working copy. 409 when someone saved after ``base_revision`` (``revision``, ``updated_by`` and
-         *     ``updated_at`` say who and when).
+         * @description Save the working copy, whole or as what changed. 409 when someone saved after ``base_revision``
+         *     (``revision``, ``updated_by`` and ``updated_at`` say who and when); not when every save since came from the
+         *     same window (``X-Client``), which a reload during a save leaves behind.
          */
         put: operations["save_company_api_companies__cid__put"];
         post?: never;
@@ -161,7 +162,8 @@ export interface paths {
         put?: never;
         /**
          * Merge Company
-         * @description After a refused save: merge the working copy with the saves made since, record by record, and save that.
+         * @description After a refused save: merge the working copy with the saves made since, record by record, and save that
+         *     (or, with ``preview``, only say what it would do, with each record changed on both sides side by side).
          */
         post: operations["merge_company_api_companies__cid__merge_post"];
         delete?: never;
@@ -254,6 +256,188 @@ export interface paths {
         post?: never;
         /** Remove Company Member */
         delete: operations["remove_company_member_api_companies__cid__members__email__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Company Approval
+         * @description An owner turns master-data approval on or off (on needs a second person who can change the data).
+         */
+        put: operations["set_company_approval_api_companies__cid__approval_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/held": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Company Held Changes
+         * @description Master-data changes waiting for approval (or decided), newest first, each with every field it changes.
+         */
+        get: operations["company_held_changes_api_companies__cid__held_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/held/{rid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decide Held Change
+         * @description Approve (someone other than who asked; the change is saved), reject, or withdraw (who asked) a held change.
+         *     An approval answers with the company as saved.
+         */
+        post: operations["decide_held_change_api_companies__cid__held__rid__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Company Changes
+         * @description Change documents: every field changed with its old and new value, newest first; ``q`` finds records by key.
+         */
+        get: operations["company_changes_api_companies__cid__changes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/reset/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Reset Request
+         * @description Mail a link to set a new password, if the address has an account and the server sends mail. The answer is
+         *     the same either way, so nobody learns which addresses have accounts.
+         */
+        post: operations["auth_reset_request_api_auth_reset_request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Reset
+         * @description Set a new password with a reset link's token; signs out every other session of the account.
+         */
+        post: operations["auth_reset_api_auth_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/members/{email}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Member Reset Link
+         * @description An owner makes a link for a planner or viewer to set a new password (valid 24 hours), to hand over.
+         */
+        post: operations["member_reset_link_api_companies__cid__members__email__reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/sso/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auth Sso Start
+         * @description Send the browser to the company's identity provider to sign in.
+         */
+        get: operations["auth_sso_start_api_auth_sso_start_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/sso/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auth Sso Callback
+         * @description The identity provider sends the browser back here: sign in, and open the application signed in.
+         */
+        get: operations["auth_sso_callback_api_auth_sso_callback_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -356,11 +540,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Post Validate
-         * @description The readiness gate on everything that can be planned; unfinished records are set aside and listed,
-         *     each also as a SET_ASIDE warning, instead of making the whole dataset unreadable.
-         */
+        /** Post Validate */
         post: operations["post_validate_api_validate_post"];
         delete?: never;
         options?: never;
@@ -678,8 +858,32 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Post Plan */
+        /**
+         * Post Plan
+         * @description The supply plan. ``pegging=false`` leaves out the requirements and the pegging (two thirds of a large plan):
+         *     ``/api/plan/trace`` gives an order's or a product's part of them when it is looked at.
+         */
         post: operations["post_plan_api_plan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/plan/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Plan Trace
+         * @description Part of the plan's requirements and pegging: an order's chain, or one product's at one place.
+         */
+        post: operations["post_plan_trace_api_plan_trace_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1181,6 +1385,13 @@ export interface components {
              * @default []
              */
             movements: string[];
+            /** Doc */
+            doc: string | null;
+            /**
+             * Short Orders
+             * @default []
+             */
+            short_orders: components["schemas"]["ShortOrder"][];
         };
         /** ActualsRequest */
         ActualsRequest: {
@@ -1317,6 +1528,11 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** ApprovalSetting */
+        ApprovalSetting: {
+            /** Approval */
+            approval: boolean;
+        };
         /** AtpNode */
         AtpNode: {
             /** Location */
@@ -1358,6 +1574,13 @@ export interface components {
             require_signin: boolean;
             /** First Account */
             first_account: boolean;
+            /**
+             * Mail
+             * @default false
+             */
+            mail: boolean;
+            /** Sso */
+            sso: string | null;
         };
         /** BacktestPoint */
         BacktestPoint: {
@@ -1374,6 +1597,41 @@ export interface components {
             actual: number;
             /** Forecast */
             forecast: number;
+        };
+        /**
+         * Batch
+         * @description A batch of a product (≈ a batch master record): made or received together, with one expiry date. Stock of a
+         *     batch-managed product is kept by batch; issues take the batch that expires first (first expiring, first out).
+         */
+        Batch: {
+            /** Product */
+            product: string;
+            /**
+             * Id
+             * @description Batch number, unique per product
+             */
+            id: string;
+            /**
+             * Made On
+             * @description Made or received
+             */
+            made_on?: string | null;
+            /**
+             * Expires On
+             * @description Last day it may be used, sold or shipped
+             */
+            expires_on?: string | null;
+            /**
+             * Supplier Batch
+             * @description The supplier's own batch number
+             * @default
+             */
+            supplier_batch: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /**
          * Binding
@@ -1735,6 +1993,34 @@ export interface components {
              */
             why: string;
         };
+        /** Clash */
+        Clash: {
+            /** Id */
+            id: string;
+            /** List */
+            list: string;
+            /** Record */
+            record: string;
+            /**
+             * Mine Removed
+             * @default false
+             */
+            mine_removed: boolean;
+            /**
+             * Theirs Removed
+             * @default false
+             */
+            theirs_removed: boolean;
+            /** Fields */
+            fields: components["schemas"]["FieldClash"][];
+            /** Kept */
+            kept: string;
+            /**
+             * Group
+             * @default
+             */
+            group: string;
+        };
         /**
          * ClosedOrder
          * @description A completed order, logged by the roll-forward: the source of OTIF and supplier reliability.
@@ -1860,6 +2146,26 @@ export interface components {
             created_at: string;
             /** Size */
             size: number;
+            /**
+             * Approval
+             * @default false
+             */
+            approval: boolean;
+            /**
+             * Pending
+             * @default 0
+             */
+            pending: number;
+            /**
+             * Places
+             * @default []
+             */
+            places: string[];
+            /**
+             * Families
+             * @default []
+             */
+            families: string[];
         };
         /** CompareRequest */
         CompareRequest: {
@@ -1965,7 +2271,31 @@ export interface components {
             /** Product */
             product: string;
             /** Qty */
-            qty: number;
+            qty: number | null;
+            /** Batch */
+            batch?: string | null;
+            stock_type?: components["schemas"]["StockType"] | null;
+        };
+        /** CountItem */
+        CountItem: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Batch */
+            batch?: string | null;
+            /** @default unrestricted */
+            stock_type: components["schemas"]["StockType"];
+            /**
+             * Book Qty
+             * @description The journal's stock when the document was made (frozen)
+             */
+            book_qty: number;
+            /**
+             * Counted
+             * @description What was found; empty until counted
+             */
+            counted?: number | null;
         };
         /** CreatePoRequest */
         CreatePoRequest: {
@@ -1977,7 +2307,11 @@ export interface components {
         };
         /** CreatePoResponse */
         CreatePoResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             report: components["schemas"]["CreateReport"];
         };
         /** CreateReport */
@@ -2142,6 +2476,10 @@ export interface components {
             promising?: components["schemas"]["PromiseSettings"];
             /** Movements */
             movements?: components["schemas"]["GoodsMovement"][];
+            /** Batches */
+            batches?: components["schemas"]["Batch"][];
+            /** Inventory Docs */
+            inventory_docs?: components["schemas"]["InventoryDoc"][];
             /** Closed Orders */
             closed_orders?: components["schemas"]["ClosedOrder"][];
             /** Accuracy */
@@ -2227,6 +2565,19 @@ export interface components {
             /** Average Value */
             average_value: number;
         };
+        /** Decision */
+        Decision: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "reject" | "withdraw";
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
         /**
          * DemandEvent
          * @description Something that moves demand for a period: a promotion, a price change, a competitor launch…
@@ -2268,7 +2619,7 @@ export interface components {
             end: string;
             /**
              * Lift
-             * @description Demand change while the event runs: 0.3 = +30 %, −0.2 = −20 %
+             * @description Demand change while the event runs: +30 % or −20 %; empty = the lift measured on past events of the kind
              */
             lift?: number | null;
         };
@@ -2355,6 +2706,19 @@ export interface components {
              * @description Forecast only: the record covers [date, date + period_days) and is spread evenly over the working days of that window (PIR splitting). Empty = the whole quantity is due on `date`.
              */
             period_days?: number | null;
+            /**
+             * Released
+             * @description Forecast only: written by a forecast release. Releasing every series again replaces it, so a series the new forecast no longer has does not stay in demand
+             * @default false
+             */
+            released: boolean;
+        };
+        /** DroppedSeries */
+        DroppedSeries: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
         };
         /** Economics */
         Economics: {
@@ -2421,6 +2785,17 @@ export interface components {
              * @default 0.02
              */
             delivery_tolerance: number;
+            /**
+             * @description A posting that takes stock below zero: refuse it, allow it and ask for a count, or count the missing stock as found
+             * @default allow
+             */
+            negative_stock: components["schemas"]["NegativeStock"];
+            /**
+             * Quality In Planning
+             * @description Stock in quality inspection counts as available in planning
+             * @default true
+             */
+            quality_in_planning: boolean;
         };
         /** FieldChange */
         FieldChange: {
@@ -2430,6 +2805,50 @@ export interface components {
             a: unknown;
             /** B */
             b: unknown;
+        };
+        /**
+         * FieldChangeRow
+         * @description One field of one record changed (a change document).
+         */
+        FieldChangeRow: {
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /** Revision */
+            revision: number | null;
+            /**
+             * At
+             * @default
+             */
+            at: string;
+            /**
+             * User
+             * @default
+             */
+            user: string;
+            /** List */
+            list: string;
+            /** Record */
+            record: string;
+            /** Field */
+            field: string;
+            /** Old */
+            old: unknown;
+            /** New */
+            new: unknown;
+        };
+        /** FieldClash */
+        FieldClash: {
+            /** Path */
+            path: string;
+            /** Base */
+            base: unknown;
+            /** Mine */
+            mine: unknown;
+            /** Theirs */
+            theirs: unknown;
         };
         /** FinanceResult */
         FinanceResult: {
@@ -2503,7 +2922,11 @@ export interface components {
         };
         /** FirmResponse */
         FirmResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             report: components["schemas"]["FirmReport"];
         };
         /** FirmedOrder */
@@ -2589,7 +3012,7 @@ export interface components {
             qty?: number | null;
             /**
              * Change
-             * @description Relative change to the statistical forecast: 0.1 = +10 %
+             * @description Relative change to the statistical forecast, e.g. +10 %
              */
             change?: number | null;
             /**
@@ -2751,10 +3174,15 @@ export interface components {
             xyz_y: number;
             /**
              * Interval
-             * @description Central prediction interval shown with the forecast (0.8 = P10–P90)
+             * @description Central prediction interval shown with the forecast (80 % = P10–P90)
              * @default 0.8
              */
             interval: number;
+            /**
+             * Released Inputs
+             * @description Written by a forecast release: a fingerprint of the events, new-product rules, overrides and these settings it was made with, so a later change to them is noticed
+             */
+            released_inputs?: string | null;
         };
         /** FoundationStatus */
         FoundationStatus: {
@@ -2812,6 +3240,31 @@ export interface components {
              * @default
              */
             note: string;
+            /**
+             * Batch
+             * @description The batch moved (batch-managed products)
+             */
+            batch?: string | null;
+            /**
+             * @description The stock the quantity comes from or goes to
+             * @default unrestricted
+             */
+            stock_type: components["schemas"]["StockType"];
+            /**
+             * Doc
+             * @description Material document: the movements posted together
+             */
+            doc?: string | null;
+            /**
+             * Reversal Of
+             * @description The movement this one takes back: its quantity counts with the opposite sign
+             */
+            reversal_of?: string | null;
+            /**
+             * Serials
+             * @description Serial numbers moved (serialised products: one per unit)
+             */
+            serials?: string[];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2824,6 +3277,44 @@ export interface components {
             status: string;
             /** Version */
             version: string;
+        };
+        /**
+         * HeldChange
+         * @description A master-data change waiting for a second person's approval.
+         */
+        HeldChange: {
+            /** Id */
+            id: number;
+            /** At */
+            at: string;
+            /** By */
+            by: string;
+            /** By Me */
+            by_me: boolean;
+            /** Summary */
+            summary: string;
+            /** Status */
+            status: string;
+            /**
+             * Decided By
+             * @default
+             */
+            decided_by: string;
+            /**
+             * Decided At
+             * @default
+             */
+            decided_at: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /**
+             * Changes
+             * @default []
+             */
+            changes: components["schemas"]["FieldChangeRow"][];
         };
         /** Heuristic */
         Heuristic: {
@@ -2893,6 +3384,45 @@ export interface components {
             quota: number | null;
             /** Vendor Material */
             vendor_material: string;
+        };
+        /**
+         * InventoryDoc
+         * @description A physical inventory document (≈ MI01/MI04/MI07): places and products to count on a day, their book stock
+         *     frozen when the document is made, the counts entered, and the differences posted against the frozen stock.
+         *     With ``block``, postings for its places and products are refused until it is posted or cancelled.
+         */
+        InventoryDoc: {
+            /** Id */
+            id: string;
+            /**
+             * Date
+             * Format: date
+             * @description Count date: the differences are posted at the end of this day
+             */
+            date: string;
+            /**
+             * Status
+             * @default open
+             */
+            status: string;
+            /**
+             * Block
+             * @description Refuse postings for these places and products while open
+             * @default false
+             */
+            block: boolean;
+            /** Items */
+            items?: components["schemas"]["CountItem"][];
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /**
+             * Posted Doc
+             * @description The material document of the differences
+             */
+            posted_doc?: string | null;
         };
         /** InventoryResult */
         InventoryResult: {
@@ -3642,6 +4172,24 @@ export interface components {
             /** Kept */
             kept: boolean;
         };
+        /** LotRow */
+        LotRow: {
+            /** Batch */
+            batch: string | null;
+            /** Stock Type */
+            stock_type: string;
+            /** Qty */
+            qty: number;
+            /** Made On */
+            made_on: string | null;
+            /** Expires On */
+            expires_on: string | null;
+            /**
+             * Expired
+             * @default false
+             */
+            expired: boolean;
+        };
         /**
          * LotSizePolicy
          * @enum {string}
@@ -3702,6 +4250,16 @@ export interface components {
             role: string;
             /** Since */
             since: string;
+            /**
+             * Places
+             * @default []
+             */
+            places: string[];
+            /**
+             * Families
+             * @default []
+             */
+            families: string[];
         };
         /** MemberChange */
         MemberChange: {
@@ -3712,19 +4270,44 @@ export interface components {
              * @enum {string}
              */
             role: "owner" | "planner" | "viewer";
+            /** Places */
+            places?: string[] | null;
+            /** Families */
+            families?: string[] | null;
         };
         /** MergeCompany */
         MergeCompany: {
             /** Base */
-            base: {
+            base?: {
                 [key: string]: unknown;
-            };
+            } | null;
             /** Dataset */
-            dataset: {
+            dataset?: {
                 [key: string]: unknown;
-            };
+            } | null;
+            /** Patch */
+            patch?: {
+                [key: string]: unknown;
+            } | null;
             /** Base Revision */
             base_revision: number;
+            /**
+             * Clean Only
+             * @default false
+             */
+            clean_only: boolean;
+            /**
+             * Choose
+             * @default {}
+             */
+            choose: {
+                [key: string]: "mine" | "theirs";
+            };
+            /**
+             * Preview
+             * @default false
+             */
+            preview: boolean;
         };
         /** MergeReport */
         MergeReport: {
@@ -3738,6 +4321,11 @@ export interface components {
             renumbered: string[];
             /** Summary */
             summary: string;
+            /**
+             * Clashes
+             * @default []
+             */
+            clashes: components["schemas"]["Clash"][];
         };
         /** MergeResult */
         MergeResult: {
@@ -3749,6 +4337,12 @@ export interface components {
             report: components["schemas"]["MergeReport"];
             /** Merged With */
             merged_with: string;
+            /**
+             * Saved
+             * @default true
+             */
+            saved: boolean;
+            held: components["schemas"]["HeldChange"] | null;
         };
         /** ModelInfo */
         ModelInfo: {
@@ -3791,12 +4385,18 @@ export interface components {
          * MovementType
          * @enum {string}
          */
-        MovementType: "opening" | "receipt" | "issue" | "sale" | "transfer_out" | "scrap" | "adjustment";
+        MovementType: "opening" | "receipt" | "issue" | "sale" | "transfer_out" | "scrap" | "adjustment" | "status";
         /**
          * MrpType
          * @enum {string}
          */
         MrpType: "deterministic" | "reorder_point" | "none";
+        /**
+         * NegativeStock
+         * @description What happens when a posting would take stock below zero (R17).
+         * @enum {string}
+         */
+        NegativeStock: "refuse" | "allow" | "found";
         /** NetEdge */
         NetEdge: {
             /** Origin */
@@ -3901,6 +4501,11 @@ export interface components {
              */
             gross_dependent: number;
             /**
+             * Expiring
+             * @default 0
+             */
+            expiring: number;
+            /**
              * Scheduled Receipts
              * @default 0
              */
@@ -3945,6 +4550,13 @@ export interface components {
              * @default 0
              */
             at_risk: number;
+        };
+        /** NodeInput */
+        NodeInput: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
         };
         /** NodeInventory */
         NodeInventory: {
@@ -4459,7 +5071,11 @@ export interface components {
         };
         /** PlacementResponse */
         PlacementResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             applied: components["schemas"]["PlacementApplied"];
         };
         /** PlanException */
@@ -4532,6 +5148,13 @@ export interface components {
             exceptions: number;
             /** Errors */
             errors: number;
+        };
+        /** PlanTrace */
+        PlanTrace: {
+            /** Requirements */
+            requirements: components["schemas"]["Requirement"][];
+            /** Pegs */
+            pegs: components["schemas"]["Peg"][];
         };
         /** PlannedOrder */
         PlannedOrder: {
@@ -4677,7 +5300,11 @@ export interface components {
         };
         /** PoActionResponse */
         PoActionResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             report: components["schemas"]["ActionReport"];
         };
         /** PoLine */
@@ -4736,6 +5363,14 @@ export interface components {
              * @default false
              */
             final: boolean;
+            /** Batch */
+            batch?: string | null;
+            /** Expires On */
+            expires_on?: string | null;
+            /** Supplier Batch */
+            supplier_batch?: string | null;
+            /** Serials */
+            serials?: string[] | null;
         };
         /** PoView */
         PoView: {
@@ -4801,7 +5436,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ship" | "receive" | "deliver" | "count";
+            action: "ship" | "receive" | "deliver" | "count" | "move" | "scrap" | "scrap_expired" | "reverse" | "shorten" | "count_doc" | "count_enter" | "count_post" | "count_cancel";
             /** Order */
             order?: string | null;
             /** Qty */
@@ -4824,6 +5459,36 @@ export interface components {
              * @default
              */
             note: string;
+            /** Batch */
+            batch?: string | null;
+            /** Expires On */
+            expires_on?: string | null;
+            /** Supplier Batch */
+            supplier_batch?: string | null;
+            /** Serials */
+            serials?: string[] | null;
+            stock_type?: components["schemas"]["StockType"] | null;
+            to_type?: components["schemas"]["StockType"] | null;
+            /** Location */
+            location?: string | null;
+            /** Product */
+            product?: string | null;
+            /** Movement */
+            movement?: string | null;
+            /** Doc */
+            doc?: string | null;
+            /** Nodes */
+            nodes?: components["schemas"]["NodeInput"][] | null;
+            /**
+             * Block
+             * @default true
+             */
+            block: boolean;
+            /**
+             * Uncounted Zero
+             * @default false
+             */
+            uncounted_zero: boolean;
         };
         /**
          * PriceScale
@@ -4875,6 +5540,29 @@ export interface components {
             volume_m3?: number | null;
             /** Shelf Life Days */
             shelf_life_days?: number | null;
+            /**
+             * Batches
+             * @description Stock kept by batch with an expiry date, issued first expiring, first out. Empty: when the product has a shelf life
+             */
+            batches?: boolean | null;
+            /**
+             * Inspect On Receipt
+             * @description Receipts go into quality inspection until released
+             * @default false
+             */
+            inspect_on_receipt: boolean;
+            /**
+             * Serial Numbers
+             * @description Every unit has its own serial number, given at receipt and at delivery
+             * @default false
+             */
+            serial_numbers: boolean;
+            /**
+             * Cold Chain
+             * @description Kept chilled or frozen: routes need a refrigerated mode
+             * @default false
+             */
+            cold_chain: boolean;
             /**
              * Whole Units
              * @description Planned in whole units (no 25.9 tins). Empty: from the unit, whole for EA, PC, box, case, tin, pail, bag, drum, bottle, …; fractional for kg, L, m, …
@@ -5003,7 +5691,11 @@ export interface components {
         };
         /** PromiseCommitResponse */
         PromiseCommitResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             result: components["schemas"]["PromiseResult"];
         };
         /** PromiseKpis */
@@ -5397,7 +6089,11 @@ export interface components {
         };
         /** ReleaseResponse */
         ReleaseResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             release: components["schemas"]["ReleaseResult"];
         };
         /** ReleaseResult */
@@ -5410,6 +6106,16 @@ export interface components {
             replaced: number;
             /** Cv Suggestions */
             cv_suggestions: components["schemas"]["CvSuggestion"][];
+            /**
+             * Dropped
+             * @description Series an earlier release wrote that this forecast no longer has: their forecast was removed from demand
+             */
+            dropped: components["schemas"]["DroppedSeries"][];
+            /**
+             * Made To Order
+             * @description Series of a product made to order there: not written (customer orders drive them), and any forecast an earlier release wrote for them removed
+             */
+            made_to_order: components["schemas"]["DroppedSeries"][];
         };
         /** Requirement */
         Requirement: {
@@ -5430,7 +6136,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "forecast" | "sales_order" | "dependent" | "transfer";
+            kind: "forecast" | "sales_order" | "dependent" | "transfer" | "expiry";
             /** Parent Order */
             parent_order: string | null;
             /**
@@ -5535,6 +6241,25 @@ export interface components {
              * @description Originally required; empty = `qty` (nothing issued yet)
              */
             required_qty?: number | null;
+        };
+        /** ResetLink */
+        ResetLink: {
+            /** Link */
+            link: string;
+            /** Expires At */
+            expires_at: string;
+        };
+        /** ResetPassword */
+        ResetPassword: {
+            /** Token */
+            token: string;
+            /** Password */
+            password: string;
+        };
+        /** ResetRequest */
+        ResetRequest: {
+            /** Email */
+            email: string;
         };
         /**
          * Resource
@@ -5727,7 +6452,11 @@ export interface components {
         };
         /** RollResponse */
         RollResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             report: components["schemas"]["RollReport"];
         };
         /**
@@ -5876,7 +6605,11 @@ export interface components {
         };
         /** SalesOrderResponse */
         SalesOrderResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             report: components["schemas"]["SalesOrderReport"];
         };
         /** SaveBaseRequest */
@@ -5893,9 +6626,13 @@ export interface components {
         /** SaveCompany */
         SaveCompany: {
             /** Dataset */
-            dataset: {
+            dataset?: {
                 [key: string]: unknown;
-            };
+            } | null;
+            /** Patch */
+            patch?: {
+                [key: string]: unknown;
+            } | null;
             /** Base Revision */
             base_revision: number;
             /**
@@ -5911,6 +6648,16 @@ export interface components {
             saved: boolean;
             /** Summary */
             summary: string;
+            /**
+             * Own
+             * @default false
+             */
+            own: boolean;
+            held: components["schemas"]["HeldChange"] | null;
+            /** Dataset */
+            dataset: {
+                [key: string]: unknown;
+            } | null;
         };
         /** ScenarioInfo */
         ScenarioInfo: {
@@ -5972,7 +6719,11 @@ export interface components {
         };
         /** ScheduleApplyResponse */
         ScheduleApplyResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             report: components["schemas"]["ApplyReport"];
         };
         /** ScheduleCatalogue */
@@ -6836,6 +7587,28 @@ export interface components {
              */
             weekdays?: number[] | null;
         };
+        /**
+         * ShortOrder
+         * @description A firm order the parts no longer cover in full after a short or late receipt (R16).
+         */
+        ShortOrder: {
+            /** Order */
+            order: string;
+            /** Product */
+            product: string;
+            /** Part */
+            part: string;
+            /** Location */
+            location: string;
+            /** Needs */
+            needs: number;
+            /** Available */
+            available: number;
+            /** Can Make */
+            can_make: number;
+            /** Qty */
+            qty: number;
+        };
         /** SignIn */
         SignIn: {
             /** Email */
@@ -6944,7 +7717,11 @@ export interface components {
         };
         /** SopReleaseResponse */
         SopReleaseResponse: {
-            dataset: components["schemas"]["Dataset"];
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
             release: components["schemas"]["SopRelease"];
         };
         /** SopResult */
@@ -7152,6 +7929,45 @@ export interface components {
              * @default false
              */
             opening_from_setup: boolean;
+            /**
+             * Unrestricted
+             * @default 0
+             */
+            unrestricted: number;
+            /**
+             * Quality
+             * @default 0
+             */
+            quality: number;
+            /**
+             * Blocked
+             * @default 0
+             */
+            blocked: number;
+            /**
+             * Expired
+             * @default 0
+             */
+            expired: number;
+            /**
+             * Lots
+             * @default []
+             */
+            lots: components["schemas"]["LotRow"][];
+            /**
+             * Serials
+             * @default []
+             */
+            serials: string[];
+            /**
+             * In Transit
+             * @default 0
+             */
+            in_transit: number;
+            /** Planning Stock */
+            planning_stock: number | null;
+            /** Counting */
+            counting: string | null;
         };
         /**
          * StockTarget
@@ -7178,6 +7994,13 @@ export interface components {
              */
             source: string;
         };
+        /**
+         * StockType
+         * @description What stock may be used for (≈ SAP's stock types). Only unrestricted stock is issued, sold or shipped; stock in
+         *     quality inspection counts in planning when the company says so (as SAP's MRP does by default); blocked stock never.
+         * @enum {string}
+         */
+        StockType: "unrestricted" | "quality" | "blocked";
         /**
          * Strategy
          * @description Planning strategy (S/4 guide §5.2).
@@ -7388,6 +8211,16 @@ export interface components {
              */
             bias_alert: number;
         };
+        /** TraceRequest */
+        TraceRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Order */
+            order?: string | null;
+            /** Location */
+            location?: string | null;
+            /** Product */
+            product?: string | null;
+        };
         /** TransportLane */
         TransportLane: {
             /** Id */
@@ -7415,7 +8248,7 @@ export interface components {
          * TransportMode
          * @enum {string}
          */
-        TransportMode: "truck_ftl" | "truck_ltl" | "rail" | "sea" | "air" | "courier" | "pipeline";
+        TransportMode: "truck_ftl" | "truck_ltl" | "reefer" | "rail" | "sea" | "air" | "courier" | "pipeline";
         /**
          * Unbooked
          * @description Postings dated before the planning start that the starting position does not reflect yet (a late posting, or
@@ -8336,6 +9169,312 @@ export interface operations {
             };
         };
     };
+    set_company_approval_api_companies__cid__approval_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalSetting"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    company_held_changes_api_companies__cid__held_get: {
+        parameters: {
+            query?: {
+                status?: "pending" | "approved" | "rejected" | "withdrawn" | "all";
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeldChange"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_held_change_api_companies__cid__held__rid__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                rid: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Decision"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SaveReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    company_changes_api_companies__cid__changes_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                list?: string;
+                limit?: number;
+                before?: number | null;
+            };
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldChangeRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_reset_request_api_auth_reset_request_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_reset_api_auth_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetPassword"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    member_reset_link_api_companies__cid__members__email__reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                email: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResetLink"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_sso_start_api_auth_sso_start_get: {
+        parameters: {
+            query?: {
+                next?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_sso_callback_api_auth_sso_callback_get: {
+        parameters: {
+            query?: {
+                code?: string;
+                state?: string;
+                error?: string;
+                error_description?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_api_health_get: {
         parameters: {
             query?: never;
@@ -9023,7 +10162,9 @@ export interface operations {
     };
     post_plan_api_plan_post: {
         parameters: {
-            query?: never;
+            query?: {
+                pegging?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -9041,6 +10182,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlanResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_plan_trace_api_plan_trace_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TraceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanTrace"];
                 };
             };
             /** @description Validation Error */

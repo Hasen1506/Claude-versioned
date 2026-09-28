@@ -31,7 +31,10 @@ export type NetworkView = S["NetworkView"];
 export type NetLocation = S["NetLocation"];
 export type NetEdge = S["NetEdge"];
 
-export type PlanResult = S["PlanResult"];
+/** The supply plan as the browser gets it (Phase S): without the requirements and the pegging, two thirds of a large
+ *  plan; `api.planTrace` gives an order's or a product's part of them when a page shows it. */
+export type PlanResult = Omit<S["PlanResult"], "requirements" | "pegs">;
+export type PlanTrace = S["PlanTrace"];
 export type PlannedOrder = S["PlannedOrder"];
 export type NodePlan = S["NodePlan"];
 export type NodeBucket = S["NodeBucket"];
@@ -115,6 +118,14 @@ export type CustomerPrice = S["CustomerPrice"];
 export type CountInput = S["CountInput"];
 export type UsageInput = S["UsageInput"];
 export type ClosedOrder = S["ClosedOrder"];
+export type LotRow = S["LotRow"];
+export type ShortOrder = S["ShortOrder"];
+export type ActionReport = S["ActionReport"];
+export type Batch = S["Batch"];
+export type InventoryDoc = S["InventoryDoc"];
+export type CountItem = S["CountItem"];
+export type StockType = S["StockType"];
+export type NegativeStock = S["NegativeStock"];
 
 export type FinanceResult = S["FinanceResult"];
 export type ServeRow = S["ServeRow"];
@@ -165,3 +176,7 @@ export type Member = S["Member"];
 export type LogRow = S["LogRow"];
 export type ListChange = S["ListChange"];
 export type MergeResult = S["MergeResult"];
+export type Clash = S["Clash"];
+export type HeldChange = S["HeldChange"];
+export type FieldChangeRow = S["FieldChangeRow"];
+export type ResetLink = S["ResetLink"];

@@ -231,21 +231,21 @@ test("inventory: optimise → placement → approve recommendation → policies 
 
   await page.goto("/#/inventory/placement");
   await expect(page.getByRole("img", { name: "Service-time placement per stage" })).toBeVisible();
-  await page.getByLabel("Select PLT-PUNE RM-SWITCH").check();
+  await page.getByLabel("Select Rotary switch + PCB at Pune plant (Chakan)").check();
   await page.getByRole("button", { name: /Review 1 change/ }).click();
   await page.getByRole("button", { name: "Use these buffers in the plan" }).click();
   await expect(freshness(page, "inventory")).toHaveAttribute("data-fresh", "stale");
   await page.getByRole("button", { name: "Recalculate now" }).click();
   await expect(freshness(page, "inventory")).toHaveAttribute("data-fresh", "fresh");
-  const row = page.locator("tr", { has: page.getByLabel("Select PLT-PUNE RM-SWITCH") });
+  const row = page.locator("tr", { has: page.getByLabel("Select Rotary switch + PCB at Pune plant (Chakan)") });
   await expect(row.locator("td").nth(10)).toContainText("fixed");
 
   await page.goto("/#/inventory/ddmrp");
   await page.getByLabel("Show every stocking stage").check();
-  await page.getByLabel("Position buffer at DC-DELHI MG-500").check();
+  await page.getByLabel("Position a buffer of Mixer grinder 500 W at Delhi NCR DC").check();
   await page.getByRole("button", { name: "Recalculate now" }).click();
   await page.getByLabel("Show every stocking stage").uncheck();
-  await expect(page.getByLabel("Position buffer at DC-DELHI MG-500")).toBeChecked();
+  await expect(page.getByLabel("Position a buffer of Mixer grinder 500 W at Delhi NCR DC")).toBeChecked();
 });
 
 test("S&OP: solve → pin → cut capacity → shadow prices → release to MRP → undo", async ({ page }) => {
@@ -500,6 +500,69 @@ test("posting: count stock → firm → ship and receive a transfer → confirm 
   await expect(page.getByText("Not counted yet")).toHaveCount(0);
 });
 
+test("stock you can trace: a short receipt names the order it leaves short → shorten it → batches in stock → block → reverse → physical inventory", async ({ page }) => {
+  await openExample(page, "Kaveri Kitchenware");
+  const posted = page.locator(".banner.info", { hasText: "Posted" });
+
+  // no heating elements left at the plant, so the kettles made there depend on the next delivery
+  await page.goto("/#/execution/count");
+  await page.getByLabel("Counted Concealed heating element at Pune plant (Chakan)").fill("0");
+  await page.getByRole("button", { name: "Save 1 count" }).click();
+  await expect(page.locator(".banner", { hasText: "Saved" })).toContainText("1 count difference");
+
+  // firm the zone, then the heater delivery comes in short, in the supplier's batch, and closes the line
+  await page.goto("/#/execution/orders");
+  await page.getByRole("button", { name: /^(Recalculate the supply plan|Calculate the supply plan)$/ }).click();
+  await page.getByRole("button", { name: /Make \d+ orders? firm/ }).click();
+  await expect(page.getByText(/planned orders? firmed/)).toBeVisible();
+  const line = page.locator("tr", { hasText: "Concealed heating element" }).filter({ hasText: "purchase" }).first();
+  const po = (await line.locator("td").first().innerText()).trim().split(/\s+/)[0];
+  await page.getByRole("button", { name: `Post part of ${po}` }).click();
+  await page.getByLabel(`Quantity for ${po}`).fill("10");
+  await page.getByText("Last delivery: close the order even if short").click();
+  await page.getByLabel(/^Batch of/).fill("HT-1");
+  await page.getByRole("button", { name: /^Receive [0-9,.]+$/ }).click();
+  await expect(posted).toContainText("in batch HT-1");
+  await expect(posted).toContainText("closed 9,990 short");
+  const short = page.locator(".banner.warning", { hasText: "Can no longer run in full" });
+  await expect(short).toContainText("Concealed heating element");
+  await short.getByRole("button", { name: /^Shorten to \d+$/ }).first().click();
+  await expect(short.getByText("shortened")).toBeVisible();
+  await expect(posted).toContainText(/shortened from 1,450 to \d+/);
+
+  // the batch is in stock now, this week's postings included; block it
+  await page.goto("/#/execution/stock");
+  await page.getByLabel("Find stock").fill("HT-1");
+  await page.getByRole("button", { name: "Batches and stock of RM-HEATER at PLT-PUNE" }).click();
+  const lot = page.locator("tr.sub tr", { hasText: "HT-1" }).filter({ hasText: "free to use" });
+  await expect(lot).toContainText("10");
+  await lot.getByRole("button", { name: "Block" }).click();
+  await expect(posted).toContainText("blocked");
+  await expect(page.locator("tr.sub tr", { hasText: "HT-1" }).filter({ hasText: "blocked" })).toBeVisible();
+
+  // the receipt is taken back from the journal: its material document, and the order is open again
+  await page.goto("/#/execution/journal");
+  await page.getByLabel("Find movements").fill("HT-1");
+  const receipt = page.locator("tr", { hasText: "HT-1" }).filter({ hasText: "receipt" }).first();
+  await receipt.getByRole("button", { name: /^Reverse / }).click();
+  await expect(page.locator(".banner", { hasText: "Reversed" })).toContainText(`${po} is open again`);
+  await expect(page.locator("tr", { hasText: "HT-1" }).filter({ hasText: "reversed" }).first()).toBeVisible();
+
+  // a physical inventory of the plant: the book is frozen, postings for it wait, the count is cancelled
+  await page.goto("/#/execution/count");
+  await page.selectOption('select[aria-label="Place to count"]', { label: "Pune plant (Chakan)" });
+  await page.getByRole("button", { name: /^Start counting \d+ products$/ }).click();
+  await expect(page.locator(".banner", { hasText: "Done" })).toContainText("book stock frozen");
+  await expect(page.getByRole("button", { name: "Post differences" })).toBeDisabled();
+  await page.getByRole("button", { name: "Cancel the count" }).click();
+  await expect(page.locator(".banner", { hasText: "Done" })).toContainText("cancelled");
+
+  // the company's rule for stock below zero
+  await page.goto("/#/execution/stock");
+  await page.getByText("Stock rules").click();
+  await expect(page.locator("select#negative_stock option", { hasText: "Refuse the posting" })).toHaveCount(1);
+});
+
 test("buying: requisitions → purchase order → approve → send → confirm late and short → plan warns → receive part → block a supplier → undo", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/buying");
@@ -750,7 +813,7 @@ test("shop floor: steps wait for parts, and the schedule's dates go back into th
   await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "stale");
 });
 
-test("company on the server: sign up → keep it there → saves itself → a colleague saves first → merge both → history → put back; a viewer changes nothing", async ({ page, browser }) => {
+test("company on the server: sign up → keep it there → saves itself → a colleague saves first → merged by itself → both change one order → merge both → history → put back; a viewer changes nothing", async ({ page, browser }) => {
   page.on("dialog", (d) => d.accept());
   await openExample(page, "Kaveri Kitchenware");
   const chip = page.locator(".save-chip .save-long");
@@ -802,24 +865,48 @@ test("company on the server: sign up → keep it there → saves itself → a co
   const ravi = await colleague("ravi@kaveri.in", "Ravi Menon");
   await take(ravi, 20, "RAVI-1");
   await expect(ravi.locator(".save-chip .save-long")).toHaveText(/^Saved \d\d:\d\d$/);
+  // they changed different records: Asha's refused save merges by itself and says so
   await take(page, 30, "ASHA-2");
-  await expect(chip).toHaveText("Not saved · saved by someone else");
-  await expect(page.locator(".save-banner")).toContainText("Ravi Menon saved Kaveri");
-  await page.getByRole("button", { name: "Merge both" }).click();
-  await expect(page.locator(".save-banner")).toContainText("Merged with Ravi Menon");
-  await expect(page.locator(".save-banner")).toContainText("renumbered SO-88223 → SO-88224");
-  await expect(chip).toHaveText(/^Saved/);
+  await expect(page.locator(".save-banner")).toContainText("Ravi Menon saved while you were working; both sets of changes are kept");
+  await expect(page.locator(".save-banner")).toContainText("SO-88223 → SO-88224");
+  await expect(chip).toHaveText(/^Saved \d\d:\d\d$/);
+  await page.locator(".save-banner").getByRole("button", { name: "OK" }).click();
   await ravi.reload();
   await ravi.goto("/#/data/demand");
   await expect(ravi.locator("tr", { hasText: "SO-88224" })).toHaveText(/sales_order30$/);   // both orders are kept
   await expect(ravi.locator("tr", { hasText: "SO-88223" })).toHaveText(/sales_order20$/);
 
+  // both change the same order: that is not merged silently, Asha is asked
+  const change = async (p: Page, q: number) => {
+    await p.goto("/#/promise/orders/SO-88222");
+    await p.getByRole("button", { name: "Change", exact: true }).click();
+    await p.getByLabel("Ordered quantity").fill(String(q));
+    await p.getByRole("button", { name: "Save and promise again" }).click();
+    await expect(p.locator(".banner.info", { hasText: "Saved" })).toContainText(`SO-88222 changed (quantity 10 → ${q}`);
+  };
+  await change(ravi, 12);
+  await expect(ravi.locator(".save-chip .save-long")).toHaveText(/^Saved \d\d:\d\d$/);
+  await change(page, 15);
+  await expect(chip).toHaveText("Not saved · saved by someone else");
+  await expect(page.locator(".save-banner")).toContainText("Ravi Menon saved Kaveri");
+  await page.getByRole("button", { name: "Merge both" }).click();
+  // the one order both changed (with its promise), side by side: she chooses whose to keep (his, here)
+  const chooser = page.locator(".clash-chooser");
+  await expect(chooser).toContainText("You and Ravi Menon both changed one record");
+  await expect(chooser.locator("legend")).toHaveText("Order SO-88222 and its promise");
+  await expect(chooser.locator("tr", { hasText: "orders and forecasts: qty" })).toContainText(/10\s*15\s*12/);
+  await chooser.getByRole("button", { name: "Merge, keeping Ravi Menon's" }).click();
+  await expect(page.locator(".save-banner")).toContainText("Merged with Ravi Menon");
+  await expect(page.locator(".save-banner")).toContainText("Changed on both sides, their version kept");
+  await expect(chip).toHaveText(/^Saved/);
+  await page.goto("/#/data/demand");
+  await expect(page.locator("tr", { hasText: "SO-88222" })).toHaveText(/sales_order12$/);    // his change stands
+
   // the history says who changed what; put the company back to before the merge
   await page.goto("/#/history");
-  const top = page.locator("ol.history > li").first();
-  await expect(top).toContainText("Asha Rao");
-  await expect(top).toContainText("merged with Ravi Menon's save");
-  const ravis = page.locator("ol.history > li", { hasText: "Ravi Menon" }).filter({ hasText: "saved" }).first();
+  await expect(page.locator("ol.history > li").first()).toContainText("Ravi Menon");     // the clash kept his: nothing new of hers
+  await expect(page.locator("ol.history > li", { hasText: "Asha Rao" }).first()).toContainText("merged with Ravi Menon's save");
+  const ravis = page.locator("ol.history > li", { hasText: "Ravi Menon" }).filter({ hasText: "saved" }).last();   // his first save
   await ravis.getByRole("button", { name: "Which records" }).click();
   await expect(ravis).toContainText("+ SO-88223");
   await ravis.getByRole("button", { name: "Put back to this" }).click();
@@ -842,4 +929,148 @@ test("company on the server: sign up → keep it there → saves itself → a co
   await meera.reload();
   await meera.goto("/#/buying");
   await expect(meera.locator(".stage-head .answer")).toContainText("should be ordered in the next 7 days");
+});
+
+test("rights and four eyes: a planner limited to a place is refused elsewhere; master data waits for a second person, who approves it; every field is on record", async ({ page, browser }) => {
+  page.on("dialog", (d) => d.accept());
+  await openExample(page, "Kaveri Kitchenware");
+  await page.locator(".save-chip .save-long").click();
+  await page.getByRole("tab", { name: "Make an account" }).click();
+  await page.getByLabel("E-mail").fill("owner@kaveri.in");
+  await page.getByLabel("Your name").fill("Nisha Owner");
+  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByRole("button", { name: "Make the account" }).click();
+  await page.getByRole("button", { name: "Keep it on the server" }).click();
+  await page.getByLabel("Colleague's e-mail").fill("plan@kaveri.in");
+  await page.getByRole("button", { name: "Add" }).click();
+  const p = await (await browser.newContext()).newPage();
+  p.on("dialog", (d) => d.accept());
+  await p.goto("/#/account");
+  await p.getByRole("tab", { name: "Make an account" }).click();
+  await p.getByLabel("E-mail").fill("plan@kaveri.in");
+  await p.getByLabel("Your name").fill("Om Planner");
+  await p.getByLabel(/^Password/).fill("colleague-1");
+  await p.getByRole("button", { name: "Make the account" }).click();
+  await p.getByRole("button", { name: /Open Kaveri Kitchenware/ }).click();
+
+  // limited to the Delhi warehouse, he may not change the company's settings
+  await page.reload();
+  await page.locator("tr", { hasText: "plan@kaveri.in" }).getByRole("button", { name: "limit" }).click();
+  await page.getByLabel("Places plan@kaveri.in may change").fill("DC-DELHI");
+  await page.getByRole("button", { name: "Save limits" }).click();
+  await expect(page.locator("tr", { hasText: "plan@kaveri.in" })).toContainText("Changes only Delhi");
+  const address = async (text: string) => {
+    await p.goto("/#/setup/company");
+    await p.getByLabel("Company address").fill(text);
+    await p.getByRole("button", { name: "Save", exact: true }).click();
+  };
+  await address("Plot 1, Chakan");
+  await expect(p.locator(".save-banner")).toContainText("your rights cover the places DC-DELHI; this change also touches company settings");
+  await p.getByRole("button", { name: "Undo the last change" }).click();
+  await expect(p.locator(".save-chip .save-long")).toHaveText(/^Saved/);
+
+  // no limit, but master data needs a second person: his change waits, the owner approves it
+  await page.locator("tr", { hasText: "plan@kaveri.in" }).getByRole("button", { name: "limit" }).click();
+  await page.getByLabel("Places plan@kaveri.in may change").fill("");
+  await page.getByRole("button", { name: "Save limits" }).click();
+  await page.getByLabel(/Master data changes need a second person/).check();
+  await address("Plot 2, Chakan");
+  await expect(p.locator(".save-banner")).toContainText("Your master data change (company settings changed) waits for a second person's approval");
+  await page.goto("/#/history");
+  const waiting = page.locator(".panel", { hasText: "Master data changes wait here" });
+  await expect(waiting).toContainText("Om Planner");
+  await expect(waiting.locator("tr", { hasText: "company address" })).toContainText("Plot 2, Chakan");
+  await waiting.getByRole("button", { name: "Approve" }).click();
+  await expect(page.locator(".banner.ok")).toContainText("Om Planner's change #1 approved and saved");
+  await page.getByLabel("Record to find changes of").fill("");
+  await page.getByRole("button", { name: "Find" }).click();
+  await expect(page.locator(".panel", { hasText: "Changes to a record" }).locator("tbody tr").first()).toContainText("Plot 2, Chakan");
+});
+
+test("opening another company while one is planning: the first one's results are dropped and the new one is planned", async ({ page }) => {
+  page.on("dialog", (d) => d.accept());
+  await openExample(page, "Kaveri Kitchenware");
+  await page.locator(".save-chip .save-long").click();
+  await page.getByRole("tab", { name: "Make an account" }).click();
+  await page.getByLabel("E-mail").fill("switch@kaveri.in");
+  await page.getByLabel("Your name").fill("Sam Switch");
+  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByRole("button", { name: "Make the account" }).click();
+  await page.getByRole("button", { name: "Keep it on the server" }).click();
+  await expect(page.locator(".save-chip .save-long")).toHaveText("Saved");
+  // a second company, the bottler, made on the server by the same person
+  const token = await page.evaluate(() => JSON.parse(localStorage.getItem("scp.session.v1") ?? "{}").token as string);
+  const bottler = await (await page.request.get("/api/examples/single_product_plant")).json();
+  expect((await page.request.post("/api/companies", { headers: { Authorization: `Bearer ${token}` },
+    data: { dataset: bottler, note: "second company" } })).ok()).toBe(true);
+  await page.goto("/#/account");
+  await page.reload();
+
+  // Kaveri's forecast takes long; the bottler is opened while Kaveri is still being planned
+  let slow = true;
+  await page.route("**/api/forecast", async (r) => {
+    if (slow) await new Promise((ok) => setTimeout(ok, 4000));
+    await r.continue();
+  });
+  const asked = page.waitForRequest("**/api/forecast");
+  await page.getByRole("button", { name: /^Open Kaveri Kitchenware/ }).click();
+  await asked;
+  await expect(page).toHaveURL(/#\/home/);
+  await page.goto("/#/account");
+  await page.getByRole("button", { name: /^Open Single-product bottler/ }).click();
+  slow = false;
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+  // every result is the bottler's: Kaveri's forecast, which came back after the bottler was open, is not taken
+  await page.goto("/#/demand");
+  await expect(page.getByRole("tab", { name: "Demand plan" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /Series workbench/ })).toHaveCount(0);   // the bottler has no sales history
+  for (const at of ["#/demand", "#/plan/orders", "#/buying"]) {
+    await page.goto("/" + at);
+    await expect(page.locator("main")).toContainText(/Mineral water|PET preform|Cap \+ label/);
+    await expect(page.locator("main")).not.toContainText(/Mixer grinder|Electric kettle|Enamelled copper|MG-500|MG-750|KT-15/);
+  }
+});
+
+test("a company on the server is planned from the server's copy: calls name the save, a change comes back as what changed, pegging is asked for", async ({ page }) => {
+  page.on("dialog", (d) => d.accept());
+  await openExample(page, "Kaveri Kitchenware");
+  await page.locator(".save-chip .save-long").click();
+  await page.getByRole("tab", { name: "Make an account" }).click();
+  await page.getByLabel("E-mail").fill("ref@kaveri.in");
+  await page.getByLabel("Your name").fill("Rhea Ref");
+  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByRole("button", { name: "Make the account" }).click();
+  await page.getByRole("button", { name: "Keep it on the server" }).click();
+  await expect(page.locator(".save-chip .save-long")).toHaveText("Saved");
+
+  // every planning call names the save instead of carrying the company
+  const sent: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "POST" && /\/api\/(validate|network|forecast|plan|promise|inventory|sop|schedule|purchasing|actuals|finance|tower)(\?|$)/.test(r.url())) sent.push(r.postData() ?? "");
+  });
+  await page.goto("/#/home");
+  await page.getByRole("button", { name: /^Plan everything/ }).first().click();
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 60_000 });
+  expect(sent.length).toBeGreaterThanOrEqual(10);
+  for (const b of sent) {
+    expect(b).toContain('"$ref"');
+    expect(b.length).toBeLessThan(2_000);
+  }
+
+  // the plan comes without its pegging: an order's is asked for when it is opened
+  await page.goto("/#/plan/orders");
+  await page.locator("table.t tbody tr").first().click();
+  await expect(page.locator(".peg-tree")).toContainText("Serves");
+
+  // a change the engine makes (a released forecast) comes back as what changed, and lands in the working copy
+  await page.goto("/#/demand/overview");
+  const answer = page.waitForResponse((r) => r.url().includes("/api/forecast/release"));
+  await page.getByRole("button", { name: "Use this forecast in the supply plan" }).click();
+  const body = await (await answer).json();
+  expect(body.dataset).toBeNull();
+  expect([...Object.keys(body.patch.lists ?? {}), ...Object.keys(body.patch.set ?? {})]).toContain("demand");   // record by record, or the list
+  await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/, { timeout: 15_000 });
+  await page.goto("/#/demand");
+  await expect(page.getByText(/Everything is up to date|out of date/).first()).toBeVisible();
+  await expect(page.locator("main")).toContainText(/units over the next/);
 });

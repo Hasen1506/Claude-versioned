@@ -118,6 +118,9 @@ const SYNONYMS: Record<string, string[]> = {
   transit_days: ["transit", "transittime", "days"], resource: ["workcentre", "workcenter", "machine", "line"],
 };
 
+const PARTY = ["customer", "customername", "customerid", "shipto", "soldto", "supplier", "suppliername", "vendor",
+  "vendorname", "counterparty", "party"];
+
 /** For each column of the grid's header, the matching import column (or none). */
 export function matchHeaders(header: string[], cols: Col[]): (Col | null)[] {
   const used = new Set<string>();
@@ -125,7 +128,10 @@ export function matchHeaders(header: string[], cols: Col[]): (Col | null)[] {
     const n = norm(h);
     if (!n) return null;
     const find = (pred: (c: Col) => boolean) => cols.find((c) => !used.has(c.path) && pred(c));
-    const c = find((c) => norm(c.header) === n || norm(c.path) === n)
+    // a goods movement's customer or supplier is its counterparty, never the place whose stock changes (R: a
+    // dispatch register's "Customer" column was dropped, and its sales counted as the warehouse's own)
+    const c = (PARTY.includes(n) ? find((c) => c.path === "counterparty") : undefined)
+      ?? find((c) => norm(c.header) === n || norm(c.path) === n)
       ?? find((c) => norm(c.label) === n)
       ?? find((c) => norm(c.path.split(".").pop()!) === n)
       ?? find((c) => (SYNONYMS[c.path.split(".").pop()!] ?? []).includes(n));
@@ -224,7 +230,8 @@ const ENUM_WORDS: Record<string, string> = {
   distributioncentre: "dc", distributioncenter: "dc", finishedgood: "FG", finished: "FG", semifinished: "SFG", subassembly: "SFG",
   rawmaterial: "RM", raw: "RM", packaging: "PKG", salesorder: "sales_order", order: "sales_order", so: "sales_order", fc: "forecast",
   lotforlot: "L4L", exact: "L4L", fixedlot: "FIXED", daysofsupply: "days_of_supply", daysofcover: "days_of_supply",
-  truck: "truck_ftl", fullload: "truck_ftl", partload: "truck_ltl", ftl: "truck_ftl", ltl: "truck_ltl", ship: "sea", ocean: "sea",
+  truck: "truck_ftl", fullload: "truck_ftl", partload: "truck_ltl", ftl: "truck_ftl", ltl: "truck_ltl", reefer: "reefer",
+  refrigerated: "reefer", refrigeratedtruck: "reefer", chilled: "reefer", coldchain: "reefer", frozen: "reefer", ship: "sea", ocean: "sea",
   vendor: "supplier", maketostock: "MTS", maketoorder: "MTO", assembletoorder: "ATO",
 };
 

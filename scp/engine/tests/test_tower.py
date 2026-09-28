@@ -179,3 +179,23 @@ def test_plan_stability_against_the_previous_base():
     assert n == len(cur.orders) and m == n - 3                           # the late A order and its B and C buys moved
     k = kpis(run_tower(ds(changed)))["plan_stability"]
     assert k.value == pytest.approx(v) and "week 1" in k.source
+
+
+def test_the_worklist_is_made_once_and_never_ends_another_requests_transaction():
+    """Its tables are made by a script, which commits whatever transaction the shared connection has open: made per
+    request, it ended another request's transaction mid-way ("cannot commit - no transaction is active")."""
+    import threading
+    from scp.tower.worklist import Tracker, get_tracker
+    from scp.versions.store import get_store
+    assert get_tracker() is get_tracker()
+    store = get_store()
+    started, made = threading.Event(), threading.Event()
+    with store.lock:
+        store.db.execute("BEGIN")
+        t = threading.Thread(target=lambda: (started.set(), Tracker(store), made.set()))
+        t.start()
+        started.wait()
+        assert not made.wait(0.2)          # waits for the lock, so the transaction stays open
+        store.db.execute("COMMIT")
+    t.join(5)
+    assert made.is_set()

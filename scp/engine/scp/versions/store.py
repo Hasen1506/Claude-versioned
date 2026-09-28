@@ -257,12 +257,17 @@ class Store:
 _store: Store | None = None
 
 
+_store_lock = threading.Lock()
+
+
 def get_store() -> Store:
-    """The process-wide store: ``$SCP_DB`` or ``~/.scp/scp.sqlite``."""
+    """The process-wide store: ``$SCP_DB`` or ``~/.scp/scp.sqlite``. Made once even when the first requests come
+    together (each is answered on its own thread)."""
     global _store
-    if _store is None:
-        _store = Store(os.environ.get("SCP_DB") or Path.home() / ".scp" / "scp.sqlite")
-    return _store
+    with _store_lock:
+        if _store is None:
+            _store = Store(os.environ.get("SCP_DB") or Path.home() / ".scp" / "scp.sqlite")
+        return _store
 
 
 def set_store(store: Store | None) -> None:

@@ -1,0 +1,11 @@
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+web/node_modules
+web/dist
+web/test-results
+web/playwright-report
+web/tsconfig.tsbuildinfo
+engine/*.egg-info
+engine/build

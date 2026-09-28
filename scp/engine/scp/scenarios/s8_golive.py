@@ -40,8 +40,9 @@ def build() -> dict:
         "products": [
             {"id": "JAM", "name": "Strawberry jam", "type": "FG", "weight_kg": 0.45, "price": 4},
             {"id": "GIFT", "name": "Gift box", "type": "FG", "price": 20},                     # no weight
-            {"id": "FRUIT", "name": "Strawberries", "type": "RM", "weight_kg": 1, "shelf_life_days": 5},
-            {"id": "JAR", "name": "Jar and lid", "type": "PKG", "weight_kg": 0.2},
+            {"id": "FRUIT", "name": "Strawberries", "type": "RM", "weight_kg": 1, "shelf_life_days": 5,
+             "cold_chain": True},
+            {"id": "JAR", "name": "Jar and lid", "type": "PKG", "weight_kg": 0.2, "serial_numbers": True},
             {"id": "SUGAR", "name": "Sugar", "type": "RM", "weight_kg": 1},
             {"id": "LABEL", "name": "Label", "type": "PKG"},
         ],
@@ -82,10 +83,12 @@ def build() -> dict:
             {"id": "L-PD", "origin": "PLANT", "destination": "DC", "products": ["JAM"], "modes": [{"transit_days": 2}]},
             {"id": "L-DC", "origin": "DC", "destination": "CUST", "modes": [{"transit_days": 1, "cost_per_kg": 0.05}]},
             {"id": "L-BACK", "origin": "DC", "destination": "PLANT", "products": ["JAM"], "modes": [{"transit_days": 2}]},
+            {"id": "L-FARM", "origin": "SUP-F", "destination": "PLANT", "products": ["FRUIT"],
+             "modes": [{"transit_days": 1}]},                                            # chilled fruit, dry truck
         ],
         "demand": [
             *[{"location": "CUST", "product": p, "date": (START + dt.timedelta(weeks=w)).isoformat(), "qty": q,
-               "period_days": 7} for w in range(4) for p, q in (("JAM", 90), ("GIFT", 10))],
+               "period_days": 7, "released": True} for w in range(4) for p, q in (("JAM", 90), ("GIFT", 10))],
             {"location": "DC", "product": "JAM", "date": START.isoformat(), "qty": 15},        # trade counter
             {"location": "PLANT", "product": "LABEL", "date": START.isoformat(), "qty": 500},  # spare labels, MTO
             {"id": "SO-9", "location": "CUST", "product": "JAM-XL", "date": "2026-07-09", "qty": 12, "kind": "sales_order"},
@@ -96,6 +99,7 @@ def build() -> dict:
         "npi": [{"location": "CUST", "product": "GIFT", "like_product": "FRUIT", "launch_date": START.isoformat()},
                 {"location": "CUST", "product": "GIFT", "like_product": "JAM", "scale": 0.1,
                  "launch_date": START.isoformat()}],
+        "forecasting": {"released_inputs": "before-the-overrides"},   # the overrides came after the release
         "overrides": [{"location": "CUST", "product": "JAM", "date": "2026-09-01", "qty": 120},
                       {"location": "DC", "product": "JAM", "date": "2026-07-15", "qty": 30}],
         "confirmations": [{"order": "SO-GONE", "ship_from": "DC", "ship_date": "2026-07-07", "date": "2026-07-08",
@@ -110,10 +114,16 @@ def build() -> dict:
         "purchase_orders": [{"id": "PO-100", "supplier": "SUP-F", "location": "PLANT", "order_date": "2026-07-01"},
                             {"id": "PO-200", "supplier": "SUP-OLD", "location": "PLANT", "order_date": "2026-06-20"}],
         "movements": [
-            {"id": "GM-1", "date": "2026-07-01", "type": "opening", "location": "PLANT", "product": "FRUIT", "qty": 300},
+            {"id": "GM-1", "date": "2026-07-01", "type": "opening", "location": "PLANT", "product": "FRUIT", "qty": 300,
+             "batch": "F-0701"},                                                          # expired on the 3rd
             {"id": "GM-2", "date": "2026-07-02", "type": "issue", "location": "PLANT", "product": "JAR", "qty": 50,
              "reference": "PRD-404"},
+            {"id": "GM-3", "date": "2026-07-03", "type": "receipt", "location": "PLANT", "product": "JAR", "qty": 10,
+             "batch": "J-9", "serials": ["J-0001", "J-0002"]},                            # no batch record, 2 serials
+            {"id": "GM-4", "date": "2026-07-03", "type": "receipt", "location": "PLANT", "product": "JAR", "qty": 10,
+             "reversal_of": "GM-99", "serials": [f"J-{i:04d}" for i in range(1, 11)]},     # takes back a lost posting
         ],
+        "batches": [{"product": "FRUIT", "id": "F-0701", "made_on": "2026-07-01", "expires_on": "2026-07-03"}],
     }
 
 
@@ -134,6 +144,8 @@ ERRORS = {
 WARNINGS = {
     ("CONFIRMATION_ORPHAN", "confirmation", "#0"), ("DEMAND_OUTSIDE_HORIZON", "demand", "*"),
     ("DEMAND_PAST_DUE", "demand", "*"), ("HISTORY_AFTER_START", "history", "*"),
+    ("FORECAST_TWICE", "demand", "DC/JAM"),  # the DC's trade counter sells jam too: both are meant
+    ("FORECAST_INPUTS_CHANGED", "demand", "*"),
     ("LOCATION_PRODUCT_DEFAULTED", "location_product", "PLANT/JAR"), ("MOVEMENT_REF_UNKNOWN", "movement", "GM-2"),
     ("MTO_WITH_FORECAST", "location_product", "PLANT/LABEL"), ("NEGATIVE_STOCK", "location_product", "PLANT/JAR"),
     ("NPI_DUPLICATE", "npi", "CUST/GIFT"), ("NPI_LIKE_WITHOUT_HISTORY", "npi", "CUST/GIFT"),
@@ -147,7 +159,9 @@ WARNINGS = {
     ("RESOURCE_UNUSED", "resource", "OLD-OVEN"), ("SHELF_LIFE_VS_LEAD_TIME", "location_product", "PLANT/FRUIT"),
     ("SOURCE_NOT_VALID_IN_HORIZON", "purchasing_source", "PU-JAR"),
     ("SS_AND_SAFETY_TIME", "location_product", "PLANT/JAM"), ("STOCK_AT_CUSTOMER", "location_product", "CUST/JAM"),
-    ("STOCK_NOT_SYNCED", "location_product", "PLANT/FRUIT"),
+    ("STOCK_NOT_SYNCED", "location_product", "PLANT/FRUIT"), ("STOCK_EXPIRED", "location_product", "PLANT/FRUIT"),
+    ("BATCH_UNKNOWN", "movement", "GM-3"), ("SERIALS_COUNT", "movement", "GM-3"),
+    ("REVERSAL_UNKNOWN", "movement", "GM-4"), ("COLD_CHAIN_LANE", "lane", "L-FARM"),
 }
 
 

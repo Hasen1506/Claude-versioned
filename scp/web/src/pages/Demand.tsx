@@ -7,9 +7,10 @@ import { BucketChart, type Mark, type Span } from "../components/charts";
 import { DemandPlan } from "./DemandPlan";
 import {
   Badge, cols, Edits, Empty, Panel, Provenance, Reading, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
+  MoreRows, ROW_LIMIT,
 } from "../components/ui";
 import { day, pct, plural, qty } from "../lib/format";
-import { Loc, namesOf, Prod } from "../lib/names";
+import { Loc, namesOf, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
@@ -29,6 +30,7 @@ export function Demand({ route }: { route: string[] }) {
   const fc = run.data;
   const stale = useStore((s) => isStale(s, "forecast"));
   const blocking = useStore((s) => s.validation?.blocking ?? false);
+  const outdated = useStore((s) => (s.validation?.issues ?? []).some((i) => i.code === "FORECAST_INPUTS_CHANGED"));
   const ds = useStore((s) => s.dataset)!;
   const view = ((route[1] as View) || "plan") as View;
   const [released, setReleased] = useState<ReleaseInfo | null>(null);
@@ -72,7 +74,12 @@ export function Demand({ route }: { route: string[] }) {
     ...(fc?.ok && fc.series.length ? [{ id: "series" as View, label: "Series workbench", count: fc.series.length }, { id: "consensus" as View, label: "Consensus grid" }] : []),
     { id: "settings", label: "Forecast settings" },
   ]} />;
-  const body = (children: React.ReactNode) => <div>{head}<div className="content">{tabs}{children}</div></div>;
+  const notYet = outdated && !released && <div className="banner warning" role="status">
+    <span><b>Not in the plan yet:</b> a demand event, new-product rule, override or forecast setting changed after the forecast was
+      last used in the supply plan. Recalculate the forecast and press <i>Use this forecast in the supply plan</i>.</span>
+    {view === "plan" && <><span className="spacer" /><button className="btn sm" onClick={() => go("demand", "overview")}>Open the forecast</button></>}
+  </div>;
+  const body = (children: React.ReactNode) => <div>{head}<div className="content">{tabs}{notYet}{children}</div></div>;
   if (view === "plan") return body(<>{released && <ReleaseBanner info={released} ds={ds} onClose={() => setReleased(null)} />}<DemandPlan ds={ds} /></>);
 
   if (run.error) return body(<div className="banner error"><Badge sev="error">Forecast failed</Badge>{run.error}</div>);
@@ -85,7 +92,7 @@ export function Demand({ route }: { route: string[] }) {
         {blocking ? <a className="btn" href={href("readiness")}>Open readiness</a>
           : (ds.history?.length ?? 0) === 0 ? <><p>A forecast needs past sales: one row per place, product, date and quantity sold. Upload them in
             Sales history, or skip the forecast and <a href={href("demand", "plan")}>enter the demand plan directly</a>.</p>
-            <a className="btn" href={href("data", "history")}>Upload sales history</a></>
+            <a className="btn" href={href("data", "history", "upload")}>Upload sales history</a></>
           : <p>Run the forecast to see every series' leaderboard, cleansed history, forecast range and consensus grid.</p>}
       </Empty></Panel>
       <ForecastSettingsPanel ds={ds} />
@@ -105,11 +112,15 @@ export function Demand({ route }: { route: string[] }) {
 
 // ------------------------------------------------------------------------------------------------
 interface ReleaseInfo {
-  records: number; series: number; replaced: number; at: string;
+  records: number; series: number; replaced: number; at: string; dropped?: { location: string; product: string }[];
+  made_to_order?: { location: string; product: string }[];
   cv_suggestions: { location: string; product: string; current: number | null; suggested: number }[];
 }
 
 function ReleaseBanner({ info, ds, onClose }: { info: ReleaseInfo; ds: Dataset; onClose: () => void }) {
+  const nm = useNames();
+  const gone = info.dropped ?? [];
+  const mto = info.made_to_order ?? [];
   const apply = () => store.update((d) => {
     for (const c of info.cv_suggestions) {
       const lp = d.location_products?.find((x) => x.location === c.location && x.product === c.product);
@@ -121,7 +132,11 @@ function ReleaseBanner({ info, ds, onClose }: { info: ReleaseInfo; ds: Dataset; 
     <div className="banner info">
       <Badge sev="ok">Released</Badge>
       <span>{info.records} forecast records for {info.series} series written to demand at {info.at} (replaced {info.replaced}).
-        The supply plan is now stale. Undo reverts the release.</span>
+        {gone.length > 0 && <> Removed the forecast an earlier release wrote for {gone.length === 1 ? "a series" : `${gone.length} series`} this
+          one no longer has: {gone.map((g) => `${nm.prod(g.product)} at ${nm.loc(g.location)}`).join(", ")}.</>}
+        {mto.length > 0 && <> Not written: {mto.map((g) => `${nm.prod(g.product)} at ${nm.loc(g.location)}`).join(", ")}, made to
+          order there, so customer orders drive {mto.length === 1 ? "it" : "them"}.</>}
+        {" "}The supply plan is now stale. Undo reverts the release.</span>
       <span className="spacer" />
       {applicable.length > 0 && <Edits><button className="btn sm" onClick={apply}>Size safety stock from forecast error ({applicable.length} item{applicable.length === 1 ? "" : "s"})</button></Edits>}
       <a className="btn sm" href={href("plan")}>Open supply plan</a>
@@ -229,7 +244,7 @@ function SeriesTable({ series }: { series: ForecastSeries[] }) {
         <thead><tr><th>Location</th><th>Product</th><th>ABC</th><th>XYZ</th><th>Pattern</th><th>Champion</th>
           <th className="num">WAPE</th><th className="num">Bias</th><th className="num">Value added</th><th className="num">Next 4 periods</th></tr></thead>
         <tbody>
-          {series.map((s) => {
+          {series.slice(0, ROW_LIMIT).map((s) => {
             const champ = s.leaderboard.find((m) => m.model === s.champion);
             const next = s.forecast.slice(0, 4).reduce((a, p) => a + p.final, 0);
             return (
@@ -247,6 +262,7 @@ function SeriesTable({ series }: { series: ForecastSeries[] }) {
           })}
         </tbody>
       </table>
+      <MoreRows shown={ROW_LIMIT} total={series.length} what="series" how="Click a cell of the matrix to narrow it, or find one in the series workbench." />
     </div>
   );
 }
@@ -263,7 +279,7 @@ function Workbench({ fc, sel }: { fc: ForecastResult; sel?: string }) {
         <div className="table-wrap" style={{ maxHeight: "calc(100vh - 260px)" }}>
           <table className="t">
             <tbody>
-              {list.map((s) => (
+              {list.slice(0, ROW_LIMIT).map((s) => (
                 <tr key={s.key} className={`clickable ${s.key === current.key ? "selected" : ""}`} onClick={() => go("demand", "series", s.key)}>
                   <td><b><Prod id={s.product} /></b><div className="faint small">{s.location}</div></td>
                   <td className="num"><Badge>{s.segment.abc}{s.segment.xyz}</Badge></td>
@@ -271,6 +287,7 @@ function Workbench({ fc, sel }: { fc: ForecastResult; sel?: string }) {
               ))}
             </tbody>
           </table>
+          <MoreRows shown={ROW_LIMIT} total={list.length} what="series" how="Type in the filter to find one." />
         </div>
       </Panel>
       <SeriesDetail s={current} fc={fc} />
@@ -410,6 +427,10 @@ function Consensus({ fc, ds }: { fc: ForecastResult; ds: Dataset }) {
   const periods = fc.series[0]?.forecast ?? [];
   const totals = periods.map((_, i) => fc.series.reduce((a, s) => a + s.forecast[i].final, 0));
   const nm = namesOf(ds);
+  // a grid of every series would be thousands of rows of inputs: the first ones, and a filter to find the rest
+  const [q, setQ] = useState("");
+  const rows = q ? fc.series.filter((s) => `${s.product} ${nm.prod(s.product)} ${s.location} ${nm.loc(s.location)}`.toLowerCase().includes(q.toLowerCase())) : fc.series;
+  const GRID_ROWS = 100;
   const setOverride = (s: ForecastSeries, p: ForecastPoint, raw: string) => {
     const v = raw.trim() === "" ? null : Number(raw);
     if (v !== null && (!Number.isFinite(v) || v < 0)) return;
@@ -423,12 +444,13 @@ function Consensus({ fc, ds }: { fc: ForecastResult; ds: Dataset }) {
     <div className="stack">
       <div className="banner info">Type a quantity into a cell to set a consensus override for that period; clear it to fall back to the
         statistical forecast. The forecast re-runs after each edit. {ds.overrides?.length ?? 0} overrides in the dataset.</div>
-      <Panel flush><Edits>
+      <Panel flush title={fc.series.length > GRID_ROWS ? <input className="input" placeholder="Find a product or place…" value={q}
+        onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 260 }} aria-label="Find series" /> : undefined}><Edits>
         <div className="table-wrap" style={{ maxHeight: "calc(100vh - 290px)" }}>
           <table className="t nowrap">
             <thead><tr><th className="stub">Series</th>{periods.map((p) => <th key={p.start} className="num">{p.label.replace(/^W\d+ /, "")}</th>)}</tr></thead>
             <tbody>
-              {fc.series.map((s) => (
+              {rows.slice(0, GRID_ROWS).map((s) => (
                 <tr key={s.key}>
                   <td className="stub"><a href={href("demand", "series", s.key)}>{nm.prod(s.product)}</a> <span className="faint small">{nm.loc(s.location)}</span></td>
                   {s.forecast.map((p) => (
@@ -442,9 +464,10 @@ function Consensus({ fc, ds }: { fc: ForecastResult; ds: Dataset }) {
                   ))}
                 </tr>
               ))}
-              <tr className="emph"><td className="stub">Total</td>{totals.map((t, i) => <td key={i} className="num">{qty(t)}</td>)}</tr>
+              <tr className="emph"><td className="stub">Total{fc.series.length > GRID_ROWS ? " (every series)" : ""}</td>{totals.map((t, i) => <td key={i} className="num">{qty(t)}</td>)}</tr>
             </tbody>
           </table>
+          <MoreRows shown={GRID_ROWS} total={rows.length} what="series" how="Find a product or place to see its row." />
         </div>
       </Edits></Panel>
     </div>

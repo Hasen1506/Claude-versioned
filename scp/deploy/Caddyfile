@@ -1,0 +1,13 @@
+# The public name of the application; Caddy gets and renews its certificate.
+plan.example.com {
+	encode gzip
+	request_body {
+		max_size 256MB
+	}
+	reverse_proxy scp:8000 {
+		transport http {
+			read_timeout 15m
+			write_timeout 15m
+		}
+	}
+}

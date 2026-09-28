@@ -4,6 +4,7 @@
 // this browser could not keep a company that exists only here.
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
+import type { Clash } from "../api/types";
 import { href, go } from "../lib/router";
 import { store, unsaved, useStore } from "../state/store";
 
@@ -52,9 +53,11 @@ export function SaveBanner() {
   const version = useStore((s) => s.version);
   const [busy, setBusy] = useState(false);
   const [merged, setMerged] = useState<string | null>(null);
+  const [clashes, setClashes] = useState<Clash[] | null>(null);
   const [refusedShown, setRefusedShown] = useState(false);
+  const canUndo = useStore((s) => s.canUndo);
   const revision = company?.revision;
-  useEffect(() => setMerged(null), [revision]);   // what a merge did is news until the next save
+  useEffect(() => { setMerged(null); setClashes(null); }, [revision]);   // what a merge did is news until the next save
   useEffect(() => {
     if (!save.refused) return;
     setRefusedShown(true);
@@ -99,16 +102,30 @@ export function SaveBanner() {
       }}>Make this the live data</button>}
     </div>;
   }
+  if (save.status === "conflict" && save.conflict && clashes) {
+    return <ClashChooser by={save.conflict.by} clashes={clashes} busy={busy}
+      onCancel={() => setClashes(null)}
+      onMerge={async (choose) => {
+        setBusy(true);
+        try { setMerged(await store.mergeMine(choose)); setClashes(null); }
+        catch (e) { setMerged(e instanceof Error ? e.message : String(e)); setClashes(null); }
+        finally { setBusy(false); }
+      }} />;
+  }
   if (save.status === "conflict" && save.conflict) {
     const c = save.conflict;
     return <div className="banner error save-banner" role="alert">
       <span><b>Not saved: {c.by} saved {company.name} {when(c.at)}</b>, after your changes began. Your changes are still here,
-        on this screen only. <b>Merge</b> keeps both: what only one of you changed is taken, and an order you both took
-        under the same number gets the next number.</span>
+        on this screen only. <b>Merge</b> keeps both: what only one of you changed is taken, an order you both took
+        under the same number gets the next number, and where you both changed a record you choose whose to keep.</span>
       <span className="spacer" />
       <button className="btn sm accent" disabled={busy} onClick={async () => {
         setBusy(true);
-        try { setMerged(await store.mergeMine()); } catch (e) { setMerged(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+        try {
+          const rep = await store.previewMerge();
+          if (rep.clashes?.length) setClashes(rep.clashes);
+          else setMerged(await store.mergeMine());
+        } catch (e) { setMerged(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
       }}>Merge both</button>
       <button className="btn sm" disabled={busy} onClick={async () => {
         if (!window.confirm(`Drop your unsaved changes and open ${c.by}'s save?`)) return;
@@ -122,11 +139,24 @@ export function SaveBanner() {
       <button className="btn sm ghost" onClick={download}>Download mine</button>
     </div>;
   }
-  if (merged) {
+  const news = merged ?? save.merged;
+  if (news) {
     return <div className="banner ok save-banner" role="status">
-      <span>{merged}</span><span className="spacer" />
+      <span>{news}</span><span className="spacer" />
       <a href={href("history")}>History</a>
-      <button className="btn sm ghost" onClick={() => setMerged(null)}>OK</button>
+      <button className="btn sm ghost" onClick={() => { setMerged(null); store.clearMerged(); }}>OK</button>
+    </div>;
+  }
+  if (save.status === "failed" && save.error?.includes("your rights cover")) {
+    return <div className="banner error save-banner" role="alert">
+      <span><b>Not saved:</b> {save.error}.</span>
+      <span className="spacer" />
+      {canUndo && <button className="btn sm" onClick={() => store.undo()}>Undo the last change</button>}
+      <button className="btn sm" disabled={busy} onClick={async () => {
+        if (!window.confirm(`Drop every change not yet saved and open ${company.name} as it was last saved?`)) return;
+        await reopen();
+      }}>Drop my unsaved changes</button>
+      <button className="btn sm ghost" onClick={download}>Download them</button>
     </div>;
   }
   if (save.status === "failed") {
@@ -152,4 +182,75 @@ export function SaveBanner() {
     </div>;
   }
   return null;
+}
+
+/** A value as it reads in the side-by-side choice. */
+function shown(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "—";
+  if (typeof v === "number") return v.toLocaleString("en-IN", { maximumFractionDigits: 4 });
+  if (typeof v === "boolean") return v ? "yes" : "no";
+  const s = typeof v === "string" ? v : JSON.stringify(v);
+  return s.length > 60 ? `${s.slice(0, 57)}…` : s;
+}
+
+/** Each record both people changed, their two versions side by side, and whose to keep (N65). Records that belong
+ *  together (an order and its promises) are chosen as one, so an order never keeps one person's quantity and its
+ *  promise the other's. */
+function ClashChooser({ by, clashes, busy, onMerge, onCancel }: {
+  by: string; clashes: Clash[]; busy: boolean;
+  onMerge: (choose: Record<string, "mine" | "theirs">) => void; onCancel: () => void;
+}) {
+  const groups = [...new Set(clashes.map((c) => c.group || c.id))];
+  const [pick, setPick] = useState<Record<string, "mine" | "theirs">>(() =>
+    Object.fromEntries(groups.map((g) => [g, clashes.find((c) => (c.group || c.id) === g)!.kept as "mine" | "theirs"])));
+  const all = (w: "mine" | "theirs") => setPick(Object.fromEntries(groups.map((g) => [g, w])));
+  const nMine = Object.values(pick).filter((w) => w === "mine").length;
+  const choose = () => Object.fromEntries(clashes.map((c) => [c.id, pick[c.group || c.id]]));
+  const pretty = (r: string) => r.replace(/ \| /g, " · ").replace(/_/g, " ");
+  return <div className="banner warning save-banner clash-chooser" role="alertdialog" aria-label="Choose whose change to keep">
+    <div className="clash-head">
+      <b>You and {by} both changed {groups.length === 1 ? "one record" : `${groups.length} records`}.</b> Everything
+      else is merged. Choose whose version to keep for each:
+      <span className="spacer" />
+      <button className="btn sm ghost" disabled={busy} onClick={() => all("mine")}>All mine</button>
+      <button className="btn sm ghost" disabled={busy} onClick={() => all("theirs")}>All {by}'s</button>
+    </div>
+    <div className="clash-list">
+      {groups.map((g) => {
+        const cs = clashes.filter((c) => (c.group || c.id) === g);
+        const order = cs.some((c) => c.list === "orders and forecasts") && cs.length > 1;
+        const title = order ? `Order ${g} and its promise${cs.length > 2 ? "s" : ""}`
+          : cs.length > 1 ? `${g}: ${[...new Set(cs.map((c) => c.list))].join(", ")}`
+          : `${cs[0].list}${cs[0].record ? ":" : ""} ${pretty(cs[0].record)}`;
+        return <fieldset key={g} className="clash">
+          <legend>{title}</legend>
+          <div className="table-wrap"><table className="t small">
+            <thead><tr><th>Field</th><th>Before</th>
+              <th><label><input type="radio" name={`k-${g}`} checked={pick[g] === "mine"} disabled={busy}
+                onChange={() => setPick({ ...pick, [g]: "mine" })} /> Yours</label></th>
+              <th><label><input type="radio" name={`k-${g}`} checked={pick[g] === "theirs"} disabled={busy}
+                onChange={() => setPick({ ...pick, [g]: "theirs" })} /> {by}'s</label></th></tr></thead>
+            <tbody>
+              {cs.map((c) => [
+                c.mine_removed || c.theirs_removed
+                  ? <tr key={`${c.id}-rm`}><td>{cs.length > 1 ? `${c.list}: ` : ""}the record</td><td>—</td>
+                    <td>{c.mine_removed ? <i>removed</i> : "changed"}</td><td>{c.theirs_removed ? <i>removed</i> : "changed"}</td></tr>
+                  : null,
+                ...c.fields.map((f) => <tr key={`${c.id}-${f.path}`}>
+                  <td>{cs.length > 1 ? `${c.list}: ` : ""}{f.path.replace(/_/g, " ") || "value"}</td><td className="muted">{shown(f.base)}</td>
+                  <td className={pick[g] === "mine" ? "strong" : ""}>{shown(f.mine)}</td>
+                  <td className={pick[g] === "theirs" ? "strong" : ""}>{shown(f.theirs)}</td></tr>),
+              ])}
+            </tbody>
+          </table></div>
+        </fieldset>;
+      })}
+    </div>
+    <div className="clash-head">
+      <span className="spacer" />
+      <button className="btn sm" disabled={busy} onClick={onCancel}>Back</button>
+      <button className="btn sm accent" disabled={busy} onClick={() => onMerge(choose())}>
+        Merge, keeping {nMine === 0 ? `${by}'s` : nMine === groups.length ? "mine" : `mine for ${nMine}, ${by}'s for ${groups.length - nMine}`}</button>
+    </div>
+  </div>;
 }

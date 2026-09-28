@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { Dataset, PoLineInput, PoView, PurchasingView, Requisition, VendorRow } from "../api/types";
+import type { Dataset, PoLineInput, PoView, PurchasingView, Requisition, ShortOrder, VendorRow } from "../api/types";
 import {
   Badge, Edits, Empty, Panel, Provenance, Reading, RunButton, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
+  MoreRows, ROW_LIMIT,
 } from "../components/ui";
 import { day, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Prod, namesOf } from "../lib/names";
@@ -11,6 +12,7 @@ import { download } from "../lib/tabular";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useFreshResult, useStore } from "../state/store";
+import { LotFields, lotExtra, NO_LOT, ShortOrders, type LotInput } from "./ExecutionStock";
 
 type View = "order" | "orders" | "suppliers";
 type Sev = "error" | "warning" | "info" | "ok";
@@ -85,7 +87,11 @@ function buyingAnswer(res: PurchasingView, window: number) {
 // ------------------------------------------------------------------------------------------------
 function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
   const [all, setAll] = useState(false);
-  const rows = useMemo(() => res.requisitions.filter((r) => all || r.due_now), [res.requisitions, all]);
+  const [q, setQ] = useState("");
+  const nmq = namesOf(ds);
+  const rows = useMemo(() => res.requisitions.filter((r) => (all || r.due_now) && (!q
+    || `${r.id} ${r.product} ${nmq.prod(r.product)} ${r.location} ${nmq.loc(r.location)} ${r.supplier} ${nmq.loc(r.supplier)}`.toLowerCase().includes(q.toLowerCase()))),
+  [res.requisitions, all, q, nmq]);
   const [pick, setPick] = useState<Set<string> | null>(null);
   const chosen = pick ?? new Set(rows.map((r) => r.id));
   const [source, setSource] = useState<Record<string, string>>({});
@@ -133,6 +139,8 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
       {msg && <div className="banner ok" role="status"><div>{msg}</div></div>}
       {err && <div className="banner error" role="alert"><Badge sev="error">Not ordered</Badge>{err}</div>}
       <Panel flush title="Requisitions: the plan's purchases" actions={<>
+        <input className="input" placeholder="Product, place, supplier…" value={q} onChange={(e) => { setQ(e.target.value); setPick(null); }}
+          style={{ maxWidth: 220 }} aria-label="Find requisitions" />
         <label className="row small"><input type="checkbox" checked={all} onChange={(e) => { setAll(e.target.checked); setPick(null); }} /> Show later ones too</label>
         <label className="row small" htmlFor="po-date">Order date <input id="po-date" type="date" className="input" style={{ width: 150 }} value={orderDate}
           min={ds.settings.planning_start} onChange={(e) => setOrderDate(e.target.value || ds.settings.planning_start)} /></label>
@@ -147,7 +155,7 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
               <thead><tr><th aria-label="Order" /><th>Product</th><th>To</th><th className="num">Qty</th><th>Needed</th><th>Order by</th>
                 <th>Supplier</th><th className="num">Price</th><th className="num">Value</th><th>Arrives</th></tr></thead>
               <tbody>
-                {rows.map((r) => {
+                {rows.slice(0, ROW_LIMIT).map((r) => {
                   const c = choiceOf(r);
                   return (
                     <tr key={r.id} className={chosen.has(r.id) ? "selected" : ""}>
@@ -175,6 +183,8 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
                 })}
               </tbody>
             </table>
+            <MoreRows shown={ROW_LIMIT} total={rows.length} what="requisitions"
+              how={`${picked.length === rows.length ? "All of them are ticked" : `${picked.length} are ticked`}: find a product, place or supplier to see the rest.`} />
           </div>
         )}
       </Panel>
@@ -249,13 +259,15 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
   const [mode, setMode] = useState<Mode>(null);
   const open = po.lines.filter((x) => !x.closed);
   const [edit, setEdit] = useState<Record<string, { qty: string; date: string; price: string; final: boolean; on: boolean }>>({});
+  const [lots, setLots] = useState<Record<string, LotInput>>({});
   const [on, setOn] = useState(ds.settings.planning_start);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [short, setShort] = useState<ShortOrder[]>([]);
   const start = (m: Mode) => {
-    setMode(m); setErr(null); setMsg(null); setText("");
+    setMode(m); setErr(null); setMsg(null); setText(""); setLots({});
     setEdit(Object.fromEntries(open.map((x) => [x.id, {
       qty: String(m === "receive" ? Math.round(x.open * 1000) / 1000 : m === "confirm" ? x.confirmed_qty ?? x.ordered : x.ordered),
       date: m === "confirm" ? x.confirmed_date ?? x.due_date : x.due_date, price: x.price == null ? "" : String(x.price), final: false,
@@ -268,7 +280,7 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
       const lines: PoLineInput[] | undefined = action === "approve" || action === "send" ? undefined : open.filter((x) => edit[x.id]?.on).map((x) => {
         const e = edit[x.id];
         return action === "cancel" ? { id: x.id, qty: null, date: null, price: null, final: false }
-          : action === "receive" ? { id: x.id, qty: Number(e.qty), date: null, price: null, final: e.final }
+          : action === "receive" ? { id: x.id, qty: Number(e.qty), date: null, price: null, final: e.final, ...lotExtra(lots[x.id] ?? NO_LOT) }
           : action === "confirm" ? { id: x.id, qty: Number(e.qty), date: e.date, price: null, final: false }
           : { id: x.id, qty: Number(e.qty), date: e.date, price: e.price === "" ? null : Number(e.price), final: false };
       });
@@ -276,6 +288,7 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
       const out = await apply(() => api.poAction(ds, action, po.id, { lines, date: action === "send" || action === "receive" ? on : undefined,
         reference: action === "confirm" ? text : undefined, note: action === "receive" ? text : undefined }));
       setMsg(namesOf(out.dataset).text(out.report.message));
+      setShort(out.report.short_orders ?? []);
       setMode(null);
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e));
@@ -305,6 +318,7 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
       </div>
       {po.attention.length > 0 && <div className="banner warning" style={{ marginBottom: 10 }}><div>{po.attention.map((a) => <div key={a}>• {a}</div>)}</div></div>}
       {msg && <div className="banner ok" role="status" style={{ marginBottom: 10 }}>{msg}</div>}
+      <ShortOrders list={short} ds={ds} onDone={setMsg} />
       {err && <div className="banner error" role="alert" style={{ marginBottom: 10 }}><Badge sev="error">Not done</Badge>{err}</div>}
       {mode && (
         <div className="row wrap" style={{ gap: 10, marginBottom: 10 }}>
@@ -325,8 +339,11 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
             {po.lines.map((x) => {
               const e = edit[x.id];
               const editing = mode && !x.closed && e;
+              const p = (ds.products ?? []).find((y) => y.id === x.product);
+              const traced = !!p && ((p.batches ?? !!p.shelf_life_days) || !!p.serial_numbers);
               return (
-                <tr key={x.id}>
+                <Fragment key={x.id}>
+                <tr>
                   {mode && <td>{editing && <input type="checkbox" checked={e.on} onChange={(ev) => set(x.id, { on: ev.target.checked })} aria-label={`Include ${x.id}`}
                     disabled={mode === "cancel" && x.received > 1e-6} />}</td>}
                   <td><b>{x.id}</b></td><td><Prod id={x.product} /></td>
@@ -352,6 +369,9 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
                   <td><Badge sev={STATUS_SEV[x.status] ?? "info"}>{x.status}</Badge>{x.days_late > 0 && !x.closed && <span className="small"> {x.days_late} d</span>}
                     {x.last_receipt && <div className="faint small">last in {day(x.last_receipt)}</div>}</td>
                 </tr>
+                {editing && mode === "receive" && traced && e.on && <tr className="sub"><td colSpan={10}>
+                  <LotFields ds={ds} product={x.product} value={lots[x.id] ?? NO_LOT} receiving onChange={(v) => setLots({ ...lots, [x.id]: v })} /></td></tr>}
+                </Fragment>
               );
             })}
           </tbody>

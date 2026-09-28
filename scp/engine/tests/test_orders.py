@@ -61,6 +61,16 @@ def test_an_accepted_order_is_a_sales_order_that_keeps_its_promise():
     assert not [i for i in validate(x2) if i.severity == "error"]
 
 
+def test_an_order_made_to_order_says_its_production_must_be_made_firm():
+    # K: a hotel order promised on new production went late at the roll: the run was only planned, never firmed
+    _, from_stock = accept(ds(shop()), order(6))
+    assert "only planned" not in from_stock.message
+    d = shop()
+    next(lp for lp in d["location_products"] if lp["product"] == "A")["strategy"] = "MTO"
+    _, made = accept(ds(d), order(6))
+    assert "It needs new supply that is only planned: make it firm (Actuals → Open orders & firming)" in made.message
+
+
 def test_a_changed_order_is_promised_again_and_cannot_go_below_what_was_delivered():
     x, _ = accept(ds(shop()), order(6))
     x, rep = change(x, "SO-00001", {"qty": 9, "date": date(2026, 1, 12), "priority": 2})

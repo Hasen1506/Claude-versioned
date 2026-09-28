@@ -15,8 +15,9 @@ from scp.demand.models import (
 from scp.demand.periods import future_periods, history_periods, period_start
 from scp.model import DemandKind, ForecastModelId as M, ForecastPeriod, SelectionMetric
 from scp.plan import run_mrp
+from scp.validate import validate
 
-from .factory import base, ds, load_example
+from .factory import base, ds, example_dict, load_example
 
 
 # ---- periods --------------------------------------------------------------------------------------
@@ -178,6 +179,28 @@ def test_forecast_runs_and_releases_as_pirs():
     assert info.replaced == 1 and info.records == 8 and len(so) == 1 and all(x.period_days == 7 for x in fc)
     assert sum(x.qty for x in fc) == pytest.approx(sum(p.released_qty for p in s.forecast), abs=0.01)
     assert run_mrp(new).ok  # the released forecast plans
+
+
+def test_releasing_every_series_removes_what_earlier_releases_wrote_for_a_series_gone_since():
+    # K: sales wrongly booked at the cold store made a series there; once they are booked to the customer again, the
+    # next release takes the cold store's released forecast out instead of planning it on top of the customer's
+    d = dataset(weekly("K", "A", smooth()))
+    d["locations"].append({"id": "K", "type": "customer"})
+    d["lanes"] = [{"id": "L1", "origin": "P", "destination": "K", "modes": [{"mode": "truck_ftl", "transit_days": 1}]}]
+    d["demand"] = [{"location": "P", "product": "A", "date": "2026-01-12", "qty": 500, "kind": "forecast",
+                    "period_days": 7, "released": True},
+                   {"location": "P", "product": "A", "date": "2026-01-19", "qty": 40, "kind": "forecast"}]
+    assert any(i.code == "FORECAST_TWICE" for i in validate(ds({**d, "demand": d["demand"] + [
+        {"location": "K", "product": "A", "date": "2026-01-12", "qty": 1, "kind": "forecast"}]})))
+    r = run_forecast(ds(d))
+    new, info = release(ds(d), r)
+    left = {(x.location, x.qty) for x in new.demand if x.location == "P"}
+    assert left == {("P", 40)}  # the hand-kept forecast stays; the released one is gone
+    assert [(x.location, x.product) for x in info.dropped] == [("P", "A")] and info.replaced == 1
+    assert all(x.released for x in new.demand if x.location == "K")
+    # releasing one chosen series leaves every other forecast alone
+    _, part = release(ds(d), r, [r.series[0].key])
+    assert part.dropped == [] and part.replaced == 0
 
 
 def test_history_promos_are_cleansed_and_their_lift_measured():
@@ -354,3 +377,62 @@ def test_foundation_disabled_by_default_and_noncommercial_refused(monkeypatch):
     assert s.champion is M.NAIVE
     assert all(sc.model is not M.TIMESFM for sc in s.leaderboard)
     foundation.set_provider(None)
+
+
+def test_a_promotion_added_after_the_release_is_flagged_until_the_forecast_is_used_again():
+    # K: marketing entered a mango promotion after Monday's release; Home said "everything is up to date" and the
+    # plan went on without it
+    d = dataset(weekly("P", "A", smooth()))
+    first, _ = release(ds(d), run_forecast(ds(d)))
+    changed = [i for i in validate(first) if i.code == "FORECAST_INPUTS_CHANGED"]
+    assert not changed
+    start = first.settings.planning_start
+    promo = {"id": "E-1", "kind": "promo", "products": ["A"], "start": str(start), "end": str(start + timedelta(days=6)),
+             "lift": 0.4}
+    later = ds({**first.model_dump(mode="json"), "events": [promo]})
+    assert [i.code for i in validate(later) if i.code == "FORECAST_INPUTS_CHANGED"] == ["FORECAST_INPUTS_CHANGED"]
+    again, _ = release(later, run_forecast(later))
+    assert not [i for i in validate(again) if i.code == "FORECAST_INPUTS_CHANGED"]
+    week = lambda x: sum(r.qty for r in x.demand if r.released and r.date < start + timedelta(days=7))  # noqa: E731
+    assert week(again) == pytest.approx(week(first) * 1.4, rel=0.02)
+
+
+def test_a_product_made_to_order_where_it_is_sold_gets_no_released_forecast():
+    # K: the hotels' catering paneer is made to order; a release wrote a forecast for it anyway (ignored by the plan,
+    # a warning every week)
+    d = dataset(weekly("P", "A", smooth()))
+    d["demand"] = [{"location": "P", "product": "A", "date": "2026-01-12", "qty": 80, "kind": "forecast",
+                    "period_days": 7, "released": True},
+                   {"location": "P", "product": "A", "date": "2026-01-14", "qty": 7, "kind": "sales_order"}]
+    next(lp for lp in d["location_products"] if (lp["location"], lp["product"]) == ("P", "A"))["strategy"] = "MTO"
+    new, info = release(ds(d), run_forecast(ds(d)))
+    assert [(x.kind.value, x.qty) for x in new.demand if x.product == "A"] == [("sales_order", 7)]
+    assert info.records == 0 and info.dropped == []
+    assert [(x.location, x.product) for x in info.made_to_order] == [("P", "A")]
+    assert not [i for i in validate(new) if i.code == "MTO_WITH_FORECAST"]
+
+
+def test_a_series_whose_history_did_not_change_is_not_competed_again(monkeypatch):
+    """Phase S: the model competition of a series depends on its history and the settings only; a forecast after a
+    change elsewhere takes the last one's outcome, and the answer is the one a fresh forecast gives."""
+    from scp.demand import pipeline
+    d = ds(example_dict("kitchenware_network"))
+    monkeypatch.setattr(pipeline, "_last_outcomes", {})
+    first = pipeline.run_forecast(d)
+    ran: list[int] = []
+    real = pipeline._compete_job
+    monkeypatch.setattr(pipeline, "_compete_job", lambda j: ran.append(1) or real(j))
+    monkeypatch.setattr(pipeline, "PARALLEL_MIN_SERIES", 10**9)
+    dearer = d.model_copy(update={"products": [p.model_copy(update={"price": (p.price or 0) * 2}) for p in d.products]})
+    again = pipeline.run_forecast(dearer)
+    assert ran == []                                          # nothing competed again
+    pipeline._last_outcomes.clear()
+    fresh = pipeline.run_forecast(dearer)
+    assert ran and again == fresh                             # the same answer as competing afresh
+    assert first.series[0].forecast == again.series[0].forecast
+    # a changed history is competed again
+    ran.clear()
+    h = d.history[0]
+    shorter = d.model_copy(update={"history": [x for x in d.history if not (x.location == h.location and x.product == h.product and x.date == h.date)]})
+    pipeline.run_forecast(shorter)
+    assert len(ran) == 1

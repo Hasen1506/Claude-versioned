@@ -7,7 +7,10 @@ so a planner can see why a number is what it is.
 """
 from __future__ import annotations
 
+import copy
+import hashlib
 import os
+import threading
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
@@ -17,7 +20,7 @@ from statistics import NormalDist
 import numpy as np
 
 from ..model import (
-    Dataset, DemandKind, DemandRecord, ForecastModelId, ForecastPeriod, NpiRule, OutlierMethod,
+    Dataset, DemandKind, DemandRecord, ForecastModelId, ForecastPeriod, NpiRule, OutlierMethod, Strategy,
 )
 from ..validate import blocks_demand, validate
 from . import foundation as fm
@@ -27,8 +30,8 @@ from .periods import (
     Period, default_season, future_periods, history_periods, label, mean_days, next_start, period_start,
 )
 from .result import (
-    BacktestPoint, CvSuggestion, ForecastPoint, ForecastResult, FoundationStatus, HistoryPoint, ModelScore,
-    ReleaseResult, Segment, Series, Summary,
+    BacktestPoint, CvSuggestion, DroppedSeries, ForecastPoint, ForecastResult, FoundationStatus, HistoryPoint,
+    ModelScore, ReleaseResult, Segment, Series, Summary,
 )
 
 ADI_CUT = 1.32   # Syntetos, Boylan & Croston (2005) demand-pattern boundaries
@@ -332,13 +335,46 @@ def _compete_job(job: tuple) -> Outcome:
     return compete(y, horizon, m, candidates, k=k, h=h, metric=metric, foundation=fpreds)
 
 
+def _cores() -> int:
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:                      # not on Linux
+        return os.cpu_count() or 1
+
+
+#: The last forecast's outcomes by what each series competed on (Phase S): a change elsewhere in the company (a week
+#: of demand, a price) leaves a series' history and settings as they were, and its competition is not run again.
+_last_outcomes: dict[str, Outcome] = {}
+_last_lock = threading.Lock()
+
+
+def _job_key(job: tuple) -> str | None:
+    """What a series' competition depends on, as a key; None for one with a foundation model's forecast in it."""
+    y, n, m, cands, origins, horizon, metric, fb = job
+    if fb is not None:
+        return None
+    return hashlib.sha1(repr((tuple(y), n, m, tuple(str(c) for c in cands), origins, horizon, str(metric))).encode()).hexdigest()
+
+
 def _compete_all(jobs: dict[tuple[str, str], tuple]) -> dict[tuple[str, str], Outcome]:
-    """Series are independent, so large portfolios compete in parallel processes."""
-    workers = min(os.cpu_count() or 1, 8)
-    if len(jobs) < PARALLEL_MIN_SERIES or workers < 2:
-        return {k: _compete_job(j) for k, j in jobs.items()}
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        return dict(zip(jobs, pool.map(_compete_job, jobs.values(), chunksize=4), strict=True))
+    """Series are independent, so large portfolios compete in parallel processes; a series whose competition is the
+    last forecast's takes its outcome from there."""
+    keys = {k: _job_key(j) for k, j in jobs.items()}
+    with _last_lock:
+        known = {k: copy.deepcopy(_last_outcomes[h]) for k, h in keys.items() if h is not None and h in _last_outcomes}
+    todo = {k: j for k, j in jobs.items() if k not in known}
+    workers = min(_cores(), 8)
+    if len(todo) < PARALLEL_MIN_SERIES or workers < 2:
+        made = {k: _compete_job(j) for k, j in todo.items()}
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            chunk = max(1, min(32, len(todo) // (workers * 4)))
+            made = dict(zip(todo, pool.map(_compete_job, todo.values(), chunksize=chunk), strict=True))
+    out = {**known, **made}
+    with _last_lock:
+        _last_outcomes.clear()
+        _last_outcomes.update({h: copy.deepcopy(out[k]) for k, h in keys.items() if h is not None})
+    return {k: out[k] for k in jobs}
 
 
 def _candidates(ds: Dataset, pattern: str, foundation_ok: bool) -> list[ForecastModelId]:
@@ -531,11 +567,26 @@ def _summary(series: list[Series]) -> Summary:
 # ---- release --------------------------------------------------------------------------------------
 def release(ds: Dataset, result: ForecastResult, keys: list[str] | None = None) -> tuple[Dataset, ReleaseResult]:
     """Write the consensus forecast into the dataset as forecast demand (≈ PIRs), replacing the
-    forecast records of the released series. Sales orders are never touched."""
-    chosen = [s for s in result.series if keys is None or s.key in keys]
+    forecast records of the released series. Releasing every series also removes what earlier releases wrote for a
+    series the forecast no longer has (sales that were wrongly attributed and have since been corrected), so it is
+    not planned on top of the right one. A product made to order where it is sold gets no forecast: its customer
+    orders drive it. Forecasts typed or uploaded by hand elsewhere, and sales orders, are never touched."""
+    def mto(loc: str, prod: str) -> bool:
+        lp = ds.demand_lp((loc, prod)) if ds.location_type(loc) is not None else None
+        return lp is not None and lp.strategy is Strategy.MTO
+
+    picked = [s for s in result.series if keys is None or s.key in keys]
+    to_order = {(s.location, s.product) for s in picked if mto(s.location, s.product)}
+    chosen = [s for s in picked if (s.location, s.product) not in to_order]
     released = {(s.location, s.product) for s in chosen}
-    kept = [d for d in ds.demand if not (d.kind is DemandKind.FORECAST and (d.location, d.product) in released)]
+
+    def replace(d: DemandRecord) -> bool:
+        return d.kind is DemandKind.FORECAST and ((d.location, d.product) in released | to_order
+                                                  or (keys is None and d.released))
+
+    kept = [d for d in ds.demand if not replace(d)]
     replaced = len(ds.demand) - len(kept)
+    dropped = sorted({(d.location, d.product) for d in ds.demand if replace(d)} - released - to_order)
     new: list[DemandRecord] = []
     for s in chosen:
         for p in s.forecast:
@@ -545,8 +596,9 @@ def release(ds: Dataset, result: ForecastResult, keys: list[str] | None = None) 
             frm = max(p.start, ds.settings.planning_start)
             days = max(1, round(p.share * (p.end - p.start).days))
             new.append(DemandRecord(location=s.location, product=s.product, date=frm, qty=qty,
-                                    kind=DemandKind.FORECAST, period_days=days))
-    out = ds.model_copy(update={"demand": kept + new})
+                                    kind=DemandKind.FORECAST, period_days=days, released=True))
+    out = ds.model_copy(update={"demand": kept + new, "forecasting": ds.forecasting.model_copy(
+        update={"released_inputs": ds.forecast_inputs()})})
     cv: list[CvSuggestion] = []
     for s in chosen:
         lp = ds.location_product_by_key.get((s.location, s.product))
@@ -554,4 +606,8 @@ def release(ds: Dataset, result: ForecastResult, keys: list[str] | None = None) 
             cv.append(CvSuggestion(location=s.location, product=s.product, current=lp.safety_stock.demand_cv,
                                    suggested=round(s.demand_cv_weekly, 4)))
     return Dataset.model_validate(out.model_dump()), ReleaseResult(records=len(new), series=len(chosen),
-                                                                  replaced=replaced, cv_suggestions=cv)
+                                                                  replaced=replaced, cv_suggestions=cv,
+                                                                  dropped=[DroppedSeries(location=loc, product=prod)
+                                                                           for loc, prod in dropped],
+                                                                  made_to_order=[DroppedSeries(location=loc, product=prod)
+                                                                                 for loc, prod in sorted(to_order)])

@@ -80,7 +80,7 @@ export function App() {
         {item?.tabs && <SectionTabs item={item} page={page} />}
         <SaveBanner />
         {page === "proof" ? <Proof route={route} />
-          : page === "account" ? <Account />
+          : page === "account" ? <Account route={route} />
           : !ds ? <div className="content"><Welcome /></div>
           : page === "data" ? <MasterData route={route} />
           : page === "settings" ? <MasterData route={["data", "settings"]} />
@@ -287,8 +287,22 @@ function Welcome() {
     api.examples().then(setExamples).catch((e) => setErr(String(e)));
   }, [locked, config, session]);
   const [starting, setStarting] = useState(false);
-  const blank = (v: CompanyValues) => {
-    store.load(blankCompany(v));
+  const [createErr, setCreateErr] = useState<string | null>(null);
+  const blank = async (v: CompanyValues) => {
+    const ds = blankCompany(v);
+    // signed in: the company is kept on the server from the start (R28), not first in this browser only
+    if (session) {
+      setCreateErr(null);
+      try {
+        const m = await api.createCompany(ds, "created");
+        store.openCompany(await api.company(m.id));
+        go("setup");
+        return;
+      } catch (e) {
+        setCreateErr(`Not kept on the server (${e instanceof Error ? e.message : String(e)}): it is in this browser only for now.`);
+      }
+    }
+    store.load(ds);
     go("setup");
   };
   return (
@@ -333,6 +347,8 @@ function Welcome() {
             : <div><button className="btn" onClick={() => setStarting(true)}>Start with an empty company</button></div>}
           <p className="muted small">Or open a file you exported earlier with <b>Import a file</b>, top right.</p>
           {!session && <p className="muted small">To work on it with colleagues and keep it safe on the server, <a href={href("account")}>sign in</a>.</p>}
+          {session && <p className="muted small">Signed in as {session.user.name}: the company is kept on the server, and you are its owner.</p>}
+          {createErr && <div className="banner warning">{createErr}</div>}
         </section>
       </div>}
       <p className="welcome-proof">Can you trust the numbers? Eight companies were worked out by hand and checked against the engine

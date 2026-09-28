@@ -1,7 +1,7 @@
 // Sign-in and the companies kept on the server (Phase I, Q14): sign in or make an account, open a company, keep the
 // company in this browser on the server, and (for an owner) say who may see and change it.
 import { useCallback, useEffect, useState } from "react";
-import { api } from "../api/client";
+import { api, SSO_START } from "../api/client";
 import type { AuthConfig, CompanyMeta, Member } from "../api/types";
 import { Badge, Empty, Panel, StageHeader } from "../components/ui";
 import { when } from "../components/SaveStatus";
@@ -25,7 +25,8 @@ export function useAuthConfig(): AuthConfig | null {
 /** Sign in, or make an account. */
 export function SignIn({ config, onDone }: { config: AuthConfig | null; onDone?: () => void }) {
   const canSignUp = !config || config.signup === "open" || config.first_account || config.signup === "invite";
-  const [mode, setMode] = useState<"in" | "up">(config?.first_account ? "up" : "in");
+  const [mode, setMode] = useState<"in" | "up" | "forgot">(config?.first_account ? "up" : "in");
+  const [sent, setSent] = useState<string | null>(null);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
@@ -37,6 +38,12 @@ export function SignIn({ config, onDone }: { config: AuthConfig | null; onDone?:
     setBusy(true);
     setErr(null);
     try {
+      if (mode === "forgot") {
+        const r = await api.resetRequest(email);
+        setSent(r.mail ? `If ${email} has an account here, a link to set a new password is on its way (it works for an hour).`
+          : "This server sends no mail. Ask an owner of your company to make you a link to set a new password (Sign in and companies → people), or the server's administrator.");
+        return;
+      }
       const s = mode === "in" ? await api.signIn(email, password) : await api.signUp(email, name, password);
       store.signedIn({ token: s.token, user: s.user });
       setPassword("");
@@ -48,7 +55,11 @@ export function SignIn({ config, onDone }: { config: AuthConfig | null; onDone?:
     }
   };
   return (
-    <form className="signin stack" onSubmit={submit} aria-label={mode === "in" ? "Sign in" : "Make an account"}>
+    <form className="signin stack" onSubmit={submit} aria-label={mode === "in" ? "Sign in" : mode === "up" ? "Make an account" : "Forgot your password"}>
+      {config?.sso && mode !== "forgot" && <>
+        <a className="btn accent" href={SSO_START}>Sign in with {config.sso}</a>
+        <p className="faint small" style={{ margin: 0 }}>or with an e-mail and a password:</p>
+      </>}
       <div className="row wrap" style={{ gap: 6 }} role="tablist">
         <button type="button" role="tab" aria-selected={mode === "in"} className={`btn sm ${mode === "in" ? "primary" : "ghost"}`} onClick={() => setMode("in")}>Sign in</button>
         {canSignUp && <button type="button" role="tab" aria-selected={mode === "up"} className={`btn sm ${mode === "up" ? "primary" : "ghost"}`} onClick={() => setMode("up")}>Make an account</button>}
@@ -60,11 +71,16 @@ export function SignIn({ config, onDone }: { config: AuthConfig | null; onDone?:
         <input className="input" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
       {mode === "up" && <label className="stack-field"><span>Your name</span>
         <input className="input" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="as colleagues see it in the history" /></label>}
-      <label className="stack-field"><span>Password{mode === "up" && <span className="faint"> (at least 8 characters)</span>}</span>
+      {mode !== "forgot" && <label className="stack-field"><span>Password{mode === "up" && <span className="faint"> (at least 8 characters)</span>}</span>
         <input className="input" type="password" autoComplete={mode === "in" ? "current-password" : "new-password"} required minLength={mode === "up" ? 8 : undefined}
-          value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+          value={password} onChange={(e) => setPassword(e.target.value)} /></label>}
       {err && <div className="banner error" role="alert" style={{ margin: 0 }}>{err}</div>}
-      <div><button className="btn accent" disabled={busy}>{busy ? "…" : mode === "in" ? "Sign in" : "Make the account"}</button></div>
+      {sent && mode === "forgot" && <div className="banner ok" role="status" style={{ margin: 0 }}>{sent}</div>}
+      <div className="row wrap" style={{ gap: 10 }}>
+        <button className={`btn ${config?.sso ? "" : "accent"}`} disabled={busy}>{busy ? "…" : mode === "in" ? "Sign in" : mode === "up" ? "Make the account" : "Send me a link"}</button>
+        {mode === "in" && <button type="button" className="btn ghost sm" onClick={() => { setMode("forgot"); setErr(null); setSent(null); }}>Forgot your password?</button>}
+        {mode === "forgot" && <button type="button" className="btn ghost sm" onClick={() => setMode("in")}>Back to signing in</button>}
+      </div>
     </form>
   );
 }
@@ -110,6 +126,85 @@ export function CompanyList({ onOpened }: { onOpened?: () => void }) {
   );
 }
 
+/** "only Pune cold store, of Paneer" / "every place and product" */
+const limitText = (places: string[], groups: string[]) => !places.length && !groups.length ? "every place and product"
+  : `only ${places.length ? places.join(", ") : "every place"}${groups.length ? `, in the product group${groups.length > 1 ? "s" : ""} ${groups.join(", ")}` : ""}`;
+
+/** "a, b" → ["a", "b"] */
+const listOf = (text: string) => text.split(/[,;\n]/).map((x) => x.trim()).filter(Boolean);
+
+/** A planner's rights limited to places and product groups (an owner edits them; empty: everything). */
+function Limits({ m, id, owner, onSaved }: { m: Member; id: string; owner: boolean; onSaved: (l: Member[], msg: string) => void }) {
+  const ds = useStore((s) => s.dataset);
+  const [open, setOpen] = useState(false);
+  const [places, setPlaces] = useState(m.places.join(", "));
+  const [families, setFamilies] = useState(m.families.join(", "));
+  const [err, setErr] = useState<string | null>(null);
+  const placeName = (x: string) => ds?.locations?.find((l) => l.id === x)?.name ?? x;
+  const text = limitText(m.places.map(placeName), m.families);
+  if (m.role !== "planner") return null;
+  if (!owner || !open) return <div className="faint small">Changes {text}{owner && <> · <button className="linkish" onClick={() => setOpen(true)}>limit</button></>}</div>;
+  const sites = (ds?.locations ?? []).filter((l) => !["customer", "supplier"].includes(l.type)).map((l) => l.id);
+  const groups = [...new Set((ds?.products ?? []).map((p) => p.family).filter(Boolean))];
+  return <form className="stack" style={{ gap: 6, marginTop: 6 }} onSubmit={async (e) => {
+    e.preventDefault();
+    setErr(null);
+    try {
+      const l = await api.setMember(id, m.email, m.role, { places: listOf(places), families: listOf(families) });
+      setOpen(false);
+      onSaved(l, `${m.name || m.email} now changes ${limitText(listOf(places).map(placeName), listOf(families))}.`);
+    } catch (x) { setErr(x instanceof Error ? x.message : String(x)); }
+  }}>
+    <label className="stack-field"><span>Only these places <span className="faint">(empty: every place)</span></span>
+      <input className="input" value={places} onChange={(e) => setPlaces(e.target.value)} placeholder={sites.slice(0, 2).join(", ")} aria-label={`Places ${m.email} may change`} /></label>
+    <label className="stack-field"><span>Only these product groups <span className="faint">(empty: every group)</span></span>
+      <input className="input" value={families} onChange={(e) => setFamilies(e.target.value)} placeholder={groups.slice(0, 2).join(", ")} aria-label={`Product groups ${m.email} may change`} /></label>
+    <span className="faint small">Places here: {sites.join(", ") || "—"}. Groups: {groups.join(", ") || "none set (a product's group is set in Master data → Products)"}.
+      A limited planner also takes orders of the customers those places supply, and changes their suppliers' orders.</span>
+    {err && <div className="banner error" style={{ margin: 0 }}>{err}</div>}
+    <div className="row" style={{ gap: 6 }}><button className="btn sm">Save limits</button>
+      <button type="button" className="btn sm ghost" onClick={() => setOpen(false)}>Cancel</button></div>
+  </form>;
+}
+
+/** A link for a colleague to set a new password, to hand over (a server that sends no mail). */
+function ResetLinkButton({ id, m }: { id: string; m: Member }) {
+  const [link, setLink] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  if (!m.user_id || m.role === "owner") return null;
+  return <div className="small" style={{ marginTop: 4 }}>
+    {!link ? <button className="linkish" onClick={async () => {
+      try { setLink((await api.memberResetLink(id, m.email)).link); } catch (x) { setErr(x instanceof Error ? x.message : String(x)); }
+    }}>Link to set a new password</button>
+      : <span>Give {m.name || m.email} this link (works once, for a day): <input className="input" readOnly value={link} aria-label="Link to set a new password"
+          onFocus={(e) => e.target.select()} style={{ width: "100%", maxWidth: 420 }} /></span>}
+    {err && <span className="banner error">{err}</span>}
+  </div>;
+}
+
+/** Master-data changes wait for a second person's approval (an owner turns it on). */
+function Approval({ id, owner }: { id: string; owner: boolean }) {
+  const [on, setOn] = useState<boolean | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { api.companies().then((l) => setOn(!!l.find((c) => c.id === id)?.approval)).catch(() => setOn(null)); }, [id]);
+  if (on === null) return null;
+  return <div className="stack" style={{ gap: 4 }}>
+    <label className="row small" style={{ gap: 8 }}>
+      <input type="checkbox" checked={on} disabled={!owner} onChange={async (e) => {
+        const want = e.target.checked;
+        setErr(null);
+        setOn(want);
+        try { setOn((await api.setApproval(id, want)).approval ?? false); } catch (x) { setOn(!want); setErr(x instanceof Error ? x.message : String(x)); }
+      }} />
+      <span><b>Master data changes need a second person's approval</b>: places, products, planning policies, machines, ways to make
+        and buy, routes, suppliers, prices, calendars and company settings wait until another planner or owner approves them
+        (in <a href={href("history")}>History</a>). Orders, stock movements and forecasts are saved at once.</span>
+    </label>
+    {!owner && <span className="faint small">Only an owner changes this.</span>}
+    {err && <div className="banner error" style={{ margin: 0 }}>{err}</div>}
+  </div>;
+}
+
 function Members({ id, role }: { id: string; role: string }) {
   const me = useStore((s) => s.session?.user);
   const [list, setList] = useState<Member[] | null>(null);
@@ -140,7 +235,9 @@ function Members({ id, role }: { id: string; role: string }) {
                       onChange={(e) => act(() => api.setMember(id, m.email, e.target.value), `${m.name || m.email} is now ${e.target.value === "owner" ? "an" : "a"} ${e.target.value}.`)}>
                       <option value="owner">owner</option><option value="planner">planner</option><option value="viewer">viewer</option>
                     </select>) : <>{m.role}{m.email === me?.email && <span className="faint"> (you)</span>}</>}
-                    <div className="faint small">{ROLE_TEXT[m.role]}</div></td>
+                    <div className="faint small">{ROLE_TEXT[m.role]}</div>
+                    <Limits key={`${m.email}-${m.places.join()}-${m.families.join()}`} m={m} id={id} owner={owner} onSaved={(l, done) => { setList(l); setMsg(done); }} />
+                    {owner && m.email !== me?.email && <ResetLinkButton id={id} m={m} />}</td>
                   <td className="small">{when(m.since)}</td>
                   {owner && <td>{m.email !== me?.email && <button className="btn sm ghost" aria-label={`Remove ${m.email}`}
                     onClick={() => { if (window.confirm(`Remove ${m.name || m.email} from this company?`)) void act(() => api.removeMember(id, m.email), `${m.name || m.email} removed.`); }}>Remove</button>}</td>}
@@ -187,7 +284,40 @@ function Password() {
   );
 }
 
-export function Account() {
+/** A link from a reset mail (or an owner): choose a new password, and be signed in. */
+function ResetPassword({ token }: { token: string }) {
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  return <Panel title="Choose a new password">
+    <form className="signin stack" onSubmit={async (e) => {
+      e.preventDefault();
+      setErr(null);
+      try {
+        const s = await api.resetPassword(token, pw);
+        store.signedIn({ token: s.token, user: s.user });
+        go("account");
+      } catch (x) { setErr(x instanceof Error ? x.message : String(x)); }
+    }}>
+      <label className="stack-field"><span>New password <span className="faint">(at least 8 characters)</span></span>
+        <input className="input" type="password" autoComplete="new-password" required minLength={8} value={pw} onChange={(e) => setPw(e.target.value)} /></label>
+      {err && <div className="banner error" role="alert" style={{ margin: 0 }}>{err}</div>}
+      <div><button className="btn accent">Set it and sign in</button></div>
+      <p className="faint small" style={{ margin: 0 }}>Setting it signs this account out everywhere else.</p>
+    </form>
+  </Panel>;
+}
+
+/** Back from the company's identity provider: sign in with the token it brought. */
+function SsoDone({ token }: { token: string }) {
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    api.meWith(token).then((me) => { store.signedIn({ token, user: me.user }); go("account"); })
+      .catch((x) => setErr(x instanceof Error ? x.message : String(x)));
+  }, [token]);
+  return err ? <div className="banner error">{err}</div> : <div className="faint">Signing in…</div>;
+}
+
+export function Account({ route = [] }: { route?: string[] }) {
   const session = useStore((s) => s.session);
   const company = useStore((s) => s.company);
   const ds = useStore((s) => s.dataset);
@@ -222,10 +352,14 @@ export function Account() {
       <StageHeader title="Your company on the server" kicker={<>Keep the company on the server instead of only in this browser:
         colleagues can open it, every change is saved as you go, and the history shows who changed what.</>}
         how={<>Each save is a revision. A save made on top of an older revision than the latest is refused, so nobody overwrites
-          a colleague's work unseen. The document of each person's run of saves within ten minutes is kept, so the company can be
-          put back to an earlier state.</>} />
+          a colleague's work unseen, and when two people changed the same record you choose whose to keep. Every save is kept,
+          so the company can be put back to the state just before any of them.</>} />
       <div className="content">
-        {!session ? (
+        {route[1] === "reset" && route[2] ? <ResetPassword token={route[2]} />
+          : route[1] === "sso" && route[2] ? <SsoDone token={route[2]} />
+          : route[1] === "sso-failed" ? <div className="banner error" role="alert">Signing in with the company account did not work: {decodeURIComponent(route[2] ?? "")}</div>
+          : null}
+        {route[1] === "reset" || route[1] === "sso" ? null : !session ? (
           <div className="welcome-grid">
             <section className="hcard">
               <h2 className="q">Sign in</h2>
@@ -260,7 +394,10 @@ export function Account() {
             )}
             {company && (
               <Panel title={`${company.name}: who may see and change it`} actions={<a className="small" href={href("history")}>History →</a>}>
-                <Members id={company.id} role={company.role} />
+                <div className="stack" style={{ gap: 14 }}>
+                  <Members id={company.id} role={company.role} />
+                  <Approval id={company.id} owner={company.role === "owner"} />
+                </div>
               </Panel>
             )}
             <Panel title="Your companies on the server">

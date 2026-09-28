@@ -454,6 +454,9 @@ function Simulate({ ds, onDone }: { ds: Dataset; onDone: (m: string) => void }) 
   const set = (patch: Partial<DemandRecord>) => setOrder((o) => ({ ...o, ...patch }));
   const key = JSON.stringify(order);
   const list = listPrice(ds, order.location, order.product);
+  const nm = useNames();
+  const ref = (order.customer_ref ?? "").trim();
+  const twin = ref ? ds.demand?.find((d) => d.kind === "sales_order" && d.location === order.location && d.customer_ref === ref) : undefined;
   const check = async () => {
     setBusy(true);
     setErr(null);
@@ -502,6 +505,8 @@ function Simulate({ ds, onDone }: { ds: Dataset; onDone: (m: string) => void }) 
               onChange={(e) => set({ price: e.target.value === "" ? null : Number(e.target.value) })} aria-label="Price a unit" /></label>
           <label className="field"><span className="label">Customer's order number</span>
             <input value={order.customer_ref ?? ""} maxLength={64} onChange={(e) => set({ customer_ref: e.target.value })} aria-label="Customer's order number" /></label>
+          {twin && <p className="small" role="status" style={{ color: "var(--warning-text)", margin: 0 }}>Already taken as {twin.id}: {qty(twin.qty)} {nm.prod(twin.product)} for {day(twin.date)}.
+            Taking it again makes a second order.</p>}
           <label className="field"><span className="label">Priority (1 = first)</span>
             <input type="number" min={1} max={9} value={order.priority} onChange={(e) => set({ priority: Number(e.target.value) })} aria-label="Priority" /></label>
           <label className="row small"><input type="checkbox" checked={!!order.complete_delivery} onChange={(e) => set({ complete_delivery: e.target.checked })} />Complete delivery only</label>
@@ -570,7 +575,7 @@ function Bop({ ds, busy, onCommit }: { ds: Dataset; busy: boolean; onCommit: () 
         </div>
       </Panel>
       {err && <div className="banner error"><Badge sev="error">BOP failed</Badge>{err}</div>}
-      {!cur ? <Panel><Empty title="No simulation yet">Simulate to see each order's confirmation before and after, then commit if the result is right.</Empty></Panel> : <>
+      {!cur ? <Panel><Empty title="Nothing re-decided yet"><i>Re-decide who gets scarce stock</i> shows each order's promise before and after; nothing is saved until you press <i>Save these new promised dates</i>.</Empty></Panel> : <>
         <div className="grid-auto">
           <StatTile label="Gained" value={qty(cur.bop.filter((b) => b.outcome === "gained").length)} sub="orders" />
           <StatTile label="Lost" value={qty(cur.bop.filter((b) => b.outcome === "lost").length)} sub="orders to call" />
@@ -597,7 +602,7 @@ function Bop({ ds, busy, onCommit }: { ds: Dataset; busy: boolean; onCommit: () 
         </Panel>
       </>}
       <Reading formula="Win and Gain may not lose (a re-check that comes out worse is rolled back to the old lines); Fill keeps its lines and tops up; Redistribute re-plans from scratch; Lose may keep at most what it had."
-        soWhat="Design the cascade as commercial policy: who is protected, who is topped up, who is re-planned, who gives supply back. Simulate, read the log, then commit." />
+        soWhat="Design the cascade as commercial policy: who is protected, who is topped up, who is re-planned, who gives supply back. Re-decide, read the log, then save the new promised dates." />
     </div>
   );
 }

@@ -1,0 +1,40 @@
+# SCP behind Caddy (HTTPS from Let's Encrypt). Set your host name in Caddyfile and the address below, then:
+#   docker compose -f deploy/compose.yaml up -d
+# Secrets (mail password, single sign-on client secret) go in deploy/scp.env, which is not in the repository:
+#   SCP_SMTP_HOST=smtp.example.com
+#   SCP_SMTP_USER=planning@example.com
+#   SCP_SMTP_PASSWORD=…
+#   SCP_OIDC_ISSUER=https://login.microsoftonline.com/<tenant id>/v2.0
+#   SCP_OIDC_CLIENT_ID=…
+#   SCP_OIDC_CLIENT_SECRET=…
+#   SCP_OIDC_NAME=Microsoft
+services:
+  scp:
+    build: ..
+    image: scp
+    restart: unless-stopped
+    environment:
+      SCP_PUBLIC_URL: https://plan.example.com
+      SCP_BACKUP_DIR: /backups
+    env_file:
+      - path: scp.env
+        required: false
+    volumes:
+      - scp-data:/data
+      - ./backups:/backups
+    expose:
+      - "8000"
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - scp
+volumes:
+  scp-data:
+  caddy-data:

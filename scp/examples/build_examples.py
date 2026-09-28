@@ -530,6 +530,71 @@ def single_product() -> dict:
     }
 
 
+def scale_company(products: int = 5000, places: int = 20, weeks: int = 104, fg_share: float = 0.2,
+                  dcs_per_fg: int = 6, parts_per_fg: int = 4, seed: int = 11) -> dict:
+    """A large fictional company for measuring the engine at a real company's scale (Phase L), not an example
+    in the UI: ``places`` stocking places (two plants, the rest warehouses), ``products`` products of which
+    ``fg_share`` are sold (each at ``dcs_per_fg`` warehouses, made at one plant from ``parts_per_fg`` bought
+    parts) and ``weeks`` of weekly sales history per series. Built on demand by ``scp/engine/scripts/scale.py``."""
+    rng = random.Random(seed)
+    plants = ["PLT-1", "PLT-2"]
+    dcs = [f"DC-{i:02d}" for i in range(1, places - len(plants) + 1)]
+    sups = [f"SUP-{i}" for i in range(1, 9)]
+    n_fg = int(products * fg_share)
+    fgs = [f"FG-{i:05d}" for i in range(1, n_fg + 1)]
+    parts = [f"RM-{i:05d}" for i in range(1, products - n_fg + 1)]
+    families = ["Kitchen", "Laundry", "Personal care", "Snacks", "Beverages", "Home care", "Baby", "Pet"]
+    season = {m: 1 + 0.15 * ((m % 12) in (10, 11, 12, 1)) for m in range(1, 13)}
+    locs = [{"id": p, "name": f"Plant {i + 1}", "type": "plant"} for i, p in enumerate(plants)]
+    locs += [{"id": d, "name": f"Warehouse {d[3:]}", "type": "dc"} for d in dcs]
+    locs += [{"id": s, "name": f"Supplier {s[4:]}", "type": "supplier"} for s in sups]
+    prods = [{"id": f, "name": f"Product {f[3:]}", "type": "FG", "price": round(rng.uniform(40, 900), 2),
+              "family": families[i % len(families)]} for i, f in enumerate(fgs)]
+    prods += [{"id": r, "name": f"Part {r[3:]}", "type": "RM", "standard_cost": round(rng.uniform(1, 60), 2)}
+              for r in parts]
+    lps, sources, buys, history, demand = [], [], [], [], []
+    plant_of = {}
+    used_at: dict[str, set[str]] = {}
+    for i, f in enumerate(fgs):
+        plant = plants[i % len(plants)]
+        plant_of[f] = plant
+        comps = rng.sample(parts, parts_per_fg)
+        for c in comps:
+            used_at.setdefault(c, set()).add(plant)
+        sources.append({"id": f"PV-{f}", "location": plant, "product": f,
+                        "components": [{"product": c, "qty": rng.choice([1, 1, 2, 4])} for c in comps]})
+        lps.append({"location": plant, "product": f, "on_hand": 0})
+        base = rng.uniform(5, 400)
+        for d in rng.sample(dcs, min(dcs_per_fg, len(dcs))):
+            lps.append({"location": d, "product": f, "on_hand": round(base * rng.uniform(1, 3)),
+                        "safety_stock": {"method": "days_of_supply", "days": 7}})
+            first = START - timedelta(weeks=weeks)
+            for w in range(weeks):
+                day = first + timedelta(weeks=w)
+                q = base * season[day.month] * (1 + rng.gauss(0, 0.2))
+                history.append({"location": d, "product": f, "date": day.isoformat(), "qty": max(0, round(q))})
+            for w in range(26):
+                day = START + timedelta(weeks=w)
+                demand.append({"location": d, "product": f, "date": day.isoformat(), "kind": "forecast",
+                               "period_days": 7, "qty": round(base * season[day.month])})
+    for c in parts:
+        for plant in sorted(used_at.get(c, {plants[0]})):
+            lps.append({"location": plant, "product": c, "on_hand": round(rng.uniform(0, 2000))})
+            buys.append({"id": f"PIR-{c}-{plant}", "supplier": rng.choice(sups), "product": c, "location": plant,
+                         "price": round(rng.uniform(1, 60), 2), "lead_time_days": rng.choice([5, 7, 10, 14])})
+    lanes = [{"id": f"LN-{p}-{d}", "origin": p, "destination": d, "modes": [{"mode": "truck_ftl", "transit_days": 2}],
+              "products": [f for f in fgs if plant_of[f] == p]} for p in plants for d in dcs]
+    return {
+        "schema_version": "1",
+        "settings": {"company_name": "Scale test company (fictional)", "currency": "INR",
+                     "planning_start": START.isoformat(), "horizon_days": 182, "bucket": "week",
+                     "default_calendar": "CAL-6D", "default_lot_policy": "POQ", "default_lot_periods": 1},
+        "calendars": [{"id": "CAL-6D", "name": "Mon–Sat", "workdays": [0, 1, 2, 3, 4, 5], "holidays": []}],
+        "locations": locs, "products": prods, "location_products": lps, "production_sources": sources,
+        "purchasing_sources": buys, "lanes": lanes, "demand": demand, "receipts": [], "history": history,
+    }
+
+
 def main() -> None:
     for name, build in (("kitchenware_network", lambda: with_history(with_journal(released(kitchenware())))),
                         ("single_product_plant", single_product)):

@@ -7,6 +7,8 @@ Open items name the roadmap phase that addresses them.
 Phases: **A** get your own company in · **B** master-data depth · **C** capacity and material together ·
 **D** PP/DS-class scheduling · **E** procure-to-pay · **F** execution you can trust · **H** defaults and onboarding ·
 **G** order to cash. Proposed after the second reality check: **I** a real place to keep the company · **J** polish.
+After J: **K** third reality check (six weeks, R-findings) · then **L** platform · **O** stock you can trace ·
+**P** planning depth · **M** order to cash, complete · **N** procure to pay, complete · **Q** connected.
 
 ## Found in the reality check (before Phase A)
 
@@ -129,9 +131,9 @@ Phases: **A** get your own company in · **B** master-data depth · **C** capaci
 | N60 | A viewer's order check went through to *Take this order*; nothing was saved, but the page moved on as if it had been. | Minor | **Fixed (I).** Every engine call that changes the company is refused before it is sent, with the reason; direct edits are refused with a notice. |
 | N61 | Opening a company, merging or putting back left every result empty until *Plan everything*. | Minor | **Fixed (I).** Opening a company plans it. |
 | N62 | A viewer still sees the buttons that change data (they are refused with a reason, not hidden or disabled). | Minor | **Fixed (J).** Buttons and forms that change data are disabled for a viewer, with the reason on hover; anything left is still refused with a notice. |
-| N63 | No password reset: a forgotten password needs the server's administrator (there is no mail sending), and an owner cannot reset a colleague's. | Minor | Open: needs a mail setup or single sign-on (SAP gap below). |
-| N64 | Each save sends the whole company, as every planning call already does. A company of tens of megabytes saves slowly; saving only what changed would be lighter. | Minor | Open. |
-| N65 | Where both people changed the same record, the merge keeps the latest save's version and lists the record; there is no side-by-side choice per record. | Minor | Open. |
+| N63 | No password reset: a forgotten password needs the server's administrator (there is no mail sending), and an owner cannot reset a colleague's. | Minor | **Fixed (L).** *Forgot your password?* mails a one-time link (an hour) when the server has a mail server; without one, an owner gives a planner or viewer *Link to set a new password* (a day) and the administrator has `python -m scp.admin reset-link`. Single sign-on by OpenID Connect (Entra ID, Google, Okta, Keycloak). Setting a new password signs out every other session. |
+| N64 | Each save sends the whole company, as every planning call already does. A company of tens of megabytes saves slowly; saving only what changed would be lighter. | Minor | **Fixed (L).** A save sends the records that changed since the save it was made from (about 1 KB for one edit on the dairy, instead of 385 KB); the whole company only when that base is not known. Planning calls still send the whole company: N77. |
+| N65 | Where both people changed the same record, the merge keeps the latest save's version and lists the record; there is no side-by-side choice per record. | Minor | **Fixed (L).** A clash shows each record side by side, field by field, with *mine* or *theirs* per record (an order and its promises are chosen together), *All mine* and *All theirs*. |
 
 ## Found while building Phase J
 
@@ -152,7 +154,104 @@ Phases: **A** get your own company in · **B** master-data depth · **C** capaci
 | N73 | The worklist's *Where* column and the setup matrix's machine buttons and title still showed ids. | Minor | **Fixed (J+).** |
 | N74 | Beyond the two grids of N70, a viewer could still change the capacity levelling settings, position a DDMRP buffer, set a worklist item's owner or mark it seen or resolved (the server refused), pick a shop-floor profile or method, type into the setup matrix and save a version (refused too). | Minor | **Fixed (J+).** All shown disabled with the reason on hover. |
 | N75 | Multi-line fields (the new addresses) showed one line: the input style fixed their height. | Minor | **Fixed (J+).** |
-| N76 | Screen-reader labels on the inventory placement and buffer tick-boxes still use ids ("Select PLT-PUNE RM-STAMP"). Sighted users see names. | Minor | Open. |
+| N76 | Screen-reader labels on the inventory placement and buffer tick-boxes still use ids ("Select PLT-PUNE RM-STAMP"). Sighted users see names. | Minor | **Fixed (L).** "Select Stamping steel at Pune plant". |
+
+## Found while building Phase L
+
+L was used as it was built: the dairy of K with its three people (saving, merging, history, a forgotten password,
+single sign-on against a test identity provider, rights by plant, a second person approving master data, a backup
+put back), a company of 5,000 products at 20 places with two years of weekly history timed step by step, and the
+container built and run as the deployment guide says.
+
+Measured on 4 cores (5,000 products, 20 places: 11,635 planning policies, 624,000 history rows, 156,000 forecast
+rows, a company of 71 MB), each step as *Plan everything* and a change ask for it:
+
+| Step | Before L | After L |
+|---|---|---|
+| Reading the company | 3.4 s | 3.6 s |
+| Data checks (after every change) | 22.2 s | 6.7 s |
+| Network view (after every change) | 16.1 s | 6.7 s |
+| Supply plan | 89 s, 5.1 GB | 66–78 s, 5.5 GB |
+| Forecast (6,000 series) | about 40 min (300 series: 113 s) | 136 s |
+| Promising | 99 s | 3.1 s |
+| Safety stock | | 30 s |
+| Capacity (S&OP) | | 14 s |
+| Schedule | | 4.7 s |
+| Buying | 45 s | 4.0 s |
+| Actuals | | 9.0 s |
+| Money | 16 s | 17 s |
+| Performance | 24 s | 12 s |
+| Saving one change | 5.1 s | 5–7 s |
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N77 | A large company does not fit the browser. The web client holds the whole company and every result, sends the whole company with each planning call and with the checks after every change (71 MB each time at 5,000 products), and receives every result whole: the supply plan's answer is about 131 MB at 1,000 products (requirements 50 MB, orders 36 MB, pegging 25 MB, places 19 MB) and would be about 650 MB at 5,000. The browser's storage cannot keep it ("storage is full" is shown). Saving is light since N64; planning is not. At 1,000 products (a 14 MB company) the browser still copes: opening in 2 s, the first calculation in 27 s, *Plan everything* in 64 s, at most 200 MB of script memory. | Critical (at scale) | **Fixed (S)**, see N92–N99. Planning calls name the company's save and send only unsaved changes; answers are kept on the server, compressed and sent as rows; the plan comes without its pegging, which a page asks for. At 5,000 products every page opens in seconds with under 0.9 GB of script memory. |
+| N78 | The supply plan of 5,000 products at 20 places takes 66–78 s and 5.5 GB in one process, so one server plans one such company at a time and needs 8 GB. | Serious | Partly **(S)**: the plan still takes 66–78 s and 5.5 GB, but it is worked out once per data (answers kept), a large company's calculations run one at a time so two never meet in memory, and the answer to the browser is a third of its size. A worker process per plan is left for later. |
+| N79 | The forecast ran 20 times slower in parallel than one series after another: each worker's maths library started a thread per core (300 series: 113 s instead of 6 s; 6,000 series would have taken about 40 minutes). | Serious | **Fixed (L).** One maths thread per worker, set before the library loads; workers as many as the cores the server may use. 6,000 series in 136 s. |
+| N80 | The data checks after every change ran twice (once for the readiness gate), copied each planning policy per row and looked up sources by scanning every source for every product at every place. | Serious | **Fixed (L).** Indexed sources and routes, policies worked out once per company, the gate reuses the checks: 22 s → 6.7 s; the network view 16 s → 6.7 s. |
+| N81 | *Plan everything* planned the company six times (the plan, promising, capacity, buying, money and performance each asked for it with the same data). | Serious | **Fixed (L).** The last plan that took long is kept by the data's content and handed out again for the same data only; promising 99 s → 3.1 s. |
+| N82 | Buying looked at every purchasing source for each planned purchase; money and performance each followed the plan's costs to the customers again. | Serious | **Fixed (L).** Sources by place and product; the costs followed to customers are kept beside the kept plan: buying 45 s → 4.0 s, performance 24 s → 12 s. |
+| N83 | The container stopped at start: single sign-on needs an HTTP client that was installed only for development. | Critical | **Fixed (L)**, found by building the container: it is a dependency of the server. |
+| N84 | *Your company* kept the values it opened with after a colleague's save; saving it wrote them back over the colleague's change. | Serious | **Fixed (L).** The form takes in a newer save while it is not being edited. |
+| N85 | Saving *Your company* renamed the working calendar even when the working week had not changed, so the save showed a changed record nobody touched. | Minor | **Fixed (L).** |
+| N86 | Rights by product group need products to have a group, and setup never asked for one. | Minor | **Fixed (L)** with R29. |
+| N87 | An edit the person's rights do not cover was refused by the server, and after a reload the page kept trying to save it while *Undo* had nothing to undo. | Minor | **Fixed (L).** The refusal offers *Drop my unsaved changes* (back to the latest save), *Undo the last change* and *Download them*. |
+| N88 | Changing a member to the role they already had was logged in *History*. | Minor | **Fixed (L).** |
+| N89 | Safety stock for 5,000 products at 20 places takes 30 s: the placement is one optimisation over every place and product. | Minor | **Fixed (S).** Stages that do not supply each other are solved apart, small groups bundled, on every core: 11 s, and optimal (before, the one optimisation stopped at its 30 s limit). |
+| N90 | Opening another company while *Plan everything* ran for the first one: the run went on, its later steps with the new company's data, and a result that came back after the switch was taken as the new company's and shown as up to date (the bottler's Demand page listed Kaveri's nine forecast series). Opening the new company did not plan it, because a run was going. Found with the 1,000-product company, where a run takes a minute. | Serious | **Fixed (L).** Opening a company, a file or a version drops every result asked for before it and stops that run at its next step; the new company is then planned. |
+| N91 | The first requests to a newly started server, arriving together (a browser asks for the sign-in settings and the company list at once), each set up the company store: both added the new columns and one failed ("duplicate column name", an error page); on an in-memory database two stores could be made, one of them lost. Seen in the end-to-end tests' server log. | Serious | **Fixed (L).** The store and the company store are made once, under a lock. |
+
+## Found while building Phase S
+
+S was built against L's generated company of 5,000 products at 20 places (71 MB) in a real browser: opened, planned,
+every page visited, a week of demand changed on the grid and everything planned again. The kitchenware company kept on
+the server is planned by reference in the browser tests.
+
+| At 5,000 products, 20 places | Before S | After S |
+|---|---|---|
+| Opening the company | 3.7–22 s | 1.4 s |
+| First *Plan everything* | 439 s, and the supply plan never arrived | 326–357 s, every step (the forecast 136 s and the plan about 75 s of it) |
+| *Plan everything* again, nothing changed | 373 s | 13 s |
+| A week of demand changed, saved and checked | not measured (each cell copied and compared the whole company) | 18 s |
+| *Plan everything* after that change | as the first | 252 s (346 s before a forecast took the unchanged series' competitions from the last) |
+| Safety stock | 30 s, stopped at the solver's time limit | 11 s, optimal |
+| Pages | Buying crashed the tab; Demand 36 s; the orders page 4.8 s and 1.2 GB; the pegging tree never showed | every page within 5 s, most under 1 s |
+| Script memory kept | up to 1.2 GB, 2.6 GB with the pegging tree | at most 0.85 GB |
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N92 | At 5,000 products the supply plan's answer, about 600 MB, could not be read by the browser ("Unexpected end of JSON input"), and Home then said "The data changed after the last calculation": a step that failed looked like data that had changed. | Critical | **Fixed (S).** The plan comes without its requirements and pegging, its lists as rows (a third as long) and compressed (at 1,000 products 120 MB became 20 MB to read and 2 MB over the wire); Home names a step that did not finish and why, in plain words. |
+| N93 | Every product or place name on a page built the names of the whole company, and a pattern over every id, afresh: a table of a thousand orders did it three thousand times (the orders page 4.8 s and 1.2 GB; the pegging tree never showed). | Serious | **Fixed (S).** Made once per working copy: the orders page in 0.9 s. |
+| N94 | Long lists drew every row: the requisitions, each with its supplier choice, crashed the browser tab; the demand grid, the consensus grid and the series lists drew thousands of rows of inputs (Demand 36 s). | Serious | **Fixed (S).** The first rows (500; 200 and 100 for grids of inputs), a search to reach the others, and how many there are. The demand grid also spreads each record over its own days only. Demand: 0.9 s. |
+| N95 | Each edit copied the whole company and compared it with the one before as text, twice (seconds per cell at 5,000 products); the browser tried on every change to keep the company and its base in its storage, which holds a few megabytes, and kept thirty undo steps of it in its database. | Serious | **Fixed (S).** An edit copies and compares the parts it touches. A company the server keeps that is too large for the browser is not copied there (a reload opens it from the server), and its undo steps are not kept across a reload. |
+| N96 | Opening a company read it into objects on the server and wrote it out again the slow way. | Minor | **Fixed (S).** Sent as it is kept, compressed: 1.4 s at 5,000 products. |
+| N97 | Every planning call sent the whole company, eleven times for *Plan everything*, and the server read it anew each time; every answer went out through the slow generic writer, uncompressed. | Serious | **Fixed (S)** with N77: a call names the save and sends the unsaved changes (a few hundred bytes); unsaved changes are read on top of the kept save, sharing every unchanged list; a change the engine makes comes back as what changed. |
+| N98 | Any change made the forecast run its model competition for every series again (136 s for 6,000 series), though a week of demand or a price leaves every history as it was. | Serious | **Fixed (S).** A series whose history and settings did not change takes the last competition's outcome, and the answer is the one a fresh forecast gives. |
+| N99 | Two planners' unsaved changes planned at once would each take the plan's memory (5.5 GB at 5,000 products): more than a server sized for one. | Serious | **Fixed (S).** A large company's calculations run one at a time (`SCP_LARGE_AT_ONCE`); a step that runs long shows how long it has run. |
+| N100 | A large company is not kept in the browser: a change made less than the autosave's 1.2 s before a reload is lost (the page asks before closing). | Minor | Open, accepted: the window is the autosave's. |
+| N101 | A change still has every other step worked out again: the answers are kept by the whole company's data, so after any change the plan (about 75 s) and the checks (7 s) are the floor at 5,000 products. | Minor | Open: keys per step by what each reads, and a plan that re-plans only what a change reaches (with P). |
+
+## Found while building Phase O
+
+O was built against the tests' small plants and used in a real browser on the kitchenware company, whose heating element
+keeps 720 days and so is now kept by batch. The heating elements at the plant were counted to zero, the zone firmed, and
+the next delivery came in short (10 of 10,000) in the supplier's batch and closed the line: the receipt named the kettle
+order it left short (1,450 needing 1,462 elements, 10 there) and offered to shorten it to 9, which it did. The batch was
+then found in stock, blocked, its receipt reversed from the journal, and the plant counted on a physical inventory
+document that held its postings until it was cancelled.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N102 | Goods received today (the planning start) were not in the stock tab until the next week began: a batch received into quality inspection could not be found, let alone released, the week it came. | Serious | **Fixed (O).** The stock tab shows the batches, stock types and serial numbers there are now, this week's postings included; what the plan starts from stays as it was, beside it. |
+| N103 | A stock change dated today (a release, a block, a scrap) would change the plan only a week later, though the goods were on the shelf before today. | Serious | **Fixed (O).** A stock change is dated the day before the start when the goods were there then, and the plan starts from it at once, as a count does; goods that came in this week change this week. |
+| N104 | The physical inventory sat below the quick count's grid of every product at every place: at a real company, a long scroll away. | Minor | **Fixed (O).** It comes first on Count stock; the grid is the quick count. |
+| N105 | Seven stock tiles left one alone on a second row. | Minor | **Fixed (O).** The least used one is gone. |
+| N106 | A product with a shelf life is now kept by batch unless it says otherwise (the kitchenware heater, the jam jar maker's fruit): its receipts get batch numbers and its issues take the first expiring. | Minor | By design, recorded: SAP needs a batch for an expiry date too. *Kept by batch* on the product turns it off. |
+| N107 | A quick count that finds less of a batch-managed product takes the difference from the first-expiring batches; one that finds more puts it in stock without a batch, since the count does not say which. | Minor | By design, recorded: count a batch on a physical inventory document to say which. |
+| N108 | The Buying page's goods receipt had no batch, expiry or serial numbers, and did not say which orders a short delivery left short. | Serious | **Fixed (O).** The same fields and the same offer as Actuals. |
+| N109 | Expired stock is dropped from the plan and flagged, but lot sizes and batch sizes still ignore shelf life (a batch covering ten days of a seven-day product). | Serious | Open: **P** (R15's second half). |
+| N110 | A short receipt names the orders it leaves short, but a late one does not: an order whose parts arrive after it starts is not named. | Minor | Open: the plan's DEMAND_AT_RISK and the shop floor's waiting for parts show it; naming it here is **P**. |
+| N111 | The browser tests' server log showed "cannot commit – no transaction is active" from the worklist: each Performance request made the worklist anew, and making it runs a script that commits whatever transaction the shared database connection has open, another request's included. Found in the log, not on screen; a worklist sync could be half written. | Serious | **Fixed (O).** The worklist is made once per store, its tables under the store's lock; a test holds a transaction open while another thread makes one. |
 
 ## Found in the second reality check (after Phase E)
 
@@ -212,41 +311,119 @@ roll-forward report, and every page at phone width except *Machines & shifts* (n
 - **J: polish sweep** (Q17–Q25, N8, N31, N56, N57, N62): **done**, see the statuses above and N66–N71; its open
   items N69–N71 are **done** too (J+), with N72–N76.
 
-## The next plan (after Phase J)
+## Found in the third reality check (Phase K)
 
-Every finding of both reality checks is fixed. What is left is breadth against SAP (the gaps below), the small open
-items (N63–N65, N76) and use at a real company's scale. Proposed, in the order recommended:
+A food company built from an empty start through the screens: Godavari Dairy Foods (fictional), one dairy plant at
+Nashik, a cold store at Pune, five suppliers (a milk co-op delivering daily, sugar, mango pulp, an imported culture,
+packaging), three customer channels (modern trade, general trade, hotels and caterers), four finished goods (mango
+yoghurt, plain dahi, paneer, and catering paneer made to order for the hotels, 7 days' shelf life), standardised milk
+as an intermediate, and two years of weekly sales history. An owner (Asha, who also enters sales promotions), a
+planner (Ravi) and a viewer (Meera, on a phone) were signed in at the same time. Then **six planning weeks**, each:
+Home, buy what is due and send it, firm the firm zone, take the hotels' orders, post the week's receipts, production,
+transfers, deliveries and a dispatch register upload, sometimes a short delivery or a count, check the stock, move the
+plan a week, re-plan and read the results. Week 5 carried a mango promotion (+40 % at modern trade) that marketing
+entered ahead of time; week 6 a stock count at the cold store.
 
-- **K: third reality check, over weeks, not a day** (first). A company from another industry (food: shelf life,
-  batches, a make-to-stock line and a make-to-order one) built from empty by a planner, with an owner and a viewer
-  signed in at the same time, then run for **six planning weeks**: each week post the actuals, roll, re-plan, buy,
-  promise, schedule. It finds what a one-cycle check cannot: drift between the journal and the plan, a growing
-  history and journal, accuracy and performance over time, how a second planner's edits meet the first's. Findings go
-  here as R1, R2, …, ranked; the phases below are re-ordered by them.
-- **L: platform for real use** (N63–N65 and the users gap). Saves that send only what changed (N64); a side-by-side
-  choice per record when two people changed it (N65); password reset by e-mail and single sign-on (N63); rights by
-  plant or product group; four eyes on master-data changes; change documents with every field's old and new value;
-  a nightly backup and a restore. A measured test at scale (5,000 products × 20 places, two years of history) with
-  the plan's time and memory, and the slow parts fixed. A deployment guide (container, database, mail).
+How the weeks went (forecast accuracy and bias as *Actuals* shows them after each roll, over the weeks measured):
+
+| Week | Accuracy | Bias | What happened |
+|---|---|---|---|
+| 1 | 73 % | +26.8 % | Sales uploaded without a customer became phantom series at the cold store and the plant (R1–R4). |
+| 2 | 80 % | +7.0 % | A colleague's save silently stopped the planner's (R6); Monday demand late every week (R9). |
+| 3 | 83 % | +2.7 % | Make to order supplied orders from stock and made them again (R7). |
+| 4 | 85 % | −7.1 % | OTIF to confirmed date 25 % although every hotel order left on the day (R8). |
+| 5 | 86 % | −8.2 % | The promotion reached the plan only once it was flagged (R10); a hotel order half late (R12). |
+| 6 | 86 % | −7.7 % | OTIF to confirmed date 40 %; the late half of that order stayed late (R13); count at the cold store. |
+
+Ranked: the critical ones first (all fixed in K), then what is open, with the phase that takes it.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| R1 | A dispatch register's *Customer* column was dropped on upload ("Customer (not used)", *Place* had taken the location): sales lost their customer. | Critical | **Fixed (K).** A movement upload reads *Customer*, *Supplier*, *Vendor* or *Party* as the counterparty; the movement table shows it as *Customer or supplier*. |
+| R2 | Sales without a customer counted as sales of the cold store and the plant: week 1 accuracy 0 % on every channel, and 42 rows of new history series at places that sell nothing. | Critical | **Fixed (K).** A sale without a counterparty, from a place with no demand of its own that ships the product to one channel only, counts as that channel's (accuracy and history). |
+| R3 | Deleting the 42 wrong history rows did not stick: history is rebuilt from the journal on every roll. No bulk delete either. | Critical | **Fixed (K).** Master data deletes every row a search finds (*Delete these N*, with a confirmation); the journal's counterparty is visible and editable, which is where the fix belongs. |
+| R4 | The forecast then had 13 series instead of 7, and releasing it again replaced only the series it wrote: the six phantom series stayed in demand (4,96,122 units over 26 weeks instead of about 2,52,000), with no warning. | Critical | **Fixed (K).** Released records are marked; a full release removes what earlier releases wrote for series it no longer has and names them. New check `FORECAST_TWICE`: a forecast at a place and at a customer it supplies. |
+| R5 | Make to order set where setup leads (the plant) did nothing: the forecast sat at the hotels' channel, whose own default strategy passed it on, so 100 catering paneer a week were made with no order. | Critical | **Fixed (K).** A customer channel without a planning record takes its strategy from the nearest place upstream. |
+| R6 | Two people at once: Asha changed one safety stock while Ravi firmed 8 orders and took 2 hotel orders. Ravi's next save was refused, and every later page kept saying "Saved"; nothing of his reached the server until he pressed *Merge*; the viewer saw none of it. Re-doing the work then took both hotel orders twice. | Critical | **Fixed (K).** A refused autosave merges by itself when no record changed on both sides and says so; only a real clash asks. The order form warns when the customer's order number is already an order. A viewer's page takes in each new save. |
+| R7 | Make to order ignored stock in planning while promising used it: two hotel orders were promised from stock *and* got a new batch; catering paneer (7 days' life) reached 340 on hand. | Critical | **Fixed (K).** Make to order uses free stock first, never the forecast. |
+| R8 | OTIF to confirmed date read 0 % every week though every hotel order left on the day asked: the order list showed the arrival date, the planner posted the delivery on it, and the one-day route made each arrive a day late. | Critical | **Fixed (K).** *Ship by* on the open-order list (the promise's ship date, else the date less the route) with "late if sent …". |
+| R9 | Routes of half a day were rounded up to a day everywhere: Monday demand at the channels could never be met, about 1,330 units late every week. | Critical | **Fixed (K).** Up to half a day arrives the same day, in planning, promising and the journal's transit. |
+| R10 | Asha entered the promotion as a demand event; Home said "Everything is up to date" and the plan's demand never had it. | Critical | **Fixed (K).** A release records what it was made with; a later change to events, new-product rules, overrides or forecast settings raises `FORECAST_INPUTS_CHANGED` and a *Not in the plan yet* banner on Demand. With it used, mango at modern trade for the promotion week went 1,968 → 2,827 (sales 2,921). |
+| R11 | Using the forecast wrote a forecast for the hotels' catering paneer, made to order: ignored by the plan, a warning every week. | Critical | **Fixed (K).** A release skips products made to order where they are sold, removes what earlier releases wrote for them, and says so. |
+| R12 | Capable-to-promise took a component's availability even when it came months out (standardised milk free in March) and never tried making it (milk bought today, standardised by Tuesday): 20 of a 60-unit hotel order were promised 3 days late on the lead time. | Critical | **Fixed (K).** The earlier of the component's stock and new supply. |
+| R13 | A promise on new production does not make that production: the run stayed planned (Monday's firming came before the order), was never made, and the order went late at the roll. Nothing on Home pointed to backorder processing, which then brought the order on time. | Serious | **Fixed (K).** Taking an order made to order, or promised on new supply, says it must be made firm and where; Home links *Try to bring late orders forward* when an order is late. SAP's CTP creates the planned order itself: **P**. |
+| R14 | Home repeated "3 places would go below zero" every week for dips weeks old that the stock had come back from, and for dips a count had settled. | Serious | **Fixed (K).** A dip is reported while it lasts, or when it began in the week just closed and no count ended it. |
+| R15 | Shelf life never limits the plan: catering paneer (7 days) made in batches of 100 covering 10 days; "May expire" is a tag, but lot sizes, batch rounding and "a week's need" ignore it, and nothing expires in stock. | Serious | **Half fixed (O):** a product with a shelf life is kept by batch with its expiry date, issued first expiring first out; stock that will expire before it is used is a requirement in the plan ("Expires unused", STOCK_EXPIRES), expired stock is no longer counted and is flagged to scrap. Open: **P** (lot sizes within shelf life, N109). |
+| R16 | A short milk delivery (85 %) is posted "closed 769 short", but the firm runs that needed it are not flagged; posting them in full takes raw milk to −2,307, and the roll sets it to 0. | Serious | **Fixed (O).** A receipt names the firm orders the part no longer covers, in the order they start, with what each can still make, and shortens one with a click (its parts in proportion); on Actuals and on Buying. |
+| R17 | Raw milk ends every week slightly negative (−306): the plan buys exactly what the runs need and any yield or rounding takes it below zero; nothing suggests a buffer. The roll's "set to 0" leaves the journal and the plan disagreeing until someone counts. | Serious | **Half fixed (O):** stock below zero is a company rule: refuse the posting, allow it and ask for a count (the plan starts from zero and says so), or count the missing stock as found when the week moves on, so the journal and the plan agree. Open: **P** (yield in the bill of materials). |
+| R18 | A person conflicts with their own save: a reload while a save is in flight is refused next time as "Ravi saved … after your changes began", shown to Ravi. | Serious | **Fixed (L).** Each browser window has its own id sent with every save; a save refused only because of saves from the same window (a reload while one was in flight) is taken as one's own, and the same person in another window is merged, never shown as a colleague. |
+| R19 | History keeps a state to put back only every ~10 minutes per person, so "just before the release" was not there; *Undo* is gone after a reload. | Serious | **Fixed (L).** Every save is kept (as the changes from the one before, with a full copy every 25), so *History* can put back any of them; undo steps are kept in the browser and survive a reload. |
+| R20 | Firming makes purchase orders after the day's orders were sent on *Buying*; they wait "to send" until someone goes back. | Serious | Open: **N** (firming offers to send what it created). |
+| R21 | Demand events are entered only in Master data; *+ New event* saves at once an event on every product at every place with the measured lift. | Serious | Open: **P** (events on the Demand page; a new event starts without effect). |
+| R22 | Two numbers called accuracy: Home "92 % accurate on past weeks" (backtest), Actuals "73 % against real sales". | Minor | **Fixed (L).** Home says "accurate on past weeks (backtest)" and, once weeks are rolled, "against real sales" separately. |
+| R23 | One negative count refused all three counts; the count grid showed a negative book stock (−905) as the suggested count. | Minor | **Fixed (K).** A negative count is flagged before saving; a stock below zero is marked and suggests 0. |
+| R24 | A viewer's Home said "Nothing calculated yet" while its first calculation ran. | Minor | **Fixed (K).** "Calculating the plan from the latest save…". |
+| R25 | Event lift said "0.3 = +30 %" on a field typed in percent (also the override change and the forecast interval). | Minor | **Fixed (K).** |
+| R26 | Backorder processing told the planner to "simulate … then commit"; the buttons are *Re-decide who gets scarce stock* and *Save these new promised dates*. | Minor | **Fixed (K).** |
+| R27 | Master data tables and record headers show ids; the index shows a table's problem count where its row count goes ("Planning policies 3" for 16 rows); "Where used" truncates a source id. | Minor | **Fixed (L).** Tables show names (the id on hover), the index shows each table's row count with its problems beside it, and *Where used* names records in words. |
+| R28 | Signed in, *Create the company* still makes a browser-only company; keeping it on the server is a second step. | Minor | **Fixed (L).** Signed in, *Create the company* makes it on the server. |
+| R29 | Setup never asks shelf life or make to order; forecast settings are labelled "Abc a", "Xyz x" and list models by code; *Upload sales history* opens a table where the upload is another button. | Minor | **Fixed (L).** Setup asks a product's group, how many days it keeps and, for a finished good, whether it is made to order; forecast settings and models are in words; *Upload sales history* opens the upload. |
+| R30 | No refrigerated route mode; the cold chain is "Truck (full load)". | Minor | **Fixed (O).** *Refrigerated truck* is a mode; a product *kept chilled* on a route planned without one is flagged (COLD_CHAIN_LANE). |
+| R31 | Smaller: Actuals before a roll says movements run "up to" the start when they run to the week's end; the merge banner takes the page's own message slot; an order promised in two lines on the same day lists the day twice; a raw-milk PO line keeps 12 decimals in the data; the promotion check starts only with the first release after it existed. | Minor | **Fixed (L).** Actuals names the latest movement date and the weeks; one line per promised day; purchase quantities are rounded to three decimals. The promotion check still starts with the first release after K (by design: an older release does not record its inputs). The merge note taking a page's message slot did not come back in L's use (not reproduced). |
+
+What held up: building a dairy from nothing (network, products with batches and a made-to-order line, suppliers with
+currencies, two years of history), buying and sending every week, firming, posting a week of receipts, production and
+transfers in minutes, the weekly roll, the promotion once it was in, backorder processing, the viewer on a phone (no
+sideways scroll, no change buttons), and three people working on one company without losing a change once R6 was fixed.
+
+## The next plan (after Phase O)
+
+Every finding of the first two reality checks is fixed, and every critical one of the third (K). L made the platform
+fit for a real company of a few hundred products, S for one of thousands: a company of 5,000 products at 20 places
+opens in a second and a half, every page in seconds, and *Plan everything* is the server's calculation and little else.
+O made stock traceable: batches that expire, stock types, short receipts, stock below zero as a rule, reversals and
+physical inventory. What is left is K's open findings (R13, R15 and R17's planning halves, R20, R21) and breadth
+against SAP (the gaps below). Proposed, in the order recommended:
+
+- **K: third reality check, over weeks, not a day**: **done**, see R1–R31 above.
+- **L: platform for real use**: **done**, see R18, R19, R22, R27–R29, R31, N63–N65, N76 and N77–N91. A save is never
+  refused as someone else's when it is one's own (R18); every save can be put back and undo survives a reload (R19);
+  saves send only what changed (N64); a clash is chosen record by record (N65); a forgotten password by e-mail or
+  from the owner, and single sign-on (N63); rights by plant or product group; master data approved by a second
+  person; change documents with every field's old and new value; nightly backups and a restore; a new company kept
+  on the server when signed in (R28); the minor sweep (R22, R27, R29, R31, N76). At 5,000 products × 20 places the
+  forecast went from about 40 minutes to 2¼, the checks after each change from 22 s to 7 s, and *Plan everything*
+  plans once instead of six times. A container, Compose with HTTPS, and [the deployment guide](DEPLOY.md).
+- **S: large companies**: **done**, see N77–N78, N89 and N92–N101. Planning calls name the company's save and send
+  only unsaved changes; the server keeps the company read and every answer, compressed and packed; the plan comes
+  without its pegging, which a page asks for; long lists draw their first rows with a search; names, edits and local
+  copies no longer cost the whole company each time; safety stock by independent groups on every core; a forecast
+  after a change competes only the series whose history changed; a large company is planned one at a time.
+- **O: stock you can trace**: **done**, see R15–R17, R30 and N102–N110. Batches with an expiry date, issued first
+  expiring first out, and stock that will expire unused a requirement in the plan (R15); a short receipt names the firm
+  orders it leaves short and shortens them (R16); stock below zero as a company rule (R17); stock in quality inspection
+  and blocked, released, blocked and scrapped; stock in transit shown at the place it goes to; material documents and
+  their reversal; physical inventory documents with the book frozen and postings held; serial numbers; a refrigerated
+  route mode and the cold-chain check (R30).
+- **P: planning depth** (R13, R15, R17, R21 and the remaining MRP, BOM, capacity and PP/DS gaps).
+  Capable-to-promise that creates the planned order it promised on, firm, as SAP does (R13); lot sizes and batches
+  that stay within shelf life (R15); yield in the bill of materials so a part is bought with the loss in it (R17);
+  demand events on the Demand page, a new one starting without effect (R21); MRP groups; withdrawal from another
+  plant and direct production; a discontinued product with its follow-up; alternative BOMs; overtime as a levelling
+  and optimiser choice; supplier and lane capacity in planning; steps needing a machine and a tool together;
+  dragging orders between days to level.
 - **M: order to cash, complete** (SD gaps). Orders with several lines; prices with discounts and quantity scales;
   payment terms and a credit check; an order confirmation to send the customer (as the purchase order); delivery
   documents with picking, packing and proof of delivery; invoices; returns and credit notes; quotations.
-- **N: procure to pay, complete** (MM gaps). Invoice verification (three-way match) and what is owed to whom;
-  contracts and scheduling agreements; several confirmation lines per order line; returns to the supplier; a
-  release strategy with more than one level.
-- **O: stock you can trace** (inventory gaps, needed by the food company in K). Batch and serial numbers; first
-  expiring, first out; stock in quality inspection and blocked; reversal of a posting; a physical inventory document
-  with a freeze; stock in transit as its own stock type.
-- **P: planning depth** (the remaining MRP, BOM, capacity and PP/DS gaps). MRP groups; withdrawal from another plant
-  and direct production; a discontinued product with its follow-up; alternative BOMs; overtime as a levelling and
-  optimiser choice; supplier and lane capacity in planning; steps needing a machine and a tool together; dragging
-  orders between days to level.
+- **N: procure to pay, complete** (R20 and the MM gaps). Firming offers to send the purchase orders it created
+  (R20); invoice verification (three-way match) and what is owed to whom; contracts and scheduling agreements;
+  several confirmation lines per order line; returns to the supplier; a release strategy with more than one level.
 - **Q: connected to the rest of the company**. Scheduled imports and an API for an ERP to send orders, stock and
   movements and to take back purchase and production orders; e-mail sent from the application (orders to suppliers,
   confirmations to customers, the worklist's reminders).
 
-K goes first because both earlier reality checks found more than the phases before them had; L before the process
-phases because a company that keeps a year of history needs it before it needs invoices.
+Order after O: **P, M, N, Q**. P stays ahead of M and N for K's reasons: every open serious finding of K left is about
+stock that is really there (shelf life, short receipts, stock below zero) or a plan that acts on it.
 
 ## Gaps against SAP recorded for later phases
 
@@ -269,10 +446,13 @@ phases because a company that keeps a year of history needs it before it needs i
   (not only group), multi-resource steps (machine and tool together), pegging-aware re-scheduling of dependent
   orders when one moves.
 - Inventory management: opening balances, counts with differences, transfers shipped and received with stock in
-  transit, production confirmations with backflush or actual usage and co-products (**F**, done). Still missing: batch
-  and serial numbers, stock types (quality inspection, blocked), stock in transit as its own stock type, physical
-  inventory documents with a freeze, reversal of a posting (today: undo, or a counter-movement). Goods issue for a
-  sales order is a posting on the order (**G**, done); a delivery document with picking and packing is still missing.
+  transit, production confirmations with backflush or actual usage and co-products (**F**, done). Batches with an
+  expiry date (first expiring first out), serial numbers, stock types (quality inspection, blocked) with release,
+  block and scrap, stock in transit at the receiving place, material documents and their reversal, physical inventory
+  documents with a freeze and a posting block, stock below zero as a company rule (**O**, done). Still missing: batch
+  classification and characteristics, restricted-use batches, a batch where-used list beyond the journal's search,
+  storage locations and bins inside a place, handling units. Goods issue for a sales order is a posting on the order
+  (**G**, done); a delivery document with picking and packing is still missing.
 - SD: taking an order with the availability check's promise, order changes promised again, cancelling the rest with
   the order logged, deliveries in part or in full, and customer-specific prices (**G**, done). Still missing:
   several lines per order, pricing conditions with discounts, surcharges and quantity scales, payment terms and a

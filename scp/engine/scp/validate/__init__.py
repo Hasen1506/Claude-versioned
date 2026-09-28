@@ -14,7 +14,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from ..model import (
-    Dataset, DemandKind, LocationType, SafetyStockMethod, Strategy,
+    Dataset, DemandKind, LocationType, SafetyStockMethod, Strategy, TransportMode,
 )
 from ..model.common import PRODUCTION_LOCATION_TYPES, STOCKING_LOCATION_TYPES
 from ..network import build_graph
@@ -55,6 +55,9 @@ RULES: dict[str, tuple[Severity, str]] = {
     "DEMAND_OUTSIDE_HORIZON": ("warning", "Demand outside the planning horizon is ignored"),
     "DEMAND_PAST_DUE": ("warning", "Demand before planning start is treated as backlog"),
     "MTO_WITH_FORECAST": ("warning", "Forecast on an MTO product is ignored"),
+    "FORECAST_TWICE": ("warning", "Forecast at a place and at a customer it supplies: both are planned"),
+    "FORECAST_INPUTS_CHANGED": ("warning", "Demand events, overrides or forecast settings changed after the forecast "
+                                           "was last used in the plan"),
     "STOCK_AT_CUSTOMER": ("warning", "Stock maintained at a customer location is not planned"),
     "RESOURCE_UNUSED": ("warning", "Resource not used by any operation"),
     "LOCATION_PRODUCT_DEFAULTED": ("warning", "Planning node without a location-product: defaults used"),
@@ -67,6 +70,11 @@ RULES: dict[str, tuple[Severity, str]] = {
     "CONFIRMATION_ORPHAN": ("warning", "Persisted confirmation for an order that no longer exists"),
     "STOCK_NOT_SYNCED": ("warning", "On-hand differs from the goods-movement journal"),
     "NEGATIVE_STOCK": ("warning", "The movement journal takes stock below zero"),
+    "STOCK_EXPIRED": ("warning", "Stock in batches past their expiry date"),
+    "BATCH_UNKNOWN": ("warning", "Goods movement in a batch with no batch record"),
+    "REVERSAL_UNKNOWN": ("warning", "Reversal of a movement that is not in the journal"),
+    "SERIALS_COUNT": ("warning", "Serial numbers that do not match the quantity"),
+    "COLD_CHAIN_LANE": ("warning", "Chilled product on a route without refrigeration"),
     "MOVEMENT_REF_UNKNOWN": ("warning", "Goods movement references no open or closed order"),
     "PHANTOM_NOT_MADE": ("warning", "Phantom assembly that is not made at that plant"),
     "PO_LINE_MISMATCH": ("error", "Purchase order line that does not match its order"),
@@ -127,12 +135,16 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         "resource": ds.resources, "production_source": ds.production_sources,
         "purchasing_source": ds.purchasing_sources, "lane": ds.lanes, "receipt": ds.receipts,
         "movement": ds.movements, "capacity_option": ds.finance.capacity_options,
-        "purchase_order": ds.purchase_orders,
+        "purchase_order": ds.purchase_orders, "inventory_doc": ds.inventory_docs,
     }
     for typ, items in groups.items():
         for oid, n in Counter(i.id for i in items).items():
             if n > 1:
                 c.add("DUP_ID", typ, oid, f"{typ} id '{oid}' is used {n} times", "Ids must be unique per type")
+    for (prod, bid), n in Counter((b.product, b.id) for b in ds.batches).items():
+        if n > 1:
+            c.add("DUP_ID", "batch", f"{prod}/{bid}", f"batch {bid} of {prod} is kept {n} times",
+                  "A batch number is unique per product")
     for sup, n in Counter(v.supplier for v in ds.vendors).items():
         if n > 1:
             c.add("DUP_ID", "vendor", sup, f"supplier '{sup}' has {n} purchasing records; the first is used",
@@ -301,6 +313,12 @@ def _references(ds: Dataset, c: _Collector) -> None:
                       "stock moves at stocking locations")
         _ref(ds, c, "product", m.product, "movement", m.id, "product")
         _ref(ds, c, "location", m.counterparty, "movement", m.id, "counterparty")
+    for b in ds.batches:
+        _ref(ds, c, "product", b.product, "batch", f"{b.product}/{b.id}", "product")
+    for d in ds.inventory_docs:
+        for it in d.items:
+            _ref(ds, c, "location", it.location, "inventory_doc", d.id, "items")
+            _ref(ds, c, "product", it.product, "inventory_doc", d.id, "items")
     for co in ds.finance.capacity_options:
         _ref(ds, c, "resource", co.resource, "capacity_option", co.id, "resource")
     for i, rule in enumerate(ds.tower.owners):
@@ -438,7 +456,22 @@ def _purchase_orders(ds: Dataset, c: _Collector) -> None:
 
 
 def _lanes(ds: Dataset, c: _Collector) -> None:
+    cold = {p.id for p in ds.products if p.cold_chain}
     for ln in ds.lanes:
+        if cold and ln.planning_mode.mode is not TransportMode.REEFER:
+            if ds.location_type(ln.origin) is LocationType.SUPPLIER:
+                goes = {pu.product for pu in ds.purchasing_sources if pu.supplier == ln.origin
+                        and pu.location == ln.destination}
+            else:
+                goes = set(ln.products or []) or ({d.product for d in ds.demand if d.location == ln.destination}
+                                                  | {lp.product for lp in ds.location_products
+                                                     if lp.location == ln.destination})
+            chilled = sorted(p for p in goes & cold if ln.carries(p))
+            if chilled:
+                c.add("COLD_CHAIN_LANE", "lane", ln.id,
+                      f"Carries {', '.join(chilled[:3])}{'…' if len(chilled) > 3 else ''}, kept chilled, but is planned "
+                      f"as {ln.planning_mode.mode.value.replace('_', ' ')}",
+                      "Plan the route as a refrigerated truck", "modes")
         per_kg = any(m.cost_per_kg > 0 or m.vehicle_capacity_kg for m in ln.modes)
         per_m3 = any(m.cost_per_m3 > 0 or m.vehicle_capacity_m3 for m in ln.modes)
         if not (per_kg or per_m3):
@@ -487,7 +520,7 @@ def _demand(ds: Dataset, c: _Collector) -> None:
             past += 1
         elif d.date >= end:
             outside += 1
-        lp = ds.location_product_by_key.get((d.location, d.product))
+        lp = ds.demand_lp((d.location, d.product)) if ds.location_type(d.location) is not None else None
         if lp and lp.strategy is Strategy.MTO and d.kind is DemandKind.FORECAST:
             mto_fc.add((d.location, d.product))
     if past:
@@ -499,6 +532,40 @@ def _demand(ds: Dataset, c: _Collector) -> None:
     for loc, prod in sorted(mto_fc):
         c.add("MTO_WITH_FORECAST", "location_product", f"{loc}/{prod}",
               "Forecast exists but the strategy is MTO", "Use MTS_CONSUME or ATO to pre-plan")
+    fc = {(d.location, d.product) for d in ds.demand if d.kind is DemandKind.FORECAST}
+    for loc, prod in sorted(fc):
+        if ds.location_type(loc) in (None, LocationType.CUSTOMER):
+            continue
+        below = sorted(x for x in _served_customers(ds, loc, prod) if (x, prod) in fc)
+        if below:
+            c.add("FORECAST_TWICE", "demand", f"{loc}/{prod}",
+                  f"{prod} has a forecast at {loc} and at {', '.join(below)}, which {loc} supplies: the plan makes "
+                  "both", f"Right if {loc} also sells {prod} itself (a trade counter). If not, the same sales are "
+                  f"counted twice: remove the forecast at {loc}, and give its sales their customer")
+    made = ds.forecasting.released_inputs
+    if made and any(d.released for d in ds.demand) and made != ds.forecast_inputs():
+        c.add("FORECAST_INPUTS_CHANGED", "demand", "*",
+              "Demand events, new-product rules, overrides or forecast settings changed after the forecast was last "
+              "used in the plan: the plan does not have them yet",
+              "Demand → Forecast: recalculate it and press Use this forecast in the supply plan")
+
+
+def _served_customers(ds: Dataset, loc: str, prod: str) -> set[str]:
+    """The customer places a product reaches from ``loc`` along the routes that carry it."""
+    out: set[str] = set()
+    seen, level = {loc}, [loc]
+    while level:
+        nxt: list[str] = []
+        for ln in ds.lanes:
+            if ln.origin not in level or ln.destination in seen or (ln.products and prod not in ln.products):
+                continue
+            seen.add(ln.destination)
+            if ds.location_type(ln.destination) is LocationType.CUSTOMER:
+                out.add(ln.destination)
+            else:
+                nxt.append(ln.destination)
+        level = nxt
+    return out
 
 
 def _forecasting(ds: Dataset, c: _Collector) -> None:
@@ -595,12 +662,30 @@ def _movements(ds: Dataset, c: _Collector) -> None:
         oid = f"{row.location}/{row.product}"
         if row.movement_stock is not None and abs(row.difference) > 1e-6:
             c.add("STOCK_NOT_SYNCED", "location_product", oid,
-                  f"On-hand {row.master_on_hand:,.2f} but the journal says {row.movement_stock:,.2f}",
+                  f"On-hand {row.master_on_hand:,.2f} but the journal says {row.planning_stock or 0.0:,.2f} usable",
                   "Roll forward (or sync stock) so on-hand is derived from the movements", "on_hand")
+        if row.expired > 1e-6:
+            c.add("STOCK_EXPIRED", "location_product", oid,
+                  f"{row.expired:,.2f} in batches past their expiry date",
+                  "Scrap them (Execution → Stock), or block them while you decide")
         if row.negative_on is not None:
             c.add("NEGATIVE_STOCK", "location_product", oid,
                   f"Stock goes negative on {row.negative_on.isoformat()}",
                   "A receipt is missing or posted late; post it, or a count adjustment")
+    known = {m.id: m for m in ds.movements}
+    batches = {(b.product, b.id) for b in ds.batches}
+    for m in ds.movements:
+        prod = ds.product_by_id.get(m.product)
+        if m.reversal_of and m.reversal_of not in known:
+            c.add("REVERSAL_UNKNOWN", "movement", m.id, f"Takes back {m.reversal_of}, which is not in the journal",
+                  "Fix the movement it reverses", "reversal_of")
+        if m.batch and (m.product, m.batch) not in batches:
+            c.add("BATCH_UNKNOWN", "movement", m.id, f"Batch {m.batch} of {m.product} has no batch record: its "
+                  "expiry date is not known", "Add the batch with its expiry date", "batch")
+        if prod and prod.serial_numbers and m.type.value not in ("adjustment", "status") and m.serials \
+                and len(m.serials) != round(abs(m.qty)):
+            c.add("SERIALS_COUNT", "movement", m.id, f"{len(m.serials)} serial numbers for {m.qty:g} units",
+                  "Give one serial number per unit", "serials")
     for mid in unmatched(ds):
         c.add("MOVEMENT_REF_UNKNOWN", "movement", mid, "The reference matches no receipt, sales order or closed order",
               "Fix the reference, or leave it empty for an unplanned movement", "reference")

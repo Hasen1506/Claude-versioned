@@ -4,9 +4,11 @@
 // was computed on, so the UI can show "stale" the moment any input it reads changes — the legacy STALE
 // cascade, done by construction: every result reads the whole dataset except the parts only the shop floor
 // schedule reads (its settings and the changeover matrix), which leave the other results fresh.
-import { useEffect, useSyncExternalStore } from "react";
-import { api, ApiError, SchemaRejected, setAuth, setPlanningView, setWriteGuard } from "../api/client";
-import type { CompanyDoc, User, ActualsView, PurchasingView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { api, ApiError, SchemaRejected, setAuth, setDataRef, setPlanningView, setWriteGuard, type DataRef } from "../api/client";
+import { makePatch, patchIsSmall, type Patch } from "../lib/patch";
+import { keepSteps, stepsFor } from "./undoStore";
+import type { CompanyDoc, CompanyMeta, PlanTrace, User, ActualsView, PurchasingView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
 
 export interface RunResults {
   forecast: ForecastResult;
@@ -28,6 +30,7 @@ export interface Run<T> {
   running: boolean;
   error: string | null;
   at: string | null;         // wall-clock time of the last successful run
+  on?: Dataset | null;       // the working copy it was computed on (a trace of the plan asks about that data)
 }
 
 /** The stored version the working copy was opened from or last saved to (P8). */
@@ -51,7 +54,14 @@ export interface OpenCompany {
   revision: number;       // the server revision the working copy is based on
   savedRevision: number;  // working-copy revision that equals the server's content
   live: boolean;
+  approval?: boolean;     // master-data changes wait for a second person's approval
+  pending?: number;       // changes waiting for approval
+  places?: string[];      // this person's rights are limited to these places (empty: all)
+  families?: string[];    // … and these product groups
 }
+
+/** What the company's meta says about approval and one's own limits. */
+const fromMeta = (m: CompanyMeta) => ({ approval: !!m.approval, pending: m.pending ?? 0, places: m.places ?? [], families: m.families ?? [] });
 
 /** Where saving stands. "local": no server company, the working copy is kept in this browser only. */
 export interface SaveState {
@@ -66,6 +76,8 @@ export interface SaveState {
   localError: string | null;
   /** A viewer tried to change something (time of the last try, to show the notice). */
   refused: number;
+  /** A colleague's save was merged in on its own (nothing both changed): what the merge did, in plain words. */
+  merged?: string | null;
 }
 
 export interface State {
@@ -85,7 +97,7 @@ export interface State {
   canUndo: boolean;
   canRedo: boolean;
   /** "Plan everything" in progress: which step of how many, and what it is doing now. */
-  planning: { done: number; of: number; label: string } | null;
+  planning: { done: number; of: number; label: string; since: number } | null;   // since: when this step began (ms)
 }
 
 /** What "Plan everything" calculates, in order. Every step only reads the dataset; none changes it. */
@@ -119,11 +131,18 @@ const STORAGE_KEY = "scp.dataset.v1";
 const VERSION_KEY = "scp.version.v1";
 const SESSION_KEY = "scp.session.v1";
 const COMPANY_KEY = "scp.company.v1";
-const BASE_KEY = "scp.company.base.v1";   // the save the working copy was made from (to merge after a conflict)
+const BASE_KEY = "scp.company.base.v2";   // the save the working copy was made from, and its revision: saves send what
+                                          // changed since it, and a merge after a conflict needs it
 const SAVE_DELAY = 1200;       // save this long after the last change
 const RETRY_DELAY = 15_000;    // try a failed save again after this
 const CHECK_EVERY = 60_000;    // look for a colleague's newer save this often
 const HISTORY = 100;
+
+/** Records in a working copy beyond which this browser keeps no copy of a company the server keeps (Phase S): its
+ *  storage holds a few megabytes, a large company is tens, and trying costs seconds on every change. */
+const LOCAL_ROWS = 50_000;
+export const rowsOf = (ds: Dataset) => Object.values(ds as unknown as Record<string, unknown>)
+  .reduce<number>((n, v) => n + (Array.isArray(v) ? v.length : 0), 0);
 
 const emptyRun = <T>(): Run<T> => ({ data: null, revision: null, running: false, error: null, at: null });
 const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), inventory: emptyRun(), sop: emptyRun(), plan: emptyRun(), schedule: emptyRun(), promise: emptyRun(), actuals: emptyRun(), purchasing: emptyRun(), finance: emptyRun(), tower: emptyRun() });
@@ -144,6 +163,11 @@ let checkedRevision = -1;
 /** Unfinished records the last data check set aside, by collection, as their JSON text: matched by content, so
  *  an edit elsewhere (which shifts row positions) never un-sets or wrongly sets aside a record. */
 let setAside: Map<string, Set<string>> = new Map();
+/** Counts datasets replaced whole (a company opened, a file or version loaded, closed): a result asked for before
+ *  belongs to the data that was there, and is dropped when it arrives; a "Plan everything" of it stops. */
+let loadEpoch = 0;
+let planningEpoch = -1;
+let planQueued = false;
 
 type Coll = Record<string, unknown[] | undefined>;
 
@@ -162,17 +186,23 @@ setPlanningView((ds) => {
   }
   return {
     clean: clean as unknown as Dataset,
-    restore: (next) => {
-      if (!dropped.length) return next;
+    restore: (next, only) => {
+      const put = only ? dropped.filter(([coll]) => only.includes(coll)) : dropped;
+      if (!put.length) return next;
       const back = { ...next } as unknown as Coll;
-      for (const [coll, recs] of dropped) back[coll] = [...(back[coll] ?? []), ...recs];
+      for (const [coll, recs] of put) back[coll] = [...(back[coll] ?? []), ...recs];
       return back as unknown as Dataset;
     },
   };
 });
 
+/** True while the undo steps kept for the reloaded working copy are read back (nothing is kept over them meanwhile). */
+let restoringSteps = false;
+
 function set(patch: Partial<State>) {
   state = { ...state, ...patch, canUndo: past.length > 0, canRedo: future.length > 0 };
+  // undo survives a reload (R19); not for a company too large to keep here (thirty steps of it would be gigabytes)
+  if ("dataset" in patch && !restoringSteps) keepSteps(() => state.dataset && rowsOf(state.dataset) > LOCAL_ROWS ? [null, [], []] : [state.dataset, past, future]);
   listeners.forEach((l) => l());
 }
 
@@ -180,8 +210,14 @@ function setRun<K extends RunKey>(key: K, patch: Partial<Run<RunResults[K]>>) {
   set({ runs: { ...state.runs, [key]: { ...state.runs[key], ...patch } } });
 }
 
-function persist(ds: Dataset | null) {
+function persist(ds: Dataset | null, live = !!state.company?.live) {
   try {
+    if (ds && live && rowsOf(ds) > LOCAL_ROWS) {
+      // the server keeps it; a reload opens it from there (restore)
+      localStorage.removeItem(STORAGE_KEY);
+      if (state.save.localError) set({ save: { ...state.save, localError: null } });
+      return;
+    }
     if (ds) localStorage.setItem(STORAGE_KEY, JSON.stringify(ds));
     else localStorage.removeItem(STORAGE_KEY);
     if (state.save.localError) set({ save: { ...state.save, localError: null } });
@@ -218,16 +254,52 @@ setAuth(() => ({ token: state.session?.token ?? null, company: state.company?.id
 setWriteGuard(() => state.company && state.company.role === "viewer"
   ? `Nothing was changed: you are a viewer of ${state.company.name}. Ask an owner to make you a planner to change it.` : null);
 
-/** The server company's save the working copy was made from: merging after a conflict needs it. */
+/** The server company's save the working copy was made from, and its revision: a save sends only what changed
+ *  since it (N64), and merging after a conflict needs it. */
 let baseDoc: Dataset | null = null;
-function setBase(ds: Dataset | null) {
+let baseRev = -1;
+function setBase(ds: Dataset | null, rev = -1) {
   baseDoc = ds;
+  baseRev = ds ? rev : -1;
   try {
-    if (ds) localStorage.setItem(BASE_KEY, JSON.stringify(ds));
+    if (ds && rowsOf(ds) > LOCAL_ROWS) localStorage.removeItem(BASE_KEY);   // kept in memory only (see persist)
+    else if (ds) localStorage.setItem(BASE_KEY, JSON.stringify({ revision: baseRev, dataset: ds }));
     else localStorage.removeItem(BASE_KEY);
   } catch {
-    /* merging then needs a reload of the company */
+    /* the next save then sends the whole company, and merging asks the server for the base */
   }
+}
+
+/** The working copy as the planning calls send it (Phase S): the server's save it was made from and what changed
+ *  since, when the server keeps the company and this browser has that save; worked out once per edit. */
+let refMemo: { ds: Dataset; rev: number; ref: DataRef } | null = null;
+/** References made for earlier working copies: a result computed on one (the plan on screen, out of date) is asked
+ *  about with the same reference, so the server answers from what it kept instead of working it out again. */
+const refsMade = new WeakMap<Dataset, DataRef>();
+/** The server did not take a reference on this save (its copy differed): send the company whole until the next. */
+let refUnfitAt = -2;
+setDataRef((ds) => {
+  const c = state.company;
+  if (!c?.live || !state.session) return null;
+  if (ds !== state.dataset) return refsMade.get(ds) ?? null;
+  if (!baseDoc || baseRev !== c.revision || refUnfitAt === baseRev) return null;
+  if (refMemo && refMemo.ds === ds && refMemo.rev === baseRev) return refMemo.ref;
+  let patch: Patch | null = null;
+  if (baseDoc !== ds) {
+    patch = makePatch(baseDoc as unknown as Record<string, unknown>, ds as unknown as Record<string, unknown>);
+    if (!patch.lists && !patch.set && !patch.drop) patch = null;
+  }
+  refMemo = { ds, rev: baseRev, ref: { revision: baseRev, patch } };
+  refsMade.set(ds, refMemo.ref);
+  return refMemo.ref;
+}, () => { refUnfitAt = baseRev; refMemo = null; });
+
+/** What a save sends: the changes since the save it was made from when that is known and they are small, else the
+ *  whole working copy. */
+function whatToSend(c: OpenCompany, ds: Dataset): { dataset: Dataset } | { patch: ReturnType<typeof makePatch> } {
+  if (!baseDoc || baseRev !== c.revision) return { dataset: ds };
+  const patch = makePatch(baseDoc as unknown as Record<string, unknown>, ds as unknown as Record<string, unknown>);
+  return patchIsSmall(patch, ds as unknown as Record<string, unknown>) ? { patch } : { dataset: ds };
 }
 
 const now = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -258,17 +330,33 @@ async function saveNow(note = ""): Promise<void> {
   set({ save: { ...state.save, status: "saving", error: null } });
   saving = (async () => {
     try {
-      const r = await api.saveCompany(c.id, ds, c.revision, note);
+      const what = whatToSend(c, ds);
+      const r = await api.saveCompany(c.id, what, c.revision, note).catch((e) => {
+        // the changes did not fit the server's copy (it was not the save this copy was made from): send it whole
+        if ("patch" in what && e instanceof ApiError && e.status === 409 && e.body.patch === "unfit") {
+          return api.saveCompany(c.id, { dataset: ds }, c.revision, note);
+        }
+        throw e;
+      });
       if (state.company?.id !== c.id) return;
-      setBase(ds);
-      set({ company: { ...state.company, revision: r.meta.revision, name: r.meta.name, role: r.meta.role, savedRevision: rev },
+      if (r.held && r.dataset) {
+        // master data waits for approval: the server kept the rest; carry on from what it saved
+        if (state.revision === rev) adopt(r.dataset as unknown as Dataset, r.meta, heldNote(r.held.summary));
+        else { setBase(r.dataset as unknown as Dataset, r.meta.revision); set({ company: { ...state.company, revision: r.meta.revision, ...fromMeta(r.meta) },
+          save: { ...state.save, status: "saved", at: now(), merged: heldNote(r.held.summary) } }); }
+        return;
+      }
+      setBase(ds, r.meta.revision);
+      set({ company: { ...state.company, revision: r.meta.revision, name: r.meta.name, role: r.meta.role, savedRevision: rev, ...fromMeta(r.meta) },
         save: { ...state.save, status: "saved", at: now(), error: null, newer: null } });
       persistCompany();
     } catch (e) {
       if (state.company?.id !== c.id) return;
       if (e instanceof ApiError && e.status === 409 && typeof e.body.revision === "number") {
+        if (await mergeQuietly(c, ds, rev)) return;
         set({ save: { ...state.save, status: "conflict", error: e.message, newer: null,
-          conflict: { by: String(e.body.updated_by ?? "someone"), at: String(e.body.updated_at ?? ""), revision: e.body.revision } } });
+          conflict: { by: e.body.self ? "You (in another window)" : String(e.body.updated_by ?? "someone"),
+            at: String(e.body.updated_at ?? ""), revision: e.body.revision } } });
       } else if (e instanceof ApiError && e.status === 401) {
         set({ save: { ...state.save, status: "failed", error: "Your sign-in has expired: sign in again to save" } });
       } else if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
@@ -285,6 +373,74 @@ async function saveNow(note = ""): Promise<void> {
   if (state.save.status === "saved" && unsaved(state)) scheduleSave(200);
 }
 
+/** A merge needs the save the working copy was made from; one saved before every save was kept may be gone. */
+function noBase(e: unknown): never {
+  if (e instanceof ApiError && e.status === 409 && e.body.base === "missing") {
+    throw new Error(`The save your changes were made from is no longer kept, so they cannot be merged: download them, open ${state.save.conflict?.by ?? "the latest"} save, and make them again`);
+  }
+  throw e;
+}
+
+/** A save refused because a colleague saved first: merge the two when no record was changed by both (the server
+ *  refuses otherwise, and the planner chooses), save that, and carry on from it. Edits made while the merge ran are
+ *  merged onto its result the same way. False when it could not merge. */
+async function mergeQuietly(c: OpenCompany, ds: Dataset, rev: number): Promise<boolean> {
+  try {
+    let base: Dataset | undefined = baseDoc && baseRev === c.revision ? baseDoc : undefined;
+    let mine = ds, mineRev = rev;
+    // only what changed goes when the server has the save it was made from (it keeps every save)
+    let r = await mergeOnServer(c, base, mine, c.revision, { cleanOnly: true });
+    for (let i = 0; i < 3 && state.company?.id === c.id && state.revision !== mineRev; i++) {
+      base = mine; mine = state.dataset!; mineRev = state.revision;
+      r = await api.mergeCompany(c.id, { base, dataset: mine, baseRevision: c.revision, cleanOnly: true });
+    }
+    if (state.company?.id !== c.id) return true;
+    if (state.revision !== mineRev) return false;
+    const rep = r.report;
+    const note = r.merged_with === "you"
+      ? "You saved this company from another window too; both are kept, and where both changed a record your later change is."
+      : [`${r.merged_with || "Someone"} saved while you were working; both sets of changes are kept (${rep.summary}).`,
+        rep.renumbered.length ? `Renumbered: ${rep.renumbered.join(", ")}.` : ""].filter(Boolean).join(" ");
+    // undo would bring back a copy without the colleague's changes, and autosave would then undo them on the server
+    adopt(r.dataset as unknown as Dataset, r.meta, r.held ? `${note} ${heldNote(r.held.summary)}` : note);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Take the company as the server saved it as the working copy (it differs from what was sent: a merge, or master
+ *  data held for approval), with a note for the planner. Undo is cleared: it would bring back a copy without it. */
+function adopt(ds: Dataset, meta: CompanyMeta, note: string | null) {
+  past.length = 0;
+  future.length = 0;
+  setBase(ds, meta.revision);
+  persist(ds);
+  advance(ds);
+  set({ company: { ...state.company!, revision: meta.revision, savedRevision: state.revision, ...fromMeta(meta) },
+    save: { ...state.save, status: "saved", at: now(), error: null, conflict: null, newer: null, merged: note } });
+  persistCompany();
+  scheduleCheck();
+}
+
+const heldNote = (summary: string) => `Your master data change (${summary}) waits for a second person's approval (History → Waiting for approval); until then the company keeps what it had.`;
+
+/** Merge on the server: the working copy as what changed since `base` (the save it was made from) when the server
+ *  keeps that save, else whole with its base. */
+async function mergeOnServer(c: OpenCompany, base: Dataset | undefined, mine: Dataset, baseRevision: number,
+  o: { cleanOnly?: boolean; choose?: Record<string, "mine" | "theirs">; preview?: boolean }) {
+  if (base) {
+    try {
+      return await api.mergeCompany(c.id, { patch: makePatch(base as unknown as Record<string, unknown>, mine as unknown as Record<string, unknown>),
+        baseRevision, ...o });
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 409 && (e.body.patch === "unfit" || e.body.base === "missing"))) throw e;
+      return api.mergeCompany(c.id, { base, dataset: mine, baseRevision, ...o });
+    }
+  }
+  return api.mergeCompany(c.id, { dataset: mine, baseRevision, ...o });   // the server finds the base itself
+}
+
 /** Look for a colleague's newer save of the open company. */
 async function checkNewer() {
   const c = state.company;
@@ -292,8 +448,16 @@ async function checkNewer() {
   try {
     const m = (await api.companies()).find((x) => x.id === c.id);
     if (!m || state.company?.id !== c.id) return;
-    if (m.role !== state.company.role) set({ company: { ...state.company, role: m.role } });
+    if (m.role !== state.company.role || (m.pending ?? 0) !== (state.company.pending ?? 0) || !!m.approval !== !!state.company.approval) {
+      set({ company: { ...state.company, role: m.role, ...fromMeta(m) } });
+    }
     if (m.revision > state.company.revision && !saving) {
+      // a viewer has nothing of their own to lose: show them the latest plan, not the one they opened
+      if (m.role === "viewer") {
+        const doc = await api.company(c.id);
+        if (state.company?.id === c.id && state.company.role === "viewer") store.openCompany(doc);
+        return;
+      }
       const newer = { by: m.updated_by, at: m.updated_at, revision: m.revision };
       // nothing unsaved here: nothing to lose, but say so rather than change the page under the planner's hands
       if (!unsaved(state)) set({ save: { ...state.save, newer } });
@@ -400,6 +564,7 @@ export const store = {
    *  or a blank company leaves the open server company (the working copy is then this browser's own); a plan
    *  version of the open company keeps it, but is not its live data. */
   load(ds: Dataset, version: Omit<WorkingVersion, "savedRevision"> | null = null) {
+    loadEpoch++;
     past.length = 0;
     future.length = 0;
     persist(ds);
@@ -433,23 +598,40 @@ export const store = {
 
   /** Open a company kept on the server: its latest save becomes the working copy. */
   openCompany(doc: CompanyDoc) {
+    loadEpoch++;
     past.length = 0;
     future.length = 0;
     const ds = doc.dataset as unknown as Dataset;
-    persist(ds);
+    persist(ds, true);
     persistVersion(null, false);
     const rev = state.revision + 1;
     setAside = new Map();
     clearTimeout(saveTimer);
     const m = doc.meta;
-    setBase(ds);
+    setBase(ds, m.revision);
     set({ dataset: ds, version: null, revision: rev, runs: emptyRuns(), validation: null, network: null,
-      company: { id: m.id, name: m.name, role: m.role, revision: m.revision, savedRevision: rev, live: true },
+      company: { id: m.id, name: m.name, role: m.role, revision: m.revision, savedRevision: rev, live: true, ...fromMeta(m) },
       save: { ...localSave(), status: m.role === "viewer" ? "readonly" : "saved", at: null, localError: state.save.localError } });
     persistCompany();
     scheduleCheck();
     setTimeout(() => { void store.planAll(); }, 0);   // no page opens empty
   },
+
+  /** The server saved the company differently from this working copy (an approval made here): carry on from it. */
+  async adoptServerSave(meta: CompanyMeta, ds: Record<string, unknown>) {
+    if (!state.company || state.company.id !== meta.id) return;
+    if (unsaved(state)) await saveNow();
+    if (unsaved(state)) return;          // not saved here: the next check shows the newer save instead
+    adopt(ds as unknown as Dataset, meta, null);
+  },
+
+  /** What a company's meta says now (approval, changes waiting). */
+  noteCompany(meta: CompanyMeta) {
+    if (state.company?.id === meta.id) set({ company: { ...state.company, ...fromMeta(meta) } });
+  },
+
+  /** The planner has read what an automatic merge did. */
+  clearMerged() { if (state.save.merged) set({ save: { ...state.save, merged: null } }); },
 
   /** Save now (and wait): before signing out, or when the planner asks. */
   saveNow: (note = "") => saveNow(note),
@@ -463,22 +645,32 @@ export const store = {
     await saveNow(`kept over ${x.by}'s save`);
   },
 
-  /** After a conflict: merge the working copy with the saves made since, record by record, and open the result.
-   *  Returns what the merge did, in plain words. */
-  async mergeMine(): Promise<string> {
+  /** After a conflict: what merging would do, without saving: each record both changed, side by side (N65). */
+  async previewMerge() {
     const c = state.company;
     const ds = state.dataset;
     if (!c || !ds) throw new Error("Nothing to merge");
-    // the save the working copy was made from: kept here, else the server's kept copy of that revision
-    const base = baseDoc ?? await api.companyRevision(c.id, c.revision).catch(() => {
-      throw new Error(`The save your changes were made from is no longer kept, so they cannot be merged: download them, open ${state.save.conflict?.by ?? "the latest"} save, and make them again`);
-    });
-    const r = await api.mergeCompany(c.id, base, ds, c.revision);
+    return (await mergeOnServer(c, baseDoc && baseRev === c.revision ? baseDoc : undefined, ds, c.revision, { preview: true })
+      .catch(noBase)).report;
+  },
+
+  /** After a conflict: merge the working copy with the saves made since, record by record (a record both changed
+   *  keeps the version `choose` names, else theirs), and open the result. Returns what the merge did, in plain words. */
+  async mergeMine(choose: Record<string, "mine" | "theirs"> = {}): Promise<string> {
+    const c = state.company;
+    const ds = state.dataset;
+    if (!c || !ds) throw new Error("Nothing to merge");
+    const r = await mergeOnServer(c, baseDoc && baseRev === c.revision ? baseDoc : undefined, ds, c.revision, { choose }).catch(noBase);
     store.openCompany({ meta: r.meta, dataset: r.dataset });
     set({ save: { ...state.save, status: "saved", at: now() } });
     const rep = r.report;
     const lines = [`Merged with ${r.merged_with || "the latest save"}: ${rep.summary}.`];
-    if (rep.conflicts.length) lines.push(`Changed on both sides, their version kept: ${rep.conflicts.slice(0, 6).join("; ")}${rep.conflicts.length > 6 ? "; …" : ""}.`);
+    const named = (x: { list: string; record: string }) => `${x.list}${x.record ? ` ${x.record.replace(/ \| /g, " · ").replace(/_/g, " ")}` : ""}`;
+    const theirs = (rep.clashes ?? []).filter((x) => x.kept === "theirs").map(named);
+    const mine = (rep.clashes ?? []).filter((x) => x.kept === "mine").map(named);
+    const few = (xs: string[]) => `${xs.slice(0, 6).join("; ")}${xs.length > 6 ? "; …" : ""}`;
+    if (theirs.length) lines.push(`Changed on both sides, their version kept: ${few(theirs)}.`);
+    if (mine.length) lines.push(`Changed on both sides, your version kept: ${few(mine)}.`);
     return lines.join(" ");
   },
 
@@ -501,6 +693,7 @@ export const store = {
   },
 
   clear() {
+    loadEpoch++;
     clearTimeout(saveTimer);
     setAside = new Map();
     past.length = 0;
@@ -516,11 +709,32 @@ export const store = {
   /** Apply an edit to a deep copy of the dataset. */
   update(mutate: (draft: Dataset) => void) {
     if (!state.dataset) return;
-    const draft = structuredClone(state.dataset);
-    mutate(draft);
-    // a no-op edit (e.g. the same value committed on Enter and again on blur) must not create history
-    if (JSON.stringify(draft) === JSON.stringify(state.dataset)) return;
-    commit(draft);
+    // the edit gets a copy of each part it reads or writes, the rest stays shared: a large company's two years of
+    // sales history are not copied, nor compared, for a change to one product (Phase S)
+    const base = state.dataset as unknown as Record<string, unknown>;
+    const next: Record<string, unknown> = { ...base };
+    const parts = new Set<string>();
+    const draft = new Proxy(next, {
+      get(t, k) {
+        if (typeof k === "string" && !parts.has(k) && k in base) {
+          parts.add(k);
+          if (base[k] !== null && typeof base[k] === "object") t[k] = structuredClone(base[k]);
+        }
+        return Reflect.get(t, k);
+      },
+      set(t, k, v) { if (typeof k === "string") parts.add(k); return Reflect.set(t, k, v); },
+      deleteProperty(t, k) { if (typeof k === "string") parts.add(k); return Reflect.deleteProperty(t, k); },
+    });
+    mutate(draft as unknown as Dataset);
+    // a part read but not changed keeps the one it was; a no-op edit (the same value committed on Enter and again on
+    // blur) must not create history
+    let changed = false;
+    for (const k of parts) {
+      if (k in base && k in next && JSON.stringify(next[k]) === JSON.stringify(base[k])) next[k] = base[k];
+      else changed = true;
+    }
+    if (!changed) return;
+    commit(next as unknown as Dataset);
   },
 
   /** Replace the dataset with an engine-produced version (e.g. a released forecast), undoable. */
@@ -558,11 +772,14 @@ export const store = {
     const ds = state.dataset;
     if (!ds) return;
     const rev = state.revision;
+    const epoch = loadEpoch;
     setRun(key, { running: true, error: null });
     try {
       const data = await RUNNERS[key](ds);
-      setRun(key, { data, revision: rev, running: false, at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
+      if (epoch !== loadEpoch) return;   // another company or file was opened meanwhile
+      setRun(key, { data, revision: rev, on: ds, running: false, at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
     } catch (e) {
+      if (epoch !== loadEpoch) return;
       if (e instanceof SchemaRejected) {
         set({ schemaErrors: e.errors });
         setRun(key, { running: false, error: "The dataset has invalid values." });
@@ -573,26 +790,38 @@ export const store = {
   /** "Plan everything": check the data, then calculate every result in order. Stops at the data check
    *  when something blocks planning; nothing it does changes the dataset. */
   async planAll() {
-    if (!state.dataset || state.planning) return;
+    if (!state.dataset) return;
+    if (state.planning) {
+      // still planning what was open before: stop that at its next step and plan this instead
+      if (planningEpoch !== loadEpoch) planQueued = true;
+      return;
+    }
+    const epoch = planningEpoch = loadEpoch;
     const of = PLAN_STEPS.length + 1;
-    set({ planning: { done: 0, of, label: "Checking your data" } });
+    const done = () => {
+      set({ planning: null });
+      if (planQueued) { planQueued = false; void store.planAll(); }
+    };
+    set({ planning: { done: 0, of, label: "Checking your data", since: Date.now() } });
     clearTimeout(timer);
     await check();
-    if (!state.dataset || state.engineError || state.schemaErrors.length || !state.validation || state.validation.blocking) {
-      set({ planning: null });
+    if (epoch !== loadEpoch || !state.dataset || state.engineError || state.schemaErrors.length || !state.validation
+        || state.validation.blocking) {
+      done();
       return;
     }
     for (const [i, st] of PLAN_STEPS.entries()) {
-      if (!state.dataset) break;
-      set({ planning: { done: i + 1, of, label: st.label } });
+      if (!state.dataset || epoch !== loadEpoch) break;
+      set({ planning: { done: i + 1, of, label: st.label, since: Date.now() } });
       await store.run(st.key);
     }
-    set({ planning: null });
+    done();
   },
 
   /** Store a result computed outside `run` (e.g. a schedule with a hand-edited sequence). */
   put<K extends RunKey>(key: K, data: RunResults[K], rev: number) {
-    setRun(key, { data, revision: rev, running: false, error: null, at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
+    setRun(key, { data, revision: rev, on: rev === state.revision ? state.dataset : null, running: false, error: null,
+      at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
   },
 
   restore() {
@@ -604,6 +833,15 @@ export const store = {
     }
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw && state.session) {
+        // a company too large to keep in this browser (persist): open its latest save from the server
+        const cr = localStorage.getItem(COMPANY_KEY);
+        const c = cr ? (JSON.parse(cr) as OpenCompany) : null;
+        if (c?.live) void api.company(c.id).then((doc) => { if (!state.dataset) store.openCompany(doc); }, (e) => {
+          // deleted, or no longer this person's: forget it (the company list offers the others); offline: open by hand
+          if (e instanceof ApiError && (e.status === 403 || e.status === 404)) { try { localStorage.removeItem(COMPANY_KEY); } catch { /* ignore */ } }
+        });
+      }
       if (raw) {
         const ds = JSON.parse(raw) as Dataset;
         const rev = state.revision + 1;
@@ -611,11 +849,25 @@ export const store = {
         const v = vr ? (JSON.parse(vr) as WorkingVersion & { modified?: boolean }) : null;
         // a reload keeps the link to the stored version; "modified" survives as a revision mismatch
         const version = v ? { id: v.id, name: v.name, kind: v.kind, status: v.status, savedRevision: v.modified ? -1 : rev } : null;
+        restoringSteps = true;
         set({ dataset: ds, version, revision: rev });
+        // the undo steps kept for exactly this working copy come back with it
+        void stepsFor(ds).then((st) => {
+          restoringSteps = false;
+          if (!st || state.dataset !== ds || past.length || future.length) return;
+          past.push(...(st.past as Dataset[]));
+          future.push(...(st.future as Dataset[]));
+          set({});
+        });
         const cr = localStorage.getItem(COMPANY_KEY);
         const c = cr && state.session ? (JSON.parse(cr) as OpenCompany & { dirty?: boolean }) : null;
         if (c) {
-          try { const br = localStorage.getItem(BASE_KEY); baseDoc = br ? (JSON.parse(br) as Dataset) : null; } catch { baseDoc = null; }
+          try {
+            const br = localStorage.getItem(BASE_KEY);
+            const b = br ? (JSON.parse(br) as { revision: number; dataset: Dataset }) : null;
+            baseDoc = b?.dataset ?? null;
+            baseRev = b?.revision ?? -1;
+          } catch { baseDoc = null; baseRev = -1; }
           set({ company: { id: c.id, name: c.name, role: c.role, revision: c.revision, live: c.live, savedRevision: c.dirty ? -1 : rev },
             save: { ...localSave(), status: c.role === "viewer" ? "readonly" : c.dirty ? "pending" : "saved" } });
           void store.refreshCompany();
@@ -638,7 +890,7 @@ export const store = {
       if (state.company?.id !== c.id || unsaved(state)) return;
       if (doc.meta.revision !== c.revision) store.openCompany(doc);
       else {
-        setBase(doc.dataset as unknown as Dataset);
+        setBase(doc.dataset as unknown as Dataset, doc.meta.revision);
         set({ company: { ...state.company, role: doc.meta.role, name: doc.meta.name } });
       }
     } catch (e) {
@@ -652,6 +904,23 @@ export const store = {
 
 export function useStore<T>(select: (s: State) => T): T {
   return useSyncExternalStore(store.subscribe, () => select(state));
+}
+
+/** Part of the plan's requirements and pegging (Phase S: the plan comes without them): an order's chain, or one
+ *  product's at one place, asked about the data the plan on screen was computed on. `data` is null while it comes. */
+export function usePlanTrace(what: { order: string } | { location: string; product: string } | null) {
+  const run = useStore((s) => s.runs.plan);
+  const key = what && run.data ? `${JSON.stringify(what)}@${run.revision}` : "";
+  const [got, setGot] = useState<{ key: string; data: PlanTrace | null; error: string | null }>({ key: "", data: null, error: null });
+  useEffect(() => {
+    const on = run.on ?? state.dataset;
+    if (!key || !what || !on) return;
+    let live = true;
+    api.planTrace(on, what).then((data) => { if (live) setGot({ key, data, error: null }); },
+      (e) => { if (live) setGot({ key, data: null, error: String(e) }); });
+    return () => { live = false; };
+  }, [key]);   // eslint-disable-line react-hooks/exhaustive-deps
+  return got.key === key ? got : { key, data: null, error: null };
 }
 
 /** A viewer of the open company: controls that change data are shown disabled (N62). */

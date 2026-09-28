@@ -1,9 +1,10 @@
 import type {
   Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
-  ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
-  PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoLineInput, RequisitionPick, PostAction, CountInput, UsageInput, SalesOrderChange, SalesOrderResponse,
-  AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult,
+  PlanTrace, ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
+  PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoLineInput, RequisitionPick, PostAction, CountInput, UsageInput, StockType, SalesOrderChange, SalesOrderResponse,
+  AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
 } from "./types";
+import { applyPatch, type Patch } from "../lib/patch";
 
 /** Thrown when the engine rejects the dataset shape (HTTP 422). Carries field-level errors. */
 export class SchemaRejected extends Error {
@@ -29,7 +30,46 @@ export function setAuth(fn: typeof authOf) { authOf = fn; }
 let writeGuard: () => string | null = () => null;
 export function setWriteGuard(fn: typeof writeGuard) { writeGuard = fn; }
 
+/** This browser window, across reloads (a tab keeps its session storage): the server takes a save from the window
+ *  whose own save it has not heard back about (a reload during a save) as that window's, not a colleague's. */
+export const CLIENT_ID = (() => {
+  try {
+    let id = sessionStorage.getItem("scp.client");
+    if (!id) { id = Math.random().toString(36).slice(2) + Date.now().toString(36); sessionStorage.setItem("scp.client", id); }
+    return id;
+  } catch {
+    return Math.random().toString(36).slice(2);
+  }
+})();
+
+/** A large answer comes with its lists of records as rows (`{$cols, $rows}`, scp/api/working.py pack_rows): the field
+ *  names are not repeated for each of a plan's hundreds of thousands of orders, so the answer is a third as long.
+ *  Put them back as records. */
+export function unpackRows(x: unknown): unknown {
+  if (Array.isArray(x)) {
+    for (let i = 0; i < x.length; i++) x[i] = unpackRows(x[i]);
+    return x;
+  }
+  if (x !== null && typeof x === "object") {
+    const o = x as Record<string, unknown>;
+    const cols = o.$cols, rows = o.$rows;
+    if (Array.isArray(cols) && Array.isArray(rows) && Object.keys(o).length === 2) {
+      const n = cols.length;
+      return (rows as unknown[][]).map((r) => {
+        const rec: Record<string, unknown> = {};
+        for (let i = 0; i < n; i++) rec[cols[i] as string] = unpackRows(r[i]);
+        return rec;
+      });
+    }
+    for (const k of Object.keys(o)) o[k] = unpackRows(o[k]);
+    return o;
+  }
+  return x;
+}
+
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
+/** Where the browser goes to sign in with the company's identity provider. */
+export const SSO_START = `${API_ORIGIN}/api/auth/sso/start`;
 /** A proof run answers only when it is done; on a small server the generated flow takes minutes. */
 export const RUN_TIMEOUT_MS = 15 * 60_000;
 
@@ -46,6 +86,8 @@ async function call<T>(path: string, init?: RequestInit, timeoutMs?: number): Pr
         "Content-Type": "application/json",
         ...(who.token ? { Authorization: `Bearer ${who.token}` } : {}),
         ...(who.company ? { "X-Company": who.company } : {}),
+        "X-Client": CLIENT_ID,
+        "X-Pack": "rows",
         ...(init?.headers ?? {}),
       },
     });
@@ -63,7 +105,13 @@ async function call<T>(path: string, init?: RequestInit, timeoutMs?: number): Pr
       const detail = typeof body.detail === "string" ? body.detail : "";
       throw new ApiError(detail || `${path}: HTTP ${res.status}`, res.status, body);
     }
-    return (await res.json()) as T;
+    let out: unknown;
+    try {
+      out = await res.json();
+    } catch {
+      throw new Error("the engine's answer did not arrive whole: it may be larger than this browser can read");
+    }
+    return (res.headers.get("X-Rows") ? unpackRows(out) : out) as T;
   } catch (e) {
     if (ctrl?.signal.aborted) {
       throw new Error(`no answer after ${Math.round(timeoutMs! / 60_000)} minutes: the engine may be overloaded or restarting`);
@@ -74,26 +122,79 @@ async function call<T>(path: string, init?: RequestInit, timeoutMs?: number): Pr
   }
 }
 
-const post = <T>(path: string, ds: Dataset) => call<T>(path, { method: "POST", body: JSON.stringify(ds) });
-
 /** What the engine plans: the dataset without the unfinished records the data check set aside, and a way to put
  *  them back into a dataset the engine returns (a released forecast, committed promises, …), so an engine write
- *  never loses a record the planner is still filling in. The store installs this. */
-export interface PlanningView { clean: Dataset; restore: (next: Dataset) => Dataset }
+ *  never loses a record the planner is still filling in; `only` puts them back into those lists alone. The store
+ *  installs this. */
+export interface PlanningView { clean: Dataset; restore: (next: Dataset, only?: string[]) => Dataset }
 let planningViewOf: (ds: Dataset) => PlanningView = (ds) => ({ clean: ds, restore: (x) => x });
 export function setPlanningView(fn: (ds: Dataset) => PlanningView) { planningViewOf = fn; }
 const clean = (ds: Dataset) => planningViewOf(ds).clean;
-const planPost = <T>(path: string, ds: Dataset) => post<T>(path, clean(ds));
-/** POST `{ dataset, ...extra }` and put the set-aside records back into the dataset that comes back. */
-async function write<T extends { dataset: Dataset }>(path: string, dataset: Dataset, extra: Record<string, unknown> = {}): Promise<T> {
+
+/** The company kept on the server that a working copy stands for: the save it was made from and what changed since
+ *  (none: nothing). Sent in place of the company (Phase S): the server reads its own copy, so a planning call is a
+ *  few hundred bytes instead of the whole company, and sets aside unfinished records itself. */
+export interface DataRef { revision: number; patch: Patch | null }
+let refOf: (ds: Dataset) => DataRef | null = () => null;
+let refUnfit: () => void = () => {};
+/** The store installs `of` (a reference for its working copy, else null) and `unfit` (the server's copy did not
+ *  match: send the company whole until the next save). */
+export function setDataRef(of: typeof refOf, unfit: () => void) { refOf = of; refUnfit = unfit; }
+
+/** `ds` as sent: a reference to the server's copy when there is one, else whole (`planning`: without the records
+ *  the data check set aside). */
+function sent(ds: Dataset, planning: boolean): { data: unknown; ref: boolean } {
+  const r = refOf(ds);
+  if (r) return { data: { $ref: r.patch ? { revision: r.revision, patch: r.patch } : { revision: r.revision } }, ref: true };
+  return { data: planning ? clean(ds) : ds, ref: false };
+}
+
+/** POST `body(ds as sent)`; when the server's copy did not fit the reference, again with the company whole. */
+async function send<T>(path: string, ds: Dataset, planning: boolean, body: (data: unknown) => unknown): Promise<T> {
+  const s = sent(ds, planning);
+  try {
+    return await call<T>(path, { method: "POST", body: JSON.stringify(body(s.data)) });
+  } catch (e) {
+    if (!(s.ref && e instanceof ApiError && e.status === 409 && e.body.patch === "unfit")) throw e;
+    refUnfit();
+    return call<T>(path, { method: "POST", body: JSON.stringify(body(planning ? clean(ds) : ds)) });
+  }
+}
+
+const post = <T>(path: string, ds: Dataset) => send<T>(path, ds, false, (d) => d);
+const planPost = <T>(path: string, ds: Dataset) => send<T>(path, ds, true, (d) => d);
+
+/** An engine answer that changed the company: the company whole, or what changed when it was sent by reference. */
+type Changed<T> = Omit<T, "dataset" | "patch"> & { dataset: Dataset };
+type ChangeAnswer = { dataset?: Dataset | null; patch?: Record<string, unknown> | null };
+function changed<T extends ChangeAnswer>(before: Dataset, out: T): Changed<T> {
+  const v = planningViewOf(before);
+  const { patch, dataset, ...rest } = out;
+  if (patch) {
+    const p = patch as unknown as Patch;
+    // the records set aside stay in the working copy, except in a list the answer sends whole
+    return { ...rest, dataset: v.restore(applyPatch(before, p), Object.keys(p.set ?? {})) } as Changed<T>;
+  }
+  return { ...rest, dataset: v.restore(dataset as Dataset) } as Changed<T>;
+}
+
+/** POST `{ dataset, ...extra }` for a change, and put the set-aside records back into the dataset that comes back. */
+async function write<T extends ChangeAnswer>(path: string, dataset: Dataset, extra: Record<string, unknown> = {}): Promise<Changed<T>> {
   const refused = writeGuard();
   if (refused) throw new Error(refused);
-  const v = planningViewOf(dataset);
-  const out = await call<T>(path, { method: "POST", body: JSON.stringify({ dataset: v.clean, ...extra }) });
-  return { ...out, dataset: v.restore(out.dataset) };
+  return changed(dataset, await send<T>(path, dataset, true, (d) => ({ dataset: d, ...extra })));
 }
 const withDataset = <T>(path: string, dataset: Dataset, extra: Record<string, unknown> = {}) =>
-  call<T>(path, { method: "POST", body: JSON.stringify({ dataset: clean(dataset), ...extra }) });
+  send<T>(path, dataset, true, (d) => ({ dataset: d, ...extra }));
+
+/** What a posting may say besides its action (scp/api/app.py PostRequest). */
+export interface PostExtra {
+  order?: string; qty?: number | null; date?: string; final?: boolean; usage?: UsageInput[] | null; counts?: CountInput[];
+  note?: string; ship_from?: string | null; batch?: string | null; expires_on?: string | null; supplier_batch?: string | null;
+  serials?: string[] | null; stock_type?: StockType | null; to_type?: StockType | null; location?: string | null;
+  product?: string | null; movement?: string | null; doc?: string | null; nodes?: { location: string; product: string }[] | null;
+  block?: boolean; uncounted_zero?: boolean;
+}
 
 export const api = {
   examples: () => call<ExampleInfo[]>("/api/examples"),
@@ -102,14 +203,16 @@ export const api = {
   rules: () => call<RuleInfo[]>("/api/rules"),
   validate: (ds: Dataset) => post<ValidationResult>("/api/validate", ds),
   network: (ds: Dataset) => post<NetworkView>("/api/network", ds),
-  plan: (ds: Dataset) => planPost<PlanResult>("/api/plan", ds),
+  plan: (ds: Dataset) => planPost<PlanResult>("/api/plan?pegging=false", ds),
+  /** Part of the plan's requirements and pegging: an order's chain (what it serves and depends on), or one product's
+   *  at one place. */
+  planTrace: (ds: Dataset, what: { order: string } | { location: string; product: string }) =>
+    withDataset<PlanTrace>("/api/plan/trace", ds, what),
   sop: (ds: Dataset) => planPost<SopResult>("/api/sop", ds),
   sopRelease: async (ds: Dataset) => {
     const refused = writeGuard();
     if (refused) throw new Error(refused);
-    const v = planningViewOf(ds);
-    const out = await post<SopReleaseResponse>("/api/sop/release", v.clean);
-    return { ...out, dataset: v.restore(out.dataset) };
+    return changed(ds, await planPost<SopReleaseResponse>("/api/sop/release", ds));
   },
   inventory: (ds: Dataset) => planPost<InventoryResult>("/api/inventory", ds),
   /** Write the multi-echelon recommendation as fixed policies; keys "location|product", null = every stage that differs. */
@@ -140,11 +243,13 @@ export const api = {
   roll: (dataset: Dataset, asOf: string) =>
     write<RollResponse>("/api/actuals/roll", dataset, { as_of: asOf }),
   /** Post what happened: ship a transfer, receive an order (a production order issues its parts), or count stock. */
-  postActual: (dataset: Dataset, action: PostAction, extra: { order?: string; qty?: number | null; date?: string; final?: boolean;
-    usage?: UsageInput[] | null; counts?: CountInput[]; note?: string; ship_from?: string | null } = {}) =>
+  postActual: (dataset: Dataset, action: PostAction, extra: PostExtra = {}) =>
     write<PoActionResponse>("/api/actuals/post", dataset, { action, order: extra.order ?? null, qty: extra.qty ?? null,
       date: extra.date ?? null, final: extra.final ?? false, usage: extra.usage ?? null, counts: extra.counts ?? null, note: extra.note ?? "",
-      ship_from: extra.ship_from ?? null }),
+      ship_from: extra.ship_from ?? null, batch: extra.batch ?? null, expires_on: extra.expires_on ?? null,
+      supplier_batch: extra.supplier_batch ?? null, serials: extra.serials ?? null, stock_type: extra.stock_type ?? null,
+      to_type: extra.to_type ?? null, location: extra.location ?? null, product: extra.product ?? null, movement: extra.movement ?? null,
+      doc: extra.doc ?? null, nodes: extra.nodes ?? null, block: extra.block ?? true, uncounted_zero: extra.uncounted_zero ?? false }),
   /** Take a checked customer order (with its promise), change one (promised again), or cancel what is still open. */
   salesOrder: (dataset: Dataset, action: "accept" | "change" | "cancel",
     extra: { order?: DemandRecord; id?: string; changes?: Partial<SalesOrderChange>; date?: string; reason?: string }) =>
@@ -176,10 +281,16 @@ export const api = {
   createCompany: (dataset: Dataset, note = "") =>
     call<CompanyMeta>("/api/companies", { method: "POST", body: JSON.stringify({ dataset, note }) }),
   company: (id: string) => call<CompanyDoc>(`/api/companies/${encodeURIComponent(id)}`),
-  saveCompany: (id: string, dataset: Dataset, baseRevision: number, note = "") =>
-    call<SaveReport>(`/api/companies/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ dataset, base_revision: baseRevision, note }) }),
-  mergeCompany: (id: string, base: Dataset, dataset: Dataset, baseRevision: number) =>
-    call<MergeResult>(`/api/companies/${encodeURIComponent(id)}/merge`, { method: "POST", body: JSON.stringify({ base, dataset, base_revision: baseRevision }) }),
+  /** Save the working copy, whole (`dataset`) or as what changed since `baseRevision` (`patch`). */
+  saveCompany: (id: string, what: { dataset: Dataset } | { patch: Patch }, baseRevision: number, note = "") =>
+    call<SaveReport>(`/api/companies/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ ...what, base_revision: baseRevision, note }) }),
+  /** Merge the working copy (whole, or a patch on `baseRevision`) with the saves made since. `base` defaults to that
+   *  revision as the server keeps it; `choose` says whose version to keep per clash; `preview` saves nothing. */
+  mergeCompany: (id: string, o: { base?: Dataset; dataset?: Dataset; patch?: Patch; baseRevision: number; cleanOnly?: boolean;
+    choose?: Record<string, "mine" | "theirs">; preview?: boolean }) =>
+    call<MergeResult>(`/api/companies/${encodeURIComponent(id)}/merge`, { method: "POST",
+      body: JSON.stringify({ base: o.base, dataset: o.dataset, patch: o.patch, base_revision: o.baseRevision, clean_only: !!o.cleanOnly,
+        choose: o.choose ?? {}, preview: !!o.preview }) }),
   deleteCompany: (id: string) => call<{ ok: boolean }>(`/api/companies/${encodeURIComponent(id)}`, { method: "DELETE" }),
   companyHistory: (id: string, before?: number) =>
     call<LogRow[]>(`/api/companies/${encodeURIComponent(id)}/history${before ? `?before=${before}` : ""}`),
@@ -187,8 +298,23 @@ export const api = {
   restoreCompany: (id: string, revision: number, baseRevision: number) =>
     call<SaveReport>(`/api/companies/${encodeURIComponent(id)}/restore`, { method: "POST", body: JSON.stringify({ revision, base_revision: baseRevision }) }),
   members: (id: string) => call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members`),
-  setMember: (id: string, email: string, role: string) =>
-    call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members`, { method: "POST", body: JSON.stringify({ email, role }) }),
+  setMember: (id: string, email: string, role: string, limits?: { places?: string[]; families?: string[] }) =>
+    call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members`, { method: "POST", body: JSON.stringify({ email, role, ...limits }) }),
+  /** A link for a planner or viewer to set a new password (an owner hands it over). */
+  memberResetLink: (id: string, email: string) =>
+    call<ResetLink>(`/api/companies/${encodeURIComponent(id)}/members/${encodeURIComponent(email)}/reset`, { method: "POST" }),
+  setApproval: (id: string, approval: boolean) =>
+    call<CompanyMeta>(`/api/companies/${encodeURIComponent(id)}/approval`, { method: "PUT", body: JSON.stringify({ approval }) }),
+  heldChanges: (id: string, status = "pending") => call<HeldChange[]>(`/api/companies/${encodeURIComponent(id)}/held?status=${status}`),
+  decideHeld: (id: string, rid: number, decision: "approve" | "reject" | "withdraw", note = "") =>
+    call<SaveReport>(`/api/companies/${encodeURIComponent(id)}/held/${rid}`, { method: "POST", body: JSON.stringify({ decision, note }) }),
+  /** Change documents: every field changed, newest first; `q` finds records by (part of) their key. */
+  changes: (id: string, q = "", list = "", before?: number) =>
+    call<FieldChangeRow[]>(`/api/companies/${encodeURIComponent(id)}/changes?q=${encodeURIComponent(q)}&list=${encodeURIComponent(list)}${before ? `&before=${before}` : ""}`),
+  resetRequest: (email: string) => call<{ ok: boolean; mail: boolean }>("/api/auth/reset/request", { method: "POST", body: JSON.stringify({ email }) }),
+  resetPassword: (token: string, password: string) => call<Session>("/api/auth/reset", { method: "POST", body: JSON.stringify({ token, password }) }),
+  /** Who a sign-on token belongs to (the provider's sign-in brings the browser back with one). */
+  meWith: (token: string) => call<Me>("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } }),
   removeMember: (id: string, email: string) =>
     call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members/${encodeURIComponent(email)}`, { method: "DELETE" }),
 

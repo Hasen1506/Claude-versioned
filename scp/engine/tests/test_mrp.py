@@ -9,6 +9,7 @@ from datetime import date
 import pytest
 
 from scp.plan import run_mrp
+from scp.validate import validate
 from scp.plan.consumption import effective_demand
 from scp.plan.lotsize import apply_modifiers, base_lot, eoq
 from scp.model import DemandRecord, LotSizing, Strategy
@@ -179,13 +180,33 @@ def test_transfer_chain_places_requirement_at_origin_on_ship_date():
     assert not orders(r, "B")  # plant stock (10) covers it: nothing to make
 
 
-def test_mto_ignores_anonymous_stock_and_forecast():
+def test_mto_ignores_the_forecast_but_uses_free_stock_first():
+    """R (K): promising ships an order from free stock, so planning must too, or the order is supplied twice (a
+    dairy made fresh 5 kg paneer for hotel orders while 165 made earlier sat until it spoiled)."""
     d = base()
     lp(d, "P", "A")["strategy"] = "MTO"
     d["demand"] = [demand("P", "A", "2026-01-12", 30, "sales_order", id="SO1"),
                    demand("P", "A", "2026-01-19", 99)]
     r = run_mrp(ds(d))
-    assert [o.qty for o in orders(r, "A")] == [30]
+    assert [o.qty for o in orders(r, "A")] == [20]      # 30 ordered, 10 on hand; the 99 forecast is not planned
+    lp(d, "P", "A")["on_hand"] = 45
+    assert orders(run_mrp(ds(d)), "A") == []
+
+
+def test_customer_channel_follows_the_strategy_where_the_product_is_kept():
+    """R: make to order set at the plant also holds for the channels it ships to (through a DC without a record of
+    its own): their forecast is not planned, their orders are. A channel's own record still wins."""
+    d = base()
+    d["locations"] += [{"id": "D", "type": "dc"}, {"id": "K", "type": "customer"}]
+    d["lanes"] = [{"id": "PD", "origin": "P", "destination": "D", "modes": [{"transit_days": 1}]},
+                  {"id": "DK", "origin": "D", "destination": "K", "modes": [{"transit_days": 1}]}]
+    lp(d, "P", "A").update(strategy="MTO", on_hand=0)
+    d["demand"] = [demand("K", "A", "2026-01-12", 99), demand("K", "A", "2026-01-19", 30, "sales_order", id="SO1")]
+    r = plan(d)
+    assert [o.qty for o in orders(r, "A") if o.kind == "make"] == [30]
+    assert any(i.code == "MTO_WITH_FORECAST" for i in validate(ds(d)))
+    lp(d, "K", "A")["strategy"] = "MTS"
+    assert sum(o.qty for o in orders(plan(d), "A") if o.kind == "make") == 99  # its forecast is planned again
 
 
 def test_ato_forecast_supply_is_not_convertible():
@@ -274,3 +295,21 @@ def test_normal_loss_and_fill_rate_k():
     assert loss(1.0) == pytest.approx(0.0833155, rel=1e-5)
     k = k_for_fill_rate(0.0833155)
     assert k == pytest.approx(1.0, abs=1e-4)
+
+
+def test_a_route_of_half_a_day_arrives_the_same_day():
+    """R (K): a dairy's trucks reach the shops the morning they leave; rounding half a day up to a whole one made
+    every Monday's demand at the channels late, every week."""
+    from datetime import date as _d
+
+    from scp.actuals.stock import arrival
+    from scp.plan.leadtime import schedule_transfer, transit_whole_days
+
+    assert [transit_whole_days(x) for x in (0, 0.25, 0.5, 0.6, 1, 1.5, 2)] == [0, 0, 0, 1, 1, 1, 2]
+    d = base()
+    d["locations"].append({"id": "K", "type": "customer"})
+    d["lanes"] = [{"id": "L-PK", "origin": "P", "destination": "K", "modes": [{"mode": "truck_ftl", "transit_days": 0.5}]}]
+    x = ds(d)
+    monday = _d(2026, 1, 12)
+    assert schedule_transfer(x, "L-PK", "A", available=monday).start_date == monday
+    assert arrival(x, "P", "K", "A", monday) == monday

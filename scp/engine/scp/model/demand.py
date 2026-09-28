@@ -75,7 +75,10 @@ class ForecastSettings(Model):
     xyz_x: float = Unit("ratio", gt=0, default=0.5, description="Forecast-error CV that closes class X")
     xyz_y: float = Unit("ratio", gt=0, default=1.0, description="Forecast-error CV that closes class Y")
     interval: float = Unit("fraction", gt=0.5, lt=1, default=0.8,
-                           description="Central prediction interval shown with the forecast (0.8 = P10–P90)")
+                           description="Central prediction interval shown with the forecast (80 % = P10–P90)")
+    released_inputs: str | None = Field(
+        None, description="Written by a forecast release: a fingerprint of the events, new-product rules, overrides "
+                          "and these settings it was made with, so a later change to them is noticed")
 
     @model_validator(mode="after")
     def _ordered(self) -> ForecastSettings:
@@ -116,7 +119,7 @@ class DemandEvent(Model):
     start: dt.date
     end: dt.date = Field(description="Last day of the event (inclusive)")
     lift: float | None = Unit("fraction", ge=-1, le=20, default=None,
-                              description="Demand change while the event runs: 0.3 = +30 %, −0.2 = −20 %")
+                              description="Demand change while the event runs: +30 % or −20 %; empty = the lift measured on past events of the kind")
 
     @model_validator(mode="after")
     def _dates(self) -> DemandEvent:
@@ -151,7 +154,7 @@ class ForecastOverride(Model):
     date: dt.date = Field(description="Any date inside the forecast period to adjust")
     qty: float | None = Unit("qty", default=None, description="Final quantity for the period")
     change: float | None = Unit("fraction", ge=-1, le=20, default=None,
-                                description="Relative change to the statistical forecast: 0.1 = +10 %")
+                                description="Relative change to the statistical forecast, e.g. +10 %")
     reason: str = Field("", max_length=200)
     author: str = Field("", max_length=80)
 

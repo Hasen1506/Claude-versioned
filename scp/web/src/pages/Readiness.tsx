@@ -106,7 +106,7 @@ export function Readiness() {
                         <td className="nowrap"><Badge sev={i.severity === "error" ? "error" : "warning"}>{i.severity === "error" ? "Stops planning" : "Planned around"}</Badge></td>
                         <td><b>{checkTitle(i.code)}</b><div className="small muted"><Msg text={i.message} /></div></td>
                         <td>{r ? <a href={href(...r)}>{what}</a> : what}</td>
-                        <td className="muted small">{i.hint}</td>
+                        <td className="muted small">{i.hint && <Msg text={i.hint} />}</td>
                       </tr>
                     );
                   })}

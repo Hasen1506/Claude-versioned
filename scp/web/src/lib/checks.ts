@@ -22,6 +22,8 @@ export const CHECK_TITLE: Record<string, string> = {
   DEMAND_OUTSIDE_HORIZON: "Demand after the end of the plan, ignored",
   DEMAND_PAST_DUE: "Demand before the plan starts, treated as overdue",
   MTO_WITH_FORECAST: "A forecast on a make-to-order product, ignored",
+  FORECAST_TWICE: "A forecast at a place and at the customer it supplies: both planned",
+  FORECAST_INPUTS_CHANGED: "A promotion, override or forecast setting is not in the plan yet",
   STOCK_AT_CUSTOMER: "Stock entered at a customer, not planned",
   RESOURCE_UNUSED: "A machine or crew no product uses",
   LOCATION_PRODUCT_DEFAULTED: "No planning policy, so defaults are used",

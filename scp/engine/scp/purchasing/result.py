@@ -166,7 +166,22 @@ class CreateReport(Out):
     skipped: dict[str, str]           # requisition id → why
 
 
+class ShortOrder(Out):
+    """A firm order the parts no longer cover in full after a short or late receipt (R16)."""
+
+    order: str                        # the production or transfer order
+    product: str                      # what it makes or moves
+    part: str                         # the part it is short of
+    location: str                     # where the part is taken from
+    needs: float                      # still to be issued for the order
+    available: float                  # of the part, for this order, after the orders before it
+    can_make: float                   # the order's quantity the part covers (what "shorten" sets it to)
+    qty: float                        # the order's open quantity now
+
+
 class ActionReport(Out):
     ok: bool
     message: str
     movements: list[str] = []         # goods movements posted (receive)
+    doc: str | None = None            # the material document of those movements
+    short_orders: list[ShortOrder] = []   # firm orders a short receipt leaves without enough parts

@@ -30,6 +30,7 @@ from ..plan import PlanResult
 from ..plan.structure import entering, needs
 from ..plan.leadtime import (
     gr_days, nominal_lead_time_days, resource_calendar, schedule_buy, schedule_make, schedule_transfer,
+    transit_whole_days,
 )
 from ..time.capacity import day_capacity
 from .atp import EPS, AtpSeries
@@ -336,7 +337,8 @@ class Promiser:
             if opt.kind == "transfer":
                 src = opt.upstream[0]
                 ln = self.ds.lane_by_id[opt.source_id]
-                transit = math.ceil(ln.planning_mode.transit_days + gr_days(self.ds.location_product_by_key.get(node)) - 1e-9)
+                transit = (transit_whole_days(ln.planning_mode.transit_days)
+                           + math.ceil(gr_days(self.ds.location_product_by_key.get(node)) - 1e-9))
                 up = self.ctp(src, qty, max(0, need - transit), depth + 1, path)
                 if up is not None:
                     sched = schedule_transfer(self.ds, opt.source_id, prod, start=self.date(up.day))
@@ -367,17 +369,19 @@ class Promiser:
             cq = need.qty(qty)
             s = self.series_for(cnode)
             k = s.first_firm(cq, 0)
-            if k is not None:
+            # stock or firm receipts that free the part only months out must not hide a part that can be bought or
+            # made sooner (K: standardised milk free in March, made from milk bought today by Tuesday)
+            sub = self.ctp(cnode, cq, 0, depth + 1, path) if k is None or k > 0 else None
+            if sub is not None and (k is None or sub.day < k):
+                k = sub.day
+                steps += sub.steps
+                actions += sub.actions
+            elif k is not None:
                 steps.append(CtpStep(kind="component", location=loc, product=need.product, qty=cq, start=self.date(k),
                                      note="component available-to-promise"))
                 actions.append(Action("out", cnode, k, cq))
             else:
-                sub = self.ctp(cnode, cq, 0, depth + 1, path)
-                if sub is None:
-                    return None
-                k = sub.day
-                steps += sub.steps
-                actions += sub.actions
+                return None
             start = max(start, k)
         # finite capacity: step by step, each in the free hours of its machine (or the alternative that finishes it
         # first) from the day the step before finishes

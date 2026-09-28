@@ -21,10 +21,15 @@ on-time inputs cover stays on time (as promising would split the shipment), and 
 """
 from __future__ import annotations
 
+import hashlib
 import math
+import threading
+import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from typing import Any, TypeVar
 
 from ..model import (
     Dataset, LocationProduct, LocationType, LotSizePolicy, MrpType, ReceiptKind, SafetyStockMethod, Strategy,
@@ -95,6 +100,7 @@ class _Planner:
         self.supplier_load: dict[str, list[float]] = defaultdict(lambda: [0.0] * len(self.b))
         self.lane_load: dict[str, list[float]] = defaultdict(lambda: [0.0] * len(self.b))
         self.kpi = Kpis()
+        self._expiring: dict[Node, list[tuple[date, float, str]]] | None = None
 
     # ------------------------------------------------------------------ setup
     def lp(self, node: Node) -> LocationProduct:
@@ -117,7 +123,7 @@ class _Planner:
             st = self.state.get(node)
             if st is None:
                 continue
-            lp = st.lp
+            lp = self.ds.demand_lp(node)
             period = {rid: rec.period_days for rid, rec in recs}
             for r in effective_demand(recs, lp.strategy, lp.consumption_backward_days, lp.consumption_forward_days):
                 for i, (d, q) in enumerate(self._split(node, r.date, r.qty, period.get(r.source_ref)
@@ -234,6 +240,7 @@ class _Planner:
         onhand = 0.0 if self.is_customer(node) else lp.on_hand
         if onhand > 0:
             st.supplies.insert(0, _Supply("on_hand", f"OH:{node[0]}:{node[1]}", self.start, onhand, self.start))
+            self._expiry(node, st, onhand)
         if lp.mrp_type is MrpType.NONE:
             self._peg(node, st)
             return
@@ -251,7 +258,9 @@ class _Planner:
         rec_on: dict[date, float] = defaultdict(float)
         for s in receipts:
             rec_on[s.date] += s.qty
-        avail = 0.0 if mto else onhand
+        # make to order still uses free stock first: what a full batch left over, or stock made before the product
+        # became make-to-order, would otherwise sit (and, with a shelf life, spoil) while the next order is made new
+        avail = onhand
         eoq_qty = None
         if lp.lot_sizing.policy is LotSizePolicy.EOQ:
             eoq_qty = rates.eoq_qty(self.ds, self.g, node, self._rate(node, st), self.val.unit_value.get(node, 0.0))
@@ -288,6 +297,32 @@ class _Planner:
                                    below_zero=min(shortage, max(0.0, -avail)))
             avail += created
         self._peg(node, st)
+
+    def _expiry(self, node: Node, st: _NodeState, onhand: float) -> None:
+        """Batch stock the requirements will not use before it expires is gone the day after (R15): a requirement
+        of its own, so the plan replaces it instead of counting on it."""
+        lots = self.expiring.get(node)
+        if not lots:
+            return
+        from ..actuals.lots import spoilage
+        used: dict[date, float] = defaultdict(float)
+        for r in st.reqs:
+            used[r.date] += r.qty
+        for day, q, batch in spoilage(lots, onhand, used):
+            if day >= self.b.end:
+                continue
+            day = max(day, self.start)
+            self._add_req(node, Requirement(id=f"EXP:{node[0]}:{node[1]}:{batch}", location=node[0], product=node[1],
+                                            date=day, qty=q, kind="expiry", priority=9))
+            self._exc("STOCK_EXPIRES", "warning", f"{q:,.1f} of batch {batch} expire unused on "
+                      f"{(day - timedelta(days=1)).isoformat()}", node=node, when=day, qty=q)
+
+    @property
+    def expiring(self) -> dict[Node, list[tuple[date, float, str]]]:
+        if self._expiring is None:
+            from ..actuals.lots import expiring
+            self._expiring = expiring(self.ds, self.b.end)
+        return self._expiring
 
     def _lot(self, lp: LocationProduct, mto: bool, shortage: float, d: date, avail: float, req_on: dict[date, float],
              rec_on: dict[date, float], eoq_qty: float | None) -> tuple[float, float | None]:
@@ -850,6 +885,8 @@ class _Planner:
                 if 0 <= bi < n:
                     if r.kind in ("forecast", "sales_order"):
                         bks[bi].gross_independent += r.qty
+                    elif r.kind == "expiry":
+                        bks[bi].expiring += r.qty
                     else:
                         bks[bi].gross_dependent += r.qty
             for sp in st.supplies:
@@ -864,7 +901,7 @@ class _Planner:
             onhand = 0.0 if self.is_customer(node) else lp.on_hand
             poh = onhand
             for bk, meta in zip(bks, self.b, strict=True):
-                poh += bk.scheduled_receipts + bk.planned_receipts - bk.gross_independent - bk.gross_dependent
+                poh += bk.scheduled_receipts + bk.planned_receipts - bk.gross_independent - bk.gross_dependent - bk.expiring
                 bk.projected_on_hand = poh
                 bk.shortage = max(0.0, -poh)
                 bk.below_safety = max(0.0, bk.safety_stock - max(poh, 0.0)) if bk.safety_stock > 0 else 0.0
@@ -1090,8 +1127,61 @@ def target_at(points: list[tuple[date, float]], d: date) -> float:
     return points[-1][1] if d == points[-1][0] else 0.0
 
 
+# "Plan everything" asks for the supply plan in six of its steps (the plan, promising, capacity, buying, money,
+# performance), each with the same data: a large company's plan takes a minute and a half, so the last one that took
+# long is kept, by the data's content, and handed out again. Callers only read a plan.
+_KEEP_AFTER_S = 2.0
+T = TypeVar("T")
+_last: tuple[str, PlanResult, dict[str, Any]] | None = None
+_last_lock = threading.Lock()
+
+
+#: A dataset's fingerprint when something already stands for its content (a company read by reference is its save
+#: and the changes on it, scp.api.working), else None: hashing a large company takes seconds.
+def _no_fingerprint(_ds: Dataset) -> str | None:
+    return None
+
+
+known_fingerprint: Callable[[Dataset], str | None] = _no_fingerprint
+
+
+def _fingerprint(ds: Dataset) -> str:
+    return known_fingerprint(ds) or hashlib.sha256(ds.model_dump_json().encode()).hexdigest()
+
+
 def run_mrp(ds: Dataset) -> PlanResult:
     """Validate, then plan. With blocking issues the result carries only the issues."""
+    global _last
+    key = None
+    if _last is not None:
+        key = _fingerprint(ds)
+        with _last_lock:
+            if _last is not None and _last[0] == key:
+                return _last[1]
+    t = time.perf_counter()
+    res = _run_mrp(ds)
+    if time.perf_counter() - t >= _KEEP_AFTER_S:
+        with _last_lock:
+            _last = (key or _fingerprint(ds), res, {})
+    return res
+
+
+def with_kept_plan(ds: Dataset, plan: PlanResult, name: str, make: Callable[[], T]) -> T:
+    """``make()``, kept beside the kept plan when ``plan`` is it and ``ds`` is the data it was made from (money and
+    performance both follow the plan's costs to the customers, a quarter of a minute for a large company)."""
+    kept = _last
+    if kept is None or kept[1] is not plan or _fingerprint(ds) != kept[0]:
+        return make()
+    with _last_lock:
+        if name in kept[2]:
+            return kept[2][name]
+    out = make()
+    with _last_lock:
+        kept[2][name] = out
+    return out
+
+
+def _run_mrp(ds: Dataset) -> PlanResult:
     issues = validate(ds)
     if has_errors(issues):
         return PlanResult(ok=False, currency=ds.settings.currency, carrying_rate=ds.settings.carrying_rate,

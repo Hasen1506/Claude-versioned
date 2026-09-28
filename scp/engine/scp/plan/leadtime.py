@@ -55,6 +55,16 @@ def _days(x: float) -> timedelta:
     return timedelta(days=math.ceil(x - 1e-9))
 
 
+def transit_whole_days(x: float) -> int:
+    """Whole days a route takes, for dates: goods leave at the start of the day, so a route of up to half a day
+    arrives the same day (a dairy truck at 5 am is in the shops by noon) and anything longer the next day on."""
+    return max(0, math.ceil(x - 0.5 - 1e-9))
+
+
+def _transit(x: float) -> timedelta:
+    return timedelta(days=transit_whole_days(x))
+
+
 # ---------------------------------------------------------------------------------------------
 @dataclass
 class OpWindow:
@@ -284,12 +294,12 @@ def schedule_buy(ds: Dataset, src_id: str, *, available: date | None = None, sta
     transit = lane.planning_mode.transit_days if lane else 0.0
     buyer = location_calendar(ds, pu.location)
     if available is not None:
-        latest = available - _days(gr) - _days(transit) - _days(pu.lead_time_days)
+        latest = available - _days(gr) - _transit(transit) - _days(pu.lead_time_days)
         st = buyer.prev_workday(latest)
     else:
         st = buyer.next_workday(start)
     ship = st + _days(pu.lead_time_days)
-    due = ship + _days(transit)
+    due = ship + _transit(transit)
     return Schedule(st, due, due + _days(gr), [], ship_date=ship)
 
 
@@ -300,10 +310,10 @@ def schedule_transfer(ds: Dataset, lane_id: str, product: str, *, available: dat
     transit = ln.planning_mode.transit_days
     ship_cal = location_calendar(ds, ln.origin)  # goods leave on the origin's working days
     if available is not None:
-        st = ship_cal.prev_workday(available - _days(gr) - _days(transit))
+        st = ship_cal.prev_workday(available - _days(gr) - _transit(transit))
     else:
         st = ship_cal.next_workday(start)
-    due = st + _days(transit)
+    due = st + _transit(transit)
     return Schedule(st, due, due + _days(gr), [], ship_date=st)
 
 

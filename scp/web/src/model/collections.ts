@@ -7,7 +7,7 @@ type Obj = Record<string, unknown>;
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
   | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides"
-  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices";
+  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches";
 
 export interface Column {
   label: string;
@@ -249,7 +249,17 @@ export const COLLECTIONS: CollectionDef[] = [
     columns: [
       { label: "Id", get: (o) => s(o.id) }, { label: "Date", get: (o) => s(o.date) }, { label: "Type", get: (o) => s(o.type) },
       { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
-      { label: "Reference", get: (o) => s(o.reference) }, { label: "Qty", get: (o) => o.qty as number, num: true },
+      { label: "Reference", get: (o) => s(o.reference) }, { label: "Customer or supplier", get: (o) => s(o.counterparty) },
+      { label: "Qty", get: (o) => o.qty as number, num: true }, { label: "Note", get: (o) => s(o.note) },
+    ],
+  },
+  {
+    key: "batches", label: "Batches", singular: "batch", defName: "Batch", issueType: "batch",
+    group: "Execution", keyOf: (o) => `${s(o.product)}/${s(o.id)}`,
+    blurb: "Batches of products kept by batch, with the day each expires. A receipt makes one; correct an expiry date here, and planning and the stock follow.",
+    columns: [
+      { label: "Product", get: (o) => s(o.product) }, { label: "Batch", get: (o) => s(o.id) }, { label: "Made", get: (o) => s(o.made_on) },
+      { label: "Expires", get: (o) => s(o.expires_on) }, { label: "Supplier's batch", get: (o) => s(o.supplier_batch) },
     ],
   },
   {
@@ -292,52 +302,52 @@ export function whereUsed(ds: Dataset, kind: "location" | "product" | "resource"
   const out: string[] = [];
   const add = (cond: boolean, what: string) => cond && out.push(what);
   if (kind === "location") {
-    for (const r of ds.resources ?? []) add(r.location === id, `resource ${r.id}`);
-    for (const p of ds.production_sources ?? []) add(p.location === id, `production source ${p.id}`);
-    for (const p of ds.purchasing_sources ?? []) add(p.supplier === id || p.location === id, `purchasing source ${p.id}`);
+    for (const r of ds.resources ?? []) add(r.location === id, `machine ${r.id}`);
+    for (const p of ds.production_sources ?? []) add(p.location === id, `way to make ${p.id}`);
+    for (const p of ds.purchasing_sources ?? []) add(p.supplier === id || p.location === id, `way to buy ${p.id}`);
     for (const v of ds.vendors ?? []) add(v.supplier === id, "its supplier purchasing data");
     for (const p of ds.purchase_orders ?? []) add(p.supplier === id || p.location === id, `purchase order ${p.id}`);
-    for (const l of ds.lanes ?? []) add(l.origin === id || l.destination === id, `lane ${l.id}`);
+    for (const l of ds.lanes ?? []) add(l.origin === id || l.destination === id, `route ${l.id}`);
     const lp = (ds.location_products ?? []).filter((x) => x.location === id).length;
     add(lp > 0, `${lp} planning polic${lp === 1 ? "y" : "ies"}`);
     const dm = (ds.demand ?? []).filter((x) => x.location === id).length;
-    add(dm > 0, `${dm} demand record(s)`);
+    add(dm > 0, `${dm} order${dm === 1 ? "" : "s"} and forecast${dm === 1 ? "" : "s"}`);
     const hs = (ds.history ?? []).filter((x) => x.location === id).length;
-    add(hs > 0, `${hs} history row(s)`);
-    for (const n of ds.npi ?? []) add(n.location === id || n.like_location === id, `NPI rule ${n.location}|${n.product}`);
+    add(hs > 0, `${hs} week${hs === 1 ? "" : "s"} of sales history`);
+    for (const n of ds.npi ?? []) add(n.location === id || n.like_location === id, `new-product rule ${n.product} at ${n.location}`);
     for (const e of ds.events ?? []) add(!!e.locations?.includes(id), `event ${e.id}`);
     const cp = (ds.customer_prices ?? []).filter((x) => x.customer === id).length;
-    add(cp > 0, `${cp} customer price(s)`);
+    add(cp > 0, `${cp} customer price${cp === 1 ? "" : "s"}`);
   }
   if (kind === "product") {
     for (const p of ds.production_sources ?? []) {
-      add(p.product === id, `output of ${p.id}`);
-      add((p.components ?? []).some((c) => c.product === id), `component in ${p.id}`);
+      add(p.product === id, `made by ${p.id}`);
+      add((p.components ?? []).some((c) => c.product === id), `a part in ${p.id}`);
     }
-    for (const p of ds.purchasing_sources ?? []) add(p.product === id, `purchasing source ${p.id}`);
-    for (const l of ds.lanes ?? []) add(!!l.products?.includes(id), `lane ${l.id}`);
+    for (const p of ds.purchasing_sources ?? []) add(p.product === id, `way to buy ${p.id}`);
+    for (const l of ds.lanes ?? []) add(!!l.products?.includes(id), `route ${l.id}`);
     const lp = (ds.location_products ?? []).filter((x) => x.product === id).length;
     add(lp > 0, `${lp} planning polic${lp === 1 ? "y" : "ies"}`);
     const dm = (ds.demand ?? []).filter((x) => x.product === id).length;
-    add(dm > 0, `${dm} demand record(s)`);
+    add(dm > 0, `${dm} order${dm === 1 ? "" : "s"} and forecast${dm === 1 ? "" : "s"}`);
     const hs = (ds.history ?? []).filter((x) => x.product === id).length;
-    add(hs > 0, `${hs} history row(s)`);
-    for (const n of ds.npi ?? []) add(n.product === id || n.like_product === id, `NPI rule ${n.location}|${n.product}`);
+    add(hs > 0, `${hs} week${hs === 1 ? "" : "s"} of sales history`);
+    for (const n of ds.npi ?? []) add(n.product === id || n.like_product === id, `new-product rule ${n.product} at ${n.location}`);
     for (const e of ds.events ?? []) add(!!e.products?.includes(id), `event ${e.id}`);
     const cp = (ds.customer_prices ?? []).filter((x) => x.product === id).length;
-    add(cp > 0, `${cp} customer price(s)`);
+    add(cp > 0, `${cp} customer price${cp === 1 ? "" : "s"}`);
   }
   if (kind === "resource") {
     for (const p of ds.production_sources ?? [])
       for (const op of p.operations ?? []) {
-        add(op.resource === id, `${p.id} op ${op.seq} (machine)`);
-        add(op.labor_resource === id, `${p.id} op ${op.seq} (labour)`);
+        add(op.resource === id, `step ${op.seq} of ${p.id} (machine)`);
+        add(op.labor_resource === id, `step ${op.seq} of ${p.id} (labour)`);
       }
   }
   if (kind === "calendar") {
-    add(ds.settings.default_calendar === id, "settings (default calendar)");
-    for (const l of ds.locations ?? []) add(l.calendar === id, `location ${l.id}`);
-    for (const r of ds.resources ?? []) add(r.calendar === id, `resource ${r.id}`);
+    add(ds.settings.default_calendar === id, "company settings (the default calendar)");
+    for (const l of ds.locations ?? []) add(l.calendar === id, `place ${l.id}`);
+    for (const r of ds.resources ?? []) add(r.calendar === id, `machine ${r.id}`);
   }
   return out;
 }

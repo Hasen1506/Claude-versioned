@@ -16,7 +16,7 @@ import re
 
 from ..actuals.post import PostingError, delivered, ordered_now, sales_order
 from ..actuals.stock import EPS, arrival
-from ..model import ClosedOrder, Dataset, DemandKind, DemandRecord, LocationType, MovementType
+from ..model import ClosedOrder, Dataset, DemandKind, DemandRecord, LocationType, MovementType, Strategy
 from ..model.common import STOCKING_LOCATION_TYPES, Out
 from ..model.promise import Confirmation
 from .result import OrderPromise
@@ -68,6 +68,19 @@ def _promised(ds: Dataset, p: OrderPromise) -> str:
     return head + (f"; {_n(p.unconfirmed)} not promised yet" if p.unconfirmed > EPS else "")
 
 
+def _new_supply(ds: Dataset, rec: DemandRecord, p: OrderPromise) -> str:
+    """A note when the promise stands on supply nobody has ordered yet: a product made to order, or lines promised on
+    new production (capable-to-promise) or on the replenishment lead time. Planned orders are only a plan; unless the
+    run is made firm it is not made, and the promise goes late at the next roll."""
+    new = [x for x in p.lines if x.method in ("ctp", "rlt")]
+    mto = any((lp := ds.demand_lp((x.ship_from, rec.product))) is not None and lp.strategy is Strategy.MTO
+              for x in p.lines if ds.location_type(x.ship_from) is not None)
+    if not (new or mto):
+        return ""
+    return (" It needs new supply that is only planned: make it firm (Actuals → Open orders & firming) after the "
+            "plan is recalculated, or it is not made.")
+
+
 def _promise(ds: Dataset, rec: DemandRecord) -> tuple[OrderPromise, list[Confirmation]]:
     """Check ``rec`` after every order already promised, and its schedule lines as confirmations to keep."""
     res = check_order(ds, rec)
@@ -103,7 +116,7 @@ def accept(ds: Dataset, order: DemandRecord) -> tuple[Dataset, SalesOrderReport]
     p, confs = _promise(ds, rec)
     new = ds.model_copy(update={"demand": [*ds.demand, rec], "confirmations": [*ds.confirmations, *confs]})
     msg = (f"{oid} taken: {_n(rec.qty)} {_name(ds, 'product', rec.product)} for {_name(ds, 'location', rec.location)}, "
-           f"asked for {_day(rec.date)}; {_promised(ds, p)}.")
+           f"asked for {_day(rec.date)}; {_promised(ds, p)}.{_new_supply(ds, rec, p)}")
     return Dataset.model_validate(new.model_dump()), SalesOrderReport(ok=True, order=oid, message=msg, promise=p)
 
 
@@ -171,7 +184,7 @@ def cancel(ds: Dataset, oid: str, on: dt.date | None = None, reason: str = "") -
     d = _open(ds, oid)
     ordered = ordered_now(ds, d)
     sales = [m for m in ds.movements if m.type is MovementType.SALE and m.reference == oid]
-    done = sum(m.qty for m in sales)
+    done = sum(m.net for m in sales)
     arrive = [arrival(ds, m.location, d.location, d.product, m.date) for m in sales]
     cf = [c for c in ds.confirmations if c.order == oid]
     closed = ClosedOrder(kind="sales", id=oid, location=d.location, product=d.product,

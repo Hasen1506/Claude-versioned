@@ -139,6 +139,7 @@ class ResourceKind(str, Enum):
 class TransportMode(str, Enum):
     TRUCK_FTL = "truck_ftl"
     TRUCK_LTL = "truck_ltl"
+    REEFER = "reefer"                # refrigerated truck: the cold chain (R30)
     RAIL = "rail"
     SEA = "sea"
     AIR = "air"

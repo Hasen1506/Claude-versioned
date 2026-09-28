@@ -10,7 +10,7 @@ from ..model.common import Out
 from ..validate import Issue
 
 OrderKind = Literal["make", "buy", "transfer"]
-ReqKind = Literal["forecast", "sales_order", "dependent", "transfer"]
+ReqKind = Literal["forecast", "sales_order", "dependent", "transfer", "expiry"]
 SupplyKind = Literal["on_hand", "receipt", "co_product", "order"]
 
 
@@ -82,6 +82,7 @@ class NodeBucket(Out):
     bucket: int
     gross_independent: float = 0.0
     gross_dependent: float = 0.0
+    expiring: float = 0.0            # batch stock that expires unused in the bucket (first expiring, first out)
     scheduled_receipts: float = 0.0
     planned_receipts: float = 0.0
     projected_on_hand: float = 0.0   # end of bucket, physical (by available dates)
