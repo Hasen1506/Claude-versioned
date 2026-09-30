@@ -6,6 +6,12 @@ The continuation covered spreadsheet decoding, save/recovery races and capacity-
 
 ## Verification after repairs
 
+### User-perspective continuation
+
+The next pass reproduced and repaired BH055–BH057 in guided setup: stale displayed values after undo, silent coercion of invalid product values, and loss of explicit zero prices/costs. Four new browser regressions passed locally, with TypeScript checking and a production build. These are further production UI changes, distinct from the 49 previously merged logic repairs. Publication and full CI verification for this continuation are tracked with its PR.
+
+The public Pages URL also returned 404; its deployment workflow failed before building because the Pages site was not configured. The Render host opened the app. This operational issue remains open. The [user workflow/product audit](scp/docs/PRODUCT_AUDIT.md) records direct walkthrough evidence, remaining section coverage, official competitor references and a proposed target-market hypothesis.
+
 | Verification | Result |
 |---|---|
 | Full engine suite | 571 passed on Windows and in Linux CI; zero failures/errors/skips |
