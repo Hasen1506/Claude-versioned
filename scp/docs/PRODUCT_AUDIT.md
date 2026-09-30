@@ -1,6 +1,6 @@
 # User workflow and product audit
 
-Updated 30 September 2026. Starting main revision: `ff76b1a7126495abfc532e39e59f82703a435ec4`. This is a continuing audit, not a claim of exhaustive testing or enterprise readiness. The preceding repair evidence is in [audit.md](../../audit.md).
+Updated 30 September 2026. Starting main revision: `ff76b1a7126495abfc532e39e59f82703a435ec4`. Fixes in this pass are merged through [PR #7](https://github.com/Hasen1506/Claude-versioned/pull/7), merge `bac9d8892484279ecda92ea7268234c316719b98`. This is a continuing audit, not a claim of exhaustive testing or enterprise readiness. The preceding repair evidence is in [audit.md](../../audit.md).
 
 ## Goal and acceptance gates
 
@@ -23,16 +23,16 @@ The local walkthrough created Audit Foods, a plant, a supplier and a saleable Co
 
 | Area | Direct observation in this pass | Still to test in this continuing audit |
 |---|---|---|
-| Entry/account | Fresh local account and server-kept company created; deployed account page rendered. | Production signup/recovery; expired sessions; role switching and cross-company journeys. |
+| Entry/account | Fresh local account and server-kept company created; deployed account page rendered. Owner invited a viewer; sign-out closed the company; the new viewer opened it; owner signed back in and reopened it. | Production signup/recovery; expired sessions; planner scopes and cross-company journeys. |
 | Home/setup | Empty Home gives a network setup link; places, products and supply wizard lead to a valid buying plan. | Manufacturing and distribution setup from scratch; interrupted setup/import recovery. |
 | Demand | Added a product/place row and entered 100 units; supply consumes the value. | New-user forecasting, overrides, release and accuracy after actual sales. |
 | Supply/buying | INR 10,000 proposal, purchase creation, sent state, receipt and reload verified. | Approvals, short/late/repeated receipts and multi-currency purchase documents through the UI. |
-| Actuals | Stock view and receipt explanation inspected. | Full roll-forward, inventory reconciliation, sales/production/transfer and reversal as one user journey. |
+| Actuals | Stock view and receipt explanation inspected; journal shows the +100 receipt and its purchase-line reference. Viewer posting and reversal controls are disabled. | Full roll-forward, inventory reconciliation, sales/production/transfer and reversal as one user journey. |
 | Money/performance | Revenue INR 25,000 and about INR 15,000 margin displayed; stale performance data shows a warning and recalculation action. | Independent financial reconciliation after mixed postings; KPI ownership and follow-up closure. |
 | Products at places/machines | Product policy list opens; no-machine state explains where to add a resource. | MRP 1–4 edits, calendars/shifts, alternative resources and constrained manufacturing journey. |
-| Versions | New base saved and visible. | Branch/edit/compare/promote and recovery while other users edit. |
+| Versions | New base saved and visible; viewer version creation is disabled. | Branch/edit/compare/promote and recovery while other users edit. |
 | Network/master data | Navigation to product details verified stored INR 250 after undo while the old setup field incorrectly showed INR 300. | Large-network discovery, import mapping and rejected-record correction. |
-| Optional supply tabs/Proof | Earlier 29-workflow browser suite covers these; they were not re-walked manually in this pass. | Beginner discoverability and complete task walkthrough for buffers, capacity plan, levelling, shop floor and Proof. |
+| Optional supply tabs/Proof | Buffers shows an optimal placement result; capacity plan opens and blocks viewer release; levelling and shop floor explain the no-machine/no-order state. All 33 browser workflows, including Proof, pass in current CI. | Full task walkthrough with production data for each optional tab; beginner discoverability and Proof comprehension. |
 
 ## Confirmed findings and repairs
 
@@ -43,6 +43,12 @@ The local walkthrough created Audit Foods, a plant, a supplier and a saleable Co
 | BH057 | Add a product with explicit selling price 0: its resulting selling-price field is blank. Inline price/cost 0 also becomes an absent override. | Explicit zero survives creation and inline edits; blank still means absent. Master data confirms both price and standard cost remain 0. |
 
 Four persistent browser regressions cover product undo/redo, creation validation, saved zero values, inline invalid values, route dates and stock edits. All four passed locally; TypeScript checking and the production Vite build passed. The Windows test server needed manual termination during Playwright shutdown; the recorded test run then exited successfully. This shutdown delay is test infrastructure evidence, not a measured application latency.
+
+Final [CI run 36739886592](https://github.com/Hasen1506/Claude-versioned/actions/runs/36739886592) passed 571 engine tests and all 33 browser workflows. Python lint, generated examples, API type drift checking and the production build also passed. This tested the code merged through PR #7. The subsequent report update changes documentation only.
+
+The viewer could simulate a 100-unit order at INR 250 while order acceptance and promise-saving controls were disabled. Master-data creation/upload controls were also disabled. These are observed UI permission checks, not a substitute for the API authorization and concurrent-save suites.
+
+Further usability observations to revisit: an empty Orders page still displays 100% confirmed/on-time tiles beside its no-orders message; and the missing-policy warning says "ordered exactly as needed" even when the company default is a week's need. The latter wording conflicts with the configured default and the engine's inheritance implementation; the warning should explain the effective company rule. These observations are recorded separately from the three repairs above.
 
 ### Deployment issue still open
 
@@ -71,7 +77,7 @@ Early pilot acceptance: a planner brings their own anonymized data, reaches the 
 
 ## Ordered next work
 
-1. Finish public entry and access verification, including the Pages gap and deployed persistence/revision. Demonstrate account recovery and owner/planner/viewer journeys on an isolated instance.
+1. Finish public entry and access verification, including the Pages gap and deployed persistence/revision. Demonstrate account recovery, expired sessions and planner scopes; extend the completed owner/viewer walkthrough to cross-company tasks.
 2. Walk a manufactured product through forecast, BOM/routing, resource calendar, constrained supply, promise, purchase, production confirmation, shipment, weekly roll and financial/KPI reconciliation. Keep an independently calculated fixture beside the journey.
 3. Test every optional tab and the scenario branch/compare/promote flow; repeat with missing data, fractional units, partial receipts and interrupted/concurrent saves.
 4. Run keyboard and narrow-screen tasks. Record actual missed actions and blocked flows; prioritize observed friction over adding more screens.

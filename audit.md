@@ -8,7 +8,7 @@ The continuation covered spreadsheet decoding, save/recovery races and capacity-
 
 ### User-perspective continuation
 
-The next pass reproduced and repaired BH055–BH057 in guided setup: stale displayed values after undo, silent coercion of invalid product values, and loss of explicit zero prices/costs. Four new browser regressions passed locally, with TypeScript checking and a production build. These are further production UI changes, distinct from the 49 previously merged logic repairs. Publication and full CI verification for this continuation are tracked with its PR.
+The next pass reproduced and repaired BH055–BH057 in guided setup: stale displayed values after undo, silent coercion of invalid product values, and loss of explicit zero prices/costs. These production fixes are merged to main through [PR #7](https://github.com/Hasen1506/Claude-versioned/pull/7), merge `bac9d8892484279ecda92ea7268234c316719b98`. The cumulative count is **52 repaired logic defects and one native runtime mitigation**. Four new browser regressions passed locally. Full [CI run 36739886592](https://github.com/Hasen1506/Claude-versioned/actions/runs/36739886592) passed **571 engine tests and 33 browser workflows**, lint, reproducible examples, API type drift checking and the production build. The earlier PR #6 counts below remain historical evidence for that repair pass.
 
 The public Pages URL also returned 404; its deployment workflow failed before building because the Pages site was not configured. The Render host opened the app. This operational issue remains open. The [user workflow/product audit](scp/docs/PRODUCT_AUDIT.md) records direct walkthrough evidence, remaining section coverage, official competitor references and a proposed target-market hypothesis.
 
@@ -42,6 +42,14 @@ Before-repair evidence remains in the earlier audit archives and repair logs. Th
 - CSV/XLSX decoding, routing exports and partial multi-mode lane imports preserve their data. Save/load and overlapping planning responses are guarded against stale results. Setup dates use the local calendar.
 
 ## Finding status
+
+Additional merged findings from the user walkthrough:
+
+| ID | Priority | Finding | Current status |
+|---|---|---|---|
+| BH055 | P2 | Guided setup shows edited values after undo restores different saved values | Repaired in PR #7; browser regressions passed |
+| BH056 | P2 | Product creation silently discards negative prices and rounds fractional shelf lives | Repaired in PR #7; browser regressions passed |
+| BH057 | P2 | Guided product creation and edits lose explicit zero prices and costs | Repaired in PR #7; browser regressions passed |
 
 | ID | Priority | Finding | Current status |
 |---|---|---|---|
