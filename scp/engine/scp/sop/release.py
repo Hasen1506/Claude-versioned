@@ -14,6 +14,7 @@ from datetime import timedelta
 
 from ..model import DemandKind, DemandRecord, StockTarget
 from ..model.dataset import Dataset
+from ..actuals.stock import forecast_in
 from .result import SopRelease, SopResult
 
 
@@ -26,8 +27,17 @@ def release_sop(ds: Dataset, res: SopResult) -> tuple[Dataset, SopRelease]:
     keep: list[DemandRecord] = []
     replaced = 0
     for d in ds.demand:
-        if d.kind is DemandKind.FORECAST and (d.location, d.product) in lines and start <= d.date < end:
+        stop = d.date + timedelta(days=d.period_days or 1)
+        if d.kind is DemandKind.FORECAST and (d.location, d.product) in lines and d.date < end and stop > start:
             replaced += 1
+            for lo, hi, suffix in [(d.date, min(start, stop), "left"), (max(end, d.date), stop, "right")]:
+                if hi <= lo:
+                    continue
+                one = ds.model_copy(update={"demand": [d]})
+                qty = forecast_in(one, lo, hi).get((d.location, d.product), 0.0)
+                if qty > 1e-6:
+                    keep.append(d.model_copy(update={"date": lo, "period_days": (hi - lo).days, "qty": qty,
+                                                    "id": f"{d.id[:58]}-{suffix}" if d.id else None}))
             continue
         keep.append(d)
     new: list[DemandRecord] = []
@@ -36,7 +46,7 @@ def release_sop(ds: Dataset, res: SopResult) -> tuple[Dataset, SopRelease]:
             if qty <= 1e-6:
                 continue
             new.append(DemandRecord(id=f"SOP-{loc}-{prod}-{b.index:03d}"[:64], location=loc, product=prod, date=b.start,
-                                    qty=round(qty, 3), kind=DemandKind.FORECAST, period_days=b.days))
+                                    qty=qty, kind=DemandKind.FORECAST, period_days=b.days))
     targets = [t for t in ds.stock_targets if t.source != "sop"]
     nodes = 0
     for sl in sorted(res.supply, key=lambda x: (x.location, x.product)):

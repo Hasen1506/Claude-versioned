@@ -84,20 +84,31 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
     fc: dict[Node, list[float]] = defaultdict(lambda: [0.0] * T)
     so: dict[Node, list[float]] = defaultdict(lambda: [0.0] * T)
     pw: dict[Node, list[float]] = defaultdict(lambda: [0.0] * T)   # Σ qty·priority
+    records = {d.id or f"#{i}": d for i, d in enumerate(ds.demand)}
+    segmented = {(d.location, d.product) for d in ds.demand if d.price is not None}
+    segments: dict[Node, dict[str, list[float]]] = defaultdict(dict)
+    segment_price: dict[str, float | None] = {}
+    segment_priority: dict[str, int] = {}
     for n, reqs in independent_demand(ds).items():
         if n not in role:
             continue
         for r, span in reqs:
+            source = records[r.source_ref]
+            segment_price[r.source_ref] = ds.selling_price(*n, source.price)
+            segment_priority[r.source_ref] = r.priority
+            segment = segments[n].setdefault(r.source_ref, [0.0] * T)
             if r.kind == "forecast":
                 for b in bk:
                     ov = (min(r.date + timedelta(days=span), b.end) - max(r.date, b.start)).days
                     if ov > 0:
                         q = r.qty * ov / span
+                        segment[b.index] += q * cfg.demand_factor
                         fc[n][b.index] += q
                         pw[n][b.index] += q * r.priority
             else:
                 i = 0 if r.date < start else bk.index_of(r.date)
                 if 0 <= i < T:
+                    segment[i] += r.qty * cfg.demand_factor
                     so[n][i] += r.qty
                     pw[n][i] += r.qty * r.priority
     dem: dict[Node, list[float]] = {}
@@ -112,10 +123,13 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
     demand_nodes = [n for n in nodes if n in dem]
 
     def price(n: Node) -> float:
+        if n in segmented and n in dem:
+            return sum(sum(q) * (segment_price[k] if segment_price[k] is not None else val.unit_value.get(n, 0.0))
+                       for k, q in segments[n].items()) / sum(dem[n])
         p = ds.selling_price(*n)
         return p if p is not None else val.unit_value.get(n, 0.0)
 
-    no_price = sorted({n[1] for n in demand_nodes if ds.selling_price(*n) is None})
+    no_price = sorted({n[1] for n in demand_nodes if any(segment_price[k] is None for k in segments[n])})
     priced = {n for n in demand_nodes if ds.selling_price(*n) is not None}
 
     lp = LinearProgram()
@@ -126,13 +140,35 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
     back: dict[Node, list[int]] = {}
     lost: dict[Node, list[int]] = {}
     for n in demand_nodes:
-        ref = price(n)
+        ref = 0.0 if n in segmented else price(n)
         sales[n] = [lp.var(f"sales|{n}|{t}", -ref if profit else 0.0) for t in range(T)]
         back[n] = [lp.var(f"back|{n}|{t}", ref * cfg.backlog_rate_per_day * bk[t].days * _prio_factor(prio[n][t])
                           # demand still open when the horizon ends is demand lost
                           + (0.0 if profit or t < T - 1 else ref * cfg.lost_sale_rate))
                    for t in range(T)]
         lost[n] = [lp.var(f"lost|{n}|{t}", 0.0 if profit else ref * cfg.lost_sale_rate) for t in range(T)]
+
+    segment_cols: dict[Node, list[tuple[str, list[int], list[int], list[int]]]] = defaultdict(list)
+    for n in demand_nodes:
+        if n not in segmented:
+            continue
+        for k, quantities in segments[n].items():
+            ref = segment_price[k] if segment_price[k] is not None else val.unit_value.get(n, 0.0)
+            ss = [lp.var(f"order-sales|{k}|{t}", -ref if profit else 0.0) for t in range(T)]
+            bb = [lp.var(f"order-back|{k}|{t}", ref * cfg.backlog_rate_per_day * bk[t].days
+                        * _prio_factor(segment_priority[k]) + (0.0 if profit or t < T - 1 else ref * cfg.lost_sale_rate))
+                  for t in range(T)]
+            ll = [lp.var(f"order-lost|{k}|{t}", 0.0 if profit else ref * cfg.lost_sale_rate) for t in range(T)]
+            segment_cols[n].append((k, ss, bb, ll))
+            for t in range(T):
+                coef = {ss[t]: 1.0, bb[t]: 1.0, ll[t]: 1.0}
+                if t > 0:
+                    coef[bb[t - 1]] = -1.0
+                lp.row(f"order-dem|{k}|{t}", coef, quantities[t], quantities[t])
+        for t in range(T):
+            for column, index in [(sales[n], 1), (back[n], 2), (lost[n], 3)]:
+                lp.row(f"order-sum|{n}|{index}|{t}", {column[t]: -1.0,
+                       **{entry[index][t]: 1.0 for entry in segment_cols[n]}}, 0.0, 0.0)
 
     arrivals: dict[Node, dict[int, dict[int, float]]] = defaultdict(lambda: defaultdict(dict))  # node → t → {col: coef}
     departs: dict[Node, dict[int, dict[int, float]]] = defaultdict(lambda: defaultdict(dict))
@@ -450,9 +486,16 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
         if n in gap:
             econ["ss"] += sum(lp.cost[j] * xv(j) for j in gap[n])
     for n in demand_nodes:
-        econ["revenue" if n in priced else "at_cost"] += sum(price(n) * xv(j) for j in sales[n])
-        econ["backlog"] += sum(lp.cost[j] * xv(j) for j in back[n])
-        econ["lost"] += sum(lp.cost[j] * xv(j) for j in lost[n])
+        if n in segmented:
+            for k, ss, bb, ll in segment_cols[n]:
+                ref = segment_price[k] if segment_price[k] is not None else val.unit_value.get(n, 0.0)
+                econ["revenue" if segment_price[k] is not None else "at_cost"] += sum(ref * xv(j) for j in ss)
+                econ["backlog"] += sum(lp.cost[j] * xv(j) for j in bb)
+                econ["lost"] += sum(lp.cost[j] * xv(j) for j in ll)
+        else:
+            econ["revenue" if n in priced else "at_cost"] += sum(price(n) * xv(j) for j in sales[n])
+            econ["backlog"] += sum(lp.cost[j] * xv(j) for j in back[n])
+            econ["lost"] += sum(lp.cost[j] * xv(j) for j in lost[n])
     total = sum(econ[k] for k in ("purchase", "production", "transport", "holding", "overtime", "backlog", "lost", "ss"))
     res.economics = Economics(
         revenue=econ["revenue"], purchase=econ["purchase"], production=econ["production"], transport=econ["transport"],

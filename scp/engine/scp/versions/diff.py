@@ -5,6 +5,7 @@ re-ordered list is not a change; singletons (settings, forecasting, …) are com
 from __future__ import annotations
 
 from typing import Any
+import json
 
 from ..model import Dataset
 from ..model.common import Out
@@ -17,7 +18,7 @@ KEYS: dict[str, tuple[str, ...]] = {
     "history": ("location", "product", "date"), "overrides": ("location", "product", "date"),
     "demand": ("id", "location", "product", "date", "kind"), "confirmations": ("order", "ship_from", "ship_date"),
     "changeovers": ("resource", "from_group", "to_group"), "closed_orders": ("kind", "id"),
-    "accuracy": ("location", "product", "start"), "customer_prices": ("customer", "product"), "vendors": ("id",),
+    "accuracy": ("location", "product", "start"), "customer_prices": ("customer", "product"), "vendors": ("supplier",),
     "purchase_orders": ("id",), "stock_targets": ("location", "product", "date"), "rolled_weeks": ("start",),
 }
 SINGLE = ("settings", "forecasting", "inventory", "sop", "scheduling", "promising", "execution", "purchasing", "finance",
@@ -73,6 +74,8 @@ def _fields(a: dict, b: dict) -> tuple[list[FieldChange], int]:
 
 
 def _key(row: dict, fields: tuple[str, ...], i: int) -> str:
+    if fields == KEYS["demand"] and row.get("id"):
+        return str(row["id"])
     vals = [row.get(f) for f in fields]
     if all(v is None for v in vals):
         return f"#{i}"
@@ -95,12 +98,17 @@ def diff_raw(da: dict, db: dict) -> DatasetDiff:
     extra = sorted(k for k in set(da) | set(db) if k not in KEYS and k not in SINGLE
                    and isinstance(da.get(k, db.get(k)), list))
     for name, fields in [*KEYS.items(), *((k, ("id",)) for k in extra)]:
-        ra = {}
-        for i, r in enumerate(da.get(name) or []):
-            ra.setdefault(_key(r, fields, i) if isinstance(r, dict) else f"#{i}", r)
-        rb = {}
-        for i, r in enumerate(db.get(name) or []):
-            rb.setdefault(_key(r, fields, i) if isinstance(r, dict) else f"#{i}", r)
+        def records(rows, fields=fields):
+            grouped: dict[str, list] = {}
+            for i, r in enumerate(rows or []):
+                k = _key(r, fields, i) if isinstance(r, dict) else f"#{i}"
+                grouped.setdefault(k, []).append(r)
+            result = {}
+            for k, group in grouped.items():
+                for i, r in enumerate(sorted(group, key=lambda x: json.dumps(x, sort_keys=True))):
+                    result[k if i == 0 else f"{k} | observation {i + 1}"] = r
+            return result
+        ra, rb = records(da.get(name)), records(db.get(name))
         items: list[ItemChange] = []
         added = [k for k in rb if k not in ra]
         removed = [k for k in ra if k not in rb]

@@ -11,6 +11,7 @@ weekend crew is appraised with the shadow prices, a re-solve, NPV, IRR and payba
 from __future__ import annotations
 
 import json
+import warnings
 
 import numpy as np
 from scipy.optimize import linprog
@@ -109,8 +110,12 @@ def independent_lp(factor: float, profit: bool) -> tuple[float, dict]:
         row[ix["ot", t]] = -1
         a_ub.append(row)
         b_ub.append(8.0 * DAYS[t])
-    res = linprog(cost, A_ub=np.array(a_ub), b_ub=b_ub, A_eq=np.array(a_eq), b_eq=b_eq,
-                  bounds=[(0, u) for u in ub], method="highs")
+    # SciPy's HiGHS scheduler is process-wide: initializing it with automatic threads here
+    # prevents later inventory MILPs from requesting their single-thread setting.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=r"Unrecognized options detected:.*threads.*", category=Warning)
+        res = linprog(cost, A_ub=np.array(a_ub), b_ub=b_ub, A_eq=np.array(a_eq), b_eq=b_eq,
+                      bounds=[(0, u) for u in ub], method="highs", options={"threads": 1})
     return float(res.fun), {k: float(res.x[i]) for k, i in ix.items()}
 
 

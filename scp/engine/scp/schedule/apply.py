@@ -94,9 +94,31 @@ def apply_result(ds: Dataset, plan, sch: ScheduleResult, ids: list[str] | None =
         steps = {o.seq: o.resource for o in mine if o.resource != own.get(o.seq)}
 
         if rc is not None:
-            rvs = [rv.model_copy(update={"date": used_on(rv.product)}) if rv.location == rc.location else rv
-                   for rv in rc.reservations]
+            issued = defaultdict(float)
+            for m in ds.movements:
+                if m.reference == rc.id and m.type.value == "issue":
+                    issued[(m.location, m.product)] += m.net
+            has_issues = any(abs(q) > 1e-6 for q in issued.values())
+            if has_issues and needs(ds, ps, start) != needs(ds, ps, rc.start_date or origin):
+                rep.skipped[so.id] = "components already issued: reverse them before changing the engineering revision"
+                continue
+            rvs = []
+            targets = []
+            old_targets = rc.original_reservations or rc.reservations
+            if needs(ds, ps, start) == needs(ds, ps, rc.start_date or origin):
+                entries = [(rv.location, rv.product, rv.required_qty if rv.required_qty is not None else rv.qty)
+                           for rv in old_targets]
+            else:
+                entries = [(rc.location, n.product, round(n.qty(rc.ordered_qty if rc.ordered_qty is not None else rc.qty), 6))
+                           for n in needs(ds, ps, start)]
+            for location, product, required in entries:
+                targets.append(Reservation(location=location, product=product, date=used_on(product), qty=required))
+                remaining = max(0.0, required - issued[(location, product)])
+                if remaining > 1e-9:
+                    rvs.append(Reservation(location=location, product=product, date=used_on(product),
+                                           qty=remaining, required_qty=required if has_issues or rc.original_reservations else None))
             receipts[index[rc.id]] = rc.model_copy(update={"start_date": start, "due_date": due, "reservations": rvs,
+                                                           "original_reservations": targets if has_issues or rc.original_reservations else [],
                                                            "step_resources": steps, "scheduled": True})
             rep.applied.append(AppliedOrder(order=so.id, receipt=rc.id, product=rc.product, location=rc.location,
                                             qty=rc.qty, start_date=start, due_date=due, was_start=rc.start_date,
@@ -111,8 +133,14 @@ def apply_result(ds: Dataset, plan, sch: ScheduleResult, ids: list[str] | None =
             continue
         num["PRD"] += 1
         rid = f"PRD-{num['PRD']:05d}"
-        rvs = [Reservation(location=r.location, product=r.product, date=used_on(r.product), qty=r.qty)
-               for r in reqs.get(o.id, [])]
+        if needs(ds, ps, start) == needs(ds, ps, o.start_date):
+            # Preserve the plan's component quantities when only the dates moved; they
+            # include its lot rounding and output precision.
+            rvs = [Reservation(location=r.location, product=r.product, date=used_on(r.product), qty=r.qty)
+                   for r in reqs.get(o.id, [])]
+        else:
+            rvs = [Reservation(location=o.location, product=n.product, date=used_on(n.product), qty=round(n.qty(o.qty), 6))
+                   for n in needs(ds, ps, start)]
         receipts.append(ScheduledReceipt(id=rid, kind=ReceiptKind.PRODUCTION, location=o.location, product=o.product,
                                          qty=o.qty, due_date=due, start_date=start, source=o.source_id,
                                          reservations=rvs, step_resources=steps, scheduled=True))

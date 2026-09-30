@@ -22,7 +22,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from ..model import (
-    Batch, CountItem, Dataset, GoodsMovement, InventoryDoc, MovementType, NegativeStock, ReceiptKind, ScheduledReceipt,
+    Batch, CountItem, Dataset, DemandRecord, Confirmation, GoodsMovement, InventoryDoc, MovementType, NegativeStock, ReceiptKind, ScheduledReceipt,
     StockType,
 )
 from ..model.common import STOCKING_LOCATION_TYPES
@@ -62,15 +62,18 @@ def next_doc(ds: Dataset, prefix: str = "MD") -> str:
     return f"{prefix}-{n + 1:05d}"
 
 
-def _serials_here(movs: list[GoodsMovement], node: Node) -> list[str]:
+def _serials_here(movs: list[GoodsMovement], node: Node, on: date | None = None,
+                  batch: str | None = None, stock_type: StockType | None = None) -> list[str]:
     """Serial numbers at a place, in the order they came in."""
-    have: dict[str, float] = {}
+    have: dict[tuple[str, str | None, StockType], float] = {}
     for m in sorted(movs, key=lambda m: (m.date, m.id)):
-        if (m.location, m.product) != node:
+        if (m.location, m.product) != node or (on is not None and m.date > on):
             continue
         for sn in m.serials:
-            have[sn] = have.get(sn, 0.0) + (1.0 if m.signed > 0 else -1.0)
-    return [sn for sn, v in have.items() if v > 0.5]
+            k = (sn, m.batch, m.stock_type)
+            have[k] = have.get(k, 0.0) + (1.0 if m.signed > 0 else -1.0)
+    return list(dict.fromkeys(sn for (sn, b, t), v in have.items() if v > 0.5
+                             and (batch is None or batch == b) and (stock_type is None or stock_type == t)))
 
 
 def _next_serials(ds: Dataset, product: str, n: int, taken: set[str]) -> list[str]:
@@ -139,38 +142,71 @@ def complete(ds: Dataset, moves: list[GoodsMovement], on: date, *, batch: str | 
             if prod and prod.serial_numbers:
                 sn = list(o.get("serials") or [])
                 if transfer and not sn:
-                    shipped = [s for x in journal if x.reference == m.reference and x.type is MovementType.TRANSFER_OUT
-                               for s in x.serials]
-                    got = {s for x in journal if x.reference == m.reference and x.type is MovementType.RECEIPT
-                           for s in x.serials}
-                    sn = [s for s in shipped if s not in got][: round(m.qty)]
-                if not sn and m.type is MovementType.RECEIPT:
+                    travelling: dict[str, float] = defaultdict(float)
+                    for x in [*journal, *out]:
+                        if x.reference != m.reference or x.product != m.product:
+                            continue
+                        sign = 1 if x.type is MovementType.TRANSFER_OUT else -1 if x.type is MovementType.RECEIPT else 0
+                        for s in x.serials:
+                            travelling[s] += sign * (-1 if x.reversal_of else 1)
+                    sn = [s for s, q in travelling.items() if q > 0.5][: round(m.qty)]
+                if not sn and m.type is MovementType.RECEIPT and not transfer:
                     sn = _next_serials(ds, m.product, round(m.qty), {s for x in out for s in x.serials})
                 upd["serials"] = sn
         elif m.type is MovementType.ADJUSTMENT and m.qty < 0 and m.batch is None and prod is not None:
             pieces = [(b, -q) for b, q in pick(ds, [*journal, *out], node, -m.qty, m.date, stock_type=m.stock_type)]
         elif m.type in OUT and m.batch is None and prod is not None:
             pieces = pick(ds, [*journal, *out], node, m.qty, m.date, stock_type=m.stock_type)
-            if prod.serial_numbers:
-                sn = list(o.get("serials") or [])
-                if not sn:
-                    sn = _serials_here([*journal, *out], node)[: round(m.qty)]
-                upd["serials"] = sn
+        if m.type in OUT and o.get("batch"):
+            pieces = [(o["batch"], m.qty)]
+        serial_parts: dict[str | None, list[str]] = {}
+        if prod and prod.serial_numbers and (m.type in OUT or m.type is MovementType.ADJUSTMENT):
+            supplied = list(o.get("serials") or m.serials)
+            if supplied and len(set(supplied)) != len(supplied):
+                raise StockError("serial numbers must be unique within a posting")
+            taken: set[str] = set()
+            for b, q in pieces:
+                if not math.isclose(abs(q), round(abs(q)), abs_tol=EPS):
+                    raise StockError(f"{_name(ds, m.product)} is serialised: post whole units")
+                n = round(abs(q))
+                if m.type in OUT or q < 0:
+                    available = _serials_here([*journal, *out], node, m.date, b, m.stock_type)
+                    available = [sn for sn in available if sn not in taken]
+                    sn = [sn for sn in supplied if sn in available] if supplied else available[:n]
+                    if len(sn) != n:
+                        raise StockError(f"{_name(ds, m.product)}: {n} available serial numbers are required in this lot")
+                else:
+                    sn = _next_serials(ds, m.product, n, taken | {s for x in out for s in x.serials})
+                serial_parts[b] = sn
+                taken.update(sn)
+            if supplied and set(supplied) != taken:
+                raise StockError("serial numbers do not match the available stock in the selected lots")
         if prod and prod.serial_numbers and m.type not in (MovementType.ADJUSTMENT, MovementType.STATUS):
-            sn = upd.get("serials", m.serials)
-            if sn and len(sn) != round(m.qty):
+            sn = [s for group in serial_parts.values() for s in group] if serial_parts else upd.get("serials", m.serials)
+            if len(sn) != round(m.qty) or len(set(sn)) != len(sn):
                 raise StockError(f"{_name(ds, m.product)} is serialised: give {round(m.qty)} serial numbers, one per "
                                  f"unit ({len(sn)} given)")
+            if m.type is MovementType.RECEIPT:
+                existing = {s for x in [*journal, *out] if x.product == m.product and x.signed > 0 for s in x.serials}
+                if not transfer and any(s in existing for s in sn):
+                    raise StockError("a received serial number already exists in the journal")
         first = True
         done[i] = []
+        serial_offset = 0
         for b, q in pieces:
             if abs(q) <= EPS:
                 continue
             x = m.model_copy(update={**upd, "batch": b, "qty": round(q, 6), "id": m.id if first else next(fresh)})
+            if prod and prod.serial_numbers and m.type is not MovementType.STATUS:
+                piece_serials = serial_parts.get(b) if serial_parts else upd.get("serials", m.serials)[serial_offset:serial_offset + round(abs(q))]
+                x = x.model_copy(update={"serials": piece_serials})
+                serial_offset += round(abs(q))
             done[i].append(x)
             out.append(x)
             first = False
     out = [x for i in range(len(moves)) for x in done.get(i, [])]
+    if moves and not out:
+        raise StockError("quantity is too small to post at six-decimal precision")
     notes += _negative(ds, journal, out, on)
     held = [f"{_n(x.qty)} of {_name(ds, x.product)} into quality inspection" for x in out
             if x.stock_type is StockType.QUALITY and x.type is MovementType.RECEIPT]
@@ -216,6 +252,15 @@ def _negative(ds: Dataset, journal: list[GoodsMovement], moves: list[GoodsMoveme
                   and x.stock_type is StockType.UNRESTRICTED)
         if bal < -EPS:
             short.append((k, bal))
+    if NegativeStock(ds.execution.negative_stock) is NegativeStock.REFUSE:
+        for m in moves:
+            if m.signed >= 0:
+                continue
+            qty = sum(x.signed for x in [*journal, *moves] if x.location == m.location and x.product == m.product
+                      and x.batch == m.batch and x.stock_type == m.stock_type and x.date <= m.date)
+            if qty < -EPS:
+                raise StockError(f"not enough in stock in batch {m.batch or '(unbatched)'} of {m.product} at {m.location}: "
+                                 "the company does not allow stock below zero")
     if not short:
         return []
     rule = NegativeStock(ds.execution.negative_stock)
@@ -307,11 +352,21 @@ def shorten(ds: Dataset, oid: str, qty: float) -> tuple[Dataset, ActionReport]:
     if new >= ordered - EPS:
         raise StockError(f"{oid} is for {_n(ordered)}: shortening makes it smaller")
     k = new / ordered
-    rvs = [rv.model_copy(update={"qty": round(rv.qty * k, 6),
-                                 "required_qty": None if rv.required_qty is None else round(rv.required_qty * k, 6)})
-           for rv in rc.reservations]
+    from ..plan.structure import needs
+    ps = ds.production_source_by_id.get(rc.source or "")
+    bom = {n.product: n for n in needs(ds, ps, rc.start_date or ds.settings.planning_start)} if ps else {}
+    rvs = []
+    targets = []
+    for rv in (rc.original_reservations or rc.reservations):
+        used = sum(m.net for m in ds.movements if m.reference == oid and m.location == rv.location
+                   and m.product == rv.product and m.type in (MovementType.ISSUE, MovementType.TRANSFER_OUT))
+        part = bom.get(rv.product)
+        ratio = part.qty(new) / part.qty(ordered) if part and part.qty(ordered) > EPS else k
+        required = (rv.required_qty if rv.required_qty is not None else rv.qty) * ratio
+        targets.append(rv.model_copy(update={"qty": required, "required_qty": required}))
+        rvs.append(rv.model_copy(update={"qty": round(max(0.0, required - used), 6), "required_qty": required}))
     open_new = new - (ordered - rc.qty)
-    upd = {"qty": round(max(open_new, EPS), 6), "reservations": rvs,
+    upd = {"qty": round(max(open_new, EPS), 6), "reservations": rvs, "original_reservations": targets,
            "ordered_qty": round(new, 6) if rc.ordered_qty is not None else None}
     receipts = [r.model_copy(update=upd) if r.id == oid else r for r in ds.receipts]
     return (ds.model_copy(update={"receipts": receipts}),
@@ -334,6 +389,7 @@ def move_stock(ds: Dataset, location: str, product: str, qty: float | None, from
     """Move stock between stock types at one place (≈ MIGO 321 release from inspection, 350 to blocked, 343/344
     blocked ↔ unrestricted): a pair of movements that sums to zero. ``qty`` None: all of it (in the batch). The
     default date is the end of the day before the planning start: the stock the plan starts from changes at once."""
+    ds = _with_openings(ds)
     node = _stock_node(ds, location, product)
     if from_type is to_type:
         raise StockError("the stock is already of that type")
@@ -360,10 +416,22 @@ def move_stock(ds: Dataset, location: str, product: str, qty: float | None, from
             break
         take = min(left, lot.qty)
         left -= take
+        serial_group = list(serials or [])
+        if ds.product_by_id[product].serial_numbers:
+            if not math.isclose(take, round(take), abs_tol=EPS):
+                raise StockError("serialised stock can only change type in whole units")
+            available = _serials_here(before(ds, on + timedelta(days=1)), node, on, lot.batch, from_type)
+            serial_group = [s for s in serial_group if s in available] if serial_group else available[:round(take)]
+            if len(serial_group) != round(take) or len(set(serial_group)) != len(serial_group):
+                raise StockError("stock type changes need one available serial number per whole unit in each lot")
         for t, sign in ((from_type, -1.0), (to_type, 1.0)):
             moves.append(GoodsMovement(id=next(ids), date=on, type=MovementType.STATUS, location=location,
                                        product=product, qty=round(sign * take, 6), batch=lot.batch, stock_type=t,
-                                       note=text, serials=list(serials or [])))
+                                       note=text, serials=serial_group))
+    if serials is not None and ds.product_by_id[product].serial_numbers:
+        used = [s for m in moves if m.qty < 0 for s in m.serials]
+        if len(set(serials)) != len(serials) or sorted(used) != sorted(serials):
+            raise StockError("serial numbers do not match the stock being moved")
     moves, _, notes = complete(ds, moves, on)
     verb = {StockType.UNRESTRICTED: "released", StockType.BLOCKED: "blocked", StockType.QUALITY: "put into inspection"}
     msg = (f"{_n(q)} of {_name(ds, product)} at {_at(ds, location)} {verb[to_type]}"
@@ -404,6 +472,7 @@ def scrap(ds: Dataset, location: str, product: str, qty: float | None, stock_typ
     """Scrap stock (≈ MIGO 551/553/555): of a batch, of a stock type, or with ``expired_only`` every expired batch
     at the place; ``qty`` None: all of it. The default date is the day before the planning start (see
     :func:`move_stock`)."""
+    ds = _with_openings(ds)
     node = _stock_node(ds, location, product)
 
     def match(day: date) -> list:
@@ -451,6 +520,11 @@ def reverse(ds: Dataset, movement: str, on: date | None = None, note: str = "") 
     group = [m for m in group if m.id not in done and not m.reversal_of]
     if not group:
         raise StockError(f"{movement} is already reversed")
+    refs = {m.reference for m in group if m.reference}
+    missing = [c.id for c in ds.closed_orders if c.id in refs and not c.cancelled and c.source_order is None]
+    if missing:
+        raise StockError(f"{', '.join(missing)} closed before its original order was retained: restore the order "
+                         "from a saved version before reversing its delivery")
     day = on or max(m0.date, ds.settings.planning_start)     # a week already moved on is not posted into again
     ids = movement_ids(ds)
     moves = [m.model_copy(update={"id": next(ids), "date": day, "reversal_of": m.id, "final": False,
@@ -464,9 +538,24 @@ def reverse(ds: Dataset, movement: str, on: date | None = None, note: str = "") 
     notes = _negative(ds, [*ds.movements, *pending_openings(ds)], moves, day)
     ref = m0.reference
     msg = (f"{m0.doc or movement} reversed on {day.isoformat()}: {len(moves)} movement{'s' if len(moves) != 1 else ''} "
-           "taken back" + (f"; {ref} is open again for what they carried" if ref else "")
+           "taken back" + (f"; {ref} is open again for what they carried" if ref
+                           and not any(c.id == ref and c.cancelled for c in ds.closed_orders) else "")
            + ("; " + "; ".join(notes) if notes else "") + ".")
-    return (ds.model_copy(update={"movements": [*ds.movements, *moves]}),
+    reopened = {m.reference for m in group if m.reference}
+    receipts, demand, confs = list(ds.receipts), list(ds.demand), list(ds.confirmations)
+    closed = []
+    for c in ds.closed_orders:
+        if c.id not in reopened or c.cancelled or c.source_order is None:
+            closed.append(c)
+            continue
+        if c.kind == "sales":
+            if not any(d.id == c.id for d in demand):
+                demand.append(DemandRecord.model_validate(c.source_order))
+                confs.extend(Confirmation.model_validate(cf) for cf in c.source_confirmations)
+        elif not any(r.id == c.id for r in receipts):
+            receipts.append(ScheduledReceipt.model_validate(c.source_order))
+    return (ds.model_copy(update={"movements": [*ds.movements, *moves], "receipts": receipts,
+                                 "demand": demand, "confirmations": confs, "closed_orders": closed}),
             ActionReport(ok=True, message=msg, movements=[m.id for m in moves], doc=doc))
 
 
@@ -475,6 +564,7 @@ def count_doc(ds: Dataset, nodes: list[Node], on: date | None = None, block: boo
               note: str = "") -> tuple[Dataset, ActionReport]:
     """Make a physical inventory document: the places and products to count on ``on`` (default: the day before the
     planning start), each lot's book stock frozen now. With ``block``, postings for them wait until it is posted."""
+    ds = _with_openings(ds)
     if not nodes:
         raise StockError("say which places and products to count")
     day = on or ds.settings.planning_start - timedelta(days=1)
@@ -595,3 +685,8 @@ def _sync_on_hand(ds: Dataset, nodes: set[Node]) -> Dataset:
             lps.append(by[k])
         by[k].on_hand = max(0.0, round(have.get(k, 0.0), 6))
     return Dataset.model_validate(ds.model_copy(update={"location_products": lps}).model_dump())
+
+
+def _with_openings(ds: Dataset) -> Dataset:
+    openings = pending_openings(ds)
+    return ds.model_copy(update={"movements": [*ds.movements, *openings]}) if openings else ds

@@ -12,7 +12,7 @@ export const KEYS: Record<string, string[]> = {
   history: ["location", "product", "date"], overrides: ["location", "product", "date"],
   demand: ["id", "location", "product", "date", "kind"], confirmations: ["order", "ship_from", "ship_date"],
   changeovers: ["resource", "from_group", "to_group"], closed_orders: ["kind", "id"],
-  accuracy: ["location", "product", "start"], customer_prices: ["customer", "product"], vendors: ["id"],
+  accuracy: ["location", "product", "start"], customer_prices: ["customer", "product"], vendors: ["supplier"],
   purchase_orders: ["id"], stock_targets: ["location", "product", "date"], rolled_weeks: ["start"],
 };
 

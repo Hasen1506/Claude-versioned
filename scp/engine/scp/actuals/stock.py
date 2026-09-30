@@ -7,7 +7,7 @@ from collections.abc import Iterable, Sequence
 from datetime import date, timedelta
 
 from ..model import AccuracyRecord, Dataset, DemandKind, GoodsMovement, LocationType, MovementType, StockType
-from ..plan.leadtime import transit_whole_days
+from ..plan.leadtime import location_calendar, transit_whole_days
 from .lots import Lot, batch_index, usable
 from .result import AccuracyReport, AccuracySeries, AccuracyWeek, LotRow, OpenOrderRow, StockRow
 
@@ -147,9 +147,9 @@ def in_transit(ds: Dataset) -> dict[Node, float]:
         if m.reference and m.type in (MovementType.TRANSFER_OUT, MovementType.RECEIPT):
             moved[(m.reference, m.type.value)] += m.net
     out: dict[Node, float] = defaultdict(float)
-    for rc in ds.receipts:
-        if rc.kind.value != "transfer":
-            continue
+    transfers = [r for r in ds.receipts if r.kind.value == "transfer"] + [
+        c for c in ds.closed_orders if c.kind == "transfer"]
+    for rc in transfers:
         q = moved.get((rc.id, "transfer_out"), 0.0) - moved.get((rc.id, "receipt"), 0.0)
         if q > EPS:
             out[(rc.location, rc.product)] += q
@@ -162,14 +162,16 @@ def _sum(movs: list[GoodsMovement], types: set[MovementType]) -> tuple[dict, dic
     first: dict[tuple[str, str, str], date] = {}
     last: dict[tuple[str, str, str], date] = {}
     final: set[str] = set()
+    reversed_ids = {m.reversal_of for m in movs if m.reversal_of}
     for m in movs:
         if m.type not in types or not m.reference:
             continue
         k = (m.reference, m.location, m.product)
         qty[k] += m.net
-        first[k] = min(first.get(k, m.date), m.date)
-        last[k] = max(last.get(k, m.date), m.date)
-        if m.final:
+        if not m.reversal_of and m.id not in reversed_ids:
+            first[k] = min(first.get(k, m.date), m.date)
+            last[k] = max(last.get(k, m.date), m.date)
+        if m.final and not m.reversal_of and m.id not in reversed_ids:
             final.add(m.reference)
     return qty, first, last, final
 
@@ -252,7 +254,7 @@ def transit_days(ds: Dataset, origin: str, destination: str, product: str) -> in
     """Whole days a shipment takes on the lane that carries it (0 when origin and destination coincide)."""
     if origin == destination:
         return 0
-    for ln in ds.lanes:
+    for ln in sorted(ds.lanes, key=lambda ln: (ln.priority, ln.id)):
         if ln.origin == origin and ln.destination == destination and ln.carries(product):
             return transit_whole_days(ln.planning_mode.transit_days)
     return 0
@@ -267,20 +269,28 @@ def arrival(ds: Dataset, ship_from: str, to: str, product: str, goods_issue: dat
 def sale_point(ds: Dataset, m: GoodsMovement, keys: set[Node]) -> tuple[Node, date]:
     """Where and when a sale counts as demand: at the customer on the day it arrives, if demand is planned
     there; else at the shipping location on the goods-issue date."""
+    if m.reversal_of:
+        m = next((x for x in ds.movements if x.id == m.reversal_of), m)
     node = sale_key(ds, m, keys)
     return node, arrival(ds, m.location, node[0], m.product, m.date)
 
 
+def forecast_days(ds: Dataset, d) -> list[date]:
+    cal = location_calendar(ds, d.location)
+    days = [d.date + timedelta(days=i) for i in range(d.period_days or 1)]
+    return [day for day in days if cal.is_workday(day)] or [d.date]
+
+
 def forecast_in(ds: Dataset, start: date, end: date) -> dict[Node, float]:
-    """Forecast quantity falling in [start, end), period records spread evenly over their calendar days."""
+    """Forecast quantity falling in [start, end), using MRP's workday distribution."""
     out: dict[Node, float] = defaultdict(float)
     for d in ds.demand:
         if d.kind is not DemandKind.FORECAST:
             continue
-        n = d.period_days or 1
-        lo, hi = max(d.date, start), min(d.date + timedelta(days=n), end)
-        if hi > lo:
-            out[(d.location, d.product)] += d.qty * (hi - lo).days / n
+        days = forecast_days(ds, d)
+        share = sum(start <= day < end for day in days)
+        if share:
+            out[(d.location, d.product)] += d.qty * share / len(days)
     return dict(out)
 
 

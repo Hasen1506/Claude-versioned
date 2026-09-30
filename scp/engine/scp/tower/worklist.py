@@ -137,7 +137,8 @@ def owner_for(ds: Dataset, r: Raw) -> tuple[str, str]:
 # ------------------------------------------------------------------------------------------------ tracker
 def owner_key(ds: Dataset, scope: str | None) -> str:
     """Whose worklist an item is on: a server company's (``@C0001``) or, in the browser, the company name's."""
-    return f"@{scope}" if scope else ds.settings.company_name
+    return f"@{scope}" if scope else (f"browser:{ds.settings.company_name}"
+                                      if ds.settings.company_name.startswith("@") else ds.settings.company_name)
 
 
 def item_id(company: str, key: str) -> str:

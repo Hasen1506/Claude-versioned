@@ -81,6 +81,7 @@ class LinearProgram:
         lp.a_matrix_.value_ = np.array(value, dtype=float)
         h = highspy.Highs()
         h.setOptionValue("output_flag", False)
+        h.setOptionValue("threads", 1)
         h.setOptionValue("time_limit", float(time_limit))
         h.passModel(lp)
         h.run()

@@ -32,7 +32,7 @@ export function nextMonday(): string {
   const today = new Date();
   const monday = new Date(today);
   monday.setDate(today.getDate() + ((8 - today.getDay()) % 7 || 7));
-  return monday.toISOString().slice(0, 10);
+  return `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
 }
 
 /** A blank company with these settings. */

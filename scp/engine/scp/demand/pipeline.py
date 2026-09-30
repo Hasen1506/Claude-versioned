@@ -590,7 +590,7 @@ def release(ds: Dataset, result: ForecastResult, keys: list[str] | None = None) 
     new: list[DemandRecord] = []
     for s in chosen:
         for p in s.forecast:
-            qty = round(p.released_qty, 3)
+            qty = p.released_qty
             if qty <= 0:
                 continue
             frm = max(p.start, ds.settings.planning_start)

@@ -27,7 +27,7 @@ def apply_placement(ds: Dataset, res: InventoryResult, keys: list[str] | None = 
     unknown = sorted(set(keys or ()) - set(stocking))
     if unknown:
         raise KeyError(f"not a stocking stage: {', '.join(unknown)}")
-    chosen = [stocking[k] for k in keys] if keys is not None else \
+    chosen = [stocking[k] for k in dict.fromkeys(keys)] if keys is not None else \
         [n for n in stocking.values() if abs(recommended(n.meio_ss) - n.current_ss) >= 1]
     lps = [lp.model_copy() for lp in ds.location_products]
     by_key = {key(lp.location, lp.product): lp for lp in lps}

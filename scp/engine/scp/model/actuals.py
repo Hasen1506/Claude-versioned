@@ -125,6 +125,9 @@ class ClosedOrder(Model):
     confirmed_date: dt.date | None = Field(None, description="Purchase: the date the supplier confirmed, if any")
     cancelled: bool = Field(False, description="Sales: cancelled before it was delivered in full; what was delivered "
                                                "is `delivered_qty`, and only that counts in OTIF")
+    source_order: dict | None = Field(None, description="Original order retained so a reversed delivery can reopen it")
+    source_confirmations: list[dict] = Field(default_factory=list)
+    confirmed_on_time_qty: float | None = Unit("qty", default=None)
 
 
 class AccuracyRecord(Model):

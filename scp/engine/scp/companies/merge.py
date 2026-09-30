@@ -14,10 +14,13 @@ series, and the records *mine* added that point at it (its promises, its deliver
 from __future__ import annotations
 
 import re
+import json
 from contextvars import ContextVar
+from functools import lru_cache
 from typing import Any
 
 from ..model.common import Out
+from ..model import Dataset
 from ..versions.diff import KEYS, SINGLE, _flat, _key
 
 # fields of a record that point at another record by its number
@@ -58,8 +61,14 @@ def _keys_of(name: str) -> tuple[str, ...]:
 
 def _index(rows: list, fields: tuple[str, ...]) -> dict[str, Any]:
     out: dict[str, Any] = {}
+    groups: dict[str, list] = {}
     for i, r in enumerate(rows or []):
-        out.setdefault(_key(r, fields, i) if isinstance(r, dict) else f"#{i}", r)
+        key = _key(r, fields, i) if isinstance(r, dict) else f"#{i}"
+        groups.setdefault(key, []).append(r)
+    for key, group in groups.items():
+        values = sorted(group, key=lambda r: json.dumps(r, sort_keys=True)) if len(group) > 1 else group
+        for i, r in enumerate(values):
+            out[key if i == 0 else f"{key} | observation {i + 1}"] = r
     return out
 
 
@@ -78,7 +87,7 @@ def _next_free(old: str, taken: set[str]) -> str:
 def _renumber(base: dict, mine: dict, theirs: dict, rep: MergeReport) -> dict:
     """The working copy with each record it added under a number the latest save also added (differently) moved to
     the next free number, and the records it added that point at one following it."""
-    renames: dict[str, str] = {}
+    renames: dict[tuple[str, str], str] = {}
     for name in set(mine) & set(theirs):
         m, t = mine[name], theirs[name]
         if name in SINGLE or not isinstance(m, list) or not isinstance(t, list) or "id" not in _keys_of(name):
@@ -88,32 +97,57 @@ def _renumber(base: dict, mine: dict, theirs: dict, rep: MergeReport) -> dict:
         taken = {str(x) for x in tb} | {str(r.get("id")) for r in m if isinstance(r, dict)}
         for r in m:
             i = r.get("id") if isinstance(r, dict) else None
-            if isinstance(i, str) and i not in ib and i in tb and tb[i] != r and i not in renames:
+            if isinstance(i, str) and i not in ib and i in tb and tb[i] != r and (name, i) not in renames:
                 new = _next_free(i, taken | set(renames.values()))
-                renames[i] = new
+                renames[(name, i)] = new
                 taken.add(new)
                 rep.renumbered.append(f"{i} → {new}")
     if not renames:
         return mine
+    schema = _dataset_schema()
+    domains = {"product": "products", "location": "locations", "resource": "resources", "calendar": "calendars"}
+
+    def follow(value: Any, spec: dict, owner: str) -> Any:
+        if "$ref" in spec:
+            spec = schema["$defs"][spec["$ref"].rsplit("/", 1)[-1]]
+        if "anyOf" in spec:
+            spec = {**next((s for s in spec["anyOf"] if s.get("type") != "null"), {}),
+                    **({"x-ref": spec["x-ref"]} if "x-ref" in spec else {})}
+            return follow(value, spec, owner)
+        domain = domains.get(spec.get("x-ref"))
+        if domain and isinstance(value, str):
+            return renames.get((domain, value), value)
+        if isinstance(value, list):
+            return [follow(v, spec.get("items", {}), owner) for v in value]
+        if not isinstance(value, dict):
+            return value
+        out = {k: follow(v, spec.get("properties", {}).get(k, {}), owner) for k, v in value.items()}
+        if isinstance(out.get("id"), str):
+            out["id"] = renames.get((owner, out["id"]), out["id"])
+        for f in REF_FIELDS:
+            if not isinstance(out.get(f), str):
+                continue
+            candidates = ["demand"] if f == "order" else ["purchase_orders"] if f in ("po", "purchase_order") else ["receipts", "demand"]
+            for target in candidates:
+                out[f] = renames.get((target, out[f]), out[f])
+        if isinstance(out.get("source"), str):
+            target = {"production": "production_sources", "purchase": "purchasing_sources", "transfer": "lanes"}.get(out.get("kind"))
+            if target:
+                out["source"] = renames.get((target, out["source"]), out["source"])
+        return out
+
     out: dict[str, Any] = {}
     for name, rows in mine.items():
         if name in SINGLE or not isinstance(rows, list):
             out[name] = rows
             continue
-        fields = _keys_of(name)
-        old = _index(base.get(name) or [], fields)
-        new_rows = []
-        for i, r in enumerate(rows):
-            if isinstance(r, dict) and _key(r, fields, i) not in old:        # added here: follows the renumbering
-                r = dict(r)
-                if "id" in fields and r.get("id") in renames:
-                    r["id"] = renames[r["id"]]
-                for f in REF_FIELDS:
-                    if isinstance(r.get(f), str) and r[f] in renames:
-                        r[f] = renames[r[f]]
-            new_rows.append(r)
-        out[name] = new_rows
+        out[name] = follow(rows, schema.get("properties", {}).get(name, {}), name)
     return out
+
+
+@lru_cache(maxsize=1)
+def _dataset_schema() -> dict:
+    return Dataset.model_json_schema()
 
 
 def merge(base: dict, mine: dict, theirs: dict, choose: dict[str, str] | None = None,

@@ -257,6 +257,8 @@ def _token_hash(token: str) -> str:
 def _company_name(doc: dict) -> str:
     s = doc.get("settings")
     name = s.get("company_name") if isinstance(s, dict) else None
+    if name is not None and not isinstance(name, str):
+        raise CompanyError("company name must be text", 422)
     return (name or "").strip() or "Unnamed company"
 
 

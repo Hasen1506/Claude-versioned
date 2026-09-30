@@ -212,6 +212,8 @@ class _Ledger:
         for oid in self.orders:
             self.order_full(oid)
         rows: dict[tuple[str, str], ServeRow] = {}
+        demand = {f"D:{d.id or '#' + str(i)}": d for i, d in enumerate(self.ds.demand)}
+        known_price: set[tuple[str, str]] = set()
         for r in self.plan.requirements:
             v = self.requirement(r.id)
             if r.kind in INDEPENDENT:
@@ -223,7 +225,13 @@ class _Ledger:
                                          price=self.ds.selling_price(r.location, r.product), revenue=0.0, costs={})
                 row = rows[key]
                 row.demand += r.qty
-                row.served += sum(p.qty for p in self.pegs_by_req.get(r.id, []))
+                served = sum(p.qty for p in self.pegs_by_req.get(r.id, []))
+                row.served += served
+                source = demand.get(r.id) or demand.get(r.id.rsplit("~", 1)[0])
+                price = self.ds.selling_price(r.location, r.product, source.price if source else None)
+                if price is not None:
+                    known_price.add(key)
+                    row.revenue += served * price
                 costs = dict(row.costs)
                 _add(costs, v)
                 row.costs = costs
@@ -231,7 +239,7 @@ class _Ledger:
                 self._unabsorb(v, "inputs to firm orders")   # reservations of released production / transfers
         out = []
         for row in rows.values():
-            row.revenue = row.served * (row.price or 0.0)
+            row.price = row.revenue / row.served if row.served > 0 and (row.location, row.product) in known_price else row.price
             row.plan_cost = sum(x for k, x in row.costs.items() if k in PLAN_COSTS)
             row.total_cost = sum(row.costs.values())
             row.cost_per_unit = row.total_cost / row.served if row.served > 0 else 0.0

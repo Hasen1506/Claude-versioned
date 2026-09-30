@@ -168,6 +168,7 @@ let setAside: Map<string, Set<string>> = new Map();
 let loadEpoch = 0;
 let planningEpoch = -1;
 let planQueued = false;
+const runRequests: Partial<Record<RunKey, number>> = {};
 
 type Coll = Record<string, unknown[] | undefined>;
 
@@ -327,6 +328,7 @@ async function saveNow(note = ""): Promise<void> {
   if (!c?.live || !ds || !state.session || !canEdit(c) || state.save.status === "conflict") return;
   if (c.savedRevision === state.revision) { set({ save: { ...state.save, status: "saved" } }); return; }
   const rev = state.revision;
+  const epoch = loadEpoch;
   set({ save: { ...state.save, status: "saving", error: null } });
   saving = (async () => {
     try {
@@ -338,7 +340,7 @@ async function saveNow(note = ""): Promise<void> {
         }
         throw e;
       });
-      if (state.company?.id !== c.id) return;
+      if (epoch !== loadEpoch || state.company?.id !== c.id) return;
       if (r.held && r.dataset) {
         // master data waits for approval: the server kept the rest; carry on from what it saved
         if (state.revision === rev) adopt(r.dataset as unknown as Dataset, r.meta, heldNote(r.held.summary));
@@ -351,7 +353,7 @@ async function saveNow(note = ""): Promise<void> {
         save: { ...state.save, status: "saved", at: now(), error: null, newer: null } });
       persistCompany();
     } catch (e) {
-      if (state.company?.id !== c.id) return;
+      if (epoch !== loadEpoch || state.company?.id !== c.id) return;
       if (e instanceof ApiError && e.status === 409 && typeof e.body.revision === "number") {
         if (await mergeQuietly(c, ds, rev)) return;
         set({ save: { ...state.save, status: "conflict", error: e.message, newer: null,
@@ -619,9 +621,10 @@ export const store = {
 
   /** The server saved the company differently from this working copy (an approval made here): carry on from it. */
   async adoptServerSave(meta: CompanyMeta, ds: Record<string, unknown>) {
-    if (!state.company || state.company.id !== meta.id) return;
+    if (!state.company?.live || state.company.id !== meta.id) return;
+    const epoch = loadEpoch;
     if (unsaved(state)) await saveNow();
-    if (unsaved(state)) return;          // not saved here: the next check shows the newer save instead
+    if (epoch !== loadEpoch || state.company?.id !== meta.id || !state.company.live || unsaved(state)) return;
     adopt(ds as unknown as Dataset, meta, null);
   },
 
@@ -773,13 +776,15 @@ export const store = {
     if (!ds) return;
     const rev = state.revision;
     const epoch = loadEpoch;
+    const request = (runRequests[key] ?? 0) + 1;
+    runRequests[key] = request;
     setRun(key, { running: true, error: null });
     try {
       const data = await RUNNERS[key](ds);
-      if (epoch !== loadEpoch) return;   // another company or file was opened meanwhile
+      if (epoch !== loadEpoch || runRequests[key] !== request) return;
       setRun(key, { data, revision: rev, on: ds, running: false, at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
     } catch (e) {
-      if (epoch !== loadEpoch) return;
+      if (epoch !== loadEpoch || runRequests[key] !== request) return;
       if (e instanceof SchemaRejected) {
         set({ schemaErrors: e.errors });
         setRun(key, { running: false, error: "The dataset has invalid values." });

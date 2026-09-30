@@ -34,6 +34,7 @@ from .documents import (
 )
 from .lots import planning_stock
 from .stock import EPS, counterparty, movement_ids, pending_openings
+from ..plan.structure import needs
 
 
 class PostingError(ValueError):
@@ -127,16 +128,10 @@ def _bom_parts(ds: Dataset, rc: ScheduledReceipt, made: float, first: bool) -> l
     ps = ds.production_source_by_id.get(rc.source or "")
     if ps is None:
         return []
-    started = made / (1.0 - ps.assembly_scrap)
     day = rc.start_date or ds.settings.planning_start
     out = []
-    for c in ps.components:
-        if not c.valid_on(day):
-            continue
-        if c.fixed_qty:
-            q = c.qty / (1.0 - c.scrap) if first else 0.0
-        else:
-            q = c.qty * started / ps.output_qty / (1.0 - c.scrap)
+    for c in needs(ds, ps, day):
+        q = c.per_unit * made + (c.per_order if first else 0.0)
         if q > EPS:
             out.append((rc.location, c.product, q))
     return out
@@ -220,11 +215,15 @@ def receive(ds: Dataset, oid: str, qty: float | None = None, on: date | None = N
                     rv = next((r for r in rc.reservations if r.product == p), None)
                     parts.append((rv.location if rv else rc.location, str(p), n))
             how = "as used"
-        elif rc.reservations:
-            share = min(1.0, total / ordered) if ordered > EPS else 1.0
-            for rv in rc.reservations:
+        elif rc.reservations or rc.original_reservations:
+            ps = ds.production_source_by_id.get(rc.source or "")
+            bom = {n.product: n for n in needs(ds, ps, rc.start_date or ds.settings.planning_start)} if ps else {}
+            for rv in (rc.original_reservations or rc.reservations):
                 req = rv.required_qty if rv.required_qty is not None else rv.qty
-                n = req * share - issued[(rv.location, rv.product)]
+                part = bom.get(rv.product)
+                planned = part.qty(ordered) if part else 0.0
+                target = part.qty(total) * req / planned if planned > EPS else req * total / ordered
+                n = target - issued[(rv.location, rv.product)]
                 if n > EPS:
                     parts.append((rv.location, rv.product, n))
             how = "in proportion to what was made"
@@ -388,6 +387,10 @@ def post(ds: Dataset, action: str, *, order: str | None = None, qty: float | Non
          doc: str | None = None, nodes: list[tuple[str, str]] | None = None, block: bool = True,
          uncounted_zero: bool = False) -> tuple[Dataset, ActionReport]:
     lot = lot or {}
+    if qty is not None and action in {"receive", "deliver", "ship", "move", "scrap"}:
+        qty = round(float(qty), 6)
+        if qty <= EPS:
+            raise PostingError("quantity is too small to post at six-decimal precision")
     try:
         if action == "count":
             return count_stock(ds, counts or [], on, note)
