@@ -1,25 +1,25 @@
 # Claude-versioned functional audit and repairs
 
-Updated 30 September 2026, against GitHub main `ee0f7d136a25f1f30246fcd886f15db8d5985694`.
+Updated 30 September 2026. Audited baseline: `ee0f7d136a25f1f30246fcd886f15db8d5985694`. Fixes merged to main as `aae75e872ac6ae8c419939295d7ad8b0ec82d977` through [PR #6](https://github.com/Hasen1506/Claude-versioned/pull/6).
 
-The continuation covered spreadsheet decoding, save/recovery races and capacity-option appraisal, then repaired the confirmed functional defects. Seven additional findings are recorded below as BH041–BH047. In total, **49 logic defects are repaired and one native runtime failure has a verified mitigation**. These are production application fixes with regression tests. Publication and CI status are recorded in [PR #6](https://github.com/Hasen1506/Claude-versioned/pull/6).
+The continuation covered spreadsheet decoding, save/recovery races and capacity-option appraisal, then repaired the confirmed functional defects. The first continuation added BH041–BH047; merge preparation found seven more logic defects, BH048–BH054. In total, **49 logic defects are repaired and one native runtime failure has a verified mitigation**. These are production application fixes with regression tests. All changes are committed and merged to main through [PR #6](https://github.com/Hasen1506/Claude-versioned/pull/6).
 
 ## Verification after repairs
 
 | Verification | Result |
 |---|---|
-| Full engine suite | 571 passed; zero failures/errors/skips |
-| Focused functional/API/file regressions | 369 passed; 11 unrelated authorization/SSO cases deselected |
+| Full engine suite | 571 passed on Windows and in Linux CI; zero failures/errors/skips |
+| Earlier focused functional/API/file regressions | 369 passed; 11 unrelated authorization/SSO cases deselected |
 | New persistent regressions | 37 passed across the two repair passes; included in the current 571-case engine suite |
 | Inventory/S&OP solver checks | 35 passed, including comparison against brute-force optima |
 | Actual TypeScript state/date tests | 5 passed |
 | Save/recovery races and controls | 6 passed |
-| Live browser workflows | 3 passed: main planning flow, spreadsheet upload, company switch during planning |
+| Full browser suite | All 29 workflows passed in Linux CI, including all nine Proof scenarios |
 | Static checks | Python lint and TypeScript build check passed |
 | Production client | Vite build passed; large-chunk advisory only |
 | API types and examples | API schema regenerated; example generator produced no changes |
 
-Interaction and solver cases overlap the full engine suite; do not sum them as unique coverage. The focused import/file gates run the actual TypeScript code in Chrome. The live browser check was a three-workflow selection, not the complete browser suite. Testing is not exhaustive.
+Interaction and solver cases overlap the full engine suite; do not sum them as unique coverage. The focused import/file gates run the actual TypeScript code in Chrome. The final publication run tested the complete 29-workflow browser suite. Testing is not exhaustive.
 
 Before-repair evidence remains in the earlier audit archives and repair logs. The last pre-mitigation engine run terminated with a native Windows exception; the passing result above is a separate run after the solver change. The mitigation uses the documented [HiGHS thread limit](https://github.com/ERGO-Code/HiGHS/blob/master/docs/src/options/definitions.md#threadsid-option-threads); its explanation of the native failure is an inference from the observed stack and successful retests.
 
@@ -133,18 +133,18 @@ Before-repair evidence remains in the earlier audit archives and repair logs. Th
 
 **Before:** An engine run ends with Windows access-violation exit -1073741819 inside SciPy MILP. Prior logs sometimes emitted the same diagnostic while completing.
 
-**Repair:** Limit HiGHS to one native thread per solve while retaining Python-level independent-group concurrency. The worker-lifecycle regression, 35 solver cases and full engine suite pass after the change. Thread oversubscription/lifecycle is an inferred cause; cross-platform CI remains to be run.
+**Repair:** Limit HiGHS to one native thread per solve while retaining Python-level independent-group concurrency. The worker-lifecycle regression, 35 solver cases and full engine suite pass after the change. Thread oversubscription/lifecycle is an inferred cause of the original native crash. The final suite passes on both Windows and Linux; the additional initialization regression is described below.
 
 ## Compatibility and limits
 
 Existing datasets remain readable. Newly closed orders retain snapshots and delivered schedule lines so they can be reopened correctly. Older imported closed-order records that lack an original-order snapshot cannot reconstruct missing source metadata automatically; the repair does not invent that metadata.
 
-New persistent regression cases are in `scp/engine/tests/test_functional_repairs.py`. Unfixed authorization/SSO findings BH009–BH012 are outside the requested functional scope. Cross-platform CI, the full browser suite and optional TimesFM are not newly verified by this repair pass.
+New persistent regressions are in `scp/engine/tests/test_functional_repairs.py`, `test_recovery_edges.py`, `test_release_edges.py` and `test_solver_startup.py`. Unfixed authorization/SSO findings BH009–BH012 are outside the requested functional scope. Windows and Linux engine runs and the full Linux browser suite are verified. macOS and the optional real TimesFM model are not newly exercised.
 
 
 ## Merge preparation and additional logic audit
 
-The publication pass found and repaired seven more defects, BH048–BH054. All are changes to application code, supported by 16 new persistent regressions: eight recovery checks, seven forecast/placement checks and a fresh-process solver sequence. The final expanded engine suite passed all 571 cases locally. The corrected live Proof workflow also passed, exercising all nine scenarios; publication CI reruns the complete 29-workflow browser suite.
+The publication pass found and repaired seven more defects, BH048–BH054. All are changes to application code, supported by 16 new persistent regressions: eight recovery checks, seven forecast/placement checks and a fresh-process solver sequence. The final expanded engine suite passed all 571 cases locally. The corrected live Proof workflow also passed, exercising all nine scenarios; final publication CI passed the complete 29-workflow browser suite.
 
 ### BH048 — Restoring the previous database overwrites its recovery source
 
@@ -193,3 +193,6 @@ The publication pass found and repaired seven more defects, BH048–BH054. All a
 Publication CI passed all 555 engine tests and 28 browser workflows, but the Proof workflow exposed an interaction introduced by the thread-limit mitigation. In a fresh server, the S3 scenario's independent SciPy LP initialized the global scheduler with automatic threads; later inventory MILPs requesting one thread returned `HiGHS Status 0: Not Set`. S5 and S9 then failed nine checkpoints despite being valid problems. A fresh-process S3→S5→S9 sequence reproduces the failure independently of browser timing.
 
 The independent LP now uses the same single-thread setting. Inventory propagates native solver errors as errors rather than labeling an uninitialized solver as an infeasible planning problem. The added fresh-process sequence passes. This is a correction to BH047's mitigation, not an additional inflated bug count.
+
+
+Final verification: [GitHub Actions run 36733258631](https://github.com/Hasen1506/Claude-versioned/actions/runs/36733258631) passed engine and web jobs on the code merged by PR #6. The final documentation update changes only this audit.
