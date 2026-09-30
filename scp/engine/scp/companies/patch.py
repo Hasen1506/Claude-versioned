@@ -97,11 +97,33 @@ def _list_change(name: str, a: list, b: list) -> dict | None:
     return ch
 
 
+def validate_patch(patch: dict) -> None:
+    """Reject malformed operation containers before reading or applying any operation."""
+    if not isinstance(patch, dict) or patch.get("v") != 1:
+        raise PatchError("not a patch this server understands")
+    for name in ("set", "lists", "sizes"):
+        if name in patch and (not isinstance(patch[name], dict) or not all(isinstance(k, str) for k in patch[name])):
+            raise PatchError(f"{name} must be an object")
+    if "drop" in patch and (not isinstance(patch['drop'], list) or not all(isinstance(k, str) for k in patch['drop'])):
+        raise PatchError("drop must be a list of field names")
+    for name, ch in patch.get('lists', {}).items():
+        if not isinstance(ch, dict):
+            raise PatchError(f"{name}: changes must be an object")
+        for op in ('remove', 'upsert'):
+            if op in ch and not isinstance(ch[op], list):
+                raise PatchError(f"{name}: {op} must be a list")
+        if not all(isinstance(k, list) and len(k) == len(keys_of(name)) for k in ch.get('remove', [])):
+            raise PatchError(f"{name}: removal keys must name every identity field")
+        if not all(isinstance(r, dict) for r in ch.get('upsert', [])):
+            raise PatchError(f"{name}: upserts must be records")
+    if not all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in patch.get('sizes', {}).values()):
+        raise PatchError("sizes must contain nonnegative integer lengths")
+
+
 def apply_patch(doc: dict, patch: dict) -> dict:
     """``doc`` with ``patch`` applied (a new document; ``doc`` is not changed). :class:`PatchError` when it does
     not fit."""
-    if not isinstance(patch, dict) or patch.get("v") != 1:
-        raise PatchError("not a patch this server understands")
+    validate_patch(patch)
     out = dict(doc)
     for name in patch.get("drop") or []:
         out.pop(name, None)

@@ -195,7 +195,7 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
                 notes.append(f"{o.product}: {pu.supplier} can deliver {earliest.isoformat()}, "
                              f"{(earliest - due).days} d after it is needed there")
                 due = earliest
-        qty = round(qty, 3)                     # no 12-decimal quantities on a purchase order
+        # Keep the planned quantity: continuous units can require less than 0.001.
         groups[(pu.supplier, o.location, _currency(ds, ds.price_currency(pu)))].append((rid, pu, qty, due, notes))
 
     num = next_numbers(ds)
@@ -339,6 +339,7 @@ def receive(ds: Dataset, po_id: str, lines: list[dict] | None, on: date | None =
         sup = _supplier_of(ds, r)
         v = ds.vendor(sup or "")
         total = before + q
+        got[r.id] = total
         if v.over_delivery_tolerance is not None and total > ordered * (1 + v.over_delivery_tolerance) + EPS:
             raise PurchasingError(f"{r.id}: receiving {q:,.0f} makes {total:,.0f} of {ordered:,.0f} ordered, more than "
                                   f"{sup}'s over-delivery tolerance of {v.over_delivery_tolerance:.0%}")

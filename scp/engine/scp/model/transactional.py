@@ -6,6 +6,7 @@ import datetime as dt
 from pydantic import Field
 
 from .common import DemandKind, Model, ReceiptKind, Ref, Unit
+from .promise import Confirmation
 
 
 class DemandRecord(Model):
@@ -28,6 +29,8 @@ class DemandRecord(Model):
         description="Sales order: the agreed net price per unit, in the company currency. Empty = the customer's "
                     "price, else the product's")
     customer_ref: str = Field("", max_length=64, description="Sales order: the customer's own order number")
+    fulfilled_confirmations: list[Confirmation] = Field(default_factory=list,
+        description="Schedule lines removed by deliveries; retained for quantity-based confirmation metrics")
     period_days: int | None = Field(
         None, ge=1, le=366,
         description="Forecast only: the record covers [date, date + period_days) and is spread evenly over the "
@@ -66,6 +69,8 @@ class ScheduledReceipt(Model):
     reservations: list[Reservation] = Field(default_factory=list,
                                             description="Components (production) or goods at the origin (transfer) "
                                                         "still to be issued; planning reserves them")
+    original_reservations: list[Reservation] = Field(default_factory=list,
+        description="Full component targets retained across rolls and reversals")
     step_resources: dict[int, str] = Field(default_factory=dict,
                                            description="Production: steps (by number) to run on one of their alternative "
                                                        "machines instead of their own")

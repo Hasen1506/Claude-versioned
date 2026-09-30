@@ -2087,6 +2087,19 @@ export interface components {
              * @default false
              */
             cancelled: boolean;
+            /**
+             * Source Order
+             * @description Original order retained so a reversed delivery can reopen it
+             */
+            source_order?: {
+                [key: string]: unknown;
+            } | null;
+            /** Source Confirmations */
+            source_confirmations?: {
+                [key: string]: unknown;
+            }[];
+            /** Confirmed On Time Qty */
+            confirmed_on_time_qty?: number | null;
         };
         /**
          * CoProduct
@@ -2701,6 +2714,11 @@ export interface components {
              * @default
              */
             customer_ref: string;
+            /**
+             * Fulfilled Confirmations
+             * @description Schedule lines removed by deliveries; retained for quantity-based confirmation metrics
+             */
+            fulfilled_confirmations?: components["schemas"]["Confirmation"][];
             /**
              * Period Days
              * @description Forecast only: the record covers [date, date + period_days) and is spread evenly over the working days of that window (PIR splitting). Empty = the whole quantity is due on `date`.
@@ -7165,6 +7183,11 @@ export interface components {
              * @description Components (production) or goods at the origin (transfer) still to be issued; planning reserves them
              */
             reservations?: components["schemas"]["Reservation"][];
+            /**
+             * Original Reservations
+             * @description Full component targets retained across rolls and reversals
+             */
+            original_reservations?: components["schemas"]["Reservation"][];
             /**
              * Step Resources
              * @description Production: steps (by number) to run on one of their alternative machines instead of their own

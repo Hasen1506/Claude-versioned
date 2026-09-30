@@ -94,14 +94,18 @@ class Kpis:
         rows: list[tuple[str, float, float]] = []   # (customer, requested qty, confirmed on the requested date)
         for c in self.closed:
             if c.kind == "sales" and c.promised_date is not None and not c.cancelled:
-                rows.append((c.location, c.ordered_qty, c.ordered_qty if c.promised_date <= c.due_date else 0.0))
+                on = c.confirmed_on_time_qty
+                if on is None:
+                    on = c.ordered_qty if c.promised_date <= c.due_date else 0.0
+                rows.append((c.location, c.ordered_qty, min(on, c.ordered_qty)))
         conf: dict[str, list] = defaultdict(list)
         for cf in self.ds.confirmations:
             conf[cf.order].append(cf)
         for d in self.ds.demand:
-            if d.kind.value == "sales_order" and d.id in conf:
-                on = sum(cf.qty for cf in conf[d.id] if cf.date <= d.date)
-                rows.append((d.location, d.qty, min(on, d.qty)))
+            if d.kind.value == "sales_order" and (d.id in conf or d.fulfilled_confirmations):
+                on = sum(cf.qty for cf in [*conf[d.id], *d.fulfilled_confirmations] if cf.date <= d.date)
+                ordered = d.ordered_qty if d.ordered_qty is not None else d.qty
+                rows.append((d.location, ordered, min(on, ordered)))
         den = sum(r[1] for r in rows)
         num = sum(r[2] for r in rows)
         value = num / den if den > EPS else None

@@ -22,7 +22,7 @@ ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.\-]*$"
 class Model(BaseModel):
     """Base for every schema object: unknown keys are rejected, strings trimmed."""
 
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, use_enum_values=False)
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, use_enum_values=False, allow_inf_nan=False)
 
 
 class Out(BaseModel):

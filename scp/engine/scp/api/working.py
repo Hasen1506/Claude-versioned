@@ -31,7 +31,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, BeforeValidator, TypeAdapter, ValidationError
 
 from ..companies import CompanyError, get_companies
-from ..companies.patch import PatchError, apply_patch, make_patch
+from ..companies.patch import PatchError, apply_patch, make_patch, validate_patch
 from ..model import Dataset
 from ..plan import mrp
 from ..validate import validate
@@ -101,6 +101,11 @@ def read(v: dict[str, Any]) -> Read:
     user = companies.whoami(token)
     companies.role(user, cid)                    # a member of the company, whatever the role
     patch = ref.get("patch") or None
+    if patch:
+        try:
+            validate_patch(patch)
+        except PatchError as e:
+            raise CompanyError(str(e), 422) from None
     key = (cid, int(ref["revision"]), _sha(patch))
     with _lock:
         hit = _kept.get(key)
@@ -147,6 +152,11 @@ def _on_base(base: Read, key: tuple[str, int, str], patch: dict[str, Any]) -> Re
     if not names or not names <= set(fields):
         return None
     try:
+        for name, n in (patch.get("sizes") or {}).items():
+            if name not in names:
+                value = getattr(base.ds, name, None)
+                if not isinstance(value, list) or len(value) != n:
+                    raise PatchError(f"{name} does not add up after the change")
         parts = base.ds.model_dump(mode="json", by_alias=True, include=names)
         parts = apply_patch(parts, {**patch, "sizes": {k: v for k, v in (patch.get("sizes") or {}).items() if k in names}})
         update = {n: TypeAdapter(fields[n].annotation).validate_python(parts[n]) for n in names}

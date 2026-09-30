@@ -32,7 +32,7 @@ from .lots import batch_index, lots, planning_stock
 from .result import OrderChange, RollReport, StockChange
 from .stock import (
     EPS, _sum, accuracy_records, arrival, before, by_ref, counterparty, demand_keys, pending_openings, refresh_actuals,
-    sale_point, stock, week_grid,
+    sale_point, stock, week_grid, forecast_days,
 )
 
 
@@ -93,16 +93,22 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
                                           counterparty=counterparty(ds, rc), ordered_qty=ordered, delivered_qty=delivered,
                                           due_date=rc.due_date, first_delivery=g_first.get(k), last_delivery=g_last.get(k),
                                           closed_on=g_last.get(k, as_of), po=rc.po, price=rc.price,
-                                          confirmed_date=rc.confirmed_date))
+                                          confirmed_date=rc.confirmed_date,
+                                          source_order=rc.model_copy(update={"qty": ordered, "ordered_qty": ordered,
+                                              "original_reservations": [],
+                                              "reservations": [rv.model_copy(update={"qty": rv.required_qty
+                                                  if rv.required_qty is not None else rv.qty, "required_qty": None})
+                                                  for rv in (rc.original_reservations or rc.reservations)]}).model_dump(mode="json")))
         else:
             rvs = []
-            for rv in rc.reservations:
+            for rv in (rc.original_reservations or rc.reservations):
                 req = rv.required_qty if rv.required_qty is not None else rv.qty
                 left = req - by_ref(iss, rc.id, rv.product, rv.location)
                 if left > EPS:
                     rvs.append(rv.model_copy(update={"qty": round(left, 6), "required_qty": req}))
             # nothing received: the quantity is the order's own, unrounded, so the next roll starts from it
             receipts.append(rc.model_copy(update={"qty": round(open_q, 6) if delivered > EPS else open_q, "reservations": rvs,
+                                                  "original_reservations": rc.original_reservations or rc.reservations,
                                                   "ordered_qty": ordered if delivered > EPS else rc.ordered_qty}))
         if closed or delivered > EPS:
             rep.orders.append(OrderChange(kind=rc.kind.value, id=rc.id, location=rc.location, product=rc.product,
@@ -122,11 +128,13 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
             if end <= as_of:
                 rep.forecast_dropped += d.qty
             elif d.date < as_of:
-                n = (end - d.date).days
+                days = forecast_days(ds, d)
                 left = (end - as_of).days
-                rep.forecast_dropped += d.qty * (n - left) / n
+                remaining = d.qty * sum(day >= as_of for day in days) / len(days)
+                rep.forecast_dropped += d.qty - remaining
                 rep.forecast_prorated += 1
-                demand.append(d.model_copy(update={"date": as_of, "qty": round(d.qty * left / n, 6), "period_days": left}))
+                if remaining > EPS:
+                    demand.append(d.model_copy(update={"date": as_of, "qty": remaining, "period_days": left}))
             else:
                 demand.append(d)
             continue
@@ -135,33 +143,49 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
             continue
         ordered = d.ordered_qty if d.ordered_qty is not None else d.qty
         delivered = by_ref(sold, d.id, d.product)
-        ks = [k for k in sold if k[0] == d.id and k[2] == d.product]
+        ks = [k for k in s_first if k[0] == d.id and k[2] == d.product]
         first = min((arrival(ds, k[1], d.location, d.product, s_first[k]) for k in ks), default=None)
         last = max((arrival(ds, k[1], d.location, d.product, s_last[k]) for k in ks), default=None)
         open_q = ordered - delivered
         closed = open_q <= ordered * tol + EPS or d.id in s_final
         if closed:
-            cf = confs.get(d.id, [])
+            cf = []
+            combined = {}
+            for c in [*d.fulfilled_confirmations, *confs.get(d.id, [])]:
+                key = (c.ship_from, c.ship_date, c.date, c.method)
+                if key in combined:
+                    prior = combined[key]
+                    combined[key] = prior.model_copy(update={"qty": prior.qty + c.qty})
+                else:
+                    combined[key] = c
+            cf = [combined[key] for key in sorted(combined)]
             rep.closed.append(ClosedOrder(kind="sales", id=d.id, location=d.location, product=d.product,
                                           counterparty=ks[0][1] if ks else None, ordered_qty=ordered,
                                           delivered_qty=delivered, due_date=d.date,
                                           promised_date=max((c.date for c in cf), default=None),
-                                          first_delivery=first, last_delivery=last, closed_on=last or as_of))
+                                          first_delivery=first, last_delivery=last, closed_on=last or as_of,
+                                          source_order=d.model_copy(update={"qty": ordered, "ordered_qty": ordered,
+                                              "fulfilled_confirmations": []}).model_dump(mode="json"),
+                                          source_confirmations=[c.model_dump(mode="json") for c in cf],
+                                          confirmed_on_time_qty=min(ordered, sum(c.qty for c in cf if c.date <= d.date))))
             rep.confirmations_trimmed += len(cf)
         else:
-            demand.append(d.model_copy(update={"qty": round(open_q, 6) if delivered > EPS else open_q,
-                                               "ordered_qty": ordered if delivered > EPS else d.ordered_qty}))
+            fulfilled = list(d.fulfilled_confirmations)
             # delivered quantity came off the earliest schedule lines
             cut = sum(c.qty for c in confs.get(d.id, [])) - open_q
             for c in sorted(confs.get(d.id, []), key=lambda c: (c.ship_date, c.date)):
                 if cut > EPS:
                     take = min(cut, c.qty)
                     cut -= take
+                    fulfilled.append(c.model_copy(update={"qty": take}))
                     if c.qty - take <= EPS:
                         rep.confirmations_trimmed += 1
                         continue
                     c = c.model_copy(update={"qty": round(c.qty - take, 6)})
                 keep_confs.append(c)
+            demand.append(d.model_copy(update={"qty": round(open_q, 6) if delivered > EPS else open_q,
+                                               "ordered_qty": ordered if delivered > EPS else d.ordered_qty,
+                                               "fulfilled_confirmations": fulfilled}))
         if closed or delivered > EPS:
             rep.orders.append(OrderChange(kind="sales", id=d.id, location=d.location, product=d.product,
                                           open_before=d.qty, open_after=0.0 if closed else round(open_q, 6), closed=closed))
@@ -262,7 +286,7 @@ def _redeliver(ds: Dataset, c: ClosedOrder, receipts: tuple[dict, dict, dict], s
         return c
     if c.kind == "sales":
         sold, first, last = sales
-        ks = [k for k in sold if k[0] == c.id and k[2] == c.product]
+        ks = [k for k in first if k[0] == c.id and k[2] == c.product]
         delivered = by_ref(sold, c.id, c.product)
         lo = min((arrival(ds, k[1], c.location, c.product, first[k]) for k in ks), default=None)
         hi = max((arrival(ds, k[1], c.location, c.product, last[k]) for k in ks), default=None)

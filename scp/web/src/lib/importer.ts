@@ -406,7 +406,8 @@ function deepMerge(a: Obj, b: Obj): Obj {
   for (const [k, v] of Object.entries(b)) {
     out[k] = v && typeof v === "object" && !Array.isArray(v) && a[k] && typeof a[k] === "object" && !Array.isArray(a[k])
       ? deepMerge(a[k] as Obj, v as Obj) : Array.isArray(v) && Array.isArray(a[k]) && k === "modes"
-      ? (v as Obj[]).map((m, i) => ({ ...((a[k] as Obj[])[i] ?? {}), ...m })) : v;
+      ? Array.from({ length: Math.max(v.length, (a[k] as Obj[]).length) }, (_, i) =>
+          ({ ...((a[k] as Obj[])[i] ?? {}), ...((v as Obj[])[i] ?? {}) })) : v;
   }
   return out;
 }
@@ -433,7 +434,8 @@ export function exportRows(ds: Dataset, ckey: CollectionKey, cols: Col[], kind: 
   }
   if (kind === "routing") {
     return [head, ...(ds.production_sources ?? []).flatMap((p) => (p.operations ?? []).map((o) =>
-      [p.location, p.product, o.seq, o.resource ?? "", o.setup_hours ?? 0, o.run_hours_per_unit ?? 0, "", o.name ?? "", p.id]))];
+      [p.location, p.product, o.seq, o.resource ?? "", o.setup_hours ?? 0, o.run_hours_per_unit ?? 0, "",
+        o.batch_qty ?? "", o.batch_hours ?? "", o.name ?? "", p.id]))];
   }
   return [head, ...items(ds, ckey).map((o) => cols.map((c) => cell(c, getPath(o, c.path))))];
 }

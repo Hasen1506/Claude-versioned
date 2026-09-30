@@ -6,8 +6,20 @@ export type Grid = string[][];
 /** RFC 4180 CSV, or tab-separated text when the first line has more tabs than commas (a paste from Excel). */
 export function parseDelimited(text: string): Grid {
   const t = text.replace(/^﻿/, "");
-  const first = t.split(/\r?\n/, 1)[0] ?? "";
-  const tabs = (first.match(/\t/g) ?? []).length, commas = (first.match(/,/g) ?? []).length, semis = (first.match(/;/g) ?? []).length;
+  // Count separators only outside quoted fields, through the first logical record.
+  let tabs = 0, commas = 0, semis = 0, quoted = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (c === '"') {
+      if (quoted && t[i + 1] === '"') i++;
+      else quoted = !quoted;
+    } else if (!quoted) {
+      if (c === "\n" || c === "\r") break;
+      if (c === "\t") tabs++;
+      if (c === ",") commas++;
+      if (c === ";") semis++;
+    }
+  }
   const sep = tabs > commas && tabs >= semis ? "\t" : semis > commas ? ";" : ",";
   const rows: Grid = [];
   let row: string[] = [], cell = "", q = false;
@@ -36,7 +48,7 @@ function trim(rows: Grid): Grid {
 export function toCsv(rows: (string | number | null | undefined)[][]): string {
   const esc = (v: string | number | null | undefined) => {
     const s = v === null || v === undefined ? "" : String(v);
-    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    return /[",;\t\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   return rows.map((r) => r.map(esc).join(",")).join("\r\n") + "\r\n";
 }
@@ -118,14 +130,23 @@ export async function readXlsx(buf: ArrayBuffer): Promise<Grid> {
   }
   // first sheet in workbook order
   let sheetPath = "xl/worksheets/sheet1.xml";
+  let date1904 = false;
   const wb = get("xl/workbook.xml"), rels = get("xl/_rels/workbook.xml.rels");
   if (wb && rels) {
-    const first = parse(await zipRead(buf, wb)).getElementsByTagName("sheet")[0];
+    const book = parse(await zipRead(buf, wb));
+    date1904 = ["1", "true"].includes(book.getElementsByTagName("workbookPr")[0]?.getAttribute("date1904") ?? "");
+    const first = book.getElementsByTagName("sheet")[0];
     const rid = first?.getAttribute("r:id") ?? first?.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id");
     const rel = Array.from(parse(await zipRead(buf, rels)).getElementsByTagName("Relationship")).find((r) => r.getAttribute("Id") === rid);
     const target = rel?.getAttribute("Target");
     if (target) sheetPath = target.startsWith("/") ? target.slice(1) : `xl/${target}`;
   }
+  const parts: string[] = [];
+  for (const part of sheetPath.split("/")) {
+    if (part === "..") parts.pop();
+    else if (part && part !== ".") parts.push(part);
+  }
+  sheetPath = parts.join("/");
   const sheet = get(sheetPath);
   if (!sheet) throw new Error("The workbook has no worksheet.");
   const doc = parse(await zipRead(buf, sheet));
@@ -141,7 +162,7 @@ export async function readXlsx(buf: ArrayBuffer): Promise<Grid> {
       if (t === "s") val = shared[Number(raw)] ?? "";
       else if (t === "inlineStr") val = Array.from(c.getElementsByTagName("t")).map((x) => x.textContent ?? "").join("");
       else if (t === "b") val = raw === "1" ? "TRUE" : "FALSE";
-      else if (raw !== "" && dateStyles.has(s)) val = excelDate(Number(raw));
+      else if (raw !== "" && dateStyles.has(s)) val = excelDate(Number(raw), date1904);
       while (out.length < i) out.push("");
       out[i] = val;
     }
@@ -151,8 +172,8 @@ export async function readXlsx(buf: ArrayBuffer): Promise<Grid> {
 }
 
 /** Excel's serial day number (1900 system) → YYYY-MM-DD. */
-export function excelDate(serial: number): string {
-  const ms = Math.round((serial - 25569) * 86400 * 1000);
+export function excelDate(serial: number, date1904 = false): string {
+  const ms = Math.round((serial + (date1904 ? 1462 : serial < 60 ? 1 : 0) - 25569) * 86400 * 1000);
   return new Date(ms).toISOString().slice(0, 10);
 }
 
