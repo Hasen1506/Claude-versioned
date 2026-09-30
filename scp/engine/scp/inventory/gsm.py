@@ -148,8 +148,8 @@ def solve(stages: Sequence[Stage], *, time_limit: float = 30.0) -> Solution:
     for sol in sols:
         out.variables += sol.variables
         out.constraints += sol.constraints
-        if sol.status == "infeasible":
-            return Solution("infeasible", math.inf, variables=out.variables, constraints=out.constraints,
+        if sol.status not in ("optimal", "time_limit", "empty"):
+            return Solution(sol.status, math.inf, variables=out.variables, constraints=out.constraints,
                             seconds=time.perf_counter() - t0, message=sol.message)
         if sol.status == "time_limit":
             out.status, out.message = "time_limit", sol.message
@@ -225,7 +225,8 @@ def _solve_group(stages: Sequence[Stage], *, time_limit: float) -> Solution:
                                                   "presolve": False, "threads": 1})
     secs = time.perf_counter() - t0
     if res.x is None:
-        return Solution("infeasible", math.inf, variables=nv, constraints=len(rows), seconds=secs,
+        return Solution("infeasible" if res.status == 2 else "error", math.inf,
+                        variables=nv, constraints=len(rows), seconds=secs,
                         message=res.message)
     x = res.x
     out = Solution("optimal" if res.status == 0 else "time_limit", 0.0, variables=nv, constraints=len(rows),

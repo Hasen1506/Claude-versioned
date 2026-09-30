@@ -2,15 +2,15 @@
 
 Updated 30 September 2026, against GitHub main `ee0f7d136a25f1f30246fcd886f15db8d5985694`.
 
-The continuation covered spreadsheet decoding, save/recovery races and capacity-option appraisal, then repaired the confirmed functional defects. Seven additional findings are recorded below as BH041–BH047. In total, **42 logic defects are repaired and one native runtime failure has a verified mitigation**. These are production application fixes with regression tests. Publication and CI status are recorded in the associated GitHub pull request.
+The continuation covered spreadsheet decoding, save/recovery races and capacity-option appraisal, then repaired the confirmed functional defects. Seven additional findings are recorded below as BH041–BH047. In total, **49 logic defects are repaired and one native runtime failure has a verified mitigation**. These are production application fixes with regression tests. Publication and CI status are recorded in [PR #6](https://github.com/Hasen1506/Claude-versioned/pull/6).
 
 ## Verification after repairs
 
 | Verification | Result |
 |---|---|
-| Full engine suite | 555 passed; zero failures/errors/skips |
+| Full engine suite | 571 passed; zero failures/errors/skips |
 | Focused functional/API/file regressions | 369 passed; 11 unrelated authorization/SSO cases deselected |
-| New interaction regressions | 21 passed; included in the current engine suite |
+| New persistent regressions | 37 passed across the two repair passes; included in the current 571-case engine suite |
 | Inventory/S&OP solver checks | 35 passed, including comparison against brute-force optima |
 | Actual TypeScript state/date tests | 5 passed |
 | Save/recovery races and controls | 6 passed |
@@ -83,6 +83,14 @@ Before-repair evidence remains in the earlier audit archives and repair logs. Th
 | BH046 | P1 | Stock type changes lose serialized inventory identities | Repaired; regression passed |
 | BH047 | P1 | Repeated native solver calls can terminate the Windows process | Mitigation verified |
 
+| BH048 | P1 | Restoring the previous database overwrites its recovery source | Repaired; regression passed |
+| BH049 | P1 | An interrupted restore truncates the current database | Repaired; regression passed |
+| BH050 | P2 | Recovery to a new server directory fails | Repaired; regression passed |
+| BH051 | P2 | Backup paths containing URI punctuation cannot be checked | Repaired; regression passed |
+| BH052 | P1 | The recovery copy drops committed WAL pages | Repaired; regression passed |
+| BH053 | P2 | Repeated placement selections inflate the inventory value change | Repaired; regression passed |
+| BH054 | P2 | Forecast release rounds away valid fractional demand | Repaired; regression passed |
+
 ## Newly uncovered findings
 
 ### BH041 — CSV delimiter detection misreads punctuation inside quoted headers
@@ -132,3 +140,56 @@ Before-repair evidence remains in the earlier audit archives and repair logs. Th
 Existing datasets remain readable. Newly closed orders retain snapshots and delivered schedule lines so they can be reopened correctly. Older imported closed-order records that lack an original-order snapshot cannot reconstruct missing source metadata automatically; the repair does not invent that metadata.
 
 New persistent regression cases are in `scp/engine/tests/test_functional_repairs.py`. Unfixed authorization/SSO findings BH009–BH012 are outside the requested functional scope. Cross-platform CI, the full browser suite and optional TimesFM are not newly verified by this repair pass.
+
+
+## Merge preparation and additional logic audit
+
+The publication pass found and repaired seven more defects, BH048–BH054. All are changes to application code, supported by 16 new persistent regressions: eight recovery checks, seven forecast/placement checks and a fresh-process solver sequence. The final expanded engine suite passed all 571 cases locally. The corrected live Proof workflow also passed, exercising all nine scenarios; publication CI reruns the complete 29-workflow browser suite.
+
+### BH048 — Restoring the previous database overwrites its recovery source
+
+**Before:** Restore a backup, then restore the returned `.before-restore` file to undo it. The function copied the current database over that same source before reading it, so the undo restored the wrong data.
+
+**Repair:** Stage and validate the incoming backup first. Preserve every existing recovery file by choosing a new destination suffix. Restoring the previous copy now restores its original contents.
+
+### BH049 — An interrupted restore truncates the current database
+
+**Before:** Inject a disk-write failure while copying the replacement: the live file contains only `partial database` afterwards.
+
+**Repair:** Complete and validate a temporary copy on the target filesystem before atomically replacing the destination. Fault tests cover an interrupted copy and a refused final installation; both preserve the current database and clean staging files. This tests I/O failures, not every possible OS/power-loss boundary.
+
+### BH050 — Recovery to a new server directory fails
+
+**Before:** Restore a valid backup into a target whose parent directories do not exist. The operation raises `FileNotFoundError` instead of rebuilding the server state.
+
+**Repair:** Create the destination directory after validating the source.
+
+### BH051 — Backup paths containing URI punctuation cannot be checked
+
+**Before:** Check a valid database named `company #1.sqlite`. The SQLite URI treats the filename punctuation as a URI fragment and opens the wrong path.
+
+**Repair:** Convert the resolved filesystem path with `Path.as_uri()` before adding the read-only query, preserving its filename.
+
+### BH052 — The recovery copy drops committed WAL pages
+
+**Before:** A stopped writer leaves a committed company update in SQLite's WAL. Restore another backup: the kept previous database contains the earlier company name because only its main file was copied and the WAL was removed.
+
+**Repair:** Use SQLite's backup API to snapshot the previous database, including its committed WAL pages, before replacement. The regression uses a deliberately stopped writer against an isolated temporary database.
+
+### BH053 — Repeated placement selections inflate the inventory value change
+
+**Before:** Apply the same stocking-stage key two, three or five times. The final stock policy is identical but the reported value change is multiplied: a 750 change becomes 1,500, 2,250 or 3,750.
+
+**Repair:** Preserve selection order while deduplicating keys before applying/reporting recommendations.
+
+### BH054 — Forecast release rounds away valid fractional demand
+
+**Before:** Release constant weekly forecasts for a product measured in kilograms. A 0.0004 weekly forecast disappears, while other valid six-decimal quantities are rounded to three decimals. Independent constant-history expectations distinguish this from the intentional whole-unit policy for EA products.
+
+**Repair:** Write the computed released quantity without the extra three-decimal rounding. Whole-unit forecast rounding remains controlled by the product's base unit.
+
+### BH047 follow-up — Native solver initialization depends on call order
+
+Publication CI passed all 555 engine tests and 28 browser workflows, but the Proof workflow exposed an interaction introduced by the thread-limit mitigation. In a fresh server, the S3 scenario's independent SciPy LP initialized the global scheduler with automatic threads; later inventory MILPs requesting one thread returned `HiGHS Status 0: Not Set`. S5 and S9 then failed nine checkpoints despite being valid problems. A fresh-process S3→S5→S9 sequence reproduces the failure independently of browser timing.
+
+The independent LP now uses the same single-thread setting. Inventory propagates native solver errors as errors rather than labeling an uninitialized solver as an infeasible planning problem. The added fresh-process sequence passes. This is a correction to BH047's mitigation, not an additional inflated bug count.

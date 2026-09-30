@@ -12,6 +12,7 @@ import datetime as dt
 import os
 import shutil
 import sqlite3
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -38,7 +39,7 @@ def backup(db: sqlite3.Connection, folder: str | os.PathLike, keep: int = 14, no
 
 def check(path: str | os.PathLike) -> list[str]:
     """What is in a backup: its companies and accounts (and SQLite's own integrity check)."""
-    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    db = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
     try:
         ok = db.execute("PRAGMA integrity_check").fetchone()[0]
         if ok != "ok":
@@ -53,14 +54,49 @@ def check(path: str | os.PathLike) -> list[str]:
 def restore(backup_file: str | os.PathLike, db_path: str | os.PathLike) -> Path:
     """Put a backup in place of the database (the server must be stopped); the database it replaces is kept beside
     it. Returns where that copy is."""
-    check(backup_file)
+    source = Path(backup_file).resolve()
+    check(source)
     target = Path(db_path)
+    if source == target.resolve():
+        raise ValueError("the backup and target database must be different files")
+    target.parent.mkdir(parents=True, exist_ok=True)
     kept = target.with_name(target.name + ".before-restore")
-    if target.exists():
-        shutil.copy2(target, kept)
+    suffix = 1
+    while kept.exists() or kept.resolve() == source:
+        suffix += 1
+        kept = target.with_name(target.name + f".before-restore-{suffix}")
+
+    def stage() -> Path:
+        fd, name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".restore", dir=target.parent)
+        os.close(fd)
+        return Path(name)
+
+    pending = stage()
+    previous = None
+    try:
+        # Finish and validate the incoming copy before touching the current database. A failed
+        # copy (full disk, permissions, interrupted I/O) cannot truncate the live file.
+        shutil.copy2(source, pending)
+        check(pending)
+        if target.exists():
+            previous = stage()
+            # A stopped/crashed database can still have committed pages in its WAL. SQLite's
+            # backup API preserves them in the recovery copy, unlike copying only the main file.
+            current = sqlite3.connect(target.resolve().as_uri() + "?mode=ro", uri=True)
+            saved = sqlite3.connect(previous)
+            try:
+                current.backup(saved)
+            finally:
+                saved.close()
+                current.close()
+            os.replace(previous, kept)
+        os.replace(pending, target)
         for extra in (target.with_name(target.name + "-wal"), target.with_name(target.name + "-shm")):
             extra.unlink(missing_ok=True)
-    shutil.copy2(backup_file, target)
+    finally:
+        pending.unlink(missing_ok=True)
+        if previous is not None:
+            previous.unlink(missing_ok=True)
     return kept
 
 
