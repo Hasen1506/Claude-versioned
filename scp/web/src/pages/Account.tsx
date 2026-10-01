@@ -113,7 +113,7 @@ export function CompanyList({ onOpened }: { onOpened?: () => void }) {
       const doc = await api.company(c.id);
       if (request !== openRequest.current) return;
       store.assertWorking(before, true);
-      store.openCompany(doc);
+      store.openCompany(doc, before);
       onOpened?.();
       go("home");
     } catch (e) {
@@ -346,7 +346,7 @@ export function Account({ route = [] }: { route?: string[] }) {
       store.assertWorking(before, true);
       const doc = await api.company(m.id);
       store.assertWorking(before, true);
-      store.openCompany(doc);
+      store.openCompany(doc, before);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {

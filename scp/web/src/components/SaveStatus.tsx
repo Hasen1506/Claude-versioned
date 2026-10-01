@@ -52,11 +52,13 @@ export function SaveBanner() {
   const ds = useStore((s) => s.dataset);
   const version = useStore((s) => s.version);
   const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [merged, setMerged] = useState<string | null>(null);
   const [clashes, setClashes] = useState<Clash[] | null>(null);
   const [refusedShown, setRefusedShown] = useState(false);
   const canUndo = useStore((s) => s.canUndo);
   const revision = company?.revision;
+  useEffect(() => { setActionError(null); }, [company?.id, revision, version?.id]);
   useEffect(() => { setMerged(null); setClashes(null); }, [revision]);   // what a merge did is news until the next save
   useEffect(() => {
     if (!save.refused) return;
@@ -65,10 +67,17 @@ export function SaveBanner() {
     return () => clearTimeout(t);
   }, [save.refused]);
   if (!ds) return null;
-  const reopen = async () => {
+  const reopen = async (acknowledged = false) => {
     if (!company) return;
+    const current = store.get();
+    const dirty = unsaved(current) || !!current.version && current.version.savedRevision !== current.revision;
+    if (!acknowledged && dirty && !window.confirm(`Open ${company.name}'s saved live data and replace your unsaved changes? Save a version or download them first if you want to keep them.`)) return;
+    const before = store.captureContext();
     setBusy(true);
-    try { store.openCompany(await api.company(company.id)); } finally { setBusy(false); }
+    setActionError(null);
+    try { store.openCompany(await api.company(company.id), before); }
+    catch (e) { if (store.currentContext(before)) setActionError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
   };
   const download = () => {
     const blob = new Blob([JSON.stringify(ds, null, 1)], { type: "application/json" });
@@ -88,17 +97,22 @@ export function SaveBanner() {
   }
   if (!company.live) {
     return <div className="banner info save-banner">
+      {actionError && <span className="banner error" role="alert">{actionError}</span>}
       <span>You are looking at {version ? <b>plan version {version.id} “{version.name}”</b> : "a plan version"}, not {company.name}'s live data.
         Changes here are saved in <a href={href("versions")}>Versions</a>, not to the company.</span>
       <span className="spacer" />
-      <button className="btn sm" disabled={busy} onClick={reopen}>Back to the live data</button>
+      <button className="btn sm" disabled={busy} onClick={() => reopen()}>Back to the live data</button>
       {company.role !== "viewer" && <button className="btn sm" disabled={busy} onClick={async () => {
         if (!window.confirm(`Make ${version ? version.id : "this version"} ${company.name}'s live data? Everyone then works on it. The data it replaces stays in the company's history.`)) return;
+        const before = store.captureContext();
         setBusy(true);
+        setActionError(null);
         try {
           const m = (await api.companies()).find((x) => x.id === company.id);
+          store.assertWorking(before, true);
           if (m) store.useAsCompanyData(m.revision, version ? `from plan version ${version.id} “${version.name}”` : "from a plan version");
-        } finally { setBusy(false); }
+        } catch (e) { if (store.currentContext(before)) setActionError(e instanceof Error ? e.message : String(e)); }
+        finally { setBusy(false); }
       }}>Make this the live data</button>}
     </div>;
   }
@@ -115,6 +129,7 @@ export function SaveBanner() {
   if (save.status === "conflict" && save.conflict) {
     const c = save.conflict;
     return <div className="banner error save-banner" role="alert">
+      {actionError && <span>{actionError}</span>}
       <span><b>Not saved: {c.by} saved {company.name} {when(c.at)}</b>, after your changes began. Your changes are still here,
         on this screen only. <b>Merge</b> keeps both: what only one of you changed is taken, an order you both took
         under the same number gets the next number, and where you both changed a record you choose whose to keep.</span>
@@ -129,7 +144,7 @@ export function SaveBanner() {
       }}>Merge both</button>
       <button className="btn sm" disabled={busy} onClick={async () => {
         if (!window.confirm(`Drop your unsaved changes and open ${c.by}'s save?`)) return;
-        await reopen();
+        await reopen(true);
       }}>Open {c.by}'s (drop mine)</button>
       <button className="btn sm" disabled={busy} title={`Your copy becomes the latest and what ${c.by} changed is undone; their save stays in the history and can be put back`}
         onClick={async () => {
@@ -149,12 +164,13 @@ export function SaveBanner() {
   }
   if (save.status === "failed" && save.error?.includes("your rights cover")) {
     return <div className="banner error save-banner" role="alert">
+      {actionError && <span>{actionError}</span>}
       <span><b>Not saved:</b> {save.error}.</span>
       <span className="spacer" />
       {canUndo && <button className="btn sm" onClick={() => store.undo()}>Undo the last change</button>}
       <button className="btn sm" disabled={busy} onClick={async () => {
         if (!window.confirm(`Drop every change not yet saved and open ${company.name} as it was last saved?`)) return;
-        await reopen();
+        await reopen(true);
       }}>Drop my unsaved changes</button>
       <button className="btn sm ghost" onClick={download}>Download them</button>
     </div>;
@@ -171,8 +187,9 @@ export function SaveBanner() {
   }
   if (save.newer) {
     return <div className="banner info save-banner">
+      {actionError && <span className="banner error" role="alert">{actionError}</span>}
       <span><b>{save.newer.by}</b> saved {company.name} {when(save.newer.at)}.</span>
-      <button className="btn sm" disabled={busy} onClick={reopen}>Show their changes</button>
+      <button className="btn sm" disabled={busy} onClick={() => reopen()}>Show their changes</button>
       <a href={href("history")}>What changed</a>
     </div>;
   }
@@ -254,3 +271,4 @@ function ClashChooser({ by, clashes, busy, onMerge, onCancel }: {
     </div>
   </div>;
 }
+
