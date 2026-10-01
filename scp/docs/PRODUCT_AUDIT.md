@@ -1,6 +1,6 @@
 # User workflow and product audit
 
-Updated 30 September 2026. Starting main revision: `ff76b1a7126495abfc532e39e59f82703a435ec4`. Fixes in this pass are merged through [PR #7](https://github.com/Hasen1506/Claude-versioned/pull/7), merge `bac9d8892484279ecda92ea7268234c316719b98`. This is a continuing audit, not a claim of exhaustive testing or enterprise readiness. The preceding repair evidence is in [audit.md](../../audit.md).
+Updated 1 October 2026. The initial walkthrough started from `ff76b1a7126495abfc532e39e59f82703a435ec4` and its fixes were merged through [PR #7](https://github.com/Hasen1506/Claude-versioned/pull/7). Later repair, merge and CI evidence is in [audit.md](../../audit.md). This is a continuing audit, not a claim of exhaustive testing or enterprise readiness.
 
 ## Goal and acceptance gates
 
@@ -78,6 +78,8 @@ Early pilot acceptance: a planner brings their own anonymized data, reaches the 
 ## Ordered next work
 
 ### 1 October continuation evidence
+
+The version/scenario pass adds an independently calculated browser journey: stock 10 and forecast 100 at INR10/unit give a 90-unit purchase costing INR900; stock 40 gives 60 units at INR600. The comparison displays the exact stock change and INR300 reduction. Promotion retains the baseline fingerprint and stock 40 survives reload. Twelve new browser checks also cover save-versus-edit races, dirty markers after discard/reload, canceling and acknowledging branch/promotion over unsaved edits, delayed version loads and live server company switching. BH062–BH064 address incorrect saved metadata, stale version loads and silent loss of unsaved edits; current publication status is recorded in [audit.md](../../audit.md).
 
 The complete automated manufacturing browser journey now passes using an imported, independently calculated fixture: forecast and finance, promise, finite production planning, purchase receipts, partial production, roll, completion, shipment and final roll. It checks B40/C20, the 9–12 January production window, INR1,700 cost and INR300 margin, partial-roll stocks A8/B24/C12 and zero final stock with four closed orders. This is browser workflow evidence, not a beginner manufacturing setup-from-scratch claim.
 

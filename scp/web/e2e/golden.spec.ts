@@ -624,12 +624,15 @@ test("buying: requisitions → purchase order → approve → send → confirm l
 });
 
 test("versions: save base → edit → save as scenario → compare → promote; the base is unchanged", async ({ page }) => {
+  const workingId = () => page.locator("section.panel").filter({ has: page.getByRole("heading", { name: "Working copy", exact: true }) }).locator("b").first().textContent();
+  const versionRow = (id: string) => page.locator("tbody tr").filter({ has: page.getByRole("button", { name: `Open ${id}`, exact: true }) });
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/versions");
   await page.getByLabel("Version name").fill("October cycle");
   await page.getByRole("button", { name: "Save as base version" }).click();
   await expect(page.locator(".version-chip")).toContainText("October cycle · base");
-  const baseSha = await page.locator("tr", { hasText: "October cycle" }).locator("td[title]").getAttribute("title");
+  const baseId = (await workingId())!;
+  const baseSha = await versionRow(baseId).locator("td[title]").getAttribute("title");
 
   // edit the working copy: modified; a base cannot be overwritten, so save as a scenario of it
   await page.goto("/#/data/location_products/PLT-PUNE%7CRM-HEATER");
@@ -642,20 +645,22 @@ test("versions: save base → edit → save as scenario → compare → promote;
   await page.getByRole("button", { name: /Save as new scenario of V\d+/ }).click();
   await expect(page.locator(".version-chip")).toContainText("More heaters · scenario");
   await expect(page.locator(".version-chip")).not.toContainText("unsaved changes");
+  const scenarioId = (await workingId())!;
 
   // compare base (A) with the scenario (B)
-  await page.getByRole("button", { name: "Compare V0001 as A" }).click();
-  await page.getByRole("button", { name: "Compare V0002 as B" }).click();
+  await page.getByRole("button", { name: `Compare ${baseId} as A` }).click();
+  await page.getByRole("button", { name: `Compare ${scenarioId} as B` }).click();
   await page.getByRole("button", { name: "Compare", exact: true }).click();
   await expect(page.getByText("Plan side by side (MRP)")).toBeVisible();
   await page.locator("tr.clickable", { hasText: "location products" }).click();
   await expect(page.getByText("on_hand: 14000 → 20000")).toBeVisible();
 
   // promote: a new base; the old one is superseded but byte-identical
-  await page.getByRole("button", { name: "Promote V0002" }).click();
-  await expect(page.locator("tr", { hasText: "V0003" }).getByText("active")).toBeVisible();
-  await expect(page.locator("tr", { hasText: "October cycle" }).getByText("superseded")).toBeVisible();
-  expect(await page.locator("tr", { hasText: "October cycle" }).locator("td[title]").getAttribute("title")).toBe(baseSha);
+  await page.getByRole("button", { name: `Promote ${scenarioId}` }).click();
+  await expect(page.locator(".version-chip")).toContainText("· base");
+  await expect(versionRow((await workingId())!).getByText("active", { exact: true })).toBeVisible();
+  await expect(versionRow(baseId).getByText("superseded", { exact: true })).toBeVisible();
+  expect(await versionRow(baseId).locator("td[title]").getAttribute("title")).toBe(baseSha);
 });
 
 test("finance: cost the plan → books close → cost to serve by region → capacity NPV → edit option → stale", async ({ page }) => {

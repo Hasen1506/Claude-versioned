@@ -4,7 +4,7 @@ import type { Comparison, Dataset, PlanSummary, VersionMeta } from "../api/types
 import { Badge, Edits, Empty, Panel, Reading, SectionBand, StageHeader, StatTile } from "../components/ui";
 import { day, money, pct, qty } from "../lib/format";
 import { go, href } from "../lib/router";
-import { isModified, store, useStore } from "../state/store";
+import { isModified, store, useStore, type WorkingSnapshot } from "../state/store";
 
 const STATUS_SEV: Record<string, "ok" | "info" | "warning" | undefined> = {
   active: "ok", promoted: "info", superseded: undefined, discarded: "warning",
@@ -48,11 +48,11 @@ export function Versions() {
   const refresh = useCallback(() => api.versions().then(setList).catch((e) => setErr(String(e))), []);
   useEffect(() => { refresh(); }, [refresh]);
 
-  const act = async (f: () => Promise<unknown>) => {
+  const act = async (f: (before: WorkingSnapshot) => Promise<unknown>) => {
     setBusy(true);
     setErr(null);
     try {
-      await f();
+      await f(store.captureWorking());
       await refresh();
     } catch (e) {
       setErr(String(e));
@@ -61,57 +61,68 @@ export function Versions() {
     }
   };
   const label = name.trim() || (current ? `Scenario of ${current.id}` : `Plan of ${day(ds.settings.planning_start)}`);
-  const saveBase = () => act(async () => {
-    const m = await api.saveBase(ds, name.trim() || `Plan of ${day(ds.settings.planning_start)}`);
-    store.saved(m);
+  const saveBase = () => act(async (before) => {
+    const m = await api.saveBase(before.dataset, name.trim() || `Plan of ${day(before.dataset.settings.planning_start)}`);
+    store.saved(m, before);
     setName("");
   });
-  const saveScenario = () => act(async () => {
-    if (!current) return;
-    const m = await api.saveVersion(current.id, ds);
-    store.saved(m);
+  const saveScenario = () => act(async (before) => {
+    if (!before.version) return;
+    const m = await api.saveVersion(before.version.id, before.dataset);
+    store.saved(m, before);
   });
-  const saveAsScenario = () => act(async () => {
-    if (!current) return;
-    const b = await api.branch(current.id, label);
-    const m = await api.saveVersion(b.id, ds);
-    store.saved(m);
+  const saveAsScenario = () => act(async (before) => {
+    if (!before.version) return;
+    const b = await api.branch(before.version.id, label);
+    store.assertWorking(before);
+    const m = await api.saveVersion(b.id, before.dataset);
+    store.saved(m, before);
     setName("");
   });
-  const open = (v: VersionMeta) => act(async () => {
+  const open = (v: VersionMeta) => act(async (before) => {
     if (modified && !window.confirm(`The working copy has unsaved changes to ${current?.id}. Open ${v.id} anyway?`)) return;
     const doc = await api.version(v.id);
-    store.load(doc.dataset, doc.meta);
+    store.loadVersion(doc.dataset, doc.meta, before);
     go("versions");
   });
-  const branch = (v: VersionMeta) => act(async () => {
+  const branch = (v: VersionMeta) => act(async (before) => {
+    if (modified && !window.confirm(`Branch the saved version ${v.id}? Opening its branch will replace the unsaved changes in your working copy.`)) return;
     const b = await api.branch(v.id, name.trim() || `Scenario of ${v.id}`);
+    store.assertWorking(before, true);
     const doc = await api.version(b.id);
-    store.load(doc.dataset, doc.meta);
+    store.loadVersion(doc.dataset, doc.meta, before);
     setName("");
   });
-  const discard = (v: VersionMeta) => act(async () => {
+  const discard = (v: VersionMeta) => act(async (before) => {
     if (!window.confirm(`Discard scenario ${v.id} “${v.name}”? Its base is not affected.`)) return;
     const m = await api.discard(v.id);
-    if (current?.id === v.id) store.saved(m);
+    if (before.version?.id === v.id) store.noteVersion(m, before);
   });
-  const promote = (v: VersionMeta) => act(async () => {
+  const promote = (v: VersionMeta) => act(async (before) => {
+    if (before.version?.id === v.id && modified
+      && !window.confirm(`Promote the saved scenario ${v.id}? Opening the new base will replace the unsaved changes in your working copy.`)) return;
     const m = await api.promote(v.id);
-    if (current?.id === v.id) {
+    store.assertWorking(before);
+    if (before.version?.id === v.id) {
+      store.assertWorking(before, true);
       const doc = await api.version(m.id);
-      store.load(doc.dataset, doc.meta);
+      store.loadVersion(doc.dataset, doc.meta, before);
     }
   });
-  const runCompare = () => act(async () => {
+  const runCompare = () => act(async (before) => {
     const [a, b] = pick;
     if (!a || !b) return;
     const load = async (id: string): Promise<[Dataset, string]> =>
-      id === WORKING ? [ds, "working copy"] : [(await api.version(id)).dataset, id];
-    if (a !== WORKING && b !== WORKING) setCmp(await api.compareVersions(a, b));
+      id === WORKING ? [before.dataset, "working copy"] : [(await api.version(id)).dataset, id];
+    let result: Comparison;
+    if (a !== WORKING && b !== WORKING) result = await api.compareVersions(a, b);
     else {
       const [[da, la], [db, lb]] = await Promise.all([load(a), load(b)]);
-      setCmp(await api.compare(da, db, la, lb));
+      store.assertWorking(before, true);
+      result = await api.compare(da, db, la, lb);
     }
+    store.assertWorking(before, a === WORKING || b === WORKING);
+    setCmp(result);
   });
 
   const rows = useMemo(() => tree((list ?? []).filter((v) => showAll || v.status !== "discarded")), [list, showAll]);
