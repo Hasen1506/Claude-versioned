@@ -17,7 +17,8 @@ import {
 type View = "stock" | "count" | "orders" | "journal" | "roll" | "accuracy";
 
 // The last roll-forward report, kept across tab switches (the roll itself is an undoable dataset edit).
-let lastRoll: RollReport | null = null;
+type RollSnapshot = { report: RollReport; on: Dataset };
+let lastRoll: RollSnapshot | null = null;
 
 const addDays = (iso: string, n: number) => {
   const d = new Date(iso + "T00:00:00Z");
@@ -56,8 +57,8 @@ async function postActual(ds: Dataset, action: PostAction, extra: Parameters<typ
 /** Book the journal into the starting position again without moving the planning start (a late posting, a count). */
 async function rebook(ds: Dataset) {
   const out = await api.roll(ds, ds.settings.planning_start);
-  lastRoll = out.report;
-  store.replace(out.dataset);
+  store.replace(out.dataset, ds);
+  lastRoll = { report: out.report, on: out.dataset };
   await store.run("actuals");
 }
 
@@ -597,7 +598,7 @@ function Firming({ ds }: { ds: Dataset }) {
     setErr(null);
     try {
       const out = await api.firm(ds, [...chosen]);
-      store.replace(out.dataset);
+      store.replace(out.dataset, ds);
       setPick(null);
       const r = out.report;
       const pos = r.purchase_orders ?? [];
@@ -747,16 +748,17 @@ function Roll({ ds }: { ds: Dataset }) {
   const [to, setTo] = useState(addDays(start, 7));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [rep, setRep] = useState<RollReport | null>(lastRoll);
+  const [snapshot, setSnapshot] = useState<RollSnapshot | null>(lastRoll);
+  const rep = snapshot?.on === ds ? snapshot.report : null;
   const pending = (ds.movements ?? []).filter((m) => m.date >= start && m.date < to);
   const roll = async () => {
     setBusy(true);
     setErr(null);
     try {
       const out = await api.roll(ds, to);
-      lastRoll = out.report;
-      setRep(out.report);
-      store.replace(out.dataset);
+      store.replace(out.dataset, ds);
+      lastRoll = { report: out.report, on: out.dataset };
+      setSnapshot(lastRoll);
       await store.run("actuals");
       setTo(addDays(to, 7));
     } catch (e) {

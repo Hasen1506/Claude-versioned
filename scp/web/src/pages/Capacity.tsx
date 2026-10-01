@@ -209,7 +209,7 @@ function Levelling({ ds, plan, on, stale }: { ds: Dataset; plan: PlanResult; on:
     setBusy(true); setErr(null);
     try {
       const out = await api.firm(ds, moved.map((o) => o.id));
-      store.replace(out.dataset);
+      store.replace(out.dataset, ds);
       setMsg(`${plural(out.report.firmed.length, "order")} kept at their levelled dates as production orders.`);
       setAsking(false);
       await store.run("plan");

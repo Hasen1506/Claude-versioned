@@ -822,7 +822,7 @@ function StockForm({ ds, product, place, lp }: { ds: Dataset; product: string; p
     if (!(n >= 0)) return setMsg("Enter the quantity counted (0 or more).");
     try {
       const out = await api.postActual(ds, "count", { counts: [{ location: place, product, qty: n }] });
-      store.replace(out.dataset);
+      store.replace(out.dataset, ds);
       setMsg(namesOf(out.dataset).text(out.report.message)); setCount("");
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }
   };

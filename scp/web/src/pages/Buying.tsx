@@ -25,8 +25,9 @@ const STATUS_SEV: Record<string, Sev> = {
 
 /** Run an engine write on the dataset, then refresh what it changes. */
 async function apply<T extends { dataset: Dataset }>(fn: () => Promise<T>): Promise<T> {
+  const before = store.get().dataset!;
   const out = await fn();
-  store.replace(out.dataset);
+  store.replace(out.dataset, before);
   await Promise.all([store.run("purchasing"), store.run("plan")]);
   return out;
 }
@@ -495,4 +496,3 @@ function SupplierDetail({ v, currency, ds }: { v: VendorRow; currency: string; d
     </Panel>
   );
 }
-

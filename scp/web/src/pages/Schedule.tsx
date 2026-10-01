@@ -66,7 +66,7 @@ export function Schedule({ route }: { route: string[] }) {
     try {
       // exactly the schedule on the page: the optimiser need not find the same one twice
       const out = await api.applySchedule(ds, sequences(res), undefined, res.holds);
-      store.replace(out.dataset);
+      store.replace(out.dataset, ds);
       const made = out.report.applied.filter((a) => a.new).length;
       const moved = out.report.applied.filter((a) => !a.new && (a.due_date !== a.was_due || a.start_date !== a.was_start)).length;
       setApplied(`${plural(made, "planned order")} became production orders with the schedule's dates${moved ? `, and ${plural(moved, "released order")} got new dates` : ""}. `
@@ -884,4 +884,3 @@ function SettingsView({ ds }: { ds: Dataset }) {
     </div>
   );
 }
-

@@ -13,7 +13,7 @@ import { store } from "../state/store";
 /** Post through the engine, keep the new dataset, re-read the journal; the message in names and the whole report. */
 export async function postAct(ds: Dataset, action: PostAction, extra: PostExtra = {}): Promise<{ text: string; report: ActionReport }> {
   const out = await api.postActual(ds, action, extra);
-  store.replace(out.dataset);
+  store.replace(out.dataset, ds);
   await store.run("actuals");
   return { text: namesOf(out.dataset).text(out.report.message), report: out.report };
 }

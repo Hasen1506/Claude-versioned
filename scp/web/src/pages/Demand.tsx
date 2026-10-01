@@ -40,7 +40,7 @@ export function Demand({ route }: { route: string[] }) {
     setReleasing(true);
     try {
       const r = await api.release(ds);
-      store.replace(r.dataset);
+      store.replace(r.dataset, ds);
       setReleased({ ...r.release, at: new Date().toLocaleTimeString("en-GB") });
       void store.run("forecast");
     } catch (e) {
