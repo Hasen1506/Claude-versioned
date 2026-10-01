@@ -42,14 +42,17 @@ export interface WorkingVersion {
   savedRevision: number; // working-copy revision that equals the stored content
 }
 
-/** The company, version and revision a version action started from. */
-export interface WorkingSnapshot {
+/** The company, account, version and revision an asynchronous action started from (even with no dataset). */
+export interface WorkingContext {
   epoch: number;
   revision: number;
-  dataset: Dataset;
   version: WorkingVersion | null;
   company: string | null;
   session: string | null;
+}
+
+export interface WorkingSnapshot extends WorkingContext {
+  dataset: Dataset;
 }
 
 /** Signed in to the server (Phase I). */
@@ -571,20 +574,24 @@ export const store = {
     return () => listeners.delete(l);
   },
 
-  captureWorking(): WorkingSnapshot {
-    if (!state.dataset) throw new Error("No working copy is open");
-    return { epoch: loadEpoch, revision: state.revision, dataset: state.dataset, version: state.version,
+  captureContext(): WorkingContext {
+    return { epoch: loadEpoch, revision: state.revision, version: state.version,
       company: state.company?.id ?? null, session: state.session?.token ?? null };
   },
 
+  captureWorking(): WorkingSnapshot {
+    if (!state.dataset) throw new Error("No working copy is open");
+    return { ...store.captureContext(), dataset: state.dataset };
+  },
+
   /** A completed action must still belong to this working copy; opening a version also requires no new edits. */
-  assertWorking(before: WorkingSnapshot, unchanged = false) {
+  assertWorking(before: WorkingContext, unchanged = false) {
     if (before.epoch !== loadEpoch || before.version !== state.version || before.company !== (state.company?.id ?? null)
       || before.session !== (state.session?.token ?? null)) {
-      throw new Error("The open company or version changed while this action was running. Your current working copy was kept. Review the original company's versions before retrying.");
+      throw new Error("The open company, account or version changed while this action was running. Your current working copy was kept. Review the original company's saved data before retrying.");
     }
     if (unchanged && before.revision !== state.revision) {
-      throw new Error("The working copy was edited while this action was running. Your edits were kept. Review Versions before retrying.");
+      throw new Error("The working copy was edited while this action was running. Your edits were kept. Review the saved data before retrying.");
     }
   },
 
@@ -1014,3 +1021,4 @@ export const NO_ISSUES: NonNullable<State["validation"]>["issues"] = [];
 
 /** The working copy differs from the stored version it came from. */
 export const isModified = (s: State) => s.version !== null && s.version.savedRevision !== s.revision;
+

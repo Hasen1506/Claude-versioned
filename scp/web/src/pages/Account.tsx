@@ -1,6 +1,6 @@
 // Sign-in and the companies kept on the server (Phase I, Q14): sign in or make an account, open a company, keep the
 // company in this browser on the server, and (for an owner) say who may see and change it.
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, SSO_START } from "../api/client";
 import type { AuthConfig, CompanyMeta, Member } from "../api/types";
 import { Badge, Empty, Panel, StageHeader } from "../components/ui";
@@ -93,27 +93,37 @@ export function CompanyList({ onOpened }: { onOpened?: () => void }) {
   const dirty = useStore(unsaved);
   const [list, setList] = useState<CompanyMeta[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const refresh = useCallback(() => {
-    if (!session) return;
-    api.companies().then(setList).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
-  }, [session]);
-  useEffect(() => { refresh(); }, [refresh, openId]);
+  const openRequest = useRef(0);
+  useEffect(() => () => { openRequest.current++; }, [session?.token]);
+  useEffect(() => {
+    let current = true;
+    setList(null);
+    setErr(null);
+    if (session) api.companies().then((l) => { if (current) setList(l); })
+      .catch((e) => { if (current) setErr(e instanceof Error ? e.message : String(e)); });
+    return () => { current = false; };
+  }, [session, openId]);
   if (!session) return null;
   const openIt = async (c: CompanyMeta) => {
     if (dirty && !window.confirm(`${open?.name} has changes that are not saved yet. Open ${c.name} anyway?`)) return;
+    const before = store.captureContext();
+    const request = ++openRequest.current;
+    setErr(null);
     try {
-      store.openCompany(await api.company(c.id));
+      const doc = await api.company(c.id);
+      if (request !== openRequest.current) return;
+      store.assertWorking(before, true);
+      store.openCompany(doc);
       onOpened?.();
       go("home");
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      if (request === openRequest.current) setErr(e instanceof Error ? e.message : String(e));
     }
   };
-  if (err) return <div className="banner error">{err}</div>;
-  if (!list) return <div className="faint">Loading…</div>;
+  if (!list) return err ? <div className="banner error">{err}</div> : <div className="faint">Loading…</div>;
   if (!list.length) return <p className="muted small" style={{ margin: 0 }}>No company is kept on the server for you yet.</p>;
   return (
-    <ul className="company-list">
+    <>{err && <div className="banner error">{err}</div>}<ul className="company-list">
       {list.map((c) => (
         <li key={c.id}>
           <button className="example" onClick={() => openIt(c)} aria-label={`Open ${c.name}`}>
@@ -122,7 +132,7 @@ export function CompanyList({ onOpened }: { onOpened?: () => void }) {
           </button>
         </li>
       ))}
-    </ul>
+    </ul></>
   );
 }
 
@@ -331,8 +341,12 @@ export function Account({ route = [] }: { route?: string[] }) {
     setBusy(true);
     setErr(null);
     try {
-      const m = await api.createCompany(ds, "moved from a browser");
-      store.openCompany(await api.company(m.id));
+      const before = store.captureWorking();
+      const m = await api.createCompany(before.dataset, "moved from a browser");
+      store.assertWorking(before, true);
+      const doc = await api.company(m.id);
+      store.assertWorking(before, true);
+      store.openCompany(doc);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -410,3 +424,4 @@ export function Account({ route = [] }: { route?: string[] }) {
     </div>
   );
 }
+

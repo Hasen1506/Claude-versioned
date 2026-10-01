@@ -79,6 +79,8 @@ Early pilot acceptance: a planner brings their own anonymized data, reaches the 
 
 ### 1 October continuation evidence
 
+The account/company continuation reproduced late upload responses losing stock edits, late company opening replacing an import or reopening after sign-out, and out-of-order company selections opening the wrong company. BH065–BH066 add context/revision validation and request ordering. Ten browser checks pass, including preserving edits at both upload boundaries, empty-browser reopening and completions in either order. The twelve version regressions and existing collaboration/approval workflows remain green. Publication status and complete CI results are in [audit.md](../../audit.md). This advances local account and collaboration correctness; deployed recovery and persistence remain separate open gates.
+
 The version/scenario pass adds an independently calculated browser journey: stock 10 and forecast 100 at INR10/unit give a 90-unit purchase costing INR900; stock 40 gives 60 units at INR600. The comparison displays the exact stock change and INR300 reduction. Promotion retains the baseline fingerprint and stock 40 survives reload. Twelve new browser checks also cover save-versus-edit races, dirty markers after discard/reload, canceling and acknowledging branch/promotion over unsaved edits, delayed version loads and live server company switching. BH062–BH064 address incorrect saved metadata, stale version loads and silent loss of unsaved edits; current publication status is recorded in [audit.md](../../audit.md).
 
 The complete automated manufacturing browser journey now passes using an imported, independently calculated fixture: forecast and finance, promise, finite production planning, purchase receipts, partial production, roll, completion, shipment and final roll. It checks B40/C20, the 9–12 January production window, INR1,700 cost and INR300 margin, partial-roll stocks A8/B24/C12 and zero final stock with four closed orders. This is browser workflow evidence, not a beginner manufacturing setup-from-scratch claim.
@@ -97,3 +99,4 @@ An independent 20-unit manufactured-product fixture reconciles B40/C20, 12 machi
 6. Measure realistic workloads and concurrent users against declared latency/memory budgets; verify backup restore on deployment. Then run pilots and revise the market hypothesis using observed adoption and outcomes.
 
 The goal remains open until these acceptance gates have evidence. Passing the existing suite or finding three more defects does not make the audit exhaustive.
+
