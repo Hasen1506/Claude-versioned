@@ -77,6 +77,12 @@ Early pilot acceptance: a planner brings their own anonymized data, reaches the 
 
 ## Ordered next work
 
+### 1 October continuation evidence
+
+The execution audit added BH058 and BH059, documented in [audit.md](../../audit.md): roll reports could outlive their working dataset, and delayed engine actions could overwrite a newly opened or edited dataset. Three browser regressions verify the repairs, including Undo/Redo, company switching during a request and a stock edit retained after reload. All engine-action replacement sites now reject a response whose starting dataset is no longer current.
+
+An independent 20-unit manufactured-product fixture reconciles B40/C20, 12 machine hours, INR1,700 cost, INR2,000 revenue and INR300 margin. Partial production of 1, 8 or 19.5 units, purchase receipt, roll, completion, shipment and shipment reversal preserve the expected stocks and order quantities. The three engine chain cases and the existing recovery/session-expiry tests pass locally. This advances the correctness and execution gates but does not substitute for a complete beginner manufacturing walkthrough, constrained-calendar scenarios or deployed account recovery. The manual browser path was interrupted by browser confirmation tooling; this is not evidence of an app failure.
+
 1. Finish public entry and access verification, including the Pages gap and deployed persistence/revision. Demonstrate account recovery, expired sessions and planner scopes; extend the completed owner/viewer walkthrough to cross-company tasks.
 2. Walk a manufactured product through forecast, BOM/routing, resource calendar, constrained supply, promise, purchase, production confirmation, shipment, weekly roll and financial/KPI reconciliation. Keep an independently calculated fixture beside the journey.
 3. Test every optional tab and the scenario branch/compare/promote flow; repeat with missing data, fractional units, partial receipts and interrupted/concurrent saves.

@@ -41,7 +41,7 @@ export function Promising({ route }: { route: string[] }) {
     setErr(null);
     try {
       const out = await api.promiseCommit(ds, mode);
-      store.replace(out.dataset);
+      store.replace(out.dataset, ds);
       store.put("promise", out.result, store.get().revision);
       if (mode === "bop") bopRun = null;
       setNote(`${out.dataset.confirmations?.length ?? 0} schedule lines committed for ${out.result.kpis.orders} orders. ` +
@@ -376,7 +376,7 @@ function OrderActions({ o, ds, currency, onDone }: { o: OrderPromise; ds: Datase
     setErr(null);
     try {
       const out = await f();
-      store.replace(out.dataset);
+      store.replace(out.dataset, ds);
       onDone(namesOf(out.dataset).text(out.report.message));
       setMode(null);
       void store.run("promise");
@@ -474,7 +474,7 @@ function Simulate({ ds, onDone }: { ds: Dataset; onDone: (m: string) => void }) 
     setErr(null);
     try {
       const r = await api.salesOrder(ds, "accept", { order });
-      store.replace(r.dataset);
+      store.replace(r.dataset, ds);
       onDone(namesOf(r.dataset).text(r.report.message));
       go("promise", "orders", r.report.order);
       void store.run("promise");

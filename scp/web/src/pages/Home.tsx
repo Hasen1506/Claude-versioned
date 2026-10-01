@@ -389,7 +389,7 @@ function StockAlert({ ds }: { ds: Dataset }) {
     setErr(null);
     try {
       const out = await api.roll(ds, ds.settings.planning_start);
-      store.replace(out.dataset);
+      store.replace(out.dataset, ds);
       await store.run("actuals");
     } catch (e) {
       setErr(String(e));

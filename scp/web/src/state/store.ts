@@ -741,7 +741,10 @@ export const store = {
   },
 
   /** Replace the dataset with an engine-produced version (e.g. a released forecast), undoable. */
-  replace(next: Dataset) {
+  replace(next: Dataset, before: Dataset) {
+    if (state.dataset !== before) {
+      throw new Error("Nothing was changed: the working data changed while this action was running. Review the current company and try again.");
+    }
     if (!state.dataset) return;
     commit(next);
   },

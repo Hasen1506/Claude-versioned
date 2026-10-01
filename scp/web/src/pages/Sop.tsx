@@ -34,7 +34,7 @@ export function Sop({ route }: { route: string[] }) {
     setErr(null);
     try {
       const out = await api.sopRelease(ds);
-      store.replace(out.dataset);
+      store.replace(out.dataset, ds);
       const r = out.release;
       setReleased(`${r.records} constrained demand records for ${r.nodes} demand points replaced ${r.replaced} forecast records ` +
         `(${qty(r.constrained_qty)} of ${qty(r.unconstrained_qty)} units can be supplied).`);

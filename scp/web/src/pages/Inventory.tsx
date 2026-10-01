@@ -200,7 +200,7 @@ function Placement({ res, ds }: { res: InventoryResult; ds: Dataset }) {
     setErr(null);
     try {
       const out = await api.applyPlacement(ds, changes.map((n) => `${n.location}|${n.product}`));
-      store.replace(out.dataset);
+      store.replace(out.dataset, ds);
       setSel(new Set());
       setConfirm(false);
     } catch (e) {
