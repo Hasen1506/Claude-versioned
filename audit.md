@@ -8,6 +8,14 @@ The continuation covered spreadsheet decoding, save/recovery races and capacity-
 
 ## Verification after repairs
 
+### 1 October continuation: account and company request ordering
+
+**BH065 (P1):** "Keep it on the server" saved the submitted stock-10 snapshot, then reopened it over stock 35 edited while either the creation response or the following document read was delayed. A late creation response also replaced newly imported company B with company A. The upload now captures its original working copy and checks company/account/version/revision before reading and applying the saved document. Newer edits or imports remain in the browser, including after reload; the submitted snapshot remains available separately on the server.
+
+**BH066 (P1):** delayed company-open responses overwrote a newer import, reopened a company after sign-out, and selected company A after the user had subsequently opened B. Company opening now validates its starting context and edit revision, ignores superseded selections, and cancels obsolete completions when the account changes or the component unmounts. Company-list refreshes also ignore obsolete responses; an opening error leaves the list available for retry. Context capture supports an empty browser so signing back in and opening a saved company still works.
+
+Six original browser reproductions demonstrated the failures, grouped into these two findings. Ten persistent checks cover both upload request boundaries, edits/imports/sign-out during requests, selections completing in either order, and opening a saved company from an empty browser. All ten pass locally; the twelve existing version regressions and two collaboration/approval workflows also pass. TypeScript and the production build pass. Full publication CI and merge status will be recorded here after completion. The prior merged cumulative count is 59 repaired logic defects plus one native runtime mitigation; these two repairs are pending publication. Deployed account recovery, realistic-scale measurements and the remaining product-audit gates are still open.
+
 ### 1 October continuation: version snapshots, branches and promotion
 
 **BH062 (P2):** saving opening stock 10, then changing it to 25 while the response was delayed, marked the working copy saved even though the stored version contained 10. A late save also attached company A's version metadata to a newly imported company B. Discarding a scenario similarly cleared the dirty marker without saving its edited data. Version saves now remember the submitted revision and mark subsequent edits unsaved, including after reload. Status changes retain the existing saved revision, and metadata is applied only to the company/version/session the action started from.
@@ -246,3 +254,4 @@ The independent LP now uses the same single-thread setting. Inventory propagates
 
 
 Final verification: [GitHub Actions run 36733258631](https://github.com/Hasen1506/Claude-versioned/actions/runs/36733258631) passed engine and web jobs on the code merged by PR #6. The final documentation update changes only this audit.
+
