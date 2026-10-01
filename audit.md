@@ -1,12 +1,24 @@
 # Claude-versioned functional audit and repairs
 
-Latest continuation completed 1 October 2026. The manufacturing form repairs are merged to main through [PR #9](https://github.com/Hasen1506/Claude-versioned/pull/9), merge `b3fe8ee7c41d3234600d6eb433850f9423b7d8c2`. Full CI passed before merge; this subsequent report update changes documentation only.
+Latest continuation: 1 October 2026. The version-workflow repairs below are verified locally and awaiting publication checks. The preceding manufacturing repairs are merged through [PR #9](https://github.com/Hasen1506/Claude-versioned/pull/9), merge `b3fe8ee7c41d3234600d6eb433850f9423b7d8c2`.
 
 Updated 30 September 2026. Audited baseline: `ee0f7d136a25f1f30246fcd886f15db8d5985694`. Fixes merged to main as `aae75e872ac6ae8c419939295d7ad8b0ec82d977` through [PR #6](https://github.com/Hasen1506/Claude-versioned/pull/6).
 
 The continuation covered spreadsheet decoding, save/recovery races and capacity-option appraisal, then repaired the confirmed functional defects. The first continuation added BH041–BH047; merge preparation found seven more logic defects, BH048–BH054. In total, **49 logic defects are repaired and one native runtime failure has a verified mitigation**. These are production application fixes with regression tests. All changes are committed and merged to main through [PR #6](https://github.com/Hasen1506/Claude-versioned/pull/6).
 
 ## Verification after repairs
+
+### 1 October continuation: version snapshots, branches and promotion
+
+**BH062 (P2):** saving opening stock 10, then changing it to 25 while the response was delayed, marked the working copy saved even though the stored version contained 10. A late save also attached company A's version metadata to a newly imported company B. Discarding a scenario similarly cleared the dirty marker without saving its edited data. Version saves now remember the submitted revision and mark subsequent edits unsaved, including after reload. Status changes retain the existing saved revision, and metadata is applied only to the company/version/session the action started from.
+
+**BH063 (P1):** a branch response finishing after company B was imported reopened company A and persisted it as the current dataset. An ordinary version-open response also replaced a stock edit made while it was in flight (35 became the stored 10). Version document loads now require the original working context and revision. Multi-request branch/save/promotion actions check that context before their next request as well as before applying the result. A delayed branch document read for server company A no longer replaces or detaches live server company B. Working-copy comparisons reject a result when their inputs were edited during calculation.
+
+**BH064 (P1):** branching or promoting a scenario with unsaved opening stock 45 silently opened the saved stock 40 and discarded the unsaved changes. Both actions now explain the replacement and require acknowledgement when they will open a saved snapshot over unsaved edits. Canceling preserves 45 and the dirty state; acknowledging deliberately opens saved stock 40. Promoting a different scenario does not replace the current working copy.
+
+Seven browser reproductions confirmed these failures on the original production build, grouped as three findings rather than seven separately counted defects. Twelve persistent browser checks pass after repair: the independently calculated scenario journey, save/reload dirty-state accuracy, late save after import, delayed branch after import, branch/promotion cancellation and acknowledgement, discard dirty-state retention, edits during a version open or comparison, and a delayed document after a live-server-company switch. For forecast 100 at INR10/unit, opening stock 10 requires purchasing 90 at INR900; scenario stock 40 requires 60 at INR600. Comparison displays the INR300 reduction and the exact stock change. Promotion preserves the baseline fingerprint and reopens stock 40 after reload. A saved-10/working-25 comparison separately reports INR900 versus INR750. TypeScript checking and the production build pass. Full publication CI is pending at this revision.
+
+The implemented cumulative count is **59 repaired logic defects plus one native runtime mitigation**; merge status is stated above. This advances the version/scenario and collaboration coverage. It does not verify deployed account recovery, backup restoration, realistic-scale latency or every optional workflow, which remain open in the product audit.
 
 ### 1 October continuation: complete manufacturing browser journey
 

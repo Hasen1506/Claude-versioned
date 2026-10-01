@@ -42,6 +42,16 @@ export interface WorkingVersion {
   savedRevision: number; // working-copy revision that equals the stored content
 }
 
+/** The company, version and revision a version action started from. */
+export interface WorkingSnapshot {
+  epoch: number;
+  revision: number;
+  dataset: Dataset;
+  version: WorkingVersion | null;
+  company: string | null;
+  session: string | null;
+}
+
 /** Signed in to the server (Phase I). */
 export interface Session { token: string; user: User }
 
@@ -561,6 +571,28 @@ export const store = {
     return () => listeners.delete(l);
   },
 
+  captureWorking(): WorkingSnapshot {
+    if (!state.dataset) throw new Error("No working copy is open");
+    return { epoch: loadEpoch, revision: state.revision, dataset: state.dataset, version: state.version,
+      company: state.company?.id ?? null, session: state.session?.token ?? null };
+  },
+
+  /** A completed action must still belong to this working copy; opening a version also requires no new edits. */
+  assertWorking(before: WorkingSnapshot, unchanged = false) {
+    if (before.epoch !== loadEpoch || before.version !== state.version || before.company !== (state.company?.id ?? null)
+      || before.session !== (state.session?.token ?? null)) {
+      throw new Error("The open company or version changed while this action was running. Your current working copy was kept. Review the original company's versions before retrying.");
+    }
+    if (unchanged && before.revision !== state.revision) {
+      throw new Error("The working copy was edited while this action was running. Your edits were kept. Review Versions before retrying.");
+    }
+  },
+
+  loadVersion(ds: Dataset, version: Omit<WorkingVersion, "savedRevision">, before: WorkingSnapshot) {
+    store.assertWorking(before, true);
+    store.load(ds, version);
+  },
+
   /** Replace the whole dataset (load example, import file, open a version). Clears history and every
    *  result; `version` names the stored version it came from (none for an example or a file). An example, a file
    *  or a blank company leaves the open server company (the working copy is then this browser's own); a plan
@@ -688,10 +720,20 @@ export const store = {
     void saveNow(note);
   },
 
-  /** The working copy was just saved as (or to) this version. */
-  saved(version: Omit<WorkingVersion, "savedRevision">) {
-    const v = { ...version, savedRevision: state.revision };
-    persistVersion(v, false);
+  /** The captured revision was saved; edits made during the request still differ from the stored version. */
+  saved(version: Omit<WorkingVersion, "savedRevision">, before: WorkingSnapshot) {
+    store.assertWorking(before);
+    const v = { ...version, savedRevision: before.revision };
+    persistVersion(v, v.savedRevision !== state.revision);
+    set({ version: v });
+  },
+
+  /** A status change did not save the working copy's data. */
+  noteVersion(version: Omit<WorkingVersion, "savedRevision">, before: WorkingSnapshot) {
+    store.assertWorking(before);
+    if (state.version?.id !== version.id) return;
+    const v = { ...version, savedRevision: state.version.savedRevision };
+    persistVersion(v, v.savedRevision !== state.revision);
     set({ version: v });
   },
 
