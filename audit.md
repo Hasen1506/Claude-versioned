@@ -1,12 +1,22 @@
 # Claude-versioned functional audit and repairs
 
-Latest continuation completed 1 October 2026. [PR #8](https://github.com/Hasen1506/Claude-versioned/pull/8) is merged as `1b9814113486d3aa41ab3ab00466ff77e90c0570`; the documentation update following it does not alter application code.
+Latest continuation: 1 October 2026. The manufacturing form repairs below are locally verified and awaiting publication checks. The preceding [PR #8](https://github.com/Hasen1506/Claude-versioned/pull/8) is merged as `1b9814113486d3aa41ab3ab00466ff77e90c0570`.
 
 Updated 30 September 2026. Audited baseline: `ee0f7d136a25f1f30246fcd886f15db8d5985694`. Fixes merged to main as `aae75e872ac6ae8c419939295d7ad8b0ec82d977` through [PR #6](https://github.com/Hasen1506/Claude-versioned/pull/6).
 
 The continuation covered spreadsheet decoding, save/recovery races and capacity-option appraisal, then repaired the confirmed functional defects. The first continuation added BH041–BH047; merge preparation found seven more logic defects, BH048–BH054. In total, **49 logic defects are repaired and one native runtime failure has a verified mitigation**. These are production application fixes with regression tests. All changes are committed and merged to main through [PR #6](https://github.com/Hasen1506/Claude-versioned/pull/6).
 
 ## Verification after repairs
+
+### 1 October continuation: complete manufacturing browser journey
+
+**BH060 (P1):** the partial-production form calculated components independently of the posting engine. For an order of 20 A with a fixed five-unit C component, confirming 8 A displayed/defaulted C2, while automatic posting correctly used C5. Selecting "parts actually used" turned the incorrect default into a stock posting. The form also counted reversed issues as consumption, omitted effective BOM parts on imported orders without reservations, and rounded small defaults to three decimals. It now reads the same component calculation used by production confirmation, including fixed quantities, net reversals, scrap and phantoms, retains six-decimal component defaults and the full open quantity, and offers retry after preview failure. Confirmation waits for a preview matching the current dataset and quantity; late previews are ignored.
+
+**BH061 (P2):** in Asia/Kolkata, the new-order form suggested 11 January for a planning start of 5 January, despite intending seven days later. Its local-midnight-to-UTC conversion shifted the calendar date. It now uses the existing calendar-day helper and suggests 12 January in the tested timezone.
+
+Both original browser reproductions failed before repair. The automated browser manufacturing journey now passes through JSON import, forecast and financial plan, sales promise, three firm orders, two purchase receipts, partial production of 8, weekly roll, remaining production of 12, shipment of 20 and final roll. Independent assertions check B40/C20, a 9–12 January production window, INR1,700 cost, INR2,000 revenue and INR300 margin; the fixture's setup and run rates require 12 machine hours. Exported stocks after the partial roll are A8/B24/C12; final stocks are all zero, with four closed orders and no remaining receipt or sales order. Separate browser checks verify fixed parts after a material-document reversal, the 0.0004-unit production default, preview retry after HTTP failure and rejection of a delayed preview for an older quantity. All four new browser workflows, six new engine/API cases and 62 focused engine cases passed, as did lint, TypeScript checking and the production build. Tests overlap; do not sum them as unique coverage. Full publication CI remains pending at this report revision.
+
+These two repairs bring the implemented cumulative total to **56 logic defects plus one native runtime mitigation**, with merge status stated above. The small-quantity and reversal corrections are grouped under BH060 rather than counted as additional findings. This imported-fixture browser proof advances the execution gate; it does not establish beginner setup from scratch, holiday-calendar accuracy or deployed account recovery.
 
 ### 1 October continuation: execution context and manufacturing reconciliation
 

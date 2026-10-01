@@ -1035,6 +1035,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/actuals/production-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Production Usage
+         * @description Read the same default components that production confirmation will issue; no posting is made.
+         */
+        post: operations["preview_production_usage_api_actuals_production_usage_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/actuals/post": {
         parameters: {
             query?: never;
@@ -5678,6 +5698,23 @@ export interface components {
             valid_from?: string | null;
             /** Valid To */
             valid_to?: string | null;
+        };
+        /** ProductionUsageInput */
+        ProductionUsageInput: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+        };
+        /** ProductionUsageRequest */
+        ProductionUsageRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Order */
+            order: string;
+            /** Qty */
+            qty?: number | null;
         };
         /** Profile */
         Profile: {
@@ -10502,6 +10539,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PoActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_production_usage_api_actuals_production_usage_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductionUsageRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductionUsageInput"][];
                 };
             };
             /** @description Validation Error */

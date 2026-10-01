@@ -5,6 +5,7 @@ import type { components } from "./schema";
 type S = components["schemas"];
 
 export type Dataset = S["Dataset"];
+export type ProductionUsageInput = S["ProductionUsageInput"];
 export type Settings = S["Settings"];
 export type Location = S["Location"];
 export type Product = S["Product"];
