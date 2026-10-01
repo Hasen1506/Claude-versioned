@@ -137,6 +137,43 @@ def _bom_parts(ds: Dataset, rc: ScheduledReceipt, made: float, first: bool) -> l
     return out
 
 
+def _production_parts(ds: Dataset, rc: ScheduledReceipt, total: float, made: float, before_q: float,
+                      issued: dict) -> tuple[list[tuple[str, str, float]], str]:
+    """The default backflush, shared by posting and its read-only preview."""
+    if not (rc.reservations or rc.original_reservations):
+        return _bom_parts(ds, rc, made, first=before_q <= EPS), "from the bill of materials"
+    parts = []
+    ordered = _ordered(rc)
+    ps = ds.production_source_by_id.get(rc.source or "")
+    bom = {n.product: n for n in needs(ds, ps, rc.start_date or ds.settings.planning_start)} if ps else {}
+    for rv in (rc.original_reservations or rc.reservations):
+        req = rv.required_qty if rv.required_qty is not None else rv.qty
+        part = bom.get(rv.product)
+        planned = part.qty(ordered) if part else 0.0
+        target = part.qty(total) * req / planned if planned > EPS else req * total / ordered
+        n = target - issued.get((rv.location, rv.product), 0.0)
+        if n > EPS:
+            parts.append((rv.location, rv.product, n))
+    return parts, "in proportion to what was made"
+
+
+def production_usage(ds: Dataset, oid: str, qty: float | None = None) -> list[dict]:
+    """Preview components for this receipt, including fixed parts, effective BOMs and net reversals."""
+    rc = _order(ds, oid)
+    if rc.kind is not ReceiptKind.PRODUCTION:
+        raise PostingError(f"{oid} is not a production order")
+    got, _, issued = _posted(ds, oid)
+    before_q = got[(rc.location, rc.product)]
+    q = _q(float(qty) if qty is not None else _ordered(rc) - before_q)
+    if q <= EPS:
+        raise PostingError(f"nothing is left to receive on {oid}")
+    parts, _ = _production_parts(ds, rc, before_q + q, q, before_q, issued)
+    amounts = {(loc, prod): _q(n) for loc, prod, n in parts}
+    keys = dict.fromkeys([(rv.location, rv.product) for rv in (rc.original_reservations or rc.reservations)]
+                         + list(amounts))
+    return [{"location": loc, "product": prod, "qty": amounts.get((loc, prod), 0.0)} for loc, prod in keys]
+
+
 class Lot(TypedDict, total=False):
     """What a posting says about the goods: the batch (and, received, its expiry and the supplier's number), the
     serial numbers, and the stock type it goes to or comes from."""
@@ -215,21 +252,8 @@ def receive(ds: Dataset, oid: str, qty: float | None = None, on: date | None = N
                     rv = next((r for r in rc.reservations if r.product == p), None)
                     parts.append((rv.location if rv else rc.location, str(p), n))
             how = "as used"
-        elif rc.reservations or rc.original_reservations:
-            ps = ds.production_source_by_id.get(rc.source or "")
-            bom = {n.product: n for n in needs(ds, ps, rc.start_date or ds.settings.planning_start)} if ps else {}
-            for rv in (rc.original_reservations or rc.reservations):
-                req = rv.required_qty if rv.required_qty is not None else rv.qty
-                part = bom.get(rv.product)
-                planned = part.qty(ordered) if part else 0.0
-                target = part.qty(total) * req / planned if planned > EPS else req * total / ordered
-                n = target - issued[(rv.location, rv.product)]
-                if n > EPS:
-                    parts.append((rv.location, rv.product, n))
-            how = "in proportion to what was made"
         else:
-            parts = _bom_parts(ds, rc, q, first=before_q <= EPS)
-            how = "from the bill of materials"
+            parts, how = _production_parts(ds, rc, total, q, before_q, issued)
         for loc, prod, n in parts:
             add(MovementType.ISSUE, loc, prod, n, "Backflush" if usage is None else "Actual usage")
         if parts:

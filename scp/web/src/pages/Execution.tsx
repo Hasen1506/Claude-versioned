@@ -1,6 +1,6 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { AccuracySeries, ActualsView, Dataset, GoodsMovement, OpenOrderRow, PlannedOrder, PostAction, RollReport, ShortOrder, StockRow } from "../api/types";
+import type { AccuracySeries, ActualsView, Dataset, GoodsMovement, OpenOrderRow, PlannedOrder, PostAction, ProductionUsageInput, RollReport, ShortOrder, StockRow } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
   Badge, Edits, Empty, MoreRows, Panel, Provenance, Reading, ROW_LIMIT, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
@@ -539,17 +539,27 @@ const KIND: Record<string, string> = { purchase: "purchase", production: "produc
 /** Post part of an order, close it short, or (production) the parts actually used instead of the backflush. */
 function PostForm({ o, ds, busy, onPost, onShip }: { o: OpenOrderRow; ds: Dataset; busy: boolean;
   onPost: (extra: Parameters<typeof api.postActual>[2]) => void; onShip: (qty: number, lot: LotInput) => void }) {
-  const rc = (ds.receipts ?? []).find((r) => r.id === o.id);
   const [lot, setLot] = useState<LotInput>(NO_LOT);
-  const [q, setQ] = useState(String(Math.round(o.open * 1000) / 1000));
+  const [q, setQ] = useState(String(o.open));
   const [final, setFinal] = useState(false);
   const [actual, setActual] = useState(false);
-  const parts = (rc?.reservations ?? []).filter((r) => o.kind === "production" || r.location !== o.location);
-  const share = o.ordered > 0 ? Math.min(1, (o.delivered + (Number(q) || 0)) / o.ordered) : 1;
   const [usage, setUsage] = useState<Record<string, string>>({});
   const n = Number(q);
-  const issued = (prod: string) => (ds.movements ?? []).filter((m) => m.reference === o.id && m.type === "issue" && m.product === prod).reduce((a, m) => a + m.qty, 0);
-  const guess = (r: (typeof parts)[number]) => Math.max(0, (r.required_qty ?? r.qty) * share - issued(r.product));
+  const [preview, setPreview] = useState<{ on: Dataset; qty: number; parts: ProductionUsageInput[] } | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  const ready = o.kind !== "production" || (preview?.on === ds && preview.qty === n);
+  const parts = ready ? preview?.parts ?? [] : [];
+  useEffect(() => {
+    let current = true;
+    setPreviewError(null);
+    if (o.kind === "production" && n > 0 && Number.isFinite(n)) {
+      void api.productionUsage(ds, o.id, n).then((parts) => {
+        if (current) setPreview({ on: ds, qty: n, parts });
+      }).catch((e) => { if (current) setPreviewError(String(e)); });
+    }
+    return () => { current = false; };
+  }, [ds, o.id, o.kind, n, retry]);
   return (
     <Edits><div className="stack" style={{ gap: 8, padding: "6px 4px" }}>
       <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
@@ -559,23 +569,25 @@ function PostForm({ o, ds, busy, onPost, onShip }: { o: OpenOrderRow; ds: Datase
         {o.kind === "production" && parts.length > 0 && <label className="small"><input type="checkbox" checked={actual} onChange={(e) => setActual(e.target.checked)} /> Enter the parts actually used</label>}
         <span className="spacer" />
         {o.kind === "transfer" && <button className="btn sm" disabled={busy || !(n > 0)} onClick={() => onShip(n, lot)}>Ship {qty(n || 0)}</button>}
-        <button className="btn sm accent" disabled={busy || !(n > 0)}
+        <button className="btn sm accent" disabled={busy || !(n > 0) || !ready}
           onClick={() => onPost({ qty: n, final, ...lotExtra(lot),
-            usage: actual ? parts.map((r) => ({ product: r.product, qty: Number(usage[r.product] ?? guess(r).toFixed(3)) || 0 })) : null })}>
+            usage: actual ? parts.map((r) => ({ product: r.product, qty: Number(usage[r.product] ?? r.qty.toFixed(6)) || 0 })) : null })}>
           {o.kind === "production" ? "Confirm" : "Receive"} {qty(n || 0)}</button>
       </div>
       <LotFields ds={ds} product={o.product} value={lot} onChange={setLot} receiving={o.kind !== "transfer"} />
       {o.kind === "production" && parts.length > 0 && (
-        <div className="small muted">{actual ? "Parts used:" : "Parts issued with it (in proportion to what is made):"}{" "}
+        <div className="small muted">{actual ? "Parts used:" : "Parts issued with it:"}{" "}
           {parts.map((r) => (
             <span key={r.product} style={{ marginRight: 14, whiteSpace: "nowrap" }}><Prod id={r.product} />{" "}
-              {actual ? <input className="input" type="number" min={0} step="any" style={{ width: 90 }} value={usage[r.product] ?? guess(r).toFixed(3)}
+              {actual ? <input className="input" type="number" min={0} step="any" style={{ width: 90 }} value={usage[r.product] ?? r.qty.toFixed(6)}
                 onChange={(e) => setUsage({ ...usage, [r.product]: e.target.value })} aria-label={`Used ${namesOf(ds).prod(r.product)}`} />
-                : <b>{qty(guess(r))}</b>}</span>
+                : <b>{qty(r.qty)}</b>}</span>
           ))}
         </div>
       )}
-      {o.kind === "production" && !parts.length && <div className="small faint">This order has no parts reserved: they are issued from the bill of materials.</div>}
+      {o.kind === "production" && n > 0 && !ready && !previewError && <div className="small faint" role="status">Calculating parts…</div>}
+      {o.kind === "production" && ready && !parts.length && <div className="small faint">No parts need to be issued with this receipt.</div>}
+      {previewError && <div className="banner error">{previewError} <button className="btn sm" onClick={() => setRetry((x) => x + 1)}>Read parts again</button></div>}
     </div></Edits>
   );
 }

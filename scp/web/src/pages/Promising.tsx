@@ -5,7 +5,7 @@ import { BucketChart } from "../components/charts";
 import {
   Badge, cols, Edits, Empty, Panel, Provenance, Reading, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term, type Severity, useTooltip,
 } from "../components/ui";
-import { day, money, pct, plural, qty, unitMoney } from "../lib/format";
+import { addDays, day, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Prod, namesOf, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
@@ -442,10 +442,9 @@ function Simulate({ ds, onDone }: { ds: Dataset; onDone: (m: string) => void }) 
   const places = useMemo(() => orderPlaces(ds), [ds]);
   const products = useMemo(() => (ds.products ?? []).filter((p) => p.type === "FG" || p.type === "SFG"), [ds]);
   const start = ds.settings.planning_start;
-  const plus = (iso: string, n: number) => new Date(new Date(iso + "T00:00:00").getTime() + n * 86400_000).toISOString().slice(0, 10);
   const [order, setOrder] = useState<DemandRecord>({
     location: places[0]?.id ?? "", product: products[0]?.id ?? "",
-    date: plus(start, 7), qty: 100, kind: "sales_order", priority: 5, complete_delivery: false, price: null, customer_ref: "",
+    date: addDays(start, 7), qty: 100, kind: "sales_order", priority: 5, complete_delivery: false, price: null, customer_ref: "",
   } as DemandRecord);
   const [out, setOut] = useState<PromiseResult | null>(null);
   const [checked, setChecked] = useState<string | null>(null);

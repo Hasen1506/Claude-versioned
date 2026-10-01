@@ -1,4 +1,5 @@
 import type {
+  ProductionUsageInput,
   Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   PlanTrace, ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
   PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoLineInput, RequisitionPick, PostAction, CountInput, UsageInput, StockType, SalesOrderChange, SalesOrderResponse,
@@ -197,6 +198,8 @@ export interface PostExtra {
 }
 
 export const api = {
+  productionUsage: (dataset: Dataset, order: string, qty: number) =>
+    withDataset<ProductionUsageInput[]>("/api/actuals/production-usage", dataset, { order, qty }),
   examples: () => call<ExampleInfo[]>("/api/examples"),
   example: (name: string) => call<Dataset>(`/api/examples/${encodeURIComponent(name)}`),
   schema: () => call<JsonSchema>("/api/schema"),

@@ -11,6 +11,8 @@ import json
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+from pydantic import Field
+
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
@@ -20,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from .. import __version__
 from ..actuals import ActualsView, FirmReport, PostingError, RollReport, actuals_view, firm_orders, post, roll_forward
+from ..actuals.post import production_usage
 from ..demand import ForecastResult, ReleaseResult, release, run_forecast
 from ..finance import FinanceResult, run_finance
 from ..tower import TowerResult, WorkItem, get_tracker, run_tower
@@ -660,6 +663,27 @@ def post_po_action(req: PoActionRequest) -> PoActionResponse:
 class UsageInput(Out):
     product: str
     qty: float
+
+
+class ProductionUsageInput(Out):
+    location: str
+    product: str
+    qty: float
+
+
+class ProductionUsageRequest(Out):
+    dataset: PlanData
+    order: str
+    qty: float | None = Field(None, gt=0, allow_inf_nan=False)
+
+
+@app.post("/api/actuals/production-usage", response_model=list[ProductionUsageInput])
+def preview_production_usage(req: ProductionUsageRequest) -> list[ProductionUsageInput]:
+    """Read the same default components that production confirmation will issue; no posting is made."""
+    try:
+        return [ProductionUsageInput(**row) for row in production_usage(req.dataset, req.order, req.qty)]
+    except PostingError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 class CountInput(Out):
