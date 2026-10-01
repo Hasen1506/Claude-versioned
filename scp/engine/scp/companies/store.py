@@ -317,7 +317,8 @@ class Companies:
         return (r["name"] or r["email"]) if r else uid
 
     def users(self) -> int:
-        return self.db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        with self.lock:
+            return self.db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
 
     def signup(self, email: str, name: str, password: str, policy: str = "open") -> Session:
         email = email.strip()
@@ -504,11 +505,12 @@ class Companies:
 
     # ---- companies -----------------------------------------------------------------------------------------
     def role(self, user: User, cid: str) -> str:
-        r = self.db.execute("SELECT m.role FROM members m JOIN companies c ON c.id = m.company_id "
-                            "WHERE m.company_id = ? AND m.user_id = ? AND c.deleted = 0", (cid, user.id)).fetchone()
-        if r is None:
-            raise CompanyError(f"no company {cid} of yours", 404)
-        return r["role"]
+        with self.lock:
+            r = self.db.execute("SELECT m.role FROM members m JOIN companies c ON c.id = m.company_id "
+                                "WHERE m.company_id = ? AND m.user_id = ? AND c.deleted = 0", (cid, user.id)).fetchone()
+            if r is None:
+                raise CompanyError(f"no company {cid} of yours", 404)
+            return r["role"]
 
     def _need(self, user: User, cid: str, *roles: str) -> str:
         role = self.role(user, cid)
@@ -1036,3 +1038,4 @@ def get_companies() -> Companies:
             _by_store.clear()
             _by_store[id(store)] = c
         return c
+

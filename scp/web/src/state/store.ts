@@ -342,6 +342,7 @@ async function saveNow(note = ""): Promise<void> {
   if (c.savedRevision === state.revision) { set({ save: { ...state.save, status: "saved" } }); return; }
   const rev = state.revision;
   const epoch = loadEpoch;
+  const context = store.captureContext();
   set({ save: { ...state.save, status: "saving", error: null } });
   saving = (async () => {
     try {
@@ -353,7 +354,7 @@ async function saveNow(note = ""): Promise<void> {
         }
         throw e;
       });
-      if (epoch !== loadEpoch || state.company?.id !== c.id) return;
+      if (epoch !== loadEpoch || !store.currentContext(context) || state.company?.id !== c.id) return;
       if (r.held && r.dataset) {
         // master data waits for approval: the server kept the rest; carry on from what it saved
         if (state.revision === rev) adopt(r.dataset as unknown as Dataset, r.meta, heldNote(r.held.summary));
@@ -366,9 +367,10 @@ async function saveNow(note = ""): Promise<void> {
         save: { ...state.save, status: "saved", at: now(), error: null, newer: null } });
       persistCompany();
     } catch (e) {
-      if (epoch !== loadEpoch || state.company?.id !== c.id) return;
+      if (epoch !== loadEpoch || !store.currentContext(context) || state.company?.id !== c.id) return;
       if (e instanceof ApiError && e.status === 409 && typeof e.body.revision === "number") {
         if (await mergeQuietly(c, ds, rev)) return;
+        if (!store.currentContext(context)) return;
         set({ save: { ...state.save, status: "conflict", error: e.message, newer: null,
           conflict: { by: e.body.self ? "You (in another window)" : String(e.body.updated_by ?? "someone"),
             at: String(e.body.updated_at ?? ""), revision: e.body.revision } } });
@@ -400,14 +402,17 @@ function noBase(e: unknown): never {
  *  refuses otherwise, and the planner chooses), save that, and carry on from it. Edits made while the merge ran are
  *  merged onto its result the same way. False when it could not merge. */
 async function mergeQuietly(c: OpenCompany, ds: Dataset, rev: number): Promise<boolean> {
+  const context = store.captureContext();
   try {
     let base: Dataset | undefined = baseDoc && baseRev === c.revision ? baseDoc : undefined;
     let mine = ds, mineRev = rev;
     // only what changed goes when the server has the save it was made from (it keeps every save)
     let r = await mergeOnServer(c, base, mine, c.revision, { cleanOnly: true });
+    if (!store.currentContext(context)) return true;
     for (let i = 0; i < 3 && state.company?.id === c.id && state.revision !== mineRev; i++) {
       base = mine; mine = state.dataset!; mineRev = state.revision;
       r = await api.mergeCompany(c.id, { base, dataset: mine, baseRevision: c.revision, cleanOnly: true });
+      if (!store.currentContext(context)) return true;
     }
     if (state.company?.id !== c.id) return true;
     if (state.revision !== mineRev) return false;
@@ -444,12 +449,14 @@ const heldNote = (summary: string) => `Your master data change (${summary}) wait
  *  keeps that save, else whole with its base. */
 async function mergeOnServer(c: OpenCompany, base: Dataset | undefined, mine: Dataset, baseRevision: number,
   o: { cleanOnly?: boolean; choose?: Record<string, "mine" | "theirs">; preview?: boolean }) {
+  const context = store.captureContext();
   if (base) {
     try {
       return await api.mergeCompany(c.id, { patch: makePatch(base as unknown as Record<string, unknown>, mine as unknown as Record<string, unknown>),
         baseRevision, ...o });
     } catch (e) {
       if (!(e instanceof ApiError && e.status === 409 && (e.body.patch === "unfit" || e.body.base === "missing"))) throw e;
+      store.assertWorking(context);
       return api.mergeCompany(c.id, { base, dataset: mine, baseRevision, ...o });
     }
   }
@@ -460,9 +467,10 @@ async function mergeOnServer(c: OpenCompany, base: Dataset | undefined, mine: Da
 async function checkNewer() {
   const c = state.company;
   if (!c?.live || !state.session || document.hidden) return;
+  const context = store.captureContext();
   try {
     const m = (await api.companies()).find((x) => x.id === c.id);
-    if (!m || state.company?.id !== c.id) return;
+    if (!m || !store.currentContext(context) || !state.company?.live) return;
     if (m.role !== state.company.role || (m.pending ?? 0) !== (state.company.pending ?? 0) || !!m.approval !== !!state.company.approval) {
       set({ company: { ...state.company, role: m.role, ...fromMeta(m) } });
     }
@@ -470,7 +478,7 @@ async function checkNewer() {
       // a viewer has nothing of their own to lose: show them the latest plan, not the one they opened
       if (m.role === "viewer") {
         const doc = await api.company(c.id);
-        if (state.company?.id === c.id && state.company.role === "viewer") store.openCompany(doc);
+        if (store.currentContext(context, true) && state.company?.live && state.company.role === "viewer") store.openCompany(doc, context);
         return;
       }
       const newer = { by: m.updated_by, at: m.updated_at, revision: m.revision };
@@ -584,10 +592,14 @@ export const store = {
     return { ...store.captureContext(), dataset: state.dataset };
   },
 
+  currentContext(before: WorkingContext, unchanged = false) {
+    return before.epoch === loadEpoch && before.version === state.version && before.company === (state.company?.id ?? null)
+      && before.session === (state.session?.token ?? null) && (!unchanged || before.revision === state.revision);
+  },
+
   /** A completed action must still belong to this working copy; opening a version also requires no new edits. */
   assertWorking(before: WorkingContext, unchanged = false) {
-    if (before.epoch !== loadEpoch || before.version !== state.version || before.company !== (state.company?.id ?? null)
-      || before.session !== (state.session?.token ?? null)) {
+    if (!store.currentContext(before)) {
       throw new Error("The open company, account or version changed while this action was running. Your current working copy was kept. Review the original company's saved data before retrying.");
     }
     if (unchanged && before.revision !== state.revision) {
@@ -638,7 +650,8 @@ export const store = {
   },
 
   /** Open a company kept on the server: its latest save becomes the working copy. */
-  openCompany(doc: CompanyDoc) {
+  openCompany(doc: CompanyDoc, before: WorkingContext) {
+    store.assertWorking(before, true);
     loadEpoch++;
     past.length = 0;
     future.length = 0;
@@ -692,8 +705,10 @@ export const store = {
     const c = state.company;
     const ds = state.dataset;
     if (!c || !ds) throw new Error("Nothing to merge");
-    return (await mergeOnServer(c, baseDoc && baseRev === c.revision ? baseDoc : undefined, ds, c.revision, { preview: true })
-      .catch(noBase)).report;
+    const context = store.captureContext();
+    const result = await mergeOnServer(c, baseDoc && baseRev === c.revision ? baseDoc : undefined, ds, c.revision, { preview: true }).catch(noBase);
+    store.assertWorking(context, true);
+    return result.report;
   },
 
   /** After a conflict: merge the working copy with the saves made since, record by record (a record both changed
@@ -702,8 +717,9 @@ export const store = {
     const c = state.company;
     const ds = state.dataset;
     if (!c || !ds) throw new Error("Nothing to merge");
+    const context = store.captureContext();
     const r = await mergeOnServer(c, baseDoc && baseRev === c.revision ? baseDoc : undefined, ds, c.revision, { choose }).catch(noBase);
-    store.openCompany({ meta: r.meta, dataset: r.dataset });
+    store.openCompany({ meta: r.meta, dataset: r.dataset }, context);
     set({ save: { ...state.save, status: "saved", at: now() } });
     const rep = r.report;
     const lines = [`Merged with ${r.merged_with || "the latest save"}: ${rep.summary}.`];
@@ -894,9 +910,10 @@ export const store = {
         // a company too large to keep in this browser (persist): open its latest save from the server
         const cr = localStorage.getItem(COMPANY_KEY);
         const c = cr ? (JSON.parse(cr) as OpenCompany) : null;
-        if (c?.live) void api.company(c.id).then((doc) => { if (!state.dataset) store.openCompany(doc); }, (e) => {
+        const context = store.captureContext();
+        if (c?.live) void api.company(c.id).then((doc) => { if (store.currentContext(context, true) && !state.dataset) store.openCompany(doc, context); }, (e) => {
           // deleted, or no longer this person's: forget it (the company list offers the others); offline: open by hand
-          if (e instanceof ApiError && (e.status === 403 || e.status === 404)) { try { localStorage.removeItem(COMPANY_KEY); } catch { /* ignore */ } }
+          if (store.currentContext(context) && e instanceof ApiError && (e.status === 403 || e.status === 404)) { try { localStorage.removeItem(COMPANY_KEY); } catch { /* ignore */ } }
         });
       }
       if (raw) {
@@ -942,15 +959,17 @@ export const store = {
     if (!c || !state.session) return;
     if (!c.live) return;
     if (unsaved(state)) { scheduleSave(100); return; }
+    const context = store.captureContext();
     try {
       const doc = await api.company(c.id);
-      if (state.company?.id !== c.id || unsaved(state)) return;
-      if (doc.meta.revision !== c.revision) store.openCompany(doc);
+      if (!store.currentContext(context, true) || !state.company?.live || state.company.revision !== c.revision || unsaved(state)) return;
+      if (doc.meta.revision !== c.revision) store.openCompany(doc, context);
       else {
         setBase(doc.dataset as unknown as Dataset, doc.meta.revision);
         set({ company: { ...state.company, role: doc.meta.role, name: doc.meta.name } });
       }
     } catch (e) {
+      if (!store.currentContext(context) || !state.company?.live) return;
       if (e instanceof ApiError && (e.status === 401 || e.status === 404)) {
         set({ save: { ...state.save, status: "failed", error: e.status === 401 ? "Your sign-in has expired: sign in again to save"
           : `${c.name} is no longer yours to open: it was deleted or you were removed from it` } });

@@ -1,6 +1,6 @@
 // The company's history (Phase I, Q14): every save with who made it and what changed, membership changes, and a way
 // to compare an earlier state with now or put the company back to it.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { Comparison, FieldChangeRow, HeldChange, LogRow } from "../api/types";
 import { Badge, Empty, Panel, StageHeader } from "../components/ui";
@@ -105,7 +105,8 @@ function RecordChanges({ id }: { id: string }) {
 export function History() {
   const company = useStore((s) => s.company);
   const ds = useStore((s) => s.dataset);
-  const [rows, setRows] = useState<LogRow[] | null>(null);
+  const [history, setHistory] = useState<{ id: string; rows: LogRow[] } | null>(null);
+  const request = useRef(0);
   const [more, setMore] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState<number | null>(null);
@@ -114,18 +115,23 @@ export function History() {
   const [msg, setMsg] = useState<string | null>(null);
   const id = company?.id;
   const revision = company?.revision;
+  const rows = history && history.id === id ? history.rows : null;
 
   const load = useCallback(async (before?: number) => {
     if (!id) return;
+    const context = store.captureContext();
+    const ticket = ++request.current;
     try {
       const got = await api.companyHistory(id, before);
-      setRows((r) => before ? [...(r ?? []), ...got] : got);
+      if (ticket !== request.current || !store.currentContext(context)) return;
+      setHistory((r) => ({ id, rows: before && r?.id === id ? [...r.rows, ...got] : got }));
       setMore(got.length >= 200);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      if (ticket === request.current && store.currentContext(context)) setErr(e instanceof Error ? e.message : String(e));
     }
   }, [id]);
-  useEffect(() => { void load(); }, [load, revision]);
+  useEffect(() => { void load(); return () => { request.current++; }; }, [load, revision]);
+  useEffect(() => { setErr(null); setMsg(null); setCmp(null); setOpen(null); }, [id]);
 
   if (!company) {
     return <div className="content"><Empty title="Not kept on the server">This company is kept only in this browser, so there is no
@@ -134,13 +140,17 @@ export function History() {
   const canPutBack = company.role !== "viewer";
   const compare = async (r: LogRow) => {
     if (!ds || r.revision == null) return;
+    const context = store.captureWorking();
     setBusy(true);
     setErr(null);
     try {
       const then = await api.companyRevision(company.id, r.revision);
-      setCmp([r.seq, await api.compare(then, ds, `revision ${r.revision}`, "now")]);
+      store.assertWorking(context, true);
+      const result = await api.compare(then, context.dataset, `revision ${r.revision}`, "now");
+      store.assertWorking(context, true);
+      setCmp([r.seq, result]);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      if (store.currentContext(context)) setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -149,17 +159,21 @@ export function History() {
     if (r.revision == null) return;
     if (!window.confirm(`Put ${company.name} back to how it was after revision ${r.revision} (${when(r.at)}, ${r.user})? `
       + "Everyone then works on that. Nothing is lost: the current state stays in this history and can be put back too.")) return;
+    const context = store.captureContext();
     setBusy(true);
     setErr(null);
     try {
       if (unsaved(store.get())) await store.saveNow();
+      store.assertWorking(context, true);
+      if (unsaved(store.get())) throw new Error("Your changes could not be saved. Keep or download them before restoring an earlier revision.");
       const latest = store.get().company?.revision ?? company.revision;
       const rep = await api.restoreCompany(company.id, r.revision, latest);
-      store.openCompany(await api.company(company.id));
+      store.assertWorking(context, true);
+      store.openCompany(await api.company(company.id), context);
       setMsg(`Put back to revision ${r.revision}: ${rep.summary || "no change"}.`);
       setCmp(null);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      if (store.currentContext(context)) setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -216,3 +230,4 @@ export function History() {
     </div>
   );
 }
+

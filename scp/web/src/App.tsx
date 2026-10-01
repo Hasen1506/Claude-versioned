@@ -288,20 +288,29 @@ function Welcome() {
   }, [locked, config, session]);
   const [starting, setStarting] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
+  const opening = useRef(0);
+  useEffect(() => () => { opening.current++; }, []);
   const blank = async (v: CompanyValues) => {
+    const context = store.captureContext();
+    const request = ++opening.current;
     const ds = blankCompany(v);
     // signed in: the company is kept on the server from the start (R28), not first in this browser only
     if (session) {
       setCreateErr(null);
       try {
         const m = await api.createCompany(ds, "created");
-        store.openCompany(await api.company(m.id));
+        if (request !== opening.current || !store.currentContext(context, true)) return;
+        const doc = await api.company(m.id);
+        if (request !== opening.current) return;
+        store.openCompany(doc, context);
         go("setup");
         return;
       } catch (e) {
+        if (request !== opening.current || !store.currentContext(context, true)) return;
         setCreateErr(`Not kept on the server (${e instanceof Error ? e.message : String(e)}): it is in this browser only for now.`);
       }
     }
+    if (request !== opening.current || !store.currentContext(context, true)) return;
     store.load(ds);
     go("setup");
   };
@@ -330,7 +339,14 @@ function Welcome() {
           {!examples && !err && <div className="faint">Loading…</div>}
           <div className="stack" style={{ gap: 8 }}>
             {examples?.map((x) => (
-              <button key={x.name} className="example" onClick={async () => openAndPlan(await api.example(x.name))}>
+              <button key={x.name} className="example" onClick={async () => {
+                const context = store.captureContext();
+                const request = ++opening.current;
+                try {
+                  const ds = await api.example(x.name);
+                  if (request === opening.current && store.currentContext(context, true)) openAndPlan(ds);
+                } catch (e) { if (request === opening.current && store.currentContext(context)) setErr(String(e)); }
+              }}>
                 <b>{x.title}</b>
                 <span className="faint small">{x.locations} locations · {x.products} products</span>
               </button>
@@ -356,3 +372,4 @@ function Welcome() {
     </div>
   );
 }
+
