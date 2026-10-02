@@ -249,9 +249,25 @@ document that held its postings until it was cancelled.
 | N106 | A product with a shelf life is now kept by batch unless it says otherwise (the kitchenware heater, the jam jar maker's fruit): its receipts get batch numbers and its issues take the first expiring. | Minor | By design, recorded: SAP needs a batch for an expiry date too. *Kept by batch* on the product turns it off. |
 | N107 | A quick count that finds less of a batch-managed product takes the difference from the first-expiring batches; one that finds more puts it in stock without a batch, since the count does not say which. | Minor | By design, recorded: count a batch on a physical inventory document to say which. |
 | N108 | The Buying page's goods receipt had no batch, expiry or serial numbers, and did not say which orders a short delivery left short. | Serious | **Fixed (O).** The same fields and the same offer as Actuals. |
-| N109 | Expired stock is dropped from the plan and flagged, but lot sizes and batch sizes still ignore shelf life (a batch covering ten days of a seven-day product). | Serious | Open: **P** (R15's second half). |
-| N110 | A short receipt names the orders it leaves short, but a late one does not: an order whose parts arrive after it starts is not named. | Minor | Open: the plan's DEMAND_AT_RISK and the shop floor's waiting for parts show it; naming it here is **P**. |
+| N109 | Expired stock is dropped from the plan and flagged, but lot sizes and batch sizes still ignore shelf life (a batch covering ten days of a seven-day product). | Serious | **Fixed (P).** A period lot covers no more than the days the product keeps; an economic or min–max lot is cut to what is used before it expires; a fixed batch longer than that is kept, and what it leaves to expire is a requirement of its own with a "Lot larger than its shelf life" warning, so the plan makes again for it. |
+| N110 | A short receipt names the orders it leaves short, but a late one does not: an order whose parts arrive after it starts is not named. | Minor | **Fixed (P).** A receipt that leaves a firm order short names it with the day it can run in full from later receipts ("cannot start in full on time: 2026-01-14 (the rest on …)"); Actuals' short orders show *The rest* beside it. |
 | N111 | The browser tests' server log showed "cannot commit – no transaction is active" from the worklist: each Performance request made the worklist anew, and making it runs a script that commits whatever transaction the shared database connection has open, another request's included. Found in the log, not on screen; a worklist sync could be half written. | Serious | **Fixed (O).** The worklist is made once per store, its tables under the store's lock; a test holds a transaction open while another thread makes one. |
+
+## Found while building Phase P
+
+P was built against the tests' small plants and the Capacity page used in a real browser on a two-run plant whose one
+press was asked for 16 hours on one 8-hour day: one run was moved a day earlier with its date field, the other dragged
+onto a day square, and both stayed firm there when the plan was recalculated.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N112 | "Expires unused" (from O) and "Lot larger than its shelf life" were not in the worklist's categories, so they landed under orders on Performance. | Minor | **Fixed (P).** Both are inventory; overtime planned and splits to stay within a supplier's capacity are capacity, a follow-up taking over is inventory. |
+| N113 | A day on the Capacity chart could be picked only with a mouse: no keyboard or screen reader could open a day's orders. | Serious | **Fixed (P).** A strip of day squares under the chart, darker when fuller and red when over, each a button that opens its day; runs are dragged onto them, or moved with a date field. |
+| N114 | Supplier and lane capacity were only flagged ("Supplier over capacity") even with planning within capacity on. | Serious | **Fixed (P).** Within capacity, what a supplier cannot make or a lane cannot carry in a week goes to the next valid source, else to earlier weeks, and only what fits nowhere is ordered over the limit (and flagged). |
+| N115 | Taking a made-to-order order now makes its production firm at once (R13), so the zone's firming afterwards finds the purchases only: the manufacturing journey expected three orders to firm and found two. | Minor | By design, recorded: the saved message names the run made firm ("Made firm for it: PRD-…"); *promise_firms* off leaves it to the planner. The journey checks the new behaviour. |
+| N116 | The plan's capacity exceptions are weekly: a day over capacity inside a week with room does not raise "Over capacity", though the Capacity page shows it red. | Minor | Open: the Capacity page and its answer line name the day; a daily exception is for a later phase. |
+| N117 | Overtime is a levelling choice in the supply plan, but not yet a choice of the shop floor optimiser, which still keeps to the shift hours. | Minor | Open: recorded below with the PP/DS gaps. |
+| N118 | Measured yield is worked out per production version and part from orders whose parts were posted as used; backflushed orders only repeat the bill of materials and are left out, as are parts through a phantom assembly (their loss is the phantom's). | Minor | By design, recorded: *Parts used* on Actuals says which orders it counted. |
 
 ## Found in the second reality check (after Phase E)
 
@@ -351,15 +367,15 @@ Ranked: the critical ones first (all fixed in K), then what is open, with the ph
 | R10 | Asha entered the promotion as a demand event; Home said "Everything is up to date" and the plan's demand never had it. | Critical | **Fixed (K).** A release records what it was made with; a later change to events, new-product rules, overrides or forecast settings raises `FORECAST_INPUTS_CHANGED` and a *Not in the plan yet* banner on Demand. With it used, mango at modern trade for the promotion week went 1,968 → 2,827 (sales 2,921). |
 | R11 | Using the forecast wrote a forecast for the hotels' catering paneer, made to order: ignored by the plan, a warning every week. | Critical | **Fixed (K).** A release skips products made to order where they are sold, removes what earlier releases wrote for them, and says so. |
 | R12 | Capable-to-promise took a component's availability even when it came months out (standardised milk free in March) and never tried making it (milk bought today, standardised by Tuesday): 20 of a 60-unit hotel order were promised 3 days late on the lead time. | Critical | **Fixed (K).** The earlier of the component's stock and new supply. |
-| R13 | A promise on new production does not make that production: the run stayed planned (Monday's firming came before the order), was never made, and the order went late at the roll. Nothing on Home pointed to backorder processing, which then brought the order on time. | Serious | **Fixed (K).** Taking an order made to order, or promised on new supply, says it must be made firm and where; Home links *Try to bring late orders forward* when an order is late. SAP's CTP creates the planned order itself: **P**. |
+| R13 | A promise on new production does not make that production: the run stayed planned (Monday's firming came before the order), was never made, and the order went late at the roll. Nothing on Home pointed to backorder processing, which then brought the order on time. | Serious | **Fixed (K, P).** Taking or changing an order promised on new production, or made to order, makes that production (and the transfers bringing it) firm at once, as SAP's capable-to-promise does, and says which ("Made firm for it: PRD-…"); purchases stay with Buying. A company rule turns it off. |
 | R14 | Home repeated "3 places would go below zero" every week for dips weeks old that the stock had come back from, and for dips a count had settled. | Serious | **Fixed (K).** A dip is reported while it lasts, or when it began in the week just closed and no count ended it. |
-| R15 | Shelf life never limits the plan: catering paneer (7 days) made in batches of 100 covering 10 days; "May expire" is a tag, but lot sizes, batch rounding and "a week's need" ignore it, and nothing expires in stock. | Serious | **Half fixed (O):** a product with a shelf life is kept by batch with its expiry date, issued first expiring first out; stock that will expire before it is used is a requirement in the plan ("Expires unused", STOCK_EXPIRES), expired stock is no longer counted and is flagged to scrap. Open: **P** (lot sizes within shelf life, N109). |
+| R15 | Shelf life never limits the plan: catering paneer (7 days) made in batches of 100 covering 10 days; "May expire" is a tag, but lot sizes, batch rounding and "a week's need" ignore it, and nothing expires in stock. | Serious | **Half fixed (O):** a product with a shelf life is kept by batch with its expiry date, issued first expiring first out; stock that will expire before it is used is a requirement in the plan ("Expires unused", STOCK_EXPIRES), expired stock is no longer counted and is flagged to scrap. **Fixed (P):** lot sizes and batches stay within shelf life (N109). |
 | R16 | A short milk delivery (85 %) is posted "closed 769 short", but the firm runs that needed it are not flagged; posting them in full takes raw milk to −2,307, and the roll sets it to 0. | Serious | **Fixed (O).** A receipt names the firm orders the part no longer covers, in the order they start, with what each can still make, and shortens one with a click (its parts in proportion); on Actuals and on Buying. |
-| R17 | Raw milk ends every week slightly negative (−306): the plan buys exactly what the runs need and any yield or rounding takes it below zero; nothing suggests a buffer. The roll's "set to 0" leaves the journal and the plan disagreeing until someone counts. | Serious | **Half fixed (O):** stock below zero is a company rule: refuse the posting, allow it and ask for a count (the plan starts from zero and says so), or count the missing stock as found when the week moves on, so the journal and the plan agree. Open: **P** (yield in the bill of materials). |
+| R17 | Raw milk ends every week slightly negative (−306): the plan buys exactly what the runs need and any yield or rounding takes it below zero; nothing suggests a buffer. The roll's "set to 0" leaves the journal and the plan disagreeing until someone counts. | Serious | **Half fixed (O):** stock below zero is a company rule: refuse the posting, allow it and ask for a count (the plan starts from zero and says so), or count the missing stock as found when the week moves on, so the journal and the plan agree. **Fixed (P):** each part's loss is in the bill of materials (component scrap), and *Parts used* on Actuals measures it from the orders posted with actual usage, beside what the bill of materials plans with, and writes it in with one click. |
 | R18 | A person conflicts with their own save: a reload while a save is in flight is refused next time as "Ravi saved … after your changes began", shown to Ravi. | Serious | **Fixed (L).** Each browser window has its own id sent with every save; a save refused only because of saves from the same window (a reload while one was in flight) is taken as one's own, and the same person in another window is merged, never shown as a colleague. |
 | R19 | History keeps a state to put back only every ~10 minutes per person, so "just before the release" was not there; *Undo* is gone after a reload. | Serious | **Fixed (L).** Every save is kept (as the changes from the one before, with a full copy every 25), so *History* can put back any of them; undo steps are kept in the browser and survive a reload. |
 | R20 | Firming makes purchase orders after the day's orders were sent on *Buying*; they wait "to send" until someone goes back. | Serious | Open: **N** (firming offers to send what it created). |
-| R21 | Demand events are entered only in Master data; *+ New event* saves at once an event on every product at every place with the measured lift. | Serious | Open: **P** (events on the Demand page; a new event starts without effect). |
+| R21 | Demand events are entered only in Master data; *+ New event* saves at once an event on every product at every place with the measured lift. | Serious | **Fixed (P).** A series' events are on the Demand page, beside its forecast, added for that series only and starting with no lift until one is typed. |
 | R22 | Two numbers called accuracy: Home "92 % accurate on past weeks" (backtest), Actuals "73 % against real sales". | Minor | **Fixed (L).** Home says "accurate on past weeks (backtest)" and, once weeks are rolled, "against real sales" separately. |
 | R23 | One negative count refused all three counts; the count grid showed a negative book stock (−905) as the suggested count. | Minor | **Fixed (K).** A negative count is flagged before saving; a stock below zero is marked and suggests 0. |
 | R24 | A viewer's Home said "Nothing calculated yet" while its first calculation ran. | Minor | **Fixed (K).** "Calculating the plan from the latest save…". |
@@ -405,13 +421,13 @@ against SAP (the gaps below). Proposed, in the order recommended:
   and blocked, released, blocked and scrapped; stock in transit shown at the place it goes to; material documents and
   their reversal; physical inventory documents with the book frozen and postings held; serial numbers; a refrigerated
   route mode and the cold-chain check (R30).
-- **P: planning depth** (R13, R15, R17, R21 and the remaining MRP, BOM, capacity and PP/DS gaps).
+- **P: planning depth**: **done**, see R13, R15, R17, R21 and N109–N118.
   Capable-to-promise that creates the planned order it promised on, firm, as SAP does (R13); lot sizes and batches
   that stay within shelf life (R15); yield in the bill of materials so a part is bought with the loss in it (R17);
   demand events on the Demand page, a new one starting without effect (R21); MRP groups; withdrawal from another
   plant and direct production; a discontinued product with its follow-up; alternative BOMs; overtime as a levelling
-  and optimiser choice; supplier and lane capacity in planning; steps needing a machine and a tool together;
-  dragging orders between days to level.
+  choice (the optimiser's is open, N117); supplier and lane capacity in planning; steps needing a machine and a tool
+  together; dragging orders between days to level.
 - **M: order to cash, complete** (SD gaps). Orders with several lines; prices with discounts and quantity scales;
   payment terms and a credit check; an order confirmation to send the customer (as the purchase order); delivery
   documents with picking, packing and proof of delivery; invoices; returns and credit notes; quotations.
@@ -422,28 +438,28 @@ against SAP (the gaps below). Proposed, in the order recommended:
   movements and to take back purchase and production orders; e-mail sent from the application (orders to suppliers,
   confirmations to customers, the worklist's reminders).
 
-Order after O: **P, M, N, Q**. P stays ahead of M and N for K's reasons: every open serious finding of K left is about
+Order after O: **P, M, N, Q**; P is done, so **M** is next. P stays ahead of M and N for K's reasons: every open serious finding of K left is about
 stock that is really there (shelf life, short receipts, stock below zero) or a plan that acts on it.
 
 ## Gaps against SAP recorded for later phases
 
 - MRP views: MRP controller, procurement type (E/F/X), phantom (special procurement 50) and the scheduling margin
-  (float before and after production) are in (**B**). Still missing: MRP groups, other special procurement keys
-  (withdrawal from another plant, direct production), discontinuation with a follow-up material, availability check
-  groups.
+  (float before and after production) are in (**B**); MRP groups, withdrawal from another plant, direct production
+  and discontinuation with a follow-up material (**P**). Still missing: availability check groups, other special
+  procurement keys (consignment, production in another plant).
 - Work centres: named shifts with breaks and weekdays, capacity changes over time, per-unit availability (**B**, done).
 - BOM and routing: date-effective lines (engineering change), fixed quantities, phantoms, co- and by-products with
   cost shares, step scrap, overlap (send-ahead), steps done outside by a supplier and alternative machines (**B**,
-  done). Still missing: BOM usage/alternative BOMs separate from production versions, routing alternative sequences,
-  change-number history.
+  done). Alternative BOMs chosen by lot size and yield measured from actual usage (**P**). Still missing: BOM usage
+  (engineering, costing), routing alternative sequences, change-number history.
 - Capacity: material-aware scheduling along the pegging, schedule dates back into supply and promising, a levelling
-  view by day and week, and capacity-constrained MRP with alternative machines (**C**, done). Still missing:
-  interactive levelling by dragging orders between days, overtime as a levelling choice, capacity-constrained
-  planning for suppliers and lanes.
+  view by day and week, and capacity-constrained MRP with alternative machines (**C**, done). Levelling by dragging
+  runs between days, overtime as a levelling choice, and supplier and lane capacity in planning (**P**, done). Still
+  missing: a daily capacity exception in the plan (N116).
 - PP/DS: strategy profiles, a heuristics catalogue (due date, shortest first, least slack, campaigns, backward),
   a local search, a constraint-solver optimiser choosing machines and sequence, a frozen zone and a drag-and-drop
-  board (**D**, done). Still missing: overtime and shift changes as optimiser choices, setup matrices by product
-  (not only group), multi-resource steps (machine and tool together), pegging-aware re-scheduling of dependent
+  board (**D**, done); steps holding a machine and a tool together (**P**). Still missing: overtime and shift changes
+  as optimiser choices (N117), setup matrices by product (not only group), pegging-aware re-scheduling of dependent
   orders when one moves.
 - Inventory management: opening balances, counts with differences, transfers shipped and received with stock in
   transit, production confirmations with backflush or actual usage and co-products (**F**, done). Batches with an

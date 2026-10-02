@@ -54,7 +54,9 @@ test('manufacturing: forecast → finite plan → promise → purchases → part
   await page.getByRole('button',{name:'Check availability'}).click();
   await page.getByRole('button',{name:'Take this order'}).click();
   await expect(page.locator('.banner.info',{hasText:'Saved'})).toContainText('SO-00001 taken: 20');
-  await firm(page,3);
+  // promised on new production: taking the order makes that production firm at once; the purchases are left to firm
+  await expect(page.locator('.banner.info',{hasText:'Saved'})).toContainText('Made firm for it: PRD-');
+  await firm(page,2);
   let data=await exported(page);
   await writeFile(test.info().outputPath('firmed.json'),JSON.stringify(data,null,2));
   expect(data.receipts.map((r:any)=>[r.kind,r.product,r.qty])).toEqual(expect.arrayContaining([['production','A',20],['purchase','B',40],['purchase','C',20]]));

@@ -268,8 +268,8 @@ export const api = {
     write<PoActionResponse>("/api/purchasing/act", dataset, { action, po, lines: extra.lines ?? null, date: extra.date ?? null,
       reference: extra.reference ?? "", note: extra.note ?? "" }),
   /** Firm planned orders into receipts: `ids`, or everything starting within the firm zone. */
-  firm: (dataset: Dataset, ids?: string[], withinDays?: number) =>
-    write<FirmResponse>("/api/orders/firm", dataset, { ids: ids ?? null, within_days: withinDays ?? null }),
+  firm: (dataset: Dataset, ids?: string[], withinDays?: number, starts?: Record<string, string>) =>
+    write<FirmResponse>("/api/orders/firm", dataset, { ids: ids ?? null, within_days: withinDays ?? null, starts: starts ?? null }),
   // ---- sign-in and companies kept on the server (Phase I)
   authConfig: () => call<AuthConfig>("/api/auth/config"),
   signUp: (email: string, name: string, password: string) =>

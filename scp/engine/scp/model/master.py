@@ -41,7 +41,9 @@ class Settings(Model):
     default_calendar: str | None = Ref("calendar", default=None)
     capacity_constrained: bool = Field(
         False, description="Plan make orders within the capacity of finite machines and labour: an order that does "
-                           "not fit uses an alternative machine, else starts earlier, else finishes later (reported)")
+                           "not fit uses an alternative machine, else starts earlier, else finishes later (reported); "
+                           "purchases and transfers within the weekly capacity of their supplier or lane: what does "
+                           "not fit goes to another source, else an earlier week")
     capacity_direction: Literal["earlier", "later"] = Field(
         "earlier", description="Levelling: an order that does not fit first tries earlier days (builds ahead, stock) "
                                "or later days (accepts a delay, reported), then the other way")
@@ -50,6 +52,9 @@ class Settings(Model):
                                        "L4L = exactly what is needed that day, POQ = the need of the next "
                                        "`default_lot_periods` buckets (one week by default)")
     default_lot_periods: int = Field(1, ge=1, le=52, description="POQ default: buckets each order covers")
+    capacity_overtime: bool = Field(
+        False, description="Levelling may plan overtime: an order that does not fit the shift hours, even on an "
+                           "alternative machine, uses the machines' overtime (at its cost) before it is moved")
     capacity_max_early_days: int | None = Unit(
         "days", ge=0, le=365, default=None,
         description="Levelling: move an order at most this many days earlier to fit; empty = as far as today")
@@ -502,6 +507,10 @@ class Operation(Model):
         description="Overlap: the next step may start once this many units are done here (empty = when all are)")
     alternatives: list[str] = Field(default_factory=list, json_schema_extra={"x-ref": "resource"},
                                     description="Other machines that can do this step with the same times")
+    tools: list[str] = Field(default_factory=list, max_length=10, json_schema_extra={"x-ref": "resource"},
+                             description="Tools the step holds while it runs (a mould, a die, a fixture): each is "
+                                         "busy for the machine's hours, so two steps needing one tool never run "
+                                         "at once")
     subcontract: Subcontract | None = Field(None, description="Done outside by a supplier instead of on a resource")
 
     def batches(self, qty: float) -> int:
@@ -529,6 +538,10 @@ class Operation(Model):
             raise ValueError("a step done outside does not use a machine here")
         if self.resource and self.resource in self.alternatives:
             raise ValueError("the machine is listed as its own alternative")
+        if self.tools and not self.resource:
+            raise ValueError("a step done outside holds no tool here")
+        if len(set(self.tools)) < len(self.tools) or (self.resource and self.resource in self.tools):
+            raise ValueError("a tool is listed twice, or the machine is listed as a tool")
         return self
 
 

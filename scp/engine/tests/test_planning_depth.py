@@ -224,3 +224,127 @@ def test_an_alternative_bom_is_chosen_by_the_order_size():
     big = next(o for o in plan.orders if o.product == "A" and o.qty > 20)
     parts = lambda o: {r.product for r in plan.requirements if r.parent_order == o.id}   # noqa: E731
     assert parts(small) == {"PASTE"} and parts(big) == {"B", "C"}
+
+
+# ---- capacity: overtime as a levelling choice ------------------------------------------------------------
+def test_levelling_with_overtime_keeps_the_order_on_its_day_and_costs_the_overtime():
+    from .test_capacity_mrp import _constrained, _two_products
+    d = _constrained(_two_products())
+    d["resources"][0].update(overtime_hours_per_day=8, overtime_cost_per_hour=50)
+    # without the choice, D starts a day earlier (the existing levelling)
+    p = run_mrp(ds(d))
+    assert next(o for o in p.orders if o.product == "D").capacity_shift_days == -1
+    d["settings"]["capacity_overtime"] = True
+    p = run_mrp(ds(d))
+    dd = next(o for o in p.orders if o.product == "D")
+    assert dd.capacity_shift_days == 0 and dd.overtime_hours == {"M1": pytest.approx(8.0)}
+    assert dd.costs["overtime"] == pytest.approx(400)
+    assert any(e.code == "OVERTIME_PLANNED" and e.order_id == dd.id for e in p.exceptions)
+    # overtime is a limit too: more than it covers still moves
+    d["resources"][0]["overtime_hours_per_day"] = 4
+    p = run_mrp(ds(d))
+    assert next(o for o in p.orders if o.product == "D").capacity_shift_days == -1
+
+
+# ---- supplier and lane capacity in planning ---------------------------------------------------------------
+def two_suppliers() -> dict:
+    """100 C needed on 26 January at P; supplier S can make 40 C a week, S2 (second choice) 30."""
+    d = base(horizon=42)
+    d["locations"].append({"id": "S2", "type": "supplier"})
+    d["purchasing_sources"][1]["capacity_per_week"] = 40
+    d["purchasing_sources"].append({"id": "PIR-C2", "supplier": "S2", "product": "C", "location": "P", "price": 6,
+                                    "lead_time_days": 1, "priority": 2, "capacity_per_week": 30})
+    d["demand"] = [demand("P", "C", "2026-01-26", 100, kind="sales_order", id="SO-C")]
+    return d
+
+
+def test_without_capacity_planning_a_supplier_is_only_flagged_when_overloaded():
+    plan = run_mrp(ds(two_suppliers()))
+    c = [o for o in plan.orders if o.product == "C"]
+    assert [(o.source_id, o.qty) for o in c] == [("PIR-C", 100)]
+    assert "SUPPLIER_CAPACITY" in {e.code for e in plan.exceptions}
+
+
+def test_what_a_supplier_cannot_make_that_week_goes_to_the_next_supplier_then_an_earlier_week():
+    d = two_suppliers()
+    d["settings"]["capacity_constrained"] = True
+    plan = run_mrp(ds(d))
+    c = sorted((o.source_id, o.qty, o.need_date.isoformat()) for o in plan.orders if o.product == "C")
+    assert c == [("PIR-C", 30, "2026-01-19"), ("PIR-C", 40, "2026-01-26"), ("PIR-C2", 30, "2026-01-26")]
+    codes = {e.code for e in plan.exceptions}
+    assert "SUPPLIER_CAPACITY" not in codes and "SUPPLY_SPLIT" in codes
+    node = next(n for n in plan.nodes if (n.location, n.product) == ("P", "C"))
+    assert all(b.shortage <= 1e-6 for b in node.buckets)
+
+
+def test_a_lane_carries_no_more_than_its_weekly_capacity():
+    d = base(horizon=42)
+    d["locations"].append({"id": "W", "type": "dc"})
+    d["location_products"] += [{"location": "W", "product": "C", "on_hand": 0}]
+    lp(d, "P", "C")["on_hand"] = 500
+    d["lanes"] = [{"id": "L-PW", "origin": "P", "destination": "W",
+                   "modes": [{"transit_days": 1, "capacity_units_per_week": 25}]}]
+    d["demand"] = [demand("W", "C", "2026-01-26", 60, kind="sales_order", id="SO-W")]
+    d["settings"]["capacity_constrained"] = True
+    plan = run_mrp(ds(d))
+    moves = [o for o in plan.orders if o.product == "C" and o.kind == "transfer"]
+    assert sum(o.qty for o in moves) == pytest.approx(60)
+    assert max(o.qty for o in moves) <= 25 + 1e-6
+    assert "LANE_CAPACITY" not in {e.code for e in plan.exceptions}
+
+
+# ---- machine and tool together ----------------------------------------------------------------------------
+def one_mould() -> dict:
+    """A runs on M1 and D on M2, a full 8 h day each for the same day; both steps need the one mould T."""
+    from .test_capacity_mrp import _two_products
+    d = _two_products()
+    d["resources"] += [{"id": "M2", "location": "P", "efficiency": 1.0, "hours_per_shift": 8, "cost_per_hour": 100},
+                       {"id": "T", "location": "P", "kind": "tool", "efficiency": 1.0, "hours_per_shift": 8,
+                        "cost_per_hour": 5}]
+    d["production_sources"][0]["operations"][0]["tools"] = ["T"]
+    d["production_sources"][1]["operations"][0].update({"resource": "M2", "tools": ["T"]})
+    return d
+
+
+def test_a_tool_is_loaded_like_its_machine_and_levelling_keeps_it_within_its_hours():
+    plan = run_mrp(ds(one_mould()))
+    t = next(r for r in plan.resources if r.resource == "T")
+    assert max(t.daily_load.values()) == pytest.approx(16.0)       # both steps want the mould the same day
+    d = one_mould()
+    d["settings"]["capacity_constrained"] = True
+    plan = run_mrp(ds(d))
+    t = next(r for r in plan.resources if r.resource == "T")
+    assert max(t.daily_load.values()) <= 8 + 1e-6
+    assert sorted(o.capacity_shift_days for o in plan.orders if o.kind == "make") == [-1, 0]
+
+
+def test_the_schedule_never_runs_two_steps_on_one_tool_at_once():
+    from scp.schedule import run_schedule
+    dset = ds(one_mould())
+    out = run_schedule(dset)
+    assert out.ok and not out.violations
+    spans = sorted((min(b.setup_start for b in out.ops if b.order == o), max(b.end for b in out.ops if b.order == o))
+                   for o in {b.order for b in out.ops})
+    assert len(spans) == 2 and spans[1][0] >= spans[0][1] - 1e-6    # one after the other, on two machines
+    assert {b.resource for b in out.ops} == {"M1", "M2"}
+
+
+# ---- moving a run to another day by hand (levelling by dragging) -------------------------------------------
+def test_a_run_moved_to_another_day_is_made_firm_there_and_the_day_it_left_is_no_longer_over():
+    from scp.actuals import firm_orders
+    from .test_capacity_mrp import _two_products
+    dset = ds(_two_products())
+    plan = run_mrp(dset)
+    busiest = lambda p: max(next(r for r in p.resources if r.resource == "M1").daily_load.values())  # noqa: E731
+    assert busiest(plan) == pytest.approx(16.0)                     # both runs on one 8 h day
+    d_run = next(o for o in plan.orders if o.product == "D" and o.kind == "make")
+    new, rep = firm_orders(dset, plan, [d_run.id], starts={d_run.id: d_run.start_date - timedelta(days=1)})
+    assert rep.ok and len(rep.firmed) == 1 and not rep.skipped
+    rc = next(r for r in new.receipts if r.planned_as == d_run.id)
+    assert rc.start_date == d_run.start_date - timedelta(days=1)
+    assert rc.due_date == d_run.due_date - timedelta(days=1)
+    assert all(v.date == d_run.start_date - timedelta(days=1) for v in rc.reservations)
+    assert busiest(run_mrp(new)) == pytest.approx(8.0)
+    # not before today, and only production
+    _, rep = firm_orders(dset, plan, [d_run.id], starts={d_run.id: dset.settings.planning_start - timedelta(days=1)})
+    assert d_run.id in rep.skipped and not rep.firmed

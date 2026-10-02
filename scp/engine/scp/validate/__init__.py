@@ -229,6 +229,8 @@ def _references(ds: Dataset, c: _Collector) -> None:
                  f"operations[{op.seq}].labor_resource")
             for alt in op.alternatives:
                 _ref(ds, c, "resource", alt, "production_source", ps.id, f"operations[{op.seq}].alternatives")
+            for t in op.tools:
+                _ref(ds, c, "resource", t, "production_source", ps.id, f"operations[{op.seq}].tools")
             if op.subcontract is not None and _ref(ds, c, "location", op.subcontract.supplier, "production_source",
                                                    ps.id, f"operations[{op.seq}].subcontract.supplier"):
                 _loc_type(ds, c, op.subcontract.supplier, {LocationType.SUPPLIER}, "production_source", ps.id,
@@ -378,8 +380,8 @@ def _production(ds: Dataset, c: _Collector) -> None:
                 c.add("PRODUCTION_NO_LEAD_TIME", "production_source", ps.id,
                       "Production lead time will be 0 days", "Add operations or fixed_lead_time_workdays")
         for op in ps.operations:
-            used.update(x for x in (op.resource, op.labor_resource, *op.alternatives) if x)
-            for rid in (op.resource, op.labor_resource, *op.alternatives):
+            used.update(x for x in (op.resource, op.labor_resource, *op.alternatives, *op.tools) if x)
+            for rid in (op.resource, op.labor_resource, *op.alternatives, *op.tools):
                 r = ds.resource_by_id.get(rid) if rid else None
                 if r is not None and r.location != ps.location:
                     c.add("RESOURCE_WRONG_LOCATION", "production_source", ps.id,

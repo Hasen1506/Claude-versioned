@@ -67,6 +67,9 @@ def conversion_unit_cost(ds: Dataset, src_id: str) -> float:
         if op.labor_resource:
             lr = ds.resource_by_id.get(op.labor_resource)
             per_unit += op.labor_hours_per_unit * (lr.cost_per_hour if lr else 0.0)
+        for t in op.tools:
+            tr = ds.resource_by_id.get(t)
+            per_unit += op.run_hours_per_unit_avg * (tr.cost_per_hour if tr else 0.0)
         total += enter[op.seq] * per_unit
     return total + ps.conversion_cost_per_unit
 

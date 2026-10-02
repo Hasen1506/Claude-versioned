@@ -57,7 +57,7 @@ const TITLE: Record<string, string> = {
   send_ahead_qty: "Overlap: send ahead quantity", co_products: "Co-products and by-products", capacity_changes: "Capacity changes",
   fixed_qty: "Fixed quantity per run", change: "Engineering change", subcontract: "Done outside by a supplier",
   tax_id: "Tax number (GSTIN, VAT)", company_tax_id: "Company tax number (GSTIN, VAT)", company_address: "Company address (for invoices)",
-  alternatives: "Alternative machines", break_minutes: "Break (minutes)", cost_share: "Share of the run's cost",
+  alternatives: "Alternative machines", tools: "Tools it holds (mould, die)", capacity_overtime: "Levelling may plan overtime", break_minutes: "Break (minutes)", cost_share: "Share of the run's cost",
   capacity_constrained: "Plan within machine capacity", wait_for_parts: "Wait for parts", step_resources: "Steps on an alternative machine",
   scheduled: "Dated by the shop floor schedule",
   capacity_direction: "When a day is full, first try", capacity_max_early_days: "Build at most this many days ahead",

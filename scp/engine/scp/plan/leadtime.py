@@ -75,6 +75,7 @@ class OpWindow:
     end: date            # exclusive
     machine_hours: float
     labor_hours: float
+    tools: tuple[str, ...] = ()   # tools held for the machine hours
 
 
 @dataclass
@@ -210,7 +211,7 @@ def _forward(ds: Dataset, ps: ProductionSource, good_qty: float, cal: WorkCalend
         op_end = cal.add_workdays(op_start, n - 1) + timedelta(days=1) if n > 0 else op_start
         if min_end is not None and min_end > op_end:
             op_end = min_end
-        windows.append(OpWindow(seq, op.resource, op.labor_resource, op_start, op_end, mh, lh))
+        windows.append(OpWindow(seq, op.resource, op.labor_resource, op_start, op_end, mh, lh, tuple(op.tools)))
         cursor = cal.add_workdays(cal.next_workday(op_end), op.queue_workdays) if op.queue_workdays else op_end
         prev = (op, op_start, d, mh)
     return windows, cursor
@@ -226,7 +227,7 @@ def _backward(ds: Dataset, ps: ProductionSource, cal: WorkCalendar, due: date,
         op_end = cal.add_workdays(cursor, -op.queue_workdays) if op.queue_workdays else cursor
         n = _span(ds, op, d, mh, cal, cal.prev_workday(op_end - timedelta(days=1)), False)
         op_start = cal.add_workdays(cal.prev_workday(op_end - timedelta(days=1)), -(n - 1)) if n > 0 else op_end
-        windows.append(OpWindow(seq, op.resource, op.labor_resource, op_start, op_end, mh, lh))
+        windows.append(OpWindow(seq, op.resource, op.labor_resource, op_start, op_end, mh, lh, tuple(op.tools)))
         cursor = op_start
     windows.reverse()
     return windows
@@ -265,7 +266,7 @@ def schedule_make(ds: Dataset, ps: ProductionSource, good_qty: float, *, availab
             for i, (seq, _, mh, lh) in enumerate(durs):
                 nxt = cal.add_workdays(prod, round(per * (i + 1))) if i < len(durs) - 1 else end
                 op = ops_by_seq[seq]
-                windows.append(OpWindow(seq, op.resource, op.labor_resource, cur, max(nxt, cur), mh, lh))
+                windows.append(OpWindow(seq, op.resource, op.labor_resource, cur, max(nxt, cur), mh, lh, tuple(op.tools)))
                 cur = max(nxt, cur)
         return Schedule(st, due, due + _days(gr), windows,
                         component_dates=_component_dates(ds, ps, windows, prod))

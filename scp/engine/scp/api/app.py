@@ -570,6 +570,7 @@ class FirmRequest(Out):
     dataset: PlanData
     ids: list[str] | None = None          # planned order ids; None = everything starting in the firm zone
     within_days: int | None = None        # overrides the dataset's firm zone
+    starts: dict[str, dt.date] | None = None  # planned production runs moved by hand: firm, starting that day
 
 
 class FirmResponse(Out):
@@ -580,7 +581,7 @@ class FirmResponse(Out):
 
 @app.post("/api/orders/firm", response_model=FirmResponse)
 def post_firm(req: FirmRequest) -> FirmResponse:
-    new, rep = firm_orders(req.dataset, run_mrp(req.dataset), req.ids, req.within_days)
+    new, rep = firm_orders(req.dataset, run_mrp(req.dataset), req.ids, req.within_days, req.starts)
     if not rep.ok:
         raise HTTPException(409, "the readiness gate has errors; fix them before firming orders")
     return FirmResponse(**answer(req.dataset, new), report=rep)

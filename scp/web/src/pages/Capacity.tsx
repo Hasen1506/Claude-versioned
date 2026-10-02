@@ -11,7 +11,7 @@ import { day, pct, plural, qty } from "../lib/format";
 import { Prod } from "../lib/names";
 import { go, href } from "../lib/router";
 import { calendarOf, dayCap, hoursOf } from "./Machines";
-import { isStale, store, useStore } from "../state/store";
+import { isStale, store, useReadOnly, useStore } from "../state/store";
 
 const DAY = 86400000;
 const toT = (iso: string) => new Date(iso + "T00:00:00Z").getTime();
@@ -96,16 +96,36 @@ function CapacityPage({ ds, sel }: { ds: Dataset; sel?: string }) {
             </button>
           ))}
         </div>
-        {current && <MachineView m={current} plan={plan} key={current.r.id} />}
+        {current && <MachineView ds={ds} m={current} plan={plan} stale={stale} key={current.r.id} />}
       </>}
     </div></div>
   );
 }
 
 // ------------------------------------------------------------------------------------------------
-function MachineView({ m, plan }: { m: MachineLoad; plan: PlanResult }) {
+function MachineView({ ds, m, plan, stale }: { ds: Dataset; m: MachineLoad; plan: PlanResult; stale: boolean }) {
   const [scale, setScale] = useState<Scale>("days");
   const [pick, setPick] = useState<number | null>(null);
+  // levelling by hand: a planned run dragged (or moved with its date field) to another day, confirmed, made firm there
+  const [move, setMove] = useState<{ id: string; to: string } | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const today = ds.settings.planning_start;
+  const ro = useReadOnly();
+  const doMove = async () => {
+    if (!move) return;
+    setBusy(true); setNote(null);
+    try {
+      const out = await api.firm(ds, [move.id], undefined, { [move.id]: move.to });
+      store.replace(out.dataset, ds);
+      const f = out.report.firmed[0];
+      setNote(f ? { ok: true, text: `${move.id} is now ${f.receipt_id}, a firm run starting ${day(f.start_date)}; it stays there when the plan is recalculated. Undo reverts it.` }
+        : { ok: false, text: out.report.skipped[move.id] ?? "It could not be moved." });
+      setMove(null);
+      await store.run("plan");
+    } catch (e) { setNote({ ok: false, text: String(e) }); } finally { setBusy(false); }
+  };
   const firstOver = m.over.length ? m.days.indexOf(m.over[0]) : -1;
   // days: eight weeks from the first overloaded day (or today); weeks: the whole plan
   const from = scale === "days" ? Math.max(0, Math.min(firstOver >= 0 ? firstOver - 3 : 0, m.days.length - 56)) : 0;
@@ -151,16 +171,45 @@ function MachineView({ m, plan }: { m: MachineLoad; plan: PlanResult }) {
           {limited && <span><span className="key box" style={{ background: "var(--critical)" }} />more than it has</span>}
           <span className="faint small">Click a {scale === "days" ? "day" : "week"} to see the orders on it.</span>
         </div>
+        {scale === "days" && <div className="table-wrap" style={{ marginTop: 8 }}>
+          <div className="row" role="group" aria-label="Days" style={{ gap: 2, flexWrap: "nowrap" }}>
+            {m.days.slice(from, from + 56).map((d, i) => {
+              const u = d.cap > 0 ? d.load / d.cap : d.load > 0 ? 2 : 0;
+              const past = d.date < today;
+              return <button key={d.date} type="button" aria-label={`${day(d.date)}: ${qty(d.load)} of ${qty(d.cap)} h`} aria-pressed={pick === i}
+                title={`${day(d.date)}: ${qty(d.load)} of ${qty(d.cap)} h${past ? "" : " · drop a run here to start it this day"}`}
+                onClick={() => setPick(i === pick ? null : i)}
+                onDragOver={(e) => { if (!past) { e.preventDefault(); setOver(d.date); } }} onDragLeave={() => setOver(null)}
+                onDrop={(e) => { e.preventDefault(); setOver(null); const id = e.dataTransfer.getData("text/plain"); if (id && !past) setMove({ id, to: d.date }); }}
+                style={{ minWidth: 18, height: 26, padding: 0, borderRadius: 3, cursor: "pointer",
+                  border: over === d.date || pick === i ? "2px solid var(--accent)" : "1px solid var(--border)",
+                  background: limited && d.load > d.cap + 1e-6 ? "var(--critical)" : `color-mix(in srgb, var(--series-1) ${Math.round(Math.min(1, u) * 100)}%, var(--surface))`,
+                  opacity: past ? 0.4 : 1 }} />;
+            })}
+          </div>
+          <span className="faint small">Each square is a day, darker when fuller, red when over; click one for its orders.{ro ? "" : " Drag a planned run from that list onto a day to start it then."}</span>
+        </div>}
       </Panel>
+      {note && <div className={`banner ${note.ok ? "ok" : "error"}`}><span>{note.text}</span><span className="spacer" />
+        <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setNote(null)}>✕</button></div>}
+      {move && <div className="banner warning" role="alertdialog" aria-label="Move the run">
+        <Badge sev="warning">Check</Badge>
+        <span>Start {move.id} on {day(move.to)}? It becomes a firm production run there, so later plans leave it on that day; its parts are reserved for the new day.</span>
+        <span className="spacer" />
+        <Edits><button className="btn sm accent" onClick={doMove} disabled={busy || stale} title={stale ? "Recalculate the supply plan first" : undefined}>
+          {busy ? "Moving…" : `Move to ${day(move.to)}`}</button></Edits>
+        <button className="btn sm ghost" onClick={() => setMove(null)} disabled={busy}>Cancel</button>
+      </div>}
       {sel && <Panel flush title={<h3>Orders on {m.r.name || m.r.id}, {sel.from === sel.to ? day(sel.from) : `week of ${day(sel.from)}`}:
         {" "}{qty(sel.load)} of {qty(sel.cap)} h</h3>} actions={<button className="btn sm ghost" onClick={() => setPick(null)}>Close</button>}>
         {lines.length === 0 ? <Empty title="Nothing runs on it then" /> : (
           <div className="table-wrap"><table className="t nowrap">
-            <thead><tr><th>Order</th><th>Product</th><th className="num">Hours then</th><th className="num">Hours in all</th><th>Runs</th><th>Needed by</th><th>Levelling</th></tr></thead>
+            <thead><tr><th>Order</th><th>Product</th><th className="num">Hours then</th><th className="num">Hours in all</th><th>Runs</th><th>Needed by</th><th>Levelling</th><th>Move to</th></tr></thead>
             <tbody>{lines.map(({ ol, h, total: t }) => {
               const o: PlannedOrder | undefined = orders.get(ol.order);
               return (
-                <tr key={ol.order}>
+                <tr key={ol.order} draggable={!!o && o.kind === "make"} style={o && o.kind === "make" ? { cursor: "grab" } : undefined}
+                  onDragStart={(e) => { e.dataTransfer.setData("text/plain", ol.order); e.dataTransfer.effectAllowed = "move"; }}>
                   <td>{o ? <a href={href("plan", "orders", o.id)}><b>{ol.order}</b></a> : <b>{ol.order}</b>} {ol.firm && <Badge>released</Badge>}</td>
                   <td><Prod id={ol.product} /></td>
                   <td className="num">{qty(h)}</td><td className="num">{qty(t)}</td>
@@ -171,6 +220,10 @@ function MachineView({ m, plan }: { m: MachineLoad; plan: PlanResult }) {
                     : o.capacity_shift_days > 0 ? <Badge sev="warning">{plural(o.capacity_shift_days, "day")} later</Badge>
                     : Object.keys(o.step_resources ?? {}).length ? <Badge sev="info">on {Object.values(o.step_resources ?? {}).join(", ")}</Badge>
                     : <span className="faint">·</span>}</td>
+                  <td>{o && o.kind === "make" ? <Edits><input type="date" className="cell" aria-label={`Move ${ol.order} to`} min={today}
+                    defaultValue={o.start_date} key={o.start_date}
+                    onChange={(e) => { const v = e.target.value; if (v && v >= today && v !== o.start_date) setMove({ id: ol.order, to: v }); }} /></Edits>
+                    : <span className="faint small">—</span>}</td>
                 </tr>
               );
             })}</tbody>
@@ -227,8 +280,9 @@ function Levelling({ ds, plan, on, stale }: { ds: Dataset; plan: PlanResult; on:
         title={stale ? "Recalculate the supply plan first" : "Make the moved orders firm production orders at their levelled dates"}>Keep these dates</button></Edits>}
     </div>}>
       <p className="small" style={{ marginTop: 0 }}>{on
-        ? <>The supply plan keeps every limited machine and crew within its day. An order that doesn't fit goes to an alternative machine, else starts earlier
-          (never before today), else finishes later and is reported. {moved.length ? <>{plural(moved.length, "order")} moved in this plan.</> : "Nothing had to move."}</>
+        ? <>The supply plan keeps every limited machine, crew and tool within its day, and every purchase and shipment within its supplier's or lane's weekly
+          capacity. An order that doesn't fit goes to an alternative machine{ds.settings.capacity_overtime ? ", else into overtime" : ""}, else starts earlier
+          (never before today), else finishes later and is reported; a purchase over a supplier's week goes to another supplier, else an earlier week. {moved.length ? <>{plural(moved.length, "order")} moved in this plan.</> : "Nothing had to move."}</>
         : <>The supply plan now assumes unlimited capacity: each order goes where its dates say, even onto a full machine; the shop floor schedule then
           finds out. Planning within capacity moves orders to where they fit instead.</>}</p>
       <Edits><div className="row wrap small" style={{ gap: 16, marginBottom: 8 }}>
@@ -243,6 +297,9 @@ function Levelling({ ds, plan, on, stale }: { ds: Dataset; plan: PlanResult; on:
             defaultValue={ds.settings.capacity_max_early_days ?? ""} key={String(ds.settings.capacity_max_early_days ?? "")} placeholder="any"
             onBlur={(e) => { const v = e.target.value.trim(); if (v === "" || Number(v) >= 0) setting({ capacity_max_early_days: v === "" ? null : Math.round(Number(v)) }); }}
             onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} /> days ahead</label>
+        <label className="row" style={{ gap: 6 }} title="A run that doesn't fit the shift hours uses the machines' overtime, at its cost, before it is moved">
+          <input type="checkbox" aria-label="Levelling may plan overtime" checked={!!ds.settings.capacity_overtime}
+            onChange={(e) => setting({ capacity_overtime: e.target.checked })} /> use overtime before moving a run</label>
       </div></Edits>
       {err && <div className="banner error"><Badge sev="error">That didn't work</Badge>{err}</div>}
       {msg && <div className="banner ok"><span>{msg}</span><span className="spacer" /><button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}

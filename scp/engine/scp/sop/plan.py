@@ -214,6 +214,9 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
                         if op.labor_resource and op.labor_hours_per_unit > 0:
                             cell = res_load[op.labor_resource][t0]
                             cell[j] = cell.get(j, 0.0) + op.labor_hours_per_unit * enter[op.seq]
+                        for t in op.tools if op.run_hours_per_unit_avg > 0 else ():
+                            cell = res_load[t][t0]
+                            cell[j] = cell.get(j, 0.0) + op.run_hours_per_unit_avg * enter[op.seq]
                 flows.append((Flow(kind="make", source_id=ps.id, location=n[0], product=n[1], origin=None, qty=[],
                                    unit_cost=uc, lead_buckets=off), cols))
             elif opt.kind == "buy":

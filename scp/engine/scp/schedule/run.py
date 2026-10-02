@@ -96,7 +96,8 @@ def build_instance(ds: Dataset, plan: PlanResult | None = None) -> tuple[Instanc
                               group=grp, qty=q, setup=op.setup_hours, run=op.run_hours(q),
                               queue_workdays=op.queue_workdays, parallel=op.parallel_units,
                               labor_resource=op.labor_resource, labor_hours=op.labor_hours_per_unit * q,
-                              alternatives=alts, send_ahead=op.send_ahead_qty))
+                              alternatives=alts, send_ahead=op.send_ahead_qty,
+                              tools=[t for t in op.tools if t in ds.resource_by_id]))
         if lead_out:
             release = after_queue(cal, origin, release, lead_out)
         for op in ops:
@@ -151,8 +152,10 @@ def build_instance(ds: Dataset, plan: PlanResult | None = None) -> tuple[Instanc
     def receive(order: str, t: float, workdays: float) -> float:
         return after_queue(meta[order]["cal"], origin, t, workdays)
 
+    tool_units = {t: max(1, ds.resource_by_id[t].units) for j in jobs.values() for o in j.ops for t in o.tools}
     inst = Instance(resources, jobs, setup_rule(changeovers, cfg.minor_setup_factor), after,
-                    cfg.tardiness_weight, cfg.setup_weight, receive, cfg.earliness_weight, cfg.makespan_weight, frozen)
+                    cfg.tardiness_weight, cfg.setup_weight, receive, cfg.earliness_weight, cfg.makespan_weight, frozen,
+                    tool_units)
     return inst, meta, beyond, no_routing
 
 

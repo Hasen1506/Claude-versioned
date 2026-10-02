@@ -2997,6 +2997,10 @@ export interface components {
             ids?: string[] | null;
             /** Within Days */
             within_days?: number | null;
+            /** Starts */
+            starts?: {
+                [key: string]: string;
+            } | null;
         };
         /** FirmResponse */
         FirmResponse: {
@@ -4971,6 +4975,11 @@ export interface components {
              * @description Other machines that can do this step with the same times
              */
             alternatives?: string[];
+            /**
+             * Tools
+             * @description Tools the step holds while it runs (a mould, a die, a fixture): each is busy for the machine's hours, so two steps needing one tool never run at once
+             */
+            tools?: string[];
             /** @description Done outside by a supplier instead of on a resource */
             subcontract?: components["schemas"]["Subcontract"] | null;
         };
@@ -5407,6 +5416,13 @@ export interface components {
              */
             step_resources: {
                 [key: string]: string;
+            };
+            /**
+             * Overtime Hours
+             * @default {}
+             */
+            overtime_hours: {
+                [key: string]: number;
             };
             /**
              * Open Later
@@ -7674,7 +7690,7 @@ export interface components {
             default_calendar?: string | null;
             /**
              * Capacity Constrained
-             * @description Plan make orders within the capacity of finite machines and labour: an order that does not fit uses an alternative machine, else starts earlier, else finishes later (reported)
+             * @description Plan make orders within the capacity of finite machines and labour: an order that does not fit uses an alternative machine, else starts earlier, else finishes later (reported); purchases and transfers within the weekly capacity of their supplier or lane: what does not fit goes to another source, else an earlier week
              * @default false
              */
             capacity_constrained: boolean;
@@ -7696,6 +7712,12 @@ export interface components {
              * @default 1
              */
             default_lot_periods: number;
+            /**
+             * Capacity Overtime
+             * @description Levelling may plan overtime: an order that does not fit the shift hours, even on an alternative machine, uses the machines' overtime (at its cost) before it is moved
+             * @default false
+             */
+            capacity_overtime: boolean;
             /**
              * Capacity Max Early Days
              * @description Levelling: move an order at most this many days earlier to fit; empty = as far as today
