@@ -96,7 +96,9 @@ def build_instance(ds: Dataset, plan: PlanResult | None = None) -> tuple[Instanc
                               group=grp, qty=q, setup=op.setup_hours, run=op.run_hours(q),
                               queue_workdays=op.queue_workdays, parallel=op.parallel_units,
                               labor_resource=op.labor_resource, labor_hours=op.labor_hours_per_unit * q,
-                              alternatives=alts, send_ahead=op.send_ahead_qty))
+                              alternatives=alts, send_ahead=op.send_ahead_qty,
+                              run_per_unit=op.run_hours_per_unit, batch_qty=op.batch_qty,
+                              batch_hours=op.batch_hours, whole=ds.whole(product)))
         if lead_out:
             release = after_queue(cal, origin, release, lead_out)
         for op in ops:
