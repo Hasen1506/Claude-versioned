@@ -110,3 +110,8 @@ The goal remains open until these acceptance gates have evidence. Passing the ex
 ## 2 October capacity continuation
 
 BH073–BH074 cover unavailable machine calendars, viable machine/source fallback and safe scheduling refusal. Twenty-one engine cases test impossible production, independent purchases, constrained alternatives, parallel units, manual pins, firm assignments, send-ahead flow, optimizer fallback, capable-to-promise and temporary reopening. Exact-main baseline reproductions and production repair status are recorded in [audit.md](../../audit.md). These checks do not close the deployment or complete-workflow acceptance gates above.
+
+
+## 2 October production-cost continuation
+
+BH075–BH076 cover machine assignment costs and partially filled batch pricing. Fifteen regression cases and 48 independently calculated quantity/rate/scrap cases test order costs, machine workload, setup, labor, outside processing, conversion and the finance overlay. Publication status and exact-main evidence are recorded in [audit.md](../../audit.md). These calculations test internal application logic.
