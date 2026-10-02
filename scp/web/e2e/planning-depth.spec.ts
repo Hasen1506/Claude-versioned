@@ -33,7 +33,7 @@ test('levelling by hand: move a run with its date, drag another onto a day, both
   await page.goto('/#/capacity');
   await expect(page.locator('.stage-head .answer')).toContainText(/asked for more than it has on 1 day/);
   // the day squares open a day's orders without a mouse on the chart
-  await square(page,/11 Jan: 16 of 8 h/).click();
+  await square(page,/^[A-Z][a-z]{2} 11 Jan: 16 of 8 h/).click();
   await expect(page.getByRole('heading',{name:/Orders on Press 1, .*11 Jan/})).toBeVisible();
   const fields=page.getByLabel(/^Move .+ to$/);
   await expect(fields).toHaveCount(2);
@@ -42,17 +42,17 @@ test('levelling by hand: move a run with its date, drag another onto a day, both
   await fields.first().fill('2026-01-10');
   await page.getByRole('button',{name:/^Move to .*10 Jan/}).click();
   await expect(page.getByText(new RegExp(`${first} is now PRD-00001, a firm run starting .*10 Jan`))).toBeVisible({timeout:45000});
-  await expect(square(page,/11 Jan: 8 of 8 h/)).toBeVisible({timeout:45000});
-  await expect(square(page,/10 Jan: 8 of 8 h/)).toBeVisible();
-  // the other dragged onto two days earlier
-  await square(page,/11 Jan: 8 of 8 h/).click();
+  await expect(square(page,/^[A-Z][a-z]{2} 11 Jan: 8 of 8 h/)).toBeVisible({timeout:45000});
+  await expect(square(page,/^[A-Z][a-z]{2} 10 Jan: 8 of 8 h/)).toBeVisible();
+  // the other dragged onto two days earlier; 11 Jan stays open after the move, now with one run
+  await expect(square(page,/^[A-Z][a-z]{2} 11 Jan: 8 of 8 h/)).toHaveAttribute('aria-pressed','true');
   const row=page.getByRole('row').filter({has:page.getByLabel(/^Move .+ to$/)});
   await expect(row).toHaveCount(1);
-  await row.dragTo(square(page,/9 Jan: 0 of 8 h/));
+  await row.dragTo(square(page,/^[A-Z][a-z]{2} 9 Jan: 0 of 8 h/));
   await page.getByRole('button',{name:/^Move to .*9 Jan/}).click();
   await expect(page.getByText(/is now PRD-00002, a firm run starting .*9 Jan/)).toBeVisible({timeout:45000});
-  await expect(square(page,/9 Jan: 8 of 8 h/)).toBeVisible({timeout:45000});
-  await expect(square(page,/11 Jan: 0 of 8 h/)).toBeVisible();
+  await expect(square(page,/^[A-Z][a-z]{2} 9 Jan: 8 of 8 h/)).toBeVisible({timeout:45000});
+  await expect(square(page,/^[A-Z][a-z]{2} 11 Jan: 0 of 8 h/)).toBeVisible();
   await expect(page.locator('.stage-head .answer')).toContainText(/No machine or crew is asked for more hours than it has/);
   // overtime is a levelling choice
   const ot=page.getByLabel('Levelling may plan overtime');
