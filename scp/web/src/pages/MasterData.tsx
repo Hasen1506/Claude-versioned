@@ -114,7 +114,7 @@ function CollectionView({ ds, ckey, selected, issues }: { ds: Dataset; ckey: Col
     if (ckey === "demand" || ckey === "overrides") seed.date = start;
     if (ckey === "receipts") seed.due_date = start;
     if (ckey === "npi") seed.launch_date = start;
-    if (ckey === "events") { seed.start = start; seed.end = start; }
+    if (ckey === "events") { seed.start = start; seed.end = start; seed.lift = 0; }   // R21: a new event changes nothing until a lift is typed
     if (ckey === "history") {
       const d = new Date(start + "T00:00:00Z");
       d.setUTCDate(d.getUTCDate() - 7);

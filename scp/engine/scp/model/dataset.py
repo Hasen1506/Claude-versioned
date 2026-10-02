@@ -23,8 +23,8 @@ from .promise import Allocation, Confirmation, PromiseSettings
 from .schedule import Changeover, ScheduleSettings
 from .sop import SopSettings, StockTarget
 from .master import (
-    Calendar, CustomerPrice, Location, LocationProduct, LotSizing, Product, ProductionSource, PurchasingSource, Resource,
-    Settings, TransportLane,
+    Calendar, CustomerPrice, Location, LocationProduct, LotSizing, MrpGroup, Product, ProductionSource, PurchasingSource,
+    Resource, Settings, TransportLane,
 )
 from .transactional import DemandRecord, SalesHistory, ScheduledReceipt
 
@@ -37,6 +37,7 @@ class Dataset(Model):
     products: list[Product] = Field(default_factory=list)
     customer_prices: list[CustomerPrice] = Field(default_factory=list)
     location_products: list[LocationProduct] = Field(default_factory=list)
+    mrp_groups: list[MrpGroup] = Field(default_factory=list)
     resources: list[Resource] = Field(default_factory=list)
     production_sources: list[ProductionSource] = Field(default_factory=list)
     purchasing_sources: list[PurchasingSource] = Field(default_factory=list)
@@ -194,6 +195,9 @@ class Dataset(Model):
         if hit is not None:
             return hit
         lp = self.location_product_by_key.get(node) or LocationProduct(location=node[0], product=node[1])
+        grp = next((g for g in self.mrp_groups if g.id == lp.mrp_group), None) if lp.mrp_group else None
+        if grp is not None and (o := grp.overrides()):
+            lp = lp.model_copy(update=o)
         if lp.lot_sizing.policy is None:
             lp = lp.model_copy(update={"lot_sizing": self.lot_sizing(lp)})
         self.lp_memo[("p", node)] = lp

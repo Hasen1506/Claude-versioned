@@ -127,7 +127,7 @@ def roll_up(ds: Dataset, g: NetworkGraph) -> Valuation:
 def _run_cost(ds: Dataset, ps, value: dict[Node, float]) -> float:
     """Materials and conversion of a run, per good unit of the main product."""
     lot = typical_lot(ps)
-    mat = sum(value.get((ps.location, n.product), 0.0) * (n.per_unit + n.per_order / lot) for n in needs(ds, ps))
+    mat = sum(value.get((n.location or ps.location, n.product), 0.0) * (n.per_unit + n.per_order / lot) for n in needs(ds, ps))
     return mat + conversion_unit_cost(ds, ps.id)
 
 

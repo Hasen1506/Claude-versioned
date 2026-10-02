@@ -130,10 +130,10 @@ def _bom_parts(ds: Dataset, rc: ScheduledReceipt, made: float, first: bool) -> l
         return []
     day = rc.start_date or ds.settings.planning_start
     out = []
-    for c in needs(ds, ps, day):
+    for c in needs(ds, ps, day, qty=rc.qty):
         q = c.per_unit * made + (c.per_order if first else 0.0)
         if q > EPS:
-            out.append((rc.location, c.product, q))
+            out.append((c.location or rc.location, c.product, q))
     return out
 
 
@@ -145,7 +145,7 @@ def _production_parts(ds: Dataset, rc: ScheduledReceipt, total: float, made: flo
     parts = []
     ordered = _ordered(rc)
     ps = ds.production_source_by_id.get(rc.source or "")
-    bom = {n.product: n for n in needs(ds, ps, rc.start_date or ds.settings.planning_start)} if ps else {}
+    bom = {n.product: n for n in needs(ds, ps, rc.start_date or ds.settings.planning_start, qty=ordered)} if ps else {}
     for rv in (rc.original_reservations or rc.reservations):
         req = rv.required_qty if rv.required_qty is not None else rv.qty
         part = bom.get(rv.product)

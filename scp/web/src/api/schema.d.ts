@@ -1687,6 +1687,33 @@ export interface components {
             /** Valid Down */
             valid_down: number | null;
         };
+        /**
+         * BomAlternative
+         * @description Another bill of materials for the same production version, chosen by the order's size (≈ S/4 alternative BOM
+         *     with a lot-size range): a small run made from bought-in paste, a large one from the raw ingredients.
+         */
+        BomAlternative: {
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * From Qty
+             * @description Used for orders of at least this many good units
+             * @default 0
+             */
+            from_qty: number;
+            /**
+             * To Qty
+             * @description …and at most this many (empty = no limit)
+             */
+            to_qty?: number | null;
+            /** Components */
+            components?: components["schemas"]["BomItem"][];
+        };
         /** BomItem */
         BomItem: {
             /** Product */
@@ -2474,6 +2501,8 @@ export interface components {
             customer_prices?: components["schemas"]["CustomerPrice"][];
             /** Location Products */
             location_products?: components["schemas"]["LocationProduct"][];
+            /** Mrp Groups */
+            mrp_groups?: components["schemas"]["MrpGroup"][];
             /** Resources */
             resources?: components["schemas"]["Resource"][];
             /** Production Sources */
@@ -4172,6 +4201,32 @@ export interface components {
              * @description MEIO: the longest outbound service time this node may quote (empty = no limit, or the customer service time where it faces demand)
              */
             max_service_days?: number | null;
+            /**
+             * Mrp Group
+             * @description MRP group: its planning values replace this product's own where it sets them
+             */
+            mrp_group?: string | null;
+            /**
+             * Withdraw From
+             * @description Special procurement: withdrawal from another plant. Production here takes this part straight from that place's stock, with no transfer order
+             */
+            withdraw_from?: string | null;
+            /**
+             * Direct Production
+             * @description Special procurement: direct production. Made for each order that needs it, never taken from stock or lot-sized
+             * @default false
+             */
+            direct_production: boolean;
+            /**
+             * Discontinued On
+             * @description Discontinued from this day: no new supply is planned; what its stock does not cover goes to the follow-up
+             */
+            discontinued_on?: string | null;
+            /**
+             * Follow Up
+             * @description Follow-up product that takes over the requirements once this one is discontinued and its stock is used up
+             */
+            follow_up?: string | null;
         };
         /**
          * LocationType
@@ -4435,6 +4490,43 @@ export interface components {
          * @enum {string}
          */
         MovementType: "opening" | "receipt" | "issue" | "sale" | "transfer_out" | "scrap" | "adjustment" | "status";
+        /**
+         * MrpGroup
+         * @description Planning parameters shared by many products (≈ S/4 MRP group): a product at a place that names the group is
+         *     planned with the group's values wherever the group sets one, instead of its own.
+         */
+        MrpGroup: {
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** @description Planning strategy for the group (empty: each product's own) */
+            strategy?: components["schemas"]["Strategy"] | null;
+            /** @description Lot size for the group (empty: each product's own) */
+            lot_sizing?: components["schemas"]["LotSizing"] | null;
+            /**
+             * Safety Time Days
+             * @description Plan receipts this many days early
+             */
+            safety_time_days?: number | null;
+            /**
+             * Planning Time Fence Days
+             * @description No new proposals inside this fence
+             */
+            planning_time_fence_days?: number | null;
+            /** Consumption Backward Days */
+            consumption_backward_days?: number | null;
+            /** Consumption Forward Days */
+            consumption_forward_days?: number | null;
+            /**
+             * Mrp Controller
+             * @description Who plans the group's products
+             */
+            mrp_controller?: string | null;
+        };
         /**
          * MrpType
          * @enum {string}
@@ -5082,7 +5174,7 @@ export interface components {
              * Supply Kind
              * @enum {string}
              */
-            supply_kind: "on_hand" | "receipt" | "co_product" | "order";
+            supply_kind: "on_hand" | "receipt" | "co_product" | "order" | "follow_up";
             /** Supply Id */
             supply_id: string;
             /** Requirement Id */
@@ -5657,6 +5749,11 @@ export interface components {
             output_qty: number;
             /** Components */
             components?: components["schemas"]["BomItem"][];
+            /**
+             * Bom Alternatives
+             * @description Other bills of materials chosen by the order's size; an order no range fits uses the components above
+             */
+            bom_alternatives?: components["schemas"]["BomAlternative"][];
             /** Operations */
             operations?: components["schemas"]["Operation"][];
             /**

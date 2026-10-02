@@ -206,7 +206,7 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
                         if (ps.location, co) in node_set:
                             add(arrivals, (ps.location, co), t, j, per)
                     for need in needs(ds, ps, bk[t0].start):
-                        add(departs, (ps.location, need.product), t0, j, need.per_unit + need.per_order / lot)
+                        add(departs, (need.location or ps.location, need.product), t0, j, need.per_unit + need.per_order / lot)
                     for op in ps.operations:
                         if op.resource and op.run_hours_per_unit_avg > 0:
                             cell = res_load[op.resource][t0]

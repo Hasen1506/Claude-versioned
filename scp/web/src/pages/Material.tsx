@@ -17,9 +17,9 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "mrp2", label: "MRP 2 · Supply" }, { id: "mrp3", label: "MRP 3 · Strategy & buffers" },
   { id: "mrp4", label: "MRP 4 · Structure" },
 ];
-const MRP1 = ["mrp_type", "mrp_controller", "reorder_point", "lot_sizing", "max_stock", "planning_time_fence_days"];
-const MRP2 = ["procurement", "phantom", "on_hand", "gr_processing_days", "safety_time_days", "float_before_workdays",
-  "float_after_workdays", "unit_cost"];
+const MRP1 = ["mrp_group", "mrp_type", "mrp_controller", "reorder_point", "lot_sizing", "max_stock", "planning_time_fence_days"];
+const MRP2 = ["procurement", "phantom", "withdraw_from", "direct_production", "on_hand", "gr_processing_days", "safety_time_days",
+  "float_before_workdays", "float_after_workdays", "unit_cost", "discontinued_on", "follow_up"];
 const MRP3 = ["strategy", "consumption_backward_days", "consumption_forward_days", "safety_stock", "holding_rate",
   "ddmrp_buffer", "max_service_days"];
 const PROC: Record<string, string> = { any: "made or got from outside", make: "made here only", external: "bought or shipped in only" };
@@ -161,13 +161,24 @@ function MaterialPage({ ds, prod, loc, tab }: { ds: Dataset; prod: string; loc: 
     <div>
       <StageHeader title={`${nm.prod(prod)} at ${nm.loc(loc)}`}
         kicker={<>{p ? TYPE_LABEL[p.type] ?? p.type : "Unknown product"}{lp?.mrp_controller ? <> · planned by <b>{lp.mrp_controller}</b></> : null}
-          {lp?.phantom ? <> · phantom assembly</> : null}. <a href={href("material")}>All products at places</a></>}
+          {lp?.phantom ? <> · phantom assembly</> : null}{lp?.withdraw_from ? <> · taken from <b>{nm.loc(lp.withdraw_from)}</b>'s stock</> : null}
+          {lp?.direct_production ? <> · made for each order</> : null}
+          {lp?.discontinued_on ? <> · discontinued {lp.discontinued_on}{lp.follow_up ? <>, then <b>{nm.prod(lp.follow_up)}</b></> : null}</> : null}. <a href={href("material")}>All products at places</a></>}
         right={places.length > 1 ? <select className="select" style={{ width: "auto" }} value={loc} onChange={(e) => go("material", prod, e.target.value, tab)} aria-label="Place">
           {places.map((l) => <option key={l} value={l}>{nm.loc(l)}</option>)}</select> : undefined} />
       <div className="content stack">
         <Tabs tabs={TABS} value={tab} onChange={(t) => go("material", prod, loc, t)} />
         {tab === "stock" && <StockList ds={ds} plan={plan} prod={prod} loc={loc} />}
-        {tab === "mrp1" && <Panel title="How it is ordered">{form(MRP1)}</Panel>}
+        {tab === "mrp1" && <Panel title="How it is ordered">
+          {(() => {
+            const g = (ds.mrp_groups ?? []).find((x) => x.id === lp?.mrp_group);
+            const set = g ? Object.entries({ strategy: g.strategy, "lot size": g.lot_sizing?.policy, "safety time": g.safety_time_days,
+              fence: g.planning_time_fence_days, "consumption back": g.consumption_backward_days, "consumption forward": g.consumption_forward_days,
+              controller: g.mrp_controller }).filter(([, v]) => v !== null && v !== undefined) : [];
+            return g ? <div className="banner info" style={{ marginBottom: 10 }}>Planned with MRP group <b>{g.name || g.id}</b>'s values where it sets one,
+              instead of the values below: {set.length ? set.map(([k, v]) => `${k} ${v}`).join(", ") : "it sets none yet"}.</div> : null;
+          })()}
+          {form(MRP1)}</Panel>}
         {tab === "mrp2" && <>
           <Sources ds={ds} prod={prod} loc={loc} plan={plan} />
           <Panel title="Procurement, lead times and stock">{form(MRP2)}</Panel>

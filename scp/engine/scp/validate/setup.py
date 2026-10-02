@@ -110,8 +110,8 @@ def checklist(ds: Dataset, aside: list[SetAside] | None = None) -> list[SetupIte
         if ps.location not in lname:
             continue
         for n in needs(ds, ps):
-            if n.product in pname and not needed.get((ps.location, n.product)):
-                needed[(ps.location, n.product)] = f"a component of {pname.get(ps.product, ps.product)}"
+            if n.product in pname and not needed.get((n.location or ps.location, n.product)):
+                needed[(n.location or ps.location, n.product)] = f"a component of {pname.get(ps.product, ps.product)}"
     co_made = {(ps.location, co.product) for ps in ds.production_sources for co in ps.co_products}
     onhand = {(lp.location, lp.product): lp.on_hand for lp in ds.location_products}
     missing = 0

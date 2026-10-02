@@ -65,8 +65,8 @@ def measured_yields(ds: Dataset) -> list[YieldRow]:
         ps = _source(ds, oid, loc, prod, day)
         if ps is None:
             continue
-        lines = {c.product: c for c in ps.components if c.valid_on(day)}
-        for n in needs(ds, ps, day):
+        lines = {c.product: c for c in ps.bom_for(good) if c.valid_on(day)}
+        for n in needs(ds, ps, day, qty=good):
             c = lines.get(n.product)
             if c is None or n.via or n.product not in parts:
                 continue

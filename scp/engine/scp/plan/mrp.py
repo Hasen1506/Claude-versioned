@@ -33,7 +33,8 @@ from datetime import date, timedelta
 from typing import Any, TypeVar
 
 from ..model import (
-    Dataset, LocationProduct, LocationType, LotSizePolicy, MrpType, ReceiptKind, SafetyStockMethod, Strategy,
+    Dataset, LocationProduct, LocationType, LotSizePolicy, MrpType, ReceiptKind, SafetyStockMethod, SafetyStockPolicy,
+    Strategy,
 )
 from ..network import NetworkGraph, Node, SupplyOption, build_graph
 from ..time import Buckets
@@ -58,7 +59,7 @@ _PREFIX = {"make": "MO", "buy": "PR", "transfer": "TO"}
 
 @dataclass
 class _Supply:
-    kind: str       # on_hand | receipt | order
+    kind: str       # on_hand | receipt | co_product | order | follow_up
     id: str
     date: date      # netting date
     qty: float
@@ -281,9 +282,13 @@ class _Planner:
     def plan_node(self, node: Node) -> None:
         st = self.state[node]
         lp = st.lp
+        direct = lp.direct_production and not self.is_customer(node)
+        if direct:   # special procurement: made for each order that needs it, never from stock, lot-for-lot
+            lp = st.lp = lp.model_copy(update={"strategy": Strategy.MTO, "safety_stock": SafetyStockPolicy()})
         self.safety_stock(node, st)
         mto = lp.strategy is Strategy.MTO
-        onhand = 0.0 if self.is_customer(node) else lp.on_hand
+        onhand = 0.0 if self.is_customer(node) or direct else lp.on_hand
+        disc = lp.discontinued_on if lp.follow_up and lp.discontinued_on else None
         if onhand > 0:
             st.supplies.insert(0, _Supply("on_hand", f"OH:{node[0]}:{node[1]}", self.start, onhand, self.start))
             self._expiry(node, st, onhand)
@@ -330,6 +335,12 @@ class _Planner:
             threshold = max(ss, 0.0 if mto else target_at(st.targets, d))
             if lp.mrp_type is MrpType.REORDER_POINT and lp.reorder_point is not None:
                 threshold = max(threshold, lp.reorder_point)
+            if disc is not None and d >= disc:
+                threshold = 0.0           # discontinued: no buffer, no new supply; the follow-up takes over
+                if avail < -EPS:
+                    self._follow_up(node, st, d, -avail)
+                    avail = 0.0
+                continue
             if avail >= threshold - EPS:
                 continue
             # reschedule in (S/4 rescheduling check): a firm receipt that lands no later than a new order could
@@ -376,6 +387,23 @@ class _Planner:
                                             date=day, qty=q, kind="expiry", priority=9))
             self._exc("STOCK_EXPIRES", "warning", f"{q:,.1f} of batch {batch} expire unused on "
                       f"{(day - timedelta(days=1)).isoformat()}", node=node, when=day, qty=q)
+
+    def _follow_up(self, node: Node, st: _NodeState, d: date, qty: float) -> None:
+        """A discontinued product's requirement its stock no longer covers goes to its follow-up at the same place
+        (≈ S/4 discontinuation with a follow-up material): a requirement there, and a supply here that it covers."""
+        follow = st.lp.follow_up
+        fnode = (node[0], follow or "")
+        if fnode not in self.state:
+            self._exc("NO_VALID_SOURCE", "error", f"Discontinued; its follow-up {follow} is not planned here",
+                      node=node, when=d, qty=qty)
+            return
+        n = sum(1 for s in st.supplies if s.kind == "follow_up") + 1
+        rid = f"FU:{node[0]}:{node[1]}:{n}"
+        self._add_req(fnode, Requirement(id=rid, location=node[0], product=follow, date=d, qty=qty, kind="dependent"))
+        st.supplies.append(_Supply("follow_up", rid, d, qty, d))
+        if n == 1:
+            self._exc("FOLLOW_UP", "info", f"Discontinued from {st.lp.discontinued_on.isoformat()}: {follow} takes "
+                      f"over from {d.isoformat()}, once its stock is used up", node=node, when=d, qty=qty)
 
     def _lot_expires(self, node: Node, st: _NodeState, last: date, qty: float, what: str, shelf: int) -> None:
         """A lot the plan made or expects that the requirements will not use up before its last day: what is left is
@@ -603,14 +631,15 @@ class _Planner:
             ps = ds.production_source_by_id[opt.source_id]
             # the BOM as it stands on the day production starts (engineering change), phantoms passed through
             prod_start = sch.ops[0].start if sch.ops else sch.start_date
-            for n in needs(ds, ps, prod_start):
+            for n in needs(ds, ps, prod_start, qty=qty):
                 cq = n.qty(qty)
                 if cq <= EPS:
                     continue
                 cd = max(self.start, (sch.component_dates or {}).get(n.product, sch.start_date))
-                req = Requirement(id=f"R:{oid}:{n.product}", location=loc, product=n.product, date=cd, qty=cq,
-                                  kind="dependent", parent_order=oid)
-                self._add_dependent((loc, n.product), req, oid)
+                at = n.location or loc     # withdrawn from another plant: its stock, no transfer
+                req = Requirement(id=f"R:{oid}:{n.product}", location=at, product=n.product, date=cd, qty=cq,
+                                  kind="dependent" if at == loc else "transfer", parent_order=oid)
+                self._add_dependent((at, n.product), req, oid)
             for co, cq in co_output(ps, qty):
                 cst = self.state.get((loc, co))
                 if cst is not None and cq > EPS:
@@ -823,7 +852,8 @@ class _Planner:
 
     # ------------------------------------------------------------------ pegging
     def _peg(self, node: Node, st: _NodeState) -> None:
-        supplies = sorted(st.supplies, key=lambda s: (s.date, {"on_hand": 0, "receipt": 1, "co_product": 2, "order": 3}[s.kind],
+        supplies = sorted(st.supplies, key=lambda s: (s.date, {"on_hand": 0, "receipt": 1, "co_product": 2, "follow_up": 3,
+                                                               "order": 3}[s.kind],
                                                       s.id))
         reqs = sorted(st.reqs, key=lambda r: (r.date, r.priority, r.id))
         left = [s.qty for s in supplies]

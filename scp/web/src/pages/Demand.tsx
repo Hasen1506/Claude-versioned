@@ -2,7 +2,7 @@
 // segmentation, events, NPI, consensus overrides, and release as forecast demand for supply planning.
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { Dataset, ForecastModels, ForecastPoint, ForecastResult, ForecastSeries } from "../api/types";
+import type { Dataset, DemandEvent, ForecastModels, ForecastPoint, ForecastResult, ForecastSeries } from "../api/types";
 import { BucketChart, type Mark, type Span } from "../components/charts";
 import { DemandPlan } from "./DemandPlan";
 import {
@@ -13,7 +13,7 @@ import { day, pct, plural, qty } from "../lib/format";
 import { Loc, namesOf, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
-import { isStale, store, useStore } from "../state/store";
+import { isStale, store, useReadOnly, useStore } from "../state/store";
 
 type View = "plan" | "overview" | "series" | "consensus" | "settings";
 
@@ -338,6 +338,7 @@ function SeriesDetail({ s, fc }: { s: ForecastSeries; fc: ForecastResult }) {
           band={{ name: `P${lo}–P${100 - lo} range`, color: "var(--series-1)", lower: pad(fut.map((p) => p.lower), H, 0), upper: pad(fut.map((p) => p.upper), H, 0) }} />
         {s.notes.length > 0 && <div className="banner warning" style={{ marginTop: 10, marginBottom: 0 }}>{s.notes.join(" ")}</div>}
       </Panel>
+      <SeriesEvents s={s} />
       <div className="grid-2">
         <Panel flush title="Model leaderboard">
           <div className="table-wrap">
@@ -504,5 +505,81 @@ function ForecastSettingsPanel({ ds }: { ds: Dataset }) {
       <Reading formula="Each candidate forecasts H periods from K rolling origins spread over the last season. Errors are pooled; the lowest selection metric wins; exact ties go to the simpler model."
         soWhat="Intermittent series only compete among Croston/SBA/TSB and the baselines; smooth series never use the intermittent models." />
     </div>
+  );
+}
+
+const EVENT_KINDS: [DemandEvent["kind"], string][] = [["promo", "Promotion"], ["price_change", "Price change"], ["launch", "Launch"],
+  ["competitor", "Competitor"], ["store_opening", "Store opening"], ["disruption", "Disruption"], ["other", "Other"]];
+
+const plusDays = (iso: string, n: number) => {
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+/** The demand events that touch one series, where its forecast is looked at (R21): added for this product at this place,
+ * starting without effect until a lift is typed (or the lift measured on past events of the kind is taken). */
+function SeriesEvents({ s }: { s: ForecastSeries }) {
+  const ds = useStore((x) => x.dataset)!;
+  const ro = useReadOnly();
+  const nm = useNames();
+  const all = ds.events ?? [];
+  const here = all.map((e, i) => ({ e, i })).filter(({ e }) => (!e.products?.length || e.products.includes(s.product))
+    && (!e.locations?.length || e.locations.includes(s.location)));
+  const edit = (i: number, f: (e: DemandEvent) => void) => store.update((d) => { f(d.events![i]); });
+  const add = () => store.update((d) => {
+    const taken = new Set((d.events ?? []).map((e) => e.id));
+    let n = (d.events?.length ?? 0) + 1;
+    while (taken.has(`EV-${n}`)) n++;
+    const start = d.settings.planning_start;
+    d.events = [...(d.events ?? []), { id: `EV-${n}`, name: "", kind: "promo", products: [s.product], locations: [s.location],
+      start, end: plusDays(start, 6), lift: 0 } as DemandEvent];
+  });
+  const scope = (e: DemandEvent) => !e.products?.length && !e.locations?.length ? "every product, everywhere"
+    : !e.products?.length ? `every product at ${e.locations!.map((l) => nm.loc(l)).join(", ")}`
+    : !e.locations?.length ? `${e.products.map((p) => nm.prod(p)).join(", ")} everywhere`
+    : e.products.length === 1 && e.locations.length === 1 ? "this series" : `${plural(e.products.length, "product")} at ${plural(e.locations.length, "place")}`;
+  return (
+    <Panel flush title={`Demand events for ${nm.prod(s.product)} at ${nm.loc(s.location)} (${here.length})`}
+      actions={!ro && <button className="btn sm" onClick={add}>+ Event for this series</button>}>
+      {here.length === 0 ? <div className="faint small" style={{ padding: 12 }}>
+        No promotion, price change or launch touches this series. Past events are taken out of the history before the forecast is
+        made and their lift measured; a future one lifts the forecast while it runs.</div> : (
+        <div className="table-wrap">
+          <table className="t">
+            <thead><tr><th>Event</th><th>Kind</th><th>From</th><th>To</th><th className="num">Lift</th><th>Applies to</th><th /></tr></thead>
+            <tbody>
+              {here.map(({ e, i }) => {
+                const measured = s.lifts[e.kind ?? "promo"];
+                return (
+                  <tr key={e.id}>
+                    <td><input className="input" aria-label="Event name" value={e.name ?? ""} placeholder={e.id} disabled={ro}
+                      onChange={(x) => edit(i, (v) => { v.name = x.target.value; })} /></td>
+                    <td><select className="input" aria-label="Kind" value={e.kind ?? "promo"} disabled={ro}
+                      onChange={(x) => edit(i, (v) => { v.kind = x.target.value as DemandEvent["kind"]; })}>
+                      {EVENT_KINDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></td>
+                    <td><input className="input" type="date" aria-label="From" value={e.start} disabled={ro}
+                      onChange={(x) => x.target.value && edit(i, (v) => { v.start = x.target.value; if (v.end < v.start) v.end = v.start; })} /></td>
+                    <td><input className="input" type="date" aria-label="To" value={e.end} min={e.start} disabled={ro}
+                      onChange={(x) => x.target.value && edit(i, (v) => { v.end = x.target.value < v.start ? v.start : x.target.value; })} /></td>
+                    <td className="num"><input className="input num" style={{ width: 80 }} type="number" step={5} aria-label="Lift %" disabled={ro}
+                      value={e.lift === null || e.lift === undefined ? "" : Math.round(e.lift * 1000) / 10}
+                      placeholder={measured !== undefined ? `${Math.round(measured * 100)}` : "measured"}
+                      onChange={(x) => edit(i, (v) => { v.lift = x.target.value === "" ? null : Number(x.target.value) / 100; })} /> %
+                      {measured !== undefined && Math.abs((e.lift ?? NaN) - measured) > 0.005 && !ro && (
+                        <div><button className="btn sm ghost" onClick={() => edit(i, (v) => { v.lift = Math.round(measured * 1000) / 1000; })}
+                          title={`The lift measured on past ${e.kind} events in this series' history`}>use measured {pct(measured, 0)}</button></div>)}
+                      {(e.lift === null || e.lift === undefined) && <div className="faint small">{measured !== undefined ? `measured ${pct(measured, 0)}` : "none measured: no effect"}</div>}</td>
+                    <td className="small">{scope(e)}</td>
+                    <td>{!ro && <button className="btn sm" aria-label={`Remove ${e.id}`} onClick={() => store.update((d) => { d.events = d.events!.filter((_, k) => k !== i); })}>Remove</button>}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>)}
+      <div className="small muted" style={{ padding: "6px 12px 12px" }}>A new event starts at 0 %: it changes nothing until a lift is typed.
+        Empty takes the lift measured on past events of the kind. Run the forecast again to see it.</div>
+    </Panel>
   );
 }

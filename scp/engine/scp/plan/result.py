@@ -11,7 +11,7 @@ from ..validate import Issue
 
 OrderKind = Literal["make", "buy", "transfer"]
 ReqKind = Literal["forecast", "sales_order", "dependent", "transfer", "expiry"]
-SupplyKind = Literal["on_hand", "receipt", "co_product", "order"]
+SupplyKind = Literal["on_hand", "receipt", "co_product", "order", "follow_up"]
 
 
 class Peg(Out):

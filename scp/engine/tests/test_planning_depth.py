@@ -139,3 +139,88 @@ def test_a_short_receipt_says_when_the_rest_comes_for_an_order_it_leaves_late():
     assert (s.order, s.available, s.starts, s.complete_on) == ("MO-2", 25, date(2026, 1, 8), date(2026, 1, 15))
     assert "cannot start in full on time: MO-2 (the rest on 2026-01-15)" in rep.message
     assert "can no longer run in full" not in rep.message
+
+
+# ---- MRP groups, special procurement, discontinuation, alternative BOMs ---------------------------------
+def test_an_mrp_group_plans_its_products_with_its_values():
+    d = base(horizon=28)
+    d["demand"] = [demand("P", "A", "2026-01-12", 25)]
+    d["mrp_groups"] = [{"id": "FRESH", "lot_sizing": {"policy": "FIXED", "fixed_qty": 40}, "safety_time_days": 2}]
+    lp(d, "P", "A")["mrp_group"] = "FRESH"
+    plan = run_mrp(ds(d))
+    made = [o for o in plan.orders if o.product == "A"]
+    assert [o.qty for o in made] == [40]                       # the group's fixed lot, not lot-for-lot
+    assert made[0].need_date == date(2026, 1, 10)               # two days of safety time
+    lp(d, "P", "A")["mrp_group"] = "NONE"
+    from scp.validate import validate
+    assert any(i.code == "REF_UNKNOWN" and i.field == "mrp_group" for i in validate(ds(d)))
+
+
+def test_a_part_withdrawn_from_another_plant_is_taken_from_its_stock_without_a_transfer():
+    d = base(horizon=28)
+    d["locations"].append({"id": "Q", "type": "plant"})
+    lp(d, "P", "C")["withdraw_from"] = "Q"
+    lp(d, "Q", "C").update(on_hand=100)
+    d["purchasing_sources"].append({"id": "PIR-CQ", "supplier": "S", "product": "C", "location": "Q", "price": 5,
+                                    "lead_time_days": 1})
+    d["demand"] = [demand("P", "A", "2026-01-12", 25)]
+    plan = run_mrp(ds(d))
+    reqs = [r for r in plan.requirements if r.product == "C"]
+    assert reqs and all(r.location == "Q" for r in reqs)          # drawn at Q
+    assert not [o for o in plan.orders if o.product == "C"]       # Q's stock covers it: nothing bought or moved
+    # firming reserves the part at Q, and confirming the production issues it there
+    from scp.actuals import firm_orders, post
+    x, rep = firm_orders(ds(d), plan, [o.id for o in plan.orders if o.product == "A"])
+    prd = next(r for r in x.receipts if r.kind.value == "production")
+    assert {(rv.location, rv.product) for rv in prd.reservations} >= {("Q", "C")}
+    x, _ = post(x, "receive", order=prd.id, on=date(2026, 1, 9))
+    assert any(m.location == "Q" and m.product == "C" and m.type.value == "issue" for m in x.movements)
+
+
+def test_direct_production_makes_for_each_order_and_never_from_stock():
+    d = base(horizon=28)
+    d["products"].append({"id": "S", "type": "SFG"})
+    d["production_sources"][0]["components"].append({"product": "S", "qty": 1})
+    d["production_sources"].append({"id": "PV-S", "location": "P", "product": "S", "fixed_lead_time_workdays": 1,
+                                    "components": [{"product": "C", "qty": 1}]})
+    lp(d, "P", "S").update(on_hand=500, direct_production=True, lot_sizing={"policy": "FIXED", "fixed_qty": 100})
+    d["demand"] = [demand("P", "A", "2026-01-12", 25), demand("P", "A", "2026-01-19", 15)]
+    plan = run_mrp(ds(d))
+    made = sorted(o.qty for o in plan.orders if o.product == "S")
+    a = sum(o.qty for o in plan.orders if o.product == "A")
+    assert sum(made) == pytest.approx(a) and 100 not in made       # exactly what A's orders take, stock untouched
+
+
+def test_a_discontinued_part_hands_its_requirements_to_the_follow_up_once_its_stock_is_used():
+    d = base(horizon=42)
+    d["products"].append({"id": "B2", "type": "RM"})
+    d["purchasing_sources"].append({"id": "PIR-B2", "supplier": "S", "product": "B2", "location": "P", "price": 11,
+                                    "lead_time_days": 3})
+    lp(d, "P", "B").update(on_hand=30, discontinued_on="2026-01-05", follow_up="B2", lot_sizing={})
+    lp(d, "P", "A")["on_hand"] = 0
+    lp(d, "P", "B2")
+    d["demand"] = [demand("P", "A", f"2026-01-{12 + 7 * k:02d}", 10) for k in range(3)]   # A takes 2 B each
+    plan = run_mrp(ds(d))
+    assert not [o for o in plan.orders if o.product == "B"]          # nothing new of the old part
+    b2 = [r for r in plan.requirements if r.product == "B2"]
+    assert sum(r.qty for r in b2) == pytest.approx(60 - 30)           # B's 30 in stock are used first
+    assert sum(o.qty for o in plan.orders if o.product == "B2") >= 30 - 1e-6
+    assert any(e.code == "FOLLOW_UP" and e.product == "B" for e in plan.exceptions)
+    node = next(n for n in plan.nodes if (n.location, n.product) == ("P", "B"))
+    assert all(bk.shortage <= 1e-6 for bk in node.buckets)
+
+
+def test_an_alternative_bom_is_chosen_by_the_order_size():
+    d = base(horizon=28)
+    d["products"].append({"id": "PASTE", "type": "RM"})
+    d["purchasing_sources"].append({"id": "PIR-PASTE", "supplier": "S", "product": "PASTE", "location": "P",
+                                    "price": 30, "lead_time_days": 1})
+    lp(d, "P", "A")["on_hand"] = 0
+    d["production_sources"][0]["bom_alternatives"] = [
+        {"id": "SMALL", "to_qty": 20, "components": [{"product": "PASTE", "qty": 1}]}]
+    d["demand"] = [demand("P", "A", "2026-01-12", 15), demand("P", "A", "2026-01-26", 50)]
+    plan = run_mrp(ds(d))
+    small = next(o for o in plan.orders if o.product == "A" and o.qty <= 20)
+    big = next(o for o in plan.orders if o.product == "A" and o.qty > 20)
+    parts = lambda o: {r.product for r in plan.requirements if r.parent_order == o.id}   # noqa: E731
+    assert parts(small) == {"PASTE"} and parts(big) == {"B", "C"}

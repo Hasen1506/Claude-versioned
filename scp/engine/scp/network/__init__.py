@@ -58,7 +58,7 @@ def supply_options(ds: Dataset, node: Node) -> list[SupplyOption]:
     makes, buys = ds.sources_at.get(node, ((), ()))
     for ps in makes:
         if proc is not ProcurementType.EXTERNAL:
-            ups = tuple((loc, n.product) for n in needs(ds, ps))
+            ups = tuple((n.location or loc, n.product) for n in needs(ds, ps))
             out.append(SupplyOption("make", ps.id, node, ups, ps.priority, ps.quota))
     if proc is ProcurementType.MAKE:
         out.sort(key=lambda o: (o.priority, _KIND_RANK[o.kind], o.source_id))
@@ -114,11 +114,19 @@ def _build_graph(ds: Dataset) -> NetworkGraph:
     suppliers_of: dict[Node, set[Node]] = defaultdict(set)
     queue: deque[Node] = deque(seed_nodes(ds))
     known: dict[Node, None] = dict.fromkeys(queue)
-    after: list[tuple[Node, Node]] = []   # (main, co-product): the co-product is planned after its main product
+    after: list[tuple[Node, Node]] = []   # (first, then): a co-product after its main product, a follow-up after
+    #                                       the discontinued product
     while queue:
         node = queue.popleft()
         opts = supply_options(ds, node)
         options[node] = opts
+        lp = ds.location_product_by_key.get(node)
+        if lp is not None and lp.follow_up and lp.discontinued_on and lp.follow_up in ds.product_by_id:
+            fn = (node[0], lp.follow_up)       # planned after the product it replaces, which hands it requirements
+            after.append((node, fn))
+            if fn not in known:
+                known[fn] = None
+                queue.append(fn)
         for o in opts:
             if o.kind == "buy":
                 continue  # supplier nodes are leaves, not planned

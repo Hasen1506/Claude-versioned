@@ -109,8 +109,8 @@ def apply_result(ds: Dataset, plan, sch: ScheduleResult, ids: list[str] | None =
                 entries = [(rv.location, rv.product, rv.required_qty if rv.required_qty is not None else rv.qty)
                            for rv in old_targets]
             else:
-                entries = [(rc.location, n.product, round(n.qty(rc.ordered_qty if rc.ordered_qty is not None else rc.qty), 6))
-                           for n in needs(ds, ps, start)]
+                entries = [(n.location or rc.location, n.product, round(n.qty(rc.ordered_qty if rc.ordered_qty is not None else rc.qty), 6))
+                           for n in needs(ds, ps, start, qty=rc.qty)]
             for location, product, required in entries:
                 targets.append(Reservation(location=location, product=product, date=used_on(product), qty=required))
                 remaining = max(0.0, required - issued[(location, product)])
@@ -139,8 +139,8 @@ def apply_result(ds: Dataset, plan, sch: ScheduleResult, ids: list[str] | None =
             rvs = [Reservation(location=r.location, product=r.product, date=used_on(r.product), qty=r.qty)
                    for r in reqs.get(o.id, [])]
         else:
-            rvs = [Reservation(location=o.location, product=n.product, date=used_on(n.product), qty=round(n.qty(o.qty), 6))
-                   for n in needs(ds, ps, start)]
+            rvs = [Reservation(location=n.location or o.location, product=n.product, date=used_on(n.product), qty=round(n.qty(o.qty), 6))
+                   for n in needs(ds, ps, start, qty=o.qty)]
         receipts.append(ScheduledReceipt(id=rid, kind=ReceiptKind.PRODUCTION, location=o.location, product=o.product,
                                          qty=o.qty, due_date=due, start_date=start, source=o.source_id,
                                          reservations=rvs, step_resources=steps, scheduled=True))

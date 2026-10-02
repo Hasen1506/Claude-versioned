@@ -7,7 +7,7 @@ type Obj = Record<string, unknown>;
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
   | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides"
-  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches";
+  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches" | "mrp_groups";
 
 export interface Column {
   label: string;
@@ -139,6 +139,17 @@ export const COLLECTIONS: CollectionDef[] = [
       { label: "Lot", get: (o) => s((o.lot_sizing as Obj | undefined)?.policy ?? "company default") },
       { label: "Safety stock", get: (o) => s((o.safety_stock as Obj | undefined)?.method ?? "none") },
       { label: "On hand", get: (o) => (o.on_hand as number) ?? 0, num: true },
+    ],
+  },
+  {
+    key: "mrp_groups", label: "MRP groups", singular: "MRP group", defName: "MrpGroup", issueType: "mrp_group",
+    group: "Planning data", keyOf: (o) => s(o.id),
+    blurb: "Planning values shared by many products: a planning policy that names the group is planned with the group's strategy, lot size, safety time, fence and consumption windows wherever the group sets one.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Name", get: (o) => s(o.name) },
+      { label: "Strategy", get: (o) => s(o.strategy ?? "each product's own") },
+      { label: "Lot", get: (o) => s((o.lot_sizing as Obj | undefined)?.policy ?? "each product's own") },
+      { label: "Products", get: (o, ds) => (ds.location_products ?? []).filter((lp) => lp.mrp_group === o.id).length, num: true },
     ],
   },
   {

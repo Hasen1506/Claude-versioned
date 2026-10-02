@@ -364,8 +364,8 @@ class Promiser:
         steps: list[CtpStep] = []
         actions: list[Action] = []
         start = 0
-        for need in needs(ds, ps, self.origin):
-            cnode = (loc, need.product)
+        for need in needs(ds, ps, self.origin, qty=qty):
+            cnode = (need.location or loc, need.product)
             cq = need.qty(qty)
             s = self.series_for(cnode)
             k = s.first_firm(cq, 0)

@@ -135,7 +135,7 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         "resource": ds.resources, "production_source": ds.production_sources,
         "purchasing_source": ds.purchasing_sources, "lane": ds.lanes, "receipt": ds.receipts,
         "movement": ds.movements, "capacity_option": ds.finance.capacity_options,
-        "purchase_order": ds.purchase_orders, "inventory_doc": ds.inventory_docs,
+        "purchase_order": ds.purchase_orders, "inventory_doc": ds.inventory_docs, "mrp_group": ds.mrp_groups,
     }
     for typ, items in groups.items():
         for oid, n in Counter(i.id for i in items).items():
@@ -168,7 +168,8 @@ def _ref(ds: Dataset, c: _Collector, kind: str, value: str | None, typ: str, oid
     if value is None:
         return True
     index = {"location": ds.location_by_id, "product": ds.product_by_id,
-             "calendar": ds.calendar_by_id, "resource": ds.resource_by_id}[kind]
+             "calendar": ds.calendar_by_id, "resource": ds.resource_by_id,
+             "mrp_group": {g.id: g for g in ds.mrp_groups}}[kind]
     if value not in index:
         c.add("REF_UNKNOWN", typ, oid, f"{field} refers to unknown {kind} '{value}'",
               f"Create {kind} '{value}' or fix the reference", field)
@@ -198,6 +199,12 @@ def _references(ds: Dataset, c: _Collector) -> None:
                   "Model consignment stock at a DC instead")
         _loc_type(ds, c, lp.location, STOCKING_LOCATION_TYPES | {LocationType.CUSTOMER},
                   "location_product", oid, "location", "suppliers are not planned")
+        _ref(ds, c, "mrp_group", lp.mrp_group, "location_product", oid, "mrp_group")
+        _ref(ds, c, "product", lp.follow_up, "location_product", oid, "follow_up")
+        if _ref(ds, c, "location", lp.withdraw_from, "location_product", oid, "withdraw_from"):
+            if lp.withdraw_from:
+                _loc_type(ds, c, lp.withdraw_from, STOCKING_LOCATION_TYPES, "location_product", oid, "withdraw_from",
+                          "parts are withdrawn from a place that keeps stock")
     for r in ds.resources:
         if _ref(ds, c, "location", r.location, "resource", r.id, "location"):
             _loc_type(ds, c, r.location, PRODUCTION_LOCATION_TYPES, "resource", r.id, "location",
@@ -210,6 +217,10 @@ def _references(ds: Dataset, c: _Collector) -> None:
         _ref(ds, c, "product", ps.product, "production_source", ps.id, "product")
         for comp in ps.components:
             _ref(ds, c, "product", comp.product, "production_source", ps.id, "components.product")
+        for alt in ps.bom_alternatives:
+            for comp in alt.components:
+                _ref(ds, c, "product", comp.product, "production_source", ps.id,
+                     f"bom_alternatives[{alt.id}].components.product")
         for co in ps.co_products:
             _ref(ds, c, "product", co.product, "production_source", ps.id, "co_products.product")
         for op in ps.operations:
