@@ -77,6 +77,10 @@ Early pilot acceptance: a planner brings their own anonymized data, reaches the 
 
 ## Ordered next work
 
+### 2 October continuation evidence
+
+Resource-calendar equivalence and independently calculated overlap timings expose BH071–BH072: resource holidays/weekends changed make dates only when named shifts were also entered, and send-ahead handoffs discounted setup or bypassed machine closures. Fourteen engine cases cover forward/backward dates, MRP/shop-floor agreement, first-batch setup and final-batch availability. Production lead-time dating now uses the resource calendar and actual partial-batch work. Publication and full-suite status are recorded in [audit.md](../../audit.md); this advances constrained-calendar correctness without claiming the remaining deployed recovery or beginner workflow gates.
+
 ### 1 October continuation evidence
 
 The live-data/recovery pass reproduced silent loss of unsaved version edits, history/manual-merge responses replacing a newer import, same-company reload refresh replacing a selected version, recovery undoing sign-out, and an automatic merge continuing into a newly opened version. BH067–BH069 enforce context ownership across these transitions; BH065 also gains guarded blank-company success/failure fallback. BH070 repairs unlocked account/role reads after concurrent requests exposed HTTP 500s and controlled transactions reproduced dirty reads/false missing-company results. Seventeen persistent browser checks and two engine regressions cover the repairs; publication/full CI status is recorded in [audit.md](../../audit.md). Deployment account recovery, persistent backup restoration and broader workload gates remain separate open requirements.
@@ -101,4 +105,3 @@ An independent 20-unit manufactured-product fixture reconciles B40/C20, 12 machi
 6. Measure realistic workloads and concurrent users against declared latency/memory budgets; verify backup restore on deployment. Then run pilots and revise the market hypothesis using observed adoption and outcomes.
 
 The goal remains open until these acceptance gates have evidence. Passing the existing suite or finding three more defects does not make the audit exhaustive.
-
