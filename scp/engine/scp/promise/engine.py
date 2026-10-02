@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-
-from ..time.capacity import NoWorkingTime
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+
+from ..time.capacity import NoWorkingTime
 
 from ..model import (
     Dataset, DemandKind, DemandRecord, LocationType,

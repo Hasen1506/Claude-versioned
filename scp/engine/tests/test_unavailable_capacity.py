@@ -176,3 +176,19 @@ def test_ctp_does_not_confirm_new_production_without_working_time(finite):
     result = run_promise(ds(d))
     assert result.ok
     assert result.orders[0].unconfirmed == 16 and not result.orders[0].lines
+
+
+def test_overlap_last_batch_uses_the_selected_machine_efficiency():
+    d = closed_company(firm=True)
+    d["resources"][0].update(capacity_changes=[], efficiency=0.25, hours_per_shift=16)
+    d["resources"] += [{"id": "FAST", "location": "P", "efficiency": 1, "hours_per_shift": 16},
+                        {"id": "PRE", "location": "P", "efficiency": 1, "hours_per_shift": 8}]
+    d["receipts"][0]["qty"] = 32
+    d["production_sources"][0]["operations"] = [
+        {"seq": 10, "resource": "PRE", "run_hours_per_unit": 0.5, "send_ahead_qty": 16},
+        {"seq": 20, "resource": "M1", "alternatives": ["FAST"], "run_hours_per_unit": 0.0625}]
+    result = run_schedule(ds(d), {"PRE": ["FIRM:10"], "M1": ["FIRM:20"]})
+    assert result.ok and not result.violations
+    assert next(o for o in result.ops if o.seq == 10).end == pytest.approx(38)
+    # Last 16 units take one productive hour = four clock hours on pinned M1.
+    assert next(o for o in result.ops if o.seq == 20).end >= 42

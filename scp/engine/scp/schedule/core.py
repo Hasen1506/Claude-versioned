@@ -165,7 +165,8 @@ class Decoded:
     objective: float = 0.0
 
 
-def handoff(inst: Instance, o: OpSpec, bl: list[Block], nxt: OpSpec | None) -> tuple[float, float]:
+def handoff(inst: Instance, o: OpSpec, bl: list[Block], nxt: OpSpec | None,
+            next_resource: str | None = None) -> tuple[float, float]:
     """When the next step of the order may start, and the earliest it may end.
 
     Without overlap the next step starts after this one ends (and its queue). With a send-ahead quantity it may
@@ -181,8 +182,9 @@ def handoff(inst: Instance, o: OpSpec, bl: list[Block], nxt: OpSpec | None) -> t
     _, done = res.at(first.unit if res.finite else -1).advance(first.run_start, first.run_work * frac)
     ready = min(after_end, inst.after(o, done))
     tail = nxt.run * min(1.0, o.send_ahead / nxt.qty) if nxt.qty > 0 else 0.0
+    machines = [next_resource] if next_resource is not None else [nxt.resource, *nxt.alternatives]
     must = min((inst.resources[rid].clock.advance(after_end, tail)[1]
-                for rid in [nxt.resource, *nxt.alternatives] if rid in inst.resources), default=INF)
+                for rid in machines if rid in inst.resources), default=INF)
     if must == INF:
         raise NoWorkingTime(f"{nxt.resource} and its alternatives have no working time left for {nxt.key}")
     return ready, must
@@ -293,12 +295,15 @@ def decode(inst: Instance, seqs: dict[str, list[str]], hold: dict[str, float] | 
         for rank, rid in enumerate(options):
             start = t0
             try:
+                candidate_must = must
+                if p is not None and ops[p].send_ahead:
+                    _, candidate_must = handoff(inst, ops[p], [b for b in blocks if b.key == p], o, rid)
                 plan = split(rid, start)
                 for _ in range(6):   # wait for the predecessor's last send-ahead batch
                     end = max(c[0] for c in plan)
-                    if end >= must - 1e-6:
+                    if end >= candidate_must - 1e-6:
                         break
-                    start += must - end
+                    start += candidate_must - end
                     plan = split(rid, start)
             except NoWorkingTime:
                 continue
@@ -525,7 +530,9 @@ def check(inst: Instance, d: Decoded) -> list[str]:
                 v.append(f"{o.key}: runs on {bl[0].resource}, which is not its resource or an alternative")
             nxt = j.ops[i + 1] if i + 1 < len(j.ops) else None
             if bl:
-                prev_ready, prev_must = handoff(inst, o, bl, nxt)
+                next_blocks = subs.get(nxt.key, []) if nxt is not None else []
+                next_resource = next_blocks[0].resource if next_blocks else None
+                prev_ready, prev_must = handoff(inst, o, bl, nxt, next_resource)
             else:
                 prev_ready, prev_must = inst.after(o, prev_ready), 0.0
         if j.ops and abs(d.completion.get(j.id, -1) - prev_ready) > 1e-6:
