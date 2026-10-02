@@ -284,10 +284,20 @@ def with_short(ds: Dataset, rep: ActionReport, parts: set[tuple[str, str]], on: 
     short = short_orders(ds, parts, on)
     if not short:
         return rep
-    names = ", ".join(s.order for s in short[:4]) + ("…" if len(short) > 4 else "")
-    return rep.model_copy(update={"short_orders": short, "message": rep.message + (
-        f" {len(short)} firm order{'s' if len(short) != 1 else ''} can no longer run in full: {names}; shorten "
-        f"{'them' if len(short) != 1 else 'it'} to what the parts cover, or find the rest.")})
+    def say(xs: list, what: str) -> str:
+        names = ", ".join(s.order + (f" (the rest on {s.complete_on.isoformat()})" if s.complete_on else "")
+                          for s in xs[:4]) + ("…" if len(xs) > 4 else "")
+        return f" {len(xs)} firm order{'s' if len(xs) != 1 else ''} {what}: {names}"
+    late = [s for s in short if s.complete_on]
+    short_ = [s for s in short if not s.complete_on]
+    msg = rep.message
+    if short_:
+        msg += (say(short_, "can no longer run in full") + f"; shorten {'them' if len(short_) != 1 else 'it'} to what "
+                "the parts cover, or find the rest.")
+    if late:
+        msg += (say(late, "cannot start in full on time") + f"; move {'them' if len(late) != 1 else 'it'} to when the "
+                "parts are there, or shorten.")
+    return rep.model_copy(update={"short_orders": short, "message": msg})
 
 
 def sales_order(ds: Dataset, oid: str) -> DemandRecord:

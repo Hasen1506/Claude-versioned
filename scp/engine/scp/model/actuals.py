@@ -181,3 +181,6 @@ class ExecutionSettings(Model):
     negative_stock: NegativeStock = Field(NegativeStock.ALLOW, description="A posting that takes stock below zero: "
                                           "refuse it, allow it and ask for a count, or count the missing stock as found")
     quality_in_planning: bool = Field(True, description="Stock in quality inspection counts as available in planning")
+    promise_firms: bool = Field(True, description="Taking or changing an order promised on new production makes that "
+                                                  "production (and the transfers bringing it) firm at once, as "
+                                                  "capable-to-promise does; off, the planner firms it")

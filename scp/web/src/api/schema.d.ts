@@ -1436,6 +1436,11 @@ export interface components {
             /** Unmatched */
             unmatched: string[];
             unbooked: components["schemas"]["Unbooked"] | null;
+            /**
+             * Yields
+             * @default []
+             */
+            yields: components["schemas"]["YieldRow"][];
         };
         /**
          * Allocation
@@ -2834,6 +2839,12 @@ export interface components {
              * @default true
              */
             quality_in_planning: boolean;
+            /**
+             * Promise Firms
+             * @description Taking or changing an order promised on new production makes that production (and the transfers bringing it) firm at once, as capable-to-promise does; off, the planner firms it
+             * @default true
+             */
+            promise_firms: boolean;
         };
         /** FieldChange */
         FieldChange: {
@@ -6637,6 +6648,11 @@ export interface components {
             /** Message */
             message: string;
             promise: components["schemas"]["OrderPromise"] | null;
+            /**
+             * Firmed
+             * @default []
+             */
+            firmed: components["schemas"]["FirmedOrder"][];
         };
         /** SalesOrderRequest */
         SalesOrderRequest: {
@@ -7668,6 +7684,10 @@ export interface components {
             can_make: number;
             /** Qty */
             qty: number;
+            /** Starts */
+            starts: string | null;
+            /** Complete On */
+            complete_on: string | null;
         };
         /** SignIn */
         SignIn: {
@@ -8668,6 +8688,35 @@ export interface components {
             sla_days: {
                 [key: string]: number;
             };
+        };
+        /**
+         * YieldRow
+         * @description One part of one production version: the loss its bill of materials plans with and the loss measured on the
+         *     orders posted with actual usage (R17).
+         */
+        YieldRow: {
+            /** Source */
+            source: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Part */
+            part: string;
+            /** Orders */
+            orders: number;
+            /** Made */
+            made: number;
+            /** Planned */
+            planned: number;
+            /** Used */
+            used: number;
+            /** Scrap Now */
+            scrap_now: number;
+            /** Scrap Measured */
+            scrap_measured: number;
+            /** Change */
+            change: boolean;
         };
     };
     responses: never;

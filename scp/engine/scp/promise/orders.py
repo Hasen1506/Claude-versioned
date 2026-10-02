@@ -15,6 +15,7 @@ import datetime as dt
 import re
 
 from ..actuals.post import PostingError, delivered, ordered_now, sales_order
+from ..actuals.result import FirmedOrder
 from ..actuals.stock import EPS, arrival
 from ..model import ClosedOrder, Dataset, DemandKind, DemandRecord, LocationType, MovementType, Strategy
 from ..model.common import STOCKING_LOCATION_TYPES, Out
@@ -32,6 +33,7 @@ class SalesOrderReport(Out):
     order: str
     message: str
     promise: OrderPromise | None = None
+    firmed: list[FirmedOrder] = []          # production and transfers made firm for the promise (R13)
 
 
 def next_order_id(ds: Dataset) -> str:
@@ -68,17 +70,65 @@ def _promised(ds: Dataset, p: OrderPromise) -> str:
     return head + (f"; {_n(p.unconfirmed)} not promised yet" if p.unconfirmed > EPS else "")
 
 
-def _new_supply(ds: Dataset, rec: DemandRecord, p: OrderPromise) -> str:
-    """A note when the promise stands on supply nobody has ordered yet: a product made to order, or lines promised on
-    new production (capable-to-promise) or on the replenishment lead time. Planned orders are only a plan; unless the
-    run is made firm it is not made, and the promise goes late at the next roll."""
-    new = [x for x in p.lines if x.method in ("ctp", "rlt")]
-    mto = any((lp := ds.demand_lp((x.ship_from, rec.product))) is not None and lp.strategy is Strategy.MTO
-              for x in p.lines if ds.location_type(x.ship_from) is not None)
-    if not (new or mto):
-        return ""
-    return (" It needs new supply that is only planned: make it firm (Actuals → Open orders & firming) after the "
-            "plan is recalculated, or it is not made.")
+def _on_new_supply(ds: Dataset, rec: DemandRecord, p: OrderPromise) -> bool:
+    """The promise stands on supply nobody has ordered yet: a product made to order, or lines promised on new
+    production (capable-to-promise) or on the replenishment lead time."""
+    if any(x.method in ("ctp", "rlt") for x in p.lines):
+        return True
+    return any((lp := ds.demand_lp((x.ship_from, rec.product))) is not None and lp.strategy is Strategy.MTO
+               for x in p.lines if ds.location_type(x.ship_from) is not None)
+
+
+def _feeding(plan, oid: str, customers: set[str]) -> list[str]:
+    """The planned production and transfers an order's requirements are pegged to, level by level down to the parts
+    (bought parts stay requisitions: Buying turns them into purchase orders); a delivery to a customer is followed
+    through, not taken."""
+    from ..plan.trace import index
+    ix = index(plan)
+    orders = {o.id: o for o in plan.orders}
+    todo = [r.id for r in plan.requirements if r.kind == "sales_order" and r.id.split("~")[0] == f"D:{oid}"]
+    seen: set[str] = set()
+    out: list[str] = []
+    while todo:
+        for peg in ix.by_requirement.get(todo.pop(), ()):
+            o = orders.get(peg.supply_id) if peg.supply_kind == "order" else None
+            if o is None or o.id in seen or o.kind == "buy":
+                continue
+            seen.add(o.id)
+            if o.location not in customers:
+                out.append(o.id)
+            todo += [r.id for r in ix.by_parent.get(o.id, ())]
+    return out
+
+
+def _make_supply(ds: Dataset, rec: DemandRecord, p: OrderPromise) -> tuple[Dataset, list[FirmedOrder], str]:
+    """R13: an order promised on new supply makes that supply firm at once, as capable-to-promise creates its planned
+    order: the plan is worked out with the order in it, and the production and transfers pegged to it become firm
+    orders. Without it (or with the company's ``promise_firms`` off) the note says to firm them by hand."""
+    if not _on_new_supply(ds, rec, p):
+        return ds, [], ""
+    manual = (" It needs new supply that is only planned: make it firm (Actuals → Open orders & firming) after the "
+              "plan is recalculated, or it is not made.")
+    if not ds.execution.promise_firms:
+        return ds, [], manual
+    from ..actuals.firm import firm_orders
+    from ..plan import run_mrp
+    plan = run_mrp(ds)
+    if not plan.ok:
+        return ds, [], manual
+    customers = {loc.id for loc in ds.locations if loc.type is LocationType.CUSTOMER}
+    ids = _feeding(plan, rec.id or "", customers)
+    if not ids:
+        return ds, [], ""
+    new, rep = firm_orders(ds, plan, ids)
+    made = rep.firmed
+    if not made:
+        return ds, [], manual
+    what = ", ".join(f"{f.receipt_id} ({_n(f.qty)} {_name(ds, 'product', f.product)} at "
+                     f"{_name(ds, 'location', f.location)}, {'starting' if f.kind == 'production' else 'leaving'} "
+                     f"{_day(f.start_date)})" for f in made)
+    return new, made, f" Made firm for it: {what}."
+
 
 
 def _promise(ds: Dataset, rec: DemandRecord) -> tuple[OrderPromise, list[Confirmation]]:
@@ -115,9 +165,11 @@ def accept(ds: Dataset, order: DemandRecord) -> tuple[Dataset, SalesOrderReport]
                                    "period_days": None})
     p, confs = _promise(ds, rec)
     new = ds.model_copy(update={"demand": [*ds.demand, rec], "confirmations": [*ds.confirmations, *confs]})
+    new = Dataset.model_validate(new.model_dump())
+    new, firmed, note = _make_supply(new, rec, p)
     msg = (f"{oid} taken: {_n(rec.qty)} {_name(ds, 'product', rec.product)} for {_name(ds, 'location', rec.location)}, "
-           f"asked for {_day(rec.date)}; {_promised(ds, p)}.{_new_supply(ds, rec, p)}")
-    return Dataset.model_validate(new.model_dump()), SalesOrderReport(ok=True, order=oid, message=msg, promise=p)
+           f"asked for {_day(rec.date)}; {_promised(ds, p)}.{note}")
+    return new, SalesOrderReport(ok=True, order=oid, message=msg, promise=p, firmed=firmed)
 
 
 CHANGEABLE = ("qty", "date", "priority", "price", "complete_delivery", "customer_ref")
@@ -151,8 +203,10 @@ def change(ds: Dataset, oid: str, changes: dict) -> tuple[Dataset, SalesOrderRep
     new = ds.model_copy(update={"demand": [rec if x is d else x for x in ds.demand],
                                 "confirmations": [*rest.confirmations, *confs]})
     what = ", ".join(_said(ds, d, rec)) or "nothing changed"
-    msg = f"{oid} changed ({what}); {_promised(ds, p)}."
-    return Dataset.model_validate(new.model_dump()), SalesOrderReport(ok=True, order=oid, message=msg, promise=p)
+    new = Dataset.model_validate(new.model_dump())
+    new, firmed, note = _make_supply(new, rec, p)
+    msg = f"{oid} changed ({what}); {_promised(ds, p)}.{note}"
+    return new, SalesOrderReport(ok=True, order=oid, message=msg, promise=p, firmed=firmed)
 
 
 def _said(ds: Dataset, a: DemandRecord, b: DemandRecord) -> list[str]:

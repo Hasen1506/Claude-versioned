@@ -61,13 +61,23 @@ def test_an_accepted_order_is_a_sales_order_that_keeps_its_promise():
     assert not [i for i in validate(x2) if i.severity == "error"]
 
 
-def test_an_order_made_to_order_says_its_production_must_be_made_firm():
-    # K: a hotel order promised on new production went late at the roll: the run was only planned, never firmed
-    _, from_stock = accept(ds(shop()), order(6))
-    assert "only planned" not in from_stock.message
+def test_an_order_made_to_order_makes_its_production_firm():
+    # K (R13): a hotel order promised on new production went late at the roll: the run was only planned, never firmed
+    x, from_stock = accept(ds(shop()), order(6))
+    assert "only planned" not in from_stock.message and not from_stock.firmed and x.receipts == ds(shop()).receipts
     d = shop()
-    next(lp for lp in d["location_products"] if lp["product"] == "A")["strategy"] = "MTO"
-    _, made = accept(ds(d), order(6))
+    next(lp for lp in d["location_products"] if lp["product"] == "A").update(strategy="MTO", on_hand=0)
+    x, made = accept(ds(d), order(6))
+    assert made.firmed and made.firmed[0].kind == "production" and "Made firm for it: PRD-00001" in made.message
+    prd = next(r for r in x.receipts if r.id == made.firmed[0].receipt_id)
+    assert prd.product == "A" and prd.qty >= 6 and prd.reservations          # it reserves its parts
+    # planning again plans nothing new for the order: its production is there
+    from scp.plan import run_mrp
+    assert not [o for o in run_mrp(x).orders if o.product == "A" and o.kind == "make"]
+    # the company can keep firming by hand
+    d["execution"] = {"promise_firms": False}
+    x, made = accept(ds(d), order(6))
+    assert not made.firmed and not [r for r in x.receipts if r.kind.value == "production"]
     assert "It needs new supply that is only planned: make it firm (Actuals → Open orders & firming)" in made.message
 
 

@@ -246,7 +246,7 @@ const CODE_LABEL: Record<string, string> = {
   EOQ_FALLBACK: "No economic lot size", STOCKOUT: "Stock runs out", SCHEDULE_LATE: "Scheduled to finish late",
   CAPACITY_EARLIER: "Started earlier to fit", CAPACITY_LATE: "Only fits later", ALTERNATIVE_MACHINE: "On an alternative machine",
   PO_CONFIRMED_LATE: "Supplier confirmed late", PO_CONFIRMED_SHORT: "Supplier confirmed less", PO_NOT_CONFIRMED: "Not confirmed by the supplier",
-  RECEIPT_OVERDUE: "Order overdue",
+  RECEIPT_OVERDUE: "Order overdue", STOCK_EXPIRES: "Stock expires unused", LOT_EXPIRES: "Lot larger than its shelf life",
 };
 export function codeLabel(code: string): string {
   if (CODE_LABEL[code]) return CODE_LABEL[code];

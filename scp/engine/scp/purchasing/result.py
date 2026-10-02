@@ -177,6 +177,8 @@ class ShortOrder(Out):
     available: float                  # of the part, for this order, after the orders before it
     can_make: float                   # the order's quantity the part covers (what "shorten" sets it to)
     qty: float                        # the order's open quantity now
+    starts: dt.date | None = None     # when the order takes the part
+    complete_on: dt.date | None = None  # receipts due after it starts bring the rest on this day: late, not short
 
 
 class ActionReport(Out):

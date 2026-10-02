@@ -21,6 +21,7 @@ on-time inputs cover stays on time (as promising would split the shipment), and 
 """
 from __future__ import annotations
 
+import bisect
 import hashlib
 import math
 import threading
@@ -76,6 +77,44 @@ class _NodeState:
     lead_time: float | None = None
 
 
+class _Fresh:
+    """Stock of a product with a shelf life by the day it expires, used first expiring first out (R15, N109): what a
+    lot still holds after its last day is gone. Stock at the start comes first (it is older; its batches that expire
+    unused are requirements already, see ``_expiry``); a requirement the stock does not cover is owed and taken
+    from the next lot to arrive."""
+
+    def __init__(self, plain: float):
+        self.plain = plain
+        self.lots: list[list] = []   # [last day, quantity, what it came from], soonest first
+        self.owed = 0.0
+
+    def add(self, last: date, qty: float, what: str) -> None:
+        pay = min(qty, self.owed)
+        self.owed -= pay
+        if qty - pay > EPS:
+            bisect.insort(self.lots, [last, qty - pay, what])
+
+    def use(self, qty: float) -> None:
+        take = min(qty, self.plain)
+        self.plain -= take
+        qty -= take
+        for lot in self.lots:
+            if qty <= EPS:
+                break
+            take = min(qty, lot[1])
+            lot[1] -= take
+            qty -= take
+        self.lots = [x for x in self.lots if x[1] > EPS]
+        self.owed += max(0.0, qty)
+
+    def expire(self, on: date) -> list[list]:
+        """The lots whose last day is before ``on``: gone, with what they still held."""
+        gone = [x for x in self.lots if x[0] < on]
+        if gone:
+            self.lots = [x for x in self.lots if x[0] >= on]
+        return gone
+
+
 class _Planner:
     def __init__(self, ds: Dataset, g: NetworkGraph):
         self.ds = ds
@@ -108,6 +147,13 @@ class _Planner:
 
     def is_customer(self, node: Node) -> bool:
         return self.ds.location_type(node[0]) is LocationType.CUSTOMER
+
+    def shelf(self, node: Node) -> int | None:
+        """Days a batch of this product keeps, where the plan follows its batches (R15); None otherwise."""
+        prod = self.ds.product_by_id.get(node[1])
+        if prod is None or not prod.shelf_life_days or not prod.batch_managed or self.is_customer(node):
+            return None
+        return prod.shelf_life_days
 
     def seed(self) -> None:
         for node in self.g.order:
@@ -267,7 +313,15 @@ class _Planner:
             if eoq_qty is None:
                 self._exc("EOQ_FALLBACK", "info", "EOQ undefined (no ordering cost, value or demand): lot-for-lot used",
                           node=node)
+        shelf = self.shelf(node)
+        fresh = _Fresh(onhand) if shelf else None
         for d in dates:
+            if fresh is not None:
+                for last, q, what in fresh.expire(d):
+                    avail -= q
+                    self._lot_expires(node, st, last, q, what, shelf)
+                fresh.add(d + timedelta(days=shelf), rec_on.get(d, 0.0), "the firm orders due then")
+                fresh.use(req_on.get(d, 0.0))
             avail += rec_on.get(d, 0.0) - req_on.get(d, 0.0)
             if d not in checks:
                 continue
@@ -283,19 +337,25 @@ class _Planner:
             # could land depends on its size (production time grows with it), so it is asked for the lot that would
             # replace the firm supply: sized as if none lay ahead (a period lot the receipt already covers would
             # otherwise shrink to the shortage and look faster than the order it duplicates)
-            lot = self._lot(lp, mto, threshold - avail, d, avail, req_on, {}, eoq_qty)[0]
+            lot = self._lot(lp, mto, threshold - avail, d, avail, req_on, {}, eoq_qty, shelf)[0]
             pulled = self._reschedule_in(node, st, receipts, rec_on, d, threshold - avail, lot)
             avail += pulled
+            if fresh is not None and pulled > EPS:
+                fresh.add(d + timedelta(days=shelf), pulled, "the firm orders brought forward")
             if avail >= threshold - EPS:
                 continue
             shortage = threshold - avail
-            qty, gap = self._lot(lp, mto, shortage, d, avail, req_on, rec_on, eoq_qty)
+            qty, gap = self._lot(lp, mto, shortage, d, avail, req_on, rec_on, eoq_qty, shelf)
             need = max(self.start, d - timedelta(days=lp.safety_time_days)) if lp.safety_time_days else d
             ceiling = gap if lp.lot_sizing.policy is LotSizePolicy.MIN_MAX and not mto else None
             # what the order is for: requirements below zero first, then the buffer up to the threshold
+            first = len(self.orders)
             created = self._supply(node, st, qty, need, shortage=shortage, ceiling=ceiling,
                                    below_zero=min(shortage, max(0.0, -avail)))
             avail += created
+            if fresh is not None:
+                for o in self.orders[first:]:   # a batch keeps from the day it is there
+                    fresh.add(max(d, o.available_date) + timedelta(days=shelf), o.qty, o.id)
         self._peg(node, st)
 
     def _expiry(self, node: Node, st: _NodeState, onhand: float) -> None:
@@ -317,6 +377,21 @@ class _Planner:
             self._exc("STOCK_EXPIRES", "warning", f"{q:,.1f} of batch {batch} expire unused on "
                       f"{(day - timedelta(days=1)).isoformat()}", node=node, when=day, qty=q)
 
+    def _lot_expires(self, node: Node, st: _NodeState, last: date, qty: float, what: str, shelf: int) -> None:
+        """A lot the plan made or expects that the requirements will not use up before its last day: what is left is
+        gone the day after, a requirement of its own the plan then covers again."""
+        day = last + timedelta(days=1)
+        if day >= self.b.end:
+            return
+        n = sum(1 for r in st.reqs if r.kind == "expiry" and r.id.startswith(f"EXP:{node[0]}:{node[1]}:"))
+        self._add_req(node, Requirement(id=f"EXP:{node[0]}:{node[1]}:+{n + 1}", location=node[0], product=node[1],
+                                        date=day, qty=qty, kind="expiry", priority=9))
+        order = what if what in self.order_by_id else None
+        self._exc("LOT_EXPIRES", "warning",
+                  f"{qty:,.1f} of {what} would expire unused on {last.isoformat()}: the lot is more than "
+                  f"{shelf} days' use (a smaller fixed batch, minimum or rounding avoids it)",
+                  node=node, order=order, when=day, qty=qty)
+
     @property
     def expiring(self) -> dict[Node, list[tuple[date, float, str]]]:
         if self._expiring is None:
@@ -325,20 +400,30 @@ class _Planner:
         return self._expiring
 
     def _lot(self, lp: LocationProduct, mto: bool, shortage: float, d: date, avail: float, req_on: dict[date, float],
-             rec_on: dict[date, float], eoq_qty: float | None) -> tuple[float, float | None]:
-        """The lot a shortage on ``d`` is ordered in, and the room left to the maximum stock."""
+             rec_on: dict[date, float], eoq_qty: float | None, shelf: int | None = None) -> tuple[float, float | None]:
+        """The lot a shortage on ``d`` is ordered in, and the room left to the maximum stock. With a shelf life, a lot
+        that is worked out (a period's need, an economic quantity, up to the maximum stock) covers no more than the
+        requirements up to its last day (R15); a fixed batch stays as it is, and what it leaves is planned to expire."""
         ls = lp.lot_sizing
         window = 0.0
+        keeps = d + timedelta(days=shelf + 1) if shelf else None
         if ls.policy is LotSizePolicy.POQ and not mto:
             bi = self.b.index_of(d)
             end_idx = min(bi + (ls.periods or 1), len(self.b))
             we = self.b[end_idx].start if end_idx < len(self.b) else self.b.end
+            if keeps is not None:
+                we = min(we, keeps)
             window = max(0.0, sum(q for dd, q in req_on.items() if d < dd < we)
                          - sum(q for dd, q in rec_on.items() if d < dd < we))
         gap = (lp.max_stock - avail) if lp.max_stock is not None else None
         if mto:
             return shortage, gap
-        return base_lot(ls, shortage, window_requirements=window, max_stock_gap=gap, eoq_qty=eoq_qty), gap
+        q = base_lot(ls, shortage, window_requirements=window, max_stock_gap=gap, eoq_qty=eoq_qty)
+        if keeps is not None and ls.policy in (LotSizePolicy.EOQ, LotSizePolicy.MIN_MAX) and q > shortage + EPS:
+            usable = max(0.0, sum(qq for dd, qq in req_on.items() if d < dd < keeps)
+                         - sum(qq for dd, qq in rec_on.items() if d < dd < keeps))
+            q = max(shortage, min(q, shortage + usable))
+        return q, gap
 
     def _earliest_new(self, node: Node, st: _NodeState, need: date, qty: float) -> date | None:
         """When a new order for ``need`` would be available: on time if its backward-scheduled start is not in

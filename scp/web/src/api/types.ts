@@ -104,6 +104,7 @@ export type PromiseCommitResponse = S["PromiseCommitResponse"];
 
 export type ActualsView = S["ActualsView"];
 export type StockRow = S["StockRow"];
+export type YieldRow = S["YieldRow"];
 export type OpenOrderRow = S["OpenOrderRow"];
 export type AccuracyReport = S["AccuracyReport"];
 export type AccuracySeries = S["AccuracySeries"];

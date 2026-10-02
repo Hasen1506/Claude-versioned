@@ -97,6 +97,23 @@ class Unbooked(Out):
     closed: int                           # closed orders whose deliveries would change
 
 
+class YieldRow(Out):
+    """One part of one production version: the loss its bill of materials plans with and the loss measured on the
+    orders posted with actual usage (R17)."""
+
+    source: str
+    location: str
+    product: str                          # what is made
+    part: str
+    orders: int                           # orders posted with actual usage
+    made: float                           # good units they made
+    planned: float                        # what the bill of materials says they take, its loss included
+    used: float                           # what they used
+    scrap_now: float                      # the part's loss in the bill of materials (component scrap)
+    scrap_measured: float                 # the loss that would have planned what was used
+    change: bool                          # they differ by half a point or more
+
+
 class ActualsView(Out):
     as_of: dt.date
     stock: list[StockRow]
@@ -105,6 +122,7 @@ class ActualsView(Out):
     movements: int
     unmatched: list[str]                  # movement ids whose reference matches no open or closed order
     unbooked: Unbooked | None = None      # None when the view is not as of the planning start
+    yields: list[YieldRow] = []           # parts' measured loss against the bill of materials
 
 
 class StockChange(Out):
