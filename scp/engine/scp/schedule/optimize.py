@@ -26,6 +26,7 @@ from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field, replace
 
+from ..time.capacity import NoWorkingTime
 from .core import EPS, Decoded, Instance, OpSpec, Res, improve
 
 SCALE = 10                  # model time unit: 6 minutes
@@ -393,7 +394,13 @@ def optimize(inst: Instance, seqs: dict[str, list[str]], hold: dict[str, float],
         cp_seqs, cp_hold, r_info = got
         use_hold = {**hold, **cp_hold} if inst.earliness_weight > 0 else hold
         left = budget - (time.perf_counter() - t0)
-        pol_seqs, pol, _ = improve(inst, cp_seqs, time_limit=max(0.1, left * 0.5), hold=use_hold, pin=True)
+        try:
+            pol_seqs, pol, _ = improve(inst, cp_seqs, time_limit=max(0.1, left * 0.5), hold=use_hold, pin=True)
+        except NoWorkingTime:
+            r_info.kept = info.kept
+            info = r_info
+            info.note = "The solver proposal cannot finish on the shift calendar; the feasible local search is used."
+            break
         r_info.seconds += info.seconds
         r_info.kept = info.kept
         info = r_info
