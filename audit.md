@@ -1,12 +1,20 @@
 # Claude-versioned functional audit and repairs
 
-Latest continuation completed 2 October 2026. The unavailable-capacity production repairs are merged to main through [PR #15](https://github.com/Hasen1506/Claude-versioned/pull/15), merge `df610aa227833407f57d815104b6d3c4b8fe444f`. The cumulative merged total is **69 logic repairs plus one native runtime mitigation**. Full CI passed before merge; this following report update changes documentation only.
+Latest continuation: 2 October 2026. The merged total remains **69 logic repairs plus one native runtime mitigation**, through [PR #15](https://github.com/Hasen1506/Claude-versioned/pull/15). Two additional production-cost repairs, BH075–BH076, have passed focused regressions and are awaiting publication CI and merge. They are not yet included in the merged count.
 
 Updated 30 September 2026. Audited baseline: `ee0f7d136a25f1f30246fcd886f15db8d5985694`. Fixes merged to main as `aae75e872ac6ae8c419939295d7ad8b0ec82d977` through [PR #6](https://github.com/Hasen1506/Claude-versioned/pull/6).
 
 The continuation covered spreadsheet decoding, save/recovery races and capacity-option appraisal, then repaired the confirmed functional defects. The first continuation added BH041–BH047; merge preparation found seven more logic defects, BH048–BH054. In total, **49 logic defects are repaired and one native runtime failure has a verified mitigation**. These are production application fixes with regression tests. All changes are committed and merged to main through [PR #6](https://github.com/Hasen1506/Claude-versioned/pull/6).
 
 ## Verification after repairs
+
+### 2 October continuation: actual production-order costs
+
+**BH075 (P1):** MRP records an operation on an alternative machine but prices its run and setup on the primary machine. Eight run hours and two setup hours assigned to a 25/hour alternative are charged 800 + 200 at the primary's 100/hour rate, instead of 200 + 50. Expensive alternatives similarly appear artificially cheap. The finance overlay reconciles internally but propagates the wrong cost and margin. Concrete orders now use their recorded step-resource assignments for both machine run and setup rates.
+
+**BH076 (P1):** production orders use the nominal full-batch average to price partly filled batches, despite loading and dating whole batch hours. With capacity 10 and three machine hours per batch, an eleven-unit order loads two batches (six hours) but charges 3.3 hours. Scrap can similarly turn ten good units into 12.5 entering units and two batches while the cost remains prorated. A new order-cost calculation prices exact run work after scrap, whole batches and per-unit work, plus labor, outside processing and conversion overhead. Nominal unit valuation and aggregate planning retain their documented full-batch averages.
+
+Fifteen persistent regression cases cover cheaper/more expensive alternatives with constrained/unconstrained planning, batch boundaries, operation scrap, labor/subcontract/overhead, nominal valuation and the finance API. All fifteen run against exact main costing/MRP files at `eb709ec5469e1101f5ad27bb664698b67ade3481` reproduce **12 failures and 3 passing controls**. The repaired cases and existing finance/manufacturing checks pass (**29 focused tests**), with lint passing. An additional **48 independently calculated quantity/rate/scrap cases** reconcile machine workload, order run/setup costs and the finance overlay, including fractional quantities. The complete **632-test engine suite** and lint pass locally. Publication CI and merge are pending. These are production calculation fixes with regression tests.
 
 ### 2 October continuation: unavailable production capacity
 

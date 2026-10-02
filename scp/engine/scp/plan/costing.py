@@ -80,6 +80,31 @@ def setup_cost(ds: Dataset, src_id: str) -> float:
     return total
 
 
+def production_order_cost(ds: Dataset, src_id: str, good_qty: float,
+                          step_resources: dict[int, str] | None = None) -> tuple[float, float]:
+    """(Conversion, setup) for an order's actual quantity and selected machines.
+
+    Unlike the nominal full-batch unit value, each partly filled batch still runs
+    for its whole batch time. Scrap sizes the units entering each operation.
+    """
+    ps = ds.production_source_by_id[src_id]
+    enter = entering(ps)
+    conversion, setup = good_qty * ps.conversion_cost_per_unit, 0.0
+    for op in ps.operations:
+        qty = good_qty * enter[op.seq]
+        if op.subcontract is not None:
+            conversion += qty * op.subcontract.cost_per_unit
+        rid = (step_resources or {}).get(op.seq, op.resource)
+        machine = ds.resource_by_id.get(rid) if rid else None
+        if machine is not None:
+            conversion += op.run_hours(qty) * machine.cost_per_hour
+            setup += op.setup_hours * machine.cost_per_hour
+        if op.labor_resource:
+            labor = ds.resource_by_id.get(op.labor_resource)
+            conversion += qty * op.labor_hours_per_unit * (labor.cost_per_hour if labor else 0.0)
+    return conversion, setup
+
+
 def component_factor(ds: Dataset, src_id: str, component: str) -> float:
     """Issued component quantity per good unit of output (phantoms passed through; a fixed-quantity part
     spread over a typical lot)."""

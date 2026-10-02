@@ -747,8 +747,7 @@ class _Planner:
             total = qty * price + freight + pu.ordering_cost + hand
             order.costs = {"purchase": qty * price, "transport": freight, "ordering": pu.ordering_cost, "handling": hand}
         elif opt.kind == "make":
-            conv = qty * costing.conversion_unit_cost(ds, opt.source_id)
-            setup = costing.setup_cost(ds, opt.source_id)
+            conv, setup = costing.production_order_cost(ds, opt.source_id, qty, order.step_resources)
             k.production_cost += conv
             k.setup_cost += setup
             total = conv + setup
