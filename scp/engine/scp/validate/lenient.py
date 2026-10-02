@@ -42,6 +42,8 @@ COLLECTION_TYPES: dict[str, str] = {
     "closed_orders": "closed_order", "accuracy": "accuracy", "rolled_weeks": "rolled_week",
     "stock_targets": "stock_target", "vendors": "vendor", "purchase_orders": "purchase_order",
     "customer_prices": "customer_price", "batches": "batch", "inventory_docs": "inventory_doc",
+    "customers": "customer", "payment_terms": "payment_terms", "sales_orders": "sales_order", "quotations": "quotation",
+    "deliveries": "delivery", "invoices": "invoice", "returns": "return",
 }
 _TYPE_COLLECTION = {v: k for k, v in COLLECTION_TYPES.items()}
 
@@ -53,7 +55,9 @@ SINGULAR: dict[str, str] = {
     "movements": "Goods movement", "closed_orders": "Closed order", "accuracy": "Accuracy record",
     "rolled_weeks": "Rolled week", "stock_targets": "Stock target", "vendors": "Supplier purchasing data",
     "purchase_orders": "Purchase order", "customer_prices": "Customer price", "batches": "Batch",
-    "inventory_docs": "Physical inventory document",
+    "inventory_docs": "Physical inventory document", "customers": "Customer sales data", "payment_terms": "Payment terms",
+    "sales_orders": "Sales order", "quotations": "Quotation", "deliveries": "Delivery", "invoices": "Invoice",
+    "returns": "Return",
 }
 
 # validate._ref's message: "<field> refers to unknown <kind> '<value>'"
@@ -78,8 +82,8 @@ def label(collection: str, rec: Any, index: int) -> str:
     if isinstance(rec, dict):
         if rec.get("id"):
             return str(rec["id"])
-        if collection == "vendors" and rec.get("supplier"):
-            return str(rec["supplier"])
+        if collection in ("vendors", "customers") and rec.get(collection[:-1] if collection == "customers" else "supplier"):
+            return str(rec[collection[:-1] if collection == "customers" else "supplier"])
         loc, prod = rec.get("location"), rec.get("product")
         if loc or prod:
             return f"{loc or '?'} / {prod or '?'}"
@@ -99,6 +103,8 @@ def client_key(collection: str, rec: Any, index: int) -> str:
         return f"{r.get('product')}/{r.get('id')}"
     if collection == "vendors":
         return str(r.get("supplier") or f"#{index}")
+    if collection == "customers":
+        return str(r.get("customer") or f"#{index}")
     if collection in ("history", "confirmations", "changeovers", "overrides", "accuracy", "rolled_weeks", "stock_targets"):
         return f"#{index}"
     return str(r.get("id") or f"#{index}")
@@ -251,6 +257,8 @@ def _readiness_id(collection: str, rec: dict[str, Any], index: int) -> str:
         return str(rec.get("id") or f"#{index}")
     if collection == "vendors":
         return str(rec.get("supplier") or f"#{index}")
+    if collection == "customers":
+        return str(rec.get("customer") or f"#{index}")
     return str(rec.get("id", f"#{index}"))
 
 

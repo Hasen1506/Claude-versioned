@@ -26,6 +26,15 @@ export function money(v: number | null | undefined, currency = "INR"): string {
   return `${sign}${sym}${nf2.format(a)}`;
 }
 
+const nfMoney = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** An exact amount, as on an invoice: ₹2,257.20, never compacted. */
+export function exactMoney(v: number | null | undefined, currency = "INR"): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  const sym = currency === "INR" ? "₹" : currency === "USD" ? "$" : currency === "EUR" ? "€" : `${currency} `;
+  return `${v < 0 ? "−" : ""}${sym}${nfMoney.format(Math.abs(v))}`;
+}
+
 /** A per-unit amount: full precision with the currency symbol (₹1,023.4), never compacted. */
 export function unitMoney(v: number | null | undefined, currency = "INR"): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";

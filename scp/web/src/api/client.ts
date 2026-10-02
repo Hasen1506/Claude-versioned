@@ -3,6 +3,7 @@ import type {
   Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   PlanTrace, ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
   PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoLineInput, RequisitionPick, PostAction, CountInput, UsageInput, StockType, SalesOrderChange, SalesOrderResponse,
+  SalesView, SalesAction, SalesActionInput, SalesActionResponse,
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
@@ -258,6 +259,11 @@ export const api = {
     extra: { order?: DemandRecord; id?: string; changes?: Partial<SalesOrderChange>; date?: string; reason?: string }) =>
     write<SalesOrderResponse>("/api/orders/sales", dataset, { action, order: extra.order ?? null, id: extra.id ?? null,
       changes: extra.changes ?? null, date: extra.date ?? null, reason: extra.reason ?? "" }),
+  /** Every sales order, quotation, delivery, invoice and return; what is due to deliver and bill; customers' credit. */
+  sales: (ds: Dataset) => planPost<SalesView>("/api/sales", ds),
+  /** One order-to-cash step: take an order, quote, deliver, invoice, record a payment, take a return back. */
+  salesAct: (dataset: Dataset, action: SalesAction, extra: SalesActionInput = {}) =>
+    write<SalesActionResponse>("/api/sales/act", dataset, { action, ...extra }),
   /** Requisitions from the supply plan, every purchase order and the supplier scorecard. */
   purchasing: (ds: Dataset) => planPost<PurchasingView>("/api/purchasing", ds),
   /** Turn requisitions into purchase orders (`lines` = which, on which source; none = everything due now). */

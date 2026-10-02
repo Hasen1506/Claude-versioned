@@ -273,7 +273,27 @@ The supply plan goes further into how a plant really plans, mostly in `engine/sc
   die) with their machine, in the plan and on the shop floor schedule; and levelling by hand: drag a run onto a day on
   the Capacity page, or give it a date, and it stays there as a firm run.
 
-The next plan (phases M, N, Q) is at the end of
+## Order to cash (Phase M)
+
+*Selling* takes a customer from their order to their payment (`engine/scp/sales`, `engine/scp/model/sales.py`):
+
+- **Orders with several lines.** Each line is priced from the customer's price at its quantity scale (else the
+  product's) less the customer's discounts, unless a price is agreed on the line, and promised like any order; new
+  production it needs is made firm at once (R13). Lines are the sales-order demand the plan already reads, under an
+  order header (`SO-00001/10`, `/20`, …).
+- **Credit.** A customer's credit limit counts their open order lines, goods shipped and not invoiced, and unpaid
+  invoices less credit notes, with tax. An order beyond it is promised but held for delivery until someone releases it.
+- **Quotations** price an offer without promising it; won, they become an order at the quoted prices.
+- **Deliveries** gather the lines due to ship, one per customer and shipping place: picked (short if need be), packed,
+  shipped as one material document, and signed for.
+- **Invoices** bill what was shipped, one per customer and payment terms, with the customer's tax rate; payments settle
+  them, with the cash discount when paid in time. A cancelled invoice frees its goods to be billed again.
+- **Returns** come back into quality inspection (or blocked, or ready to sell) as a receipt naming the return, and a
+  credit note pays them back.
+- **Documents**: the order confirmation, the invoice and the credit note print, download or start an e-mail, in exact
+  amounts.
+
+The next plan (phases N, Q) is at the end of
 [docs/USABILITY_LOG.md](docs/USABILITY_LOG.md#the-next-plan-after-phase-o).
 
 ## What is here (P0–P10)

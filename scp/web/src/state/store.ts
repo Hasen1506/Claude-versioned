@@ -8,7 +8,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { api, ApiError, SchemaRejected, setAuth, setDataRef, setPlanningView, setWriteGuard, type DataRef } from "../api/client";
 import { makePatch, patchIsSmall, type Patch } from "../lib/patch";
 import { keepSteps, stepsFor } from "./undoStore";
-import type { CompanyDoc, CompanyMeta, PlanTrace, User, ActualsView, PurchasingView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
+import type { CompanyDoc, CompanyMeta, PlanTrace, User, ActualsView, PurchasingView, SalesView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
 
 export interface RunResults {
   forecast: ForecastResult;
@@ -19,6 +19,7 @@ export interface RunResults {
   promise: PromiseResult;
   actuals: ActualsView;
   purchasing: PurchasingView;
+  sales: SalesView;
   finance: FinanceResult;
   tower: TowerResult;
 }
@@ -122,6 +123,7 @@ export const PLAN_STEPS: { key: RunKey; label: string }[] = [
   { key: "sop", label: "Balancing capacity" },
   { key: "schedule", label: "Sequencing the shop floor" },
   { key: "purchasing", label: "Listing what to buy" },
+  { key: "sales", label: "Listing what to deliver and bill" },
   { key: "actuals", label: "Reading actuals" },
   { key: "finance", label: "Costing the plan" },
   { key: "tower", label: "Measuring performance" },
@@ -136,6 +138,7 @@ const RUNNERS: { [K in RunKey]: (ds: Dataset) => Promise<RunResults[K]> } = {
   promise: api.promise,
   actuals: (ds) => api.actuals(ds),
   purchasing: api.purchasing,
+  sales: api.sales,
   finance: api.finance,
   tower: api.tower,
 };
@@ -158,7 +161,7 @@ export const rowsOf = (ds: Dataset) => Object.values(ds as unknown as Record<str
   .reduce<number>((n, v) => n + (Array.isArray(v) ? v.length : 0), 0);
 
 const emptyRun = <T>(): Run<T> => ({ data: null, revision: null, running: false, error: null, at: null });
-const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), inventory: emptyRun(), sop: emptyRun(), plan: emptyRun(), schedule: emptyRun(), promise: emptyRun(), actuals: emptyRun(), purchasing: emptyRun(), finance: emptyRun(), tower: emptyRun() });
+const emptyRuns = (): State["runs"] => ({ forecast: emptyRun(), inventory: emptyRun(), sop: emptyRun(), plan: emptyRun(), schedule: emptyRun(), promise: emptyRun(), actuals: emptyRun(), purchasing: emptyRun(), sales: emptyRun(), finance: emptyRun(), tower: emptyRun() });
 
 const localSave = (): SaveState => ({ status: "local", at: null, error: null, conflict: null, newer: null, localError: null, refused: 0 });
 
@@ -1005,7 +1008,7 @@ export const useReadOnly = () => useStore((s) => s.company?.role === "viewer" &&
 /** Results that take a moment to rebuild: a page showing one calculates it when it opens out of date (N56) or not
  * calculated at all (N71, e.g. after reopening the browser), instead of showing the earlier result behind an "out of
  * date" mark, or an empty page waiting for *Calculate*. */
-const QUICK: ReadonlySet<RunKey> = new Set<RunKey>(["actuals", "purchasing", "finance", "promise"]);
+const QUICK: ReadonlySet<RunKey> = new Set<RunKey>(["actuals", "purchasing", "sales", "finance", "promise"]);
 
 export function useFreshResult(key: RunKey) {
   useEffect(() => {

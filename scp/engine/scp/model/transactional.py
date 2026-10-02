@@ -29,6 +29,11 @@ class DemandRecord(Model):
         description="Sales order: the agreed net price per unit, in the company currency. Empty = the customer's "
                     "price, else the product's")
     customer_ref: str = Field("", max_length=64, description="Sales order: the customer's own order number")
+    order: str | None = Field(None, max_length=64, description="Sales order: the order header this line is on (empty: "
+                                                              "an order of one line, its own header)")
+    discount: float = Unit("fraction", lt=1, default=0.0,
+                           description="Sales order: the discount its net price already has in it (customer and price "
+                                       "discounts together), shown on its documents")
     fulfilled_confirmations: list[Confirmation] = Field(default_factory=list,
         description="Schedule lines removed by deliveries; retained for quantity-based confirmation metrics")
     period_days: int | None = Field(

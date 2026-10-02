@@ -169,7 +169,8 @@ def _ref(ds: Dataset, c: _Collector, kind: str, value: str | None, typ: str, oid
         return True
     index = {"location": ds.location_by_id, "product": ds.product_by_id,
              "calendar": ds.calendar_by_id, "resource": ds.resource_by_id,
-             "mrp_group": {g.id: g for g in ds.mrp_groups}}[kind]
+             "mrp_group": {g.id: g for g in ds.mrp_groups},
+             "payment_terms": ds.payment_terms_by_id}[kind]
     if value not in index:
         c.add("REF_UNKNOWN", typ, oid, f"{field} refers to unknown {kind} '{value}'",
               f"Create {kind} '{value}' or fix the reference", field)
@@ -432,6 +433,7 @@ def _purchasing(ds: Dataset, c: _Collector) -> None:
                           f"planning uses {min(a, b, key=lambda x: (x.priority, x.id)).id}",
                           "Keep one fixed source per period, or give them dates that do not overlap", "fixed")
     _purchase_orders(ds, c)
+    _sales(ds, c)
 
 
 def _overlap(a, b) -> bool:
@@ -466,6 +468,42 @@ def _purchase_orders(ds: Dataset, c: _Collector) -> None:
                   f"{n} open purchase order line{'s' if n != 1 else ''} with {pu_sup}, which is blocked for purchasing"
                   + (f" ({v.block_reason})" if v.block_reason else ""),
                   "Receive or cancel them, or lift the block; planning still counts them")
+
+
+def _sales(ds: Dataset, c: _Collector) -> None:
+    """Customers' sales data, payment terms and the order-to-cash documents name what exists."""
+    sell = STOCKING_LOCATION_TYPES | {LocationType.CUSTOMER}
+    _ref(ds, c, "payment_terms", ds.sales.payment_terms, "settings", "sales", "payment_terms")
+    for cu in ds.customers:
+        if _ref(ds, c, "location", cu.customer, "customer", cu.customer, "customer"):
+            _loc_type(ds, c, cu.customer, sell, "customer", cu.customer, "customer", "a supplier is not a customer")
+        _ref(ds, c, "payment_terms", cu.payment_terms, "customer", cu.customer, "payment_terms")
+    for typ, docs in (("sales_order", ds.sales_orders), ("quotation", ds.quotations), ("delivery", ds.deliveries),
+                      ("invoice", ds.invoices), ("return", ds.returns)):
+        for x in docs:
+            _ref(ds, c, "location", x.customer, typ, x.id, "customer")
+            if getattr(x, "payment_terms", None):
+                _ref(ds, c, "payment_terms", x.payment_terms, typ, x.id, "payment_terms")
+    for q in ds.quotations:
+        for ln in q.lines:
+            _ref(ds, c, "product", ln.product, "quotation", q.id, "lines.product")
+    for dl in ds.deliveries:
+        _ref(ds, c, "location", dl.ship_from, "delivery", dl.id, "ship_from")
+    for r in ds.returns:
+        _ref(ds, c, "product", r.product, "return", r.id, "product")
+        _ref(ds, c, "location", r.location, "return", r.id, "location")
+    headers = {o.id: o for o in ds.sales_orders}
+    for i, d in enumerate(ds.demand):
+        if d.order is None or d.kind is not DemandKind.SALES_ORDER:
+            continue
+        h = headers.get(d.order)
+        oid = d.id or f"#{i}"
+        if h is None:
+            c.add("REF_UNKNOWN", "demand", oid, f"order refers to unknown sales order '{d.order}'",
+                  f"Create sales order '{d.order}' or clear the reference", "order")
+        elif h.customer != d.location:
+            c.add("SO_LINE_MISMATCH", "demand", oid, f"Line {oid} is on sales order {h.id} for {h.customer} but is "
+                  f"for {d.location}", "Move the line to an order for its customer, or fix it", "order")
 
 
 def _lanes(ds: Dataset, c: _Collector) -> None:

@@ -515,7 +515,8 @@ function Simulate({ ds, onDone }: { ds: Dataset; onDone: (m: string) => void }) 
           </div>
         </div>
         <p className="faint small">Checking saves nothing: it comes after every order already promised. <b>Take this order</b> saves it as a
-          sales order with the promise shown, so later orders can't take its stock.</p>
+          sales order with the promise shown, so later orders can't take its stock. An order of several lines, or a quotation:
+          {" "}<a href={href("selling", "new")}>Selling → New order or quotation</a>.</p>
       </Panel>
       <div className="stack">
         {err && <div className="banner error"><Badge sev="error">Not taken</Badge>{err}</div>}

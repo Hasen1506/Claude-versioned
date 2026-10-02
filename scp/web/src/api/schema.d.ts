@@ -1035,6 +1035,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sales": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Sales
+         * @description Every sales order with its lines, quotations, deliveries, invoices and returns, what is due to deliver and to
+         *     bill, and each customer's credit position.
+         */
+        post: operations["post_sales_api_sales_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sales/act": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Sales Action
+         * @description One order-to-cash step: take an order, quote, deliver, invoice, record a payment, take a return back.
+         */
+        post: operations["post_sales_action_api_sales_act_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/actuals/production-usage": {
         parameters: {
             query?: never;
@@ -2437,6 +2478,71 @@ export interface components {
             note: string;
         };
         /**
+         * Customer
+         * @description A customer's sales data (≈ customer master, sales area view).
+         */
+        Customer: {
+            /**
+             * Customer
+             * @description The customer location this record describes
+             */
+            customer: string;
+            /**
+             * Contact
+             * @description Who to talk to
+             * @default
+             */
+            contact: string;
+            /**
+             * Email
+             * @default
+             */
+            email: string;
+            /**
+             * Phone
+             * @default
+             */
+            phone: string;
+            /**
+             * Payment Terms
+             * @description Empty = the company's default payment terms
+             */
+            payment_terms?: string | null;
+            /**
+             * Credit Limit
+             * @description Most the customer may owe: open orders, delivered and not invoiced, and unpaid invoices. A new order beyond it is blocked for delivery until someone releases it. Empty = no credit check
+             */
+            credit_limit?: number | null;
+            /**
+             * Discount
+             * @description Discount on every line the customer orders (0.05 = 5 %), after quantity scales
+             * @default 0
+             */
+            discount: number;
+            /**
+             * Tax Rate
+             * @description Tax on the customer's invoices; empty = the company's rate
+             */
+            tax_rate?: number | null;
+            /**
+             * Incoterms
+             * @description Delivery terms, e.g. DAP Mumbai
+             * @default
+             */
+            incoterms: string;
+            /**
+             * Blocked
+             * @description Sales block: no new orders or quotations; open ones are still delivered
+             * @default false
+             */
+            blocked: boolean;
+            /**
+             * Block Reason
+             * @default
+             */
+            block_reason: string;
+        };
+        /**
          * CustomerPrice
          * @description What a customer pays for a product (≈ a customer-specific condition record, PR00 per customer and material).
          *     A sales order's own price wins; without either, the product's selling price.
@@ -2451,9 +2557,46 @@ export interface components {
             product: string;
             /**
              * Price
-             * @description Net price per base unit, in the company currency
+             * @description Price per base unit, in the company currency
              */
             price: number;
+            /**
+             * Scales
+             * @description Quantity breaks: from this quantity on one order line, this price
+             */
+            scales?: components["schemas"]["PriceScale"][];
+            /**
+             * Discount
+             * @description Discount off this price for the customer on this product (0.05 = 5 %)
+             * @default 0
+             */
+            discount: number;
+        };
+        /** CustomerRow */
+        CustomerRow: {
+            /** Customer */
+            customer: string;
+            /** Credit Limit */
+            credit_limit: number | null;
+            /** Open Orders */
+            open_orders: number;
+            /** To Bill */
+            to_bill: number;
+            /** Receivable */
+            receivable: number;
+            /** Exposure */
+            exposure: number;
+            /** Overdue */
+            overdue: number;
+            /** Headroom */
+            headroom: number | null;
+            /** Payment Terms */
+            payment_terms: string;
+            /**
+             * Blocked
+             * @default false
+             */
+            blocked: boolean;
         };
         /** CvSuggestion */
         CvSuggestion: {
@@ -2499,6 +2642,10 @@ export interface components {
             products?: components["schemas"]["Product"][];
             /** Customer Prices */
             customer_prices?: components["schemas"]["CustomerPrice"][];
+            /** Customers */
+            customers?: components["schemas"]["Customer"][];
+            /** Payment Terms */
+            payment_terms?: components["schemas"]["PaymentTerms"][];
             /** Location Products */
             location_products?: components["schemas"]["LocationProduct"][];
             /** Mrp Groups */
@@ -2516,6 +2663,17 @@ export interface components {
             /** Purchase Orders */
             purchase_orders?: components["schemas"]["PurchaseOrder"][];
             purchasing?: components["schemas"]["PurchasingSettings"];
+            /** Sales Orders */
+            sales_orders?: components["schemas"]["SalesOrder"][];
+            /** Quotations */
+            quotations?: components["schemas"]["Quotation"][];
+            /** Deliveries */
+            deliveries?: components["schemas"]["Delivery"][];
+            /** Invoices */
+            invoices?: components["schemas"]["Invoice"][];
+            /** Returns */
+            returns?: components["schemas"]["ReturnOrder"][];
+            sales?: components["schemas"]["SalesSettings"];
             /** Demand */
             demand?: components["schemas"]["DemandRecord"][];
             /** Receipts */
@@ -2646,6 +2804,146 @@ export interface components {
             note: string;
         };
         /**
+         * Delivery
+         * @description An outbound delivery (≈ LIKP): picked, packed, then goods issued, which posts the sale movements.
+         */
+        Delivery: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /** Ship From */
+            ship_from: string;
+            /**
+             * Created On
+             * Format: date
+             */
+            created_on: string;
+            /**
+             * Planned On
+             * Format: date
+             * @description Planned goods issue
+             */
+            planned_on: string;
+            /** Lines */
+            lines: components["schemas"]["DeliveryLine"][];
+            /**
+             * Packages
+             * @description Packed: number of packages; empty = not packed
+             */
+            packages?: number | null;
+            /**
+             * Gross Kg
+             * @description Packed: gross weight
+             */
+            gross_kg?: number | null;
+            /**
+             * Issued On
+             * @description Goods issue posted; empty = not shipped yet
+             */
+            issued_on?: string | null;
+            /**
+             * Movements
+             * @description The sale movements posted at goods issue
+             */
+            movements?: string[];
+            /**
+             * Pod On
+             * @description Proof of delivery: when the customer received it
+             */
+            pod_on?: string | null;
+            /**
+             * Pod By
+             * @description Who signed for it
+             * @default
+             */
+            pod_by: string;
+            /**
+             * Pod Note
+             * @default
+             */
+            pod_note: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** DeliveryLine */
+        DeliveryLine: {
+            /**
+             * Order
+             * @description The sales order line delivered
+             */
+            order: string;
+            /** Product */
+            product: string;
+            /**
+             * Qty
+             * @description To deliver
+             */
+            qty: number;
+            /**
+             * Picked
+             * @description Picked; empty = not picked yet
+             */
+            picked?: number | null;
+            /**
+             * Batch
+             * @description Batch to pick (empty = first expiring)
+             */
+            batch?: string | null;
+            /**
+             * Final
+             * @description Closes the order line even if short
+             * @default false
+             */
+            final: boolean;
+            /**
+             * Received
+             * @description Proof of delivery: what the customer signed for; empty = all of it
+             */
+            received?: number | null;
+        };
+        /** DeliveryView */
+        DeliveryView: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /** Ship From */
+            ship_from: string;
+            /**
+             * Planned On
+             * Format: date
+             */
+            planned_on: string;
+            /** Status */
+            status: string;
+            /** Qty */
+            qty: number;
+            /** Lines */
+            lines: number;
+            /** Packages */
+            packages: number | null;
+            /** Gross Kg */
+            gross_kg: number | null;
+            /** Issued On */
+            issued_on: string | null;
+            /** Pod On */
+            pod_on: string | null;
+            /**
+             * Short
+             * @default 0
+             */
+            short: number;
+            /**
+             * Invoiced
+             * @default false
+             */
+            invoiced: boolean;
+        };
+        /**
          * DemandEvent
          * @description Something that moves demand for a period: a promotion, a price change, a competitor launch…
          *
@@ -2768,6 +3066,17 @@ export interface components {
              * @default
              */
             customer_ref: string;
+            /**
+             * Order
+             * @description Sales order: the order header this line is on (empty: an order of one line, its own header)
+             */
+            order?: string | null;
+            /**
+             * Discount
+             * @description Sales order: the discount its net price already has in it (customer and price discounts together), shown on its documents
+             * @default 0
+             */
+            discount: number;
             /**
              * Fulfilled Confirmations
              * @description Schedule lines removed by deliveries; retained for quantity-based confirmation metrics
@@ -3674,6 +3983,141 @@ export interface components {
              * @default []
              */
             types: string[];
+        };
+        /**
+         * Invoice
+         * @description A billing document (≈ VBRK): an invoice for goods delivered, or a credit note for goods returned or a price
+         *     put right. Its amounts are fixed when it is made; payments are recorded against it.
+         */
+        Invoice: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @default invoice
+             * @enum {string}
+             */
+            kind: "invoice" | "credit_note";
+            /** Customer */
+            customer: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /**
+             * Discount Date
+             * @description Paid by this day, the cash discount applies
+             */
+            discount_date?: string | null;
+            /**
+             * Discount
+             * @description Cash discount for paying by the discount date
+             * @default 0
+             */
+            discount: number;
+            /** Payment Terms */
+            payment_terms?: string | null;
+            /** Lines */
+            lines: components["schemas"]["InvoiceLine"][];
+            /**
+             * Tax Rate
+             * @default 0
+             */
+            tax_rate: number;
+            /** Payments */
+            payments?: components["schemas"]["Payment"][];
+            /**
+             * Reference
+             * @description Credit note: the invoice it credits
+             */
+            reference?: string | null;
+            /** Sent On */
+            sent_on?: string | null;
+            /**
+             * Cancelled
+             * @description Cancelled: it no longer counts as owed
+             * @default false
+             */
+            cancelled: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** InvoiceLine */
+        InvoiceLine: {
+            /**
+             * Order
+             * @description The sales order line billed
+             */
+            order?: string | null;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Price
+             * @description Net price per unit
+             */
+            price: number;
+            /**
+             * Movements
+             * @description Invoice: the sale movements billed
+             */
+            movements?: string[];
+            /**
+             * Ret
+             * @description Credit note: the return it pays back
+             */
+            ret?: string | null;
+        };
+        /** InvoiceView */
+        InvoiceView: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Customer */
+            customer: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /** Net */
+            net: number;
+            /** Tax */
+            tax: number;
+            /** Total */
+            total: number;
+            /** Open */
+            open: number;
+            /** Status */
+            status: string;
+            /**
+             * Days Overdue
+             * @default 0
+             */
+            days_overdue: number;
+            /** Discount Until */
+            discount_until: string | null;
+            /**
+             * Discount Amount
+             * @default 0
+             */
+            discount_amount: number;
         };
         /** Issue */
         Issue: {
@@ -5037,6 +5481,55 @@ export interface components {
             /** Closed */
             closed: boolean;
         };
+        /** OrderLineView */
+        OrderLineView: {
+            /** Id */
+            id: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /** Delivered */
+            delivered: number;
+            /** Invoiced */
+            invoiced: number;
+            /** Returned */
+            returned: number;
+            /** Open */
+            open: number;
+            /** On Delivery */
+            on_delivery: number;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Promised */
+            promised: string | null;
+            /** Ship From */
+            ship_from: string | null;
+            /** Price */
+            price: number | null;
+            /** List Price */
+            list_price: number | null;
+            /**
+             * Discount
+             * @default 0
+             */
+            discount: number;
+            /** Value */
+            value: number | null;
+            /**
+             * Closed
+             * @default false
+             */
+            closed: boolean;
+            /**
+             * Cancelled
+             * @default false
+             */
+            cancelled: boolean;
+        };
         /** OrderLoad */
         OrderLoad: {
             /** Order */
@@ -5126,6 +5619,53 @@ export interface components {
             /** Value */
             value: number | null;
         };
+        /** OrderView */
+        OrderView: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /**
+             * Order Date
+             * Format: date
+             */
+            order_date: string;
+            /**
+             * Customer Ref
+             * @default
+             */
+            customer_ref: string;
+            /** Payment Terms */
+            payment_terms: string;
+            /** Quotation */
+            quotation: string | null;
+            /**
+             * Credit Block
+             * @default false
+             */
+            credit_block: boolean;
+            /**
+             * Credit Note
+             * @default
+             */
+            credit_note: string;
+            /** Confirmation Sent On */
+            confirmation_sent_on: string | null;
+            /**
+             * Lines
+             * @default []
+             */
+            lines: components["schemas"]["OrderLineView"][];
+            /** Value */
+            value: number | null;
+            /** Status */
+            status: string;
+            /**
+             * Header
+             * @default true
+             */
+            header: boolean;
+        };
         /**
          * OutlierMethod
          * @enum {string}
@@ -5176,6 +5716,59 @@ export interface components {
             old: string;
             /** New */
             new: string;
+        };
+        /** Payment */
+        Payment: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Amount */
+            amount: number;
+            /**
+             * Reference
+             * @description Bank reference
+             * @default
+             */
+            reference: string;
+            /**
+             * Discount
+             * @description Cash discount taken with this payment
+             * @default 0
+             */
+            discount: number;
+        };
+        /**
+         * PaymentTerms
+         * @description When an invoice is due, and the cash discount for paying early (e.g. 2 % within 10 days, net 30).
+         */
+        PaymentTerms: {
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Net Days
+             * @description Pay within this many days of the invoice date
+             * @default 30
+             */
+            net_days: number;
+            /**
+             * Discount Days
+             * @description Paid within this many days, the cash discount applies (0 = no cash discount)
+             * @default 0
+             */
+            discount_days: number;
+            /**
+             * Discount
+             * @description Cash discount for paying early (0.02 = 2 %)
+             * @default 0
+             */
+            discount: number;
         };
         /** Peg */
         Peg: {
@@ -6221,6 +6814,108 @@ export interface components {
             vendors: components["schemas"]["VendorRow"][];
         };
         /**
+         * Quotation
+         * @description An offer to a customer (≈ a quotation): its lines become an order's lines when it is won.
+         */
+        Quotation: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /**
+             * Quote Date
+             * Format: date
+             */
+            quote_date: string;
+            /**
+             * Valid To
+             * Format: date
+             */
+            valid_to: string;
+            /**
+             * Customer Ref
+             * @description The customer's enquiry number
+             * @default
+             */
+            customer_ref: string;
+            /**
+             * Payment Terms
+             * @description Empty = the customer's
+             */
+            payment_terms?: string | null;
+            /** Lines */
+            lines: components["schemas"]["QuoteLine"][];
+            /**
+             * Status
+             * @default open
+             * @enum {string}
+             */
+            status: "open" | "won" | "lost";
+            /**
+             * Order
+             * @description The order it became
+             */
+            order?: string | null;
+            /**
+             * Lost Reason
+             * @default
+             */
+            lost_reason: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** QuotationView */
+        QuotationView: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /**
+             * Quote Date
+             * Format: date
+             */
+            quote_date: string;
+            /**
+             * Valid To
+             * Format: date
+             */
+            valid_to: string;
+            /** Status */
+            status: string;
+            /** Value */
+            value: number;
+            /** Lines */
+            lines: number;
+            /** Order */
+            order: string | null;
+        };
+        /** QuoteLine */
+        QuoteLine: {
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Date
+             * Format: date
+             * @description Wanted on
+             */
+            date: string;
+            /**
+             * Price
+             * @description Net price per unit offered
+             */
+            price: number;
+            /**
+             * List Price
+             * @description Before scales and discounts
+             */
+            list_price?: number | null;
+        };
+        /**
          * ReceiptKind
          * @enum {string}
          */
@@ -6587,6 +7282,95 @@ export interface components {
             /** Base Revision */
             base_revision: number;
         };
+        /**
+         * ReturnOrder
+         * @description A customer return (≈ a returns order): agreed, then received into stock, then paid back with a credit note.
+         */
+        ReturnOrder: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /**
+             * Order
+             * @description The sales order line the goods were sold on
+             */
+            order?: string | null;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Price
+             * @description Paid back per unit
+             */
+            price: number;
+            /**
+             * Location
+             * @description Where the goods come back to
+             */
+            location: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Created On
+             * Format: date
+             */
+            created_on: string;
+            /**
+             * @description The stock the goods come back into: checked first (quality), held (blocked), or ready to sell
+             * @default quality
+             */
+            stock_type: components["schemas"]["StockType"];
+            /**
+             * Batch
+             * @description The batch coming back
+             */
+            batch?: string | null;
+            /** Received On */
+            received_on?: string | null;
+            /** Received Qty */
+            received_qty?: number | null;
+            /**
+             * Movements
+             * @description The receipts posted
+             */
+            movements?: string[];
+            /**
+             * Credit Note
+             * @description The credit note that paid it back
+             */
+            credit_note?: string | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** ReturnView */
+        ReturnView: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /** Received Qty */
+            received_qty: number | null;
+            /** Status */
+            status: string;
+            /** Value */
+            value: number;
+            /** Order */
+            order: string | null;
+            /** Credit Note */
+            credit_note: string | null;
+        };
         /** RollReport */
         RollReport: {
             /** Ok */
@@ -6702,6 +7486,80 @@ export interface components {
              */
             review_period_days: number;
         };
+        /** SalesActionRequest */
+        SalesActionRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "create_order" | "add_lines" | "release_credit" | "send_confirmation" | "cancel_order" | "create_quotation" | "win_quotation" | "lose_quotation" | "create_deliveries" | "pick" | "pack" | "issue" | "proof" | "cancel_delivery" | "create_invoices" | "pay" | "cancel_invoice" | "create_return" | "receive_return" | "credit_return";
+            /** Id */
+            id?: string | null;
+            /** Customer */
+            customer?: string | null;
+            /** Lines */
+            lines?: components["schemas"]["SalesLineInput"][] | null;
+            /** Date */
+            date?: string | null;
+            /**
+             * Customer Ref
+             * @default
+             */
+            customer_ref: string;
+            /** Payment Terms */
+            payment_terms?: string | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * By
+             * @default
+             */
+            by: string;
+            /** Valid To */
+            valid_to?: string | null;
+            /** Packages */
+            packages?: number | null;
+            /** Gross Kg */
+            gross_kg?: number | null;
+            /** Amount */
+            amount?: number | null;
+            /**
+             * Reference
+             * @default
+             */
+            reference: string;
+            /** Orders */
+            orders?: string[] | null;
+            /** Product */
+            product?: string | null;
+            /** Qty */
+            qty?: number | null;
+            /** Order */
+            order?: string | null;
+            /** Location */
+            location?: string | null;
+            stock_type?: components["schemas"]["StockType"] | null;
+            /** Batch */
+            batch?: string | null;
+        };
+        /** SalesActionResponse */
+        SalesActionResponse: {
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
+            report: components["schemas"]["SalesReport"];
+        };
         /**
          * SalesHistory
          * @description Long-format history row: one product at one location on one date.
@@ -6736,6 +7594,84 @@ export interface components {
              * @default false
              */
             from_journal: boolean;
+        };
+        /** SalesLineInput */
+        SalesLineInput: {
+            /** Order */
+            order?: string | null;
+            /** Product */
+            product?: string | null;
+            /** Qty */
+            qty?: number | null;
+            /** Date */
+            date?: string | null;
+            /** Price */
+            price?: number | null;
+            /** Priority */
+            priority?: number | null;
+            /** Complete Delivery */
+            complete_delivery?: boolean | null;
+            /** Picked */
+            picked?: number | null;
+            /** Received */
+            received?: number | null;
+            /** Batch */
+            batch?: string | null;
+            /** Ship From */
+            ship_from?: string | null;
+        };
+        /**
+         * SalesOrder
+         * @description A sales order header (≈ VBAK). Lines are the sales-order demand records whose ``order`` is this id.
+         */
+        SalesOrder: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /**
+             * Order Date
+             * Format: date
+             */
+            order_date: string;
+            /**
+             * Customer Ref
+             * @description The customer's own order number
+             * @default
+             */
+            customer_ref: string;
+            /**
+             * Payment Terms
+             * @description Empty = the customer's
+             */
+            payment_terms?: string | null;
+            /**
+             * Quotation
+             * @description The quotation the order was won from
+             */
+            quotation?: string | null;
+            /**
+             * Credit Block
+             * @description Over the customer's credit limit: not delivered until released
+             * @default false
+             */
+            credit_block: boolean;
+            /**
+             * Credit Note
+             * @description Why it was blocked, or who released it
+             * @default
+             */
+            credit_note: string;
+            /**
+             * Confirmation Sent On
+             * @description When the order confirmation went to the customer
+             */
+            confirmation_sent_on?: string | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /** SalesOrderChange */
         SalesOrderChange: {
@@ -6795,6 +7731,126 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             report: components["schemas"]["SalesOrderReport"];
+        };
+        /**
+         * SalesReport
+         * @description What an order-to-cash action did, in plain words, and the documents it made or changed.
+         */
+        SalesReport: {
+            /**
+             * Ok
+             * @default true
+             */
+            ok: boolean;
+            /** Message */
+            message: string;
+            /**
+             * Documents
+             * @default []
+             */
+            documents: string[];
+            /**
+             * Movements
+             * @default []
+             */
+            movements: string[];
+            /**
+             * Promises
+             * @default []
+             */
+            promises: components["schemas"]["OrderPromise"][];
+            /**
+             * Firmed
+             * @default []
+             */
+            firmed: components["schemas"]["FirmedOrder"][];
+            /**
+             * Credit Block
+             * @default false
+             */
+            credit_block: boolean;
+        };
+        /** SalesSettings */
+        SalesSettings: {
+            /**
+             * Payment Terms
+             * @description Payment terms for customers without their own; empty = net 30 days
+             */
+            payment_terms?: string | null;
+            /**
+             * Tax Rate
+             * @description Tax on invoices (0.18 = 18 %)
+             * @default 0
+             */
+            tax_rate: number;
+            /**
+             * Credit Check
+             * @description Orders beyond a customer's credit limit are blocked for delivery
+             * @default true
+             */
+            credit_check: boolean;
+            /**
+             * Quotation Days
+             * @description How long a new quotation is valid
+             * @default 30
+             */
+            quotation_days: number;
+            /**
+             * Delivery Days
+             * @description Order lines promised to ship within this many days are listed to deliver
+             * @default 3
+             */
+            delivery_days: number;
+        };
+        /** SalesView */
+        SalesView: {
+            /** Currency */
+            currency: string;
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /**
+             * Orders
+             * @default []
+             */
+            orders: components["schemas"]["OrderView"][];
+            /**
+             * Quotations
+             * @default []
+             */
+            quotations: components["schemas"]["QuotationView"][];
+            /**
+             * Deliveries
+             * @default []
+             */
+            deliveries: components["schemas"]["DeliveryView"][];
+            /**
+             * Invoices
+             * @default []
+             */
+            invoices: components["schemas"]["InvoiceView"][];
+            /**
+             * Returns
+             * @default []
+             */
+            returns: components["schemas"]["ReturnView"][];
+            /**
+             * To Deliver
+             * @default []
+             */
+            to_deliver: components["schemas"]["ToDeliver"][];
+            /**
+             * To Bill
+             * @default []
+             */
+            to_bill: components["schemas"]["ToBill"][];
+            /**
+             * Customers
+             * @default []
+             */
+            customers: components["schemas"]["CustomerRow"][];
         };
         /** SaveBaseRequest */
         SaveBaseRequest: {
@@ -8294,6 +9350,59 @@ export interface components {
             ss_shortfall: number[];
             /** Unit Value */
             unit_value: number;
+        };
+        /**
+         * ToBill
+         * @description Goods delivered and not invoiced yet.
+         */
+        ToBill: {
+            /** Order */
+            order: string;
+            /** Customer */
+            customer: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /** Price */
+            price: number | null;
+            /** Value */
+            value: number | null;
+            /**
+             * Delivered On
+             * Format: date
+             */
+            delivered_on: string;
+            /** Movements */
+            movements: string[];
+        };
+        /**
+         * ToDeliver
+         * @description An order line due to ship and not on a delivery yet.
+         */
+        ToDeliver: {
+            /** Order */
+            order: string;
+            /** Header */
+            header: string;
+            /** Customer */
+            customer: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /** Ship From */
+            ship_from: string | null;
+            /**
+             * Ship Date
+             * Format: date
+             */
+            ship_date: string;
+            /**
+             * Credit Block
+             * @default false
+             */
+            credit_block: boolean;
         };
         /** Totals */
         Totals: {
@@ -10707,6 +11816,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PoActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_sales_api_sales_post: {
+        parameters: {
+            query?: {
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SalesView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_sales_action_api_sales_act_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SalesActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SalesActionResponse"];
                 };
             };
             /** @description Validation Error */

@@ -179,7 +179,26 @@ class CustomerPrice(Model):
 
     customer: str = Ref("location", description="The customer (or selling location) the price is agreed with")
     product: str = Ref("product")
-    price: float = Unit("money_per_unit", description="Net price per base unit, in the company currency")
+    price: float = Unit("money_per_unit", description="Price per base unit, in the company currency")
+    scales: list[PriceScale] = Field(default_factory=list, max_length=20,
+                                     description="Quantity breaks: from this quantity on one order line, this price")
+    discount: float = Unit("fraction", lt=1, default=0.0,
+                           description="Discount off this price for the customer on this product (0.05 = 5 %)")
+
+    @field_validator("scales")
+    @classmethod
+    def _scales(cls, v: list[PriceScale]) -> list[PriceScale]:
+        v = sorted(v, key=lambda x: x.from_qty)
+        if len({x.from_qty for x in v}) < len(v):
+            raise ValueError("two price scales start at the same quantity")
+        return v
+
+    def price_for(self, qty: float) -> float:
+        p = self.price
+        for sc in self.scales:
+            if qty + 1e-9 >= sc.from_qty:
+                p = sc.price
+        return p
 
 
 class LotSizing(Model):

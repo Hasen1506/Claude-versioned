@@ -253,6 +253,24 @@ document that held its postings until it was cancelled.
 | N110 | A short receipt names the orders it leaves short, but a late one does not: an order whose parts arrive after it starts is not named. | Minor | **Fixed (P).** A receipt that leaves a firm order short names it with the day it can run in full from later receipts ("cannot start in full on time: 2026-01-14 (the rest on …)"); Actuals' short orders show *The rest* beside it. |
 | N111 | The browser tests' server log showed "cannot commit – no transaction is active" from the worklist: each Performance request made the worklist anew, and making it runs a script that commits whatever transaction the shared database connection has open, another request's included. Found in the log, not on screen; a worklist sync could be half written. | Serious | **Fixed (O).** The worklist is made once per store, its tables under the store's lock; a test holds a transaction open while another thread makes one. |
 
+## Found while building Phase M
+
+M was built against the tests' small shop and then used in a real browser from an imported company: an order of two
+lines for a customer with a 1,000 credit limit (blocked, then released), its confirmation marked sent, a delivery picked
+two drums short, packed, shipped and signed for, the invoice paid within the discount days, one tin returned into quality
+inspection and credited, and a quotation won; every Selling tab was then opened at phone width.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N119 | There are two places to take an order: *Orders → New order* (one line, availability checked before taking it) and *Selling → New order or quotation* (several lines, prices, quotations, the credit check). | Minor | Open: the two forms are linked to each other; one form that checks every line before taking the order is for a later pass. An order of one line taken on *Orders* has no header and is shown, delivered and billed on *Selling* all the same. |
+| N120 | *Mark as sent* on an order confirmation changed the order but showed nothing: its result went to a message nobody displayed. | Serious | **Fixed (M).** The document buttons report through the order's own message line. |
+| N121 | Money on documents was the compact screen format: an invoice total read "₹2.1K", and so did every purchase order document since Q23. | Serious | **Fixed (M).** Documents (purchase orders, order confirmations, invoices, credit notes) and the Selling page show exact amounts (₹2,257.20); summaries keep the short form. |
+| N122 | Orders held over a credit limit and overdue invoices are on *Selling* only: not in the worklist on *Performance*, not on Home. | Minor | Open: Selling's answer line names both under "Needs you". |
+| N123 | Tax is one rate per customer (or the company's): no rate per product and no split into its parts (CGST, SGST, IGST by place of supply). | Minor | Open: recorded with the SD gaps below. |
+| N124 | Overdue invoices have no reminder (dunning) and customers no statement of account. | Minor | Open: **Q** (e-mail from the application). |
+| N125 | Proof of delivery records the day the customer signed, but on-time delivery (OTIF) still counts the shipping day plus the route's transit days. | Minor | Open: by design until OTIF can choose its date; recorded. |
+| N126 | *Money* shows the plan's revenue, not what was invoiced. | Minor | By design, recorded: *Money* is the plan's economics; what was billed, paid and is owed is on *Selling*. |
+
 ## Found while building Phase P
 
 P was built against the tests' small plants and the Capacity page used in a real browser on a two-run plant whose one
@@ -428,9 +446,12 @@ against SAP (the gaps below). Proposed, in the order recommended:
   plant and direct production; a discontinued product with its follow-up; alternative BOMs; overtime as a levelling
   choice (the optimiser's is open, N117); supplier and lane capacity in planning; steps needing a machine and a tool
   together; dragging orders between days to level.
-- **M: order to cash, complete** (SD gaps). Orders with several lines; prices with discounts and quantity scales;
-  payment terms and a credit check; an order confirmation to send the customer (as the purchase order); delivery
-  documents with picking, packing and proof of delivery; invoices; returns and credit notes; quotations.
+- **M: order to cash, complete**: **done**, see N119–N126. Orders with several lines, each priced from the
+  customer's price at its quantity scale (else the product's) less the customer's discounts; payment terms with a cash
+  discount; a credit limit that holds an order for delivery until it is released; an order confirmation to print or
+  e-mail; quotations won into orders at their prices; deliveries picked, packed, shipped (one material document) and
+  signed for; invoices with tax, payments and the cash discount; returns into quality inspection and credit notes;
+  what each customer owes.
 - **N: procure to pay, complete** (R20 and the MM gaps). Firming offers to send the purchase orders it created
   (R20); invoice verification (three-way match) and what is owed to whom; contracts and scheduling agreements;
   several confirmation lines per order line; returns to the supplier; a release strategy with more than one level.
@@ -438,7 +459,7 @@ against SAP (the gaps below). Proposed, in the order recommended:
   movements and to take back purchase and production orders; e-mail sent from the application (orders to suppliers,
   confirmations to customers, the worklist's reminders).
 
-Order after O: **P, M, N, Q**; P is done, so **M** is next. P stays ahead of M and N for K's reasons: every open serious finding of K left is about
+Order after O: **P, M, N, Q**; P and M are done, so **N** is next. P stays ahead of M and N for K's reasons: every open serious finding of K left is about
 stock that is really there (shelf life, short receipts, stock below zero) or a plan that acts on it.
 
 ## Gaps against SAP recorded for later phases
@@ -468,12 +489,14 @@ stock that is really there (shelf life, short receipts, stock below zero) or a p
   documents with a freeze and a posting block, stock below zero as a company rule (**O**, done). Still missing: batch
   classification and characteristics, restricted-use batches, a batch where-used list beyond the journal's search,
   storage locations and bins inside a place, handling units. Goods issue for a sales order is a posting on the order
-  (**G**, done); a delivery document with picking and packing is still missing.
+  (**G**, done) or a delivery document picked, packed and shipped (**M**, done).
 - SD: taking an order with the availability check's promise, order changes promised again, cancelling the rest with
-  the order logged, deliveries in part or in full, and customer-specific prices (**G**, done). Still missing:
-  several lines per order, pricing conditions with discounts, surcharges and quantity scales, payment terms and a
-  credit check, delivery documents (picking, packing, proof of delivery), billing and invoices, returns and credit
-  notes, quotations and contracts, and output (an order confirmation to send the customer).
+  the order logged, deliveries in part or in full, and customer-specific prices (**G**, done). Orders with several
+  lines, prices with quantity scales and discounts, payment terms with a cash discount, a credit limit with a delivery
+  block and its release, quotations, an order confirmation, delivery documents (picking, packing, goods issue, proof
+  of delivery), invoices with tax and payments, returns and credit notes (**M**, done). Still missing: surcharges and
+  freight conditions, tax per product and its parts (N123), contracts and scheduling agreements with customers,
+  dunning and statements (N124), down payments, invoice lists, and consignment stock at the customer.
 - MM: supplier purchasing data with a purchasing block, info records with price scales, the source list (fixed
   and blocked), requisitions from MRP, purchase orders with an approval limit, supplier confirmations that planning
   uses, and goods receipts with delivery tolerances (**E**, done). Still missing: invoice verification (three-way

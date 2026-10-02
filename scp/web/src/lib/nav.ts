@@ -38,6 +38,7 @@ export const NAV: NavGroup[] = [
   ] },
   { label: "Customers", items: [
     { id: "promise", label: "Orders", question: "What can we promise each customer, and when?", run: "promise" },
+    { id: "selling", label: "Selling", question: "What do we ship and bill, and who owes us what?", run: "sales" },
     { id: "execution", label: "Actuals", question: "What actually happened?", run: "actuals" },
   ] },
   { label: "Suppliers", items: [

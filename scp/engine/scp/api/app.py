@@ -39,6 +39,8 @@ from ..plan.trace import PlanTrace, index as trace_index, trace
 from ..plan.level import LevelPreview, level_preview
 from ..purchasing import PurchasingError, act as purchasing_act, create_purchase_orders, purchasing_view
 from ..purchasing.result import ActionReport, CreateReport, PurchasingView
+from ..sales import SalesError, act as sales_act, sales_view
+from ..sales.result import SalesReport, SalesView
 from ..promise import PromiseResult, check_order, commit, run_bop, run_promise
 from ..promise.orders import (
     OrderError, SalesOrderReport, accept as accept_order, cancel as cancel_order, change as change_order,
@@ -659,6 +661,74 @@ def post_po_action(req: PoActionRequest) -> PoActionResponse:
     except PurchasingError as e:
         raise HTTPException(409, str(e)) from e
     return PoActionResponse(**answer(req.dataset, new), report=rep)
+
+
+@app.post("/api/sales", response_model=SalesView)
+def post_sales(ds: PlanData, as_of: dt.date | None = None) -> Response:
+    """Every sales order with its lines, quotations, deliveries, invoices and returns, what is due to deliver and to
+    bill, and each customer's credit position."""
+    return respond("sales", ds, lambda: sales_view(ds, as_of), as_of)
+
+
+class SalesLineInput(Out):
+    order: str | None = None                        # deliveries, picking, proof: the order line
+    product: str | None = None                      # orders and quotations: the product
+    qty: float | None = None
+    date: dt.date | None = None                     # orders and quotations: wanted on
+    price: float | None = None                      # a net price agreed for this line (empty: the price list)
+    priority: int | None = None
+    complete_delivery: bool | None = None
+    picked: float | None = None
+    received: float | None = None
+    batch: str | None = None
+    ship_from: str | None = None
+
+
+class SalesActionRequest(Out):
+    dataset: PlanData
+    action: Literal["create_order", "add_lines", "release_credit", "send_confirmation", "cancel_order",
+                    "create_quotation", "win_quotation", "lose_quotation", "create_deliveries", "pick", "pack",
+                    "issue", "proof", "cancel_delivery", "create_invoices", "pay", "cancel_invoice", "create_return",
+                    "receive_return", "credit_return"]
+    id: str | None = None                           # the order, quotation, delivery, invoice or return
+    customer: str | None = None
+    lines: list[SalesLineInput] | None = None
+    date: dt.date | None = None                     # the day it happens (default: the planning start)
+    customer_ref: str = ""
+    payment_terms: str | None = None
+    note: str = ""
+    reason: str = ""
+    by: str = ""                                    # released by, signed by
+    valid_to: dt.date | None = None
+    packages: int | None = None
+    gross_kg: float | None = None
+    amount: float | None = None
+    reference: str = ""
+    orders: list[str] | None = None                 # invoices: only these order lines or orders
+    product: str | None = None                      # returns
+    qty: float | None = None
+    order: str | None = None
+    location: str | None = None
+    stock_type: StockType | None = None
+    batch: str | None = None
+
+
+class SalesActionResponse(Out):
+    dataset: Dataset | None = None        # the changed company whole, or
+    patch: dict[str, Any] | None = None   # what changed, when it came by reference (scp.api.working)
+    report: SalesReport
+
+
+@app.post("/api/sales/act", response_model=SalesActionResponse)
+def post_sales_action(req: SalesActionRequest) -> SalesActionResponse:
+    """One order-to-cash step: take an order, quote, deliver, invoice, record a payment, take a return back."""
+    lines = None if req.lines is None else [x.model_dump(exclude_none=True) for x in req.lines]
+    kw = req.model_dump(exclude={"dataset", "action", "id", "customer", "lines", "date"})
+    try:
+        new, rep = sales_act(req.dataset, req.action, id=req.id, customer=req.customer, lines=lines, on=req.date, **kw)
+    except (SalesError, OrderError) as e:
+        raise HTTPException(409, str(e)) from e
+    return SalesActionResponse(**answer(req.dataset, new), report=rep)
 
 
 class UsageInput(Out):

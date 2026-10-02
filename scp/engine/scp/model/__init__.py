@@ -18,6 +18,10 @@ from .promise import (
     Allocation, BopSegment, Confirmation, ConfirmationStrategy, PromiseSettings,
 )
 from .purchasing import PriceScale, PurchaseOrder, PurchasingSettings, Vendor
+from .sales import (
+    Customer, Delivery, DeliveryLine, Invoice, InvoiceLine, PaymentTerms, Payment, QuoteLine, Quotation, ReturnOrder,
+    SalesOrder, SalesSettings,
+)
 from .schedule import Changeover, ScheduleSettings
 from .sop import SopMode, SopSettings, StockTarget
 from .master import (
@@ -28,6 +32,8 @@ from .master import (
 from .transactional import DemandRecord, Reservation, SalesHistory, ScheduledReceipt
 
 __all__ = [
+    "Customer", "Delivery", "DeliveryLine", "Invoice", "InvoiceLine", "PaymentTerms", "Payment", "QuoteLine",
+    "Quotation", "ReturnOrder", "SalesOrder", "SalesSettings",
     "PriceScale", "PurchaseOrder", "PurchasingSettings", "Vendor",
     "AccuracyRecord", "OwnerRule", "TowerSettings", "CapacityOption", "FinanceSettings", "ClosedOrder", "ExecutionSettings", "GoodsMovement", "MovementType", "RolledWeek", "Batch", "CountItem", "InventoryDoc", "NegativeStock", "StockType", "Reservation",
     "DEFAULT_MODELS", "Allocation", "BopSegment", "Confirmation", "ConfirmationStrategy", "PromiseSettings", "DemandEvent", "EventKind", "ForecastModelId", "ForecastOverride", "ForecastPeriod",

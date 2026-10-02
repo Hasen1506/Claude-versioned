@@ -166,7 +166,8 @@ function refOptions(ds: Dataset | null, kind: string): { id: string; label: stri
   if (!ds) return [];
   const list =
     kind === "location" ? ds.locations : kind === "product" ? ds.products : kind === "resource" ? ds.resources
-      : kind === "calendar" ? ds.calendars ?? [] : kind === "mrp_group" ? ds.mrp_groups ?? [] : [];
+      : kind === "calendar" ? ds.calendars ?? [] : kind === "mrp_group" ? ds.mrp_groups ?? []
+      : kind === "payment_terms" ? ds.payment_terms ?? [] : [];
   return (list ?? []).map((x) => {
     const o = x as { id: string; name?: string; type?: string };
     return { id: o.id, label: o.name && o.name !== o.id ? `${o.name} · ${o.id}` : o.id };

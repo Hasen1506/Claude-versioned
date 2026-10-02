@@ -335,6 +335,9 @@ def deliver(ds: Dataset, oid: str, qty: float | None = None, on: date | None = N
             ship_from: str | None = None, note: str = "", lot: Lot | None = None) -> tuple[Dataset, ActionReport]:
     """Goods issue of a sales order to its customer (≈ VL01N + PGI)."""
     d = sales_order(ds, oid)
+    head = next((o for o in ds.sales_orders if o.id == d.order), None) if d.order else None
+    if head is not None and head.credit_block:
+        raise PostingError(f"{head.id} is blocked over the customer's credit limit: release it on Selling first")
     frm = ship_from or ship_point(ds, d)
     if not frm or ds.location_type(frm) not in STOCKING_LOCATION_TYPES:
         raise PostingError(f"{oid} has no place to ship from: give {_at(ds, d.location)} a route from a plant or "

@@ -20,9 +20,11 @@ KEYS: dict[str, tuple[str, ...]] = {
     "changeovers": ("resource", "from_group", "to_group"), "closed_orders": ("kind", "id"),
     "accuracy": ("location", "product", "start"), "customer_prices": ("customer", "product"), "vendors": ("supplier",),
     "purchase_orders": ("id",), "stock_targets": ("location", "product", "date"), "rolled_weeks": ("start",),
+    "customers": ("customer",), "payment_terms": ("id",), "sales_orders": ("id",), "quotations": ("id",),
+    "deliveries": ("id",), "invoices": ("id",), "returns": ("id",),
 }
 SINGLE = ("settings", "forecasting", "inventory", "sop", "scheduling", "promising", "execution", "purchasing", "finance",
-          "tower")
+          "tower", "sales")
 MAX_FIELDS = 12
 
 

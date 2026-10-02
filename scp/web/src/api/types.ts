@@ -166,6 +166,23 @@ export type PoAction = S["PoActionRequest"]["action"];
 export type PoLineInput = S["PoLineInput"];
 export type RequisitionPick = S["RequisitionPick"];
 
+// Phase M: order to cash
+export type SalesView = S["SalesView"];
+export type OrderView = S["OrderView"];
+export type OrderLineView = S["OrderLineView"];
+export type QuotationView = S["QuotationView"];
+export type DeliveryView = S["DeliveryView"];
+export type InvoiceView = S["InvoiceView"];
+export type ReturnView = S["ReturnView"];
+export type ToDeliver = S["ToDeliver"];
+export type ToBill = S["ToBill"];
+export type CustomerRow = S["CustomerRow"];
+export type SalesReport = S["SalesReport"];
+export type SalesAction = S["SalesActionRequest"]["action"];
+export type SalesLineInput = S["SalesLineInput"];
+export type SalesActionResponse = S["SalesActionResponse"];
+export type SalesActionInput = Omit<Partial<S["SalesActionRequest"]>, "dataset" | "action">;
+
 // Phase I: sign-in and companies kept on the server
 export type AuthConfig = S["AuthConfig"];
 export type Session = S["Session"];
