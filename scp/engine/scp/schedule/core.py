@@ -29,6 +29,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from ..time.capacity import NoWorkingTime
+
 from .clock import EPS, INF, ResourceClock
 
 
@@ -163,7 +165,8 @@ class Decoded:
     objective: float = 0.0
 
 
-def handoff(inst: Instance, o: OpSpec, bl: list[Block], nxt: OpSpec | None) -> tuple[float, float]:
+def handoff(inst: Instance, o: OpSpec, bl: list[Block], nxt: OpSpec | None,
+            next_resource: str | None = None) -> tuple[float, float]:
     """When the next step of the order may start, and the earliest it may end.
 
     Without overlap the next step starts after this one ends (and its queue). With a send-ahead quantity it may
@@ -179,7 +182,11 @@ def handoff(inst: Instance, o: OpSpec, bl: list[Block], nxt: OpSpec | None) -> t
     _, done = res.at(first.unit if res.finite else -1).advance(first.run_start, first.run_work * frac)
     ready = min(after_end, inst.after(o, done))
     tail = nxt.run * min(1.0, o.send_ahead / nxt.qty) if nxt.qty > 0 else 0.0
-    _, must = inst.resources[nxt.resource].clock.advance(after_end, tail)
+    machines = [next_resource] if next_resource is not None else [nxt.resource, *nxt.alternatives]
+    must = min((inst.resources[rid].clock.advance(after_end, tail)[1]
+                for rid in machines if rid in inst.resources), default=INF)
+    if must == INF:
+        raise NoWorkingTime(f"{nxt.resource} and its alternatives have no working time left for {nxt.key}")
     return ready, must
 
 
@@ -245,8 +252,8 @@ def decode(inst: Instance, seqs: dict[str, list[str]], hold: dict[str, float] | 
                 r0, r1 = clk.advance(s1, o.run / n)
                 if best is None or (r1, u) < best[:2]:
                     best = (r1, u, s0, r0, su, prev)
-            if best[0] == INF:
-                raise ValueError(f"{rid} has no working time left for {o.key}")
+            if best is None or best[0] == INF:
+                raise NoWorkingTime(f"{rid} has no working time left for {o.key}")
             if best[1] >= 0:
                 fr[best[1]] = best[0]
                 stt[best[1]] = (o.product, o.group)
@@ -271,28 +278,40 @@ def decode(inst: Instance, seqs: dict[str, list[str]], hold: dict[str, float] | 
         def split(rid: str, start: float) -> list[tuple]:
             res = inst.resources[rid]
             allowed = min(o.parallel or res.units, res.units) if res.finite else 1
-            plan = trial(o, rid, res, start, 1)
-            if o.run > EPS:
-                for n in range(2, allowed + 1):
+            plan = None
+            for n in range(1, (allowed if o.run > EPS else 1) + 1):
+                try:
                     cand = trial(o, rid, res, start, n)
-                    if score(cand) < score(plan) - 1e-6:
-                        plan = cand
+                except NoWorkingTime:
+                    continue
+                if plan is None or score(cand) < score(plan) - 1e-6:
+                    plan = cand
+            if plan is None:
+                raise NoWorkingTime(f"{rid} has no working time left for {o.key}")
             return plan
 
         best: tuple | None = None
         options = [machine[k]] if k in machine else [o.resource, *(a for a in o.alternatives if a in inst.resources)]
         for rank, rid in enumerate(options):
             start = t0
-            plan = split(rid, start)
-            for _ in range(6):   # overlapped: do not finish before the step before can hand over its last batch
-                end = max(c[0] for c in plan)
-                if end >= must - 1e-6 or end == INF:
-                    break
-                start += must - end
+            try:
+                candidate_must = must
+                if p is not None and ops[p].send_ahead:
+                    _, candidate_must = handoff(inst, ops[p], [b for b in blocks if b.key == p], o, rid)
                 plan = split(rid, start)
+                for _ in range(6):   # wait for the predecessor's last send-ahead batch
+                    end = max(c[0] for c in plan)
+                    if end >= candidate_must - 1e-6:
+                        break
+                    start += candidate_must - end
+                    plan = split(rid, start)
+            except NoWorkingTime:
+                continue
             key = (max(c[0] for c in plan), rank)
             if best is None or key < best[0]:
                 best = (key, rid, plan)
+        if best is None:
+            raise NoWorkingTime(f"{', '.join(options)} has no working time left for {o.key}")
         _, rid, plan = best
         n = len(plan)
         for sub, (r1, u, s0, r0, su, prev) in enumerate(plan):
@@ -446,7 +465,10 @@ def improve(inst: Instance, seqs: dict[str, list[str]], *, time_limit: float = 4
                 st.tried += 1
                 trial = dict(cur)
                 trial[r] = cand
-                d = decode(inst, trial, hold, pin)
+                try:
+                    d = decode(inst, trial, hold, pin)
+                except NoWorkingTime:
+                    continue
                 if d.objective < best.objective - 1e-7:
                     cur, best = trial, d
                     st.accepted += 1
@@ -508,7 +530,9 @@ def check(inst: Instance, d: Decoded) -> list[str]:
                 v.append(f"{o.key}: runs on {bl[0].resource}, which is not its resource or an alternative")
             nxt = j.ops[i + 1] if i + 1 < len(j.ops) else None
             if bl:
-                prev_ready, prev_must = handoff(inst, o, bl, nxt)
+                next_blocks = subs.get(nxt.key, []) if nxt is not None else []
+                next_resource = next_blocks[0].resource if next_blocks else None
+                prev_ready, prev_must = handoff(inst, o, bl, nxt, next_resource)
             else:
                 prev_ready, prev_must = inst.after(o, prev_ready), 0.0
         if j.ops and abs(d.completion.get(j.id, -1) - prev_ready) > 1e-6:

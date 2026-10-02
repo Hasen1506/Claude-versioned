@@ -21,7 +21,7 @@ from datetime import date, timedelta
 from ..model import Calendar, Dataset, LocationProduct, ProductionSource, TransportLane
 from ..network import SupplyOption
 from ..time import WorkCalendar
-from ..time.capacity import day_capacity
+from ..time.capacity import NoWorkingTime, day_capacity
 from .structure import entering, needs, started_factor
 
 DEFAULT_CALENDAR = Calendar(id="SYS-MON-FRI", name="Mon–Fri", workdays=[0, 1, 2, 3, 4])
@@ -143,7 +143,28 @@ def _span(ds: Dataset, op, d: float, hours: float, cal: WorkCalendar, day: date,
             if left <= 1e-9:
                 return n
         cur += timedelta(days=1 if forward else -1)
-    return n
+    raise NoWorkingTime(f"{op.resource} has insufficient working time for step {op.seq} "
+                        f"within 3660 calendar days of {day.isoformat()}")
+
+
+def _dated_operation(ds, op, d, hours, cal, day, forward):
+    """Use a declared alternative when the primary cannot complete the operation."""
+    try:
+        return op, d, _span(ds, op, d, hours, cal, day, forward)
+    except NoWorkingTime as failure:
+        for rid in dict.fromkeys(op.alternatives):
+            res = ds.resource_by_id.get(rid)
+            if res is None or rid == op.resource:
+                continue
+            candidate = op.model_copy(update={"resource": rid})
+            units = min(op.parallel_units or res.units, res.units)
+            rate = res.hours_per_workday_per_unit * units
+            duration = hours / rate if rate > 0 else 0.0
+            try:
+                return candidate, duration, _span(ds, candidate, duration, hours, cal, day, forward)
+            except NoWorkingTime:
+                continue
+        raise failure
 
 
 def _margins(ds: Dataset, ps: ProductionSource) -> tuple[float, float]:
@@ -193,7 +214,6 @@ def _forward(ds: Dataset, ps: ProductionSource, good_qty: float, cal: WorkCalend
     cursor = st
     prev: tuple | None = None    # (op, start, d, machine hours)
     for (seq, d, mh, lh), op in zip(durs, ps.operations, strict=True):
-        n = _span(ds, op, d, mh, cal, cal.next_workday(cursor), True)
         op_start = cal.next_workday(cursor)
         min_end = None
         if prev is not None and prev[0].send_ahead_qty:
@@ -203,7 +223,8 @@ def _forward(ds: Dataset, ps: ProductionSource, good_qty: float, cal: WorkCalend
             batch = cal.add_workdays(pstart, _span(ds, pop, bd, bh, cal, pstart, True))
             early = cal.add_workdays(cal.next_workday(batch), pop.queue_workdays) if pop.queue_workdays else batch
             op_start = min(op_start, cal.next_workday(early))
-            n = _span(ds, op, d, mh, cal, op_start, True)
+        op, d, n = _dated_operation(ds, op, d, mh, cal, op_start, True)
+        if prev is not None and prev[0].send_ahead_qty:
             td, th = _partial_duration(ps, op, good_qty, share, d, mh, setup=False)
             tail = _span(ds, op, td, th, cal, cal.next_workday(cursor), True)
             min_end = cal.add_workdays(cal.next_workday(cursor), tail - 1) + timedelta(days=1) if tail > 0 else cursor
@@ -224,7 +245,7 @@ def _backward(ds: Dataset, ps: ProductionSource, cal: WorkCalendar, due: date,
     for (seq, d, mh, lh) in reversed(durs):
         op = ops_by_seq[seq]
         op_end = cal.add_workdays(cursor, -op.queue_workdays) if op.queue_workdays else cursor
-        n = _span(ds, op, d, mh, cal, cal.prev_workday(op_end - timedelta(days=1)), False)
+        op, d, n = _dated_operation(ds, op, d, mh, cal, cal.prev_workday(op_end - timedelta(days=1)), False)
         op_start = cal.add_workdays(cal.prev_workday(op_end - timedelta(days=1)), -(n - 1)) if n > 0 else op_end
         windows.append(OpWindow(seq, op.resource, op.labor_resource, op_start, op_end, mh, lh))
         cursor = op_start
@@ -279,7 +300,10 @@ def schedule_make(ds: Dataset, ps: ProductionSource, good_qty: float, *, availab
             st0 = windows[0].start
             for _ in range(400):
                 nxt = cal.add_workdays(st0, 1)
-                w2, e2 = _forward(ds, ps, good_qty, cal, nxt, durs)
+                try:
+                    w2, e2 = _forward(ds, ps, good_qty, cal, nxt, durs)
+                except NoWorkingTime:
+                    break
                 if e2 > end:
                     break
                 st0 = nxt
