@@ -8,6 +8,14 @@ The continuation covered spreadsheet decoding, save/recovery races and capacity-
 
 ## Verification after repairs
 
+### 2 October continuation: resource calendars and overlapping production
+
+**BH071 (P1):** a resource's own holidays/weekends were ignored by make-order dating unless it also had named shifts or capacity changes. The same eight-hour machine capacity expressed with a named shift produced different dates. On a Monday machine holiday, an eight-hour make order was reported available Tuesday, although the shop floor could only run Tuesday and make it available Wednesday. Forward/backward holiday and weekend reproductions fail on main. Date-dependent lead-time walking now includes an explicit resource calendar, preserving the existing fast path for inherited constant capacity.
+
+**BH072 (P1):** send-ahead overlap prorated the first operation's setup with the batch quantity and used nominal days across machine shutdowns. Eight hours of setup plus two hours for the first four units was treated as a one-day handoff rather than two. The final batch could also be reported complete while its next machine was closed. Partial-batch work now includes the entire first setup, exact batch run work, and date-dependent resource capacity at both the first handoff and final completion; nominal production duration shares the corrected setup calculation.
+
+Fourteen persistent engine cases cover named-shift equivalence, both date directions, holidays/weekends, MRP/shop-floor agreement, full setup and the final-machine shutdown. Running these against the exact main lead-time source at `ca73120118383de3e11315b34cfac5110a0494ee` reproduces nine failures (five calendar and four overlap boundaries); five existing-behavior controls pass. All fourteen and the complete **596-test engine suite** pass locally, alongside lint and the focused capacity/promising/routing checks. Full CI and publication are pending. These two additional repairs are not yet included in the merged cumulative count.
+
 ### 1 October continuation: live-data transitions, restoration and concurrent reads
 
 **BH067 (P1):** returning from a saved version to live data discarded unsaved stock 35 without acknowledgement. Its delayed document also replaced a newer import or stock edit. "Make this the live data" applied its company-A lookup to company B's version when B was opened meanwhile. Live-data return now acknowledges unsaved version/live edits, validates the original context and revision before replacement, and reports failed reads with retry available. Publishing a version validates that the confirmed working copy is still current after the revision lookup.
@@ -22,7 +30,7 @@ The creation audit also extends **BH065**, without counting a new defect: a dela
 
 Twelve browser reproductions and two corrected engine concurrency reproductions verified the original failures, grouped into four new findings plus the BH065 follow-up. Seventeen persistent browser cases pass in focused checks, alongside the account/version regressions. Merge reproductions were independently confirmed on a rebuilt main-branch client; their server used the isolated database-read repair to avoid the separately identified concurrency failure. [PR #12](https://github.com/Hasen1506/Claude-versioned/pull/12) merged the production repairs at `5ff6bfcfd2def9b4dbfa4145099276a2c04f960c`. [Full CI run 36827273837](https://github.com/Hasen1506/Claude-versioned/actions/runs/36827273837) passed all **582 engine tests and 79 browser tests**, along with lint, reproducible examples, API-type checks and the production build. The CI-tested synthetic merge and actual merged commit have the identical tree `a84094aa9b8ef16deeba6bf62881fc2430ff4e35`. All 17 new browser checks also passed in a fresh isolated local run.
 
-Local Windows follow-up remains open: a subsequent single-worker rerun of three established golden workflows failed during example bootstrap while waiting for “Everything is up to date”, before the account/history operations. Traces show slow successful validation/network requests and unfinished forecast/planning work; no source cause is established. This is recorded as an unresolved runtime/timing observation, not an additional confirmed defect or a claim that every platform passes. The cumulative merged count is **65 logic repairs plus one native runtime mitigation**. Remaining product-audit gates are open.
+Local Windows follow-up: an earlier single-worker rerun of three established golden workflows timed out during example bootstrap. Direct requests on the same server later passed (validation 0.17 s, network 0.065 s, forecast 1.286 s), and fresh reruns passed all three established workflows: versions in 21.6 s, then collaboration and four-eyes approval in 120.27 s. No source cause for the earlier delay is established; it remains an intermittent timing observation rather than an additional confirmed defect or a claim that every platform passes. The cumulative merged count at PR #12 is **65 logic repairs plus one native runtime mitigation**. Remaining product-audit gates are open.
 
 ### 1 October continuation: account and company request ordering
 
@@ -274,4 +282,3 @@ The independent LP now uses the same single-thread setting. Inventory propagates
 
 
 Final verification: [GitHub Actions run 36733258631](https://github.com/Hasen1506/Claude-versioned/actions/runs/36733258631) passed engine and web jobs on the code merged by PR #6. The final documentation update changes only this audit.
-

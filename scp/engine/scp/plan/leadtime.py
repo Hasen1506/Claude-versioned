@@ -119,14 +119,14 @@ def _op_workdays(ds: Dataset, ps: ProductionSource, good_qty: float) -> list[tup
 
 def _shaped(ds: Dataset, rid: str | None) -> bool:
     r = ds.resource_by_id.get(rid) if rid else None
-    return bool(r and (r.shifts or r.capacity_changes))
+    return bool(r and (r.calendar or r.shifts or r.capacity_changes))
 
 
 def _span(ds: Dataset, op, d: float, hours: float, cal: WorkCalendar, day: date, forward: bool) -> int:
     """Working days of ``cal`` an operation occupies, from ``day`` forward (or ending on ``day`` backward). A
     resource with the same capacity every working day takes ceil(duration); one with named shifts or capacity
-    changes is walked day by day, so a shutdown week or a Saturday half shift lengthens or shortens the
-    operation where it falls."""
+    changes or its own calendar is walked day by day, so a resource holiday, shutdown week or Saturday
+    half shift lengthens or shortens the operation where it falls."""
     if op.subcontract is not None or not _shaped(ds, op.resource):
         return math.ceil(d - 1e-9)
     if hours <= 1e-9:
@@ -163,7 +163,8 @@ def production_workdays(ds: Dataset, ps: ProductionSource, good_qty: float) -> f
         if op.send_ahead_qty and nxt is not None:
             # overlapped: the next step starts after the send-ahead batch; it still ends after this step
             share = _share(op, good_qty, ps)
-            total += max(math.ceil(durs[i][1] * share - 1e-9), days[i] - days[i + 1]) + op.queue_workdays
+            batch_days, _ = _partial_duration(ps, op, good_qty, share, durs[i][1], durs[i][2], setup=True)
+            total += max(math.ceil(batch_days - 1e-9), days[i] - days[i + 1]) + op.queue_workdays
         else:
             total += days[i] + op.queue_workdays
     return total + before + after
@@ -174,32 +175,44 @@ def _share(op, good_qty: float, ps: ProductionSource) -> float:
     return min(1.0, op.send_ahead_qty / q) if op.send_ahead_qty and q > 0 else 1.0
 
 
+def _partial_duration(ps: ProductionSource, op, good_qty: float, share: float, days: float,
+                      hours: float, *, setup: bool) -> tuple[float, float]:
+    """Work for a send-ahead batch: its first batch needs the whole setup; its final batch does not."""
+    if op.subcontract is not None:
+        return days * share, 0.0
+    qty = good_qty * entering(ps)[op.seq] * share
+    work = (op.setup_hours if setup else 0.0) + op.run_hours(qty)
+    return (days * work / hours if hours > 0 else 0.0), work
+
+
 def _forward(ds: Dataset, ps: ProductionSource, good_qty: float, cal: WorkCalendar, st: date,
              durs: list[tuple[int, float, float, float]]) -> tuple[list[OpWindow], date]:
     """Operations one after the other from ``st``; an overlapped step lets the next one start once its
     send-ahead batch (and the queue after it) is through, but the next one never ends before it does."""
     windows: list[OpWindow] = []
     cursor = st
-    prev: tuple | None = None    # (op, start, d)
+    prev: tuple | None = None    # (op, start, d, machine hours)
     for (seq, d, mh, lh), op in zip(durs, ps.operations, strict=True):
         n = _span(ds, op, d, mh, cal, cal.next_workday(cursor), True)
         op_start = cal.next_workday(cursor)
         min_end = None
         if prev is not None and prev[0].send_ahead_qty:
-            pop, pstart, pd = prev
+            pop, pstart, pd, pmh = prev
             share = _share(pop, good_qty, ps)
-            batch = cal.add_workdays(pstart, math.ceil(pd * share - 1e-9))
+            bd, bh = _partial_duration(ps, pop, good_qty, share, pd, pmh, setup=True)
+            batch = cal.add_workdays(pstart, _span(ds, pop, bd, bh, cal, pstart, True))
             early = cal.add_workdays(cal.next_workday(batch), pop.queue_workdays) if pop.queue_workdays else batch
             op_start = min(op_start, cal.next_workday(early))
             n = _span(ds, op, d, mh, cal, op_start, True)
-            tail = math.ceil(d * share - 1e-9)
+            td, th = _partial_duration(ps, op, good_qty, share, d, mh, setup=False)
+            tail = _span(ds, op, td, th, cal, cal.next_workday(cursor), True)
             min_end = cal.add_workdays(cal.next_workday(cursor), tail - 1) + timedelta(days=1) if tail > 0 else cursor
         op_end = cal.add_workdays(op_start, n - 1) + timedelta(days=1) if n > 0 else op_start
         if min_end is not None and min_end > op_end:
             op_end = min_end
         windows.append(OpWindow(seq, op.resource, op.labor_resource, op_start, op_end, mh, lh))
         cursor = cal.add_workdays(cal.next_workday(op_end), op.queue_workdays) if op.queue_workdays else op_end
-        prev = (op, op_start, d)
+        prev = (op, op_start, d, mh)
     return windows, cursor
 
 
