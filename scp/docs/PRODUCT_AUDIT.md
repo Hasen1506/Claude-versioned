@@ -115,3 +115,8 @@ BH073–BH074 cover unavailable machine calendars, viable machine/source fallbac
 ## 2 October production-cost continuation
 
 BH075–BH076 cover machine assignment costs and partially filled batch pricing. Fifteen regression cases and 48 independently calculated quantity/rate/scrap cases test order costs, machine workload, setup, labor, outside processing, conversion and the finance overlay. Publication status and exact-main evidence are recorded in [audit.md](../../audit.md). These calculations test internal application logic.
+
+
+## 2 October physical scheduling continuation
+
+BH077–BH079 repair fractional batch work, fractional whole pieces and premature batch send-ahead in detailed scheduling. Twenty regressions and 108 independent combinations verify actual sublot work, quantity conservation, batch handoffs, the API and schedule replay. BH080 remains open in rough production-date/load/setup planning. Exact-main reproduction and publication status are recorded in [audit.md](../../audit.md).
