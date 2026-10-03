@@ -13,6 +13,11 @@ type Sev = "error" | "warning" | "info" | "ok";
 const INV_SEV: Record<string, Sev> = {
   blocked: "error", released: "info", "to pay": "info", paid: "ok", cancelled: "warning", "credit open": "info", credited: "ok",
 };
+/** Credit memos and subsequent credits are owed to us; invoices and subsequent debits by us (N132). */
+const isCredit = (kind: string) => kind === "credit_memo" || kind === "subsequent_credit";
+const KIND: Record<string, string> = {
+  invoice: "Invoice", credit_memo: "Credit memo", subsequent_debit: "Subsequent debit", subsequent_credit: "Subsequent credit",
+};
 const RET_SEV: Record<string, Sev> = { "to credit": "warning", credited: "ok", "replacement due": "info", replaced: "ok" };
 const CON_SEV: Record<string, Sev> = { active: "ok", "not started": "info", expired: "warning", "used up": "warning" };
 
@@ -67,18 +72,20 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
   const [ref, setRef] = useState("");
   const [on, setOn] = useState(ds.settings.planning_start);
   const [tax, setTax] = useState("");
+  const [freight, setFreight] = useState("");
   const { busy, run, banners } = usePoAction();
   const line = (o: string) => edit[o] ?? { qty: "", price: "" };
-  const net = picked.reduce((a, g) => a + Number(line(g.order).qty || g.qty) * Number(line(g.order).price || g.price || 0), 0);
+  const net = picked.reduce((a, g) => a + Number(line(g.order).qty || g.qty) * Number(line(g.order).price || g.price || 0), 0)
+    + Number(freight || 0);
   const supplier = suppliers.size === 1 ? [...suppliers][0] : null;
   const vendor = (ds.vendors ?? []).find((v) => v.supplier === supplier);
   const rate = vendor?.tax_rate ?? ds.purchasing?.tax_rate ?? 0;
   const toggle = (o: string) => { const n = new Set(chosen); if (n.has(o)) n.delete(o); else n.add(o); setPick(n); };
   const enter = () => run("enter_invoice", "", {
-    supplier, date: on, reference: ref, tax: tax === "" ? null : Number(tax),
+    supplier, date: on, reference: ref, tax: tax === "" ? null : Number(tax), delivery_costs: Number(freight || 0),
     lines: picked.map((g) => ({ id: g.order, order: g.order, final: false, qty: Number(line(g.order).qty || g.qty),
       price: line(g.order).price === "" ? null : Number(line(g.order).price) })),
-  }, () => { setPick(null); setEdit({}); setRef(""); setTax(""); });
+  }, () => { setPick(null); setEdit({}); setRef(""); setTax(""); setFreight(""); });
   const cur = pay.invoices.find((i) => i.id === sel);
   return (
     <div className="stack">
@@ -94,6 +101,9 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
           onChange={(e) => setRef(e.target.value)} /></label>
         <label className="row small">Dated <input type="date" className="input" style={{ width: 150 }} value={on} aria-label="Invoice date"
           onChange={(e) => setOn(e.target.value || ds.settings.planning_start)} /></label>
+        <label className="row small" title="Freight and other delivery costs on the invoice that the order did not plan">Delivery costs <input className="input num"
+          style={{ width: 90 }} type="number" min={0} step="any" aria-label="Delivery costs" placeholder="0" value={freight}
+          onChange={(e) => setFreight(e.target.value)} /></label>
         <label className="row small">Tax <input className="input num" style={{ width: 90 }} type="number" min={0} step="any" aria-label="Tax charged"
           placeholder={String(round2(net * rate))} value={tax} onChange={(e) => setTax(e.target.value)} /></label>
         <Edits><button className="btn accent" disabled={busy || !picked.length || suppliers.size !== 1} onClick={enter}
@@ -135,11 +145,11 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
               <tbody>
                 {pay.invoices.map((i) => (
                   <tr key={i.id} className={`clickable ${i.id === sel ? "selected" : ""}`} onClick={() => go("buying", "invoices", i.id)}>
-                    <td><b>{i.id}</b>{i.kind === "credit_memo" && <div className="faint small">credit memo{i.return_id ? ` for ${i.return_id}` : ""}</div>}</td>
+                    <td><b>{i.id}</b>{i.kind !== "invoice" && <div className="faint small">{KIND[i.kind].toLowerCase()}{i.return_id ? ` for ${i.return_id}` : ""}</div>}</td>
                     <td><Loc id={i.supplier} /></td><td>{i.reference || "—"}</td><td>{day(i.date)}</td>
-                    <td>{i.kind === "invoice" ? day(i.due_date) : "—"}{i.days_overdue > 0 && <Badge sev="error">{i.days_overdue} d overdue</Badge>}</td>
-                    <td className="num">{exactMoney(i.kind === "credit_memo" ? -i.total : i.total, i.currency)}</td>
-                    <td className="num">{i.open > 0.005 ? exactMoney(i.kind === "credit_memo" ? -i.open : i.open, i.currency) : ""}</td>
+                    <td>{!isCredit(i.kind) ? day(i.due_date) : "—"}{i.days_overdue > 0 && <Badge sev="error">{i.days_overdue} d overdue</Badge>}</td>
+                    <td className="num">{exactMoney(isCredit(i.kind) ? -i.total : i.total, i.currency)}</td>
+                    <td className="num">{i.open > 0.005 ? exactMoney(isCredit(i.kind) ? -i.open : i.open, i.currency) : ""}</td>
                     <td><Badge sev={INV_SEV[i.status]}>{i.status}</Badge></td>
                   </tr>
                 ))}
@@ -160,7 +170,7 @@ export function Invoices({ res, ds, sel, po }: { res: PurchasingView; ds: Datase
 function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
   const today = ds.settings.planning_start;
   const [on, setOn] = useState(today);
-  const inTime = inv.kind === "invoice" && !!inv.discount_date && on <= inv.discount_date && inv.payments.length === 0 && inv.discount > 0;
+  const inTime = !isCredit(inv.kind) && !!inv.discount_date && on <= inv.discount_date && inv.payments.length === 0 && inv.discount > 0;
   const due = round2(inv.open - (inTime ? round2(inv.total * inv.discount) : 0));
   const [amount, setAmount] = useState("");
   const [ref, setRef] = useState("");
@@ -168,7 +178,7 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
   const blocked = inv.status === "blocked";
   const open = inv.open > 0.005 && inv.status !== "cancelled";
   return (
-    <Panel title={<h3>{inv.kind === "credit_memo" ? "Credit memo" : "Invoice"} {inv.id} <span className="muted">from {namesOf(ds).loc(inv.supplier)}</span>{" "}
+    <Panel title={<h3>{KIND[inv.kind]} {inv.id} <span className="muted">from {namesOf(ds).loc(inv.supplier)}</span>{" "}
       <Badge sev={INV_SEV[inv.status]}>{inv.status}</Badge></h3>}
       actions={<Edits>
         {blocked && <button className="btn accent" disabled={busy} onClick={() => run("release_invoice", inv.id, { date: today })}>Release for payment</button>}
@@ -176,9 +186,9 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
       </Edits>}>
       <div className="row wrap small muted" style={{ gap: 16, marginBottom: 10 }}>
         {inv.reference && <span>Their no. {inv.reference}</span>}<span>Dated {day(inv.date)}</span>
-        {inv.kind === "invoice" && <span>Due {day(inv.due_date)}</span>}
+        {!isCredit(inv.kind) && <span>Due {day(inv.due_date)}</span>}
         {inv.discount_date && <span>{Math.round(inv.discount * 1000) / 10} % off if paid by {day(inv.discount_date)}</span>}
-        <span>Net {exactMoney(inv.net, inv.currency)} · tax {exactMoney(inv.tax, inv.currency)} · total {exactMoney(inv.total, inv.currency)}</span>
+        <span>Net {exactMoney(inv.net, inv.currency)}{inv.delivery_costs ? ` (of which delivery costs ${exactMoney(inv.delivery_costs, inv.currency)})` : ""} · tax {exactMoney(inv.tax, inv.currency)} · total {exactMoney(inv.total, inv.currency)}</span>
         {inv.released_on && <span>Released {day(inv.released_on)}{inv.released_by ? ` by ${inv.released_by}` : ""}</span>}
       </div>
       {inv.still.length > 0 && <div className="banner warning" style={{ marginBottom: 10 }}><div><b>Blocked for payment:</b>
@@ -207,16 +217,52 @@ function InvoiceDetail({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
       {inv.payments.length > 0 && <p className="small" style={{ marginTop: 8 }}>{inv.payments.map((p, i) => <span key={i}>{i > 0 && "; "}
         {exactMoney(p.amount, inv.currency)} on {day(p.date)}{p.discount ? ` (discount ${exactMoney(p.discount, inv.currency)})` : ""}{p.reference ? `, ${p.reference}` : ""}</span>)}</p>}
       {open && !blocked && <Edits><div className="row wrap" style={{ gap: 10, marginTop: 10 }}>
-        <label className="row small">{inv.kind === "credit_memo" ? "Refund received on" : "Paid on"} <input type="date" className="input" value={on} aria-label="Paid on"
+        <label className="row small">{isCredit(inv.kind) ? "Refund received on" : "Paid on"} <input type="date" className="input" value={on} aria-label="Paid on"
           onChange={(e) => setOn(e.target.value || today)} /></label>
         <label className="row small">Amount <input className="input num" style={{ width: 110 }} type="number" min={0} step="any" aria-label="Amount paid"
           placeholder={String(due)} value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
         <label className="row small">Bank reference <input className="input" style={{ width: 120 }} value={ref} aria-label="Bank reference" onChange={(e) => setRef(e.target.value)} /></label>
         <button className="btn accent" disabled={busy} onClick={() => run("pay_invoice", inv.id, { date: on, amount: amount === "" ? null : Number(amount), reference: ref },
-          () => { setAmount(""); setRef(""); })}>{inv.kind === "credit_memo" ? "Refund received" : `Pay ${exactMoney(amount === "" ? due : Number(amount), inv.currency)}`}</button>
+          () => { setAmount(""); setRef(""); })}>{isCredit(inv.kind) ? "Refund received" : `Pay ${exactMoney(amount === "" ? due : Number(amount), inv.currency)}`}</button>
         {inTime && <span className="small faint">in time for the cash discount of {exactMoney(round2(inv.total * inv.discount), inv.currency)}</span>}
       </div></Edits>}
+      {inv.kind === "invoice" && inv.status !== "cancelled" && <PriceCorrection inv={inv} ds={ds} />}
     </Panel>
+  );
+}
+
+/** A subsequent debit or credit (N132): the supplier puts the price of goods already invoiced right, without a quantity. */
+function PriceCorrection({ inv, ds }: { inv: SupplierInvoiceView; ds: Dataset }) {
+  const [order, setOrder] = useState(inv.lines[0]?.order ?? "");
+  const [kind, setKind] = useState<"subsequent_debit" | "subsequent_credit">("subsequent_debit");
+  const [diff, setDiff] = useState("");
+  const [n, setN] = useState("");
+  const [ref, setRef] = useState("");
+  const { busy, run, banners } = usePoAction();
+  const ln = inv.lines.find((l) => l.order === order);
+  const amount = round2(Number(diff || 0) * Number(n || ln?.invoiced || 0));
+  return (
+    <Edits><details style={{ marginTop: 12 }}>
+      <summary className="small">Price put right later (subsequent debit or credit)</summary>
+      <div className="row wrap" style={{ gap: 10, marginTop: 8 }}>
+        <label className="row small">Line <select className="input" value={order} aria-label="Line corrected" onChange={(e) => setOrder(e.target.value)}>
+          {inv.lines.map((l) => <option key={l.order} value={l.order}>{l.order} · {namesOf(ds).prod(l.product)}</option>)}</select></label>
+        <label className="row small">The supplier <select className="input" value={kind} aria-label="Charge or credit"
+          onChange={(e) => setKind(e.target.value as typeof kind)}>
+          <option value="subsequent_debit">charges more</option><option value="subsequent_credit">credits us</option></select></label>
+        <label className="row small">per unit <input className="input num" style={{ width: 90 }} type="number" min={0} step="any" aria-label="Difference per unit"
+          value={diff} onChange={(e) => setDiff(e.target.value)} /></label>
+        <label className="row small">on <input className="input num" style={{ width: 80 }} type="number" min={0} aria-label="Units corrected"
+          placeholder={String(ln?.invoiced ?? "")} value={n} onChange={(e) => setN(e.target.value)} /> units</label>
+        <label className="row small">Their no. <input className="input" style={{ width: 110 }} value={ref} aria-label="Their debit or credit note number"
+          onChange={(e) => setRef(e.target.value)} /></label>
+        <button className="btn" disabled={busy || !(Number(diff) > 0)} onClick={() => run("enter_invoice", "", {
+          kind, supplier: inv.supplier, reference: ref, date: ds.settings.planning_start,
+          lines: [{ id: order, order, final: false, price: Number(diff), qty: n === "" ? null : Number(n) }],
+        }, () => { setDiff(""); setN(""); setRef(""); })}>Enter the {kind === "subsequent_debit" ? "debit" : "credit"}{amount ? ` (${exactMoney(amount, inv.currency)} before tax)` : ""}</button>
+      </div>
+      {banners}
+    </details></Edits>
   );
 }
 

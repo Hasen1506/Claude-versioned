@@ -314,7 +314,9 @@ The supply plan goes further into how a plant really plans, mostly in `engine/sc
 - **Supplier invoices** are checked against the order's price and the goods received (three-way match). A difference
   beyond the tolerances blocks payment; a quantity block lifts once the goods arrive, a price block when someone
   releases it. Payments follow the supplier's terms and take the cash discount in time. The same invoice number is
-  never entered twice.
+  never entered twice. Freight and other delivery costs the order did not plan go on the invoice as their own amount,
+  and a price put right later is a subsequent debit or credit on what was invoiced, without a quantity (a debit
+  beyond the tolerance is blocked like an invoice; goods sent back are credited at the corrected price).
 - **Returns to the supplier** take goods out of stock against their order line: replaced (the line opens again) or
   credited (the line is reduced and the credit memo is entered at the price paid).
 - **What we owe**: open invoices per supplier (overdue, due within a week, blocked) and goods received but not

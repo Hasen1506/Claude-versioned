@@ -286,8 +286,8 @@ phone width.
 | N128 | The supplier list said "30 d terms" for a supplier with 2 % / 10 days / net 30 terms. | Minor | **Fixed (N).** The terms read as they are agreed. |
 | N129 | A scheduling agreement with nothing scheduled yet counted as an open purchase order in Buying's answer line. | Minor | **Fixed (N).** Only agreements with open delivery schedule lines count. |
 | N130 | Releases name who gave them only when people sign in on a server; in a company kept in the browser nobody is named, so one person can release every level of an order. | Minor | By design, recorded: four eyes needs accounts. On a server the release is the signed-in account's, a level with approvers takes only them, and one account never releases two levels of one order. |
-| N131 | Contract prices price the orders and requisitions, but the plan's cost on *Money* still uses the info record's price. | Minor | Open: recorded with the MM gaps below. |
-| N132 | A supplier invoice cannot carry freight or other unplanned delivery costs, and a price difference cannot be put right with a debit or credit for the price alone (subsequent debit/credit). | Minor | Open: recorded with the MM gaps below. |
+| N131 | Contract prices price the orders and requisitions, but the plan's cost on *Money* still uses the info record's price. | Minor | Fixed (gaps after Q): a planned purchase takes the price of a contract valid on its order day, as its requisition will, so the plan's purchase cost on *Money* matches what will be ordered; stock is still valued at the info record's price. |
+| N132 | A supplier invoice cannot carry freight or other unplanned delivery costs, and a price difference cannot be put right with a debit or credit for the price alone (subsequent debit/credit). | Minor | Fixed (gaps after Q): an invoice carries delivery costs (freight and other costs the order did not plan), counted in its net and its tax. A subsequent debit or credit (`SD-`/`SC-`) puts the price of invoiced goods right per unit without changing the quantity invoiced; a debit beyond the price tolerance is blocked, a credit lowers what we owe, and goods sent back later are credited at the corrected price. *Buying → Invoices* has the field and a *Price put right later* form on each invoice. |
 | N133 | Invoice verification books nothing in a ledger: "received, not invoiced" is a list for the month-end accrual, not a GR/IR account. | Minor | By design, recorded: there is no general ledger here; *What we owe* and *Received, not invoiced* are what an accountant posts from. |
 
 ## Found while building Phase Q
@@ -325,7 +325,7 @@ onto a day square, and both stayed firm there when the plan was recalculated.
 | N113 | A day on the Capacity chart could be picked only with a mouse: no keyboard or screen reader could open a day's orders. | Serious | **Fixed (P).** A strip of day squares under the chart, darker when fuller and red when over, each a button that opens its day; runs are dragged onto them, or moved with a date field. |
 | N114 | Supplier and lane capacity were only flagged ("Supplier over capacity") even with planning within capacity on. | Serious | **Fixed (P).** Within capacity, what a supplier cannot make or a lane cannot carry in a week goes to the next valid source, else to earlier weeks, and only what fits nowhere is ordered over the limit (and flagged). |
 | N115 | Taking a made-to-order order now makes its production firm at once (R13), so the zone's firming afterwards finds the purchases only: the manufacturing journey expected three orders to firm and found two. | Minor | By design, recorded: the saved message names the run made firm ("Made firm for it: PRD-…"); *promise_firms* off leaves it to the planner. The journey checks the new behaviour. |
-| N116 | The plan's capacity exceptions are weekly: a day over capacity inside a week with room does not raise "Over capacity", though the Capacity page shows it red. | Minor | Open: the Capacity page and its answer line name the day; a daily exception is for a later phase. |
+| N116 | The plan's capacity exceptions are weekly: a day over capacity inside a week with room does not raise "Over capacity", though the Capacity page shows it red. | Minor | Fixed (gaps after Q): the plan checks each day of a week that has room against the day's shifts and overtime and raises "Over capacity on a day" (`CAPACITY_DAY_OVERLOAD`) with the first day, the number of days and the worst; Situations and the worklist show it under capacity and link to the Capacity page. |
 | N117 | Overtime is a levelling choice in the supply plan, but not yet a choice of the shop floor optimiser, which still keeps to the shift hours. | Minor | Open: recorded below with the PP/DS gaps. |
 | N118 | Measured yield is worked out per production version and part from orders whose parts were posted as used; backflushed orders only repeat the bill of materials and are left out, as are parts through a phantom assembly (their loss is the phantom's). | Minor | By design, recorded: *Parts used* on Actuals says which orders it counted. |
 
@@ -524,8 +524,8 @@ stock that is really there (shelf life, short receipts, stock below zero) or a p
   (engineering, costing), routing alternative sequences, change-number history.
 - Capacity: material-aware scheduling along the pegging, schedule dates back into supply and promising, a levelling
   view by day and week, and capacity-constrained MRP with alternative machines (**C**, done). Levelling by dragging
-  runs between days, overtime as a levelling choice, and supplier and lane capacity in planning (**P**, done). Still
-  missing: a daily capacity exception in the plan (N116).
+  runs between days, overtime as a levelling choice, and supplier and lane capacity in planning (**P**, done). A daily
+  capacity exception in the plan (N116, done after Q).
 - PP/DS: strategy profiles, a heuristics catalogue (due date, shortest first, least slack, campaigns, backward),
   a local search, a constraint-solver optimiser choosing machines and sequence, a frozen zone and a drag-and-drop
   board (**D**, done); steps holding a machine and a tool together (**P**). Still missing: overtime and shift changes
@@ -551,9 +551,9 @@ stock that is really there (shelf life, short receipts, stock below zero) or a p
   uses, and goods receipts with delivery tolerances (**E**, done). Quality inspection stock (**O**, done). Invoice
   verification (three-way match) with payment blocks and their release, payments with the cash discount, payables
   and goods received not invoiced, contracts and scheduling agreements, several confirmation lines per order line,
-  returns to the supplier with credit memos, and a release strategy of several levels (**N**, done). Still missing:
-  freight and unplanned delivery costs on invoices and subsequent debits or credits (N132), contract prices in the
-  plan's cost (N131), evaluated receipt settlement (paying from the goods receipt without an invoice), consignment
+  returns to the supplier with credit memos, and a release strategy of several levels (**N**, done). Freight and
+  unplanned delivery costs on invoices, subsequent debits or credits (N132) and contract prices in the plan's cost
+  (N131) followed after Q. Still missing: evaluated receipt settlement (paying from the goods receipt without an invoice), consignment
   and subcontracting stock at the supplier, and forecast delivery schedules (JIT and forecast releases) on
   scheduling agreements.
 - Users and authorisations: accounts, companies with owner, planner and viewer roles, invitations, conflict-safe saves

@@ -650,7 +650,7 @@ def act(ds: Dataset, action: str, po_id: str = "", *, lines: list[dict] | None =
         if action == "enter_invoice":
             return enter_invoice(ds, kw.get("supplier"), lines, on=on, reference=reference, tax=kw.get("tax"),
                                  kind=kw.get("kind") or "invoice", po=po_id or None, return_id=kw.get("return_id"),
-                                 note=note)
+                                 note=note, delivery_costs=kw.get("delivery_costs") or 0.0)
         if action == "release_invoice":
             return release_invoice(ds, po_id, by, on, note)
         if action == "pay_invoice":

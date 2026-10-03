@@ -155,7 +155,8 @@ class SupplierInvoiceLine(Model):
     order: str = Field(min_length=1, max_length=64, description="The purchase order line invoiced")
     product: str = Ref("product")
     qty: float = Unit("qty", gt=0)
-    price: float = Unit("money_per_unit", description="Price per unit as invoiced, before tax")
+    price: float = Unit("money_per_unit", description="Price per unit as invoiced, before tax; on a subsequent "
+                                                         "debit or credit, the difference per unit")
 
     @property
     def amount(self) -> float:
@@ -165,10 +166,11 @@ class SupplierInvoiceLine(Model):
 class SupplierInvoice(Model):
     """A supplier's invoice or credit memo (≈ MIRO). Checked when entered against the order's price and the goods
     received (three-way match); a difference beyond tolerance blocks it for payment until someone releases it, or
-    until the goods it bills arrive."""
+    until the goods it bills arrive. A subsequent debit or credit corrects the price of what was already invoiced:
+    its lines carry the difference per unit and leave the quantity invoiced as it was (N132)."""
 
     id: Id
-    kind: Literal["invoice", "credit_memo"] = "invoice"
+    kind: Literal["invoice", "credit_memo", "subsequent_debit", "subsequent_credit"] = "invoice"
     supplier: str = Ref("location")
     reference: str = Field("", max_length=64, description="The supplier's invoice number")
     date: dt.date
@@ -177,6 +179,8 @@ class SupplierInvoice(Model):
     discount: float = Unit("fraction", lt=1, default=0.0)
     currency: str | None = Field(None, min_length=3, max_length=3, description="Empty = company currency")
     lines: list[SupplierInvoiceLine] = Field(min_length=1)
+    delivery_costs: float = Unit("money", ge=0, default=0.0,
+                                 description="Freight and other delivery costs billed that the order did not plan")
     tax: float = Unit("money", default=0.0, description="Tax on the invoice, as the supplier charged it")
     blocks: list[str] = Field(default_factory=list, description="Why it was blocked for payment when entered")
     released_by: str = Field("", max_length=200)
@@ -188,7 +192,17 @@ class SupplierInvoice(Model):
 
     @property
     def net(self) -> float:
-        return round(sum(x.amount for x in self.lines), 2)
+        return round(sum(x.amount for x in self.lines) + self.delivery_costs, 2)
+
+    @property
+    def credit(self) -> bool:
+        """Money owed to us rather than by us."""
+        return self.kind in ("credit_memo", "subsequent_credit")
+
+    @property
+    def bills_goods(self) -> bool:
+        """Counts toward the quantity invoiced (a subsequent debit or credit corrects the price only)."""
+        return self.kind in ("invoice", "credit_memo")
 
     @property
     def total(self) -> float:

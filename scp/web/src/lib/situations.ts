@@ -176,6 +176,14 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
           actions: [],
         };
         break;
+      case "CAPACITY_DAY_OVERLOAD":
+        s = {
+          title: `${plural(l.length, "machine or line", "machines or lines")} over capacity on single days`,
+          why: "The week has room, but on these days the planned work is more than the shifts and overtime hold. Move work to a quieter day or level it on the Capacity page.",
+          items: l.map((e) => ({ label: e.resource ?? "", detail: `from ${d(e.date)}, up to ${qty(e.qty)} h over in a day`, to: e.resource ? href("plan", "capacity", e.resource) : undefined })),
+          actions: [],
+        };
+        break;
       case "SUPPLIER_CAPACITY":
         s = {
           title: `Suppliers asked for more than they can deliver, ${plural(l.length, "time")}`,
@@ -266,7 +274,7 @@ const CODE_LABEL: Record<string, string> = {
   DEMAND_AT_RISK: "Demand late or short", START_IN_PAST: "Should already have started", FENCE_SHIFT: "Moved out of the freeze window",
   RESCHEDULE_IN: "Incoming order needed sooner", NO_VALID_SOURCE: "No way to supply", BELOW_SAFETY_STOCK: "Below safety stock",
   EXCESS_STOCK: "Above maximum stock", SHELF_LIFE_RISK: "May expire", CAPACITY_OVERLOAD: "Over capacity",
-  CAPACITY_OVERTIME: "Overtime needed", SUPPLIER_CAPACITY: "Supplier over capacity", LANE_CAPACITY: "Lane over capacity",
+  CAPACITY_OVERTIME: "Overtime needed", CAPACITY_DAY_OVERLOAD: "Over capacity on a day", SUPPLIER_CAPACITY: "Supplier over capacity", LANE_CAPACITY: "Lane over capacity",
   EOQ_FALLBACK: "No economic lot size", STOCKOUT: "Stock runs out", SCHEDULE_LATE: "Scheduled to finish late",
   CAPACITY_EARLIER: "Started earlier to fit", CAPACITY_LATE: "Only fits later", ALTERNATIVE_MACHINE: "On an alternative machine",
   PO_CONFIRMED_LATE: "Supplier confirmed late", PO_CONFIRMED_SHORT: "Supplier confirmed less", PO_NOT_CONFIRMED: "Not confirmed by the supplier",

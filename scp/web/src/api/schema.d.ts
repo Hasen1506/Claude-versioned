@@ -7226,9 +7226,14 @@ export interface components {
              * @default invoice
              * @enum {string}
              */
-            kind: "invoice" | "credit_memo";
+            kind: "invoice" | "credit_memo" | "subsequent_debit" | "subsequent_credit";
             /** Return Id */
             return_id?: string | null;
+            /**
+             * Delivery Costs
+             * @default 0
+             */
+            delivery_costs: number;
             /** Amount */
             amount?: number | null;
             stock_type?: components["schemas"]["StockType"] | null;
@@ -10804,7 +10809,8 @@ export interface components {
          * SupplierInvoice
          * @description A supplier's invoice or credit memo (≈ MIRO). Checked when entered against the order's price and the goods
          *     received (three-way match); a difference beyond tolerance blocks it for payment until someone releases it, or
-         *     until the goods it bills arrive.
+         *     until the goods it bills arrive. A subsequent debit or credit corrects the price of what was already invoiced:
+         *     its lines carry the difference per unit and leave the quantity invoiced as it was (N132).
          */
         SupplierInvoice: {
             /** Id */
@@ -10814,7 +10820,7 @@ export interface components {
              * @default invoice
              * @enum {string}
              */
-            kind: "invoice" | "credit_memo";
+            kind: "invoice" | "credit_memo" | "subsequent_debit" | "subsequent_credit";
             /** Supplier */
             supplier: string;
             /**
@@ -10847,6 +10853,12 @@ export interface components {
             currency?: string | null;
             /** Lines */
             lines: components["schemas"]["SupplierInvoiceLine"][];
+            /**
+             * Delivery Costs
+             * @description Freight and other delivery costs billed that the order did not plan
+             * @default 0
+             */
+            delivery_costs: number;
             /**
              * Tax
              * @description Tax on the invoice, as the supplier charged it
@@ -10896,7 +10908,7 @@ export interface components {
             qty: number;
             /**
              * Price
-             * @description Price per unit as invoiced, before tax
+             * @description Price per unit as invoiced, before tax; on a subsequent debit or credit, the difference per unit
              */
             price: number;
         };
@@ -10928,6 +10940,11 @@ export interface components {
             currency: string;
             /** Net */
             net: number;
+            /**
+             * Delivery Costs
+             * @default 0
+             */
+            delivery_costs: number;
             /** Tax */
             tax: number;
             /** Total */

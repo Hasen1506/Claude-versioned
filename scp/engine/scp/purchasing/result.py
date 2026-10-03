@@ -232,7 +232,8 @@ class SupplierInvoiceView(Out):
     discount_date: dt.date | None
     discount: float
     currency: str
-    net: float
+    net: float                         # the lines and the delivery costs
+    delivery_costs: float = 0.0        # freight and other costs billed that the order did not plan (N132)
     tax: float
     total: float
     settled: float

@@ -87,7 +87,17 @@ test('procure to pay: firmed and sent, released at two levels, confirmed in two 
   await expect(done(page)).toContainText('INR 716.87 paid on SI-00001, cash discount INR 14.63; settled.',{timeout:45000});
   await page.screenshot({path:'test-results/buying-invoice.png',fullPage:true});
 
-  // five tins go back and are credited at the 9.50 they were paid for
+  // the supplier later credits 0.30 a tin on the 70 invoiced (N132): a subsequent credit, the quantity invoiced unchanged
+  await page.getByText('Price put right later').click();
+  await page.getByLabel('Charge or credit').selectOption('subsequent_credit');
+  await page.getByLabel('Difference per unit').fill('0.3');
+  await expect(page.getByLabel('Units corrected')).toHaveAttribute('placeholder','70');
+  await page.getByLabel('Their debit or credit note number').fill('CN-3');
+  await page.getByRole('button',{name:/^Enter the credit \(₹21.00 before tax\)/}).click();
+  await expect(done(page)).toContainText('Subsequent credit SC-00001 from Sharma Metals (their CN-3): INR 23.10 (less per unit: PO-00001-10 0.30 on 70).',{timeout:45000});
+  await expect(page.getByRole('row',{name:/SC-00001.*subsequent credit/})).toContainText('−₹23.10');
+
+  // five tins go back and are credited at the 9.20 they cost after the credit
   await page.goto('/#/buying/returns');
   await page.getByLabel('Order line sent back').selectOption('PO-00001-10');
   await page.getByLabel('Quantity sent back').fill('5');
@@ -97,12 +107,12 @@ test('procure to pay: firmed and sent, released at two levels, confirmed in two 
   await expect(done(page)).toContainText(/Return RS-00001: 5 of Tin of white sent back to Sharma Metals from Pune plant .*\(dented\)\. PO-00001-10 is now for 115; a credit memo is expected/,{timeout:45000});
   await page.getByLabel('Credit memo number for RS-00001').fill('CN-4');
   await page.getByRole('button',{name:'Credit memo in'}).click();
-  await expect(done(page)).toContainText('Credit memo CM-00001 from Sharma Metals (their CN-4): INR 52.25 for return RS-00001.',{timeout:45000});
+  await expect(done(page)).toContainText('Credit memo CM-00001 from Sharma Metals (their CN-4): INR 50.60 for return RS-00001.',{timeout:45000});
   await expect(page.getByRole('row',{name:/RS-00001.*credited/})).toBeVisible();
 
-  // what we owe Sharma: the credit
+  // what we owe Sharma: the two credits
   await page.goto('/#/buying/owed');
-  await expect(page.getByRole('row',{name:/Sharma Metals/})).toContainText('−₹52.25');
+  await expect(page.getByRole('row',{name:/Sharma Metals/})).toContainText('−₹73.70');
 
   // the contract counts what was ordered
   await page.goto('/#/buying/contracts');

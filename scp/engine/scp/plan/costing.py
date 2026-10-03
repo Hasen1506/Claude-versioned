@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import date
 
-from ..model import Dataset, LaneMode, TransportLane
+from ..model import Dataset, LaneMode, PurchaseContract, TransportLane
 from ..network import NetworkGraph, Node, SupplyOption
 from .leadtime import supplier_lane
 from .structure import entering, main_share, needs, typical_lot, unit_need
@@ -20,6 +21,22 @@ def fx(ds: Dataset, currency: str | None) -> float:
     if not currency or currency == ds.settings.currency:
         return 1.0
     return ds.settings.fx_rates.get(currency, 1.0)
+
+
+def contract_for(ds: Dataset, supplier: str, location: str, product: str, on: date,
+                 currency: str | None) -> tuple[PurchaseContract, float] | None:
+    """The contract a new order line for this product takes its price from: valid that day, with this supplier, for
+    this place (or any), in the line's currency; the lowest price when several apply."""
+    best = None
+    for k in ds.contracts:
+        if k.supplier != supplier or (k.location and k.location != location) or not k.valid_from <= on <= k.valid_to:
+            continue
+        if (k.currency or ds.settings.currency) != (currency or ds.settings.currency):
+            continue
+        ln = next((x for x in k.lines if x.product == product), None)
+        if ln is not None and (best is None or ln.price < best[1]):
+            best = (k, ln.price)
+    return best
 
 
 def freight_per_unit(ds: Dataset, mode: LaneMode, product: str) -> float:

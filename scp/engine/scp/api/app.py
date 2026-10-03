@@ -668,8 +668,9 @@ class PoActionRequest(Out):
     valid_to: dt.date | None = None                 # create_agreement
     qty: float | None = None                        # create_agreement: the target quantity
     tax: float | None = None                        # enter_invoice: as charged (default: the supplier's rate)
-    kind: Literal["invoice", "credit_memo"] = "invoice"
+    kind: Literal["invoice", "credit_memo", "subsequent_debit", "subsequent_credit"] = "invoice"
     return_id: str | None = None                    # enter_invoice: the return a credit memo credits
+    delivery_costs: float = Field(0.0, ge=0)        # enter_invoice: freight and other costs the order did not plan
     amount: float | None = None                     # pay_invoice (default: what is open, less the discount in time)
     stock_type: StockType | None = None             # return_goods: where the goods are (default: blocked)
     replace: bool = False                           # return_goods: the supplier replaces them (else credits them)
@@ -690,7 +691,8 @@ def post_po_action(req: PoActionRequest) -> PoActionResponse:
                                   note=req.note, by=who_asks() or req.by, orders=req.orders, supplier=req.supplier,
                                   location=req.location, product=req.product, valid_to=req.valid_to, qty=req.qty,
                                   tax=req.tax, kind=req.kind, return_id=req.return_id, amount=req.amount,
-                                  stock_type=req.stock_type, replace=req.replace)
+                                  stock_type=req.stock_type, replace=req.replace,
+                                  delivery_costs=req.delivery_costs)
     except PurchasingError as e:
         raise HTTPException(409, str(e)) from e
     return PoActionResponse(**answer(req.dataset, new), report=rep)

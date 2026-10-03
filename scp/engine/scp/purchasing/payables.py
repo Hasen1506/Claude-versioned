@@ -23,10 +23,10 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from ..model import (
-    Dataset, GoodsMovement, MovementType, Payment, PurchaseContract, ReceiptKind, StockType, SupplierInvoice,
+    Dataset, GoodsMovement, MovementType, Payment, ReceiptKind, StockType, SupplierInvoice,
     SupplierInvoiceLine, SupplierReturn,
 )
-from ..plan.costing import fx
+from ..plan.costing import contract_for, fx
 from .result import (
     ActionReport, ContractLineView, ContractView, InvoiceLineView, PayableRow, PayablesView, SupplierInvoiceView,
     SupplierReturnView, ToInvoice,
@@ -111,7 +111,7 @@ def invoiced(ds: Dataset, skip: str | None = None) -> dict[str, float]:
     """Quantity invoiced per order line: invoices less credit memos, none cancelled."""
     out: dict[str, float] = defaultdict(float)
     for inv in ds.supplier_invoices:
-        if inv.cancelled or inv.id == skip:
+        if inv.cancelled or inv.id == skip or not inv.bills_goods:
             continue
         sign = -1.0 if inv.kind == "credit_memo" else 1.0
         for ln in inv.lines:
@@ -155,13 +155,15 @@ def _qty_blocks(ds: Dataset, lines: list[SupplierInvoiceLine], skip: str | None 
 def still_blocked(ds: Dataset, inv: SupplierInvoice) -> list[str]:
     """What stands in the way of paying it now: its price blocks, and quantity blocks while the goods are still
     missing (counting every invoice entered before it)."""
-    if inv.kind != "invoice" or inv.cancelled or inv.released_on is not None or not inv.blocks:
+    if inv.credit or inv.cancelled or inv.released_on is not None or not inv.blocks:
         return []
     price = [b for b in inv.blocks if b.startswith("price:")]
+    if inv.kind == "subsequent_debit":
+        return price
     got = received(ds)
     billed: dict[str, float] = defaultdict(float)
     for other in ds.supplier_invoices:
-        if other.cancelled or other.id >= inv.id and other.kind == "invoice":
+        if other.cancelled or not other.bills_goods or other.id >= inv.id and other.kind == "invoice":
             continue
         sign = -1.0 if other.kind == "credit_memo" else 1.0
         for ln in other.lines:
@@ -193,11 +195,22 @@ def to_invoice(ds: Dataset) -> list[ToInvoice]:
 
 def enter_invoice(ds: Dataset, supplier: str | None, lines: list[dict] | None, *, on: date | None = None,
                   reference: str = "", tax: float | None = None, kind: str = "invoice", po: str | None = None,
-                  return_id: str | None = None, note: str = "") -> tuple[Dataset, ActionReport]:
+                  return_id: str | None = None, note: str = "", delivery_costs: float = 0.0
+                  ) -> tuple[Dataset, ActionReport]:
     """Enter a supplier's invoice (or credit memo). ``lines``: ``{"order": line, "qty"?, "price"?}``; empty with
     ``po``: everything received on that order and not yet invoiced, at the order's prices; empty with
-    ``return_id`` (a credit memo): the goods sent back, at the price they were invoiced at (else the order's)."""
+    ``return_id`` (a credit memo): the goods sent back, at the price they were invoiced at (else the order's).
+    ``delivery_costs``: freight and other costs billed that the order did not plan. A ``subsequent_debit`` or
+    ``subsequent_credit`` corrects the price of what was invoiced: each line gives the difference per unit as
+    ``price`` and the quantity it applies to (default: all invoiced on that line so far)."""
     on = on or ds.settings.planning_start
+    if kind not in ("invoice", "credit_memo", "subsequent_debit", "subsequent_credit"):
+        raise PayablesError(f"{kind} is not a kind of supplier invoice")
+    if delivery_costs < 0:
+        raise PayablesError("delivery costs cannot be negative")
+    if kind.startswith("subsequent"):
+        return _subsequent(ds, supplier, lines, kind, on=on, reference=reference, tax=tax, note=note,
+                           delivery_costs=delivery_costs)
     credit = kind == "credit_memo"
     ret = None
     if return_id:
@@ -253,7 +266,7 @@ def enter_invoice(ds: Dataset, supplier: str | None, lines: list[dict] | None, *
     if not credit:
         blocks = _qty_blocks(ds, got_lines) + blocks
     terms = ds.vendor_terms(supplier)
-    net = round(sum(x.amount for x in got_lines), 2)
+    net = round(sum(x.amount for x in got_lines) + delivery_costs, 2)
     v = ds.vendor(supplier)
     rate = v.tax_rate if v.tax_rate is not None else ds.purchasing.tax_rate
     tax_amt = round(net * rate, 2) if tax is None else round(float(tax), 2)
@@ -263,7 +276,8 @@ def enter_invoice(ds: Dataset, supplier: str | None, lines: list[dict] | None, *
         due_date=on if credit else on + timedelta(days=terms.net_days),
         discount_date=on + timedelta(days=terms.discount_days) if terms.discount and not credit else None,
         discount=0.0 if credit else terms.discount, currency=None if cur == ds.settings.currency else cur,
-        lines=got_lines, tax=tax_amt, blocks=blocks, return_id=return_id, note=note[:400])
+        lines=got_lines, delivery_costs=round(delivery_costs, 2), tax=tax_amt, blocks=blocks, return_id=return_id,
+        note=note[:400])
     rets = ds.supplier_returns
     if ret is not None:
         rets = [r.model_copy(update={"credit_memo": iid}) if r.id == ret.id else r for r in rets]
@@ -275,6 +289,8 @@ def enter_invoice(ds: Dataset, supplier: str | None, lines: list[dict] | None, *
                + (f" for return {return_id}" if return_id else "") + ".")
     else:
         lines_txt = f"{len(got_lines)} line{'s' if len(got_lines) != 1 else ''}"
+        if inv.delivery_costs:
+            lines_txt += f" and {_money(inv.delivery_costs, c)} delivery costs"
         msg = f"{iid} from {name}{their}: {_money(inv.total, c)}, {lines_txt}; "
         if blocks:
             msg += "blocked for payment: " + "; ".join(b.split(": ", 1)[1] for b in blocks) + "."
@@ -286,13 +302,78 @@ def enter_invoice(ds: Dataset, supplier: str | None, lines: list[dict] | None, *
             ActionReport(ok=True, message=msg, id=iid))
 
 
+def _subsequent(ds: Dataset, supplier: str | None, lines: list[dict] | None, kind: str, *, on: date,
+                reference: str, tax: float | None, note: str, delivery_costs: float) -> tuple[Dataset, ActionReport]:
+    """A subsequent debit or credit (≈ MIRO's subsequent debit/credit): the price of goods already invoiced put
+    right, without a quantity. A debit that takes the price beyond the tolerance is blocked like an invoice."""
+    debit = kind == "subsequent_debit"
+    if not lines:
+        raise PayablesError("say which invoiced order lines the price difference is for, and by how much each")
+    billed = invoiced(ds)
+    got_lines: list[SupplierInvoiceLine] = []
+    blocks: list[str] = []
+    cur = None
+    for w in lines:
+        li = line_info(ds, w.get("order") or "")
+        if li is None:
+            raise PayablesError(f"{w.get('order')} is not a purchase order line")
+        if supplier and li.supplier != supplier:
+            raise PayablesError(f"{li.id} is on an order with {li.supplier}, not {supplier}")
+        supplier = li.supplier
+        if cur is not None and li.currency != cur:
+            raise PayablesError("one invoice is in one currency: enter the other lines on an invoice of their own")
+        cur = li.currency
+        done = billed.get(li.id, 0.0)
+        if done <= EPS:
+            raise PayablesError(f"{li.id} is not invoiced yet: a subsequent debit or credit corrects an invoice")
+        if w.get("price") is None or float(w["price"]) <= 0:
+            raise PayablesError(f"{li.id}: give the price difference per unit, more than zero")
+        q = float(w["qty"]) if w.get("qty") is not None else done
+        if q <= EPS or q > done + EPS:
+            raise PayablesError(f"{li.id}: the difference applies to at most the {done:,.0f} invoiced")
+        ln = SupplierInvoiceLine(order=li.id, product=li.product, qty=round(q, 6), price=float(w["price"]))
+        got_lines.append(ln)
+        paid = _invoiced_price(ds, li.id)
+        if debit and paid is not None and (b := _price_block(ds, ln.model_copy(update={"price": paid + ln.price}),
+                                                             li.price)):
+            blocks.append(b)
+    assert supplier is not None
+    terms = ds.vendor_terms(supplier)
+    net = round(sum(x.amount for x in got_lines) + delivery_costs, 2)
+    v = ds.vendor(supplier)
+    rate = v.tax_rate if v.tax_rate is not None else ds.purchasing.tax_rate
+    tax_amt = round(net * rate, 2) if tax is None else round(float(tax), 2)
+    iid = _next(ds, "SD" if debit else "SC", [i.id for i in ds.supplier_invoices])
+    inv = SupplierInvoice(
+        id=iid, kind=kind, supplier=supplier, reference=reference[:64], date=on,
+        due_date=on + timedelta(days=terms.net_days) if debit else on, currency=None if cur == ds.settings.currency
+        else cur, lines=got_lines, delivery_costs=round(delivery_costs, 2), tax=tax_amt, blocks=blocks,
+        note=note[:400])
+    c = cur or ds.settings.currency
+    name = ds.location_by_id[supplier].name if supplier in ds.location_by_id else supplier
+    their = f" (their {reference})" if reference else ""
+    what = ", ".join(f"{x.order} {x.price:,.2f} on {x.qty:,.0f}" for x in got_lines)
+    msg = (f"Subsequent {'debit' if debit else 'credit'} {iid} from {name}{their}: {_money(inv.total, c)} "
+           f"({'more' if debit else 'less'} per unit: {what})")
+    msg += ("; blocked for payment: " + "; ".join(b.split(": ", 1)[1] for b in blocks) + ".") if blocks else "."
+    return (ds.model_copy(update={"supplier_invoices": [*ds.supplier_invoices, inv]}),
+            ActionReport(ok=True, message=msg, id=iid))
+
+
 def _invoiced_price(ds: Dataset, lid: str) -> float | None:
-    """The price a line was last invoiced at: goods sent back are credited at what was paid for them."""
+    """The price a line was last invoiced at, with the subsequent debits and credits since: goods sent back are
+    credited at what was paid for them."""
+    adjust = 0.0
     for inv in reversed(ds.supplier_invoices):
-        if inv.kind == "invoice" and not inv.cancelled:
-            for ln in inv.lines:
-                if ln.order == lid:
-                    return ln.price
+        if inv.cancelled:
+            continue
+        for ln in inv.lines:
+            if ln.order != lid:
+                continue
+            if inv.kind == "invoice":
+                return round(ln.price + adjust, 6)
+            if not inv.bills_goods:
+                adjust += ln.price if inv.kind == "subsequent_debit" else -ln.price
     return None
 
 
@@ -339,7 +420,7 @@ def pay_invoice(ds: Dataset, iid: str, amount: float | None = None, on: date | N
         raise PayablesError(f"{iid} is blocked for payment ({'; '.join(b.split(': ', 1)[1] for b in why)}): "
                             "release it first")
     disc = 0.0
-    if inv.kind == "invoice" and inv.discount and inv.discount_date and on <= inv.discount_date and not inv.payments:
+    if not inv.credit and inv.discount and inv.discount_date and on <= inv.discount_date and not inv.payments:
         disc = round(inv.total * inv.discount, 2)
     due = round(inv.open - disc, 2)
     amt = due if amount is None else round(float(amount), 2)
@@ -351,7 +432,7 @@ def pay_invoice(ds: Dataset, iid: str, amount: float | None = None, on: date | N
         disc = 0.0          # the discount is for paying in full in time
     new = inv.model_copy(update={"payments": [*inv.payments, Payment(date=on, amount=amt, discount=disc,
                                                                      reference=reference[:64])]})
-    verb = "refund received for" if inv.kind == "credit_memo" else "paid on"
+    verb = "refund received for" if inv.credit else "paid on"
     msg = (f"{_money(amt, cur)} {verb} {iid}" + (f", cash discount {_money(disc, cur)}" if disc else "")
            + ("; settled." if new.open <= 0.005 else f"; {_money(new.open, cur)} still open."))
     return _replace(ds, new), ActionReport(ok=True, message=msg, id=iid)
@@ -438,22 +519,6 @@ def return_goods(ds: Dataset, order: str, qty: float, *, on: date | None = None,
 
 
 # ---- contracts ----------------------------------------------------------------------------------------------
-def contract_for(ds: Dataset, supplier: str, location: str, product: str, on: date,
-                 currency: str | None) -> tuple[PurchaseContract, float] | None:
-    """The contract a new order line for this product takes its price from: valid that day, with this supplier, for
-    this place (or any), in the line's currency; the lowest price when several apply."""
-    best = None
-    for k in ds.contracts:
-        if k.supplier != supplier or (k.location and k.location != location) or not k.valid_from <= on <= k.valid_to:
-            continue
-        if (k.currency or ds.settings.currency) != (currency or ds.settings.currency):
-            continue
-        ln = next((x for x in k.lines if x.product == product), None)
-        if ln is not None and (best is None or ln.price < best[1]):
-            best = (k, ln.price)
-    return best
-
-
 def _ordered_on(ds: Dataset) -> dict[tuple[str, str], tuple[float, float]]:
     """(contract, product) → (quantity, value) on order lines that name the contract, open and closed."""
     out: dict[tuple[str, str], list[float]] = defaultdict(lambda: [0.0, 0.0])
@@ -504,7 +569,7 @@ def invoice_view(ds: Dataset, inv: SupplierInvoice, as_of: date, got: dict[str, 
     still = still_blocked(ds, inv)
     if inv.cancelled:
         status = "cancelled"
-    elif inv.kind == "credit_memo":
+    elif inv.credit:
         status = "credited" if inv.open <= 0.005 else "credit open"
     elif inv.open <= 0.005:
         status = "paid"
@@ -526,7 +591,7 @@ def invoice_view(ds: Dataset, inv: SupplierInvoice, as_of: date, got: dict[str, 
     return SupplierInvoiceView(
         id=inv.id, kind=inv.kind, supplier=inv.supplier, reference=inv.reference, date=inv.date,
         due_date=inv.due_date, discount_date=inv.discount_date, discount=inv.discount,
-        currency=inv.currency or ds.settings.currency, net=inv.net, tax=inv.tax, total=inv.total, settled=inv.settled,
+        currency=inv.currency or ds.settings.currency, net=inv.net, delivery_costs=inv.delivery_costs, tax=inv.tax, total=inv.total, settled=inv.settled,
         open=inv.open, status=status, blocks=inv.blocks, still=still, released_by=inv.released_by,
         released_on=inv.released_on, days_overdue=max(0, overdue), lines=lines, payments=inv.payments,
         return_id=inv.return_id, note=inv.note)
@@ -554,9 +619,9 @@ def payables_view(ds: Dataset, as_of: date | None = None) -> PayablesView:
             continue
         k = fx(ds, x.currency if x.currency != ds.settings.currency else None)
         r = row(x.supplier)
-        amt = x.open * k * (-1 if x.kind == "credit_memo" else 1)
+        amt = x.open * k * (-1 if x.kind in ("credit_memo", "subsequent_credit") else 1)
         r.open += amt
-        if x.kind == "invoice":
+        if x.kind in ("invoice", "subsequent_debit"):
             if x.status == "blocked":
                 r.blocked += amt
             if x.due_date < as_of:
