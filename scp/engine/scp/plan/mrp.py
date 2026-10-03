@@ -21,6 +21,7 @@ on-time inputs cover stays on time (as promising would split the shipment), and 
 """
 from __future__ import annotations
 
+import bisect
 import hashlib
 import math
 import threading
@@ -32,7 +33,8 @@ from datetime import date, timedelta
 from typing import Any, TypeVar
 
 from ..model import (
-    Dataset, LocationProduct, LocationType, LotSizePolicy, MrpType, ReceiptKind, SafetyStockMethod, Strategy,
+    Dataset, LocationProduct, LocationType, LotSizePolicy, MrpType, ReceiptKind, SafetyStockMethod, SafetyStockPolicy,
+    Strategy,
 )
 from ..network import NetworkGraph, Node, SupplyOption, build_graph
 from ..time import Buckets
@@ -57,7 +59,7 @@ _PREFIX = {"make": "MO", "buy": "PR", "transfer": "TO"}
 
 @dataclass
 class _Supply:
-    kind: str       # on_hand | receipt | order
+    kind: str       # on_hand | receipt | co_product | order | follow_up
     id: str
     date: date      # netting date
     qty: float
@@ -74,6 +76,44 @@ class _NodeState:
     targets: list[tuple[date, float]] = field(default_factory=list)   # S&OP stock targets (date, qty), by date
     ss_note: str = ""
     lead_time: float | None = None
+
+
+class _Fresh:
+    """Stock of a product with a shelf life by the day it expires, used first expiring first out (R15, N109): what a
+    lot still holds after its last day is gone. Stock at the start comes first (it is older; its batches that expire
+    unused are requirements already, see ``_expiry``); a requirement the stock does not cover is owed and taken
+    from the next lot to arrive."""
+
+    def __init__(self, plain: float):
+        self.plain = plain
+        self.lots: list[list] = []   # [last day, quantity, what it came from], soonest first
+        self.owed = 0.0
+
+    def add(self, last: date, qty: float, what: str) -> None:
+        pay = min(qty, self.owed)
+        self.owed -= pay
+        if qty - pay > EPS:
+            bisect.insort(self.lots, [last, qty - pay, what])
+
+    def use(self, qty: float) -> None:
+        take = min(qty, self.plain)
+        self.plain -= take
+        qty -= take
+        for lot in self.lots:
+            if qty <= EPS:
+                break
+            take = min(qty, lot[1])
+            lot[1] -= take
+            qty -= take
+        self.lots = [x for x in self.lots if x[1] > EPS]
+        self.owed += max(0.0, qty)
+
+    def expire(self, on: date) -> list[list]:
+        """The lots whose last day is before ``on``: gone, with what they still held."""
+        gone = [x for x in self.lots if x[0] < on]
+        if gone:
+            self.lots = [x for x in self.lots if x[0] >= on]
+        return gone
 
 
 class _Planner:
@@ -109,6 +149,13 @@ class _Planner:
     def is_customer(self, node: Node) -> bool:
         return self.ds.location_type(node[0]) is LocationType.CUSTOMER
 
+    def shelf(self, node: Node) -> int | None:
+        """Days a batch of this product keeps, where the plan follows its batches (R15); None otherwise."""
+        prod = self.ds.product_by_id.get(node[1])
+        if prod is None or not prod.shelf_life_days or not prod.batch_managed or self.is_customer(node):
+            return None
+        return prod.shelf_life_days
+
     def seed(self) -> None:
         for node in self.g.order:
             self.state[node] = _NodeState(lp=self.lp(node))
@@ -140,8 +187,12 @@ class _Planner:
             st = self.state.get(node)
             if st is None:
                 continue
-            d = self.receipt_date(rc)
-            if rc.expected_qty > EPS:   # a supplier who confirmed less than ordered: the plan counts what is confirmed
+            if rc.confirmations:        # confirmed in several deliveries: each arrives on its own day
+                for day, q in rc.expected_parts():
+                    d = self._available(rc, day)
+                    st.supplies.append(_Supply("receipt", rc.id, d, q, d, rc.scheduled))
+            elif rc.expected_qty > EPS:   # a supplier who confirmed less than ordered: the plan counts what is confirmed
+                d = self.receipt_date(rc)
                 st.supplies.append(_Supply("receipt", rc.id, d, rc.expected_qty, d, rc.scheduled))
             self._firm_load(rc)
             # what the firm order still draws from stock: components, or goods at a transfer's origin
@@ -180,12 +231,17 @@ class _Planner:
             self._load(rc.step_resources.get(w.seq, w.resource), w.start, w.end, w.machine_hours, who)
             if w.labor_resource and w.labor_hours > 0:
                 self._load(w.labor_resource, w.start, w.end, w.labor_hours, who)
+            for t in w.tools:
+                self._load(t, w.start, w.end, w.machine_hours, who)
 
     def receipt_date(self, rc) -> date:
         """A firm receipt is available after goods-receipt processing, like a planned order; a purchase line the
         supplier confirmed arrives on the confirmed date."""
+        return self._available(rc, rc.expected_date)
+
+    def _available(self, rc, day: date) -> date:
         gr = gr_days(self.ds.location_product_by_key.get((rc.location, rc.product)))
-        return max(rc.expected_date + timedelta(days=math.ceil(gr - 1e-9)), self.start)
+        return max(day + timedelta(days=math.ceil(gr - 1e-9)), self.start)
 
     def _split(self, node: Node, d: date, qty: float, period_days: int | None) -> list[tuple[date, float]]:
         """PIR splitting: spread a period forecast evenly over the working days of its window."""
@@ -243,9 +299,13 @@ class _Planner:
     def plan_node(self, node: Node) -> None:
         st = self.state[node]
         lp = st.lp
+        direct = lp.direct_production and not self.is_customer(node)
+        if direct:   # special procurement: made for each order that needs it, never from stock, lot-for-lot
+            lp = st.lp = lp.model_copy(update={"strategy": Strategy.MTO, "safety_stock": SafetyStockPolicy()})
         self.safety_stock(node, st)
         mto = lp.strategy is Strategy.MTO
-        onhand = 0.0 if self.is_customer(node) else lp.on_hand
+        onhand = 0.0 if self.is_customer(node) or direct else lp.on_hand
+        disc = lp.discontinued_on if lp.follow_up and lp.discontinued_on else None
         if onhand > 0:
             st.supplies.insert(0, _Supply("on_hand", f"OH:{node[0]}:{node[1]}", self.start, onhand, self.start))
             self._expiry(node, st, onhand)
@@ -275,7 +335,15 @@ class _Planner:
             if eoq_qty is None:
                 self._exc("EOQ_FALLBACK", "info", "EOQ undefined (no ordering cost, value or demand): lot-for-lot used",
                           node=node)
+        shelf = self.shelf(node)
+        fresh = _Fresh(onhand) if shelf else None
         for d in dates:
+            if fresh is not None:
+                for last, q, what in fresh.expire(d):
+                    avail -= q
+                    self._lot_expires(node, st, last, q, what, shelf)
+                fresh.add(d + timedelta(days=shelf), rec_on.get(d, 0.0), "the firm orders due then")
+                fresh.use(req_on.get(d, 0.0))
             avail += rec_on.get(d, 0.0) - req_on.get(d, 0.0)
             if d not in checks:
                 continue
@@ -284,6 +352,12 @@ class _Planner:
             threshold = max(ss, 0.0 if mto else target_at(st.targets, d))
             if lp.mrp_type is MrpType.REORDER_POINT and lp.reorder_point is not None:
                 threshold = max(threshold, lp.reorder_point)
+            if disc is not None and d >= disc:
+                threshold = 0.0           # discontinued: no buffer, no new supply; the follow-up takes over
+                if avail < -EPS:
+                    self._follow_up(node, st, d, -avail)
+                    avail = 0.0
+                continue
             if avail >= threshold - EPS:
                 continue
             # reschedule in (S/4 rescheduling check): a firm receipt that lands no later than a new order could
@@ -291,19 +365,25 @@ class _Planner:
             # could land depends on its size (production time grows with it), so it is asked for the lot that would
             # replace the firm supply: sized as if none lay ahead (a period lot the receipt already covers would
             # otherwise shrink to the shortage and look faster than the order it duplicates)
-            lot = self._lot(lp, mto, threshold - avail, d, avail, req_on, {}, eoq_qty)[0]
+            lot = self._lot(lp, mto, threshold - avail, d, avail, req_on, {}, eoq_qty, shelf)[0]
             pulled = self._reschedule_in(node, st, receipts, rec_on, d, threshold - avail, lot)
             avail += pulled
+            if fresh is not None and pulled > EPS:
+                fresh.add(d + timedelta(days=shelf), pulled, "the firm orders brought forward")
             if avail >= threshold - EPS:
                 continue
             shortage = threshold - avail
-            qty, gap = self._lot(lp, mto, shortage, d, avail, req_on, rec_on, eoq_qty)
+            qty, gap = self._lot(lp, mto, shortage, d, avail, req_on, rec_on, eoq_qty, shelf)
             need = max(self.start, d - timedelta(days=lp.safety_time_days)) if lp.safety_time_days else d
             ceiling = gap if lp.lot_sizing.policy is LotSizePolicy.MIN_MAX and not mto else None
             # what the order is for: requirements below zero first, then the buffer up to the threshold
+            first = len(self.orders)
             created = self._supply(node, st, qty, need, shortage=shortage, ceiling=ceiling,
                                    below_zero=min(shortage, max(0.0, -avail)))
             avail += created
+            if fresh is not None:
+                for o in self.orders[first:]:   # a batch keeps from the day it is there
+                    fresh.add(max(d, o.available_date) + timedelta(days=shelf), o.qty, o.id)
         self._peg(node, st)
 
     def _expiry(self, node: Node, st: _NodeState, onhand: float) -> None:
@@ -325,6 +405,38 @@ class _Planner:
             self._exc("STOCK_EXPIRES", "warning", f"{q:,.1f} of batch {batch} expire unused on "
                       f"{(day - timedelta(days=1)).isoformat()}", node=node, when=day, qty=q)
 
+    def _follow_up(self, node: Node, st: _NodeState, d: date, qty: float) -> None:
+        """A discontinued product's requirement its stock no longer covers goes to its follow-up at the same place
+        (≈ S/4 discontinuation with a follow-up material): a requirement there, and a supply here that it covers."""
+        follow = st.lp.follow_up
+        fnode = (node[0], follow or "")
+        if fnode not in self.state:
+            self._exc("NO_VALID_SOURCE", "error", f"Discontinued; its follow-up {follow} is not planned here",
+                      node=node, when=d, qty=qty)
+            return
+        n = sum(1 for s in st.supplies if s.kind == "follow_up") + 1
+        rid = f"FU:{node[0]}:{node[1]}:{n}"
+        self._add_req(fnode, Requirement(id=rid, location=node[0], product=follow, date=d, qty=qty, kind="dependent"))
+        st.supplies.append(_Supply("follow_up", rid, d, qty, d))
+        if n == 1:
+            self._exc("FOLLOW_UP", "info", f"Discontinued from {st.lp.discontinued_on.isoformat()}: {follow} takes "
+                      f"over from {d.isoformat()}, once its stock is used up", node=node, when=d, qty=qty)
+
+    def _lot_expires(self, node: Node, st: _NodeState, last: date, qty: float, what: str, shelf: int) -> None:
+        """A lot the plan made or expects that the requirements will not use up before its last day: what is left is
+        gone the day after, a requirement of its own the plan then covers again."""
+        day = last + timedelta(days=1)
+        if day >= self.b.end:
+            return
+        n = sum(1 for r in st.reqs if r.kind == "expiry" and r.id.startswith(f"EXP:{node[0]}:{node[1]}:"))
+        self._add_req(node, Requirement(id=f"EXP:{node[0]}:{node[1]}:+{n + 1}", location=node[0], product=node[1],
+                                        date=day, qty=qty, kind="expiry", priority=9))
+        order = what if what in self.order_by_id else None
+        self._exc("LOT_EXPIRES", "warning",
+                  f"{qty:,.1f} of {what} would expire unused on {last.isoformat()}: the lot is more than "
+                  f"{shelf} days' use (a smaller fixed batch, minimum or rounding avoids it)",
+                  node=node, order=order, when=day, qty=qty)
+
     @property
     def expiring(self) -> dict[Node, list[tuple[date, float, str]]]:
         if self._expiring is None:
@@ -333,20 +445,30 @@ class _Planner:
         return self._expiring
 
     def _lot(self, lp: LocationProduct, mto: bool, shortage: float, d: date, avail: float, req_on: dict[date, float],
-             rec_on: dict[date, float], eoq_qty: float | None) -> tuple[float, float | None]:
-        """The lot a shortage on ``d`` is ordered in, and the room left to the maximum stock."""
+             rec_on: dict[date, float], eoq_qty: float | None, shelf: int | None = None) -> tuple[float, float | None]:
+        """The lot a shortage on ``d`` is ordered in, and the room left to the maximum stock. With a shelf life, a lot
+        that is worked out (a period's need, an economic quantity, up to the maximum stock) covers no more than the
+        requirements up to its last day (R15); a fixed batch stays as it is, and what it leaves is planned to expire."""
         ls = lp.lot_sizing
         window = 0.0
+        keeps = d + timedelta(days=shelf + 1) if shelf else None
         if ls.policy is LotSizePolicy.POQ and not mto:
             bi = self.b.index_of(d)
             end_idx = min(bi + (ls.periods or 1), len(self.b))
             we = self.b[end_idx].start if end_idx < len(self.b) else self.b.end
+            if keeps is not None:
+                we = min(we, keeps)
             window = max(0.0, sum(q for dd, q in req_on.items() if d < dd < we)
                          - sum(q for dd, q in rec_on.items() if d < dd < we))
         gap = (lp.max_stock - avail) if lp.max_stock is not None else None
         if mto:
             return shortage, gap
-        return base_lot(ls, shortage, window_requirements=window, max_stock_gap=gap, eoq_qty=eoq_qty), gap
+        q = base_lot(ls, shortage, window_requirements=window, max_stock_gap=gap, eoq_qty=eoq_qty)
+        if keeps is not None and ls.policy in (LotSizePolicy.EOQ, LotSizePolicy.MIN_MAX) and q > shortage + EPS:
+            usable = max(0.0, sum(qq for dd, qq in req_on.items() if d < dd < keeps)
+                         - sum(qq for dd, qq in rec_on.items() if d < dd < keeps))
+            q = max(shortage, min(q, shortage + usable))
+        return q, gap
 
     def _earliest_new(self, node: Node, st: _NodeState, need: date, qty: float) -> date | None:
         """When a new order for ``need`` would be available: on time if its backward-scheduled start is not in
@@ -440,12 +562,12 @@ class _Planner:
         total = 0.0
         req_left = qty if below_zero is None else below_zero
         buf_left = 0.0 if shortage is None else max(0.0, shortage - req_left)
-        for q in lots:
+        for lot in lots:
             try:
-                self._create_order(node, st, opt, q, need)
+                made = self._within_limits(node, st, opt, lot, need)
             except NoWorkingTime as failure:
                 self._exc("SOURCE_NO_WORKING_TIME", "warning", f"{opt.source_id}: {failure}",
-                          node=node, when=need, qty=q)
+                          node=node, when=need, qty=lot)
                 excluded.add((opt.kind, opt.source_id))
                 remaining = max(0.0, qty - total)
                 if remaining <= EPS:
@@ -454,15 +576,103 @@ class _Planner:
                                             shortage=None if shortage is None else max(0.0, shortage - total),
                                             ceiling=None if ceiling is None else max(0.0, ceiling - total),
                                             below_zero=req_left, excluded=excluded)
-            o = self.orders[-1]
-            for_req = min(q, req_left)
-            o.for_buffer = min(q - for_req, buf_left)
-            o.for_lot_size = max(0.0, q - for_req - o.for_buffer)
-            req_left -= for_req
-            buf_left -= o.for_buffer
-            self.quota_alloc[(node, opt.source_id)] += q
-            total += q
+            for o in made:
+                q = o.qty
+                for_req = min(q, req_left)
+                o.for_buffer = min(q - for_req, buf_left)
+                o.for_lot_size = max(0.0, q - for_req - o.for_buffer)
+                req_left -= for_req
+                buf_left -= o.for_buffer
+                self.quota_alloc[(node, o.source_id)] += q
+                total += q
         return total
+
+    # ------------------------------------------------------------------ supplier and lane capacity
+    def _limit(self, opt: SupplyOption) -> float | None:
+        """Units a week the source can supply (supplier capacity) or the lane can carry; None: no limit."""
+        if opt.kind == "buy":
+            return self.ds.purchasing_source_by_id[opt.source_id].capacity_per_week
+        if opt.kind == "transfer":
+            return self.ds.lane_by_id[opt.source_id].planning_mode.capacity_units_per_week
+        return None
+
+    def _room(self, opt: SupplyOption, qty: float, need: date) -> tuple[float, bool]:
+        """What is left of the weekly limit in the bucket an order needed on ``need`` would ship in, and whether
+        that order could still start today or later."""
+        cap = self._limit(opt)
+        sch = schedule(self.ds, opt, qty, available=need)
+        ok = sch.start_date >= self.start
+        if cap is None:
+            return math.inf, ok
+        if not ok:
+            sch = schedule(self.ds, opt, qty, start=self.start)
+        day = sch.start_date if opt.kind == "transfer" else (sch.ship_date or sch.start_date)
+        bi = self.b.index_of(day)
+        if not 0 <= bi < len(self.b):
+            return math.inf, ok
+        load = (self.lane_load[opt.source_id] if opt.kind == "transfer" else self.supplier_load[opt.source_id])[bi]
+        return max(0.0, cap * self.b[bi].days / 7.0 - load), ok
+
+    def _piece(self, node: Node, opt: SupplyOption, room: float, left: float) -> float:
+        """How much of ``left`` an order from ``opt`` may take within ``room``: whole packs, at least the minimum."""
+        take = min(left, room)
+        if opt.kind == "buy":
+            pu = self.ds.purchasing_source_by_id[opt.source_id]
+            if pu.rounding_qty and take < left - EPS:
+                take = math.floor(take / pu.rounding_qty + 1e-9) * pu.rounding_qty
+            if take < pu.moq - EPS:
+                return 0.0
+        if self.ds.whole(node[1]) and take < left - EPS:
+            take = math.floor(take + 1e-9)
+        return take if take > EPS else 0.0
+
+    def _within_limits(self, node: Node, st: _NodeState, opt: SupplyOption, qty: float, need: date) -> list[PlannedOrder]:
+        """Create the order for ``qty``. When capacity-constrained planning is on and the supplier or lane has a weekly
+        limit, what does not fit that week goes to the node's other valid sources, then to earlier weeks of the same
+        source (arriving early, held as stock); only what fits nowhere is ordered over the limit (and flagged)."""
+        if not self.s.capacity_constrained or self._limit(opt) is None:
+            self._create_order(node, st, opt, qty, need)
+            return [self.orders[-1]]
+        made: list[PlannedOrder] = []
+        left = qty
+
+        def order(o: SupplyOption, q: float, on: date) -> None:
+            nonlocal left
+            self._create_order(node, st, o, q, on)
+            made.append(self.orders[-1])
+            left -= q
+
+        room, _ = self._room(opt, left, need)
+        if (q := self._piece(node, opt, room, left)) > 0:
+            order(opt, q, need)
+        others = [o for o in self.g.options.get(node, []) if o.source_id != opt.source_id and self._valid(o, need)
+                  and not (o.kind == "buy" and self.ds.purchasing_source_by_id[o.source_id].blocked)]
+        for o in others:
+            if left <= EPS:
+                break
+            room, _ = self._room(o, left, need)
+            if (q := self._piece(node, o, room, left)) > 0:
+                order(o, q, need)
+        on = need
+        for _ in range(26):
+            if left <= EPS:
+                break
+            on -= timedelta(days=7)
+            room, ok = self._room(opt, left, on)
+            if not ok:
+                break
+            if (q := self._piece(node, opt, room, left)) > 0:
+                order(opt, q, on)
+        if left > EPS:
+            order(opt, left, need)
+        if len(made) > 1:
+            what = "supplier" if opt.kind == "buy" else "lane"
+            self._exc("SUPPLY_SPLIT", "info",
+                      f"{qty:,.0f} needed {need.isoformat()} is over the {what} capacity of {opt.source_id}: split into "
+                      + ", ".join(f"{o.id} {o.qty:,.0f} from {o.source_id}"
+                                  + (f" arriving {o.available_date.isoformat()}" if o.need_date != need else "")
+                                  for o in made), node=node, when=need, qty=qty)
+        return made
 
     def _valid(self, opt: SupplyOption, d: date) -> bool:
         if opt.kind == "make":
@@ -529,7 +739,17 @@ class _Planner:
         if placed is not None:
             order.capacity_shift_days = (sch.available_date - base_avail).days
             order.step_resources = {seq: r for seq, r in placed.items() if r != self._primary(opt.source_id, seq)}
+            order.overtime_hours = {r: round(h, 4) for r, h in self._ot_used.items() if h > 1e-9}
         self._cost(order, opt, qty)
+        if order.overtime_hours:
+            ot_cost = sum(h * ds.resource_by_id[r].overtime_cost_per_hour for r, h in order.overtime_hours.items())
+            order.costs["overtime"] = ot_cost
+            order.total_cost += ot_cost
+            order.unit_cost = order.total_cost / qty if qty > 0 else 0.0
+            self.kpi.production_cost += ot_cost
+            self._exc("OVERTIME_PLANNED", "info", f"{oid} fits with "
+                      + ", ".join(f"{h:,.1f} h overtime on {r}" for r, h in order.overtime_hours.items())
+                      + (f" (costing {ot_cost:,.0f})" if ot_cost > 0 else ""), node=node, order=oid, when=need, qty=qty)
         self.orders.append(order)
         self.order_by_id[oid] = order
         st.supplies.append(_Supply("order", oid, need, qty, sch.available_date))
@@ -548,14 +768,15 @@ class _Planner:
             ps = ds.production_source_by_id[opt.source_id]
             # the BOM as it stands on the day production starts (engineering change), phantoms passed through
             prod_start = sch.ops[0].start if sch.ops else sch.start_date
-            for n in needs(ds, ps, prod_start):
+            for n in needs(ds, ps, prod_start, qty=qty):
                 cq = n.qty(qty)
                 if cq <= EPS:
                     continue
                 cd = max(self.start, (sch.component_dates or {}).get(n.product, sch.start_date))
-                req = Requirement(id=f"R:{oid}:{n.product}", location=loc, product=n.product, date=cd, qty=cq,
-                                  kind="dependent", parent_order=oid)
-                self._add_dependent((loc, n.product), req, oid)
+                at = n.location or loc     # withdrawn from another plant: its stock, no transfer
+                req = Requirement(id=f"R:{oid}:{n.product}", location=at, product=n.product, date=cd, qty=cq,
+                                  kind="dependent" if at == loc else "transfer", parent_order=oid)
+                self._add_dependent((at, n.product), req, oid)
             for co, cq in co_output(ps, qty):
                 cst = self.state.get((loc, co))
                 if cst is not None and cq > EPS:
@@ -567,6 +788,8 @@ class _Planner:
                 self._load((placed or {}).get(w.seq, w.resource), w.start, w.end, w.machine_hours, who)
                 if w.labor_resource and w.labor_hours > 0:
                     self._load(w.labor_resource, w.start, w.end, w.labor_hours, who)
+                for t in w.tools:
+                    self._load(t, w.start, w.end, w.machine_hours, who)
         elif opt.kind == "transfer":
             ln = ds.lane_by_id[opt.source_id]
             req = Requirement(id=f"T:{oid}", location=ln.origin, product=prod, date=max(self.start, sch.start_date),
@@ -620,19 +843,43 @@ class _Planner:
         ps = self.ds.production_source_by_id[source_id]
         return next((op.resource for op in ps.operations if op.seq == seq), None)
 
-    def _placement(self, opt: SupplyOption, sch: Schedule) -> dict[int, str] | None:
+    def _ot(self, resource: str, d: date) -> float:
+        """Overtime all units of a machine may add on ``d`` (none on a day it does not work)."""
+        r = self.ds.resource_by_id[resource]
+        if r.overtime_hours_per_day <= 0 or self._cap(resource, d) <= 0:
+            return 0.0
+        return r.overtime_hours_per_day * day_capacity(r, resource_calendar(self.ds, resource), d,
+                                                       self.ds.scheduling.day_start_hour).units
+
+    def _placement(self, opt: SupplyOption, sch: Schedule, overtime: bool = False) -> dict[int, str] | None:
         """The machine each step runs on so every finite machine and labour pool stays within its daily capacity
-        (the step's own machine first, then its alternatives in order), or None when a step fits nowhere."""
+        (the step's own machine first, then its alternatives in order), or None when a step fits nowhere. With
+        ``overtime``, a day's capacity includes the machine's overtime, and ``self._ot_used`` says how much of it the
+        order takes, per machine."""
         ps = self.ds.production_source_by_id[opt.source_id]
         ops = {op.seq: op for op in ps.operations}
         extra: dict[tuple[str, date], float] = defaultdict(float)
         choice: dict[int, str] = {}
+        self._ot_used: dict[str, float] = {}
+
+        def cap(rid: str, d: date) -> float:
+            return self._cap(rid, d) + (self._ot(rid, d) if overtime else 0.0)
 
         def fits(rid: str, spread: list[tuple[date, float]]) -> bool:
             if not self.ds.resource_by_id[rid].finite:
                 return True
-            return all(self.res_daily[rid].get(d, 0.0) + extra[(rid, d)] + h <= self._cap(rid, d) + 1e-6
+            return all(self.res_daily[rid].get(d, 0.0) + extra[(rid, d)] + h <= cap(rid, d) + 1e-6
                        for d, h in spread)
+
+        def take(rid: str, spread: list[tuple[date, float]]) -> None:
+            for d, h in spread:
+                before = self.res_daily[rid].get(d, 0.0) + extra[(rid, d)]
+                if overtime:
+                    c = self._cap(rid, d)
+                    over = max(0.0, before + h - c) - max(0.0, before - c)
+                    if over > 1e-9:
+                        self._ot_used[rid] = self._ot_used.get(rid, 0.0) + over
+                extra[(rid, d)] += h
 
         for w in sch.ops:
             if w.resource is None:
@@ -651,10 +898,15 @@ class _Planner:
                 lab = self._spread(w.labor_resource, w.start, w.end, w.labor_hours)
                 if not fits(w.labor_resource, lab):
                     return None
-                for d, h in lab:
-                    extra[(w.labor_resource, d)] += h
-            for d, h in spread:
-                extra[(got, d)] += h
+                take(w.labor_resource, lab)
+            for t in w.tools:
+                if t not in self.ds.resource_by_id:
+                    continue
+                held = self._spread(t, w.start, w.end, w.machine_hours)
+                if not fits(t, held):
+                    return None
+                take(t, held)
+            take(got, spread)
             choice[w.seq] = got
         return choice
 
@@ -666,14 +918,19 @@ class _Planner:
         got = self._placement(opt, sch)
         if got is not None:
             return sch, got
+        if self.s.capacity_overtime:          # overtime on the day it is planned, before moving it
+            got = self._placement(opt, sch, overtime=True)
+            if got is not None:
+                return sch, got
         ways = (self._earlier, self._later) if self.s.capacity_direction == "earlier" else (self._later, self._earlier)
-        for way in ways:
-            found = way(opt, qty, target, sch)
-            if found is not None:
-                return found
+        for ot in ([False, True] if self.s.capacity_overtime else [False]):
+            for way in ways:
+                found = way(opt, qty, target, sch, ot)
+                if found is not None:
+                    return found
         return sch, None
 
-    def _earlier(self, opt: SupplyOption, qty: float, target: date, sch: Schedule):
+    def _earlier(self, opt: SupplyOption, qty: float, target: date, sch: Schedule, ot: bool = False):
         ds = self.ds
         cal = location_calendar(ds, opt.node[0])
         limit = self.s.capacity_max_early_days
@@ -689,11 +946,11 @@ class _Planner:
                 return None
             if not cal.is_workday(s.start_date):
                 continue
-            got = self._placement(opt, s)
+            got = self._placement(opt, s, ot)
             if got is not None:
                 return s, got
 
-    def _later(self, opt: SupplyOption, qty: float, target: date, sch: Schedule):
+    def _later(self, opt: SupplyOption, qty: float, target: date, sch: Schedule, ot: bool = False):
         ds = self.ds
         cal = location_calendar(ds, opt.node[0])
         last = self.b.end + timedelta(days=31)
@@ -705,7 +962,7 @@ class _Planner:
             s = schedule(ds, opt, qty, start=d)
             if s.available_date > last:
                 return None
-            got = self._placement(opt, s)
+            got = self._placement(opt, s, ot)
             if got is not None:
                 return s, got
 
@@ -767,7 +1024,8 @@ class _Planner:
 
     # ------------------------------------------------------------------ pegging
     def _peg(self, node: Node, st: _NodeState) -> None:
-        supplies = sorted(st.supplies, key=lambda s: (s.date, {"on_hand": 0, "receipt": 1, "co_product": 2, "order": 3}[s.kind],
+        supplies = sorted(st.supplies, key=lambda s: (s.date, {"on_hand": 0, "receipt": 1, "co_product": 2, "follow_up": 3,
+                                                               "order": 3}[s.kind],
                                                       s.id))
         reqs = sorted(st.reqs, key=lambda r: (r.date, r.priority, r.id))
         left = [s.qty for s in supplies]

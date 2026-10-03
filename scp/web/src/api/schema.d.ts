@@ -1035,6 +1035,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sales": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Sales
+         * @description Every sales order with its lines, quotations, deliveries, invoices and returns, what is due to deliver and to
+         *     bill, and each customer's credit position.
+         */
+        post: operations["post_sales_api_sales_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sales/act": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Sales Action
+         * @description One order-to-cash step: take an order, quote, deliver, invoice, record a payment, take a return back.
+         */
+        post: operations["post_sales_action_api_sales_act_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/actuals/production-usage": {
         parameters: {
             query?: never;
@@ -1407,6 +1448,13 @@ export interface components {
             movements: string[];
             /** Doc */
             doc: string | null;
+            /** Id */
+            id: string | null;
+            /**
+             * Sent
+             * @default []
+             */
+            sent: string[];
             /**
              * Short Orders
              * @default []
@@ -1436,6 +1484,11 @@ export interface components {
             /** Unmatched */
             unmatched: string[];
             unbooked: components["schemas"]["Unbooked"] | null;
+            /**
+             * Yields
+             * @default []
+             */
+            yields: components["schemas"]["YieldRow"][];
         };
         /**
          * Allocation
@@ -1547,6 +1600,25 @@ export interface components {
             skipped: {
                 [key: string]: string;
             };
+        };
+        /**
+         * Approval
+         * @description One release of a purchase order at one level of the release strategy.
+         */
+        Approval: {
+            /** Level */
+            level: string;
+            /**
+             * By
+             * @description Who released it
+             * @default
+             */
+            by: string;
+            /**
+             * On
+             * Format: date
+             */
+            on: string;
         };
         /** ApprovalSetting */
         ApprovalSetting: {
@@ -1681,6 +1753,33 @@ export interface components {
             valid_up: number | null;
             /** Valid Down */
             valid_down: number | null;
+        };
+        /**
+         * BomAlternative
+         * @description Another bill of materials for the same production version, chosen by the order's size (≈ S/4 alternative BOM
+         *     with a lot-size range): a small run made from bought-in paste, a large one from the raw ingredients.
+         */
+        BomAlternative: {
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * From Qty
+             * @description Used for orders of at least this many good units
+             * @default 0
+             */
+            from_qty: number;
+            /**
+             * To Qty
+             * @description …and at most this many (empty = no limit)
+             */
+            to_qty?: number | null;
+            /** Components */
+            components?: components["schemas"]["BomItem"][];
         };
         /** BomItem */
         BomItem: {
@@ -2240,6 +2339,16 @@ export interface components {
             plan_a: components["schemas"]["PlanSummary"];
             plan_b: components["schemas"]["PlanSummary"];
         };
+        /** ConfirmPart */
+        ConfirmPart: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Qty */
+            qty: number;
+        };
         /**
          * Confirmation
          * @description A persisted schedule line: what was promised to a sales order, from where and when.
@@ -2278,6 +2387,91 @@ export interface components {
          * @enum {string}
          */
         ConfirmationStrategy: "win" | "gain" | "redistribute" | "fill" | "lose";
+        /**
+         * ConfirmedDelivery
+         * @description One dated quantity the supplier confirmed for an order line (≈ a confirmation line of a PO item).
+         */
+        ConfirmedDelivery: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Qty */
+            qty: number;
+        };
+        /** ContractLine */
+        ContractLine: {
+            /** Product */
+            product: string;
+            /**
+             * Price
+             * @description Agreed price per base unit, in the contract's currency
+             */
+            price: number;
+            /**
+             * Target Qty
+             * @description Quantity agreed over the contract
+             */
+            target_qty?: number | null;
+        };
+        /** ContractLineView */
+        ContractLineView: {
+            /** Product */
+            product: string;
+            /** Price */
+            price: number;
+            /** Target Qty */
+            target_qty: number | null;
+            /** Ordered */
+            ordered: number;
+            /** Left */
+            left: number | null;
+        };
+        /** ContractView */
+        ContractView: {
+            /** Id */
+            id: string;
+            /** Supplier */
+            supplier: string;
+            /** Location */
+            location: string | null;
+            /**
+             * Valid From
+             * Format: date
+             */
+            valid_from: string;
+            /**
+             * Valid To
+             * Format: date
+             */
+            valid_to: string;
+            /** Currency */
+            currency: string;
+            /** Target Value */
+            target_value: number | null;
+            /** Ordered Value */
+            ordered_value: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "not started" | "expired" | "used up";
+            /** Lines */
+            lines: components["schemas"]["ContractLineView"][];
+            /** Attention */
+            attention: string[];
+            /**
+             * Supplier Reference
+             * @default
+             */
+            supplier_reference: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
         /**
          * CostLine
          * @description One plan cost category traced three ways: the plan KPI, the sum over its sources (orders or node
@@ -2405,6 +2599,71 @@ export interface components {
             note: string;
         };
         /**
+         * Customer
+         * @description A customer's sales data (≈ customer master, sales area view).
+         */
+        Customer: {
+            /**
+             * Customer
+             * @description The customer location this record describes
+             */
+            customer: string;
+            /**
+             * Contact
+             * @description Who to talk to
+             * @default
+             */
+            contact: string;
+            /**
+             * Email
+             * @default
+             */
+            email: string;
+            /**
+             * Phone
+             * @default
+             */
+            phone: string;
+            /**
+             * Payment Terms
+             * @description Empty = the company's default payment terms
+             */
+            payment_terms?: string | null;
+            /**
+             * Credit Limit
+             * @description Most the customer may owe: open orders, delivered and not invoiced, and unpaid invoices. A new order beyond it is blocked for delivery until someone releases it. Empty = no credit check
+             */
+            credit_limit?: number | null;
+            /**
+             * Discount
+             * @description Discount on every line the customer orders (0.05 = 5 %), after quantity scales
+             * @default 0
+             */
+            discount: number;
+            /**
+             * Tax Rate
+             * @description Tax on the customer's invoices; empty = the company's rate
+             */
+            tax_rate?: number | null;
+            /**
+             * Incoterms
+             * @description Delivery terms, e.g. DAP Mumbai
+             * @default
+             */
+            incoterms: string;
+            /**
+             * Blocked
+             * @description Sales block: no new orders or quotations; open ones are still delivered
+             * @default false
+             */
+            blocked: boolean;
+            /**
+             * Block Reason
+             * @default
+             */
+            block_reason: string;
+        };
+        /**
          * CustomerPrice
          * @description What a customer pays for a product (≈ a customer-specific condition record, PR00 per customer and material).
          *     A sales order's own price wins; without either, the product's selling price.
@@ -2419,9 +2678,46 @@ export interface components {
             product: string;
             /**
              * Price
-             * @description Net price per base unit, in the company currency
+             * @description Price per base unit, in the company currency
              */
             price: number;
+            /**
+             * Scales
+             * @description Quantity breaks: from this quantity on one order line, this price
+             */
+            scales?: components["schemas"]["PriceScale"][];
+            /**
+             * Discount
+             * @description Discount off this price for the customer on this product (0.05 = 5 %)
+             * @default 0
+             */
+            discount: number;
+        };
+        /** CustomerRow */
+        CustomerRow: {
+            /** Customer */
+            customer: string;
+            /** Credit Limit */
+            credit_limit: number | null;
+            /** Open Orders */
+            open_orders: number;
+            /** To Bill */
+            to_bill: number;
+            /** Receivable */
+            receivable: number;
+            /** Exposure */
+            exposure: number;
+            /** Overdue */
+            overdue: number;
+            /** Headroom */
+            headroom: number | null;
+            /** Payment Terms */
+            payment_terms: string;
+            /**
+             * Blocked
+             * @default false
+             */
+            blocked: boolean;
         };
         /** CvSuggestion */
         CvSuggestion: {
@@ -2467,8 +2763,14 @@ export interface components {
             products?: components["schemas"]["Product"][];
             /** Customer Prices */
             customer_prices?: components["schemas"]["CustomerPrice"][];
+            /** Customers */
+            customers?: components["schemas"]["Customer"][];
+            /** Payment Terms */
+            payment_terms?: components["schemas"]["PaymentTerms"][];
             /** Location Products */
             location_products?: components["schemas"]["LocationProduct"][];
+            /** Mrp Groups */
+            mrp_groups?: components["schemas"]["MrpGroup"][];
             /** Resources */
             resources?: components["schemas"]["Resource"][];
             /** Production Sources */
@@ -2482,6 +2784,23 @@ export interface components {
             /** Purchase Orders */
             purchase_orders?: components["schemas"]["PurchaseOrder"][];
             purchasing?: components["schemas"]["PurchasingSettings"];
+            /** Contracts */
+            contracts?: components["schemas"]["PurchaseContract"][];
+            /** Supplier Invoices */
+            supplier_invoices?: components["schemas"]["SupplierInvoice"][];
+            /** Supplier Returns */
+            supplier_returns?: components["schemas"]["SupplierReturn"][];
+            /** Sales Orders */
+            sales_orders?: components["schemas"]["SalesOrder"][];
+            /** Quotations */
+            quotations?: components["schemas"]["Quotation"][];
+            /** Deliveries */
+            deliveries?: components["schemas"]["Delivery"][];
+            /** Invoices */
+            invoices?: components["schemas"]["Invoice"][];
+            /** Returns */
+            returns?: components["schemas"]["ReturnOrder"][];
+            sales?: components["schemas"]["SalesSettings"];
             /** Demand */
             demand?: components["schemas"]["DemandRecord"][];
             /** Receipts */
@@ -2612,6 +2931,146 @@ export interface components {
             note: string;
         };
         /**
+         * Delivery
+         * @description An outbound delivery (≈ LIKP): picked, packed, then goods issued, which posts the sale movements.
+         */
+        Delivery: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /** Ship From */
+            ship_from: string;
+            /**
+             * Created On
+             * Format: date
+             */
+            created_on: string;
+            /**
+             * Planned On
+             * Format: date
+             * @description Planned goods issue
+             */
+            planned_on: string;
+            /** Lines */
+            lines: components["schemas"]["DeliveryLine"][];
+            /**
+             * Packages
+             * @description Packed: number of packages; empty = not packed
+             */
+            packages?: number | null;
+            /**
+             * Gross Kg
+             * @description Packed: gross weight
+             */
+            gross_kg?: number | null;
+            /**
+             * Issued On
+             * @description Goods issue posted; empty = not shipped yet
+             */
+            issued_on?: string | null;
+            /**
+             * Movements
+             * @description The sale movements posted at goods issue
+             */
+            movements?: string[];
+            /**
+             * Pod On
+             * @description Proof of delivery: when the customer received it
+             */
+            pod_on?: string | null;
+            /**
+             * Pod By
+             * @description Who signed for it
+             * @default
+             */
+            pod_by: string;
+            /**
+             * Pod Note
+             * @default
+             */
+            pod_note: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** DeliveryLine */
+        DeliveryLine: {
+            /**
+             * Order
+             * @description The sales order line delivered
+             */
+            order: string;
+            /** Product */
+            product: string;
+            /**
+             * Qty
+             * @description To deliver
+             */
+            qty: number;
+            /**
+             * Picked
+             * @description Picked; empty = not picked yet
+             */
+            picked?: number | null;
+            /**
+             * Batch
+             * @description Batch to pick (empty = first expiring)
+             */
+            batch?: string | null;
+            /**
+             * Final
+             * @description Closes the order line even if short
+             * @default false
+             */
+            final: boolean;
+            /**
+             * Received
+             * @description Proof of delivery: what the customer signed for; empty = all of it
+             */
+            received?: number | null;
+        };
+        /** DeliveryView */
+        DeliveryView: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /** Ship From */
+            ship_from: string;
+            /**
+             * Planned On
+             * Format: date
+             */
+            planned_on: string;
+            /** Status */
+            status: string;
+            /** Qty */
+            qty: number;
+            /** Lines */
+            lines: number;
+            /** Packages */
+            packages: number | null;
+            /** Gross Kg */
+            gross_kg: number | null;
+            /** Issued On */
+            issued_on: string | null;
+            /** Pod On */
+            pod_on: string | null;
+            /**
+             * Short
+             * @default 0
+             */
+            short: number;
+            /**
+             * Invoiced
+             * @default false
+             */
+            invoiced: boolean;
+        };
+        /**
          * DemandEvent
          * @description Something that moves demand for a period: a promotion, a price change, a competitor launch…
          *
@@ -2735,6 +3194,17 @@ export interface components {
              */
             customer_ref: string;
             /**
+             * Order
+             * @description Sales order: the order header this line is on (empty: an order of one line, its own header)
+             */
+            order?: string | null;
+            /**
+             * Discount
+             * @description Sales order: the discount its net price already has in it (customer and price discounts together), shown on its documents
+             * @default 0
+             */
+            discount: number;
+            /**
              * Fulfilled Confirmations
              * @description Schedule lines removed by deliveries; retained for quantity-based confirmation metrics
              */
@@ -2834,6 +3304,12 @@ export interface components {
              * @default true
              */
             quality_in_planning: boolean;
+            /**
+             * Promise Firms
+             * @description Taking or changing an order promised on new production makes that production (and the transfers bringing it) firm at once, as capable-to-promise does; off, the planner firms it
+             * @default true
+             */
+            promise_firms: boolean;
         };
         /** FieldChange */
         FieldChange: {
@@ -2949,6 +3425,11 @@ export interface components {
              * @default []
              */
             notes: string[];
+            /**
+             * Sent
+             * @default []
+             */
+            sent: string[];
         };
         /** FirmRequest */
         FirmRequest: {
@@ -2957,6 +3438,15 @@ export interface components {
             ids?: string[] | null;
             /** Within Days */
             within_days?: number | null;
+            /** Starts */
+            starts?: {
+                [key: string]: string;
+            } | null;
+            /**
+             * Send
+             * @default false
+             */
+            send: boolean;
         };
         /** FirmResponse */
         FirmResponse: {
@@ -3631,6 +4121,160 @@ export interface components {
              */
             types: string[];
         };
+        /**
+         * Invoice
+         * @description A billing document (≈ VBRK): an invoice for goods delivered, or a credit note for goods returned or a price
+         *     put right. Its amounts are fixed when it is made; payments are recorded against it.
+         */
+        Invoice: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @default invoice
+             * @enum {string}
+             */
+            kind: "invoice" | "credit_note";
+            /** Customer */
+            customer: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /**
+             * Discount Date
+             * @description Paid by this day, the cash discount applies
+             */
+            discount_date?: string | null;
+            /**
+             * Discount
+             * @description Cash discount for paying by the discount date
+             * @default 0
+             */
+            discount: number;
+            /** Payment Terms */
+            payment_terms?: string | null;
+            /** Lines */
+            lines: components["schemas"]["InvoiceLine"][];
+            /**
+             * Tax Rate
+             * @default 0
+             */
+            tax_rate: number;
+            /** Payments */
+            payments?: components["schemas"]["Payment"][];
+            /**
+             * Reference
+             * @description Credit note: the invoice it credits
+             */
+            reference?: string | null;
+            /** Sent On */
+            sent_on?: string | null;
+            /**
+             * Cancelled
+             * @description Cancelled: it no longer counts as owed
+             * @default false
+             */
+            cancelled: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** InvoiceLine */
+        InvoiceLine: {
+            /**
+             * Order
+             * @description The sales order line billed
+             */
+            order?: string | null;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Price
+             * @description Net price per unit
+             */
+            price: number;
+            /**
+             * Movements
+             * @description Invoice: the sale movements billed
+             */
+            movements?: string[];
+            /**
+             * Ret
+             * @description Credit note: the return it pays back
+             */
+            ret?: string | null;
+        };
+        /** InvoiceLineView */
+        InvoiceLineView: {
+            /** Order */
+            order: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /** Price */
+            price: number;
+            /** Amount */
+            amount: number;
+            /** Order Price */
+            order_price: number | null;
+            /** Received */
+            received: number;
+            /** Invoiced */
+            invoiced: number;
+        };
+        /** InvoiceView */
+        InvoiceView: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Customer */
+            customer: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /** Net */
+            net: number;
+            /** Tax */
+            tax: number;
+            /** Total */
+            total: number;
+            /** Open */
+            open: number;
+            /** Status */
+            status: string;
+            /**
+             * Days Overdue
+             * @default 0
+             */
+            days_overdue: number;
+            /** Discount Until */
+            discount_until: string | null;
+            /**
+             * Discount Amount
+             * @default 0
+             */
+            discount_amount: number;
+        };
         /** Issue */
         Issue: {
             /** Code */
@@ -4161,6 +4805,32 @@ export interface components {
              * @description MEIO: the longest outbound service time this node may quote (empty = no limit, or the customer service time where it faces demand)
              */
             max_service_days?: number | null;
+            /**
+             * Mrp Group
+             * @description MRP group: its planning values replace this product's own where it sets them
+             */
+            mrp_group?: string | null;
+            /**
+             * Withdraw From
+             * @description Special procurement: withdrawal from another plant. Production here takes this part straight from that place's stock, with no transfer order
+             */
+            withdraw_from?: string | null;
+            /**
+             * Direct Production
+             * @description Special procurement: direct production. Made for each order that needs it, never taken from stock or lot-sized
+             * @default false
+             */
+            direct_production: boolean;
+            /**
+             * Discontinued On
+             * @description Discontinued from this day: no new supply is planned; what its stock does not cover goes to the follow-up
+             */
+            discontinued_on?: string | null;
+            /**
+             * Follow Up
+             * @description Follow-up product that takes over the requirements once this one is discontinued and its stock is used up
+             */
+            follow_up?: string | null;
         };
         /**
          * LocationType
@@ -4423,7 +5093,44 @@ export interface components {
          * MovementType
          * @enum {string}
          */
-        MovementType: "opening" | "receipt" | "issue" | "sale" | "transfer_out" | "scrap" | "adjustment" | "status";
+        MovementType: "opening" | "receipt" | "issue" | "sale" | "transfer_out" | "scrap" | "adjustment" | "return" | "status";
+        /**
+         * MrpGroup
+         * @description Planning parameters shared by many products (≈ S/4 MRP group): a product at a place that names the group is
+         *     planned with the group's values wherever the group sets one, instead of its own.
+         */
+        MrpGroup: {
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** @description Planning strategy for the group (empty: each product's own) */
+            strategy?: components["schemas"]["Strategy"] | null;
+            /** @description Lot size for the group (empty: each product's own) */
+            lot_sizing?: components["schemas"]["LotSizing"] | null;
+            /**
+             * Safety Time Days
+             * @description Plan receipts this many days early
+             */
+            safety_time_days?: number | null;
+            /**
+             * Planning Time Fence Days
+             * @description No new proposals inside this fence
+             */
+            planning_time_fence_days?: number | null;
+            /** Consumption Backward Days */
+            consumption_backward_days?: number | null;
+            /** Consumption Forward Days */
+            consumption_forward_days?: number | null;
+            /**
+             * Mrp Controller
+             * @description Who plans the group's products
+             */
+            mrp_controller?: string | null;
+        };
         /**
          * MrpType
          * @enum {string}
@@ -4868,6 +5575,11 @@ export interface components {
              * @description Other machines that can do this step with the same times
              */
             alternatives?: string[];
+            /**
+             * Tools
+             * @description Tools the step holds while it runs (a mould, a die, a fixture): each is busy for the machine's hours, so two steps needing one tool never run at once
+             */
+            tools?: string[];
             /** @description Done outside by a supplier instead of on a resource */
             subcontract?: components["schemas"]["Subcontract"] | null;
         };
@@ -4924,6 +5636,55 @@ export interface components {
             open_after: number;
             /** Closed */
             closed: boolean;
+        };
+        /** OrderLineView */
+        OrderLineView: {
+            /** Id */
+            id: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /** Delivered */
+            delivered: number;
+            /** Invoiced */
+            invoiced: number;
+            /** Returned */
+            returned: number;
+            /** Open */
+            open: number;
+            /** On Delivery */
+            on_delivery: number;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Promised */
+            promised: string | null;
+            /** Ship From */
+            ship_from: string | null;
+            /** Price */
+            price: number | null;
+            /** List Price */
+            list_price: number | null;
+            /**
+             * Discount
+             * @default 0
+             */
+            discount: number;
+            /** Value */
+            value: number | null;
+            /**
+             * Closed
+             * @default false
+             */
+            closed: boolean;
+            /**
+             * Cancelled
+             * @default false
+             */
+            cancelled: boolean;
         };
         /** OrderLoad */
         OrderLoad: {
@@ -5014,6 +5775,53 @@ export interface components {
             /** Value */
             value: number | null;
         };
+        /** OrderView */
+        OrderView: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /**
+             * Order Date
+             * Format: date
+             */
+            order_date: string;
+            /**
+             * Customer Ref
+             * @default
+             */
+            customer_ref: string;
+            /** Payment Terms */
+            payment_terms: string;
+            /** Quotation */
+            quotation: string | null;
+            /**
+             * Credit Block
+             * @default false
+             */
+            credit_block: boolean;
+            /**
+             * Credit Note
+             * @default
+             */
+            credit_note: string;
+            /** Confirmation Sent On */
+            confirmation_sent_on: string | null;
+            /**
+             * Lines
+             * @default []
+             */
+            lines: components["schemas"]["OrderLineView"][];
+            /** Value */
+            value: number | null;
+            /** Status */
+            status: string;
+            /**
+             * Header
+             * @default true
+             */
+            header: boolean;
+        };
         /**
          * OutlierMethod
          * @enum {string}
@@ -5028,7 +5836,7 @@ export interface components {
             owner: string;
             /**
              * Categories
-             * @description Any of coverage, capacity, inventory, orders, delivery, demand
+             * @description Any of coverage, capacity, inventory, orders, delivery, demand, payables, receivables
              */
             categories?: string[];
             /**
@@ -5065,13 +5873,114 @@ export interface components {
             /** New */
             new: string;
         };
+        /**
+         * PayableRow
+         * @description What we owe one supplier (company currency).
+         */
+        PayableRow: {
+            /** Supplier */
+            supplier: string;
+            /** Name */
+            name: string;
+            /** Open */
+            open: number;
+            /** Overdue */
+            overdue: number;
+            /** Due Soon */
+            due_soon: number;
+            /** Blocked */
+            blocked: number;
+            /** Not Invoiced */
+            not_invoiced: number;
+            /** Next Due */
+            next_due: string | null;
+            /** Terms */
+            terms: string;
+        };
+        /**
+         * PayablesView
+         * @description Invoice verification and what is owed to whom.
+         */
+        PayablesView: {
+            /** Invoices */
+            invoices: components["schemas"]["SupplierInvoiceView"][];
+            /** To Invoice */
+            to_invoice: components["schemas"]["ToInvoice"][];
+            /** Payables */
+            payables: components["schemas"]["PayableRow"][];
+            /** Contracts */
+            contracts: components["schemas"]["ContractView"][];
+            /** Returns */
+            returns: components["schemas"]["SupplierReturnView"][];
+            /** Blocked */
+            blocked: number;
+            /** Open Value */
+            open_value: number;
+            /** Overdue Value */
+            overdue_value: number;
+            /** Not Invoiced Value */
+            not_invoiced_value: number;
+        };
+        /** Payment */
+        Payment: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Amount */
+            amount: number;
+            /**
+             * Reference
+             * @description Bank reference
+             * @default
+             */
+            reference: string;
+            /**
+             * Discount
+             * @description Cash discount taken with this payment
+             * @default 0
+             */
+            discount: number;
+        };
+        /**
+         * PaymentTerms
+         * @description When an invoice is due, and the cash discount for paying early (e.g. 2 % within 10 days, net 30).
+         */
+        PaymentTerms: {
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * Net Days
+             * @description Pay within this many days of the invoice date
+             * @default 30
+             */
+            net_days: number;
+            /**
+             * Discount Days
+             * @description Paid within this many days, the cash discount applies (0 = no cash discount)
+             * @default 0
+             */
+            discount_days: number;
+            /**
+             * Discount
+             * @description Cash discount for paying early (0.02 = 2 %)
+             * @default 0
+             */
+            discount: number;
+        };
         /** Peg */
         Peg: {
             /**
              * Supply Kind
              * @enum {string}
              */
-            supply_kind: "on_hand" | "receipt" | "co_product" | "order";
+            supply_kind: "on_hand" | "receipt" | "co_product" | "order" | "follow_up";
             /** Supply Id */
             supply_id: string;
             /** Requirement Id */
@@ -5306,6 +6215,13 @@ export interface components {
                 [key: string]: string;
             };
             /**
+             * Overtime Hours
+             * @default {}
+             */
+            overtime_hours: {
+                [key: string]: number;
+            };
+            /**
              * Open Later
              * @default []
              */
@@ -5318,8 +6234,11 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "approve" | "send" | "confirm" | "receive" | "change" | "cancel";
-            /** Po */
+            action: "approve" | "send" | "send_all" | "confirm" | "receive" | "change" | "cancel" | "create_agreement" | "enter_invoice" | "release_invoice" | "pay_invoice" | "cancel_invoice" | "return_goods";
+            /**
+             * Po
+             * @default
+             */
             po: string;
             /** Lines */
             lines?: components["schemas"]["PoLineInput"][] | null;
@@ -5335,6 +6254,41 @@ export interface components {
              * @default
              */
             note: string;
+            /**
+             * By
+             * @default
+             */
+            by: string;
+            /** Orders */
+            orders?: string[] | null;
+            /** Supplier */
+            supplier?: string | null;
+            /** Location */
+            location?: string | null;
+            /** Product */
+            product?: string | null;
+            /** Valid To */
+            valid_to?: string | null;
+            /** Qty */
+            qty?: number | null;
+            /** Tax */
+            tax?: number | null;
+            /**
+             * Kind
+             * @default invoice
+             * @enum {string}
+             */
+            kind: "invoice" | "credit_memo";
+            /** Return Id */
+            return_id?: string | null;
+            /** Amount */
+            amount?: number | null;
+            stock_type?: components["schemas"]["StockType"] | null;
+            /**
+             * Replace
+             * @default false
+             */
+            replace: boolean;
         };
         /** PoActionResponse */
         PoActionResponse: {
@@ -5385,11 +6339,33 @@ export interface components {
             last_receipt: string | null;
             /** Source */
             source: string | null;
+            /**
+             * Confirmations
+             * @default []
+             */
+            confirmations: components["schemas"]["ConfirmedDelivery"][];
+            /** Contract */
+            contract: string | null;
+            /**
+             * Invoiced
+             * @default 0
+             */
+            invoiced: number;
+            /**
+             * Returned
+             * @default 0
+             */
+            returned: number;
         };
         /** PoLineInput */
         PoLineInput: {
-            /** Id */
+            /**
+             * Id
+             * @default
+             */
             id: string;
+            /** Order */
+            order?: string | null;
             /** Qty */
             qty?: number | null;
             /** Date */
@@ -5401,6 +6377,8 @@ export interface components {
              * @default false
              */
             final: boolean;
+            /** Parts */
+            parts?: components["schemas"]["ConfirmPart"][] | null;
             /** Batch */
             batch?: string | null;
             /** Expires On */
@@ -5445,6 +6423,34 @@ export interface components {
             lines: components["schemas"]["PoLine"][];
             /** Attention */
             attention: string[];
+            /**
+             * Kind
+             * @default standard
+             */
+            kind: string;
+            /**
+             * Approvals
+             * @default []
+             */
+            approvals: components["schemas"]["Approval"][];
+            /**
+             * Levels Needed
+             * @default []
+             */
+            levels_needed: string[];
+            /** Next Level */
+            next_level: string | null;
+            /** Product */
+            product: string | null;
+            /** Valid To */
+            valid_to: string | null;
+            /** Target Qty */
+            target_qty: number | null;
+            /**
+             * Released Qty
+             * @default 0
+             */
+            released_qty: number;
         };
         /** PoolingRow */
         PoolingRow: {
@@ -5646,6 +6652,11 @@ export interface components {
             output_qty: number;
             /** Components */
             components?: components["schemas"]["BomItem"][];
+            /**
+             * Bom Alternatives
+             * @description Other bills of materials chosen by the order's size; an order no range fits uses the components above
+             */
+            bom_alternatives?: components["schemas"]["BomAlternative"][];
             /** Operations */
             operations?: components["schemas"]["Operation"][];
             /**
@@ -5886,12 +6897,70 @@ export interface components {
             note: string;
         };
         /**
+         * PurchaseContract
+         * @description An outline agreement (≈ contract): prices agreed with a supplier for a period. Purchase orders for its products
+         *     made while it is valid take its price and name it; what was ordered is set against its targets.
+         */
+        PurchaseContract: {
+            /** Id */
+            id: string;
+            /** Supplier */
+            supplier: string;
+            /**
+             * Location
+             * @description Receiving place (empty: any of ours)
+             */
+            location?: string | null;
+            /**
+             * Valid From
+             * Format: date
+             */
+            valid_from: string;
+            /**
+             * Valid To
+             * Format: date
+             */
+            valid_to: string;
+            /**
+             * Currency
+             * @description Empty = company currency
+             */
+            currency?: string | null;
+            /**
+             * Target Value
+             * @description Value agreed over the contract
+             */
+            target_value?: number | null;
+            /** Lines */
+            lines: components["schemas"]["ContractLine"][];
+            /**
+             * Supplier Reference
+             * @description The supplier's own contract number
+             * @default
+             */
+            supplier_reference: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /**
          * PurchaseOrder
          * @description A purchase order header (≈ EKKO). Lines are the purchase receipts whose ``po`` is this id.
+         *
+         *     A scheduling agreement (``kind``) is a long-running order for one product from one supplier: planning adds
+         *     delivery schedule lines to it instead of making new orders, and each changed schedule is sent again.
          */
         PurchaseOrder: {
             /** Id */
             id: string;
+            /**
+             * Kind
+             * @default standard
+             * @enum {string}
+             */
+            kind: "standard" | "scheduling_agreement";
             /** Supplier */
             supplier: string;
             /**
@@ -5931,6 +7000,26 @@ export interface components {
              * @default
              */
             note: string;
+            /**
+             * Approvals
+             * @description Releases given, level by level
+             */
+            approvals?: components["schemas"]["Approval"][];
+            /**
+             * Product
+             * @description Scheduling agreement: the product
+             */
+            product?: string | null;
+            /**
+             * Valid To
+             * @description Scheduling agreement: no schedule lines after this day
+             */
+            valid_to?: string | null;
+            /**
+             * Target Qty
+             * @description Scheduling agreement: the quantity agreed over its life
+             */
+            target_qty?: number | null;
         };
         /** PurchasingSettings */
         PurchasingSettings: {
@@ -5945,6 +7034,29 @@ export interface components {
              * @default 7
              */
             release_window_days: number;
+            /**
+             * Release Levels
+             * @description Release strategy: levels by order value (empty: the approval limit is the one level)
+             */
+            release_levels?: components["schemas"]["ReleaseLevel"][];
+            /**
+             * Price Tolerance
+             * @description An invoiced price this much over the order's price blocks the invoice
+             * @default 0.02
+             */
+            price_tolerance: number;
+            /**
+             * Amount Tolerance
+             * @description Differences up to this much per line never block an invoice
+             * @default 1
+             */
+            amount_tolerance: number;
+            /**
+             * Tax Rate
+             * @description Tax on supplier invoices, unless the supplier has its own
+             * @default 0
+             */
+            tax_rate: number;
         };
         /**
          * PurchasingSource
@@ -6074,6 +7186,21 @@ export interface components {
             confirmations_overdue: number;
             /** Late Lines */
             late_lines: number;
+            /**
+             * Blocked Invoices
+             * @default 0
+             */
+            blocked_invoices: number;
+            /**
+             * Payables Overdue
+             * @default 0
+             */
+            payables_overdue: number;
+            /**
+             * To Invoice
+             * @default 0
+             */
+            to_invoice: number;
         };
         /** PurchasingView */
         PurchasingView: {
@@ -6095,6 +7222,109 @@ export interface components {
             orders: components["schemas"]["PoView"][];
             /** Vendors */
             vendors: components["schemas"]["VendorRow"][];
+            payables: components["schemas"]["PayablesView"] | null;
+        };
+        /**
+         * Quotation
+         * @description An offer to a customer (≈ a quotation): its lines become an order's lines when it is won.
+         */
+        Quotation: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /**
+             * Quote Date
+             * Format: date
+             */
+            quote_date: string;
+            /**
+             * Valid To
+             * Format: date
+             */
+            valid_to: string;
+            /**
+             * Customer Ref
+             * @description The customer's enquiry number
+             * @default
+             */
+            customer_ref: string;
+            /**
+             * Payment Terms
+             * @description Empty = the customer's
+             */
+            payment_terms?: string | null;
+            /** Lines */
+            lines: components["schemas"]["QuoteLine"][];
+            /**
+             * Status
+             * @default open
+             * @enum {string}
+             */
+            status: "open" | "won" | "lost";
+            /**
+             * Order
+             * @description The order it became
+             */
+            order?: string | null;
+            /**
+             * Lost Reason
+             * @default
+             */
+            lost_reason: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** QuotationView */
+        QuotationView: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /**
+             * Quote Date
+             * Format: date
+             */
+            quote_date: string;
+            /**
+             * Valid To
+             * Format: date
+             */
+            valid_to: string;
+            /** Status */
+            status: string;
+            /** Value */
+            value: number;
+            /** Lines */
+            lines: number;
+            /** Order */
+            order: string | null;
+        };
+        /** QuoteLine */
+        QuoteLine: {
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Date
+             * Format: date
+             * @description Wanted on
+             */
+            date: string;
+            /**
+             * Price
+             * @description Net price per unit offered
+             */
+            price: number;
+            /**
+             * List Price
+             * @description Before scales and discounts
+             */
+            list_price?: number | null;
         };
         /**
          * ReceiptKind
@@ -6135,6 +7365,23 @@ export interface components {
             unabsorbed_reasons: {
                 [key: string]: number;
             };
+        };
+        /**
+         * ReleaseLevel
+         * @description A level of the release strategy: orders worth more than ``above`` need a release at this level, in order of
+         *     the amounts. ``approvers``: who may release at this level (e-mail addresses); empty = anyone who may change the
+         *     company. One person never releases two levels of the same order.
+         */
+        ReleaseLevel: {
+            /** Name */
+            name: string;
+            /**
+             * Above
+             * @description Orders worth more than this (company currency) need this level
+             */
+            above: number;
+            /** Approvers */
+            approvers?: string[];
         };
         /** ReleaseRequest */
         ReleaseRequest: {
@@ -6261,6 +7508,10 @@ export interface components {
              * @default []
              */
             open_later: string[];
+            /** Contract */
+            contract: string | null;
+            /** Agreement */
+            agreement: string | null;
         };
         /** RequisitionPick */
         RequisitionPick: {
@@ -6463,6 +7714,95 @@ export interface components {
             /** Base Revision */
             base_revision: number;
         };
+        /**
+         * ReturnOrder
+         * @description A customer return (≈ a returns order): agreed, then received into stock, then paid back with a credit note.
+         */
+        ReturnOrder: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /**
+             * Order
+             * @description The sales order line the goods were sold on
+             */
+            order?: string | null;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Price
+             * @description Paid back per unit
+             */
+            price: number;
+            /**
+             * Location
+             * @description Where the goods come back to
+             */
+            location: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Created On
+             * Format: date
+             */
+            created_on: string;
+            /**
+             * @description The stock the goods come back into: checked first (quality), held (blocked), or ready to sell
+             * @default quality
+             */
+            stock_type: components["schemas"]["StockType"];
+            /**
+             * Batch
+             * @description The batch coming back
+             */
+            batch?: string | null;
+            /** Received On */
+            received_on?: string | null;
+            /** Received Qty */
+            received_qty?: number | null;
+            /**
+             * Movements
+             * @description The receipts posted
+             */
+            movements?: string[];
+            /**
+             * Credit Note
+             * @description The credit note that paid it back
+             */
+            credit_note?: string | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** ReturnView */
+        ReturnView: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /** Received Qty */
+            received_qty: number | null;
+            /** Status */
+            status: string;
+            /** Value */
+            value: number;
+            /** Order */
+            order: string | null;
+            /** Credit Note */
+            credit_note: string | null;
+        };
         /** RollReport */
         RollReport: {
             /** Ok */
@@ -6578,6 +7918,80 @@ export interface components {
              */
             review_period_days: number;
         };
+        /** SalesActionRequest */
+        SalesActionRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "create_order" | "add_lines" | "release_credit" | "send_confirmation" | "cancel_order" | "create_quotation" | "win_quotation" | "lose_quotation" | "create_deliveries" | "pick" | "pack" | "issue" | "proof" | "cancel_delivery" | "create_invoices" | "pay" | "cancel_invoice" | "create_return" | "receive_return" | "credit_return";
+            /** Id */
+            id?: string | null;
+            /** Customer */
+            customer?: string | null;
+            /** Lines */
+            lines?: components["schemas"]["SalesLineInput"][] | null;
+            /** Date */
+            date?: string | null;
+            /**
+             * Customer Ref
+             * @default
+             */
+            customer_ref: string;
+            /** Payment Terms */
+            payment_terms?: string | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * By
+             * @default
+             */
+            by: string;
+            /** Valid To */
+            valid_to?: string | null;
+            /** Packages */
+            packages?: number | null;
+            /** Gross Kg */
+            gross_kg?: number | null;
+            /** Amount */
+            amount?: number | null;
+            /**
+             * Reference
+             * @default
+             */
+            reference: string;
+            /** Orders */
+            orders?: string[] | null;
+            /** Product */
+            product?: string | null;
+            /** Qty */
+            qty?: number | null;
+            /** Order */
+            order?: string | null;
+            /** Location */
+            location?: string | null;
+            stock_type?: components["schemas"]["StockType"] | null;
+            /** Batch */
+            batch?: string | null;
+        };
+        /** SalesActionResponse */
+        SalesActionResponse: {
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
+            report: components["schemas"]["SalesReport"];
+        };
         /**
          * SalesHistory
          * @description Long-format history row: one product at one location on one date.
@@ -6613,6 +8027,84 @@ export interface components {
              */
             from_journal: boolean;
         };
+        /** SalesLineInput */
+        SalesLineInput: {
+            /** Order */
+            order?: string | null;
+            /** Product */
+            product?: string | null;
+            /** Qty */
+            qty?: number | null;
+            /** Date */
+            date?: string | null;
+            /** Price */
+            price?: number | null;
+            /** Priority */
+            priority?: number | null;
+            /** Complete Delivery */
+            complete_delivery?: boolean | null;
+            /** Picked */
+            picked?: number | null;
+            /** Received */
+            received?: number | null;
+            /** Batch */
+            batch?: string | null;
+            /** Ship From */
+            ship_from?: string | null;
+        };
+        /**
+         * SalesOrder
+         * @description A sales order header (≈ VBAK). Lines are the sales-order demand records whose ``order`` is this id.
+         */
+        SalesOrder: {
+            /** Id */
+            id: string;
+            /** Customer */
+            customer: string;
+            /**
+             * Order Date
+             * Format: date
+             */
+            order_date: string;
+            /**
+             * Customer Ref
+             * @description The customer's own order number
+             * @default
+             */
+            customer_ref: string;
+            /**
+             * Payment Terms
+             * @description Empty = the customer's
+             */
+            payment_terms?: string | null;
+            /**
+             * Quotation
+             * @description The quotation the order was won from
+             */
+            quotation?: string | null;
+            /**
+             * Credit Block
+             * @description Over the customer's credit limit: not delivered until released
+             * @default false
+             */
+            credit_block: boolean;
+            /**
+             * Credit Note
+             * @description Why it was blocked, or who released it
+             * @default
+             */
+            credit_note: string;
+            /**
+             * Confirmation Sent On
+             * @description When the order confirmation went to the customer
+             */
+            confirmation_sent_on?: string | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
         /** SalesOrderChange */
         SalesOrderChange: {
             /** Qty */
@@ -6637,6 +8129,11 @@ export interface components {
             /** Message */
             message: string;
             promise: components["schemas"]["OrderPromise"] | null;
+            /**
+             * Firmed
+             * @default []
+             */
+            firmed: components["schemas"]["FirmedOrder"][];
         };
         /** SalesOrderRequest */
         SalesOrderRequest: {
@@ -6666,6 +8163,126 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             report: components["schemas"]["SalesOrderReport"];
+        };
+        /**
+         * SalesReport
+         * @description What an order-to-cash action did, in plain words, and the documents it made or changed.
+         */
+        SalesReport: {
+            /**
+             * Ok
+             * @default true
+             */
+            ok: boolean;
+            /** Message */
+            message: string;
+            /**
+             * Documents
+             * @default []
+             */
+            documents: string[];
+            /**
+             * Movements
+             * @default []
+             */
+            movements: string[];
+            /**
+             * Promises
+             * @default []
+             */
+            promises: components["schemas"]["OrderPromise"][];
+            /**
+             * Firmed
+             * @default []
+             */
+            firmed: components["schemas"]["FirmedOrder"][];
+            /**
+             * Credit Block
+             * @default false
+             */
+            credit_block: boolean;
+        };
+        /** SalesSettings */
+        SalesSettings: {
+            /**
+             * Payment Terms
+             * @description Payment terms for customers without their own; empty = net 30 days
+             */
+            payment_terms?: string | null;
+            /**
+             * Tax Rate
+             * @description Tax on invoices (0.18 = 18 %)
+             * @default 0
+             */
+            tax_rate: number;
+            /**
+             * Credit Check
+             * @description Orders beyond a customer's credit limit are blocked for delivery
+             * @default true
+             */
+            credit_check: boolean;
+            /**
+             * Quotation Days
+             * @description How long a new quotation is valid
+             * @default 30
+             */
+            quotation_days: number;
+            /**
+             * Delivery Days
+             * @description Order lines promised to ship within this many days are listed to deliver
+             * @default 3
+             */
+            delivery_days: number;
+        };
+        /** SalesView */
+        SalesView: {
+            /** Currency */
+            currency: string;
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /**
+             * Orders
+             * @default []
+             */
+            orders: components["schemas"]["OrderView"][];
+            /**
+             * Quotations
+             * @default []
+             */
+            quotations: components["schemas"]["QuotationView"][];
+            /**
+             * Deliveries
+             * @default []
+             */
+            deliveries: components["schemas"]["DeliveryView"][];
+            /**
+             * Invoices
+             * @default []
+             */
+            invoices: components["schemas"]["InvoiceView"][];
+            /**
+             * Returns
+             * @default []
+             */
+            returns: components["schemas"]["ReturnView"][];
+            /**
+             * To Deliver
+             * @default []
+             */
+            to_deliver: components["schemas"]["ToDeliver"][];
+            /**
+             * To Bill
+             * @default []
+             */
+            to_bill: components["schemas"]["ToBill"][];
+            /**
+             * Customers
+             * @default []
+             */
+            customers: components["schemas"]["CustomerRow"][];
         };
         /** SaveBaseRequest */
         SaveBaseRequest: {
@@ -7263,6 +8880,16 @@ export interface components {
              * @description Purchase: quantity the supplier confirmed (of the ordered quantity); planning counts no more than this
              */
             confirmed_qty?: number | null;
+            /**
+             * Confirmations
+             * @description Purchase: the supplier's confirmation in several deliveries (date and quantity each); `confirmed_date` is then the last of them and `confirmed_qty` their total
+             */
+            confirmations?: components["schemas"]["ConfirmedDelivery"][];
+            /**
+             * Contract
+             * @description Purchase: the contract the line releases against
+             */
+            contract?: string | null;
         };
         /** ScheduledReceiptOut */
         ScheduledReceiptOut: {
@@ -7561,7 +9188,7 @@ export interface components {
             default_calendar?: string | null;
             /**
              * Capacity Constrained
-             * @description Plan make orders within the capacity of finite machines and labour: an order that does not fit uses an alternative machine, else starts earlier, else finishes later (reported)
+             * @description Plan make orders within the capacity of finite machines and labour: an order that does not fit uses an alternative machine, else starts earlier, else finishes later (reported); purchases and transfers within the weekly capacity of their supplier or lane: what does not fit goes to another source, else an earlier week
              * @default false
              */
             capacity_constrained: boolean;
@@ -7583,6 +9210,12 @@ export interface components {
              * @default 1
              */
             default_lot_periods: number;
+            /**
+             * Capacity Overtime
+             * @description Levelling may plan overtime: an order that does not fit the shift hours, even on an alternative machine, uses the machines' overtime (at its cost) before it is moved
+             * @default false
+             */
+            capacity_overtime: boolean;
             /**
              * Capacity Max Early Days
              * @description Levelling: move an order at most this many days earlier to fit; empty = as far as today
@@ -7668,6 +9301,10 @@ export interface components {
             can_make: number;
             /** Qty */
             qty: number;
+            /** Starts */
+            starts: string | null;
+            /** Complete On */
+            complete_on: string | null;
         };
         /** SignIn */
         SignIn: {
@@ -7925,6 +9562,8 @@ export interface components {
              * @default
              */
             blocked: string;
+            /** Contract */
+            contract: string | null;
         };
         /** StepReport */
         StepReport: {
@@ -8126,6 +9765,256 @@ export interface components {
              */
             total_final: number;
         };
+        /**
+         * SupplierInvoice
+         * @description A supplier's invoice or credit memo (≈ MIRO). Checked when entered against the order's price and the goods
+         *     received (three-way match); a difference beyond tolerance blocks it for payment until someone releases it, or
+         *     until the goods it bills arrive.
+         */
+        SupplierInvoice: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @default invoice
+             * @enum {string}
+             */
+            kind: "invoice" | "credit_memo";
+            /** Supplier */
+            supplier: string;
+            /**
+             * Reference
+             * @description The supplier's invoice number
+             * @default
+             */
+            reference: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /** Discount Date */
+            discount_date?: string | null;
+            /**
+             * Discount
+             * @default 0
+             */
+            discount: number;
+            /**
+             * Currency
+             * @description Empty = company currency
+             */
+            currency?: string | null;
+            /** Lines */
+            lines: components["schemas"]["SupplierInvoiceLine"][];
+            /**
+             * Tax
+             * @description Tax on the invoice, as the supplier charged it
+             * @default 0
+             */
+            tax: number;
+            /**
+             * Blocks
+             * @description Why it was blocked for payment when entered
+             */
+            blocks?: string[];
+            /**
+             * Released By
+             * @default
+             */
+            released_by: string;
+            /** Released On */
+            released_on?: string | null;
+            /** Payments */
+            payments?: components["schemas"]["Payment"][];
+            /**
+             * Return Id
+             * @description Credit memo: the return it credits
+             */
+            return_id?: string | null;
+            /**
+             * Cancelled
+             * @default false
+             */
+            cancelled: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** SupplierInvoiceLine */
+        SupplierInvoiceLine: {
+            /**
+             * Order
+             * @description The purchase order line invoiced
+             */
+            order: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Price
+             * @description Price per unit as invoiced, before tax
+             */
+            price: number;
+        };
+        /** SupplierInvoiceView */
+        SupplierInvoiceView: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Supplier */
+            supplier: string;
+            /** Reference */
+            reference: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
+            /** Discount Date */
+            discount_date: string | null;
+            /** Discount */
+            discount: number;
+            /** Currency */
+            currency: string;
+            /** Net */
+            net: number;
+            /** Tax */
+            tax: number;
+            /** Total */
+            total: number;
+            /** Settled */
+            settled: number;
+            /** Open */
+            open: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "blocked" | "released" | "to pay" | "paid" | "cancelled" | "credit open" | "credited";
+            /** Blocks */
+            blocks: string[];
+            /** Still */
+            still: string[];
+            /** Released By */
+            released_by: string;
+            /** Released On */
+            released_on: string | null;
+            /** Days Overdue */
+            days_overdue: number;
+            /** Lines */
+            lines: components["schemas"]["InvoiceLineView"][];
+            /** Payments */
+            payments: components["schemas"]["Payment"][];
+            /** Return Id */
+            return_id: string | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /**
+         * SupplierReturn
+         * @description Goods sent back to the supplier (≈ return delivery): taken out of stock against the order line, so the line
+         *     counts that much less received. ``replace``: the supplier sends new goods (the line is open again for them);
+         *     otherwise a credit memo is expected.
+         */
+        SupplierReturn: {
+            /** Id */
+            id: string;
+            /** Supplier */
+            supplier: string;
+            /**
+             * Order
+             * @description The purchase order line the goods came on
+             */
+            order: string;
+            /** Product */
+            product: string;
+            /**
+             * Location
+             * @description Where the goods leave from
+             */
+            location: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /** @default blocked */
+            stock_type: components["schemas"]["StockType"];
+            /** Batch */
+            batch?: string | null;
+            /**
+             * Replace
+             * @default false
+             */
+            replace: boolean;
+            /**
+             * Movement
+             * @description The goods movement that took them out
+             */
+            movement?: string | null;
+            /** Credit Memo */
+            credit_memo?: string | null;
+        };
+        /** SupplierReturnView */
+        SupplierReturnView: {
+            /** Id */
+            id: string;
+            /** Supplier */
+            supplier: string;
+            /** Order */
+            order: string;
+            /** Product */
+            product: string;
+            /** Location */
+            location: string;
+            /** Qty */
+            qty: number;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Reason */
+            reason: string;
+            /** Replace */
+            replace: boolean;
+            /** Stock Type */
+            stock_type: string;
+            /** Batch */
+            batch: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "to credit" | "credited" | "replacement due" | "replaced";
+            /** Credit Memo */
+            credit_memo: string | null;
+        };
         /** SupplyLine */
         SupplyLine: {
             /** Location */
@@ -8155,6 +10044,89 @@ export interface components {
             ss_shortfall: number[];
             /** Unit Value */
             unit_value: number;
+        };
+        /**
+         * ToBill
+         * @description Goods delivered and not invoiced yet.
+         */
+        ToBill: {
+            /** Order */
+            order: string;
+            /** Customer */
+            customer: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /** Price */
+            price: number | null;
+            /** Value */
+            value: number | null;
+            /**
+             * Delivered On
+             * Format: date
+             */
+            delivered_on: string;
+            /** Movements */
+            movements: string[];
+        };
+        /**
+         * ToDeliver
+         * @description An order line due to ship and not on a delivery yet.
+         */
+        ToDeliver: {
+            /** Order */
+            order: string;
+            /** Header */
+            header: string;
+            /** Customer */
+            customer: string;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /** Ship From */
+            ship_from: string | null;
+            /**
+             * Ship Date
+             * Format: date
+             */
+            ship_date: string;
+            /**
+             * Credit Block
+             * @default false
+             */
+            credit_block: boolean;
+        };
+        /**
+         * ToInvoice
+         * @description Goods received and not yet invoiced, or invoiced and not received, per order line (≈ GR/IR clearing).
+         */
+        ToInvoice: {
+            /** Order */
+            order: string;
+            /** Po */
+            po: string | null;
+            /** Supplier */
+            supplier: string;
+            /** Product */
+            product: string;
+            /** Location */
+            location: string;
+            /** Received */
+            received: number;
+            /** Invoiced */
+            invoiced: number;
+            /** Qty */
+            qty: number;
+            /** Price */
+            price: number | null;
+            /** Value */
+            value: number;
+            /** Currency */
+            currency: string;
+            /** Last Receipt */
+            last_receipt: string | null;
         };
         /** Totals */
         Totals: {
@@ -8493,6 +10465,16 @@ export interface components {
              * @default 0
              */
             min_order_value: number;
+            /**
+             * Payment Terms
+             * @description Payment terms with a cash discount (empty: net `payment_terms_days`)
+             */
+            payment_terms?: string | null;
+            /**
+             * Tax Rate
+             * @description Tax on this supplier's invoices (empty: the purchasing default)
+             */
+            tax_rate?: number | null;
         };
         /** VendorRow */
         VendorRow: {
@@ -8510,6 +10492,11 @@ export interface components {
             confirmation_required: boolean;
             /** Payment Terms Days */
             payment_terms_days: number;
+            /**
+             * Terms
+             * @default
+             */
+            terms: string;
             /** Currency */
             currency: string;
             /** Open Lines */
@@ -8668,6 +10655,35 @@ export interface components {
             sla_days: {
                 [key: string]: number;
             };
+        };
+        /**
+         * YieldRow
+         * @description One part of one production version: the loss its bill of materials plans with and the loss measured on the
+         *     orders posted with actual usage (R17).
+         */
+        YieldRow: {
+            /** Source */
+            source: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Part */
+            part: string;
+            /** Orders */
+            orders: number;
+            /** Made */
+            made: number;
+            /** Planned */
+            planned: number;
+            /** Used */
+            used: number;
+            /** Scrap Now */
+            scrap_now: number;
+            /** Scrap Measured */
+            scrap_measured: number;
+            /** Change */
+            change: boolean;
         };
     };
     responses: never;
@@ -10539,6 +12555,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PoActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_sales_api_sales_post: {
+        parameters: {
+            query?: {
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SalesView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_sales_action_api_sales_act_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SalesActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SalesActionResponse"];
                 };
             };
             /** @description Validation Error */

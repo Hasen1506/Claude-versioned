@@ -25,7 +25,9 @@ from ..versions.diff import SINGLE, _flat
 from .patch import _hashable, keys_of
 
 MASTER = ("calendars", "locations", "products", "customer_prices", "location_products", "resources",
-          "production_sources", "purchasing_sources", "lanes", "vendors", "changeovers", *SINGLE)
+          "production_sources", "purchasing_sources", "lanes", "vendors", "customers", "payment_terms", "contracts",
+          "changeovers",
+          *SINGLE)
 # settings that are working state rather than master data: moving the plan a week changes them
 WORKING = {"settings": ("planning_start",), "forecasting": ("released_inputs",)}
 PLACE_FIELDS = ("location", "origin", "destination", "ship_from", "supplier")

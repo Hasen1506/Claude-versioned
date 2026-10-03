@@ -16,6 +16,9 @@ Each resource takes the operations in its sequence order. When the head of a seq
 ready and no other resource can move, the earliest-ranked *ready* operation is taken instead, so a
 sequence produced by the local search can never deadlock.
 
+Tools: an operation that needs a tool (a mould, a die) holds it from its setup to its end; it waits until enough of
+the tool is free, as it waits for its machine.
+
 Machine choice: an operation listed in the sequence of one of its *alternative* resources runs there. One listed
 on its own resource runs on whichever of its own and its alternatives finishes it first (``pin=False``, what the
 dispatching rules use) or on its own (``pin=True``, what a sequence handed back from a schedule, the board or the
@@ -69,6 +72,7 @@ class OpSpec:
     parts_ready: float = 0.0             # parts it consumes from stock, receipts or orders outside the schedule
     waits_on: list[tuple[str, float]] = field(default_factory=list)   # (order made in this schedule, receiving
                                                                       # workdays): parts it consumes from that order
+    tools: list[str] = field(default_factory=list)   # tools it holds from its setup to its end
 
 
 @dataclass
@@ -102,6 +106,7 @@ class Instance:
     earliness_weight: float = 0.0     # per hour an order finishes before it is due (stock built early)
     makespan_weight: float = 0.0      # per hour until the last order finishes
     frozen: dict[str, float] = field(default_factory=dict)   # order -> scheduled start (clock hours): keeps its place
+    tool_units: dict[str, int] = field(default_factory=dict)  # tool -> how many of it there are (default one)
 
     def parts_at(self, o: OpSpec, completion: dict[str, float]) -> float:
         """When every part the operation consumes is available, given the completion of the orders it waits on."""
@@ -230,6 +235,21 @@ def decode(inst: Instance, seqs: dict[str, list[str]], hold: dict[str, float] | 
     done: dict[str, float] = {}      # order -> completion, once its last operation is placed
     parts: dict[str, float] = {}
     held: dict[str, float] = {}      # operation -> hours it waited for parts after it could otherwise start
+    tool_use: dict[str, list[tuple[float, float]]] = {}   # tool -> (from, to) it is held
+
+    def tool_clash(o: OpSpec, a: float, b: float) -> float | None:
+        """None when every tool the operation needs is free enough over [a, b); else the earliest time worth trying."""
+        later = None
+        for t in o.tools:
+            busy = [(x, y) for x, y in tool_use.get(t, []) if x < b - EPS and y > a + EPS]
+            n = inst.tool_units.get(t, 1)
+            if len(busy) < n:
+                continue
+            # the earliest moment one more becomes free: enough of the overlapping holds have ended
+            ends = sorted(y for _, y in busy)
+            cand = ends[len(busy) - n]
+            later = cand if later is None else max(later, cand)
+        return later
 
     def ready(k: str) -> bool:
         p = prev_of[k]
@@ -305,6 +325,15 @@ def decode(inst: Instance, seqs: dict[str, list[str]], hold: dict[str, float] | 
                         break
                     start += candidate_must - end
                     plan = split(rid, start)
+                for _ in range(200 if o.tools else 0):   # wait for the tools it needs
+                    end = max(c[0] for c in plan)
+                    if end == INF:
+                        break
+                    nxt = tool_clash(o, min(c[2] for c in plan), end)
+                    if nxt is None:
+                        break
+                    start = max(start + EPS, nxt)
+                    plan = split(rid, start)
             except NoWorkingTime:
                 continue
             key = (max(c[0] for c in plan), rank)
@@ -323,6 +352,8 @@ def decode(inst: Instance, seqs: dict[str, list[str]], hold: dict[str, float] | 
             blocks.append(Block(k, sub, rid, u, o.qty / n, s0, r0, r1, su, o.run / n, prev))
         end_all = max(c[0] for c in plan)
         op_end[k] = end_all
+        for t in o.tools:
+            tool_use.setdefault(t, []).append((min(c[2] for c in plan), end_all))
         nxt = next_of.get(k)
         ready_at[k], m = handoff(inst, o, blocks[-n:], nxt)
         if nxt is not None and m:
@@ -504,6 +535,16 @@ def check(inst: Instance, d: Decoded) -> list[str]:
         if res.finite:
             by_unit.setdefault((b.resource, b.unit), []).append(b)
         subs.setdefault(b.key, []).append(b)
+    held: dict[str, list[tuple[float, float, str]]] = {}
+    for k, bl in subs.items():
+        for t in ops[k].tools:
+            held.setdefault(t, []).append((min(b.setup_start for b in bl), max(b.end for b in bl), k))
+    for t, spans in held.items():
+        n = inst.tool_units.get(t, 1)
+        for a, _end, k in spans:
+            at_once = sum(1 for x, y, _ in spans if x < a + 1e-6 and y > a + 1e-6)
+            if at_once > n:
+                v.append(f"tool {t}: {at_once} steps hold it at once from {k} (there are {n})")
     for (r, u), bl in by_unit.items():
         bl.sort(key=lambda b: b.setup_start)
         for a, b in zip(bl, bl[1:], strict=False):

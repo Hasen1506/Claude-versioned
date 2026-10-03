@@ -1,7 +1,7 @@
 // The purchase order as a document to send (Q23): a page of its own to print, save as PDF or download, and the text of
 // an e-mail to the supplier. Built from the order view and the company's data; nothing is sent from here.
 import type { Dataset, PoView } from "../api/types";
-import { money, qty, unitMoney } from "./format";
+import { exactMoney, qty } from "./format";
 import { namesOf } from "./names";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -48,8 +48,8 @@ export function poDocument(po: PoView, ds: Dataset): string {
     `Prices in ${po.currency}`,
   ].filter(Boolean) as string[];
   const rows = items.map((l, i) => `<tr><td>${(i + 1) * 10}</td><td><b>${esc(nm.prod(l.product))}</b><div class="id">${esc(l.product)}</div></td>
-    <td class="num">${qty(l.ordered)} ${esc(unit(l.product))}</td><td class="num">${l.price != null ? esc(unitMoney(l.price, po.currency)) : "—"}</td>
-    <td class="num">${esc(money(l.value, po.currency))}</td><td>${esc(long(l.due_date))}</td></tr>`).join("");
+    <td class="num">${qty(l.ordered)} ${esc(unit(l.product))}</td><td class="num">${l.price != null ? esc(exactMoney(l.price, po.currency)) : "—"}</td>
+    <td class="num">${esc(exactMoney(l.value, po.currency))}</td><td>${esc(long(l.due_date))}</td></tr>`).join("");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(po.id)} · ${esc(company)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
@@ -69,7 +69,7 @@ export function poDocument(po: PoView, ds: Dataset): string {
   ul { padding-left: 18px; } footer { margin-top: 28px; font-size: 11px; color: #5b6470; }
   @media print { .page { padding: 0; } @page { margin: 18mm; } }
 </style></head><body><div class="page">
-<header><div><h1>Purchase order ${esc(po.id)}</h1>${draft ? `<div class="draft">${draft}</div>` : ""}</div>
+<header><div><h1>${po.kind === "scheduling_agreement" ? "Delivery schedule" : "Purchase order"} ${esc(po.id)}</h1>${draft ? `<div class="draft">${draft}</div>` : ""}</div>
 <div style="text-align:right"><b>${esc(company)}</b><div class="muted">Order date ${esc(long(po.order_date ?? po.sent_on))}</div>
 ${po.vendor_reference ? `<div class="muted">Your reference ${esc(po.vendor_reference)}</div>` : ""}</div></header>
 <div class="grid">
@@ -81,7 +81,7 @@ ${po.vendor_reference ? `<div class="muted">Your reference ${esc(po.vendor_refer
 </div>
 <table><thead><tr><th>Line</th><th>Item</th><th class="num">Quantity</th><th class="num">Price</th><th class="num">Value</th><th>Deliver by</th></tr></thead>
 <tbody>${rows}</tbody>
-<tfoot><tr><td></td><td>Total</td><td></td><td></td><td class="num">${esc(money(po.value, po.currency))}</td><td></td></tr></tfoot></table>
+<tfoot><tr><td></td><td>Total</td><td></td><td></td><td class="num">${esc(exactMoney(po.value, po.currency))}</td><td></td></tr></tfoot></table>
 ${po.note ? `<p><b>Note:</b> ${esc(po.note)}</p>` : ""}
 <p>Please confirm the quantities and delivery dates, quoting ${esc(po.id)} on every delivery note and invoice.</p>
 <footer>${esc(company)} · ${esc(po.id)} · ${items.length} line${items.length === 1 ? "" : "s"}</footer>
@@ -94,13 +94,13 @@ export function poEmail(po: PoView, ds: Dataset): { to: string; subject: string;
   const addr = poAddresses(po, ds);
   const body = [
     `Hello${vendor?.contact ? ` ${vendor.contact}` : ""},`, "",
-    `Please supply the following on purchase order ${po.id}, delivered to ${nm.loc(po.location)}${addr.deliver.address ? `, ${addr.deliver.address.split(/\n+/).map((x) => x.trim()).filter(Boolean).join(", ")}` : ""}:`, "",
-    ...lines.map((l) => `- ${nm.prod(l.product)} (${l.product}): ${qty(l.ordered)} ${unit(l.product)}${l.price != null ? ` at ${unitMoney(l.price, po.currency)}` : ""}, by ${long(l.due_date)}`),
-    "", `Total ${money(po.value, po.currency)}.`,
+    `Please supply the following on ${po.kind === "scheduling_agreement" ? "scheduling agreement" : "purchase order"} ${po.id}, delivered to ${nm.loc(po.location)}${addr.deliver.address ? `, ${addr.deliver.address.split(/\n+/).map((x) => x.trim()).filter(Boolean).join(", ")}` : ""}:`, "",
+    ...lines.map((l) => `- ${nm.prod(l.product)} (${l.product}): ${qty(l.ordered)} ${unit(l.product)}${l.price != null ? ` at ${exactMoney(l.price, po.currency)}` : ""}, by ${long(l.due_date)}`),
+    "", `Total ${exactMoney(po.value, po.currency)}.`,
     "Please confirm quantities and delivery dates, and quote the order number on the delivery note and invoice.", "",
     "Regards,", company,
     ...addr.company.address.split(/\n+/).map((x) => x.trim()).filter(Boolean),
     ...(addr.company.tax ? [`Tax no. ${addr.company.tax}`] : []),
   ].join("\n");
-  return { to: vendor?.email ?? "", subject: `Purchase order ${po.id} from ${company}`, body };
+  return { to: vendor?.email ?? "", subject: `${po.kind === "scheduling_agreement" ? "Delivery schedule" : "Purchase order"} ${po.id} from ${company}`, body };
 }

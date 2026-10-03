@@ -23,6 +23,7 @@ class MovementType(str, Enum):
     TRANSFER_OUT = "transfer_out"    # − goods issue of a stock transfer (reference = the transfer receipt)
     SCRAP = "scrap"                  # −
     ADJUSTMENT = "adjustment"        # ± inventory count difference (signed quantity)
+    RETURN = "return"                # − goods sent back to the supplier (reference = the purchase order line)
     STATUS = "status"                # ± stock moved between stock types or batches at one place (signed; the pair
                                      #   posted together sums to zero: release from inspection, block, unblock)
 
@@ -30,6 +31,7 @@ class MovementType(str, Enum):
 SIGN: dict[MovementType, float] = {
     MovementType.OPENING: 1.0, MovementType.RECEIPT: 1.0, MovementType.ISSUE: -1.0, MovementType.SALE: -1.0,
     MovementType.TRANSFER_OUT: -1.0, MovementType.SCRAP: -1.0, MovementType.ADJUSTMENT: 1.0, MovementType.STATUS: 1.0,
+    MovementType.RETURN: -1.0,
 }
 SIGNED = {MovementType.ADJUSTMENT, MovementType.STATUS}
 
@@ -181,3 +183,6 @@ class ExecutionSettings(Model):
     negative_stock: NegativeStock = Field(NegativeStock.ALLOW, description="A posting that takes stock below zero: "
                                           "refuse it, allow it and ask for a count, or count the missing stock as found")
     quality_in_planning: bool = Field(True, description="Stock in quality inspection counts as available in planning")
+    promise_firms: bool = Field(True, description="Taking or changing an order promised on new production makes that "
+                                                  "production (and the transfers bringing it) firm at once, as "
+                                                  "capable-to-promise does; off, the planner firms it")

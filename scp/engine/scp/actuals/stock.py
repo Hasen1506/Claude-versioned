@@ -157,13 +157,18 @@ def in_transit(ds: Dataset) -> dict[Node, float]:
 
 
 def _sum(movs: list[GoodsMovement], types: set[MovementType]) -> tuple[dict, dict, dict, set]:
-    """Quantity, first and last date per (reference, location, product), and references closed as final."""
+    """Quantity, first and last date per (reference, location, product), and references closed as final. Receipts
+    count less what went back to the supplier against the same order line."""
     qty: dict[tuple[str, str, str], float] = defaultdict(float)
     first: dict[tuple[str, str, str], date] = {}
     last: dict[tuple[str, str, str], date] = {}
     final: set[str] = set()
     reversed_ids = {m.reversal_of for m in movs if m.reversal_of}
+    back = MovementType.RECEIPT in types
     for m in movs:
+        if back and m.type is MovementType.RETURN and m.reference:
+            qty[(m.reference, m.location, m.product)] -= m.net
+            continue
         if m.type not in types or not m.reference:
             continue
         k = (m.reference, m.location, m.product)

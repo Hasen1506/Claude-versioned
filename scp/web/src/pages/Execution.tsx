@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { AccuracySeries, ActualsView, Dataset, GoodsMovement, OpenOrderRow, PlannedOrder, PostAction, ProductionUsageInput, RollReport, ShortOrder, StockRow } from "../api/types";
+import type { AccuracySeries, ActualsView, Dataset, GoodsMovement, OpenOrderRow, PlannedOrder, PostAction, ProductionUsageInput, RollReport, ShortOrder, StockRow, YieldRow } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
   Badge, Edits, Empty, MoreRows, Panel, Provenance, Reading, ROW_LIMIT, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
@@ -9,12 +9,12 @@ import { day, pct, plural, qty } from "../lib/format";
 import { Loc, Msg, namesOf, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
-import { isStale, store, useFreshResult, useStore } from "../state/store";
+import { isStale, store, useFreshResult, useReadOnly, useStore } from "../state/store";
 import {
   daysBetween, hasDetail, LotFields, lotExtra, LotsDetail, NO_LOT, PhysicalInventory, postAct, ShortOrders, StockRules, StockTypeCells, type LotInput,
 } from "./ExecutionStock";
 
-type View = "stock" | "count" | "orders" | "journal" | "roll" | "accuracy";
+type View = "stock" | "count" | "orders" | "journal" | "roll" | "accuracy" | "yield";
 
 // The last roll-forward report, kept across tab switches (the roll itself is an undoable dataset edit).
 type RollSnapshot = { report: RollReport; on: Dataset };
@@ -104,6 +104,7 @@ export function Execution({ route }: { route: string[] }) {
     {view === "stock" && <Stock res={res} ds={ds} />}
     {view === "orders" && <Orders res={res} ds={ds} />}
     {view === "accuracy" && <Accuracy res={res} sel={route[2]} />}
+    {view === "yield" && <Yields res={res} ds={ds} />}
   </>);
 }
 
@@ -116,6 +117,7 @@ function Nav({ view, res, ds }: { view: View; res: ActualsView | null; ds: Datas
       { id: "journal", label: "Movement journal", count: ds.movements?.length ?? 0 },
       { id: "roll", label: "Start a new week" },
       { id: "accuracy", label: "Forecast accuracy", count: res?.accuracy.series.length },
+      { id: "yield", label: "Parts used", count: res?.yields?.filter((y) => y.change).length || undefined },
     ]} />
   );
 }
@@ -605,6 +607,23 @@ function Firming({ ds }: { ds: Dataset }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [toSend, setToSend] = useState<string[]>([]);
+  const sendThem = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const before = store.get().dataset!;
+      const out = await api.poAction(before, "send_all", "", { orders: toSend });
+      store.replace(out.dataset, before);
+      setToSend([]);
+      setMsg(namesOf(out.dataset).text(out.report.message));
+      await store.run("purchasing");
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   const firm = async () => {
     setBusy(true);
     setErr(null);
@@ -614,6 +633,7 @@ function Firming({ ds }: { ds: Dataset }) {
       setPick(null);
       const r = out.report;
       const pos = r.purchase_orders ?? [];
+      setToSend(pos);
       setMsg(`${plural(r.firmed.length, "planned order")} firmed: ${r.firmed.slice(0, 4).map((f) => `${f.planned_id} → ${f.receipt_id}`).join(", ")}${r.firmed.length > 4 ? "…" : ""}.`
         + (pos.length ? ` Purchases went onto ${plural(pos.length, "purchase order")} (${pos.join(", ")}), grouped per supplier as on Buying${(r.notes ?? []).length ? `: ${(r.notes ?? []).map(namesOf(ds).text).join("; ")}` : ""}.` : "")
         + (Object.keys(r.skipped).length ? ` Not firmed: ${Object.entries(r.skipped).slice(0, 3).map(([k, v]) => `${k} (${v})`).join(", ")}.` : "")
@@ -637,7 +657,9 @@ function Firming({ ds }: { ds: Dataset }) {
         {chosen.size ? "Select none" : "Select all"}</button><button className="btn sm accent" disabled={busy || planStale || chosen.size === 0} onClick={firm}
         title={planStale ? "Recalculate the supply plan first" : "Turns these planned orders into firm purchase, production and transfer orders in your data. Undo reverts it."}>
         {busy ? "Saving…" : `Make ${chosen.size} order${chosen.size === 1 ? "" : "s"} firm`}</button></></Edits> : null}>
-      {msg && <div className="banner info" style={{ margin: 12 }}><Badge sev="ok">Firmed</Badge><span>{msg}</span><span className="spacer" />
+      {msg && <div className="banner info" role="status" style={{ margin: 12 }}><Badge sev="ok">Firmed</Badge><span>{msg}</span><span className="spacer" />
+        {toSend.length > 0 && <Edits><button className="btn sm accent" disabled={busy} onClick={sendThem}
+          title="Sends every one of them that needs no release; the rest wait on Buying">Send the {plural(toSend.length, "purchase order")} now</button></Edits>}
         <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
       {err && <div className="banner error" style={{ margin: 12 }}><Badge sev="error">Firming failed</Badge>{err}</div>}
       {!plan.data ? <Empty title="No supply plan yet"><button className="btn" onClick={() => store.run("plan")} disabled={plan.running}>Calculate the supply plan</button></Empty>
@@ -668,8 +690,8 @@ function Firming({ ds }: { ds: Dataset }) {
 }
 
 // ------------------------------------------------------------------------------------------------
-const TYPES = ["all", "opening", "receipt", "issue", "sale", "transfer_out", "scrap", "adjustment", "status"] as const;
-const TYPE_TEXT: Record<string, string> = { transfer_out: "transfer out", adjustment: "count difference", status: "stock change" };
+const TYPES = ["all", "opening", "receipt", "issue", "sale", "transfer_out", "scrap", "return", "adjustment", "status"] as const;
+const TYPE_TEXT: Record<string, string> = { transfer_out: "transfer out", adjustment: "count difference", status: "stock change", return: "back to supplier" };
 const STOCK_TEXT: Record<string, string> = { quality: "inspection", blocked: "blocked" };
 
 /** The quantity as it counts in stock: + in, − out, count differences and stock changes as signed; a reversal the other way. */
@@ -881,6 +903,57 @@ function Accuracy({ res, sel }: { res: ActualsView; sel?: string }) {
       </Panel>
       <Reading formula="WMAPE = Σ|forecast − actual| / Σ actual, per series over the logged weeks; bias = (Σ forecast − Σ actual) / Σ actual; accuracy = max(0, 1 − WMAPE). A sale counts at the customer when demand is planned there, else at the shipping location."
         soWhat="Persistent positive bias inflates stock; negative bias shows up as late orders. The actuals are already appended to sales history, so the next forecast run learns from them." />
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Parts used against the bill of materials (R17): the loss measured on orders posted with what they really used. */
+function Yields({ res, ds }: { res: ActualsView; ds: Dataset }) {
+  const nm = useNames();
+  const rows = res.yields ?? [];
+  const viewer = useReadOnly();
+  const put = (y: YieldRow) => store.update((d) => {
+    const ps = (d.production_sources ?? []).find((p) => p.id === y.source);
+    for (const c of ps?.components ?? []) if (c.product === y.part) c.scrap = y.scrap_measured;
+  });
+  if (rows.length === 0) {
+    return <Panel><Empty title="No production posted with what it used">
+      When a production order is confirmed with the parts it really used (instead of the bill of materials' quantities), each part's
+      loss is measured here against the loss the bill of materials plans with, so the plan buys parts with the loss in them.
+    </Empty></Panel>;
+  }
+  const off = rows.filter((y) => y.change);
+  return (
+    <div className="stack">
+      <Panel flush title="Parts used against the bill of materials" actions={off.length > 0 && !viewer && (
+        <button className="btn" onClick={() => off.forEach(put)}>Put every measured loss in its bill of materials</button>)}>
+        <div className="table-wrap" style={{ maxHeight: 520 }}>
+          <table className="t">
+            <thead><tr><th>Made</th><th>At</th><th>Part</th><th className="num">Orders</th><th className="num">Good made</th>
+              <th className="num">Planned</th><th className="num">Used</th><th className="num">Loss planned</th><th className="num">Loss measured</th><th /></tr></thead>
+            <tbody>
+              {rows.map((y) => {
+                const now = (ds.production_sources ?? []).find((p) => p.id === y.source)?.components?.find((c) => c.product === y.part)?.scrap ?? y.scrap_now;
+                const done = Math.abs(now - y.scrap_measured) < 0.005;
+                return (
+                  <tr key={`${y.source}|${y.part}`}>
+                    <td><Prod id={y.product} /> <span className="faint">{y.source}</span></td><td><Loc id={y.location} /></td><td><Prod id={y.part} /></td>
+                    <td className="num">{y.orders}</td><td className="num">{qty(y.made)}</td><td className="num">{qty(y.planned)}</td><td className="num">{qty(y.used)}</td>
+                    <td className="num">{pct(now, 1)}</td>
+                    <td className="num">{y.change && !done ? <Badge sev={y.scrap_measured > now ? "warning" : "info"}>{pct(y.scrap_measured, 1)}</Badge> : pct(y.scrap_measured, 1)}</td>
+                    <td>{y.change && !done && !viewer && <button className="btn sm" title={`Set ${nm.prod(y.part)}'s loss in ${y.source} to ${pct(y.scrap_measured, 1)}`}
+                      onClick={() => put(y)}>Use {pct(y.scrap_measured, 1)}</button>}
+                      {done && y.change && <span className="faint">in the bill of materials</span>}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+      <Reading formula="Loss measured = 1 − (what the bill of materials needs before the part's loss ÷ what was used), over every order posted with actual usage. Backflushed orders repeat the bill of materials and are left out."
+        soWhat="A part used above its bill of materials runs below zero every week (raw milk, R17). With the measured loss in the bill of materials, the plan buys and reserves the part with the loss in it." />
     </div>
   );
 }

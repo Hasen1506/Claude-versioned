@@ -18,13 +18,16 @@ from .finance import FinanceSettings
 from .tower import TowerSettings
 from .demand import DemandEvent, ForecastOverride, ForecastSettings, NpiRule
 from .inventory import InventorySettings
-from .purchasing import PurchaseOrder, PurchasingSettings, Vendor
+from .purchasing import (
+    PurchaseContract, PurchaseOrder, PurchasingSettings, SupplierInvoice, SupplierReturn, Vendor,
+)
+from .sales import Customer, Delivery, Invoice, PaymentTerms, Quotation, ReturnOrder, SalesOrder, SalesSettings
 from .promise import Allocation, Confirmation, PromiseSettings
 from .schedule import Changeover, ScheduleSettings
 from .sop import SopSettings, StockTarget
 from .master import (
-    Calendar, CustomerPrice, Location, LocationProduct, LotSizing, Product, ProductionSource, PurchasingSource, Resource,
-    Settings, TransportLane,
+    Calendar, CustomerPrice, Location, LocationProduct, LotSizing, MrpGroup, Product, ProductionSource, PurchasingSource,
+    Resource, Settings, TransportLane,
 )
 from .transactional import DemandRecord, SalesHistory, ScheduledReceipt
 
@@ -36,7 +39,10 @@ class Dataset(Model):
     locations: list[Location] = Field(default_factory=list)
     products: list[Product] = Field(default_factory=list)
     customer_prices: list[CustomerPrice] = Field(default_factory=list)
+    customers: list[Customer] = Field(default_factory=list)
+    payment_terms: list[PaymentTerms] = Field(default_factory=list)
     location_products: list[LocationProduct] = Field(default_factory=list)
+    mrp_groups: list[MrpGroup] = Field(default_factory=list)
     resources: list[Resource] = Field(default_factory=list)
     production_sources: list[ProductionSource] = Field(default_factory=list)
     purchasing_sources: list[PurchasingSource] = Field(default_factory=list)
@@ -44,6 +50,15 @@ class Dataset(Model):
     vendors: list[Vendor] = Field(default_factory=list)
     purchase_orders: list[PurchaseOrder] = Field(default_factory=list)
     purchasing: PurchasingSettings = Field(default_factory=PurchasingSettings)
+    contracts: list[PurchaseContract] = Field(default_factory=list)
+    supplier_invoices: list[SupplierInvoice] = Field(default_factory=list)
+    supplier_returns: list[SupplierReturn] = Field(default_factory=list)
+    sales_orders: list[SalesOrder] = Field(default_factory=list)
+    quotations: list[Quotation] = Field(default_factory=list)
+    deliveries: list[Delivery] = Field(default_factory=list)
+    invoices: list[Invoice] = Field(default_factory=list)
+    returns: list[ReturnOrder] = Field(default_factory=list)
+    sales: SalesSettings = Field(default_factory=SalesSettings)
     demand: list[DemandRecord] = Field(default_factory=list)
     receipts: list[ScheduledReceipt] = Field(default_factory=list)
     history: list[SalesHistory] = Field(default_factory=list)
@@ -126,6 +141,14 @@ class Dataset(Model):
         """The supplier's purchasing data, or the defaults when none is kept."""
         return self.vendor_by_supplier.get(supplier) or Vendor(supplier=supplier)
 
+    def vendor_terms(self, supplier: str) -> PaymentTerms:
+        """A supplier's payment terms: their own record with a cash discount, else net their payment days."""
+        v = self.vendor(supplier)
+        if v.payment_terms and v.payment_terms in self.payment_terms_by_id:
+            return self.payment_terms_by_id[v.payment_terms]
+        return PaymentTerms(id=f"NET{v.payment_terms_days}", name=f"Net {v.payment_terms_days} days",
+                            net_days=v.payment_terms_days)
+
     def price_currency(self, pu: PurchasingSource) -> str | None:
         """The currency a source's price is in: its own, else the supplier's order currency (empty = the company's)."""
         cur = pu.currency or self.vendor(pu.supplier).currency
@@ -194,6 +217,9 @@ class Dataset(Model):
         if hit is not None:
             return hit
         lp = self.location_product_by_key.get(node) or LocationProduct(location=node[0], product=node[1])
+        grp = next((g for g in self.mrp_groups if g.id == lp.mrp_group), None) if lp.mrp_group else None
+        if grp is not None and (o := grp.overrides()):
+            lp = lp.model_copy(update=o)
         if lp.lot_sizing.policy is None:
             lp = lp.model_copy(update={"lot_sizing": self.lot_sizing(lp)})
         self.lp_memo[("p", node)] = lp
@@ -230,22 +256,50 @@ class Dataset(Model):
         return lp
 
     @cached_property
-    def customer_price_by_key(self) -> dict[tuple[str, str], float]:
-        out: dict[tuple[str, str], float] = {}
+    def customer_price_by_key(self) -> dict[tuple[str, str], CustomerPrice]:
+        out: dict[tuple[str, str], CustomerPrice] = {}
         for cp in self.customer_prices:
-            out.setdefault((cp.customer, cp.product), cp.price)
+            out.setdefault((cp.customer, cp.product), cp)
         return out
 
-    def selling_price(self, location: str, product: str, order_price: float | None = None) -> float | None:
-        """What one unit sells for: the order's own price, else the customer's, else the product's (empty = no
-        price: no revenue or margin is shown for it)."""
-        if order_price is not None:
-            return order_price
+    @cached_property
+    def customer_by_id(self) -> dict[str, Customer]:
+        return {c.customer: c for c in self.customers}
+
+    def customer(self, location: str) -> Customer:
+        """The customer's sales data, or the defaults when none is kept."""
+        return self.customer_by_id.get(location) or Customer(customer=location)
+
+    @cached_property
+    def payment_terms_by_id(self) -> dict[str, PaymentTerms]:
+        return _index(self.payment_terms)
+
+    def terms_for(self, customer: str, own: str | None = None) -> PaymentTerms:
+        """Payment terms: the document's own, else the customer's, else the company's, else net 30 days."""
+        for t in (own, self.customer(customer).payment_terms, self.sales.payment_terms):
+            if t and t in self.payment_terms_by_id:
+                return self.payment_terms_by_id[t]
+        return PaymentTerms(id="NET30", name="Net 30 days")
+
+    def list_price(self, location: str, product: str, qty: float | None = None) -> tuple[float | None, float]:
+        """Price per unit before discounts (the customer's, with its quantity scale for ``qty``, else the product's)
+        and the discount off it (the customer's price discount and the customer's own, together)."""
+        cust = self.customer_by_id.get(location)
+        cd = cust.discount if cust else 0.0
         cp = self.customer_price_by_key.get((location, product))
         if cp is not None:
-            return cp
+            base = cp.price_for(qty) if qty is not None else cp.price
+            return base, 1 - (1 - cp.discount) * (1 - cd)
         p = self.product_by_id.get(product)
-        return p.price if p else None
+        return (p.price if p else None), cd
+
+    def selling_price(self, location: str, product: str, order_price: float | None = None) -> float | None:
+        """What one unit sells for: the order's own price, else the customer's, else the product's, less the
+        customer's discounts (empty = no price: no revenue or margin is shown for it)."""
+        if order_price is not None:
+            return order_price
+        base, disc = self.list_price(location, product)
+        return None if base is None else round(base * (1 - disc), 6)
 
     def whole(self, product: str) -> bool:
         """Quantities of this product are planned in whole units."""

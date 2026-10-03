@@ -29,6 +29,11 @@ class DemandRecord(Model):
         description="Sales order: the agreed net price per unit, in the company currency. Empty = the customer's "
                     "price, else the product's")
     customer_ref: str = Field("", max_length=64, description="Sales order: the customer's own order number")
+    order: str | None = Field(None, max_length=64, description="Sales order: the order header this line is on (empty: "
+                                                              "an order of one line, its own header)")
+    discount: float = Unit("fraction", lt=1, default=0.0,
+                           description="Sales order: the discount its net price already has in it (customer and price "
+                                       "discounts together), shown on its documents")
     fulfilled_confirmations: list[Confirmation] = Field(default_factory=list,
         description="Schedule lines removed by deliveries; retained for quantity-based confirmation metrics")
     period_days: int | None = Field(
@@ -50,6 +55,13 @@ class Reservation(Model):
     qty: float = Unit("qty", description="Still to be issued")
     required_qty: float | None = Unit("qty", default=None,
                                       description="Originally required; empty = `qty` (nothing issued yet)")
+
+
+class ConfirmedDelivery(Model):
+    """One dated quantity the supplier confirmed for an order line (≈ a confirmation line of a PO item)."""
+
+    date: dt.date
+    qty: float = Unit("qty", ge=0)
 
 
 class ScheduledReceipt(Model):
@@ -88,6 +100,11 @@ class ScheduledReceipt(Model):
     confirmed_qty: float | None = Unit("qty", default=None,
                                        description="Purchase: quantity the supplier confirmed (of the ordered "
                                                    "quantity); planning counts no more than this")
+    confirmations: list[ConfirmedDelivery] = Field(
+        default_factory=list,
+        description="Purchase: the supplier's confirmation in several deliveries (date and quantity each); "
+                    "`confirmed_date` is then the last of them and `confirmed_qty` their total")
+    contract: str | None = Field(None, max_length=64, description="Purchase: the contract the line releases against")
 
     @property
     def expected_date(self) -> dt.date:
@@ -101,6 +118,22 @@ class ScheduledReceipt(Model):
             return self.qty
         received = (self.ordered_qty if self.ordered_qty is not None else self.qty) - self.qty
         return max(0.0, min(self.qty, self.confirmed_qty - received))
+
+    def expected_parts(self) -> list[tuple[dt.date, float]]:
+        """What is still expected and when: one part per confirmation line still to come (what was received is set
+        against the earliest lines first), else the expected quantity on the expected date."""
+        if not self.confirmations:
+            return [(self.expected_date, self.expected_qty)]
+        received = (self.ordered_qty if self.ordered_qty is not None else self.qty) - self.qty
+        left = self.qty
+        out = []
+        for c in sorted(self.confirmations, key=lambda c: c.date):
+            take = min(max(0.0, c.qty - received), left)
+            received = max(0.0, received - c.qty)
+            if take > 1e-9:
+                out.append((c.date, take))
+                left -= take
+        return out
 
 
 class SalesHistory(Model):

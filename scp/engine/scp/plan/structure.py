@@ -28,6 +28,7 @@ class Need:
     per_order: float
     operation: int | None           # the parent's step that consumes it (None: the first)
     via: tuple[str, ...] = ()       # phantom assemblies it passes through
+    location: str = ""              # where it is taken from: the plant, or the place it is withdrawn from
 
     def qty(self, good: float) -> float:
         return self.per_unit * good + (self.per_order if good > 0 else 0.0)
@@ -63,9 +64,19 @@ def phantom_source(ds: Dataset, location: str, product: str, on: date | None) ->
     return min(cands, key=lambda p: (p.priority, p.id)) if cands else None
 
 
-def needs(ds: Dataset, ps: ProductionSource, on: date | None = None, _seen: tuple[str, ...] = ()) -> list[Need]:
+def part_location(ds: Dataset, plant: str, part: str) -> str:
+    """Where production at ``plant`` takes ``part`` from: the plant, or the place the part is withdrawn from
+    (special procurement: withdrawal from another plant)."""
+    lp = ds.location_product_by_key.get((plant, part))
+    return lp.withdraw_from if lp is not None and lp.withdraw_from else plant
+
+
+def needs(ds: Dataset, ps: ProductionSource, on: date | None = None, _seen: tuple[str, ...] = (),
+          qty: float | None = None) -> list[Need]:
     """The parts one order of ``ps`` draws, phantoms passed through. ``on`` is the order's start: BOM lines not
-    valid that day are left out (``None``: every line, for the network structure)."""
+    valid that day are left out (``None``: every line, for the network structure). ``qty``: the order's good units,
+    which choose an alternative bill of materials by its lot-size range (``None`` with ``on``: the main one; with
+    neither, every alternative's lines, for the structure)."""
     ops = sorted(ps.operations, key=lambda o: o.seq)
     first = ops[0].seq if ops else None
     enter = entering(ps)
@@ -79,9 +90,10 @@ def needs(ds: Dataset, ps: ProductionSource, on: date | None = None, _seen: tupl
             return
         seq = min((s for s in (old.operation, n.operation) if s is not None), key=lambda s: rank.get(s, 0), default=None)
         out[n.product] = Need(n.product, old.per_unit + n.per_unit, old.per_order + n.per_order, seq,
-                              old.via or n.via)
+                              old.via or n.via, old.location or n.location)
 
-    for c in ps.components:
+    lines = ps.bom_for(qty) if qty is not None else (ps.components if on is not None else ps.bom_for(None))
+    for c in lines:
         if on is not None and not c.valid_on(on):
             continue
         seq = c.operation or first
@@ -90,10 +102,10 @@ def needs(ds: Dataset, ps: ProductionSource, on: date | None = None, _seen: tupl
         pu, po = (0.0, c.qty / loss) if c.fixed_qty else (f * c.qty / ps.output_qty / loss, 0.0)
         sub = phantom_source(ds, ps.location, c.product, on) if c.product not in _seen else None
         if sub is None:
-            add(Need(c.product, pu, po, seq))
+            add(Need(c.product, pu, po, seq, (), part_location(ds, ps.location, c.product)))
             continue
         for n in needs(ds, sub, on, (*_seen, c.product)):
-            add(Need(n.product, pu * n.per_unit, po * n.per_unit + n.per_order, seq, (c.product, *n.via)))
+            add(Need(n.product, pu * n.per_unit, po * n.per_unit + n.per_order, seq, (c.product, *n.via), n.location))
     return list(out.values())
 
 
@@ -112,5 +124,5 @@ def main_share(ps: ProductionSource) -> float:
     return max(0.0, 1.0 - sum(c.cost_share for c in ps.co_products))
 
 
-__all__ = ["Need", "co_output", "entering", "main_share", "needs", "phantom_source", "started_factor",
+__all__ = ["Need", "co_output", "entering", "main_share", "needs", "part_location", "phantom_source", "started_factor",
            "typical_lot", "unit_need"]

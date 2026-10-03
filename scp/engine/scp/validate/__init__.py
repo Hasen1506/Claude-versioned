@@ -135,7 +135,7 @@ def _duplicates(ds: Dataset, c: _Collector) -> None:
         "resource": ds.resources, "production_source": ds.production_sources,
         "purchasing_source": ds.purchasing_sources, "lane": ds.lanes, "receipt": ds.receipts,
         "movement": ds.movements, "capacity_option": ds.finance.capacity_options,
-        "purchase_order": ds.purchase_orders, "inventory_doc": ds.inventory_docs,
+        "purchase_order": ds.purchase_orders, "inventory_doc": ds.inventory_docs, "mrp_group": ds.mrp_groups,
     }
     for typ, items in groups.items():
         for oid, n in Counter(i.id for i in items).items():
@@ -168,7 +168,9 @@ def _ref(ds: Dataset, c: _Collector, kind: str, value: str | None, typ: str, oid
     if value is None:
         return True
     index = {"location": ds.location_by_id, "product": ds.product_by_id,
-             "calendar": ds.calendar_by_id, "resource": ds.resource_by_id}[kind]
+             "calendar": ds.calendar_by_id, "resource": ds.resource_by_id,
+             "mrp_group": {g.id: g for g in ds.mrp_groups},
+             "payment_terms": ds.payment_terms_by_id}[kind]
     if value not in index:
         c.add("REF_UNKNOWN", typ, oid, f"{field} refers to unknown {kind} '{value}'",
               f"Create {kind} '{value}' or fix the reference", field)
@@ -198,6 +200,12 @@ def _references(ds: Dataset, c: _Collector) -> None:
                   "Model consignment stock at a DC instead")
         _loc_type(ds, c, lp.location, STOCKING_LOCATION_TYPES | {LocationType.CUSTOMER},
                   "location_product", oid, "location", "suppliers are not planned")
+        _ref(ds, c, "mrp_group", lp.mrp_group, "location_product", oid, "mrp_group")
+        _ref(ds, c, "product", lp.follow_up, "location_product", oid, "follow_up")
+        if _ref(ds, c, "location", lp.withdraw_from, "location_product", oid, "withdraw_from"):
+            if lp.withdraw_from:
+                _loc_type(ds, c, lp.withdraw_from, STOCKING_LOCATION_TYPES, "location_product", oid, "withdraw_from",
+                          "parts are withdrawn from a place that keeps stock")
     for r in ds.resources:
         if _ref(ds, c, "location", r.location, "resource", r.id, "location"):
             _loc_type(ds, c, r.location, PRODUCTION_LOCATION_TYPES, "resource", r.id, "location",
@@ -210,6 +218,10 @@ def _references(ds: Dataset, c: _Collector) -> None:
         _ref(ds, c, "product", ps.product, "production_source", ps.id, "product")
         for comp in ps.components:
             _ref(ds, c, "product", comp.product, "production_source", ps.id, "components.product")
+        for alt in ps.bom_alternatives:
+            for comp in alt.components:
+                _ref(ds, c, "product", comp.product, "production_source", ps.id,
+                     f"bom_alternatives[{alt.id}].components.product")
         for co in ps.co_products:
             _ref(ds, c, "product", co.product, "production_source", ps.id, "co_products.product")
         for op in ps.operations:
@@ -218,6 +230,8 @@ def _references(ds: Dataset, c: _Collector) -> None:
                  f"operations[{op.seq}].labor_resource")
             for alt in op.alternatives:
                 _ref(ds, c, "resource", alt, "production_source", ps.id, f"operations[{op.seq}].alternatives")
+            for t in op.tools:
+                _ref(ds, c, "resource", t, "production_source", ps.id, f"operations[{op.seq}].tools")
             if op.subcontract is not None and _ref(ds, c, "location", op.subcontract.supplier, "production_source",
                                                    ps.id, f"operations[{op.seq}].subcontract.supplier"):
                 _loc_type(ds, c, op.subcontract.supplier, {LocationType.SUPPLIER}, "production_source", ps.id,
@@ -367,8 +381,8 @@ def _production(ds: Dataset, c: _Collector) -> None:
                 c.add("PRODUCTION_NO_LEAD_TIME", "production_source", ps.id,
                       "Production lead time will be 0 days", "Add operations or fixed_lead_time_workdays")
         for op in ps.operations:
-            used.update(x for x in (op.resource, op.labor_resource, *op.alternatives) if x)
-            for rid in (op.resource, op.labor_resource, *op.alternatives):
+            used.update(x for x in (op.resource, op.labor_resource, *op.alternatives, *op.tools) if x)
+            for rid in (op.resource, op.labor_resource, *op.alternatives, *op.tools):
                 r = ds.resource_by_id.get(rid) if rid else None
                 if r is not None and r.location != ps.location:
                     c.add("RESOURCE_WRONG_LOCATION", "production_source", ps.id,
@@ -419,6 +433,8 @@ def _purchasing(ds: Dataset, c: _Collector) -> None:
                           f"planning uses {min(a, b, key=lambda x: (x.priority, x.id)).id}",
                           "Keep one fixed source per period, or give them dates that do not overlap", "fixed")
     _purchase_orders(ds, c)
+    _sales(ds, c)
+    _procure(ds, c)
 
 
 def _overlap(a, b) -> bool:
@@ -453,6 +469,70 @@ def _purchase_orders(ds: Dataset, c: _Collector) -> None:
                   f"{n} open purchase order line{'s' if n != 1 else ''} with {pu_sup}, which is blocked for purchasing"
                   + (f" ({v.block_reason})" if v.block_reason else ""),
                   "Receive or cancel them, or lift the block; planning still counts them")
+
+
+def _sales(ds: Dataset, c: _Collector) -> None:
+    """Customers' sales data, payment terms and the order-to-cash documents name what exists."""
+    sell = STOCKING_LOCATION_TYPES | {LocationType.CUSTOMER}
+    _ref(ds, c, "payment_terms", ds.sales.payment_terms, "settings", "sales", "payment_terms")
+    for cu in ds.customers:
+        if _ref(ds, c, "location", cu.customer, "customer", cu.customer, "customer"):
+            _loc_type(ds, c, cu.customer, sell, "customer", cu.customer, "customer", "a supplier is not a customer")
+        _ref(ds, c, "payment_terms", cu.payment_terms, "customer", cu.customer, "payment_terms")
+    for typ, docs in (("sales_order", ds.sales_orders), ("quotation", ds.quotations), ("delivery", ds.deliveries),
+                      ("invoice", ds.invoices), ("return", ds.returns)):
+        for x in docs:
+            _ref(ds, c, "location", x.customer, typ, x.id, "customer")
+            if getattr(x, "payment_terms", None):
+                _ref(ds, c, "payment_terms", x.payment_terms, typ, x.id, "payment_terms")
+    for q in ds.quotations:
+        for ln in q.lines:
+            _ref(ds, c, "product", ln.product, "quotation", q.id, "lines.product")
+    for dl in ds.deliveries:
+        _ref(ds, c, "location", dl.ship_from, "delivery", dl.id, "ship_from")
+    for r in ds.returns:
+        _ref(ds, c, "product", r.product, "return", r.id, "product")
+        _ref(ds, c, "location", r.location, "return", r.id, "location")
+    headers = {o.id: o for o in ds.sales_orders}
+    for i, d in enumerate(ds.demand):
+        if d.order is None or d.kind is not DemandKind.SALES_ORDER:
+            continue
+        h = headers.get(d.order)
+        oid = d.id or f"#{i}"
+        if h is None:
+            c.add("REF_UNKNOWN", "demand", oid, f"order refers to unknown sales order '{d.order}'",
+                  f"Create sales order '{d.order}' or clear the reference", "order")
+        elif h.customer != d.location:
+            c.add("SO_LINE_MISMATCH", "demand", oid, f"Line {oid} is on sales order {h.id} for {h.customer} but is "
+                  f"for {d.location}", "Move the line to an order for its customer, or fix it", "order")
+
+
+def _procure(ds: Dataset, c: _Collector) -> None:
+    """Suppliers' payment terms, contracts, scheduling agreements, supplier invoices and returns name what exists."""
+    sup = {LocationType.SUPPLIER}
+    for v in ds.vendors:
+        _ref(ds, c, "payment_terms", v.payment_terms, "vendor", v.supplier, "payment_terms")
+    for k in ds.contracts:
+        if _ref(ds, c, "location", k.supplier, "contract", k.id, "supplier"):
+            _loc_type(ds, c, k.supplier, sup, "contract", k.id, "supplier", "a contract is with a supplier")
+        _ref(ds, c, "location", k.location, "contract", k.id, "location")
+        for ln in k.lines:
+            _ref(ds, c, "product", ln.product, "contract", k.id, "lines.product")
+    for po in ds.purchase_orders:
+        if po.kind == "scheduling_agreement":
+            if po.product is None:
+                c.add("SA_NO_PRODUCT", "purchase_order", po.id, f"Scheduling agreement {po.id} has no product",
+                      "Give the product it schedules", "product")
+            else:
+                _ref(ds, c, "product", po.product, "purchase_order", po.id, "product")
+    for inv in ds.supplier_invoices:
+        _ref(ds, c, "location", inv.supplier, "supplier_invoice", inv.id, "supplier")
+        for ln in inv.lines:
+            _ref(ds, c, "product", ln.product, "supplier_invoice", inv.id, "lines.product")
+    for r in ds.supplier_returns:
+        _ref(ds, c, "location", r.supplier, "supplier_return", r.id, "supplier")
+        _ref(ds, c, "product", r.product, "supplier_return", r.id, "product")
+        _ref(ds, c, "location", r.location, "supplier_return", r.id, "location")
 
 
 def _lanes(ds: Dataset, c: _Collector) -> None:

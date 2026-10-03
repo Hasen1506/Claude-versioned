@@ -156,12 +156,14 @@ export function ShortOrders({ list, ds, onDone }: { list: ShortOrder[]; ds: Data
       <div className="row" style={{ gap: 8 }}><Badge sev="warning">Can no longer run in full</Badge>
         <span>{plural(list.length, "firm order")} {list.length === 1 ? "needs" : "need"} more than there is and is coming.</span></div>
       <table className="t" style={{ marginTop: 8, width: "auto" }}>
-        <thead><tr><th>Order</th><th>Makes</th><th>Short of</th><th className="num">Needs</th><th className="num">Has</th><th className="num">Can make</th><th /></tr></thead>
+        <thead><tr><th>Order</th><th>Makes</th><th>Short of</th><th className="num">Needs</th><th className="num">Has</th><th className="num">Can make</th><th>The rest</th><th /></tr></thead>
         <tbody>
           {list.map((s) => (
             <tr key={`${s.order}|${s.part}`}>
               <td><b>{s.order}</b></td><td><Prod id={s.product} /> {qty(s.qty)}</td><td><Prod id={s.part} /> at <Loc id={s.location} /></td>
               <td className="num">{qty(s.needs)}</td><td className="num">{qty(s.available)}</td><td className="num"><b>{qty(s.can_make)}</b></td>
+              <td>{s.complete_on ? <span title={`The order takes the part from ${day(s.starts ?? "")}; open receipts bring the rest by ${day(s.complete_on)}`}>
+                late: there {day(s.complete_on)}</span> : <span className="faint">nothing coming</span>}</td>
               <td>{done.has(s.order) ? <Badge sev="ok">shortened</Badge>
                 : <Edits><button className="btn sm" disabled={!!busy || s.can_make <= 0} onClick={() => shorten(s)}
                   title={s.can_make <= 0 ? "Nothing of it can be made: cancel it or find the parts" : `Make ${nm.prod(s.product)} ${qty(s.can_make)} instead of ${qty(s.qty)}; its parts in proportion`}>

@@ -279,7 +279,8 @@ def _negative(ds: Dataset, journal: list[GoodsMovement], moves: list[GoodsMoveme
 def short_orders(ds: Dataset, parts: set[Node], on: date) -> list[ShortOrder]:
     """Firm orders that take one of ``parts`` and that it no longer covers in full: usable stock on ``on`` and the
     open receipts of the part due by an order's start go to the orders in the order they start; an order whose
-    open reservation is more than what is left is short, and ``can_make`` is what the part it gets covers."""
+    open reservation is more than what is left is short, and ``can_make`` is what the part it gets covers. When
+    receipts due after its start bring the rest, ``complete_on`` says when: the order is late rather than short."""
     from .lots import planning_stock
     from .stock import open_orders
     if not parts:
@@ -302,7 +303,7 @@ def short_orders(ds: Dataset, parts: set[Node], on: date) -> list[ShortOrder]:
             row = rows.get(rc.id)
             if row is None or rc.id in finals or row.open <= row.ordered * tol + EPS:
                 continue
-            incoming.append((rc.expected_date, row.open))
+            incoming.append([rc.expected_date, row.open])
         users = []
         for rc in ds.receipts:
             for rv in rc.reservations:
@@ -330,8 +331,18 @@ def short_orders(ds: Dataset, parts: set[Node], on: date) -> list[ShortOrder]:
             prod = ds.product_by_id.get(rc.product)
             if prod is not None and prod.whole:
                 can = math.floor(can + 1e-9)
+            # N110: the rest may still be coming, only after the order starts: it is late, not short
+            rest, until, k = need - got, None, used_in
+            while k < len(incoming) and rest > EPS:
+                take = min(rest, incoming[k][1])
+                incoming[k][1] -= take
+                rest -= take
+                if rest <= EPS:
+                    until = incoming[k][0]
+                k += 1
             out.append(ShortOrder(order=rc.id, product=rc.product, part=part, location=loc, needs=round(need, 6),
-                                  available=round(got, 6), can_make=round(can, 6), qty=round(open_q, 6)))
+                                  available=round(got, 6), can_make=round(can, 6), qty=round(open_q, 6),
+                                  starts=when, complete_on=until))
     return out
 
 

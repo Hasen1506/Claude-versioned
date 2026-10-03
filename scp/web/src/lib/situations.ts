@@ -192,6 +192,30 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
           actions: [{ label: "Transport lanes", to: href("data", "lanes") }],
         };
         break;
+      case "OVERTIME_PLANNED":
+        s = {
+          title: `${plural(l.length, "production run")} kept on their day with overtime`,
+          why: "Levelling may plan overtime: these runs did not fit the shift hours, even on an alternative machine, so they use the machines' overtime (at its cost) instead of moving.",
+          items: l.map((e) => ({ label: `${e.order_id}: ${n(e.qty)} ${where(e)}`, detail: e.message.split(" fits with ")[1], to: e.order_id ? href("plan", "orders", e.order_id) : undefined })),
+          actions: [{ label: "Capacity levelling", to: href("plan", "capacity") }],
+        };
+        break;
+      case "SUPPLY_SPLIT":
+        s = {
+          title: `${plural(l.length, "need")} split over suppliers, lanes or weeks to stay within capacity`,
+          why: "More was needed in a week than the supplier can make or the lane can carry; the rest goes to another source, else arrives a week or more early.",
+          items: l.map((e) => ({ label: `${n(e.qty)} ${where(e)}`, detail: e.message.split(": split into ")[1], to: node(e) })),
+          actions: [{ label: "Purchasing sources", to: href("data", "purchasing_sources") }],
+        };
+        break;
+      case "FOLLOW_UP":
+        s = {
+          title: `${plural(l.length, "discontinued item")} handing over to a follow-up`,
+          why: "Once the discontinued item's stock is used up, what is still needed is planned on its follow-up product.",
+          items: l.map((e) => ({ label: where(e), detail: e.message.split(": ")[1], to: node(e) })),
+          actions: [],
+        };
+        break;
       case "EOQ_FALLBACK":
         s = {
           title: `${plural(l.length, "item")} order exactly what's needed instead of an economic lot`,
@@ -246,7 +270,8 @@ const CODE_LABEL: Record<string, string> = {
   EOQ_FALLBACK: "No economic lot size", STOCKOUT: "Stock runs out", SCHEDULE_LATE: "Scheduled to finish late",
   CAPACITY_EARLIER: "Started earlier to fit", CAPACITY_LATE: "Only fits later", ALTERNATIVE_MACHINE: "On an alternative machine",
   PO_CONFIRMED_LATE: "Supplier confirmed late", PO_CONFIRMED_SHORT: "Supplier confirmed less", PO_NOT_CONFIRMED: "Not confirmed by the supplier",
-  RECEIPT_OVERDUE: "Order overdue",
+  RECEIPT_OVERDUE: "Order overdue", STOCK_EXPIRES: "Stock expires unused", LOT_EXPIRES: "Lot larger than its shelf life",
+  OVERTIME_PLANNED: "Kept on its day with overtime", SUPPLY_SPLIT: "Split to stay within capacity", FOLLOW_UP: "Follow-up takes over",
 };
 export function codeLabel(code: string): string {
   if (CODE_LABEL[code]) return CODE_LABEL[code];

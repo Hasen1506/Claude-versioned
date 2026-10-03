@@ -2,7 +2,8 @@ import type {
   ProductionUsageInput,
   Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   PlanTrace, ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
-  PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoLineInput, RequisitionPick, PostAction, CountInput, UsageInput, StockType, SalesOrderChange, SalesOrderResponse,
+  PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoActionInput, RequisitionPick, PostAction, CountInput, UsageInput, StockType, SalesOrderChange, SalesOrderResponse,
+  SalesView, SalesAction, SalesActionInput, SalesActionResponse,
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
@@ -258,18 +259,25 @@ export const api = {
     extra: { order?: DemandRecord; id?: string; changes?: Partial<SalesOrderChange>; date?: string; reason?: string }) =>
     write<SalesOrderResponse>("/api/orders/sales", dataset, { action, order: extra.order ?? null, id: extra.id ?? null,
       changes: extra.changes ?? null, date: extra.date ?? null, reason: extra.reason ?? "" }),
+  /** Every sales order, quotation, delivery, invoice and return; what is due to deliver and bill; customers' credit. */
+  sales: (ds: Dataset) => planPost<SalesView>("/api/sales", ds),
+  /** One order-to-cash step: take an order, quote, deliver, invoice, record a payment, take a return back. */
+  salesAct: (dataset: Dataset, action: SalesAction, extra: SalesActionInput = {}) =>
+    write<SalesActionResponse>("/api/sales/act", dataset, { action, ...extra }),
   /** Requisitions from the supply plan, every purchase order and the supplier scorecard. */
   purchasing: (ds: Dataset) => planPost<PurchasingView>("/api/purchasing", ds),
   /** Turn requisitions into purchase orders (`lines` = which, on which source; none = everything due now). */
   createPurchaseOrders: (dataset: Dataset, lines?: RequisitionPick[], orderDate?: string) =>
     write<CreatePoResponse>("/api/purchasing/create", dataset, { lines: lines ?? null, order_date: orderDate ?? null }),
-  /** Approve, send, confirm, receive, change or cancel lines of a purchase order. */
-  poAction: (dataset: Dataset, action: PoAction, po: string, extra: { lines?: PoLineInput[]; date?: string; reference?: string; note?: string } = {}) =>
-    write<PoActionResponse>("/api/purchasing/act", dataset, { action, po, lines: extra.lines ?? null, date: extra.date ?? null,
-      reference: extra.reference ?? "", note: extra.note ?? "" }),
-  /** Firm planned orders into receipts: `ids`, or everything starting within the firm zone. */
-  firm: (dataset: Dataset, ids?: string[], withinDays?: number) =>
-    write<FirmResponse>("/api/orders/firm", dataset, { ids: ids ?? null, within_days: withinDays ?? null }),
+  /** An action on a purchase order (approve, send, confirm, receive, change, cancel), a scheduling agreement, a
+   * supplier invoice (enter, release, pay, cancel) or a return to the supplier. */
+  poAction: (dataset: Dataset, action: PoAction, po: string, extra: PoActionInput = {}) =>
+    write<PoActionResponse>("/api/purchasing/act", dataset, { action, po, ...extra, lines: extra.lines ?? null,
+      date: extra.date ?? null, reference: extra.reference ?? "", note: extra.note ?? "" }),
+  /** Firm planned orders into receipts: `ids`, or everything starting within the firm zone; `send` sends the
+   * purchase orders it makes at once. */
+  firm: (dataset: Dataset, ids?: string[], withinDays?: number, starts?: Record<string, string>, send = false) =>
+    write<FirmResponse>("/api/orders/firm", dataset, { ids: ids ?? null, within_days: withinDays ?? null, starts: starts ?? null, send }),
   // ---- sign-in and companies kept on the server (Phase I)
   authConfig: () => call<AuthConfig>("/api/auth/config"),
   signUp: (email: string, name: string, password: string) =>

@@ -13,8 +13,9 @@ import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useFreshResult, useStore } from "../state/store";
 import { LotFields, lotExtra, NO_LOT, ShortOrders, type LotInput } from "./ExecutionStock";
+import { Contracts, Invoices, Owed, Returns, usePoAction } from "./BuyingPay";
 
-type View = "order" | "orders" | "suppliers";
+type View = "order" | "orders" | "invoices" | "owed" | "returns" | "contracts" | "suppliers";
 type Sev = "error" | "warning" | "info" | "ok";
 
 const STATUS_SEV: Record<string, Sev> = {
@@ -42,9 +43,10 @@ export function Buying({ route }: { route: string[] }) {
   const head = (
     <StageHeader title="Buying" kicker="What to order from which supplier, the purchase orders on their way, and how each supplier delivers."
       how={<>The supply plan's purchases are the <Term t="Purchase requisition">requisitions</Term>. Pick the ones to order and they become
-        purchase orders, one per supplier and receiving place, priced from each supplier's price scales. An order is approved (above the
-        approval limit), sent, confirmed by the supplier (the plan then expects the confirmed date and quantity) and received, in parts or
-        at once. Blocked suppliers are never planned or ordered from.</>}
+        purchase orders, one per supplier and receiving place, priced from a contract or each supplier's price scales (a product on a
+        scheduling agreement gets delivery schedule lines on it instead). An order is released (level by level, by its value), sent,
+        confirmed by the supplier (in one delivery or several: the plan expects each) and received. The supplier's invoice is checked
+        against the order and the goods received before it is paid; goods can go back to be replaced or credited.</>}
       answer={res && buyingAnswer(res, ds.purchasing?.release_window_days ?? 7)}
       right={<>{res && <Provenance kind="derived" at={run.at} stale={stale} />}
         <RunButton running={run.running} has={!!res} onClick={() => store.run("purchasing")} /></>} />
@@ -65,10 +67,19 @@ export function Buying({ route }: { route: string[] }) {
     <Tabs<View> value={view} onChange={(v) => go("buying", v)} tabs={[
       { id: "order", label: "To order", count: res.totals.requisitions },
       { id: "orders", label: "Purchase orders", count: res.totals.open_orders },
+      { id: "invoices", label: "Supplier invoices", count: (res.payables?.invoices.filter((i) => i.open > 0.005 && i.status !== "cancelled").length ?? 0) + res.totals.to_invoice },
+      { id: "owed", label: "What we owe", count: res.payables?.payables.length ?? 0 },
+      { id: "returns", label: "Returns", count: res.payables?.returns.length ?? 0 },
+      { id: "contracts", label: "Contracts", count: res.payables?.contracts.length ?? 0 },
       { id: "suppliers", label: "Suppliers", count: res.vendors.length },
     ]} />
     {view === "order" && <ToOrder res={res} ds={ds} />}
     {view === "orders" && <Orders res={res} ds={ds} sel={route[2]} />}
+    {view === "invoices" && res.payables && <Invoices res={res} ds={ds} sel={/^(SI|CM)-/.test(route[2] ?? "") ? route[2] : undefined}
+      po={/^(SI|CM)-/.test(route[2] ?? "") ? undefined : route[2]} key={route[2] ?? ""} />}
+    {view === "owed" && res.payables && <Owed res={res} ds={ds} />}
+    {view === "returns" && res.payables && <Returns res={res} ds={ds} />}
+    {view === "contracts" && res.payables && <Contracts res={res} ds={ds} />}
     {view === "suppliers" && <Suppliers res={res} ds={ds} />}
   </>);
 }
@@ -81,7 +92,10 @@ function buyingAnswer(res: PurchasingView, window: number) {
   else parts.push(`Nothing needs ordering in the next ${plural(window, "day")}`);
   if (t.open_orders) parts.push(`${plural(t.open_orders, "purchase order")} ${t.open_orders === 1 ? "is" : "are"} open, ${money(t.open_value, res.currency)} still to come`);
   const todo = [t.awaiting_approval && `${t.awaiting_approval} to approve`, t.to_send && `${t.to_send} to send`,
-    t.confirmations_overdue && `${t.confirmations_overdue} to chase for a confirmation`, t.late_lines && `${plural(t.late_lines, "line")} late`].filter(Boolean);
+    t.confirmations_overdue && `${t.confirmations_overdue} to chase for a confirmation`, t.late_lines && `${plural(t.late_lines, "line")} late`,
+    t.blocked_invoices && `${plural(t.blocked_invoices, "invoice")} blocked for payment`,
+    t.payables_overdue && `${money(t.payables_overdue, res.currency)} owed to suppliers overdue`,
+    t.to_invoice && `${plural(t.to_invoice, "order line")} received but not invoiced`].filter(Boolean);
   return <>{parts.join("; ")}.{todo.length > 0 && <> Needs you: {todo.join(", ")}.</>}</>;
 }
 
@@ -175,6 +189,8 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
                           </select>
                         ) : <Loc id={r.supplier} />}
                         {c?.blocked && <div className="small">{c.blocked}</div>}
+                        {(c?.contract ?? r.contract) && <div className="faint small">contract {c?.contract ?? r.contract}</div>}
+                        {r.agreement && (source[r.id] ?? r.source_id) === r.source_id && <div className="faint small">onto scheduling agreement {r.agreement}</div>}
                       </td>
                       <td className="num">{unitMoney(c?.price ?? r.price, c?.currency ?? r.currency)}</td>
                       <td className="num">{money(c?.value ?? r.value, res.currency)}</td>
@@ -190,7 +206,9 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
         )}
       </Panel>
       {picked.length > 0 && <Reading formula={<>{plural(picked.length, "line")} to {plural(suppliers.size, "supplier")}, {money(value, res.currency)} with duty.
-        {res.approval_limit != null && <> Orders above {money(res.approval_limit, res.currency)} need approval before they are sent.</>}</>}
+        {(ds.purchasing?.release_levels?.length ?? 0) > 0 ? <> Orders are released by {(ds.purchasing?.release_levels ?? []).slice().sort((a, b) => a.above - b.above)
+          .map((l) => `${l.name} above ${money(l.above, res.currency)}`).join(", then ")} before they are sent.</>
+          : res.approval_limit != null && <> Orders above {money(res.approval_limit, res.currency)} need approval before they are sent.</>}</>}
         soWhat="Each supplier gets one order per receiving place. Choosing another supplier applies its minimum, pack size and lead time; the line's date moves if it can't deliver in time." />}
       <PurchasingSettings ds={ds} />
     </div>
@@ -200,7 +218,7 @@ function ToOrder({ res, ds }: { res: PurchasingView; ds: Dataset }) {
 function PurchasingSettings({ ds }: { ds: Dataset }) {
   return (
     <details className="panel" style={{ padding: "10px 14px" }}>
-      <summary><b>Purchasing settings</b> <span className="muted small">approval limit, what counts as due to order</span></summary>
+      <summary><b>Purchasing settings</b> <span className="muted small">approval limit or release levels, what counts as due to order, invoice tolerances and tax</span></summary>
       <div style={{ marginTop: 10 }}>
         <SchemaForm defName="PurchasingSettings" value={(ds.purchasing ?? {}) as unknown as Obj}
           onChange={(next) => store.update((d) => { d.purchasing = next as unknown as Dataset["purchasing"]; })} />
@@ -235,7 +253,8 @@ function Orders({ res, ds, sel }: { res: PurchasingView; ds: Dataset; sel?: stri
                   const next = p.lines.filter((x) => !x.closed && x.open > 1e-6).map((x) => x.expected_date).sort()[0];
                   return (
                     <tr key={p.id} className={`clickable ${p.id === sel ? "selected" : ""}`} onClick={() => go("buying", "orders", p.id)}>
-                      <td><b>{p.id}</b>{!p.header && <div className="faint small">no order document</div>}</td>
+                      <td><b>{p.id}</b>{!p.header && <div className="faint small">no order document</div>}
+                        {p.kind === "scheduling_agreement" && <div className="faint small">scheduling agreement for <Prod id={p.product ?? ""} /></div>}</td>
                       <td>{p.supplier ? <Loc id={p.supplier} /> : "—"}</td><td><Loc id={p.location} /></td>
                       <td><Badge sev={STATUS_SEV[p.status]}>{p.status}</Badge></td>
                       <td className="num">{p.lines.length}</td><td className="num">{money(p.value, p.currency)}</td>
@@ -259,7 +278,8 @@ type Mode = null | "confirm" | "receive" | "change" | "cancel";
 function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
   const [mode, setMode] = useState<Mode>(null);
   const open = po.lines.filter((x) => !x.closed);
-  const [edit, setEdit] = useState<Record<string, { qty: string; date: string; price: string; final: boolean; on: boolean }>>({});
+  const [edit, setEdit] = useState<Record<string, { qty: string; date: string; price: string; final: boolean; on: boolean;
+    parts: { date: string; qty: string }[] | null }>>({});
   const [lots, setLots] = useState<Record<string, LotInput>>({});
   const [on, setOn] = useState(ds.settings.planning_start);
   const [text, setText] = useState("");
@@ -273,6 +293,7 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
       qty: String(m === "receive" ? Math.round(x.open * 1000) / 1000 : m === "confirm" ? x.confirmed_qty ?? x.ordered : x.ordered),
       date: m === "confirm" ? x.confirmed_date ?? x.due_date : x.due_date, price: x.price == null ? "" : String(x.price), final: false,
       on: m !== "receive" || x.open > 1e-6,
+      parts: m === "confirm" && (x.confirmations?.length ?? 0) > 1 ? x.confirmations!.map((c) => ({ date: c.date, qty: String(c.qty) })) : null,
     }])));
   };
   const act = async (action: "approve" | "send" | "confirm" | "receive" | "change" | "cancel") => {
@@ -282,7 +303,8 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
         const e = edit[x.id];
         return action === "cancel" ? { id: x.id, qty: null, date: null, price: null, final: false }
           : action === "receive" ? { id: x.id, qty: Number(e.qty), date: null, price: null, final: e.final, ...lotExtra(lots[x.id] ?? NO_LOT) }
-          : action === "confirm" ? { id: x.id, qty: Number(e.qty), date: e.date, price: null, final: false }
+          : action === "confirm" ? (e.parts ? { id: x.id, final: false, parts: e.parts.map((p) => ({ date: p.date, qty: Number(p.qty) })) }
+            : { id: x.id, qty: Number(e.qty), date: e.date, price: null, final: false })
           : { id: x.id, qty: Number(e.qty), date: e.date, price: e.price === "" ? null : Number(e.price), final: false };
       });
       if (lines && lines.length === 0) throw new Error("Tick at least one line");
@@ -299,15 +321,23 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
   };
   const set = (id: string, patch: Partial<(typeof edit)[string]>) => setEdit({ ...edit, [id]: { ...edit[id], ...patch } });
   const hasOpen = open.some((x) => x.open > 1e-6);
+  const agreement = po.kind === "scheduling_agreement";
+  const levels = (ds.purchasing?.release_levels?.length ?? 0) > 0;
+  const toBill = po.lines.some((x) => x.received - x.invoiced > 1e-6);
+  const received = po.lines.some((x) => x.received > 1e-6);
   return (
     <Panel title={<h3>{po.id} <span className="muted">to {po.supplier ? namesOf(ds).loc(po.supplier) : "—"}</span> <Badge sev={STATUS_SEV[po.status]}>{po.status}</Badge></h3>}
       actions={<>
-        <Edits>{po.header && !po.approved && <button className="btn accent" disabled={busy} onClick={() => act("approve")}>Approve</button>}
-        {po.header && po.approved && !po.sent_on && hasOpen && <button className="btn accent" disabled={busy} onClick={() => act("send")}>Mark as sent</button>}
+        <Edits>{po.header && !po.approved && <button className="btn accent" disabled={busy} onClick={() => act("approve")}>
+          {levels && po.next_level ? `Release: ${po.next_level}` : "Approve"}</button>}
+        {po.header && po.approved && !po.sent_on && hasOpen && <button className="btn accent" disabled={busy} onClick={() => act("send")}>
+          {agreement ? "Send the delivery schedule" : "Mark as sent"}</button>}
         {hasOpen && <button className="btn" disabled={busy} onClick={() => start("confirm")}>Record confirmation</button>}
         {hasOpen && <button className="btn" disabled={busy} onClick={() => start("receive")}>Receive goods</button>}
         {hasOpen && <button className="btn ghost" disabled={busy} onClick={() => start("change")}>Change</button>}
-        {open.some((x) => x.received <= 1e-6) && <button className="btn ghost" disabled={busy} onClick={() => start("cancel")}>Cancel lines</button>}</Edits>
+        {open.some((x) => x.received <= 1e-6) && <button className="btn ghost" disabled={busy} onClick={() => start("cancel")}>Cancel lines</button>}
+        {toBill && <button className="btn" disabled={busy} onClick={() => go("buying", "invoices", po.id)}>Enter the invoice</button>}
+        {received && <button className="btn ghost" disabled={busy} onClick={() => go("buying", "returns")}>Send goods back</button>}</Edits>
       </>}>
       <div className="row wrap small muted" style={{ gap: 16, marginBottom: 10 }}>
         <span>To <Loc id={po.location} /></span>
@@ -315,6 +345,10 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
         <span>{po.sent_on ? `Sent ${day(po.sent_on)}` : po.header ? "Not sent yet" : "Imported open order"}</span>
         {po.vendor_reference && <span>Supplier ref. {po.vendor_reference}</span>}
         <span>{money(po.value, po.currency)}</span>
+        {agreement && <span>Scheduling agreement for <Prod id={po.product ?? ""} />{po.valid_to ? ` until ${day(po.valid_to)}` : ""}
+          {po.target_qty != null ? `: ${qty(po.released_qty)} of ${qty(po.target_qty)} scheduled` : ""}</span>}
+        {po.approvals.length > 0 && <span>Released {po.approvals.map((a) => `${a.level}${a.by ? ` by ${a.by}` : ""} ${day(a.on)}`).join(", ")}</span>}
+        {!po.approved && po.levels_needed.length > 1 && <span>Needs {po.levels_needed.join(", then ")}</span>}
         {po.header && <PoDocButtons po={po} ds={ds} />}
       </div>
       {po.attention.length > 0 && <div className="banner warning" style={{ marginBottom: 10 }}><div>{po.attention.map((a) => <div key={a}>• {a}</div>)}</div></div>}
@@ -364,12 +398,29 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
                     ? <input type="date" className="input" aria-label={`Delivery date ${x.id}`} value={e.date} onChange={(ev) => set(x.id, { date: ev.target.value })} />
                     : day(x.due_date)}</td>
                   <td>{editing && mode === "confirm"
-                    ? <input type="date" className="input" aria-label={`Confirmed date ${x.id}`} value={e.date} onChange={(ev) => set(x.id, { date: ev.target.value })} />
+                    ? e.parts ? <span className="small">in {e.parts.length} deliveries, below</span>
+                      : <span className="row" style={{ gap: 6 }}><input type="date" className="input" aria-label={`Confirmed date ${x.id}`} value={e.date} onChange={(ev) => set(x.id, { date: ev.target.value })} />
+                        <button className="btn sm ghost" type="button" onClick={() => set(x.id, { parts: [{ date: e.date, qty: e.qty }, { date: e.date, qty: "0" }] })}>Several deliveries</button></span>
+                    : (x.confirmations?.length ?? 0) > 1 ? <span className="small">{x.confirmations!.map((c) => `${qty(c.qty)} on ${day(c.date)}`).join(", ")}</span>
                     : x.confirmed_date ? <>{day(x.confirmed_date)}{x.confirmed_qty != null && x.confirmed_qty < x.ordered - 1e-6 && <span className="small"> · {qty(x.confirmed_qty)}</span>}</>
-                    : x.confirmed_qty != null ? qty(x.confirmed_qty) : "—"}</td>
+                    : x.confirmed_qty != null ? qty(x.confirmed_qty) : "—"}
+                    {x.contract && <div className="faint small">contract {x.contract}</div>}</td>
                   <td><Badge sev={STATUS_SEV[x.status] ?? "info"}>{x.status}</Badge>{x.days_late > 0 && !x.closed && <span className="small"> {x.days_late} d</span>}
                     {x.last_receipt && <div className="faint small">last in {day(x.last_receipt)}</div>}</td>
                 </tr>
+                {editing && mode === "confirm" && e.parts && <tr className="sub"><td colSpan={10}>
+                  <div className="row wrap" style={{ gap: 8 }}>
+                    {e.parts.map((pt, i) => <span key={i} className="row" style={{ gap: 4 }}>
+                      <input className="input num" style={{ width: 80 }} type="number" min={0} aria-label={`Delivery ${i + 1} quantity ${x.id}`} value={pt.qty}
+                        onChange={(ev) => set(x.id, { parts: e.parts!.map((q, j) => (j === i ? { ...q, qty: ev.target.value } : q)) })} />
+                      on <input type="date" className="input" aria-label={`Delivery ${i + 1} date ${x.id}`} value={pt.date}
+                        onChange={(ev) => set(x.id, { parts: e.parts!.map((q, j) => (j === i ? { ...q, date: ev.target.value } : q)) })} />
+                      {e.parts!.length > 2 && <button className="btn sm ghost" type="button" aria-label={`Remove delivery ${i + 1}`}
+                        onClick={() => set(x.id, { parts: e.parts!.filter((_, j) => j !== i) })}>✕</button>}</span>)}
+                    <button className="btn sm ghost" type="button" onClick={() => set(x.id, { parts: [...e.parts!, { date: e.parts![e.parts!.length - 1].date, qty: "0" }] })}>+ Another delivery</button>
+                    <button className="btn sm ghost" type="button" onClick={() => set(x.id, { parts: null })}>One delivery</button>
+                    <span className="small faint">{qty(e.parts.reduce((a, q) => a + Number(q.qty || 0), 0))} of {qty(x.ordered)} confirmed</span>
+                  </div></td></tr>}
                 {editing && mode === "receive" && traced && e.on && <tr className="sub"><td colSpan={10}>
                   <LotFields ds={ds} product={x.product} value={lots[x.id] ?? NO_LOT} receiving onChange={(v) => setLots({ ...lots, [x.id]: v })} /></td></tr>}
                 </Fragment>
@@ -383,9 +434,9 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
 }
 
 const MODE_HINT: Record<Exclude<Mode, null>, string> = {
-  confirm: "The date and quantity the supplier promised. The plan expects the goods then, and counts no more than confirmed.",
+  confirm: "The date and quantity the supplier promised, or several deliveries. The plan expects each then, and counts no more than confirmed.",
   receive: "Posts a goods receipt per line. Stock and the order update when the plan moves past this date (Actuals → Start a new week).",
-  change: "A new quantity or date needs a new confirmation from a supplier who confirms; an order that grows above the approval limit needs approving again.",
+  change: "A new quantity or date needs a new confirmation from a supplier who confirms; an order that grows above the approval limit needs releasing again.",
   cancel: "Only lines nothing has been received for can be cancelled. The plan buys again what is still needed.",
 };
 
@@ -431,7 +482,7 @@ function Suppliers({ res, ds }: { res: PurchasingView; ds: Dataset }) {
                 <tr key={v.supplier} className={`clickable ${open === v.supplier ? "selected" : ""}`} onClick={() => setOpen(open === v.supplier ? null : v.supplier)}>
                   <td><b>{v.name}</b><div className="faint small">{v.supplier}</div></td>
                   <td>{v.blocked ? <Badge sev="error">blocked</Badge> : <Badge sev="ok">open</Badge>}
-                    <span className="small"> {v.confirmation_required ? "confirms orders · " : ""}{v.payment_terms_days} d terms · {v.info_records.length} source{v.info_records.length === 1 ? "" : "s"}</span></td>
+                    <span className="small"> {v.confirmation_required ? "confirms orders · " : ""}{v.terms || `${v.payment_terms_days} d terms`} · {v.info_records.length} source{v.info_records.length === 1 ? "" : "s"}</span></td>
                   <td className="num">{v.open_lines || ""}</td><td className="num">{v.open_value ? money(v.open_value, res.currency) : ""}</td>
                   <td className="num">{v.closed_lines || ""}</td>
                   <td className="num">{v.on_time != null ? pct(v.on_time, 0) : "—"}</td><td className="num">{v.in_full != null ? pct(v.in_full, 0) : "—"}</td>
@@ -452,6 +503,10 @@ function Suppliers({ res, ds }: { res: PurchasingView; ds: Dataset }) {
 }
 
 function SupplierDetail({ v, currency, ds }: { v: VendorRow; currency: string; ds: Dataset }) {
+  const { busy, run, banners } = usePoAction();
+  const [until, setUntil] = useState("");
+  const [target, setTarget] = useState("");
+  const agreements = (ds.purchase_orders ?? []).filter((p) => p.kind === "scheduling_agreement" && p.supplier === v.supplier);
   const recordIndex = (ds.vendors ?? []).findIndex((x) => x.supplier === v.supplier);
   const toggleBlock = () => store.update((d) => {
     const list = [...(d.vendors ?? [])];
@@ -467,14 +522,15 @@ function SupplierDetail({ v, currency, ds }: { v: VendorRow; currency: string; d
         <a className="btn sm ghost" href={href("data", "vendors", recordIndex >= 0 ? v.supplier : undefined)}>{v.has_record ? "Edit purchasing data" : "Add purchasing data"}</a></>}>
       <div className="row wrap small muted" style={{ gap: 16, marginBottom: 10 }}>
         <span>{v.confirmation_required ? "Confirms every order" : "Does not confirm orders"}</span>
-        <span>Pays in {v.payment_terms_days} days</span><span>Orders in {v.currency}</span>
+        <span>{(() => { const t = (ds.payment_terms ?? []).find((x) => x.id === (ds.vendors ?? []).find((y) => y.supplier === v.supplier)?.payment_terms);
+          return t ? `We pay on ${t.name || t.id}` : `We pay in ${v.payment_terms_days} days`; })()}</span><span>Orders in {v.currency}</span>
         {v.confirmed_late > 0 && <span>{plural(v.confirmed_late, "line")} confirmed later than asked</span>}
       </div>
       {v.info_records.length === 0 ? <Empty title="Sells nothing yet">Add a purchasing source for this supplier.</Empty> : (
         <div className="table-wrap">
           <table className="t">
             <thead><tr><th>Source</th><th>Product</th><th>To</th><th className="num">Price</th><th>Price scales</th><th className="num">Min</th>
-              <th className="num">Lead time</th><th>Valid</th><th>Source list</th></tr></thead>
+              <th className="num">Lead time</th><th>Valid</th><th>Source list</th><th>Scheduling agreement</th></tr></thead>
             <tbody>
               {v.info_records.map((r) => (
                 <tr key={r.source_id}>
@@ -486,12 +542,26 @@ function SupplierDetail({ v, currency, ds }: { v: VendorRow; currency: string; d
                   <td className="num">{qty(r.lead_time_days)} d</td>
                   <td className="small">{r.valid_from || r.valid_to ? `${r.valid_from ? day(r.valid_from) : "…"} – ${r.valid_to ? day(r.valid_to) : "…"}` : "always"}</td>
                   <td>{r.blocked ? <Badge sev="error">blocked</Badge> : r.fixed ? <Badge sev="ok">fixed</Badge> : <span className="small">priority {r.priority}{r.quota != null ? ` · quota ${pct(r.quota, 0)}` : ""}</span>}</td>
+                  <td>{(() => {
+                    const sa = agreements.find((p) => p.product === r.product && p.location === r.location);
+                    return sa ? <a href={href("buying", "orders", sa.id)}>{sa.id}</a> : !r.blocked && !v.blocked && <Edits>
+                      <button className="btn sm ghost" disabled={busy} onClick={() => run("create_agreement", "", { supplier: v.supplier, location: r.location,
+                        product: r.product, valid_to: until || null, qty: target === "" ? null : Number(target), date: ds.settings.planning_start })}>Make one</button></Edits>;
+                  })()}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+      {banners}
+      {v.info_records.length > 0 && <Edits><div className="row wrap small" style={{ gap: 10, marginTop: 8 }}>
+        <span className="muted">A new scheduling agreement runs</span>
+        <label className="row">until <input type="date" className="input" value={until} aria-label="Scheduling agreement until" onChange={(e) => setUntil(e.target.value)} /></label>
+        <label className="row">for <input className="input num" style={{ width: 90 }} type="number" min={0} aria-label="Scheduling agreement quantity" value={target}
+          placeholder="any" onChange={(e) => setTarget(e.target.value)} /></label>
+        <span className="faint">Planning's purchases of that product then become delivery schedule lines on it, sent as one schedule.</span>
+      </div></Edits>}
       <p className="faint small" style={{ marginTop: 8 }}>{currency !== v.currency ? `Values in ${currency}; prices in the source's currency.` : ""}</p>
     </Panel>
   );

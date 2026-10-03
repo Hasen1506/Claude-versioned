@@ -104,6 +104,7 @@ export type PromiseCommitResponse = S["PromiseCommitResponse"];
 
 export type ActualsView = S["ActualsView"];
 export type StockRow = S["StockRow"];
+export type YieldRow = S["YieldRow"];
 export type OpenOrderRow = S["OpenOrderRow"];
 export type AccuracyReport = S["AccuracyReport"];
 export type AccuracySeries = S["AccuracySeries"];
@@ -163,7 +164,31 @@ export type CreatePoResponse = S["CreatePoResponse"];
 export type PoActionResponse = S["PoActionResponse"];
 export type PoAction = S["PoActionRequest"]["action"];
 export type PoLineInput = S["PoLineInput"];
+export type PoActionInput = Omit<Partial<S["PoActionRequest"]>, "dataset" | "action" | "po">;
+export type PayablesView = S["PayablesView"];
+export type SupplierInvoiceView = S["SupplierInvoiceView"];
+export type ToInvoice = S["ToInvoice"];
+export type PayableRow = S["PayableRow"];
+export type ContractView = S["ContractView"];
+export type SupplierReturnView = S["SupplierReturnView"];
 export type RequisitionPick = S["RequisitionPick"];
+
+// Phase M: order to cash
+export type SalesView = S["SalesView"];
+export type OrderView = S["OrderView"];
+export type OrderLineView = S["OrderLineView"];
+export type QuotationView = S["QuotationView"];
+export type DeliveryView = S["DeliveryView"];
+export type InvoiceView = S["InvoiceView"];
+export type ReturnView = S["ReturnView"];
+export type ToDeliver = S["ToDeliver"];
+export type ToBill = S["ToBill"];
+export type CustomerRow = S["CustomerRow"];
+export type SalesReport = S["SalesReport"];
+export type SalesAction = S["SalesActionRequest"]["action"];
+export type SalesLineInput = S["SalesLineInput"];
+export type SalesActionResponse = S["SalesActionResponse"];
+export type SalesActionInput = Omit<Partial<S["SalesActionRequest"]>, "dataset" | "action">;
 
 // Phase I: sign-in and companies kept on the server
 export type AuthConfig = S["AuthConfig"];

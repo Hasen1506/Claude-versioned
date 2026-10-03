@@ -67,6 +67,9 @@ def conversion_unit_cost(ds: Dataset, src_id: str) -> float:
         if op.labor_resource:
             lr = ds.resource_by_id.get(op.labor_resource)
             per_unit += op.labor_hours_per_unit * (lr.cost_per_hour if lr else 0.0)
+        for t in op.tools:
+            tr = ds.resource_by_id.get(t)
+            per_unit += op.run_hours_per_unit_avg * (tr.cost_per_hour if tr else 0.0)
         total += enter[op.seq] * per_unit
     return total + ps.conversion_cost_per_unit
 
@@ -152,7 +155,7 @@ def roll_up(ds: Dataset, g: NetworkGraph) -> Valuation:
 def _run_cost(ds: Dataset, ps, value: dict[Node, float]) -> float:
     """Materials and conversion of a run, per good unit of the main product."""
     lot = typical_lot(ps)
-    mat = sum(value.get((ps.location, n.product), 0.0) * (n.per_unit + n.per_order / lot) for n in needs(ds, ps))
+    mat = sum(value.get((n.location or ps.location, n.product), 0.0) * (n.per_unit + n.per_order / lot) for n in needs(ds, ps))
     return mat + conversion_unit_cost(ds, ps.id)
 
 

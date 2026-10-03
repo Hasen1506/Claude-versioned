@@ -41,7 +41,9 @@ class Settings(Model):
     default_calendar: str | None = Ref("calendar", default=None)
     capacity_constrained: bool = Field(
         False, description="Plan make orders within the capacity of finite machines and labour: an order that does "
-                           "not fit uses an alternative machine, else starts earlier, else finishes later (reported)")
+                           "not fit uses an alternative machine, else starts earlier, else finishes later (reported); "
+                           "purchases and transfers within the weekly capacity of their supplier or lane: what does "
+                           "not fit goes to another source, else an earlier week")
     capacity_direction: Literal["earlier", "later"] = Field(
         "earlier", description="Levelling: an order that does not fit first tries earlier days (builds ahead, stock) "
                                "or later days (accepts a delay, reported), then the other way")
@@ -50,6 +52,9 @@ class Settings(Model):
                                        "L4L = exactly what is needed that day, POQ = the need of the next "
                                        "`default_lot_periods` buckets (one week by default)")
     default_lot_periods: int = Field(1, ge=1, le=52, description="POQ default: buckets each order covers")
+    capacity_overtime: bool = Field(
+        False, description="Levelling may plan overtime: an order that does not fit the shift hours, even on an "
+                           "alternative machine, uses the machines' overtime (at its cost) before it is moved")
     capacity_max_early_days: int | None = Unit(
         "days", ge=0, le=365, default=None,
         description="Levelling: move an order at most this many days earlier to fit; empty = as far as today")
@@ -174,7 +179,26 @@ class CustomerPrice(Model):
 
     customer: str = Ref("location", description="The customer (or selling location) the price is agreed with")
     product: str = Ref("product")
-    price: float = Unit("money_per_unit", description="Net price per base unit, in the company currency")
+    price: float = Unit("money_per_unit", description="Price per base unit, in the company currency")
+    scales: list[PriceScale] = Field(default_factory=list, max_length=20,
+                                     description="Quantity breaks: from this quantity on one order line, this price")
+    discount: float = Unit("fraction", lt=1, default=0.0,
+                           description="Discount off this price for the customer on this product (0.05 = 5 %)")
+
+    @field_validator("scales")
+    @classmethod
+    def _scales(cls, v: list[PriceScale]) -> list[PriceScale]:
+        v = sorted(v, key=lambda x: x.from_qty)
+        if len({x.from_qty for x in v}) < len(v):
+            raise ValueError("two price scales start at the same quantity")
+        return v
+
+    def price_for(self, qty: float) -> float:
+        p = self.price
+        for sc in self.scales:
+            if qty + 1e-9 >= sc.from_qty:
+                p = sc.price
+        return p
 
 
 class LotSizing(Model):
@@ -217,6 +241,28 @@ class SafetyStockPolicy(Model):
         return self
 
 
+class MrpGroup(Model):
+    """Planning parameters shared by many products (≈ S/4 MRP group): a product at a place that names the group is
+    planned with the group's values wherever the group sets one, instead of its own."""
+
+    id: Id
+    name: str = Field("", max_length=80)
+    strategy: Strategy | None = Field(None, description="Planning strategy for the group (empty: each product's own)")
+    lot_sizing: LotSizing | None = Field(None, description="Lot size for the group (empty: each product's own)")
+    safety_time_days: float | None = Unit("days", default=None, description="Plan receipts this many days early")
+    planning_time_fence_days: float | None = Unit("days", default=None,
+                                                  description="No new proposals inside this fence")
+    consumption_backward_days: float | None = Unit("days", default=None)
+    consumption_forward_days: float | None = Unit("days", default=None)
+    mrp_controller: str | None = Field(None, max_length=40, description="Who plans the group's products")
+
+    def overrides(self) -> dict:
+        """The fields of a product at a place that the group sets."""
+        keys = ("strategy", "lot_sizing", "safety_time_days", "planning_time_fence_days", "consumption_backward_days",
+                "consumption_forward_days", "mrp_controller")
+        return {k: getattr(self, k) for k in keys if getattr(self, k) is not None}
+
+
 class LocationProduct(Model):
     """How one product is planned at one location (≈ S/4 MARC, MRP views 1–4)."""
 
@@ -251,9 +297,28 @@ class LocationProduct(Model):
         "days", default=None,
         description="MEIO: the longest outbound service time this node may quote (empty = no limit, or the "
                     "customer service time where it faces demand)")
+    mrp_group: str | None = Ref("mrp_group", default=None,
+                                description="MRP group: its planning values replace this product's own where it sets them")
+    withdraw_from: str | None = Ref(
+        "location", default=None,
+        description="Special procurement: withdrawal from another plant. Production here takes this part straight "
+                    "from that place's stock, with no transfer order")
+    direct_production: bool = Field(False, description="Special procurement: direct production. Made for each order "
+                                                       "that needs it, never taken from stock or lot-sized")
+    discontinued_on: date | None = Field(None, description="Discontinued from this day: no new supply is planned; "
+                                                           "what its stock does not cover goes to the follow-up")
+    follow_up: str | None = Ref("product", default=None,
+                                description="Follow-up product that takes over the requirements once this one is "
+                                            "discontinued and its stock is used up")
 
     @model_validator(mode="after")
     def _params(self) -> LocationProduct:
+        if self.follow_up is not None and self.follow_up == self.product:
+            raise ValueError("a product cannot be its own follow-up")
+        if self.follow_up is not None and self.discontinued_on is None:
+            raise ValueError("a follow-up product needs the day the product is discontinued")
+        if self.withdraw_from is not None and self.withdraw_from == self.location:
+            raise ValueError("withdrawal from another plant names another place")
         if self.mrp_type is MrpType.REORDER_POINT and self.reorder_point is None:
             raise ValueError("reorder-point planning needs the reorder point")
         if self.lot_sizing.policy is LotSizePolicy.MIN_MAX and self.max_stock is None:
@@ -461,6 +526,10 @@ class Operation(Model):
         description="Overlap: the next step may start once this many units are done here (empty = when all are)")
     alternatives: list[str] = Field(default_factory=list, json_schema_extra={"x-ref": "resource"},
                                     description="Other machines that can do this step with the same times")
+    tools: list[str] = Field(default_factory=list, max_length=10, json_schema_extra={"x-ref": "resource"},
+                             description="Tools the step holds while it runs (a mould, a die, a fixture): each is "
+                                         "busy for the machine's hours, so two steps needing one tool never run "
+                                         "at once")
     subcontract: Subcontract | None = Field(None, description="Done outside by a supplier instead of on a resource")
 
     def batches(self, qty: float) -> int:
@@ -488,6 +557,30 @@ class Operation(Model):
             raise ValueError("a step done outside does not use a machine here")
         if self.resource and self.resource in self.alternatives:
             raise ValueError("the machine is listed as its own alternative")
+        if self.tools and not self.resource:
+            raise ValueError("a step done outside holds no tool here")
+        if len(set(self.tools)) < len(self.tools) or (self.resource and self.resource in self.tools):
+            raise ValueError("a tool is listed twice, or the machine is listed as a tool")
+        return self
+
+
+class BomAlternative(Model):
+    """Another bill of materials for the same production version, chosen by the order's size (≈ S/4 alternative BOM
+    with a lot-size range): a small run made from bought-in paste, a large one from the raw ingredients."""
+
+    id: str = Field(min_length=1, max_length=20)
+    name: str = Field("", max_length=80)
+    from_qty: float = Unit("qty", default=0.0, description="Used for orders of at least this many good units")
+    to_qty: float | None = Unit("qty", gt=0, default=None, description="…and at most this many (empty = no limit)")
+    components: list[BomItem] = Field(default_factory=list)
+
+    def fits(self, qty: float) -> bool:
+        return qty + 1e-9 >= self.from_qty and (self.to_qty is None or qty <= self.to_qty + 1e-9)
+
+    @model_validator(mode="after")
+    def _range(self) -> BomAlternative:
+        if self.to_qty is not None and self.to_qty < self.from_qty:
+            raise ValueError("the lot-size range ends before it starts")
         return self
 
 
@@ -499,6 +592,9 @@ class ProductionSource(Model):
     product: str = Ref("product")
     output_qty: float = Unit("qty", gt=0, default=1.0, description="Base quantity the BOM refers to")
     components: list[BomItem] = Field(default_factory=list)
+    bom_alternatives: list[BomAlternative] = Field(
+        default_factory=list, description="Other bills of materials chosen by the order's size; an order no range "
+                                          "fits uses the components above")
     operations: list[Operation] = Field(default_factory=list)
     co_products: list[CoProduct] = Field(default_factory=list,
                                          description="Other products the same run yields (co- and by-products)")
@@ -516,6 +612,16 @@ class ProductionSource(Model):
     quota: float | None = Unit("fraction", default=None, le=1, description="Share of requirements")
     valid_from: date | None = None
     valid_to: date | None = None
+
+    def bom_for(self, qty: float | None) -> list[BomItem]:
+        """The bill of materials an order of ``qty`` good units uses: the first alternative whose lot-size range fits,
+        else the main one. ``None``: every line of every alternative (the network's structure)."""
+        if qty is None:
+            return [*self.components, *(c for a in self.bom_alternatives for c in a.components)]
+        for a in self.bom_alternatives:
+            if a.fits(qty):
+                return a.components
+        return self.components
 
     @model_validator(mode="after")
     def _structure(self) -> ProductionSource:
@@ -544,9 +650,14 @@ class ProductionSource(Model):
             raise ValueError("a product cannot be both a part and a co-product of the same run")
         if sum(c.cost_share for c in self.co_products) > 1 + 1e-9:
             raise ValueError("the co-products' cost shares add up to more than 100%")
-        for c in self.components:
+        for c in [*self.components, *(x for a in self.bom_alternatives for x in a.components)]:
             if c.operation is not None and c.operation not in seqs:
                 raise ValueError(f"component {c.product} references unknown operation {c.operation}")
+            if c.product == self.product:
+                raise ValueError("a product cannot be its own component")
+        alts = [a.id for a in self.bom_alternatives]
+        if len(alts) != len(set(alts)):
+            raise ValueError("two alternative bills of materials have the same id")
         if self.valid_from and self.valid_to and self.valid_to < self.valid_from:
             raise ValueError("valid_to before valid_from")
         if self.max_lot is not None and self.max_lot < self.min_lot:

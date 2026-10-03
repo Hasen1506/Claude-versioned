@@ -251,7 +251,73 @@ Stock is kept the way a food or parts business needs it, in `engine/scp/actuals/
 - **Serial numbers**, one per unit, given at receipt (or numbered) and leaving first in, first out.
 - **The cold chain**: a refrigerated route mode, and a check for chilled products on routes without one.
 
-The next plan (phases P, M, N, Q) is at the end of
+## Planning depth (Phase P)
+
+The supply plan goes further into how a plant really plans, mostly in `engine/scp/plan/mrp.py` and `structure.py`:
+
+- **Lots within shelf life.** A period lot covers no more days than the product keeps; an economic or min–max lot is
+  cut to what is used before it expires; a fixed batch that is longer leaves a planned "expires" requirement and a
+  warning, and the plan makes again for it.
+- **Yield in the bill of materials.** *Parts used* on Actuals measures each part's loss from production orders posted
+  with actual usage, beside the loss the bill of materials plans with, and puts it in with one click.
+- **Promises that make their supply.** Taking or changing an order promised on new production (or made to order) makes
+  that production and the transfers bringing it firm at once, as capable-to-promise does in SAP.
+- **Late receipts named.** A receipt that leaves a firm order short says when it can run in full.
+- **Demand events on the Demand page**, for the series in view, starting without effect.
+- **MRP groups** that set the planning rules of many products at once; **withdrawal from another plant** (a part
+  taken from another plant's stock); **direct production** (a part made for its parent's order, never from stock);
+  **discontinuation** with a follow-up product that takes over once the old one's stock is used up; **alternative
+  bills of materials** chosen by the order's size.
+- **Capacity**: overtime as a levelling choice (at its cost); purchases and shipments kept within their supplier's and
+  lane's weekly capacity, the rest going to another source or an earlier week; steps that hold a tool (a mould, a
+  die) with their machine, in the plan and on the shop floor schedule; and levelling by hand: drag a run onto a day on
+  the Capacity page, or give it a date, and it stays there as a firm run.
+
+## Order to cash (Phase M)
+
+*Selling* takes a customer from their order to their payment (`engine/scp/sales`, `engine/scp/model/sales.py`):
+
+- **Orders with several lines.** Each line is priced from the customer's price at its quantity scale (else the
+  product's) less the customer's discounts, unless a price is agreed on the line, and promised like any order; new
+  production it needs is made firm at once (R13). Lines are the sales-order demand the plan already reads, under an
+  order header (`SO-00001/10`, `/20`, …).
+- **Credit.** A customer's credit limit counts their open order lines, goods shipped and not invoiced, and unpaid
+  invoices less credit notes, with tax. An order beyond it is promised but held for delivery until someone releases it.
+- **Quotations** price an offer without promising it; won, they become an order at the quoted prices.
+- **Deliveries** gather the lines due to ship, one per customer and shipping place: picked (short if need be), packed,
+  shipped as one material document, and signed for.
+- **Invoices** bill what was shipped, one per customer and payment terms, with the customer's tax rate; payments settle
+  them, with the cash discount when paid in time. A cancelled invoice frees its goods to be billed again.
+- **Returns** come back into quality inspection (or blocked, or ready to sell) as a receipt naming the return, and a
+  credit note pays them back.
+- **Documents**: the order confirmation, the invoice and the credit note print, download or start an e-mail, in exact
+  amounts.
+
+## Procure to pay (Phase N)
+
+*Buying* now follows a purchase past the goods receipt to the payment (`engine/scp/purchasing/payables.py`, and
+`engine/scp/model/purchasing.py`):
+
+- **Firming sends what it ordered** (R20): its result offers to send the purchase orders it made, all but those still
+  to be released.
+- **Release strategy.** Levels by order value (e.g. a buyer above 500, a director above 1,000), each with the people
+  who may release it; on a server the release is the signed-in account's, and one account never releases two levels of
+  one order. Without levels, the approval limit is the one level.
+- **Contracts** fix a supplier's prices for a period; orders made while one is valid take its price, name it, and count
+  against its quantity and value. **Scheduling agreements** take planning's purchases of one product as delivery
+  schedule lines, sent as one schedule.
+- **Confirmations in several deliveries**: the supplier's dates and quantities for one line, each expected by planning
+  and promising on its own day.
+- **Supplier invoices** are checked against the order's price and the goods received (three-way match). A difference
+  beyond the tolerances blocks payment; a quantity block lifts once the goods arrive, a price block when someone
+  releases it. Payments follow the supplier's terms and take the cash discount in time. The same invoice number is
+  never entered twice.
+- **Returns to the supplier** take goods out of stock against their order line: replaced (the line opens again) or
+  credited (the line is reduced and the credit memo is entered at the price paid).
+- **What we owe**: open invoices per supplier (overdue, due within a week, blocked) and goods received but not
+  invoiced. Blocked and overdue bills, credit holds and overdue customer invoices are in the worklist.
+
+The next plan (phase Q) is at the end of
 [docs/USABILITY_LOG.md](docs/USABILITY_LOG.md#the-next-plan-after-phase-o).
 
 ## What is here (P0–P10)

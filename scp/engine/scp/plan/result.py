@@ -11,7 +11,7 @@ from ..validate import Issue
 
 OrderKind = Literal["make", "buy", "transfer"]
 ReqKind = Literal["forecast", "sales_order", "dependent", "transfer", "expiry"]
-SupplyKind = Literal["on_hand", "receipt", "co_product", "order"]
+SupplyKind = Literal["on_hand", "receipt", "co_product", "order", "follow_up"]
 
 
 class Peg(Out):
@@ -64,6 +64,7 @@ class PlannedOrder(Out):
     # capacity-constrained planning: workdays moved to fit (negative = earlier) and steps on an alternative machine
     capacity_shift_days: int = 0
     step_resources: dict[int, str] = {}
+    overtime_hours: dict[str, float] = {}   # levelling with overtime: hours beyond the shifts, per machine
     # buy: open purchase order lines for the same product and place that arrive after this is needed (expediting one
     # of them may do instead of ordering again)
     open_later: list[str] = []

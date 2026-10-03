@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from datetime import timedelta
+from datetime import date, timedelta
 
 from ..model import Dataset, LocationType, ReceiptKind, Reservation, ScheduledReceipt
 from ..plan import PlanResult
+from ..plan.leadtime import schedule_make
 from ..purchasing import create_purchase_orders
 from .result import FirmedOrder, FirmReport
 
@@ -31,8 +32,13 @@ def _next_numbers(ds: Dataset) -> dict[str, int]:
 
 
 def firm_orders(ds: Dataset, plan: PlanResult, ids: list[str] | None = None,
-                within_days: int | None = None) -> tuple[Dataset, FirmReport]:
+                within_days: int | None = None, starts: dict[str, date] | None = None,
+                send: bool = False) -> tuple[Dataset, FirmReport]:
+    """``starts``: planned production orders moved by hand (levelling by dragging a run to another day): each is made
+    firm starting on that day, its due date and reservations moved with it. ``send``: the purchase orders it makes
+    go to their suppliers at once, all but those still to be released (R20)."""
     rep = FirmReport(ok=False, firmed=[], skipped={})
+    starts = starts or {}
     if not plan.ok:
         return ds, rep
     horizon = ds.settings.planning_start + timedelta(days=ds.execution.firm_zone_days if within_days is None
@@ -60,15 +66,29 @@ def firm_orders(ds: Dataset, plan: PlanResult, ids: list[str] | None = None,
         if o.kind == "buy":
             buys.append(o)
             continue
+        start, due, shift = o.start_date, o.due_date, 0
+        moved = starts.get(o.id)
+        if moved is not None:
+            ps = ds.production_source_by_id.get(o.source_id) if o.kind == "make" else None
+            if ps is None:
+                rep.skipped[o.id] = "only a production run can be moved to another day here"
+                continue
+            if moved < ds.settings.planning_start:
+                rep.skipped[o.id] = "a run cannot be moved to before today"
+                continue
+            sch = schedule_make(ds, ps, o.qty, start=moved)
+            start, due, shift = sch.start_date, sch.due_date, (sch.start_date - o.start_date).days
         prefix, kind = PREFIX[o.kind]
         num[prefix] += 1
         rid = f"{prefix}-{num[prefix]:05d}"
-        rvs = [Reservation(location=r.location, product=r.product, date=r.date, qty=r.qty) for r in reqs.get(o.id, [])]
+        rvs = [Reservation(location=r.location, product=r.product, date=max(ds.settings.planning_start,
+                                                                           r.date + timedelta(days=shift)), qty=r.qty)
+               for r in reqs.get(o.id, [])]
         receipts.append(ScheduledReceipt(id=rid, kind=kind, location=o.location, product=o.product, qty=o.qty,
-                                         due_date=o.due_date, start_date=o.start_date, source=o.source_id,
+                                         due_date=due, start_date=start, source=o.source_id,
                                          reservations=rvs, step_resources=dict(o.step_resources), planned_as=o.id))
         rep.firmed.append(FirmedOrder(planned_id=o.id, receipt_id=rid, kind=kind.value, location=o.location,
-                                      product=o.product, qty=o.qty, start_date=o.start_date, due_date=o.due_date,
+                                      product=o.product, qty=o.qty, start_date=start, due_date=due,
                                       reservations=len(rvs)))
     out = ds.model_copy(update={"receipts": receipts})
     if buys:
@@ -85,6 +105,13 @@ def firm_orders(ds: Dataset, plan: PlanResult, ids: list[str] | None = None,
                                           reservations=0))
         rep.purchase_orders = [c.id for c in made.created]
         rep.notes = [n for c in made.created for n in c.notes]
+        if send and rep.purchase_orders:
+            from ..purchasing import PurchasingError, send_all
+            try:
+                out, sent = send_all(out, rep.purchase_orders, ds.settings.planning_start)
+                rep.sent = sent.sent
+            except PurchasingError:
+                pass                      # nothing that could go yet
     if wanted is not None:
         for oid in sorted(wanted - {f.planned_id for f in rep.firmed} - set(rep.skipped)):
             rep.skipped[oid] = "not in the current plan (re-run supply planning)"

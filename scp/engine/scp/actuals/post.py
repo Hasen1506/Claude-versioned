@@ -130,10 +130,10 @@ def _bom_parts(ds: Dataset, rc: ScheduledReceipt, made: float, first: bool) -> l
         return []
     day = rc.start_date or ds.settings.planning_start
     out = []
-    for c in needs(ds, ps, day):
+    for c in needs(ds, ps, day, qty=rc.qty):
         q = c.per_unit * made + (c.per_order if first else 0.0)
         if q > EPS:
-            out.append((rc.location, c.product, q))
+            out.append((c.location or rc.location, c.product, q))
     return out
 
 
@@ -145,7 +145,7 @@ def _production_parts(ds: Dataset, rc: ScheduledReceipt, total: float, made: flo
     parts = []
     ordered = _ordered(rc)
     ps = ds.production_source_by_id.get(rc.source or "")
-    bom = {n.product: n for n in needs(ds, ps, rc.start_date or ds.settings.planning_start)} if ps else {}
+    bom = {n.product: n for n in needs(ds, ps, rc.start_date or ds.settings.planning_start, qty=ordered)} if ps else {}
     for rv in (rc.original_reservations or rc.reservations):
         req = rv.required_qty if rv.required_qty is not None else rv.qty
         part = bom.get(rv.product)
@@ -284,10 +284,20 @@ def with_short(ds: Dataset, rep: ActionReport, parts: set[tuple[str, str]], on: 
     short = short_orders(ds, parts, on)
     if not short:
         return rep
-    names = ", ".join(s.order for s in short[:4]) + ("…" if len(short) > 4 else "")
-    return rep.model_copy(update={"short_orders": short, "message": rep.message + (
-        f" {len(short)} firm order{'s' if len(short) != 1 else ''} can no longer run in full: {names}; shorten "
-        f"{'them' if len(short) != 1 else 'it'} to what the parts cover, or find the rest.")})
+    def say(xs: list, what: str) -> str:
+        names = ", ".join(s.order + (f" (the rest on {s.complete_on.isoformat()})" if s.complete_on else "")
+                          for s in xs[:4]) + ("…" if len(xs) > 4 else "")
+        return f" {len(xs)} firm order{'s' if len(xs) != 1 else ''} {what}: {names}"
+    late = [s for s in short if s.complete_on]
+    short_ = [s for s in short if not s.complete_on]
+    msg = rep.message
+    if short_:
+        msg += (say(short_, "can no longer run in full") + f"; shorten {'them' if len(short_) != 1 else 'it'} to what "
+                "the parts cover, or find the rest.")
+    if late:
+        msg += (say(late, "cannot start in full on time") + f"; move {'them' if len(late) != 1 else 'it'} to when the "
+                "parts are there, or shorten.")
+    return rep.model_copy(update={"short_orders": short, "message": msg})
 
 
 def sales_order(ds: Dataset, oid: str) -> DemandRecord:
@@ -325,6 +335,9 @@ def deliver(ds: Dataset, oid: str, qty: float | None = None, on: date | None = N
             ship_from: str | None = None, note: str = "", lot: Lot | None = None) -> tuple[Dataset, ActionReport]:
     """Goods issue of a sales order to its customer (≈ VL01N + PGI)."""
     d = sales_order(ds, oid)
+    head = next((o for o in ds.sales_orders if o.id == d.order), None) if d.order else None
+    if head is not None and head.credit_block:
+        raise PostingError(f"{head.id} is blocked over the customer's credit limit: release it on Selling first")
     frm = ship_from or ship_point(ds, d)
     if not frm or ds.location_type(frm) not in STOCKING_LOCATION_TYPES:
         raise PostingError(f"{oid} has no place to ship from: give {_at(ds, d.location)} a route from a plant or "

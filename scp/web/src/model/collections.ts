@@ -7,7 +7,9 @@ type Obj = Record<string, unknown>;
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
   | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides"
-  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches";
+  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches" | "mrp_groups"
+  | "customers" | "payment_terms" | "sales_orders" | "quotations" | "deliveries" | "invoices" | "returns"
+  | "contracts" | "supplier_invoices" | "supplier_returns";
 
 export interface Column {
   label: string;
@@ -142,6 +144,17 @@ export const COLLECTIONS: CollectionDef[] = [
     ],
   },
   {
+    key: "mrp_groups", label: "MRP groups", singular: "MRP group", defName: "MrpGroup", issueType: "mrp_group",
+    group: "Planning data", keyOf: (o) => s(o.id),
+    blurb: "Planning values shared by many products: a planning policy that names the group is planned with the group's strategy, lot size, safety time, fence and consumption windows wherever the group sets one.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Name", get: (o) => s(o.name) },
+      { label: "Strategy", get: (o) => s(o.strategy ?? "each product's own") },
+      { label: "Lot", get: (o) => s((o.lot_sizing as Obj | undefined)?.policy ?? "each product's own") },
+      { label: "Products", get: (o, ds) => (ds.location_products ?? []).filter((lp) => lp.mrp_group === o.id).length, num: true },
+    ],
+  },
+  {
     key: "demand", label: "Demand", singular: "demand record", defName: "DemandRecord", issueType: "demand",
     group: "Planning data", keyOf: (o, i) => s(o.id) || `#${i}`,
     blurb: "Forecasts (optionally spread over a period's working days) and firm sales orders.",
@@ -169,6 +182,107 @@ export const COLLECTIONS: CollectionDef[] = [
       { label: "Id", get: (o) => s(o.id) }, { label: "Supplier", get: (o) => s(o.supplier) },
       { label: "To", get: (o) => s(o.location) }, { label: "Ordered", get: (o) => s(o.order_date) },
       { label: "Sent", get: (o) => s(o.sent_on) }, { label: "Approved", get: (o) => (o.approved === false ? "no" : "yes") },
+    ],
+  },
+  {
+    key: "sales_orders", label: "Sales orders", singular: "sales order", defName: "SalesOrder",
+    issueType: "sales_order", group: "Execution", keyOf: (o) => s(o.id),
+    blurb: "Sales order headers: customer, order date, the customer's number, payment terms and a credit block. The lines are the sales-order demand that names the order (Selling manages both).",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Customer", get: (o) => s(o.customer) },
+      { label: "Ordered", get: (o) => s(o.order_date) }, { label: "Their number", get: (o) => s(o.customer_ref) },
+      { label: "Credit block", get: (o) => (o.credit_block ? "yes" : "") },
+    ],
+  },
+  {
+    key: "quotations", label: "Quotations", singular: "quotation", defName: "Quotation", issueType: "quotation",
+    group: "Execution", keyOf: (o) => s(o.id),
+    blurb: "Offers to customers with their prices and how long they hold. A quotation promises nothing until it is won and becomes an order.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Customer", get: (o) => s(o.customer) },
+      { label: "Valid to", get: (o) => s(o.valid_to) }, { label: "Status", get: (o) => s(o.status) },
+      { label: "Lines", get: (o) => ((o.lines as Obj[]) ?? []).length, num: true },
+    ],
+  },
+  {
+    key: "deliveries", label: "Deliveries", singular: "delivery", defName: "Delivery", issueType: "delivery",
+    group: "Execution", keyOf: (o) => s(o.id),
+    blurb: "Outbound deliveries: what is picked, packed and shipped to a customer, and who signed for it.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Customer", get: (o) => s(o.customer) },
+      { label: "From", get: (o) => s(o.ship_from) }, { label: "Shipped", get: (o) => s(o.issued_on) },
+      { label: "Delivered", get: (o) => s(o.pod_on) },
+    ],
+  },
+  {
+    key: "invoices", label: "Invoices", singular: "invoice", defName: "Invoice", issueType: "invoice",
+    group: "Execution", keyOf: (o) => s(o.id),
+    blurb: "Invoices and credit notes to customers, with their payment terms and the payments received.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Kind", get: (o) => (o.kind === "credit_note" ? "credit note" : "invoice") },
+      { label: "Customer", get: (o) => s(o.customer) }, { label: "Date", get: (o) => s(o.date) },
+      { label: "Due", get: (o) => s(o.due_date) },
+    ],
+  },
+  {
+    key: "returns", label: "Customer returns", singular: "return", defName: "ReturnOrder", issueType: "return",
+    group: "Execution", keyOf: (o) => s(o.id),
+    blurb: "Goods a customer sends back: agreed, received into stock, and credited.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Customer", get: (o) => s(o.customer) },
+      { label: "Product", get: (o) => s(o.product) }, { label: "Qty", get: (o) => o.qty as number, num: true },
+      { label: "Received", get: (o) => s(o.received_on) }, { label: "Credit note", get: (o) => s(o.credit_note) },
+    ],
+  },
+  {
+    key: "contracts", label: "Contracts", singular: "contract", defName: "PurchaseContract", issueType: "contract",
+    group: "Make & buy", keyOf: (o) => s(o.id),
+    blurb: "Prices agreed with a supplier for a period, per product, with the quantity or value agreed. Purchase orders made while a contract is valid take its price and count against it.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Supplier", get: (o) => s(o.supplier) },
+      { label: "From", get: (o) => s(o.valid_from) }, { label: "To", get: (o) => s(o.valid_to) },
+      { label: "Products", get: (o) => ((o.lines as Obj[]) ?? []).length, num: true },
+    ],
+  },
+  {
+    key: "supplier_invoices", label: "Supplier invoices", singular: "supplier invoice", defName: "SupplierInvoice",
+    issueType: "supplier_invoice", group: "Execution", keyOf: (o) => s(o.id),
+    blurb: "Suppliers' invoices and credit memos, checked against the order and the goods received, with the payments made (Buying manages them).",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Kind", get: (o) => (o.kind === "credit_memo" ? "credit memo" : "invoice") },
+      { label: "Supplier", get: (o) => s(o.supplier) }, { label: "Their number", get: (o) => s(o.reference) },
+      { label: "Date", get: (o) => s(o.date) }, { label: "Due", get: (o) => s(o.due_date) },
+    ],
+  },
+  {
+    key: "supplier_returns", label: "Returns to suppliers", singular: "return to a supplier", defName: "SupplierReturn",
+    issueType: "supplier_return", group: "Execution", keyOf: (o) => s(o.id),
+    blurb: "Goods sent back to a supplier against the order line they came on, to be replaced or credited.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Supplier", get: (o) => s(o.supplier) },
+      { label: "Order line", get: (o) => s(o.order) }, { label: "Qty", get: (o) => o.qty as number, num: true },
+      { label: "Date", get: (o) => s(o.date) }, { label: "Credit memo", get: (o) => s(o.credit_memo) },
+    ],
+  },
+  {
+    key: "customers", label: "Customer sales data", singular: "customer record", defName: "Customer", issueType: "customer",
+    group: "Demand inputs", keyOf: (o) => s(o.customer),
+    blurb: "How you sell to each customer: contact, payment terms, a credit limit, a discount on everything they buy, the tax on their invoices and a sales block. A customer without a record buys on the defaults.",
+    columns: [
+      { label: "Customer", get: (o) => s(o.customer) }, { label: "Terms", get: (o) => s(o.payment_terms) },
+      { label: "Credit limit", get: (o) => (o.credit_limit as number | null) ?? "", num: true },
+      { label: "Discount", get: (o) => (o.discount ? `${Math.round((o.discount as number) * 1000) / 10} %` : "") },
+      { label: "Blocked", get: (o) => (o.blocked ? `yes${o.block_reason ? `: ${s(o.block_reason)}` : ""}` : "") },
+    ],
+  },
+  {
+    key: "payment_terms", label: "Payment terms", singular: "payment terms", defName: "PaymentTerms",
+    issueType: "payment_terms", group: "Demand inputs", keyOf: (o) => s(o.id),
+    blurb: "When an invoice is due, and the cash discount for paying early (e.g. 2 % within 10 days, net 30).",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Name", get: (o) => s(o.name) },
+      { label: "Net days", get: (o) => o.net_days as number, num: true },
+      { label: "Discount", get: (o) => (o.discount ? `${Math.round((o.discount as number) * 1000) / 10} % in ${o.discount_days} d` : "") },
     ],
   },
   {
@@ -307,6 +421,11 @@ export function whereUsed(ds: Dataset, kind: "location" | "product" | "resource"
     for (const p of ds.purchasing_sources ?? []) add(p.supplier === id || p.location === id, `way to buy ${p.id}`);
     for (const v of ds.vendors ?? []) add(v.supplier === id, "its supplier purchasing data");
     for (const p of ds.purchase_orders ?? []) add(p.supplier === id || p.location === id, `purchase order ${p.id}`);
+    for (const c of ds.customers ?? []) add(c.customer === id, "its customer sales data");
+    for (const k of ds.contracts ?? []) add(k.supplier === id || k.location === id, `contract ${k.id}`);
+    for (const i of ds.supplier_invoices ?? []) add(i.supplier === id, `supplier ${i.kind === "credit_memo" ? "credit memo" : "invoice"} ${i.id}`);
+    for (const o of ds.sales_orders ?? []) add(o.customer === id, `sales order ${o.id}`);
+    for (const i of ds.invoices ?? []) add(i.customer === id, `${i.kind === "credit_note" ? "credit note" : "invoice"} ${i.id}`);
     for (const l of ds.lanes ?? []) add(l.origin === id || l.destination === id, `route ${l.id}`);
     const lp = (ds.location_products ?? []).filter((x) => x.location === id).length;
     add(lp > 0, `${lp} planning polic${lp === 1 ? "y" : "ies"}`);

@@ -243,6 +243,15 @@ def _solve(inst: Instance, warm: Decoded, hold: dict[str, float], time_limit: fl
         m.AddExactlyOne(lits)
     for r, (ivs, dem) in cum.items():
         m.AddCumulative(ivs, dem, inst.resources[r].units)
+    tool_ivs: dict[str, list] = {}
+    for o in ops:
+        if o.tools:
+            dur = m.NewIntVar(0, horizon, f"d{o.key}")
+            iv = m.NewIntervalVar(s[o.key], dur, e[o.key], f"t{o.key}")
+            for t in o.tools:
+                tool_ivs.setdefault(t, []).append(iv)
+    for t, ivs in tool_ivs.items():
+        m.AddCumulative(ivs, [1] * len(ivs), inst.tool_units.get(t, 1))
 
     def lag_after(o: OpSpec) -> int:
         end = warm.op_end.get(o.key)

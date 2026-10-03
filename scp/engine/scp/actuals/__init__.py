@@ -11,6 +11,7 @@ from .result import (
 )
 from .roll import roll_forward
 from .stock import accuracy_records, accuracy_report, open_orders, pending_openings, stock, stock_rows, unmatched
+from .yields import measured_yields
 
 
 def unbooked(ds: Dataset) -> Unbooked:
@@ -32,11 +33,12 @@ def actuals_view(ds: Dataset, as_of: date | None = None) -> ActualsView:
     d = as_of or ds.settings.planning_start
     return ActualsView(as_of=d, stock=stock_rows(ds, d), open_orders=open_orders(ds, d),
                        accuracy=accuracy_report(ds.accuracy), movements=len(ds.movements), unmatched=unmatched(ds),
-                       unbooked=unbooked(ds) if d == ds.settings.planning_start else None)
+                       unbooked=unbooked(ds) if d == ds.settings.planning_start else None,
+                       yields=measured_yields(ds))
 
 
 __all__ = [
     "AccuracyReport", "ActualsView", "FirmReport", "FirmedOrder", "OpenOrderRow", "PostingError", "RollReport",
-    "StockRow", "accuracy_records", "accuracy_report", "actuals_view", "count_stock", "firm_orders", "open_orders",
+    "StockRow", "accuracy_records", "measured_yields", "accuracy_report", "actuals_view", "count_stock", "firm_orders", "open_orders",
     "pending_openings", "post", "receive", "roll_forward", "ship", "stock", "stock_rows", "unbooked",
 ]
