@@ -15,8 +15,9 @@ A file is CSV (comma, semicolon or tab; the header names the columns, as the bro
 message the ERP would send, or its list of items). Server settings:
 
 * ``SCP_IMPORT_DIR``: where folders of files are looked for (none: only web addresses);
-* ``SCP_IMPORT_HOSTS``: if set, the only hosts a web address may name (comma-separated), so a job cannot reach into
-  the server's own network;
+* ``SCP_IMPORT_HOSTS``: if set, the only hosts a web address may name (comma-separated). Without it any host on the
+  internet may be named, but not one inside the server's own network (a private, loopback or link-local address, as
+  the name resolves when the file is read, redirects included), so a job cannot reach the server's neighbours;
 * ``SCP_TIMEZONE``: the time zone of the times of day (default UTC), e.g. ``Asia/Kolkata``.
 """
 from __future__ import annotations
@@ -25,10 +26,12 @@ import csv
 import datetime as dt
 import hashlib
 import io
+import ipaddress
 import json
 import os
 import re
 import shutil
+import socket
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
@@ -152,7 +155,7 @@ def _check(c: Companies, cid: str, body: JobInput) -> None:
         u = urlparse(body.source)
         if u.scheme not in ("http", "https") or not u.hostname:
             raise CompanyError("a web address starts with https:// (or http://)", 422)
-        allowed = [x.strip().lower() for x in os.environ.get("SCP_IMPORT_HOSTS", "").split(",") if x.strip()]
+        allowed = _hosts()
         if allowed and u.hostname.lower() not in allowed:
             raise CompanyError(f"this server reads files only from {', '.join(allowed)}", 422)
     else:
@@ -438,9 +441,54 @@ def applier(kind: str, items: list[Any]) -> Callable:
 Fetch = Callable[[str, dict[str, str]], bytes]
 
 
+def _hosts() -> list[str]:
+    return [x.strip().lower() for x in os.environ.get("SCP_IMPORT_HOSTS", "").split(",") if x.strip()]
+
+
+def _inside(host: str) -> bool:
+    """Whether a host name resolves to an address in the server's own network (or the machine itself)."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return False                    # no such name: reading it fails on its own
+    for info in infos:
+        ip = ipaddress.ip_address(str(info[4][0]).split("%")[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+            return True
+    return False
+
+
+def reachable(url: str) -> None:
+    """Refuse an address a job may not read: not http(s), a host not on the allowlist, or (without one) a host inside
+    the server's own network."""
+    u = urlparse(url)
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise ValueError(f"{url} is not a web address (http:// or https://)")
+    allowed = _hosts()
+    if allowed:
+        if u.hostname.lower() not in allowed:
+            raise ValueError(f"this server reads files only from {', '.join(allowed)}, not {u.hostname}")
+    elif _inside(u.hostname):
+        raise ValueError(f"{u.hostname} is inside the server's own network: the server's administrator can allow it "
+                         "with SCP_IMPORT_HOSTS")
+
+
+class _Redirect(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only to an address the job could name itself; headers given for the job (Authorization)
+    are not sent on to it."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        reachable(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _fetch(url: str, headers: dict[str, str]) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": "scp-import/1", **headers})
-    with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310 - http(s) only, checked when the job was made
+    reachable(url)
+    req = urllib.request.Request(url, headers={"User-Agent": "scp-import/1"})
+    for k, v in headers.items():
+        req.add_unredirected_header(k, v)          # not carried to wherever a redirect points
+    opener = urllib.request.build_opener(_Redirect)
+    with opener.open(req, timeout=60) as r:
         data = r.read(MAX_BYTES + 1)
     if len(data) > MAX_BYTES:
         raise ValueError(f"the file is larger than {MAX_BYTES // (1024 * 1024)} MB")

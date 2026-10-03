@@ -206,3 +206,14 @@ export type Clash = S["Clash"];
 export type HeldChange = S["HeldChange"];
 export type FieldChangeRow = S["FieldChangeRow"];
 export type ResetLink = S["ResetLink"];
+
+// Phase Q: connected to the rest of the company
+export type ApiKey = S["ApiKey"];
+export type ImportJob = S["ImportJob"];
+export type ImportJobs = S["ImportJobs"];
+export type JobInput = S["JobInput"];
+export type MessageRow = S["MessageRow"];
+export type MailInput = S["MailInput"];
+export type MailRow = S["MailRow"];
+export type MailSetup = S["MailSetup"];
+export type ReminderSettings = S["ReminderSettings"];

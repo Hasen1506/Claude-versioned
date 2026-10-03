@@ -10,6 +10,7 @@ import {
 import { addDays, day, exactMoney, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Msg, Prod, namesOf, useNames } from "../lib/names";
 import { confirmationDocument, customerAddresses, customerEmail, invoiceDocument } from "../lib/sodoc";
+import { ServerSend } from "../components/ServerSend";
 import { download } from "../lib/tabular";
 import { go, href } from "../lib/router";
 import { isStale, store, useFreshResult, useReadOnly, useStore } from "../state/store";
@@ -267,6 +268,9 @@ function DocButtons(p: ({ kind: "confirmation"; o: OrderView } | { kind: "invoic
     <button className="btn sm ghost" onClick={print} title="Opens the document as a page and the print dialog, where it can be saved as PDF">Print or PDF</button>
     <button className="btn sm ghost" onClick={() => download(`${id}.html`, html(), "text/html")}>Download</button>
     <a className="btn sm ghost" href={mailto}>E-mail</a>
+    <ServerSend kind={p.kind === "confirmation" ? "confirmation" : inv!.kind === "credit_note" ? "credit_note" : "invoice"} docRef={id} to={mail.to}
+      subject={mail.subject} text={mail.body} html={html}
+      onSent={p.kind === "confirmation" && p.o.header && !p.o.confirmation_sent_on && p.action ? () => p.action!.run("send_confirmation", { id }) : undefined} />
     {p.kind === "confirmation" && p.o.header && !p.o.confirmation_sent_on && p.action && <Edits><button className="btn sm" disabled={p.action.busy}
       onClick={() => p.action!.run("send_confirmation", { id })}>Mark as sent</button></Edits>}
   </span>;

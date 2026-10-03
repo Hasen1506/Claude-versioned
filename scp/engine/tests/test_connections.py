@@ -478,3 +478,21 @@ def test_worklist_reminders_reach_each_owner_once_on_the_days_set(monkeypatch):
     s = outbox.set_reminders(c, asha, cid, outbox.ReminderSettings(on=False), friday)
     assert s.next_reminder is None
     assert outbox.remind_due(c, dt.datetime(2026, 1, 14, 8, 0, tzinfo=dt.UTC)) == {}
+
+
+def test_an_import_does_not_reach_into_the_servers_own_network(monkeypatch):
+    import pytest
+
+    from scp.connect.imports import reachable
+    monkeypatch.delenv("SCP_IMPORT_HOSTS", raising=False)
+    for url in ("http://127.0.0.1:8000/x.csv", "http://localhost/x.csv", "http://169.254.169.254/latest/meta-data",
+                "http://10.0.0.5/export.csv", "http://[::1]/x.csv"):
+        with pytest.raises(ValueError, match="inside the server's own network"):
+            reachable(url)
+    with pytest.raises(ValueError, match="not a web address"):
+        reachable("file:///etc/passwd")
+    # the administrator allows a host by name: then only it, wherever it is
+    monkeypatch.setenv("SCP_IMPORT_HOSTS", "localhost")
+    reachable("http://localhost/x.csv")
+    with pytest.raises(ValueError, match="reads files only from localhost, not erp.example.com"):
+        reachable("https://erp.example.com/x.csv")

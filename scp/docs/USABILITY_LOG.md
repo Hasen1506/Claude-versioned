@@ -290,6 +290,28 @@ phone width.
 | N132 | A supplier invoice cannot carry freight or other unplanned delivery costs, and a price difference cannot be put right with a debit or credit for the price alone (subsequent debit/credit). | Minor | Open: recorded with the MM gaps below. |
 | N133 | Invoice verification books nothing in a ledger: "received, not invoiced" is a list for the month-end accrual, not a GR/IR account. | Minor | By design, recorded: there is no general ledger here; *What we owe* and *Received, not invoiced* are what an accountant posts from. |
 
+## Found while building Phase Q
+
+Q was built against the tests' small plant, and then used in a real browser:
+- The kitchenware example was kept on the server.
+- An owner made a key for "SAP", and the ERP sent two customer orders with it: one taken, one with an unknown product. The message log said which line was refused and why, and the History had the ERP's save.
+- A scheduled import was set up and run, the e-mail tab read, the key withdrawn, and every tab opened at phone width.
+
+Mail was tested in the engine with a stand-in mail server.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N134 | A scheduled import could name any web address, so an owner could make the server read from its own network (a database's admin page, a cloud metadata address). A redirect could lead there too, and carried the import's Authorization header along. | Critical | **Fixed (Q).** Without `SCP_IMPORT_HOSTS`, a name that resolves inside the server's own network is refused, redirects included. Headers given for an import are not sent on after a redirect. |
+| N135 | Worklist reminders named the company by its id ("Worklist: 2 open · C0001") when its settings had no company name. | Minor | **Fixed (Q).** They fall back to the name the company has on the server. |
+| N136 | A refusal in plain words that came back as 422 was shown in the browser as "N schema error(s)". This applied to an e-mail address the company does not know, an import that cannot be read, and the other plain refusals. | Serious | **Fixed (Q).** The browser shows the server's sentence. |
+| N137 | A purchase order deleted outright here (not cancelled) disappears from the orders the ERP takes, so the ERP keeps its copy open. | Minor | Open: the ERP is told about cancelled lines but not about a deleted order. Cancel rather than delete; a deletion message is for later. |
+| N138 | The ERP's stock message is per place and product. A company with batches or stock types gets its count difference posted on the stock without a batch. | Minor | Open: batch and stock-type counts come from the physical inventory on *Actuals* or as postings. |
+| N139 | Firming with *send* (R20) marks the purchase orders as sent but does not e-mail them. *Send from here* is order by order. | Minor | Open: sending the documents of a firming at once is for later. |
+| N140 | The document sent is the page *Print* shows, attached as an HTML file, not a PDF. | Minor | Open: a supplier who needs a PDF gets one from Print. Server-side PDF needs a renderer on the server. |
+| N141 | Delivery schedules of scheduling agreements have no *Send from here* yet, though the server accepts them. | Minor | Open. |
+| N142 | A host name could resolve to a public address when checked and to an inside one when read (DNS rebinding). | Minor | By design, recorded: production servers set `SCP_IMPORT_HOSTS`, as the deployment guide says. |
+| N143 | *Send from here* has no browser test against a real mail server (the test server sends no mail). | Minor | Open. The engine tests cover what is sent, to whom, attached, refused and kept in the outbox. The browser test covers the page without mail. |
+
 ## Found while building Phase P
 
 P was built against the tests' small plants and the Capacity page used in a real browser on a two-run plant whose one
@@ -477,11 +499,15 @@ against SAP (the gaps below). Proposed, in the order recommended:
   price the orders made under them; scheduling agreements whose delivery schedule planning extends; a supplier's
   confirmation in several deliveries that planning expects one by one; returns to the supplier, replaced or credited;
   a release strategy of several levels with named approvers and four eyes; payables and receivables in the worklist.
-- **Q: connected to the rest of the company**. Scheduled imports and an API for an ERP to send orders, stock and
-  movements and to take back purchase and production orders; e-mail sent from the application (orders to suppliers,
-  confirmations to customers, the worklist's reminders).
+- **Q: connected to the rest of the company**: **done**, see N134–N143 and [the integration guide](INTEGRATION.md).
+  - Keys for an ERP or a script, in one company as a planner or a viewer.
+  - Customer orders matched by the ERP's number, stock, goods movements by the ERP's own order numbers, and master records. Each is saved as a revision by the key and merged into open windows. A message sent twice is not applied twice.
+  - Released purchase, production and transfer orders for the ERP to take and acknowledge with its numbers.
+  - Every message logged with what became of each line.
+  - Scheduled imports from a web address or a server folder (CSV with SAP column names, or JSON).
+  - Documents e-mailed from the server to addresses the company knows, an outbox, and worklist reminders.
 
-Order after O: **P, M, N, Q**; P, M and N are done, so **Q** is next. P stays ahead of M and N for K's reasons: every open serious finding of K left is about
+Order after O: **P, M, N, Q**. All four are done. Proposed next: a fourth reality check over a month with an ERP connected. It would be run the way K was, logged as R-findings, and would be the first to use imports and keys day to day. The breadth below would follow it. P stays ahead of M and N for K's reasons: every open serious finding of K left is about
 stock that is really there (shelf life, short receipts, stock below zero) or a plan that acts on it.
 
 ## Gaps against SAP recorded for later phases

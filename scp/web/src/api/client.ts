@@ -5,6 +5,7 @@ import type {
   PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoActionInput, RequisitionPick, PostAction, CountInput, UsageInput, StockType, SalesOrderChange, SalesOrderResponse,
   SalesView, SalesAction, SalesActionInput, SalesActionResponse,
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
+  ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
 
@@ -70,6 +71,7 @@ export function unpackRows(x: unknown): unknown {
 }
 
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
+const co = (id: string) => `/api/companies/${encodeURIComponent(id)}`;
 /** Where the browser goes to sign in with the company's identity provider. */
 export const SSO_START = `${API_ORIGIN}/api/auth/sso/start`;
 /** A proof run answers only when it is done; on a small server the generated flow takes minutes. */
@@ -95,6 +97,8 @@ async function call<T>(path: string, init?: RequestInit, timeoutMs?: number): Pr
     });
     if (res.status === 422) {
       const body = await res.json();
+      // a refusal in plain words (an address the company does not know) rather than field errors
+      if (typeof body.detail === "string") throw new ApiError(body.detail, 422, body);
       throw new SchemaRejected((body.detail ?? []) as SchemaError[]);
     }
     if (!res.ok) {
@@ -328,6 +332,24 @@ export const api = {
   meWith: (token: string) => call<Me>("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } }),
   removeMember: (id: string, email: string) =>
     call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members/${encodeURIComponent(email)}`, { method: "DELETE" }),
+
+  // Phase Q: keys for other systems, scheduled imports, the message log, e-mail from the server
+  keys: (id: string) => call<ApiKey[]>(`${co(id)}/keys`),
+  makeKey: (id: string, name: string, role: "planner" | "viewer") =>
+    call<ApiKey>(`${co(id)}/keys`, { method: "POST", body: JSON.stringify({ name, role }) }),
+  revokeKey: (id: string, kid: string) => call<ApiKey[]>(`${co(id)}/keys/${encodeURIComponent(kid)}`, { method: "DELETE" }),
+  imports: (id: string) => call<ImportJobs>(`${co(id)}/imports`),
+  saveImport: (id: string, job: JobInput, jid?: string) =>
+    call<ImportJobs>(`${co(id)}/imports${jid ? `/${encodeURIComponent(jid)}` : ""}`, { method: jid ? "PUT" : "POST", body: JSON.stringify(job) }),
+  removeImport: (id: string, jid: string) => call<ImportJobs>(`${co(id)}/imports/${encodeURIComponent(jid)}`, { method: "DELETE" }),
+  runImport: (id: string, jid: string) => call<MessageRow[]>(`${co(id)}/imports/${encodeURIComponent(jid)}/run`, { method: "POST" }, RUN_TIMEOUT_MS),
+  messages: (id: string, o: { kind?: string; status?: string; before?: number } = {}) =>
+    call<MessageRow[]>(`${co(id)}/messages?kind=${encodeURIComponent(o.kind ?? "")}&status=${encodeURIComponent(o.status ?? "")}${o.before ? `&before=${o.before}` : ""}`),
+  mailSetup: (id: string) => call<MailSetup>(`${co(id)}/mail`),
+  sendMail: (id: string, m: MailInput) => call<MailRow>(`${co(id)}/mail`, { method: "POST", body: JSON.stringify(m) }),
+  mailSent: (id: string, ref = "") => call<MailRow[]>(`${co(id)}/mail/sent?ref=${encodeURIComponent(ref)}`),
+  setReminders: (id: string, r: ReminderSettings) => call<MailSetup>(`${co(id)}/mail/reminders`, { method: "PUT", body: JSON.stringify(r) }),
+  remindNow: (id: string) => call<MailRow[]>(`${co(id)}/mail/reminders/send`, { method: "POST" }),
 
   versions: () => call<VersionMeta[]>("/api/versions"),
   version: (id: string) => call<VersionDoc>(`/api/versions/${encodeURIComponent(id)}`),

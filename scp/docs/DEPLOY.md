@@ -51,7 +51,7 @@ Everything is set by environment variables. None is needed to try it; the ones m
 | `SCP_BACKUP_DIR` | A folder for the nightly copy of the database. None: no nightly copy. *Production.* | none |
 | `SCP_BACKUP_HOUR` | When the nightly copy is taken (hour, UTC). | `2` |
 | `SCP_BACKUP_KEEP` | How many nightly copies are kept; the oldest go. | `14` |
-| `SCP_SMTP_HOST` | Mail server for "forgot your password" links. None: no mail is sent, and a company owner (or the administrator) gives the link instead. | none |
+| `SCP_SMTP_HOST` | Mail server for "forgot your password" links, documents sent with *Send from here* and worklist reminders. None: no mail is sent; a company owner (or the administrator) gives a reset link instead, and *E-mail* opens the planner's own mail program. | none |
 | `SCP_SMTP_PORT` | | `587` (`465` with `ssl`) |
 | `SCP_SMTP_TLS` | `starttls`, `ssl` or `none`. | `starttls` |
 | `SCP_SMTP_USER`, `SCP_SMTP_PASSWORD` | The mail account. | none |
@@ -59,6 +59,10 @@ Everything is set by environment variables. None is needed to try it; the ones m
 | `SCP_OIDC_ISSUER` | Single sign-on: your identity provider's issuer (OpenID Connect). None: no single sign-on. | none |
 | `SCP_OIDC_CLIENT_ID`, `SCP_OIDC_CLIENT_SECRET` | The application registered with the provider. | none |
 | `SCP_OIDC_NAME` | The button says "Sign in with …". | "your company account" |
+| `SCP_TIMEZONE` | Time zone of scheduled imports and worklist reminders, e.g. `Asia/Kolkata`. | `UTC` |
+| `SCP_IMPORT_DIR` | Folder of company folders (`<dir>/<company id>/`) that scheduled imports read files from. None: imports read web addresses only. | none |
+| `SCP_IMPORT_HOSTS` | Comma-separated hosts scheduled imports may read web addresses from. None: any host on the internet, never one inside the server's own network. *Production:* set it. | none |
+| `SCP_SCHEDULER` | `0`: this server does not run scheduled imports and reminders (a second server on the same database). | on |
 | `OPENBLAS_NUM_THREADS` | Threads of the maths library per process. Leave it at 1: the forecast runs one process per core. | `1` |
 | `SCP_LARGE_AT_ONCE` | How many large companies (200,000 records or more) are calculated at once. Each plan of 5,000 products takes about 5.5 GB: raise it only with the memory for it. | `1` |
 
@@ -71,6 +75,9 @@ Any SMTP server works: your company's, or a sending service (Amazon SES, Postmar
 365 with an app password: `SCP_SMTP_HOST=smtp.office365.com`, `SCP_SMTP_PORT=587`, `SCP_SMTP_TLS=starttls`, the
 mailbox as user and sender. The mail says where to set a new password (`SCP_PUBLIC_URL/#/account/reset/…`); the
 link works once, for an hour. At most five are sent per address per hour.
+
+The same mail server sends documents (*Send from here* on Buying and Selling, only to addresses the company knows,
+at most 500 a company a day) and worklist reminders; see [INTEGRATION.md](INTEGRATION.md).
 
 Without mail, "Forgot your password?" tells the person to ask their company's owner: on *Account*, each planner and
 viewer has *Link to set a new password* (valid a day), and the administrator can make one for anyone:
