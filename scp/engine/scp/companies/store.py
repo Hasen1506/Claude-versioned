@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 CREATE TABLE IF NOT EXISTS erp_withdrawn (
   company_id TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, erp_ref TEXT NOT NULL, location TEXT NOT NULL,
-  at TEXT NOT NULL, user_id TEXT NOT NULL, taken_at TEXT, PRIMARY KEY (company_id, kind, id)
+  at TEXT NOT NULL, user_id TEXT NOT NULL, taken_at TEXT, restored_at TEXT, PRIMARY KEY (company_id, kind, id)
 );
 CREATE TABLE IF NOT EXISTS sign_in_states (
   state TEXT PRIMARY KEY, verifier TEXT NOT NULL, nonce TEXT NOT NULL, at TEXT NOT NULL, next TEXT NOT NULL DEFAULT ''
@@ -348,6 +348,8 @@ class Companies:
             self.db.execute("ALTER TABLE users ADD COLUMN sso_subject TEXT")
         if "kind" not in ucols:      # Phase Q: an account behind an integration key is not a person
             self.db.execute("ALTER TABLE users ADD COLUMN kind TEXT NOT NULL DEFAULT 'person'")
+        if "restored_at" not in {r[1] for r in self.db.execute("PRAGMA table_info(erp_withdrawn)")}:
+            self.db.execute("ALTER TABLE erp_withdrawn ADD COLUMN restored_at TEXT")
         self.failures: dict[str, list[dt.datetime]] = {}
 
     # ---- accounts ------------------------------------------------------------------------------------------
@@ -957,7 +959,8 @@ class Companies:
 
     def _withdraw(self, cid: str, uid: str, now: str, before: dict, after: dict) -> None:
         """An order the ERP numbered that this save removed (deleted, not completed) is kept to tell the ERP it is
-        withdrawn (N137); one that comes back (a save put back) is no longer withdrawn."""
+        withdrawn (N137); one that comes back (a save put back) is no longer withdrawn. If the ERP had already closed
+        its copy, the order that came back is marked restored, so it goes to the ERP again as a new order."""
         old, new = erp_orders(before), erp_orders(after)
         closed = {(f"{c.get('kind')}_order", c.get("id")) for c in after.get("closed_orders") or [] if isinstance(c, dict)}
         for (kind, oid), (ref, place) in old.items():
@@ -965,10 +968,12 @@ class Companies:
                 self.db.execute("INSERT INTO erp_withdrawn (company_id, kind, id, erp_ref, location, at, user_id) "
                                 "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (company_id, kind, id) DO UPDATE SET erp_ref = "
                                 "excluded.erp_ref, location = excluded.location, at = excluded.at, user_id = "
-                                "excluded.user_id, taken_at = NULL", (cid, kind, oid, ref, place, now, uid))
+                                "excluded.user_id, taken_at = NULL, restored_at = NULL", (cid, kind, oid, ref, place, now, uid))
         for kind, oid in set(new) - set(old):
             self.db.execute("DELETE FROM erp_withdrawn WHERE company_id = ? AND kind = ? AND id = ? AND taken_at IS NULL",
                             (cid, kind, oid))
+            self.db.execute("UPDATE erp_withdrawn SET restored_at = ? WHERE company_id = ? AND kind = ? AND id = ? AND "
+                            "taken_at IS NOT NULL", (now, cid, kind, oid))
 
     def _document(self, cid: str, rev: int, uid: str, now: str, before: dict, after: dict) -> None:
         """Keep every field this save changed, with its old and new value (change documents)."""

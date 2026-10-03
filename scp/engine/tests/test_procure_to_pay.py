@@ -109,6 +109,13 @@ def test_freight_on_an_invoice_and_a_later_price_correction_by_subsequent_debit_
                                                                        "price": 1}])
     with pytest.raises(PurchasingError, match="give the price difference"):
         act(x, "enter_invoice", "", kind="subsequent_debit", lines=[{"order": "PO-00001-10"}])
+    # the same note twice is refused, and one note cannot correct more than was invoiced by repeating a line
+    with pytest.raises(PurchasingError, match="DN-1 is already entered as SD-00001"):
+        act(x, "enter_invoice", "", on=JAN, kind="subsequent_debit", reference="dn-1",
+            lines=[{"order": "PO-00001-10", "price": 0.1}])
+    with pytest.raises(PurchasingError, match="at most the 100 invoiced"):
+        act(x, "enter_invoice", "", kind="subsequent_credit", lines=[{"order": "PO-00001-10", "qty": 60, "price": 1},
+                                                                     {"order": "PO-00001-10", "qty": 60, "price": 1}])
     # returned goods are credited at the corrected price: 10 + 0.10 − 0.20
     x, _ = act(x, "return_goods", "", lines=[{"id": "PO-00001-10", "qty": 10}], on=JAN, stock_type="unrestricted")
     x, rep = act(x, "enter_invoice", "", on=JAN, kind="credit_memo", return_id=x.supplier_returns[0].id)

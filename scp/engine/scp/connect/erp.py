@@ -527,6 +527,15 @@ def outbound(ds: Dataset, kind: OutKind, everything: bool = False) -> list[OutOr
     return out
 
 
+def forget_erp(ds: Dataset, kind: str, oid: str) -> Dataset:
+    """The order as if the ERP had never taken it: no number, no version taken."""
+    clear = {"erp_ref": "", "erp_sent": ""}
+    if kind == "purchase_order":
+        return ds.model_copy(update={f: [p.model_copy(update=clear) if p.id == oid else p for p in getattr(ds, f)]
+                                     for f in ("purchase_orders", "cancelled_purchase_orders")})
+    return ds.model_copy(update={"receipts": [r.model_copy(update=clear) if r.id == oid else r for r in ds.receipts]})
+
+
 def withdrawn_version(kind: str, oid: str, erp_ref: str) -> str:
     return _version({"withdrawn": [kind, oid, erp_ref]})
 
@@ -537,13 +546,17 @@ def withdrawn(kind: OutKind, rows: list[dict]) -> list[OutOrder]:
     return [OutOrder(kind=kind, id=r["id"], version=withdrawn_version(kind, r["id"], r["erp_ref"]),
                      change="taken" if r.get("taken_at") else "withdrawn", erp_ref=r["erp_ref"],
                      location=r.get("location") or "")
-            for r in rows if r["kind"] == kind]
+            for r in rows if r["kind"] == kind and not r.get("restored_at")]
 
 
-def acknowledge(ds: Dataset, acks: list[ErpAck], gone: dict[tuple[str, str], str] | None = None
-                ) -> tuple[Dataset, list[ItemResult]]:
+def acknowledge(ds: Dataset, acks: list[ErpAck], gone: dict[tuple[str, str], str] | None = None,
+                restored: set[tuple[str, str]] | None = None) -> tuple[Dataset, list[ItemResult]]:
     """The ERP took these orders: keep the number it gave each and the version it took. ``gone``: orders deleted
-    here, (kind, id) → the ERP's number; an acknowledgement of one says the ERP closed its copy."""
+    here, (kind, id) → the ERP's number; an acknowledgement of one says the ERP closed its copy. ``restored``: orders
+    that came back after the ERP closed its copy; the ERP made them anew, so the number it gives now replaces the old."""
+    for a in acks:
+        if (a.kind, a.id) in (restored or set()):
+            ds = forget_erp(ds, a.kind, a.id)
     current = {(k, o.id): o for k in ("purchase_order", "production_order", "transfer_order")
                for o in outbound(ds, k, everything=True)} if acks else {}
     return _each(ds, acks, lambda a: a.id, lambda d, a: _ack(d, a, current, gone or {}))

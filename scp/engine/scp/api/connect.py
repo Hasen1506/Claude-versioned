@@ -18,7 +18,7 @@ from ..connect import (
     apply_postings, apply_records, apply_stock, history, log, outbound, read_company, receive, record_lists,
 )
 from ..connect import imports, outbox
-from ..connect.erp import ItemResult, withdrawn
+from ..connect.erp import ItemResult, forget_erp, withdrawn
 from ..connect.imports import ImportJobs
 from ..model.common import Model, Out
 from .companies import Signed
@@ -128,7 +128,12 @@ def _out(cid: str, user, kind: str, everything: bool) -> OutAnswer:
     c = get_companies()
     ds, rev = read_company(c, user, cid)
     with c.lock:
-        gone = [o for o in withdrawn(kind, _gone(c, cid)) if everything or o.change != "taken"]  # type: ignore[arg-type]
+        rows = _gone(c, cid)
+    gone = [o for o in withdrawn(kind, rows) if everything or o.change != "taken"]  # type: ignore[arg-type]
+    # an order that came back after the ERP closed its copy goes to the ERP as a new order
+    for r in rows:
+        if r["restored_at"] and r["kind"] == kind:
+            ds = forget_erp(ds, kind, r["id"])
     orders = outbound(ds, kind, everything) + gone  # type: ignore[arg-type]
     pending = [o for o in orders if o.change != "taken"]
     if pending:
@@ -169,14 +174,22 @@ def erp_acknowledge(cid: str, body: AckMessage, user: Signed) -> MessageAnswer:
     (deleted here) is acknowledged with its ERP number when the ERP has closed its copy."""
     c = get_companies()
     with c.lock:
-        gone = {(r["kind"], r["id"]): r["erp_ref"] for r in _gone(c, cid) if not r["taken_at"]}
-    answer = receive(c, user, cid, "acknowledgements", body.message_id, lambda ds: acknowledge(ds, body.orders, gone))
+        rows = _gone(c, cid)
+    gone = {(r["kind"], r["id"]): r["erp_ref"] for r in rows if not r["taken_at"]}
+    restored = {(r["kind"], r["id"]) for r in rows if r["restored_at"]}
+    answer = receive(c, user, cid, "acknowledgements", body.message_id,
+                     lambda ds: acknowledge(ds, body.orders, gone, restored))
     closed = [(i.id, a.kind) for i, a in zip(answer.message.items, body.orders, strict=False)
               if i.status == "applied" and (a.kind, a.id) in gone and "deleted here" in i.message]
     if closed and answer.message.status != "duplicate":
         with c.lock:
             c.db.executemany("UPDATE erp_withdrawn SET taken_at = ? WHERE company_id = ? AND kind = ? AND id = ?",
                              [(answer.message.at, cid, k, oid) for oid, k in closed])
+    made = [(cid, a.kind, a.id) for i, a in zip(answer.message.items, body.orders, strict=False)
+            if i.status == "applied" and (a.kind, a.id) in restored]
+    if made and answer.message.status != "duplicate":
+        with c.lock:   # the ERP has the order again: nothing withdrawn is left to tell it
+            c.db.executemany("DELETE FROM erp_withdrawn WHERE company_id = ? AND kind = ? AND id = ?", made)
     return answer
 
 

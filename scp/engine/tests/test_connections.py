@@ -298,6 +298,15 @@ def test_an_order_the_erp_took_and_then_deleted_here_goes_to_it_as_withdrawn_unt
     r = client.post(f"/api/companies/{cid}/restore", headers=h(owner), json={"revision": rev - 1, "base_revision": rev})
     assert r.status_code == 200, r.text
     assert client.get(f"/api/companies/{cid}/erp/production-orders", headers=h(key)).json()["orders"] == []
+    # the purchase order came back too, after the ERP had closed its copy: it goes to the ERP again as a new order
+    [again] = client.get(f"/api/companies/{cid}/erp/purchase-orders", headers=h(key)).json()["orders"]
+    assert (again["id"], again["change"], again["erp_ref"]) == ("PO-00001", "new", "")
+    r = client.post(f"/api/companies/{cid}/erp/acknowledge", headers=h(key), json={"orders": [
+        {"kind": "purchase_order", "id": "PO-00001", "erp_ref": "4500000999", "version": again["version"]}]})
+    assert r.json()["message"]["items"][0]["status"] == "applied", r.text
+    assert client.get(f"/api/companies/{cid}/erp/purchase-orders", headers=h(key)).json()["orders"] == []
+    every = client.get(f"/api/companies/{cid}/erp/purchase-orders?all=true", headers=h(key)).json()["orders"]
+    assert [(o["id"], o["change"], o["erp_ref"]) for o in every] == [("PO-00001", "taken", "4500000999")]
 
 
 # ---- master data ------------------------------------------------------------------------------------------------
