@@ -8065,6 +8065,12 @@ export interface components {
              */
             erp_sent: string;
             /**
+             * Erp Generation
+             * @description Integration lifecycle identifier, assigned when an order closed by the ERP is restored
+             * @default
+             */
+            erp_generation: string;
+            /**
              * Cancelled Lines
              * @description Cancelled line snapshots, retained so the ERP also receives their cancellation
              */
@@ -10008,6 +10014,12 @@ export interface components {
              * @default
              */
             erp_sent: string;
+            /**
+             * Erp Generation
+             * @description Integration lifecycle identifier, assigned when an order closed by the ERP is restored
+             * @default
+             */
+            erp_generation: string;
         };
         /** ScheduledReceiptOut */
         ScheduledReceiptOut: {

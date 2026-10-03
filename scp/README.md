@@ -342,6 +342,8 @@ The company on the server talks to the rest of the business (`engine/scp/connect
   sent twice is not applied twice, and every item says whether it was taken, already so, or refused and why.
 - **Orders out**: released purchase orders and firm production and transfer orders, with a version, for the ERP to
   take and acknowledge with its own numbers; one the ERP numbered and then deleted here goes to it as withdrawn.
+  A withdrawal must be acknowledged with its exact exported version after the ERP closes its copy. Restoring an
+  order after that closure exports it again with a new version; acknowledgements from its earlier copy cannot take it.
 - **Scheduled imports** read a web address or a server folder (CSV with SAP column names, or JSON) every hour, day or
   week; the same file is never taken twice, and nothing inside the server's own network is read.
 - **E-mail from the server**: *Send from here* on purchase orders, delivery schedules, confirmations, invoices, credit

@@ -226,10 +226,39 @@ def line_rate(ds: Dataset, customer: str, product: str) -> float:
     return p.tax_rate if p and p.tax_rate is not None else ds.sales.tax_rate
 
 
+# State names and common abbreviations use the same identifiers as GSTINs. An explicit region still overrides
+# the registration's state; other countries' region names remain comparable as text.
+_GST_STATES = {
+    "01": ("Jammu and Kashmir", "JK", "J&K"), "02": ("Himachal Pradesh", "HP"),
+    "03": ("Punjab", "PB"), "04": ("Chandigarh", "CH"), "05": ("Uttarakhand", "UK", "UT", "Uttaranchal"),
+    "06": ("Haryana", "HR"), "07": ("Delhi", "DL", "New Delhi"), "08": ("Rajasthan", "RJ"),
+    "09": ("Uttar Pradesh", "UP"), "10": ("Bihar", "BR"), "11": ("Sikkim", "SK"),
+    "12": ("Arunachal Pradesh", "AR"), "13": ("Nagaland", "NL"), "14": ("Manipur", "MN"),
+    "15": ("Mizoram", "MZ"), "16": ("Tripura", "TR"), "17": ("Meghalaya", "ML"), "18": ("Assam", "AS"),
+    "19": ("West Bengal", "WB"), "20": ("Jharkhand", "JH"), "21": ("Odisha", "OD", "OR", "Orissa"),
+    "22": ("Chhattisgarh", "CG", "CT"), "23": ("Madhya Pradesh", "MP"), "24": ("Gujarat", "GJ"),
+    "25": ("Daman and Diu", "DD"),
+    "26": ("Dadra and Nagar Haveli", "DN", "Dadra and Nagar Haveli and Daman and Diu"),
+    "27": ("Maharashtra", "MH"), "28": ("Andhra Pradesh (old)",), "29": ("Karnataka", "KA"),
+    "30": ("Goa", "GA"), "31": ("Lakshadweep", "LD"), "32": ("Kerala", "KL"),
+    "33": ("Tamil Nadu", "TN"), "34": ("Puducherry", "PY", "Pondicherry"),
+    "35": ("Andaman and Nicobar Islands", "AN"), "36": ("Telangana", "TS", "TG"),
+    "37": ("Andhra Pradesh", "AP"), "38": ("Ladakh", "LA"), "97": ("Other Territory",),
+}
+
+
+def _region_name(region: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", region.strip().lower()).split())
+
+
+_GST_REGIONS = {_region_name(name): code for code, names in _GST_STATES.items() for name in (*names, code)}
+
+
 def _place(tax_id: str, region: str) -> str:
-    """The state for the place of supply: the region, else a GSTIN's first two digits (its state code)."""
+    """The explicit region, with Indian states normalized to GST codes, else the GSTIN's state code."""
     if region.strip():
-        return region.strip().lower()
+        name = _region_name(region)
+        return _GST_REGIONS.get(name, region.strip().casefold())
     t = tax_id.strip()
     return t[:2] if len(t) >= 2 and t[:2].isdigit() else ""
 
@@ -870,19 +899,25 @@ def credit_return(ds: Dataset, rid: str, on: date | None = None) -> tuple[Datase
     if r.received_on is None:
         raise SalesError(f"{rid} has not come back yet: receive it first")
     day = _today(ds, on)
-    billed = next((i.id for i in ds.invoices if i.kind == "invoice" and not i.cancelled
-                   for ln in i.lines if r.order and ln.order == r.order), None)
+    billed = next(((i, ln) for i in ds.invoices if i.kind == "invoice" and not i.cancelled and i.customer == r.customer
+                   for ln in i.lines if r.order and ln.order == r.order and ln.product == r.product), None)
     cid = _next(_invoice_ids(ds), "CN")
     known, _, _, _ = _dates(ds, r.customer, None, day)
+    ln = InvoiceLine(order=r.order, product=r.product, qty=r.received_qty or r.qty, price=r.price, ret=rid)
+    if billed:
+        inv, original = billed
+        ln = ln.model_copy(update={"tax_rate": original.tax_rate})
+        rate, split, reference = inv.tax_rate, inv.tax_split, inv.id
+    else:
+        ln = _rated(ds, r.customer, ln)
+        rate, split, reference = _tax_rate(ds, r.customer), tax_split(ds, r.customer), None
     cn = Invoice(id=cid, kind="credit_note", customer=r.customer, date=day, due_date=day, payment_terms=known,
-                 lines=[_rated(ds, r.customer, InvoiceLine(order=r.order, product=r.product,
-                                                           qty=r.received_qty or r.qty, price=r.price, ret=rid))],
-                 tax_rate=_tax_rate(ds, r.customer), tax_split=tax_split(ds, r.customer), reference=billed,
+                 lines=[ln], tax_rate=rate, tax_split=split, reference=reference,
                  note=f"Return {rid}")
     new = r.model_copy(update={"credit_note": cid})
     return (ds.model_copy(update={"invoices": [*ds.invoices, cn], "returns": _replace(ds.returns, r, new)}),
             SalesReport(message=f"Credit note {cid} for {_name(ds, r.customer)}: {_m(ds, cn.total)}"
-                                + (f" against {billed}" if billed else "") + ".", documents=[cid, rid]))
+                                + (f" against {reference}" if reference else "") + ".", documents=[cid, rid]))
 
 
 # ------------------------------------------------------------------------------------------------ the view

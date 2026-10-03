@@ -126,10 +126,10 @@ def _gone(c, cid: str) -> list[dict]:
 
 def _out(cid: str, user, kind: str, everything: bool) -> OutAnswer:
     c = get_companies()
-    ds, rev = read_company(c, user, cid)
     with c.lock:
+        ds, rev = read_company(c, user, cid)
         gone = [o for o in withdrawn(kind, _gone(c, cid)) if everything or o.change != "taken"]  # type: ignore[arg-type]
-    orders = outbound(ds, kind, everything) + gone  # type: ignore[arg-type]
+        orders = outbound(ds, kind, everything) + gone  # type: ignore[arg-type]
     pending = [o for o in orders if o.change != "taken"]
     if pending:
         items = [ItemResult(ref=o.id, status="applied", id=o.id, message=f"{o.change}, version {o.version}")
@@ -169,15 +169,18 @@ def erp_acknowledge(cid: str, body: AckMessage, user: Signed) -> MessageAnswer:
     (deleted here) is acknowledged with its ERP number when the ERP has closed its copy."""
     c = get_companies()
     with c.lock:
-        gone = {(r["kind"], r["id"]): r["erp_ref"] for r in _gone(c, cid) if not r["taken_at"]}
-    answer = receive(c, user, cid, "acknowledgements", body.message_id, lambda ds: acknowledge(ds, body.orders, gone))
-    closed = [(i.id, a.kind) for i, a in zip(answer.message.items, body.orders, strict=False)
-              if i.status == "applied" and (a.kind, a.id) in gone and "deleted here" in i.message]
-    if closed and answer.message.status != "duplicate":
-        with c.lock:
-            c.db.executemany("UPDATE erp_withdrawn SET taken_at = ? WHERE company_id = ? AND kind = ? AND id = ?",
-                             [(answer.message.at, cid, k, oid) for oid, k in closed])
-    return answer
+        rows = [r for r in _gone(c, cid) if not r["taken_at"]]
+        generations = {(r["kind"], r["id"]): r["generation"] for r in rows}
+        gone = {(o.kind, o.id): o for kind in ("purchase_order", "production_order", "transfer_order")
+                for o in withdrawn(kind, rows)}
+        answer = receive(c, user, cid, "acknowledgements", body.message_id, lambda ds: acknowledge(ds, body.orders, gone))
+        closed = [(i.id, a.kind) for i, a in zip(answer.message.items, body.orders, strict=False)
+                  if i.status == "applied" and (a.kind, a.id) in gone and "deleted here" in i.message]
+        if closed and answer.message.status != "duplicate":
+            c.db.executemany("UPDATE erp_withdrawn SET taken_at = ? WHERE company_id = ? AND kind = ? AND id = ? "
+                             "AND generation = ? AND taken_at IS NULL",
+                             [(answer.message.at, cid, k, oid, generations[(k, oid)]) for oid, k in closed])
+        return answer
 
 
 # ---- scheduled imports -----------------------------------------------------------------------------------------

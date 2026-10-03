@@ -95,7 +95,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 CREATE TABLE IF NOT EXISTS erp_withdrawn (
   company_id TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, erp_ref TEXT NOT NULL, location TEXT NOT NULL,
-  at TEXT NOT NULL, user_id TEXT NOT NULL, taken_at TEXT, PRIMARY KEY (company_id, kind, id)
+  at TEXT NOT NULL, user_id TEXT NOT NULL, taken_at TEXT, generation TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (company_id, kind, id)
 );
 CREATE TABLE IF NOT EXISTS sign_in_states (
   state TEXT PRIMARY KEY, verifier TEXT NOT NULL, nonce TEXT NOT NULL, at TEXT NOT NULL, next TEXT NOT NULL DEFAULT ''
@@ -111,18 +112,24 @@ LOG_ITEMS = 12                # records named per list in a save's detail
 KEY_PREFIX = "scpk_"           # an integration key, not a session (Phase Q)
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-def erp_orders(doc: dict) -> dict[tuple[str, str], tuple[str, str]]:
-    """The orders of a company's data the ERP has numbered: (kind, id) → (the ERP's number, the place)."""
-    out: dict[tuple[str, str], tuple[str, str]] = {}
+def erp_records(doc: dict) -> dict[tuple[str, str], dict]:
+    """Order records by integration identity, including ones the ERP has not numbered yet."""
+    out: dict[tuple[str, str], dict] = {}
     # a cancelled order's header is kept in cancelled_purchase_orders and goes to the ERP as cancelled from there:
     # it is not withdrawn
     for p in [*(doc.get("purchase_orders") or []), *(doc.get("cancelled_purchase_orders") or [])]:
-        if isinstance(p, dict) and p.get("erp_ref") and p.get("id"):
-            out[("purchase_order", p["id"])] = (p["erp_ref"], str(p.get("location") or ""))
+        if isinstance(p, dict) and isinstance(p.get("id"), str) and p["id"]:
+            out[("purchase_order", p["id"])] = p
     for r in doc.get("receipts") or []:
-        if isinstance(r, dict) and r.get("erp_ref") and r.get("id") and r.get("kind") in ("production", "transfer"):
-            out[(f"{r['kind']}_order", r["id"])] = (r["erp_ref"], str(r.get("location") or ""))
+        if (isinstance(r, dict) and isinstance(r.get("id"), str) and r["id"]
+                and r.get("kind") in ("production", "transfer")):
+            out[(f"{r['kind']}_order", r["id"])] = r
     return out
+
+
+def erp_orders(doc: dict) -> dict[tuple[str, str], tuple[str, str]]:
+    """The orders of a company's data the ERP has numbered: (kind, id) → (the ERP's number, the place)."""
+    return {key: (r["erp_ref"], str(r.get("location") or "")) for key, r in erp_records(doc).items() if r.get("erp_ref")}
 
 
 # plain names of the dataset's lists, for the audit trail
@@ -348,6 +355,8 @@ class Companies:
             self.db.execute("ALTER TABLE users ADD COLUMN sso_subject TEXT")
         if "kind" not in ucols:      # Phase Q: an account behind an integration key is not a person
             self.db.execute("ALTER TABLE users ADD COLUMN kind TEXT NOT NULL DEFAULT 'person'")
+        if "generation" not in {r[1] for r in self.db.execute("PRAGMA table_info(erp_withdrawn)")}:
+            self.db.execute("ALTER TABLE erp_withdrawn ADD COLUMN generation TEXT NOT NULL DEFAULT ''")
         self.failures: dict[str, list[dt.datetime]] = {}
 
     # ---- accounts ------------------------------------------------------------------------------------------
@@ -770,11 +779,15 @@ class Companies:
                 doc, held = split_master(current, doc)
                 if not held["before"] and not held["after"]:
                     held = None
+            revived = self._revive_erp(cid, current, doc)
+            erp_changed = revived is not doc
+            doc = revived
             text = _canonical(doc)
             now = _iso(_now())
             if text == r["dataset"]:
                 if held is None:
-                    return SaveReport(meta=self._meta(cid, role, user.id), saved=False, summary="nothing changed", own=own)
+                    return SaveReport(meta=self._meta(cid, role, user.id), saved=False, summary="nothing changed", own=own,
+                                      dataset=doc if erp_changed else None)
                 self.db.execute("BEGIN")
                 try:
                     request = self._hold(cid, r["revision"], user, held, now)
@@ -801,7 +814,7 @@ class Companies:
                 self.db.execute("ROLLBACK")
                 raise
             return SaveReport(meta=self._meta(cid, role, user.id), saved=True, own=own, held=request,
-                              dataset=doc if request else None,
+                              dataset=doc if request or erp_changed else None,
                               summary=summary + (f"; waiting for approval: {request.summary}" if request else ""))
 
     def merge_save(self, user: User, cid: str, base: dict | None, mine: dict | None, base_revision: int,
@@ -955,6 +968,36 @@ class Companies:
                           summary=r["summary"], status=r["status"], decided_by=self._name(r["decided_by"]) if r["decided_by"] else "",
                           decided_at=r["decided_at"] or "", note=r["note"], changes=rows)
 
+    def _revive_erp(self, cid: str, before: dict, after: dict) -> dict:
+        """A restored order whose ERP copy was closed needs a new export and a distinct lifecycle. Preserve that
+        lifecycle across subsequent saves and restores, so acknowledgements from its old copy cannot take it."""
+        closed = {(r["kind"], r["id"]) for r in self.db.execute(
+            "SELECT kind, id FROM erp_withdrawn WHERE company_id = ? AND taken_at IS NOT NULL", (cid,))}
+        previous = erp_records(before)
+        out = after
+        for collection in ("purchase_orders", "cancelled_purchase_orders", "receipts"):
+            rows = after.get(collection)
+            if not isinstance(rows, list):
+                continue
+            new = []
+            for r in rows:
+                if not isinstance(r, dict) or not isinstance(r.get("id"), str) or not r["id"]:
+                    new.append(r)
+                    continue
+                if collection == "receipts" and r.get("kind") not in ("production", "transfer"):
+                    new.append(r)
+                    continue
+                key = ("purchase_order" if collection != "receipts" else f"{r.get('kind')}_order", r.get("id"))
+                prev = previous.get(key)
+                if prev is None and key in closed:
+                    r = {**r, "erp_sent": "", "erp_generation": secrets.token_hex(16)}
+                elif prev and prev.get("erp_generation") and r.get("erp_generation") != prev["erp_generation"]:
+                    r = {**r, "erp_sent": "", "erp_generation": prev["erp_generation"]}
+                new.append(r)
+            if new != rows:
+                out = {**out, collection: new}
+        return out
+
     def _withdraw(self, cid: str, uid: str, now: str, before: dict, after: dict) -> None:
         """An order the ERP numbered that this save removed (deleted, not completed) is kept to tell the ERP it is
         withdrawn (N137); one that comes back (a save put back) is no longer withdrawn."""
@@ -962,12 +1005,13 @@ class Companies:
         closed = {(f"{c.get('kind')}_order", c.get("id")) for c in after.get("closed_orders") or [] if isinstance(c, dict)}
         for (kind, oid), (ref, place) in old.items():
             if (kind, oid) not in new and (kind, oid) not in closed:
-                self.db.execute("INSERT INTO erp_withdrawn (company_id, kind, id, erp_ref, location, at, user_id) "
-                                "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (company_id, kind, id) DO UPDATE SET erp_ref = "
+                self.db.execute("INSERT INTO erp_withdrawn (company_id, kind, id, erp_ref, location, at, user_id, generation) "
+                                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (company_id, kind, id) DO UPDATE SET erp_ref = "
                                 "excluded.erp_ref, location = excluded.location, at = excluded.at, user_id = "
-                                "excluded.user_id, taken_at = NULL", (cid, kind, oid, ref, place, now, uid))
-        for kind, oid in set(new) - set(old):
-            self.db.execute("DELETE FROM erp_withdrawn WHERE company_id = ? AND kind = ? AND id = ? AND taken_at IS NULL",
+                                "excluded.user_id, taken_at = NULL, generation = excluded.generation",
+                                (cid, kind, oid, ref, place, now, uid, secrets.token_hex(16)))
+        for kind, oid in set(erp_records(after)) - set(erp_records(before)):
+            self.db.execute("DELETE FROM erp_withdrawn WHERE company_id = ? AND kind = ? AND id = ?",
                             (cid, kind, oid))
 
     def _document(self, cid: str, rev: int, uid: str, now: str, before: dict, after: dict) -> None:

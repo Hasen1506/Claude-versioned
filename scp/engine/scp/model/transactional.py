@@ -112,6 +112,8 @@ class ScheduledReceipt(Model):
     erp_ref: str = Field("", max_length=64, description="Production or transfer: the order's number in the ERP")
     erp_sent: str = Field("", max_length=32, description="Production or transfer: the version of the order the ERP "
                                                         "took last (empty: never)")
+    erp_generation: str = Field("", max_length=32, description="Integration lifecycle identifier, assigned when an "
+                                                               "order closed by the ERP is restored")
 
     @property
     def target_qty(self) -> float:

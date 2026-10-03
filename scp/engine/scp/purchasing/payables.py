@@ -195,6 +195,14 @@ def to_invoice(ds: Dataset) -> list[ToInvoice]:
     return out
 
 
+def _check_reference(ds: Dataset, supplier: str, reference: str, kind: str) -> None:
+    dup = next((i for i in ds.supplier_invoices if reference and i.supplier == supplier and not i.cancelled
+                and i.kind == kind and i.reference.strip().lower() == reference.strip().lower()), None)
+    if dup is not None:
+        who = ds.location_by_id[supplier].name if supplier in ds.location_by_id else supplier
+        raise PayablesError(f"{who or supplier}'s {dup.reference} is already entered as {dup.id}")
+
+
 def enter_invoice(ds: Dataset, supplier: str | None, lines: list[dict] | None, *, on: date | None = None,
                   reference: str = "", tax: float | None = None, kind: str = "invoice", po: str | None = None,
                   return_id: str | None = None, note: str = "", delivery_costs: float = 0.0
@@ -259,12 +267,7 @@ def enter_invoice(ds: Dataset, supplier: str | None, lines: list[dict] | None, *
         if not credit and (b := _price_block(ds, ln, li.price)):
             blocks.append(b)
     assert supplier is not None
-    dup = next((i for i in ds.supplier_invoices if reference and i.supplier == supplier and not i.cancelled
-                and i.kind == ("credit_memo" if credit else "invoice")
-                and i.reference.strip().lower() == reference.strip().lower()), None)
-    if dup is not None:
-        who = ds.location_by_id[supplier].name if supplier in ds.location_by_id else supplier
-        raise PayablesError(f"{who or supplier}'s {dup.reference} is already entered as {dup.id}")
+    _check_reference(ds, supplier, reference, "credit_memo" if credit else "invoice")
     if not credit:
         blocks = _qty_blocks(ds, got_lines) + blocks
     terms = ds.vendor_terms(supplier)
@@ -340,6 +343,7 @@ def _subsequent(ds: Dataset, supplier: str | None, lines: list[dict] | None, kin
                                                              li.price)):
             blocks.append(b)
     assert supplier is not None
+    _check_reference(ds, supplier, reference, kind)
     terms = ds.vendor_terms(supplier)
     net = round(sum(x.amount for x in got_lines) + delivery_costs, 2)
     v = ds.vendor(supplier)
