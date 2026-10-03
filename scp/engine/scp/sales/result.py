@@ -97,6 +97,9 @@ class InvoiceView(Out):
     days_overdue: int = 0
     discount_until: dt.date | None = None
     discount_amount: float = 0.0          # the cash discount if paid by then
+    reminder_level: int = 0               # the last payment reminder sent
+    reminded_on: dt.date | None = None
+    reminder_due: int = 0                 # the reminder it has reached and not had yet (0: none)
 
 
 class ReturnView(Out):
@@ -148,6 +151,7 @@ class CustomerRow(Out):
     headroom: float | None = None         # credit limit less exposure
     payment_terms: str
     blocked: bool = False
+    reminder_due: int = 0                 # the highest payment reminder an overdue invoice has reached and not had
 
 
 class SalesView(Out):

@@ -722,7 +722,7 @@ class SalesActionRequest(Out):
     action: Literal["create_order", "add_lines", "release_credit", "send_confirmation", "cancel_order",
                     "create_quotation", "win_quotation", "lose_quotation", "create_deliveries", "pick", "pack",
                     "issue", "proof", "cancel_delivery", "create_invoices", "pay", "cancel_invoice", "create_return",
-                    "receive_return", "credit_return"]
+                    "receive_return", "credit_return", "remind"]
     id: str | None = None                           # the order, quotation, delivery, invoice or return
     customer: str | None = None
     lines: list[SalesLineInput] | None = None
@@ -737,7 +737,7 @@ class SalesActionRequest(Out):
     gross_kg: float | None = None
     amount: float | None = None
     reference: str = ""
-    orders: list[str] | None = None                 # invoices: only these order lines or orders
+    orders: list[str] | None = None                 # invoices: only these order lines or orders; remind: these invoices
     product: str | None = None                      # returns
     qty: float | None = None
     order: str | None = None

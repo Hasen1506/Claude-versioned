@@ -292,6 +292,9 @@ The supply plan goes further into how a plant really plans, mostly in `engine/sc
   credit note pays them back.
 - **Documents**: the order confirmation, the invoice and the credit note print, download or start an e-mail, in exact
   amounts.
+- **Payment reminders and statements** (N124): reminder days past the due date (7, 21 and 35 by default, in *Selling
+  settings*) make each overdue invoice due its next reminder; the reminder letter and a customer's statement of
+  account (by document and by age) print, mail or go from the server, and a reminder sent is recorded on its invoices.
 
 ## Procure to pay (Phase N)
 
@@ -325,15 +328,16 @@ The company on the server talks to the rest of the business (`engine/scp/connect
 - **Keys** (`scpk_…`) let an ERP or a script work in one company as a planner or a viewer; an owner makes and
   withdraws them.
 - **Messages in**: customer orders matched by the ERP's number (new, changed line by line, cancelled), stock (an
-  opening balance or a count difference), goods movements by the ERP's own order numbers, and master records. Each is
+  opening balance or a count difference, or lot by lot when rows name a batch or stock type), goods movements by the ERP's own order numbers, and master records. Each is
   saved as a revision by the key, in the History, and merged into open windows like a colleague's change; a message
   sent twice is not applied twice, and every item says whether it was taken, already so, or refused and why.
 - **Orders out**: released purchase orders and firm production and transfer orders, with a version, for the ERP to
-  take and acknowledge with its own numbers.
+  take and acknowledge with its own numbers; one the ERP numbered and then deleted here goes to it as withdrawn.
 - **Scheduled imports** read a web address or a server folder (CSV with SAP column names, or JSON) every hour, day or
   week; the same file is never taken twice, and nothing inside the server's own network is read.
-- **E-mail from the server**: *Send from here* on purchase orders, confirmations, invoices and credit notes (to
-  addresses the company knows, the document attached, replies to the sender), an outbox, and worklist reminders to
+- **E-mail from the server**: *Send from here* on purchase orders, delivery schedules, confirmations, invoices, credit
+  notes, statements and payment reminders, and firming e-mails the orders it made (to
+  addresses the company knows, the document attached as a PDF and as its page, replies to the sender), an outbox, and worklist reminders to
   each owner of open exceptions on the days set.
 
 What is still missing is in [docs/USABILITY_LOG.md](docs/USABILITY_LOG.md#found-while-building-phase-q).

@@ -265,8 +265,8 @@ function Mail({ id, owner }: { id: string; owner: boolean }) {
   return <>
     <Panel title="E-mail from the server">
       {setup.mail ? <p className="small" style={{ marginTop: 0 }}>The server sends mail from <b>{setup.sender}</b>. Purchase orders, delivery schedules,
-        order confirmations, invoices and credit notes have <i>Send from here</i> on Buying and Selling: the document goes to the supplier's or customer's
-        address in their purchasing or sales data, attached, and replies come to whoever sent it.</p>
+        order confirmations, invoices, credit notes, statements and payment reminders have <i>Send from here</i> on Buying and Selling: the document goes to
+        the supplier's or customer's address in their purchasing or sales data, attached as a PDF and as the page Print shows, and replies come to whoever sent it.</p>
         : <p className="small muted" style={{ marginTop: 0 }}>This server sends no mail (its administrator has not set up a mail server). <i>E-mail</i> on a document
           opens your own mail program instead, and worklist reminders cannot be sent.</p>}
     </Panel>

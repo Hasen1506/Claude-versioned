@@ -653,7 +653,8 @@ export interface paths {
         put?: never;
         /**
          * Erp Acknowledge
-         * @description The ERP took these orders: the number it gave each, and the version it took.
+         * @description The ERP took these orders: the number it gave each, and the version it took. An order listed as withdrawn
+         *     (deleted here) is acknowledged with its ERP number when the ERP has closed its copy.
          */
         post: operations["erp_acknowledge_api_companies__cid__erp_acknowledge_post"];
         delete?: never;
@@ -3126,6 +3127,11 @@ export interface components {
              * @default false
              */
             blocked: boolean;
+            /**
+             * Reminder Due
+             * @default 0
+             */
+            reminder_due: number;
         };
         /** CvSuggestion */
         CvSuggestion: {
@@ -3806,9 +3812,21 @@ export interface components {
             product: string;
             /**
              * Qty
-             * @description On hand at the end of the day, every stock type
+             * @description On hand at the end of the day: every batch and stock type, or the batch and stock type named
              */
             qty: number;
+            /**
+             * Batch
+             * @description The batch: the place's stock is then given lot by lot
+             */
+            batch?: string | null;
+            /**
+             * Expires On
+             * @description A batch not known here yet: its expiry date
+             */
+            expires_on?: string | null;
+            /** @description unrestricted, quality or blocked: the place's stock is then given lot by lot */
+            stock_type?: components["schemas"]["StockType"] | null;
         };
         /**
          * EventKind
@@ -4787,6 +4805,17 @@ export interface components {
              * @default
              */
             note: string;
+            /**
+             * Reminder Level
+             * @description The last payment reminder sent for it: 1 the first, …
+             * @default 0
+             */
+            reminder_level: number;
+            /**
+             * Reminded On
+             * @description When that reminder was sent
+             */
+            reminded_on?: string | null;
         };
         /** InvoiceLine */
         InvoiceLine: {
@@ -4874,6 +4903,18 @@ export interface components {
              * @default 0
              */
             discount_amount: number;
+            /**
+             * Reminder Level
+             * @default 0
+             */
+            reminder_level: number;
+            /** Reminded On */
+            reminded_on: string | null;
+            /**
+             * Reminder Due
+             * @default 0
+             */
+            reminder_due: number;
         };
         /** Issue */
         Issue: {
@@ -5625,7 +5666,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "purchase_order" | "delivery_schedule" | "confirmation" | "invoice" | "credit_note";
+            kind: "purchase_order" | "delivery_schedule" | "confirmation" | "invoice" | "credit_note" | "reminder" | "statement";
             /**
              * Ref
              * @description The document's number (PO-00001, SO-00003, INV-00002)
@@ -6693,7 +6734,7 @@ export interface components {
              * Change
              * @enum {string}
              */
-            change: "new" | "changed" | "taken";
+            change: "new" | "changed" | "taken" | "withdrawn";
             /** Erp Ref */
             erp_ref: string;
             /** Location */
@@ -8881,7 +8922,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "create_order" | "add_lines" | "release_credit" | "send_confirmation" | "cancel_order" | "create_quotation" | "win_quotation" | "lose_quotation" | "create_deliveries" | "pick" | "pack" | "issue" | "proof" | "cancel_delivery" | "create_invoices" | "pay" | "cancel_invoice" | "create_return" | "receive_return" | "credit_return";
+            action: "create_order" | "add_lines" | "release_credit" | "send_confirmation" | "cancel_order" | "create_quotation" | "win_quotation" | "lose_quotation" | "create_deliveries" | "pick" | "pack" | "issue" | "proof" | "cancel_delivery" | "create_invoices" | "pay" | "cancel_invoice" | "create_return" | "receive_return" | "credit_return" | "remind";
             /** Id */
             id?: string | null;
             /** Customer */
@@ -9195,6 +9236,11 @@ export interface components {
              * @default 3
              */
             delivery_days: number;
+            /**
+             * Reminder Days
+             * @description Days past the due date for the first, second, third … payment reminder (dunning levels). Empty: no reminders
+             */
+            reminder_days?: number[];
         };
         /** SalesView */
         SalesView: {

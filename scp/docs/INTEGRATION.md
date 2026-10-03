@@ -104,10 +104,23 @@ One line that cannot be taken refuses its whole order, with the reason given.
  "stock": [{"location": "PLT-PUNE", "product": "MOT-500", "qty": 412}]}
 ```
 
-Each quantity is what is on hand at the end of the day, across every stock type.
+Each quantity is what is on hand at the end of the day, across every batch and stock type.
 
 - **A place and product with no movements yet:** the quantity becomes the opening balance.
 - **Otherwise:** the difference to the stock here is posted as a count difference, e.g. "40 on hand: −2 posted (count difference)".
+
+**By batch and stock type.** A row may name a `batch` and a `stock_type` (`unrestricted`, `quality` or `blocked`):
+
+```json
+{"stock": [{"location": "PLT-PUNE", "product": "MOT-500", "batch": "B2609", "expires_on": "2027-03-31", "qty": 300},
+           {"location": "PLT-PUNE", "product": "MOT-500", "batch": "B2610", "stock_type": "quality", "qty": 112}]}
+```
+
+- A place and product given this way is counted lot by lot, as a physical inventory is. The count is kept on *Actuals* as a posted document marked "Stock from the ERP".
+- A lot here that the ERP does not list is counted as none.
+- A batch new here is made with the `expires_on` given.
+- A product kept by batch needs the batch on each row. A product not kept by batch cannot have one.
+- A place and product being counted on an open document here is refused until that count is posted or cancelled.
 
 `as_of` defaults to the day before the planning start.
 
@@ -180,7 +193,10 @@ These return the orders planners released for the ERP to carry out:
 
 Without `?all=true`, only orders the ERP has not taken in their current form are listed.
 
-- `change` is `new` (never taken) or `changed` (taken, then changed here: a new quantity, date or line).
+- `change` is one of:
+  - `new`: never taken.
+  - `changed`: taken, then changed here (a new quantity, date or line).
+  - `withdrawn`: taken, then deleted here. It has no lines. The ERP should close its copy and acknowledge it with its number; it is then `taken`, listed only with `?all=true`.
 - `version` fingerprints what the ERP needs. A new version means something changed.
 - A pull that differs from the last one is logged in Messages as a message out.
 
@@ -197,6 +213,7 @@ Without `?all=true`, only orders the ERP has not taken in their current form are
 - `sent_to_supplier` marks a purchase order as sent.
 - An acknowledgement of an older version than the order has now keeps the ERP's number, and the order is listed again as `changed`.
 - An order the ERP has already numbered is not renumbered: an acknowledgement with a different number is refused.
+- A `withdrawn` order is acknowledged with the ERP's number it had. Putting a save back that brings the order back here cancels the withdrawal.
 
 ## Scheduled imports
 
@@ -210,6 +227,7 @@ Where the ERP cannot call an API, it writes an export that the server reads. An 
 
 **Formats:**
 - **CSV.** The delimiter is detected: comma, semicolon, tab or bar.
+  - Stock can have a column per stock type, as SAP's MARD does (`Unrestricted`/`LABST`, `Quality inspection`/`INSME`, `Blocked`/`SPEME`): each row becomes a row per stock type.
   - A header row names the columns. Names are recognised in English and as SAP exports them: `Material`/`MATNR`, `Plant`/`WERK`, `Menge`, `VBELN`, `KUNNR`, `MBLNR`, `CHARG`, and so on.
   - Dates are read day first (`05/01/2026` is 5 January) unless the import says otherwise.
   - German numbers are read (`1.234,5`).
@@ -226,14 +244,18 @@ Where the ERP cannot call an API, it writes an export that the server reads. An 
 When the server has a mail server set up (`SCP_SMTP_HOST`, see [DEPLOY.md](DEPLOY.md)), documents can go from the server.
 
 **Documents.** These have **Send from here** beside *E-mail* on *Buying* and *Selling*:
-- purchase orders
+- purchase orders and delivery schedules
 - order confirmations
 - invoices and credit notes
+- statements of account and payment reminders (*Selling → Customers*)
 
-The document is sent with the page *Print* shows attached. It comes from the server's address, and replies go to whoever sent it. Rules:
+The document is attached twice: as a PDF the server lays out itself (A4, no browser needed), and as the page *Print* shows, the exact copy. It comes from the server's address, and replies go to whoever sent it. Rules:
 - It goes only to addresses the company knows: the supplier's or customer's e-mail in their purchasing or sales data, or a member's.
 - A company sends at most 500 e-mails a day.
 - Sending a purchase order or a confirmation also records it as sent.
+- On a scheduling agreement, it sends the delivery schedule.
+- Sending a payment reminder records it on its invoices, so the next reminder follows only when they are still unpaid at the next reminder day.
+- **Firming** with *send* e-mails each approved purchase order to its supplier. An order whose supplier has no e-mail address, or whose mail fails, is named and stays unsent.
 
 **Worklist reminders.** An owner sets the days and the time on **Connections → E-mail**. On those days, each person who owns open exceptions on the worklist gets one e-mail with them:
 - the ones past their time first, then the oldest;

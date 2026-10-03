@@ -28,6 +28,7 @@ from ..companies.store import EMAIL
 from ..model.common import Model, Out
 from ..model.tower import CATEGORIES
 from .imports import _zone, next_run, timezone
+from .pdf import html_to_pdf
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS mail_outbox (
@@ -47,7 +48,7 @@ MailKind = Literal["purchase_order", "delivery_schedule", "confirmation", "invoi
 
 
 class MailInput(Model):
-    kind: Literal["purchase_order", "delivery_schedule", "confirmation", "invoice", "credit_note"]
+    kind: Literal["purchase_order", "delivery_schedule", "confirmation", "invoice", "credit_note", "reminder", "statement"]
     ref: str = Field(min_length=1, max_length=64, description="The document's number (PO-00001, SO-00003, INV-00002)")
     to: list[str] = Field(min_length=1, max_length=10)
     cc: list[str] = Field(default_factory=list, max_length=10)
@@ -67,7 +68,7 @@ class MailRow(Out):
     subject: str
     status: Literal["sent", "failed"]
     error: str
-    attachment: str                # the attached file's name, if any
+    attachment: str                # the attached files' names, if any ("PO-00001.pdf, PO-00001.html")
 
 
 class ReminderSettings(Model):
@@ -134,8 +135,19 @@ def _send(c: Companies, cid: str, uid: str, kind: str, ref: str, to: list[str], 
     msg["Subject"] = subject
     msg["Message-ID"] = make_msgid(domain="scp.local")
     msg.set_content(text)
+    names = []
     if html:
+        # N140: the document as a PDF first, the page itself beside it as the exact copy
+        try:
+            doc = html_to_pdf(html, subject)
+        except Exception:  # noqa: BLE001 - the page still goes
+            doc = None
+        if doc is not None:
+            pdf = re.sub(r"\.html$", "", filename) + ".pdf"
+            msg.add_attachment(doc, maintype="application", subtype="pdf", filename=pdf)
+            names.append(pdf)
         msg.add_attachment(html.encode("utf-8"), maintype="text", subtype="html", filename=filename)
+        names.append(filename)
     status, error = "sent", ""
     try:
         mail.deliver(msg)
@@ -144,7 +156,7 @@ def _send(c: Companies, cid: str, uid: str, kind: str, ref: str, to: list[str], 
     cur = c.db.execute("INSERT INTO mail_outbox (company_id, at, user_id, kind, ref, recipients, cc, subject, body, "
                        "attachment, status, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                        (cid, _iso(_now()), uid, kind, ref, json.dumps(to), json.dumps(cc), subject, text,
-                        filename if html else "", status, error))
+                        ", ".join(names), status, error))
     return _row(c, c.db.execute("SELECT * FROM mail_outbox WHERE seq = ?", (cur.lastrowid,)).fetchone())
 
 

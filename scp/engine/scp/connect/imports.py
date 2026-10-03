@@ -246,7 +246,7 @@ def _norm(s: str) -> str:
 SYNONYMS: dict[str, list[str]] = {
     "location": ["location", "place", "plant", "site", "warehouse", "werk", "storagelocation", "loc"],
     "product": ["product", "material", "item", "sku", "article", "matnr", "productid", "itemcode"],
-    "qty": ["qty", "quantity", "onhand", "stock", "unrestricted", "menge", "amount"],
+    "qty": ["qty", "quantity", "onhand", "stock", "unrestricted", "labst", "menge", "amount"],
     "number": ["number", "order", "ordernumber", "salesorder", "orderno", "vbeln", "documentnumber"],
     "customer": ["customer", "soldto", "shipto", "customerid", "kunnr"],
     "order_date": ["orderdate", "documentdate", "created"],
@@ -263,6 +263,8 @@ SYNONYMS: dict[str, list[str]] = {
     "supplier_batch": ["supplierbatch", "vendorbatch"],
     "stock_type": ["stocktype", "fromstock"],
     "to_type": ["totype", "tostock"],
+    "quality": ["quality", "qualityinspection", "inqualityinspection", "insme", "inspection"],
+    "blocked": ["blocked", "blockedstock", "speme"],
     "note": ["note", "text", "comment"],
 }
 ACTIONS = {"101": "receive", "gr": "receive", "receipt": "receive", "receive": "receive", "goodsreceipt": "receive",
@@ -313,7 +315,11 @@ def _num(v: str) -> float | None:
 
 
 DATES = {"date", "order_date", "expires_on"}
-NUMBERS = {"qty", "price"}
+NUMBERS = {"qty", "price", "quality", "blocked"}
+# stock types as exports write them: SAP's stock type indicator (2 quality inspection, 3 blocked) and plain words
+STOCK_TYPES = {"": "unrestricted", "1": "unrestricted", "unrestricted": "unrestricted", "free": "unrestricted",
+               "2": "quality", "q": "quality", "quality": "quality", "qualityinspection": "quality",
+               "inspection": "quality", "3": "blocked", "s": "blocked", "blocked": "blocked"}
 FLAGS = {"cancelled", "final"}
 
 
@@ -343,9 +349,24 @@ def _rows(grid: list[list[str]], fields: list[str], day_first: bool) -> list[dic
                 rec[f] = v.lower() in ("1", "x", "yes", "y", "true", "ja")
             elif f == "action":
                 rec[f] = ACTIONS.get(_norm(v), v.lower())
+            elif f in ("stock_type", "to_type"):
+                rec[f] = STOCK_TYPES.get(_norm(v), v.lower())
             else:
                 rec[f] = v
         out.append(rec)
+    return out
+
+
+def _stock_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Stock with a column per stock type (as SAP's MARD has unrestricted, quality inspection and blocked) becomes a
+    row per stock type."""
+    if not any("quality" in r or "blocked" in r for r in rows):
+        return rows
+    out = []
+    for r in rows:
+        base = {k: v for k, v in r.items() if k not in ("qty", "quality", "blocked", "stock_type")}
+        for col, kind in (("qty", "unrestricted"), ("quality", "quality"), ("blocked", "blocked")):
+            out.append({**base, "qty": r.get(col, 0), "stock_type": kind})
     return out
 
 
@@ -384,7 +405,8 @@ def parse(kind: str, fmt: str, raw: bytes, day_first: bool = True) -> list[Any]:
     if kind.startswith("records:"):
         return _records(grid, day_first)
     if kind == "stock":
-        return _rows(grid, ["location", "product", "qty"], day_first)
+        return _stock_rows(_rows(grid, ["location", "product", "qty", "batch", "expires_on", "stock_type", "quality",
+                                        "blocked"], day_first))
     if kind == "postings":
         return _rows(grid, ["ref", "action", "number", "qty", "date", "final", "location", "product", "batch",
                             "expires_on", "supplier_batch", "stock_type", "to_type", "note"], day_first)

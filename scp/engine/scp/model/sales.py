@@ -81,6 +81,17 @@ class SalesSettings(Model):
     quotation_days: int = Unit("days", ge=1, le=366, default=30, description="How long a new quotation is valid")
     delivery_days: int = Unit("days", le=60, default=3,
                               description="Order lines promised to ship within this many days are listed to deliver")
+    reminder_days: list[int] = Field(
+        default_factory=lambda: [7, 21, 35], max_length=5,
+        description="Days past the due date for the first, second, third … payment reminder (dunning levels). "
+                    "Empty: no reminders")
+
+    @field_validator("reminder_days")
+    @classmethod
+    def _levels(cls, v: list[int]) -> list[int]:
+        if any(d < 1 or d > 365 for d in v):
+            raise ValueError("a reminder comes 1 to 365 days after the due date")
+        return sorted(set(v))
 
 
 class SalesOrder(Model):
@@ -210,6 +221,8 @@ class Invoice(Model):
     sent_on: dt.date | None = None
     cancelled: bool = Field(False, description="Cancelled: it no longer counts as owed")
     note: str = Field("", max_length=400)
+    reminder_level: int = Field(0, ge=0, le=5, description="The last payment reminder sent for it: 1 the first, …")
+    reminded_on: dt.date | None = Field(None, description="When that reminder was sent")
 
     @property
     def net(self) -> float:

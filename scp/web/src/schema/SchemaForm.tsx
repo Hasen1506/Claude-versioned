@@ -337,6 +337,9 @@ function Widget({ id, name, node, nullable, value, onChange, currency, invalid }
   if (node.type === "array" && node.items?.format === "date") {
     return <DateList value={(value as string[]) ?? []} onChange={onChange} />;
   }
+  if (node.type === "array" && (node.items?.type === "integer" || node.items?.type === "number")) {
+    return <NumberList id={id} cls={cls} value={(value as number[]) ?? []} onChange={onChange} />;
+  }
   if (node.type === "object" && node.additionalProperties) {
     return <KeyValue value={(value as Record<string, number>) ?? {}} onChange={onChange} />;
   }
@@ -350,6 +353,19 @@ function Widget({ id, name, node, nullable, value, onChange, currency, invalid }
   }
   return <input id={id} className={cls} value={(value as string) ?? ""}
     onChange={(e) => onChange(e.target.value === "" && nullable ? null : e.target.value)} />;
+}
+
+/** A list of numbers typed as "7, 21, 35", kept as typed until the field is left. */
+function NumberList({ id, cls, value, onChange }: { id: string; cls: string; value: number[]; onChange: (v: unknown) => void }) {
+  const [text, setText] = useState(value.join(", "));
+  useEffect(() => setText(value.join(", ")), [value]);
+  const commit = () => {
+    const nums = text.split(/[,;\s]+/).filter(Boolean).map(Number);
+    if (nums.every(Number.isFinite)) onChange(nums);
+    else setText(value.join(", "));
+  };
+  return <input id={id} className={cls} value={text} inputMode="numeric" placeholder="none"
+    onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === "Enter") commit(); }} />;
 }
 
 function NumberInput({ id, node, nullable, value, onChange, unit, integer, invalid }: {

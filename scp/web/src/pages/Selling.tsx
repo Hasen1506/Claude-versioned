@@ -9,8 +9,9 @@ import {
 } from "../components/ui";
 import { addDays, day, exactMoney, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Msg, Prod, namesOf, useNames } from "../lib/names";
-import { confirmationDocument, customerAddresses, customerEmail, invoiceDocument } from "../lib/sodoc";
+import { confirmationDocument, customerAddresses, customerEmail, invoiceDocument, openItems, statementDocument } from "../lib/sodoc";
 import { ServerSend } from "../components/ServerSend";
+import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { download } from "../lib/tabular";
 import { go, href } from "../lib/router";
 import { isStale, store, useFreshResult, useReadOnly, useStore } from "../state/store";
@@ -109,7 +110,7 @@ export function Selling({ route }: { route: string[] }) {
     {view === "deliver" && <Deliveries res={res} ds={ds} sel={route[2]} />}
     {view === "bill" && <Invoices res={res} ds={ds} sel={route[2]} />}
     {view === "returns" && <Returns res={res} ds={ds} />}
-    {view === "customers" && <Customers res={res} />}
+    {view === "customers" && <Customers res={res} ds={ds} sel={route[2]} />}
   </>);
 }
 
@@ -521,7 +522,8 @@ function Invoices({ res, ds, sel }: { res: SalesView; ds: Dataset; sel?: string 
               <td>{day(i.date)}</td><td>{day(i.due_date)}{i.discount_until && <div className="faint small">{exactMoney(i.discount_amount, res.currency)} off by {day(i.discount_until)}</div>}</td>
               <td className="num">{exactMoney(i.kind === "credit_note" ? -i.total : i.total, res.currency)}</td>
               <td className="num">{exactMoney(i.kind === "credit_note" ? -i.open : i.open, res.currency)}</td>
-              <td><Badge sev={INVOICE_SEV[i.status] ?? "info"}>{i.status}{i.days_overdue ? ` ${i.days_overdue} d` : ""}</Badge></td>
+              <td><Badge sev={INVOICE_SEV[i.status] ?? "info"}>{i.status}{i.days_overdue ? ` ${i.days_overdue} d` : ""}</Badge>
+                {i.reminder_level > 0 && <div className="faint small">reminder {i.reminder_level} sent {i.reminded_on ? day(i.reminded_on) : ""}</div>}</td>
             </tr>))}
           </tbody>
         </table></div>}
@@ -611,9 +613,81 @@ function Returns({ res, ds }: { res: SalesView; ds: Dataset }) {
 }
 
 // ------------------------------------------------------------------------------------------------ customers
-function Customers({ res }: { res: SalesView }) {
+const reminderName = (n: number) => (n === 1 ? "Payment reminder" : `Payment reminder ${n}`);
+
+/** The statement of account or a payment reminder for a customer (N124): print, download, e-mail or send from the server.
+ * A reminder sent from the server is recorded on its invoices; one printed or mailed otherwise is recorded with the button. */
+function CustomerDocButtons({ customer, res, ds, reminder = 0, action }: { customer: string; res: SalesView; ds: Dataset; reminder?: number; action: Runner }) {
+  const o = openItems(res.invoices, customer);
+  const items = reminder ? o.overdue : o.items;
+  const cur = res.currency;
+  const html = () => statementDocument(customer, res.invoices, res.as_of, ds, reminder);
+  const name = reminder ? reminderName(reminder) : "Statement of account";
+  const file = `${customer}-${reminder ? `reminder-${reminder}` : `statement-${res.as_of}`}`;
+  const mail = customerEmail(ds, customer, name,
+    reminder ? `Our records show these invoices as unpaid past their due date:` : `This is what we have open for you on ${day(res.as_of)}:`,
+    items.map((i) => `- ${i.kind === "credit_note" ? "Credit note" : "Invoice"} ${i.id} of ${day(i.date)}${i.kind === "invoice" ? `, due ${day(i.due_date)}` : ""}: ` +
+      `${exactMoney(i.kind === "credit_note" ? -i.open : i.open, cur)} open${i.days_overdue ? ` (${i.days_overdue} days overdue)` : ""}`),
+    reminder ? [`Please pay ${exactMoney(o.overdueAmount, cur)}, quoting the invoice numbers. If you have paid in the last few days, thank you, and please disregard this.`]
+      : [`In all ${exactMoney(o.owed, cur)}${o.overdueAmount > 0 ? `, of which ${exactMoney(o.overdueAmount, cur)} overdue` : ""}. If your records differ, please tell us.`]);
+  const mailto = `mailto:${encodeURIComponent(mail.to)}?subject=${encodeURIComponent(mail.subject)}&body=${encodeURIComponent(mail.body)}`;
+  const print = () => {
+    const w = window.open("", "_blank");
+    if (!w) return download(`${file}.html`, html(), "text/html");
+    w.document.write(html());
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 250);
+  };
+  const record = () => action.run("remind", { customer, date: res.as_of });
+  return <span className="row wrap" style={{ gap: 6 }}>
+    <button className="btn sm ghost" onClick={print} title="Opens the document as a page and the print dialog, where it can be saved as PDF">Print or PDF</button>
+    <button className="btn sm ghost" onClick={() => download(`${file}.html`, html(), "text/html")}>Download</button>
+    <a className="btn sm ghost" href={mailto}>E-mail</a>
+    <ServerSend kind={reminder ? "reminder" : "statement"} docRef={file} to={mail.to} subject={mail.subject} text={mail.body} html={html}
+      onSent={reminder ? record : undefined} />
+    {reminder > 0 && <Edits><button className="btn sm" disabled={action.busy} onClick={record}
+      title="Records the reminder on its invoices, so the next one follows when they are later still unpaid">Record {reminderName(reminder).toLowerCase()} as sent</button></Edits>}
+  </span>;
+}
+
+function Customers({ res, ds, sel }: { res: SalesView; ds: Dataset; sel?: string }) {
+  const action = useAction();
   if (res.customers.length === 0) return <Panel><Empty title="No customers yet">Customers appear here once they order or have sales data.</Empty></Panel>;
-  return <Panel flush title="What customers owe" actions={<>
+  const due = res.customers.filter((c) => c.reminder_due > 0);
+  const open = res.customers.find((c) => c.customer === sel);
+  const days = ds.sales?.reminder_days ?? [7, 21, 35];
+  return <div className="stack">
+    {action.banners}
+    {due.length > 0 && <Panel flush title="Payment reminders due" actions={<span className="faint small"
+      title="Change them in Selling settings below">{days.length ? `Reminders ${days.join(", ")} days after the due date` : "No reminder days set"}</span>}>
+      <div className="table-wrap"><table className="t">
+        <thead><tr><th>Customer</th><th>Reminder</th><th className="num">Overdue</th><th>Invoices</th><th /></tr></thead>
+        <tbody>{due.map((c) => {
+          const o = openItems(res.invoices, c.customer);
+          return <tr key={c.customer}>
+            <td><b><Loc id={c.customer} /></b></td><td>{reminderName(c.reminder_due)}</td>
+            <td className="num"><Badge sev="error">{exactMoney(c.overdue, res.currency)}</Badge></td>
+            <td className="small">{o.overdue.map((i) => `${i.id} (${i.days_overdue} d)`).join(", ")}</td>
+            <td><CustomerDocButtons customer={c.customer} res={res} ds={ds} reminder={c.reminder_due} action={action} /></td>
+          </tr>;
+        })}</tbody>
+      </table></div>
+    </Panel>}
+    {open && <Panel title={<>Statement of account: <Loc id={open.customer} /></>} actions={<button className="btn sm ghost" onClick={() => go("selling", "customers")}>Close</button>}>
+      {(() => {
+        const o = openItems(res.invoices, open.customer);
+        return <div className="stack">
+          <div className="row wrap" style={{ gap: 18 }}>
+            <StatTile label="Owed" value={exactMoney(o.owed, res.currency)} />
+            {o.aging.map((a) => <StatTile key={a.label} label={a.label} value={exactMoney(a.amount, res.currency)} />)}
+          </div>
+          {o.items.length === 0 ? <p className="faint" style={{ margin: 0 }}>Nothing open on {day(res.as_of)}.</p> :
+            <CustomerDocButtons customer={open.customer} res={res} ds={ds} action={action} />}
+        </div>;
+      })()}
+    </Panel>}
+    <Panel flush title="What customers owe" actions={<>
     <a className="btn sm ghost" href={href("data", "customers")}>Edit customer sales data</a>
     <a className="btn sm ghost" href={href("data", "payment_terms")}>Payment terms</a>
     <a className="btn sm ghost" href={href("data", "customer_prices")}>Prices</a></>}>
@@ -621,7 +695,8 @@ function Customers({ res }: { res: SalesView }) {
       <thead><tr><th>Customer</th><th>Terms</th><th className="num">Open orders</th><th className="num">Shipped, not invoiced</th><th className="num">Unpaid</th>
         <th className="num">Owes in all</th><th className="num">Credit limit</th><th className="num">Left</th><th className="num">Overdue</th></tr></thead>
       <tbody>{res.customers.map((c) => (
-        <tr key={c.customer}>
+        <tr key={c.customer} className={`clickable ${sel === c.customer ? "selected" : ""}`} title="Show the statement of account"
+          onClick={() => go("selling", "customers", sel === c.customer ? undefined : c.customer)}>
           <td><b><Loc id={c.customer} /></b>{c.blocked && <> <Badge sev="error">blocked</Badge></>}</td><td className="small">{c.payment_terms}</td>
           <td className="num">{exactMoney(c.open_orders, res.currency)}</td><td className="num">{exactMoney(c.to_bill, res.currency)}</td>
           <td className="num">{exactMoney(c.receivable, res.currency)}</td><td className="num"><b>{exactMoney(c.exposure, res.currency)}</b></td>
@@ -632,6 +707,14 @@ function Customers({ res }: { res: SalesView }) {
       </tbody>
     </table></div>
     <p className="faint small" style={{ padding: "0 12px" }}>Amounts include tax. What a customer owes counts their open order lines, goods shipped and not invoiced,
-      and unpaid invoices less credit notes not yet paid out.</p>
-  </Panel>;
+      and unpaid invoices less credit notes not yet paid out. Click a customer for their statement of account.</p>
+  </Panel>
+    <details className="panel" style={{ padding: "10px 14px" }}>
+      <summary><b>Selling settings</b> <span className="muted small">default payment terms, tax, credit check, how long quotations hold, what is due to ship, payment reminder days</span></summary>
+      <div style={{ marginTop: 10 }}>
+        <SchemaForm defName="SalesSettings" value={(ds.sales ?? {}) as unknown as Obj}
+          onChange={(next) => store.update((d) => { d.sales = next as unknown as Dataset["sales"]; })} />
+      </div>
+    </details>
+  </div>;
 }

@@ -12,6 +12,7 @@ from scp.actuals import PostingError, post, roll_forward
 from scp.api.app import app
 from scp.model import StockType
 from scp.sales import (
+    remind,
     SalesError, act, cancel_invoice, create_deliveries, create_invoices, create_order, create_quotation,
     create_return, credit_return, exposure, issue, lose_quotation, pack, pay, pick, proof, receive_return,
     release_credit, sales_view, to_bill, to_deliver, win_quotation,
@@ -167,6 +168,43 @@ def test_a_late_part_payment_takes_no_discount_and_the_rest_goes_overdue():
     assert v.status == "overdue" and v.days_overdue == 6 and sales_view(x, date(2026, 2, 10)).customers[0].overdue > 0
     with pytest.raises(SalesError, match="has payments"):
         cancel_invoice(x, "INV-00001")
+
+
+def test_an_overdue_invoice_reaches_payment_reminders_by_the_days_it_is_overdue():
+    x, _ = taken()
+    x, _ = create_deliveries(x)
+    x, _ = issue(x, "DL-00001")
+    x, _ = create_invoices(x)
+    due = x.invoices[0].due_date
+    assert x.sales.reminder_days == [7, 21, 35]
+    assert sales_view(x, date(2026, 2, 10)).invoices[0].reminder_due == 0          # 6 days overdue: none yet
+    v = sales_view(x, date(2026, 2, 12))
+    assert (v.invoices[0].reminder_due, v.customers[0].reminder_due) == (1, 1)
+    x, rep = remind(x, "K", on=date(2026, 2, 12))
+    assert rep.message.startswith("Payment reminder 1 to ") and "INV-00001 (8 days overdue, " in rep.message
+    assert (x.invoices[0].reminder_level, x.invoices[0].reminded_on) == (1, date(2026, 2, 12))
+    assert sales_view(x, date(2026, 2, 12)).invoices[0].reminder_due == 0
+    with pytest.raises(SalesError, match="is due a payment reminder"):
+        remind(x, "K", on=date(2026, 2, 12))
+    # long overdue: straight to the last reminder reached
+    assert (date(2026, 3, 15) - due).days >= 35
+    x, rep = remind(x, "K", on=date(2026, 3, 15))
+    assert rep.message.startswith("Payment reminder 3 to ") and x.invoices[0].reminder_level == 3
+    # paid, nothing is due; a company without reminder days has none
+    paid, _ = pay(x, "INV-00001", x.invoices[0].open, on=date(2026, 3, 16))
+    assert sales_view(paid, date(2026, 6, 1)).invoices[0].reminder_due == 0
+    none = x.model_copy(update={"sales": x.sales.model_copy(update={"reminder_days": []}), "invoices": [
+        x.invoices[0].model_copy(update={"reminder_level": 0})]})
+    assert sales_view(none, date(2026, 6, 1)).invoices[0].reminder_due == 0
+
+
+def test_reminder_days_are_kept_in_order_once_each_and_within_a_year():
+    d = shop()
+    d["sales"] = {"reminder_days": [21, 7, 7]}
+    assert ds(d).sales.reminder_days == [7, 21]
+    d["sales"] = {"reminder_days": [0]}
+    with pytest.raises(Exception, match="1 to 365 days"):
+        ds(d)
 
 
 def test_a_cancelled_invoice_frees_its_goods_to_be_billed_again():

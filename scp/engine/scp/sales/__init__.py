@@ -925,7 +925,9 @@ def sales_view(ds: Dataset, as_of: date | None = None) -> SalesView:
         invs.append(InvoiceView(id=i.id, kind=i.kind, customer=i.customer, date=i.date, due_date=i.due_date, net=i.net,
                                 tax=i.tax, total=i.total, open=i.open, status=st, days_overdue=max(0, late),
                                 discount_until=i.discount_date if in_time else None,
-                                discount_amount=round(i.total * i.discount, 2) if in_time else 0.0))
+                                discount_amount=round(i.total * i.discount, 2) if in_time else 0.0,
+                                reminder_level=i.reminder_level, reminded_on=i.reminded_on,
+                                reminder_due=_reminder_due(ds, i, day)))
     rets = [ReturnView(id=r.id, customer=r.customer, product=r.product, qty=r.qty, received_qty=r.received_qty,
                        status=r.status, value=round((r.received_qty or r.qty) * r.price, 2), order=r.order,
                        credit_note=r.credit_note) for r in ds.returns]
@@ -939,7 +941,8 @@ def sales_view(ds: Dataset, as_of: date | None = None) -> SalesView:
         custs.append(CustomerRow(customer=cu, credit_limit=c.credit_limit if c else None, open_orders=o, to_bill=u,
                                  receivable=r, exposure=exp, overdue=overdue,
                                  headroom=None if not c or c.credit_limit is None else round(c.credit_limit - exp, 2),
-                                 payment_terms=ds.terms_for(cu).text(), blocked=bool(c and c.blocked)))
+                                 payment_terms=ds.terms_for(cu).text(), blocked=bool(c and c.blocked),
+                                 reminder_due=max((i.reminder_due for i in invs if i.customer == cu), default=0)))
     return SalesView(currency=ds.settings.currency, as_of=day, orders=sorted(orders, key=lambda o: o.id, reverse=True),
                      quotations=sorted(quotes, key=lambda q: q.id, reverse=True),
                      deliveries=sorted(dels, key=lambda d: d.id, reverse=True),
@@ -948,9 +951,35 @@ def sales_view(ds: Dataset, as_of: date | None = None) -> SalesView:
                      to_bill=to_bill(ds), customers=custs)
 
 
+# ---- payment reminders (dunning) ----------------------------------------------------------------------------------
+def _reminder_due(ds: Dataset, i, day: date) -> int:
+    """The payment reminder an unpaid invoice has reached by ``day`` and not had yet: the number of the company's
+    reminder days it is overdue by (0: none due)."""
+    if i.kind != "invoice" or i.cancelled or i.open <= 0.005 or i.due_date >= day:
+        return 0
+    reached = sum(1 for d in ds.sales.reminder_days if (day - i.due_date).days >= d)
+    return reached if reached > i.reminder_level else 0
+
+
+def remind(ds: Dataset, customer: str, on: date | None = None, ids: list[str] | None = None) -> tuple[Dataset, SalesReport]:
+    """Record a payment reminder to a customer (≈ a dunning run for one customer): every unpaid invoice that has
+    reached a reminder it has not had (or only those in ``ids``) goes up to that reminder, sent on ``on``."""
+    day = _today(ds, on)
+    due = [(i, n) for i in ds.invoices if i.customer == customer and (ids is None or i.id in ids)
+           and (n := _reminder_due(ds, i, day))]
+    if not due:
+        raise SalesError(f"no invoice of {_name(ds, customer)} is due a payment reminder on {_day(day)}")
+    upd = {i.id: i.model_copy(update={"reminder_level": n, "reminded_on": day}) for i, n in due}
+    level = max(n for _, n in due)
+    said = "; ".join(f"{i.id} ({(day - i.due_date).days} days overdue, {_m(ds, i.open)})" for i, _ in due)
+    return (ds.model_copy(update={"invoices": [upd.get(i.id, i) for i in ds.invoices]}),
+            SalesReport(message=f"Payment reminder {level} to {_name(ds, customer)} on {_day(day)}: {said}.",
+                        documents=[i.id for i, _ in due]))
+
+
 ACTIONS = ("create_order", "add_lines", "release_credit", "send_confirmation", "cancel_order", "create_quotation",
            "win_quotation", "lose_quotation", "create_deliveries", "pick", "pack", "issue", "proof", "cancel_delivery",
-           "create_invoices", "pay", "cancel_invoice", "create_return", "receive_return", "credit_return")
+           "create_invoices", "pay", "cancel_invoice", "create_return", "receive_return", "credit_return", "remind")
 
 
 def act(ds: Dataset, action: str, *, id: str | None = None, customer: str | None = None,
@@ -1009,6 +1038,8 @@ def act(ds: Dataset, action: str, *, id: str | None = None, customer: str | None
                               kw.get("batch"))
     if action == "credit_return":
         return credit_return(ds, need(id, "return"), on)
+    if action == "remind":
+        return remind(ds, need(customer, "customer"), on, kw.get("orders"))
     raise SalesError(f"unknown action {action!r}")
 
 
@@ -1016,5 +1047,5 @@ __all__ = [
     "ACTIONS", "SalesError", "act", "add_lines", "cancel_delivery", "cancel_invoice", "cancel_order", "create_deliveries",
     "create_invoices", "create_order", "create_quotation", "create_return", "credit_return", "exposure", "issue",
     "line_record", "lose_quotation", "net_price", "pack", "pay", "pick", "price", "proof", "receive_return",
-    "release_credit", "sales_view", "send_confirmation", "to_bill", "to_deliver", "win_quotation",
+    "release_credit", "remind", "sales_view", "send_confirmation", "to_bill", "to_deliver", "win_quotation",
 ]
