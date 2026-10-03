@@ -131,7 +131,8 @@ class Promiser:
         s.add_in(0, lp.on_hand if lp else 0.0)
         for r in ds.receipts:
             if (r.location, r.product) == node:
-                s.add_in(self.day(r.expected_date) + math.ceil(gr_days(lp) - 1e-9), r.expected_qty)
+                for d, q in r.expected_parts():
+                    s.add_in(self.day(d) + math.ceil(gr_days(lp) - 1e-9), q)
         if self.cfg.include_planned_orders:
             for o in self.plan.orders:
                 if (o.location, o.product) == node:

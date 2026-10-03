@@ -175,3 +175,4 @@ class FirmReport(Out):
     skipped: dict[str, str]               # planned order id → reason
     purchase_orders: list[str] = []       # purchase orders created for the firmed buys (grouped as Buying does)
     notes: list[str] = []                 # from those orders: approval needed, below a supplier's minimum, …
+    sent: list[str] = []                  # of those orders, the ones sent to their suppliers (``send``)

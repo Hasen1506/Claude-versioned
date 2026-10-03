@@ -43,7 +43,8 @@ COLLECTION_TYPES: dict[str, str] = {
     "stock_targets": "stock_target", "vendors": "vendor", "purchase_orders": "purchase_order",
     "customer_prices": "customer_price", "batches": "batch", "inventory_docs": "inventory_doc",
     "customers": "customer", "payment_terms": "payment_terms", "sales_orders": "sales_order", "quotations": "quotation",
-    "deliveries": "delivery", "invoices": "invoice", "returns": "return",
+    "deliveries": "delivery", "invoices": "invoice", "returns": "return", "contracts": "contract",
+    "supplier_invoices": "supplier_invoice", "supplier_returns": "supplier_return",
 }
 _TYPE_COLLECTION = {v: k for k, v in COLLECTION_TYPES.items()}
 
@@ -57,7 +58,8 @@ SINGULAR: dict[str, str] = {
     "purchase_orders": "Purchase order", "customer_prices": "Customer price", "batches": "Batch",
     "inventory_docs": "Physical inventory document", "customers": "Customer sales data", "payment_terms": "Payment terms",
     "sales_orders": "Sales order", "quotations": "Quotation", "deliveries": "Delivery", "invoices": "Invoice",
-    "returns": "Return",
+    "returns": "Return", "contracts": "Contract", "supplier_invoices": "Supplier invoice",
+    "supplier_returns": "Return to supplier",
 }
 
 # validate._ref's message: "<field> refers to unknown <kind> '<value>'"

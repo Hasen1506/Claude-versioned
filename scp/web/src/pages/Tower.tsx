@@ -194,7 +194,7 @@ function KpiDetail({ k, cur }: { k: Kpi; cur: string }) {
 // ------------------------------------------------------------------------------------------------
 const CAT_LINK: Record<string, string[]> = {
   coverage: ["plan", "exceptions"], capacity: ["plan", "capacity"], inventory: ["inventory"], orders: ["execution", "orders"],
-  delivery: ["promise"], demand: ["execution", "accuracy"],
+  delivery: ["promise"], demand: ["execution", "accuracy"], payables: ["buying", "invoices"], receivables: ["selling", "bill"],
 };
 const AGE_BINS: { label: string; lo: number; hi: number }[] = [
   { label: "0–1 d", lo: 0, hi: 1 }, { label: "2–3 d", lo: 2, hi: 3 }, { label: "4–7 d", lo: 4, hi: 7 },
@@ -417,7 +417,7 @@ function Settings({ ds }: { ds: Dataset }) {
         <SchemaForm defName="TowerSettings" value={(ds.tower ?? {}) as unknown as Obj}
           onChange={(next) => store.update((d) => { d.tower = next as unknown as Dataset["tower"]; })} />
       </Panel>
-      <Reading formula="Owner rules are tried in order; the first whose categories, locations, products and families all match (empty = any) owns the exception. Categories: coverage, capacity, inventory, orders, delivery, demand."
+      <Reading formula="Owner rules are tried in order; the first whose categories, locations, products and families all match (empty = any) owns the exception. Categories: coverage, capacity, inventory, orders, delivery, demand, payables, receivables."
         soWhat="Targets are graded with a band: within 5 points of a ratio target (or 25 % of another) is ‘near target’. KPIs with no data are not graded." />
     </div>
   );

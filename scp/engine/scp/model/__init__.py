@@ -17,7 +17,10 @@ from .tower import OwnerRule, TowerSettings
 from .promise import (
     Allocation, BopSegment, Confirmation, ConfirmationStrategy, PromiseSettings,
 )
-from .purchasing import PriceScale, PurchaseOrder, PurchasingSettings, Vendor
+from .purchasing import (
+    Approval, ContractLine, PriceScale, PurchaseContract, PurchaseOrder, PurchasingSettings, ReleaseLevel, SupplierInvoice,
+    SupplierInvoiceLine, SupplierReturn, Vendor,
+)
 from .sales import (
     Customer, Delivery, DeliveryLine, Invoice, InvoiceLine, PaymentTerms, Payment, QuoteLine, Quotation, ReturnOrder,
     SalesOrder, SalesSettings,
@@ -29,12 +32,13 @@ from .master import (
     ProductionSource, PurchasingSource, Resource, SafetyStockPolicy, Settings, Shift, Subcontract, TransportLane,
     UomConversion,
 )
-from .transactional import DemandRecord, Reservation, SalesHistory, ScheduledReceipt
+from .transactional import DemandRecord, Reservation, SalesHistory, ConfirmedDelivery, ScheduledReceipt
 
 __all__ = [
     "Customer", "Delivery", "DeliveryLine", "Invoice", "InvoiceLine", "PaymentTerms", "Payment", "QuoteLine",
     "Quotation", "ReturnOrder", "SalesOrder", "SalesSettings",
-    "PriceScale", "PurchaseOrder", "PurchasingSettings", "Vendor",
+    "Approval", "ContractLine", "PriceScale", "PurchaseContract", "PurchaseOrder", "PurchasingSettings", "ReleaseLevel",
+    "ConfirmedDelivery", "SupplierInvoice", "SupplierInvoiceLine", "SupplierReturn", "Vendor",
     "AccuracyRecord", "OwnerRule", "TowerSettings", "CapacityOption", "FinanceSettings", "ClosedOrder", "ExecutionSettings", "GoodsMovement", "MovementType", "RolledWeek", "Batch", "CountItem", "InventoryDoc", "NegativeStock", "StockType", "Reservation",
     "DEFAULT_MODELS", "Allocation", "BopSegment", "Confirmation", "ConfirmationStrategy", "PromiseSettings", "DemandEvent", "EventKind", "ForecastModelId", "ForecastOverride", "ForecastPeriod",
     "ForecastSettings", "InventorySettings", "NpiRule", "OutlierMethod", "SelectionMetric",

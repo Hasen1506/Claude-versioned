@@ -12,6 +12,11 @@
   received. Each is a plain change to the dataset; receiving posts goods-receipt movements that the roll-forward
   books into stock and uses to close the line.
 * **Views**: every order with its lines' status, and a supplier scorecard from the closed-order log.
+
+Phase N adds a release strategy with several levels by order value (:func:`approve` records who released which
+level; one person never releases two levels of one order), prices from contracts, scheduling agreements whose
+delivery schedule planning extends, a supplier's confirmation in several deliveries, and sending every order firming
+made in one go (R20). Invoice verification, payments, returns and contracts are in :mod:`.payables`.
 """
 from __future__ import annotations
 
@@ -20,10 +25,19 @@ import re
 from collections import defaultdict
 from datetime import date
 
-from ..model import Dataset, GoodsMovement, MovementType, PurchaseOrder, ReceiptKind, ScheduledReceipt
+from ..model import (
+    Approval, Dataset, GoodsMovement, MovementType, PurchaseOrder, ReceiptKind, ReleaseLevel, ScheduledReceipt,
+    ConfirmedDelivery,
+)
 from ..plan import PlanResult
 from ..plan.costing import fx
 from ..plan.leadtime import schedule_buy
+from .payables import (
+    PayablesError, cancel_invoice, contract_for, enter_invoice, invoiced, pay_invoice, payables_view,
+    release_invoice, return_goods,
+)
+from .payables import received as _received_net
+from .payables import returned as _returned
 from .result import (
     ActionReport, CreatedPo, CreateReport, InfoRecord, PoLine, PoView, PurchasingTotals, PurchasingView, Requisition,
     SourceChoice, VendorRow,
@@ -69,12 +83,9 @@ def _lot(pu, qty: float) -> float:
 
 
 def received(ds: Dataset) -> dict[str, float]:
-    """Goods received per order line: every receipt movement posted against it, whatever its date."""
-    out: dict[str, float] = defaultdict(float)
-    for m in ds.movements:
-        if m.type is MovementType.RECEIPT and m.reference:
-            out[m.reference] += m.net
-    return out
+    """Goods received per order line: every receipt movement posted against it, whatever its date, less what was sent
+    back to the supplier."""
+    return _received_net(ds)
 
 
 def _last_receipt(ds: Dataset) -> dict[str, date]:
@@ -106,15 +117,65 @@ def _valid(pu, d: date) -> bool:
     return (pu.valid_from is None or pu.valid_from <= d) and (pu.valid_to is None or pu.valid_to >= d)
 
 
+def release_levels(ds: Dataset) -> list[ReleaseLevel]:
+    """The release strategy's levels by amount; without one, the approval limit is a single level."""
+    if ds.purchasing.release_levels:
+        return sorted(ds.purchasing.release_levels, key=lambda lv: lv.above)
+    if ds.purchasing.approval_limit is not None:
+        return [ReleaseLevel(name="Approval", above=ds.purchasing.approval_limit)]
+    return []
+
+
+def levels_needed(ds: Dataset, value: float) -> list[ReleaseLevel]:
+    """The levels an order worth ``value`` (company currency) must be released at, in order."""
+    return [lv for lv in release_levels(ds) if value > lv.above + EPS]
+
+
+def order_value(ds: Dataset, po_id: str, receipts: list[ScheduledReceipt] | None = None) -> float:
+    """What an order is worth in company currency: ordered quantity × price over its open lines."""
+    po = ds.purchase_order_by_id.get(po_id)
+    k = fx(ds, po.currency if po else None)
+    return sum((r.ordered_qty if r.ordered_qty is not None else r.qty) * (r.price or 0.0)
+               for r in (receipts if receipts is not None else ds.receipts) if r.po == po_id) * k
+
+
+def _release_note(ds: Dataset, value: float) -> str | None:
+    need = levels_needed(ds, value)
+    if not need:
+        return None
+    if not ds.purchasing.release_levels:
+        return (f"worth {value:,.0f}, above the approval limit of {need[0].above:,.0f}: approve it before "
+                "sending")
+    return f"worth {value:,.0f}: to be released by {', then '.join(lv.name for lv in need)} before sending"
+
+
+def price_on(ds: Dataset, pu, qty: float, on: date, location: str) -> tuple[float, str | None]:
+    """The price a new line pays: a valid contract's, else the info record's for that quantity."""
+    k = contract_for(ds, pu.supplier, location, pu.product, on, ds.price_currency(pu))
+    if k is not None:
+        return k[1], k[0].id
+    return pu.price_for(qty), None
+
+
+def agreement_for(ds: Dataset, supplier: str, location: str, product: str, on: date) -> PurchaseOrder | None:
+    """An approved scheduling agreement that takes delivery schedule lines for this product on that day."""
+    for po in ds.purchase_orders:
+        if (po.kind == "scheduling_agreement" and po.supplier == supplier and po.location == location
+                and po.product == product and po.approved and po.order_date <= on
+                and (po.valid_to is None or on <= po.valid_to)):
+            return po
+    return None
+
+
 def _choice(ds: Dataset, pu, qty: float, order_date: date, need_by: date, assigned: bool) -> SourceChoice:
     q = qty if assigned else _lot(pu, qty)
     sch = schedule_buy(ds, pu.id, start=order_date)
-    price = pu.price_for(q)
+    price, contract = price_on(ds, pu, q, order_date, pu.location)
     return SourceChoice(source_id=pu.id, supplier=pu.supplier, price=price, currency=_currency(ds, ds.price_currency(pu)),
                         value=q * price * fx(ds, ds.price_currency(pu)) * (1.0 + pu.duty_rate), qty=q,
                         lead_time_days=pu.lead_time_days, arrives=sch.due_date,
                         days_late=max(0, (sch.available_date - need_by).days), fixed=pu.fixed, assigned=assigned,
-                        blocked=_blocked_reason(ds, pu))
+                        blocked=_blocked_reason(ds, pu), contract=contract)
 
 
 # ---- requisitions ----------------------------------------------------------------------------------
@@ -133,14 +194,15 @@ def requisitions(ds: Dataset, plan: PlanResult) -> list[Requisition]:
                 continue
             choices.append(_choice(ds, alt, o.qty, order_on, o.need_date, alt.id == pu.id))
         choices.sort(key=lambda c: (not c.assigned, bool(c.blocked), c.days_late, c.value))
-        price = pu.price_for(o.qty)
+        price, contract = price_on(ds, pu, o.qty, order_on, o.location)
+        sa = agreement_for(ds, pu.supplier, o.location, o.product, o.due_date)
         out.append(Requisition(
             id=o.id, location=o.location, product=o.product, qty=o.qty, need_date=o.need_date,
             order_date=o.start_date, due_date=o.due_date, source_id=pu.id, supplier=pu.supplier, price=price,
             currency=_currency(ds, ds.price_currency(pu)), value=o.qty * price * fx(ds, ds.price_currency(pu)) * (1.0 + pu.duty_rate),
             due_now=(o.start_date - start).days <= window, late=o.start_in_past or o.start_date < start,
             wanted_order_date=o.wanted_start if o.start_in_past else (o.start_date if o.start_date < start else None),
-            choices=choices, open_later=list(o.open_later)))
+            choices=choices, open_later=list(o.open_later), contract=contract, agreement=sa.id if sa else None))
     out.sort(key=lambda r: (r.order_date, r.supplier, r.product, r.id))
     return out
 
@@ -157,6 +219,7 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
     if lines is None:
         lines = [{"id": r.id} for r in requisitions(ds, plan) if r.due_now]
     groups: dict[tuple[str, str, str], list[tuple[str, object, float, date, list[str]]]] = defaultdict(list)
+    agreements: dict[str, list[tuple[str, object, float, date, list[str]]]] = defaultdict(list)
     for ln in lines:
         rid = ln["id"]
         o = by_id.get(rid)
@@ -196,12 +259,41 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
                              f"{(earliest - due).days} d after it is needed there")
                 due = earliest
         # Keep the planned quantity: continuous units can require less than 0.001.
+        sa = agreement_for(ds, pu.supplier, o.location, o.product, due)
+        if sa is not None:
+            agreements[sa.id].append((rid, pu, qty, due, notes))
+            continue
         groups[(pu.supplier, o.location, _currency(ds, ds.price_currency(pu)))].append((rid, pu, qty, due, notes))
 
     num = next_numbers(ds)
     receipts = list(ds.receipts)
     headers = list(ds.purchase_orders)
-    limit = ds.purchasing.approval_limit
+    for sa_id, items in sorted(agreements.items()):
+        sa = ds.purchase_order_by_id[sa_id]
+        taken = [int(m.group(1)) for x in [*(r.id for r in receipts), *(c.id for c in ds.closed_orders)]
+                 if (m := re.fullmatch(rf"{re.escape(sa_id)}-(\d+)", x))]
+        n = max(taken, default=0)
+        created = CreatedPo(id=sa_id, supplier=sa.supplier, location=sa.location,
+                            currency=_currency(ds, sa.currency), value=0.0, lines=[], approved=True, notes=[])
+        for rid, pu, qty, due, notes in items:
+            n = (n // 10 + 1) * 10
+            lid = f"{sa_id}-{n}"
+            price, contract = price_on(ds, pu, qty, today, sa.location)
+            receipts.append(ScheduledReceipt(id=lid, kind=ReceiptKind.PURCHASE, location=sa.location, product=pu.product,
+                                             qty=qty, due_date=due, start_date=today, source=pu.id, po=sa_id,
+                                             price=price, planned_as=rid, contract=contract))
+            created.lines.append(lid)
+            created.value += qty * price
+            created.notes += notes
+            rep.lines[rid] = lid
+        released = sum((r.ordered_qty if r.ordered_qty is not None else r.qty) for r in receipts if r.po == sa_id) + sum(
+            c.ordered_qty for c in ds.closed_orders if c.po == sa_id)
+        created.notes.append(f"{len(items)} delivery schedule line{'s' if len(items) != 1 else ''} added to scheduling "
+                             f"agreement {sa_id}: send the changed schedule")
+        if sa.target_qty is not None and released > sa.target_qty + EPS:
+            created.notes.append(f"{sa_id} now schedules {released:,.0f}, beyond the {sa.target_qty:,.0f} agreed")
+        headers = [h.model_copy(update={"sent_on": None}) if h.id == sa_id else h for h in headers]
+        rep.created.append(created)
     for (sup, loc, cur), items in sorted(groups.items()):
         num["PO"] += 1
         pid = f"PO-{num['PO']:05d}"
@@ -209,10 +301,12 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
                             notes=[])
         for i, (rid, pu, qty, due, notes) in enumerate(items, start=1):
             lid = f"{pid}-{i * 10}"
-            price = pu.price_for(qty)
+            price, contract = price_on(ds, pu, qty, today, loc)
             receipts.append(ScheduledReceipt(id=lid, kind=ReceiptKind.PURCHASE, location=loc, product=pu.product, qty=qty,
                                              due_date=due, start_date=today, source=pu.id, po=pid, price=price,
-                                             planned_as=rid))
+                                             planned_as=rid, contract=contract))
+            if contract:
+                created.notes.append(f"{lid}: at {price:,.2f}, the price agreed in contract {contract}")
             created.lines.append(lid)
             created.value += qty * price
             created.notes += notes
@@ -221,10 +315,9 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
         v = ds.vendor(sup)
         if v.min_order_value and company_value < v.min_order_value - EPS:
             created.notes.append(f"worth {company_value:,.0f}, below {sup}'s minimum order of {v.min_order_value:,.0f}")
-        if limit is not None and company_value > limit + EPS:
+        if (why := _release_note(ds, company_value)) is not None:
             created.approved = False
-            created.notes.append(f"worth {company_value:,.0f}, above the approval limit of {limit:,.0f}: approve it "
-                                 "before sending")
+            created.notes.append(why)
         headers.append(PurchaseOrder(id=pid, supplier=sup, location=loc, order_date=today,
                                      currency=None if cur == ds.settings.currency else cur, approved=created.approved))
         rep.created.append(created)
@@ -267,10 +360,48 @@ def _pick(lines: list[ScheduledReceipt], wanted: list[dict] | None, po_id: str) 
     return out
 
 
-def approve(ds: Dataset, po_id: str) -> tuple[Dataset, ActionReport]:
+def approve(ds: Dataset, po_id: str, by: str = "", on: date | None = None) -> tuple[Dataset, ActionReport]:
+    """Release an order at the next level its value needs (≈ ME29N). A level with named approvers is released only by
+    one of them; whoever released one level of an order does not release the next."""
     po = _header(ds, po_id)
-    return (ds.model_copy(update={"purchase_orders": _replace_header(ds, po.model_copy(update={"approved": True}))}),
-            ActionReport(ok=True, message=f"{po_id} approved"))
+    on = on or ds.settings.planning_start
+    value = order_value(ds, po_id) if po.kind == "standard" else _agreement_value(ds, po)
+    need = levels_needed(ds, value)
+    done = {a.level for a in po.approvals}
+    todo = [lv for lv in need if lv.name not in done]
+    if not todo:
+        if po.approved:
+            raise PurchasingError(f"{po_id} is already released")
+        new = po.model_copy(update={"approved": True})
+        return (ds.model_copy(update={"purchase_orders": _replace_header(ds, new)}),
+                ActionReport(ok=True, message=f"{po_id} approved" + (f" by {by}" if by else "")))
+    lv = todo[0]
+    who = by.strip().lower()
+    if lv.approvers and who not in {a.strip().lower() for a in lv.approvers}:
+        raise PurchasingError(f"{po_id} is released at level {lv.name} only by {', '.join(lv.approvers)}"
+                              + (f", not {by}" if by else ""))
+    if who and any(a.by.strip().lower() == who for a in po.approvals):
+        prev = next(a for a in po.approvals if a.by.strip().lower() == who)
+        raise PurchasingError(f"{prev.by} released {po_id} at level {prev.level}: someone else releases level "
+                              f"{lv.name}")
+    full = len(todo) == 1
+    new = po.model_copy(update={"approvals": [*po.approvals, Approval(level=lv.name, by=by[:200], on=on)],
+                                "approved": full})
+    if full and len(need) == 1 and not ds.purchasing.release_levels:
+        msg = f"{po_id} approved" + (f" by {by}" if by else "")
+    else:
+        msg = (f"{po_id} released at level {lv.name}" + (f" by {by}" if by else "")
+               + ("; fully released, it can be sent" if full else f"; still to be released by "
+                  f"{', then '.join(x.name for x in todo[1:])}"))
+    return ds.model_copy(update={"purchase_orders": _replace_header(ds, new)}), ActionReport(ok=True, message=msg)
+
+
+def _agreement_value(ds: Dataset, po: PurchaseOrder) -> float:
+    pu = next((x for x in ds.purchasing_sources if x.supplier == po.supplier and x.location == po.location
+               and x.product == po.product), None)
+    if pu is None or not po.target_qty:
+        return 0.0
+    return po.target_qty * price_on(ds, pu, po.target_qty, po.order_date, po.location)[0] * fx(ds, ds.price_currency(pu))
 
 
 def send(ds: Dataset, po_id: str, on: date | None = None) -> tuple[Dataset, ActionReport]:
@@ -280,34 +411,111 @@ def send(ds: Dataset, po_id: str, on: date | None = None) -> tuple[Dataset, Acti
     on = on or ds.settings.planning_start
     v = ds.vendor(po.supplier)
     msg = f"{po_id} sent to {po.supplier} on {on.isoformat()}"
+    if po.kind == "scheduling_agreement":
+        msg = f"Delivery schedule of {po_id} sent to {po.supplier} on {on.isoformat()}"
     if v.confirmation_required:
         msg += f"; a confirmation is expected within {v.confirmation_days} d"
     return (ds.model_copy(update={"purchase_orders": _replace_header(ds, po.model_copy(update={"sent_on": on}))}),
-            ActionReport(ok=True, message=msg))
+            ActionReport(ok=True, message=msg, sent=[po_id]))
+
+
+def send_all(ds: Dataset, ids: list[str] | None, on: date | None = None) -> tuple[Dataset, ActionReport]:
+    """Send every order given (default: every approved order not sent yet), e.g. the ones firming just made (R20).
+    Orders still to be released are left, and named."""
+    wanted = ids if ids is not None else [p.id for p in ds.purchase_orders if p.sent_on is None]
+    sent, waiting, other = [], [], []
+    for pid in wanted:
+        po = ds.purchase_order_by_id.get(pid)
+        if po is None or po.sent_on is not None:
+            other.append(pid)
+            continue
+        if not po.approved:
+            waiting.append(pid)
+            continue
+        if not any(r.po == pid for r in ds.receipts):
+            other.append(pid)
+            continue
+        ds, _ = send(ds, pid, on)
+        sent.append(pid)
+    if not sent and not waiting:
+        raise PurchasingError("there is no order to send")
+    parts = []
+    if sent:
+        parts.append(f"{len(sent)} order{'s' if len(sent) != 1 else ''} sent: {', '.join(sent)}")
+    if waiting:
+        parts.append(f"{', '.join(waiting)} {'wait' if len(waiting) != 1 else 'waits'} to be released first")
+    return ds, ActionReport(ok=True, message="; ".join(parts) + ".", sent=sent)
+
+
+def create_agreement(ds: Dataset, supplier: str, location: str, product: str, *, on: date | None = None,
+                     valid_to: date | None = None, target_qty: float | None = None,
+                     note: str = "") -> tuple[Dataset, ActionReport]:
+    """A scheduling agreement (≈ ME31L) for one product from one supplier to one place: planning's purchases of it
+    become delivery schedule lines on it instead of new orders, until it ends."""
+    on = on or ds.settings.planning_start
+    pu = next((x for x in ds.purchasing_sources if x.supplier == supplier and x.location == location
+               and x.product == product), None)
+    if pu is None:
+        raise PurchasingError(f"{supplier} does not sell {product} to {location}: add the purchasing source first")
+    if why := _blocked_reason(ds, pu):
+        raise PurchasingError(why)
+    if valid_to is not None and valid_to < on:
+        raise PurchasingError("the agreement cannot end before it starts")
+    if (old := agreement_for(ds, supplier, location, product, on)) is not None:
+        raise PurchasingError(f"{old.id} already schedules {product} from {supplier} to {location}")
+    n = max([int(m.group(1)) for p in ds.purchase_orders if (m := re.fullmatch(r"SA-(\d+)", p.id))], default=0)
+    sid = f"SA-{n + 1:05d}"
+    price, contract = price_on(ds, pu, target_qty or 1.0, on, location)
+    value = (target_qty or 0.0) * price * fx(ds, ds.price_currency(pu))
+    need = levels_needed(ds, value)
+    cur = ds.price_currency(pu)
+    po = PurchaseOrder(id=sid, kind="scheduling_agreement", supplier=supplier, location=location, order_date=on,
+                       currency=None if not cur or cur == ds.settings.currency else cur, approved=not need,
+                       product=product, valid_to=valid_to, target_qty=target_qty, note=note[:400])
+    msg = (f"Scheduling agreement {sid}: {product} from {supplier} to {location}"
+           + (f" until {valid_to.isoformat()}" if valid_to else "")
+           + (f", {target_qty:,.0f} agreed" if target_qty else "") + f" at {price:,.2f}"
+           + (f" (contract {contract})" if contract else "")
+           + ("; release it before planning schedules on it" if need
+              else "; planning's purchases of it now become delivery schedule lines on it") + ".")
+    return ds.model_copy(update={"purchase_orders": [*ds.purchase_orders, po]}), ActionReport(ok=True, message=msg,
+                                                                                              id=sid)
 
 
 def confirm(ds: Dataset, po_id: str, lines: list[dict] | None, reference: str = "") -> tuple[Dataset, ActionReport]:
-    """The supplier's confirmation: per line a date (default: as asked) and quantity (default: all of it)."""
+    """The supplier's confirmation: per line a date (default: as asked) and quantity (default: all of it), or
+    ``parts``: several deliveries, each a date and quantity (≈ several confirmation lines of one item)."""
     got = received(ds)
     upd: dict[str, ScheduledReceipt] = {}
     short = late = 0
     for r, w in _pick(_po_lines(ds, po_id), lines, po_id):
         ordered = r.ordered_qty if r.ordered_qty is not None else r.qty
-        d = date.fromisoformat(w["date"]) if isinstance(w.get("date"), str) else (w.get("date") or r.due_date)
-        q = float(w["qty"]) if w.get("qty") is not None else ordered
+        parts = [ConfirmedDelivery.model_validate(x) for x in (w.get("parts") or [])]
+        if parts:
+            parts.sort(key=lambda x: x.date)
+            d, q = parts[-1].date, sum(x.qty for x in parts)
+        else:
+            d = date.fromisoformat(w["date"]) if isinstance(w.get("date"), str) else (w.get("date") or r.due_date)
+            q = float(w["qty"]) if w.get("qty") is not None else ordered
         if q < -EPS or q > ordered + EPS:
             raise PurchasingError(f"{r.id}: a confirmation of {q:,.0f} must be between 0 and the {ordered:,.0f} ordered")
         if q < got.get(r.id, 0.0) - EPS:
             raise PurchasingError(f"{r.id}: {got[r.id]:,.0f} are already received, more than {q:,.0f}")
         short += q < ordered - EPS
         late += d > r.due_date
-        upd[r.id] = r.model_copy(update={"confirmed_date": d, "confirmed_qty": q})
+        upd[r.id] = r.model_copy(update={"confirmed_date": d, "confirmed_qty": q,
+                                         "confirmations": parts if len(parts) > 1 else []})
     receipts = [upd.get(r.id, r) for r in ds.receipts]
     headers = list(ds.purchase_orders)
     po = ds.purchase_order_by_id.get(po_id)
     if po is not None and reference:
         headers = _replace_header(ds, po.model_copy(update={"vendor_reference": reference}))
     parts = [f"{len(upd)} line{'s' if len(upd) != 1 else ''} of {po_id} confirmed"]
+    split = [r for r in upd.values() if r.confirmations]
+    if split:
+        parts.append("; ".join(f"{r.id} in {len(r.confirmations)} deliveries ("
+                               + ", ".join(f"{c.qty:,.0f} on {c.date.isoformat()}" for c in r.confirmations) + ")"
+                               for r in split))
     if late:
         parts.append(f"{late} later than asked")
     if short:
@@ -394,20 +602,18 @@ def change(ds: Dataset, po_id: str, lines: list[dict]) -> tuple[Dataset, ActionR
             open_q = new_q - (ordered - r.qty)       # open = new order less what was already booked off it
             patch.update(qty=max(open_q, EPS), ordered_qty=new_q if r.ordered_qty is not None else None)
         if (abs(new_q - ordered) > EPS or due != r.due_date) and ds.vendor(_supplier_of(ds, r) or "").confirmation_required:
-            patch.update(confirmed_date=None, confirmed_qty=None)
+            patch.update(confirmed_date=None, confirmed_qty=None, confirmations=[])
         upd[r.id] = r.model_copy(update=patch)
     receipts = [upd.get(r.id, r) for r in ds.receipts]
     headers = list(ds.purchase_orders)
     msg = f"{len(upd)} line{'s' if len(upd) != 1 else ''} of {po_id} changed"
     po = ds.purchase_order_by_id.get(po_id)
-    limit = ds.purchasing.approval_limit
-    if po is not None and limit is not None:
-        k = fx(ds, po.currency)
-        old = sum(r.qty * (r.price or 0.0) for r in ds.receipts if r.po == po_id) * k
-        new = sum(r.qty * (r.price or 0.0) for r in receipts if r.po == po_id) * k
-        if new > limit + EPS and new > old + EPS:
-            headers = _replace_header(ds, po.model_copy(update={"approved": False, "sent_on": None}))
-            msg += f"; now worth {new:,.0f}, above the approval limit: approve and send it again"
+    if po is not None and po.kind == "standard" and release_levels(ds):
+        old, new = order_value(ds, po_id), order_value(ds, po_id, receipts)
+        if levels_needed(ds, new) and new > old + EPS:
+            headers = _replace_header(ds, po.model_copy(update={"approved": False, "sent_on": None, "approvals": []}))
+            msg += (f"; now worth {new:,.0f}, above the approval limit: approve and send it again"
+                    if not ds.purchasing.release_levels else f"; now worth {new:,.0f}: release and send it again")
     return ds.model_copy(update={"receipts": receipts, "purchase_orders": headers}), ActionReport(ok=True, message=msg)
 
 
@@ -427,13 +633,38 @@ def cancel(ds: Dataset, po_id: str, lines: list[dict] | None) -> tuple[Dataset, 
     return ds.model_copy(update={"receipts": receipts, "purchase_orders": headers}), ActionReport(ok=True, message=msg)
 
 
-ACTIONS = {"approve", "send", "confirm", "receive", "change", "cancel"}
+ACTIONS = {"approve", "send", "send_all", "confirm", "receive", "change", "cancel", "create_agreement",
+           "enter_invoice", "release_invoice", "pay_invoice", "cancel_invoice", "return_goods"}
 
 
-def act(ds: Dataset, action: str, po_id: str, *, lines: list[dict] | None = None, on: date | None = None,
-        reference: str = "", note: str = "") -> tuple[Dataset, ActionReport]:
+def act(ds: Dataset, action: str, po_id: str = "", *, lines: list[dict] | None = None, on: date | None = None,
+        reference: str = "", note: str = "", by: str = "", **kw) -> tuple[Dataset, ActionReport]:
+    """One action on purchasing documents. ``po_id`` names the order (or the invoice, for the invoice actions); the
+    rest of what an action needs comes in ``kw`` (see each function)."""
+    try:
+        if action == "send_all":
+            return send_all(ds, kw.get("orders"), on)
+        if action == "create_agreement":
+            return create_agreement(ds, kw.get("supplier") or "", kw.get("location") or "", kw.get("product") or "",
+                                    on=on, valid_to=kw.get("valid_to"), target_qty=kw.get("qty"), note=note)
+        if action == "enter_invoice":
+            return enter_invoice(ds, kw.get("supplier"), lines, on=on, reference=reference, tax=kw.get("tax"),
+                                 kind=kw.get("kind") or "invoice", po=po_id or None, return_id=kw.get("return_id"),
+                                 note=note)
+        if action == "release_invoice":
+            return release_invoice(ds, po_id, by, on, note)
+        if action == "pay_invoice":
+            return pay_invoice(ds, po_id, kw.get("amount"), on, reference)
+        if action == "cancel_invoice":
+            return cancel_invoice(ds, po_id)
+        if action == "return_goods":
+            ln = (lines or [{}])[0]
+            return return_goods(ds, ln.get("id") or po_id, ln.get("qty") or 0.0, on=on, reason=note,
+                                stock_type=kw.get("stock_type"), batch=ln.get("batch"), replace=bool(kw.get("replace")))
+    except PayablesError as e:
+        raise PurchasingError(str(e)) from e
     if action == "approve":
-        return approve(ds, po_id)
+        return approve(ds, po_id, by, on)
     if action == "send":
         return send(ds, po_id, on)
     if action == "confirm":
@@ -448,7 +679,18 @@ def act(ds: Dataset, action: str, po_id: str, *, lines: list[dict] | None = None
 
 
 # ---- views -----------------------------------------------------------------------------------------
-def _line(ds: Dataset, r, got: dict[str, float], last: dict[str, date], as_of: date, closed: bool) -> PoLine:
+def _line(ds: Dataset, r, got: dict[str, float], last: dict[str, date], as_of: date, closed: bool,
+          billed: dict[str, float] | None = None, back: dict[str, float] | None = None) -> PoLine:
+    line = _line_status(ds, r, got, last, as_of, closed)
+    line.invoiced = (billed or {}).get(r.id, 0.0)
+    line.returned = (back or {}).get(r.id, 0.0)
+    line.contract = (r.source_order or {}).get("contract") if closed else r.contract
+    if not closed:
+        line.confirmations = list(r.confirmations)
+    return line
+
+
+def _line_status(ds: Dataset, r, got: dict[str, float], last: dict[str, date], as_of: date, closed: bool) -> PoLine:
     if closed:
         ordered, rec, due = r.ordered_qty, r.delivered_qty, r.due_date
         exp = r.confirmed_date or due
@@ -488,7 +730,7 @@ def _line(ds: Dataset, r, got: dict[str, float], last: dict[str, date], as_of: d
 
 def purchase_orders(ds: Dataset, as_of: date | None = None) -> list[PoView]:
     as_of = as_of or ds.settings.planning_start
-    got, last = received(ds), _last_receipt(ds)
+    got, last, billed, back = received(ds), _last_receipt(ds), invoiced(ds), _returned(ds)
     open_by: dict[str, list] = defaultdict(list)
     closed_by: dict[str, list] = defaultdict(list)
     loose = []
@@ -504,13 +746,13 @@ def purchase_orders(ds: Dataset, as_of: date | None = None) -> list[PoView]:
             closed_by[c.po].append(c)
     out = []
     for po in ds.purchase_orders:
-        lines = ([_line(ds, r, got, last, as_of, False) for r in open_by.get(po.id, [])]
-                 + [_line(ds, c, got, last, as_of, True) for c in closed_by.get(po.id, [])])
+        lines = ([_line(ds, r, got, last, as_of, False, billed, back) for r in open_by.get(po.id, [])]
+                 + [_line(ds, c, got, last, as_of, True, billed, back) for c in closed_by.get(po.id, [])])
         lines.sort(key=lambda x: x.id)
         out.append(_view(ds, po.id, True, po, po.supplier, po.location, lines, as_of))
     for r in loose:
         out.append(_view(ds, r.id, False, None, _supplier_of(ds, r), r.location,
-                         [_line(ds, r, got, last, as_of, False)], as_of))
+                         [_line(ds, r, got, last, as_of, False, billed, back)], as_of))
     order = {"awaiting approval": 0, "to send": 1, "awaiting confirmation": 2, "partly received": 3, "sent": 4,
              "confirmed": 5, "received": 6, "closed": 7}
     out.sort(key=lambda p: (order[p.status], p.id))
@@ -522,16 +764,26 @@ def _view(ds: Dataset, pid: str, header: bool, po: PurchaseOrder | None, supplie
     v = ds.vendor(supplier or "")
     open_lines = [x for x in lines if not x.closed]
     attention: list[str] = []
-    if not open_lines:
-        status = "closed"
+    agreement = po is not None and po.kind == "scheduling_agreement"
+    need = ([lv.name for lv in levels_needed(ds, _agreement_value(ds, po) if agreement else order_value(ds, po.id))]
+            if po is not None else [])
+    given = {a.level for a in po.approvals} if po is not None else set()
+    nxt = next((lv for lv in need if lv not in given), None) if po is not None and not po.approved else None
+    if agreement and po is not None and not po.approved:
+        status = "awaiting approval"
+        attention.append(f"release it at level {nxt}" if nxt and ds.purchasing.release_levels
+                         else "approve it before planning schedules on it")
+    elif not open_lines:
+        status = "closed" if not agreement or lines else "sent"
     elif all(x.open <= EPS for x in open_lines):
         status = "received"
     elif po is not None and not po.approved:
         status = "awaiting approval"
-        attention.append("approve it before it is sent")
+        attention.append(f"release it at level {nxt}" if nxt and ds.purchasing.release_levels
+                         else "approve it before it is sent")
     elif po is not None and po.sent_on is None:
         status = "to send"
-        attention.append("send it to the supplier")
+        attention.append("send the changed delivery schedule" if agreement else "send it to the supplier")
     elif any(x.received > EPS for x in open_lines):
         status = "partly received"
     elif any(x.status == "awaiting confirmation" for x in open_lines):
@@ -561,7 +813,10 @@ def _view(ds: Dataset, pid: str, header: bool, po: PurchaseOrder | None, supplie
                   currency=_currency(ds, cur), approved=po.approved if po else True, sent_on=po.sent_on if po else None,
                   vendor_reference=po.vendor_reference if po else "", note=po.note if po else "", status=status,
                   value=sum(x.value for x in lines), open_value=sum(x.open * (x.price or 0.0) for x in open_lines),
-                  lines=lines, attention=attention)
+                  lines=lines, attention=attention, kind=po.kind if po else "standard",
+                  approvals=list(po.approvals) if po else [], levels_needed=need, next_level=nxt,
+                  product=po.product if po else None, valid_to=po.valid_to if po else None,
+                  target_qty=po.target_qty if po else None, released_qty=sum(x.ordered for x in lines))
 
 
 def vendor_rows(ds: Dataset, orders: list[PoView]) -> list[VendorRow]:
@@ -590,7 +845,8 @@ def vendor_rows(ds: Dataset, orders: list[PoView]) -> list[VendorRow]:
         out.append(VendorRow(
             supplier=loc.id, name=loc.name or loc.id, has_record=loc.id in ds.vendor_by_supplier, blocked=v.blocked,
             block_reason=v.block_reason, confirmation_required=v.confirmation_required,
-            payment_terms_days=v.payment_terms_days, currency=_currency(ds, v.currency), open_lines=len(open_lines),
+            payment_terms_days=v.payment_terms_days, terms=ds.vendor_terms(loc.id).name or ds.vendor_terms(loc.id).id,
+            currency=_currency(ds, v.currency), open_lines=len(open_lines),
             open_value=open_value, closed_lines=len(closed),
             on_time=len(on_time) / len(closed) if closed else None, in_full=len(in_full) / len(closed) if closed else None,
             avg_days_late=sum(lates) / len(lates) if lates else None, confirmed_late=confirmed_late,
@@ -603,7 +859,9 @@ def purchasing_view(ds: Dataset, plan: PlanResult) -> PurchasingView:
     reqs = requisitions(ds, plan) if plan.ok else []
     orders = purchase_orders(ds, as_of)
     due = [r for r in reqs if r.due_now]
-    live = [p for p in orders if p.status not in ("received", "closed")]
+    live = [p for p in orders if p.status not in ("received", "closed")
+            and (p.kind == "standard" or any(not x.closed and x.open > EPS for x in p.lines))]
+    pay = payables_view(ds, as_of)
     totals = PurchasingTotals(
         requisitions=len(reqs), due_now=len(due), due_now_value=sum(r.value for r in due),
         late_to_order=sum(r.late for r in reqs), open_orders=len(live),
@@ -611,13 +869,16 @@ def purchasing_view(ds: Dataset, plan: PlanResult) -> PurchasingView:
         awaiting_approval=sum(p.status == "awaiting approval" for p in orders),
         to_send=sum(p.status == "to send" for p in orders),
         confirmations_overdue=sum(any(a.startswith("confirmation overdue") for a in p.attention) for p in orders),
-        late_lines=sum(1 for p in live for x in p.lines if not x.closed and x.open > EPS and x.days_late > 0))
+        late_lines=sum(1 for p in live for x in p.lines if not x.closed and x.open > EPS and x.days_late > 0),
+        blocked_invoices=pay.blocked, payables_overdue=pay.overdue_value,
+        to_invoice=sum(1 for x in pay.to_invoice if x.qty > EPS))
     return PurchasingView(ok=plan.ok, as_of=as_of, currency=ds.settings.currency,
                           approval_limit=ds.purchasing.approval_limit, totals=totals, requisitions=reqs, orders=orders,
-                          vendors=vendor_rows(ds, orders))
+                          vendors=vendor_rows(ds, orders), payables=pay)
 
 
 __all__ = [
-    "ACTIONS", "PurchasingError", "act", "approve", "cancel", "change", "confirm", "create_purchase_orders",
-    "next_numbers", "purchase_orders", "purchasing_view", "receive", "requisitions", "send", "vendor_rows",
+    "ACTIONS", "PurchasingError", "act", "agreement_for", "approve", "cancel", "change", "confirm", "create_agreement",
+    "create_purchase_orders", "levels_needed", "next_numbers", "order_value", "price_on", "purchase_orders",
+    "purchasing_view", "receive", "release_levels", "requisitions", "send", "send_all", "vendor_rows",
 ]

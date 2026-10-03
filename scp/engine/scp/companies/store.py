@@ -108,6 +108,7 @@ LABELS = {
     "purchasing_sources": "ways to buy", "lanes": "routes", "vendors": "suppliers", "purchase_orders": "purchase orders",
     "customers": "customers", "payment_terms": "payment terms", "sales_orders": "sales orders",
     "quotations": "quotations", "deliveries": "deliveries", "invoices": "invoices and credit notes", "returns": "returns",
+    "contracts": "contracts", "supplier_invoices": "supplier invoices", "supplier_returns": "returns to suppliers",
     "sales": "sales settings",
     "demand": "orders and forecasts", "receipts": "open orders", "history": "sales history", "events": "events",
     "npi": "new products", "overrides": "forecast overrides", "stock_targets": "stock targets",

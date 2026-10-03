@@ -18,7 +18,9 @@ from .finance import FinanceSettings
 from .tower import TowerSettings
 from .demand import DemandEvent, ForecastOverride, ForecastSettings, NpiRule
 from .inventory import InventorySettings
-from .purchasing import PurchaseOrder, PurchasingSettings, Vendor
+from .purchasing import (
+    PurchaseContract, PurchaseOrder, PurchasingSettings, SupplierInvoice, SupplierReturn, Vendor,
+)
 from .sales import Customer, Delivery, Invoice, PaymentTerms, Quotation, ReturnOrder, SalesOrder, SalesSettings
 from .promise import Allocation, Confirmation, PromiseSettings
 from .schedule import Changeover, ScheduleSettings
@@ -48,6 +50,9 @@ class Dataset(Model):
     vendors: list[Vendor] = Field(default_factory=list)
     purchase_orders: list[PurchaseOrder] = Field(default_factory=list)
     purchasing: PurchasingSettings = Field(default_factory=PurchasingSettings)
+    contracts: list[PurchaseContract] = Field(default_factory=list)
+    supplier_invoices: list[SupplierInvoice] = Field(default_factory=list)
+    supplier_returns: list[SupplierReturn] = Field(default_factory=list)
     sales_orders: list[SalesOrder] = Field(default_factory=list)
     quotations: list[Quotation] = Field(default_factory=list)
     deliveries: list[Delivery] = Field(default_factory=list)
@@ -135,6 +140,14 @@ class Dataset(Model):
     def vendor(self, supplier: str) -> Vendor:
         """The supplier's purchasing data, or the defaults when none is kept."""
         return self.vendor_by_supplier.get(supplier) or Vendor(supplier=supplier)
+
+    def vendor_terms(self, supplier: str) -> PaymentTerms:
+        """A supplier's payment terms: their own record with a cash discount, else net their payment days."""
+        v = self.vendor(supplier)
+        if v.payment_terms and v.payment_terms in self.payment_terms_by_id:
+            return self.payment_terms_by_id[v.payment_terms]
+        return PaymentTerms(id=f"NET{v.payment_terms_days}", name=f"Net {v.payment_terms_days} days",
+                            net_days=v.payment_terms_days)
 
     def price_currency(self, pu: PurchasingSource) -> str | None:
         """The currency a source's price is in: its own, else the supplier's order currency (empty = the company's)."""

@@ -434,6 +434,7 @@ def _purchasing(ds: Dataset, c: _Collector) -> None:
                           "Keep one fixed source per period, or give them dates that do not overlap", "fixed")
     _purchase_orders(ds, c)
     _sales(ds, c)
+    _procure(ds, c)
 
 
 def _overlap(a, b) -> bool:
@@ -504,6 +505,34 @@ def _sales(ds: Dataset, c: _Collector) -> None:
         elif h.customer != d.location:
             c.add("SO_LINE_MISMATCH", "demand", oid, f"Line {oid} is on sales order {h.id} for {h.customer} but is "
                   f"for {d.location}", "Move the line to an order for its customer, or fix it", "order")
+
+
+def _procure(ds: Dataset, c: _Collector) -> None:
+    """Suppliers' payment terms, contracts, scheduling agreements, supplier invoices and returns name what exists."""
+    sup = {LocationType.SUPPLIER}
+    for v in ds.vendors:
+        _ref(ds, c, "payment_terms", v.payment_terms, "vendor", v.supplier, "payment_terms")
+    for k in ds.contracts:
+        if _ref(ds, c, "location", k.supplier, "contract", k.id, "supplier"):
+            _loc_type(ds, c, k.supplier, sup, "contract", k.id, "supplier", "a contract is with a supplier")
+        _ref(ds, c, "location", k.location, "contract", k.id, "location")
+        for ln in k.lines:
+            _ref(ds, c, "product", ln.product, "contract", k.id, "lines.product")
+    for po in ds.purchase_orders:
+        if po.kind == "scheduling_agreement":
+            if po.product is None:
+                c.add("SA_NO_PRODUCT", "purchase_order", po.id, f"Scheduling agreement {po.id} has no product",
+                      "Give the product it schedules", "product")
+            else:
+                _ref(ds, c, "product", po.product, "purchase_order", po.id, "product")
+    for inv in ds.supplier_invoices:
+        _ref(ds, c, "location", inv.supplier, "supplier_invoice", inv.id, "supplier")
+        for ln in inv.lines:
+            _ref(ds, c, "product", ln.product, "supplier_invoice", inv.id, "lines.product")
+    for r in ds.supplier_returns:
+        _ref(ds, c, "location", r.supplier, "supplier_return", r.id, "supplier")
+        _ref(ds, c, "product", r.product, "supplier_return", r.id, "product")
+        _ref(ds, c, "location", r.location, "supplier_return", r.id, "location")
 
 
 def _lanes(ds: Dataset, c: _Collector) -> None:

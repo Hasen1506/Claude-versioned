@@ -56,7 +56,7 @@ from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, len
 from ..validate.setup import SetupItem, checklist
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
 from ..companies import CompanyError
-from .companies import EditScope, Scope, company_error, gate, router as companies_router
+from .companies import EditScope, Scope, company_error, gate, router as companies_router, who_asks
 from .working import PlanData, answer, is_ref, read as read_ref, respond, send
 
 ROOT = Path(__file__).resolve().parents[3]          # scp/
@@ -573,6 +573,7 @@ class FirmRequest(Out):
     ids: list[str] | None = None          # planned order ids; None = everything starting in the firm zone
     within_days: int | None = None        # overrides the dataset's firm zone
     starts: dict[str, dt.date] | None = None  # planned production runs moved by hand: firm, starting that day
+    send: bool = False                    # send the purchase orders it makes at once (all but those to be released)
 
 
 class FirmResponse(Out):
@@ -583,7 +584,7 @@ class FirmResponse(Out):
 
 @app.post("/api/orders/firm", response_model=FirmResponse)
 def post_firm(req: FirmRequest) -> FirmResponse:
-    new, rep = firm_orders(req.dataset, run_mrp(req.dataset), req.ids, req.within_days, req.starts)
+    new, rep = firm_orders(req.dataset, run_mrp(req.dataset), req.ids, req.within_days, req.starts, req.send)
     if not rep.ok:
         raise HTTPException(409, "the readiness gate has errors; fix them before firming orders")
     return FirmResponse(**answer(req.dataset, new), report=rep)
@@ -624,12 +625,19 @@ def post_create_pos(req: CreatePoRequest) -> CreatePoResponse:
     return CreatePoResponse(**answer(req.dataset, new), report=rep)
 
 
+class ConfirmPart(Out):
+    date: dt.date
+    qty: float
+
+
 class PoLineInput(Out):
-    id: str
+    id: str = ""                                    # the order line (an invoice line: the line invoiced)
+    order: str | None = None                        # enter_invoice: the order line invoiced (same as id)
     qty: float | None = None
     date: dt.date | None = None
     price: float | None = None
     final: bool = False
+    parts: list[ConfirmPart] | None = None          # confirm: several deliveries, each a date and quantity
     batch: str | None = None                        # receive: the batch (default: a new one for batch-managed products)
     expires_on: dt.date | None = None               # receive: its expiry (default: today + the shelf life)
     supplier_batch: str | None = None
@@ -638,12 +646,27 @@ class PoLineInput(Out):
 
 class PoActionRequest(Out):
     dataset: PlanData
-    action: Literal["approve", "send", "confirm", "receive", "change", "cancel"]
-    po: str
+    action: Literal["approve", "send", "send_all", "confirm", "receive", "change", "cancel", "create_agreement",
+                    "enter_invoice", "release_invoice", "pay_invoice", "cancel_invoice", "return_goods"]
+    po: str = ""                                    # the order; for the invoice actions the invoice (enter: the order
+                                                    # whose receipts it bills, when no lines are given)
     lines: list[PoLineInput] | None = None          # None = every open line, as ordered
-    date: dt.date | None = None                     # sent on / received on (default: the planning start)
-    reference: str = ""                             # the supplier's confirmation number
-    note: str = ""                                  # delivery note on a goods receipt
+    date: dt.date | None = None                     # sent on / received on / invoice date / paid on (default: today)
+    reference: str = ""                             # the supplier's confirmation, invoice or payment number
+    note: str = ""                                  # delivery note on a goods receipt; why goods go back
+    by: str = ""                                    # who releases (signed in: the account, whatever this says)
+    orders: list[str] | None = None                 # send_all: the orders (None: every approved one not sent)
+    supplier: str | None = None                     # create_agreement, enter_invoice
+    location: str | None = None                     # create_agreement
+    product: str | None = None                      # create_agreement
+    valid_to: dt.date | None = None                 # create_agreement
+    qty: float | None = None                        # create_agreement: the target quantity
+    tax: float | None = None                        # enter_invoice: as charged (default: the supplier's rate)
+    kind: Literal["invoice", "credit_memo"] = "invoice"
+    return_id: str | None = None                    # enter_invoice: the return a credit memo credits
+    amount: float | None = None                     # pay_invoice (default: what is open, less the discount in time)
+    stock_type: StockType | None = None             # return_goods: where the goods are (default: blocked)
+    replace: bool = False                           # return_goods: the supplier replaces them (else credits them)
 
 
 class PoActionResponse(Out):
@@ -654,10 +677,14 @@ class PoActionResponse(Out):
 
 @app.post("/api/purchasing/act", response_model=PoActionResponse)
 def post_po_action(req: PoActionRequest) -> PoActionResponse:
-    lines = None if req.lines is None else [x.model_dump(exclude_none=True) for x in req.lines]
+    lines = None if req.lines is None else [
+        {**x.model_dump(exclude_none=True), **({"order": x.order or x.id})} for x in req.lines]
     try:
         new, rep = purchasing_act(req.dataset, req.action, req.po, lines=lines, on=req.date, reference=req.reference,
-                                  note=req.note)
+                                  note=req.note, by=who_asks() or req.by, orders=req.orders, supplier=req.supplier,
+                                  location=req.location, product=req.product, valid_to=req.valid_to, qty=req.qty,
+                                  tax=req.tax, kind=req.kind, return_id=req.return_id, amount=req.amount,
+                                  stock_type=req.stock_type, replace=req.replace)
     except PurchasingError as e:
         raise HTTPException(409, str(e)) from e
     return PoActionResponse(**answer(req.dataset, new), report=rep)

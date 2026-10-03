@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Literal
 
-from ..model import PriceScale
+from ..model import Approval, Payment, PriceScale, ConfirmedDelivery
 from ..model.common import Out
 
 
@@ -23,6 +23,7 @@ class SourceChoice(Out):
     fixed: bool
     assigned: bool                    # the source planning chose
     blocked: str = ""                 # why it cannot be used ("" = usable)
+    contract: str | None = None       # the contract its price comes from
 
 
 class Requisition(Out):
@@ -45,6 +46,8 @@ class Requisition(Out):
     wanted_order_date: dt.date | None = None   # late: when it should have been ordered to arrive when needed
     choices: list[SourceChoice]
     open_later: list[str] = []        # open order lines for the same product and place that arrive after it is needed
+    contract: str | None = None       # the contract its price comes from
+    agreement: str | None = None      # ordering adds a delivery schedule line to this scheduling agreement
 
 
 class PoLine(Out):
@@ -64,6 +67,10 @@ class PoLine(Out):
     closed: bool
     last_receipt: dt.date | None = None
     source: str | None = None
+    confirmations: list[ConfirmedDelivery] = []   # the supplier's confirmation in several deliveries
+    contract: str | None = None
+    invoiced: float = 0.0                    # quantity on supplier invoices less credit memos
+    returned: float = 0.0                    # quantity sent back to the supplier
 
 
 class PoView(Out):
@@ -83,6 +90,14 @@ class PoView(Out):
     open_value: float                 # order currency
     lines: list[PoLine]
     attention: list[str]              # what needs doing, in plain words
+    kind: str = "standard"            # or scheduling_agreement
+    approvals: list[Approval] = []    # releases given
+    levels_needed: list[str] = []     # release levels its value needs, in order
+    next_level: str | None = None     # the level that releases it next
+    product: str | None = None        # scheduling agreement
+    valid_to: dt.date | None = None
+    target_qty: float | None = None
+    released_qty: float = 0.0         # scheduling agreement: on its schedule lines, open and closed
 
 
 class InfoRecord(Out):
@@ -112,6 +127,7 @@ class VendorRow(Out):
     block_reason: str
     confirmation_required: bool
     payment_terms_days: int
+    terms: str = ""                   # the payment terms in words (a cash discount, or net days)
     currency: str
     open_lines: int
     open_value: float                 # company currency
@@ -135,6 +151,9 @@ class PurchasingTotals(Out):
     to_send: int
     confirmations_overdue: int
     late_lines: int
+    blocked_invoices: int = 0
+    payables_overdue: float = 0.0      # company currency
+    to_invoice: int = 0                # order lines received and not invoiced
 
 
 class PurchasingView(Out):
@@ -146,6 +165,7 @@ class PurchasingView(Out):
     requisitions: list[Requisition]
     orders: list[PoView]
     vendors: list[VendorRow]
+    payables: PayablesView | None = None
 
 
 class CreatedPo(Out):
@@ -186,4 +206,132 @@ class ActionReport(Out):
     message: str
     movements: list[str] = []         # goods movements posted (receive)
     doc: str | None = None            # the material document of those movements
+    id: str | None = None             # the document made (supplier invoice, return, scheduling agreement)
+    sent: list[str] = []              # purchase orders sent (send_all)
     short_orders: list[ShortOrder] = []   # firm orders a short receipt leaves without enough parts
+
+
+class InvoiceLineView(Out):
+    order: str
+    product: str
+    qty: float
+    price: float
+    amount: float
+    order_price: float | None          # the purchase order's price
+    received: float                    # on the order line, less returns
+    invoiced: float                    # on all invoices less credit memos, this one included
+
+
+class SupplierInvoiceView(Out):
+    id: str
+    kind: str
+    supplier: str
+    reference: str
+    date: dt.date
+    due_date: dt.date
+    discount_date: dt.date | None
+    discount: float
+    currency: str
+    net: float
+    tax: float
+    total: float
+    settled: float
+    open: float
+    status: Literal["blocked", "released", "to pay", "paid", "cancelled", "credit open", "credited"]
+    blocks: list[str]                  # why it was blocked when entered
+    still: list[str]                   # what still stands in the way of paying it
+    released_by: str
+    released_on: dt.date | None
+    days_overdue: int
+    lines: list[InvoiceLineView]
+    payments: list[Payment]
+    return_id: str | None = None
+    note: str = ""
+
+
+class ToInvoice(Out):
+    """Goods received and not yet invoiced, or invoiced and not received, per order line (≈ GR/IR clearing)."""
+
+    order: str
+    po: str | None
+    supplier: str
+    product: str
+    location: str
+    received: float
+    invoiced: float
+    qty: float                         # received less invoiced (negative: invoiced ahead of the goods)
+    price: float | None
+    value: float                       # qty × price, order currency
+    currency: str
+    last_receipt: dt.date | None
+
+
+class PayableRow(Out):
+    """What we owe one supplier (company currency)."""
+
+    supplier: str
+    name: str
+    open: float                        # open invoices less open credit memos
+    overdue: float
+    due_soon: float                    # due within the next 7 days
+    blocked: float
+    not_invoiced: float                # goods received and not yet invoiced
+    next_due: dt.date | None
+    terms: str
+
+
+class ContractLineView(Out):
+    product: str
+    price: float
+    target_qty: float | None
+    ordered: float                     # on order lines that name the contract, open and closed
+    left: float | None                 # target less ordered
+
+
+class ContractView(Out):
+    id: str
+    supplier: str
+    location: str | None
+    valid_from: dt.date
+    valid_to: dt.date
+    currency: str
+    target_value: float | None
+    ordered_value: float
+    status: Literal["active", "not started", "expired", "used up"]
+    lines: list[ContractLineView]
+    attention: list[str]
+    supplier_reference: str = ""
+    note: str = ""
+
+
+class SupplierReturnView(Out):
+    id: str
+    supplier: str
+    order: str
+    product: str
+    location: str
+    qty: float
+    date: dt.date
+    reason: str
+    replace: bool
+    stock_type: str
+    batch: str | None
+    status: Literal["to credit", "credited", "replacement due", "replaced"]
+    credit_memo: str | None = None
+
+
+class PayablesView(Out):
+    """Invoice verification and what is owed to whom."""
+
+    invoices: list[SupplierInvoiceView]
+    to_invoice: list[ToInvoice]
+    payables: list[PayableRow]
+    contracts: list[ContractView]
+    returns: list[SupplierReturnView]
+    blocked: int
+    open_value: float                  # company currency
+    overdue_value: float
+    not_invoiced_value: float
+
+
+PurchasingView.model_rebuild()

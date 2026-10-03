@@ -32,6 +32,8 @@ CATEGORY = {
     "RECEIPT_OVERDUE": "orders", "PO_CONFIRMED_LATE": "orders",
     "PO_CONFIRMED_SHORT": "orders", "PO_NOT_CONFIRMED": "orders", "ORDER_OVERDUE": "delivery", "PROMISE_AT_RISK": "delivery",
     "PROMISE_LATE": "delivery", "FORECAST_BIAS": "demand", "NO_DEMAND_STOCK": "inventory",
+    "INVOICE_BLOCKED": "payables", "PAYABLE_OVERDUE": "payables", "CREDIT_BLOCK": "receivables",
+    "RECEIVABLE_OVERDUE": "receivables",
 }
 SKIP = {"EOQ_FALLBACK"}  # a parameter note for the data owner, not planner work
 
@@ -112,6 +114,7 @@ def collect(ds: Dataset, plan: PlanResult | None, promise: PromiseResult | None,
             add(Raw("ORDER_OVERDUE", "error", f"Sales order {d.id or '?'} requested {d.date.isoformat()} still has "
                                               f"{d.qty:,.0f} to deliver", d.location, d.product, order_id=d.id,
                     date=d.date, qty=d.qty))
+    _money(ds, add)
     if accuracy is not None:
         for s in accuracy.series:
             if s.bias is not None and len(s.weeks) >= 4 and abs(s.bias) > ds.tower.bias_alert:
@@ -119,6 +122,35 @@ def collect(ds: Dataset, plan: PlanResult | None, promise: PromiseResult | None,
                         f"{'Over' if s.bias > 0 else 'Under'}-forecast by {abs(s.bias):.0%} over {len(s.weeks)} weeks",
                         s.location, s.product, qty=s.forecast - s.actual))
     return list(out.values())
+
+
+def _money(ds: Dataset, add) -> None:
+    """Supplier invoices blocked for payment or overdue, sales orders held by the credit check and customer invoices
+    overdue: work for whoever pays and collects."""
+    from ..purchasing.payables import still_blocked
+    start = ds.settings.planning_start
+    cur = ds.settings.currency
+    for inv in ds.supplier_invoices:
+        if inv.cancelled or inv.kind != "invoice" or inv.open <= 0.005:
+            continue
+        if why := still_blocked(ds, inv):
+            add(Raw("INVOICE_BLOCKED", "warning", f"Supplier invoice {inv.id} from {inv.supplier} is blocked for payment: "
+                    + "; ".join(b.split(": ", 1)[1] for b in why), order_id=inv.id, date=inv.date, qty=inv.open))
+        elif inv.due_date < start:
+            add(Raw("PAYABLE_OVERDUE", "warning", f"Supplier invoice {inv.id} from {inv.supplier} was due "
+                    f"{inv.due_date.isoformat()}: {inv.open:,.2f} {inv.currency or cur} unpaid", order_id=inv.id,
+                    date=inv.due_date, qty=inv.open))
+    open_orders = {d.order for d in ds.demand if d.order and d.qty > 0}
+    for so in ds.sales_orders:
+        if so.credit_block and so.id in open_orders:
+            add(Raw("CREDIT_BLOCK", "warning", f"Sales order {so.id} for {so.customer} is held by the credit check"
+                    + (f": {so.credit_note}" if so.credit_note else ""), location=so.customer, order_id=so.id,
+                    date=so.order_date))
+    for inv in ds.invoices:
+        if not inv.cancelled and inv.kind == "invoice" and inv.open > 0.005 and inv.due_date < start:
+            add(Raw("RECEIVABLE_OVERDUE", "warning", f"Invoice {inv.id} to {inv.customer} was due "
+                    f"{inv.due_date.isoformat()}: {inv.open:,.2f} {cur} unpaid", location=inv.customer,
+                    order_id=inv.id, date=inv.due_date, qty=inv.open))
 
 
 def owner_for(ds: Dataset, r: Raw) -> tuple[str, str]:

@@ -187,8 +187,12 @@ class _Planner:
             st = self.state.get(node)
             if st is None:
                 continue
-            d = self.receipt_date(rc)
-            if rc.expected_qty > EPS:   # a supplier who confirmed less than ordered: the plan counts what is confirmed
+            if rc.confirmations:        # confirmed in several deliveries: each arrives on its own day
+                for day, q in rc.expected_parts():
+                    d = self._available(rc, day)
+                    st.supplies.append(_Supply("receipt", rc.id, d, q, d, rc.scheduled))
+            elif rc.expected_qty > EPS:   # a supplier who confirmed less than ordered: the plan counts what is confirmed
+                d = self.receipt_date(rc)
                 st.supplies.append(_Supply("receipt", rc.id, d, rc.expected_qty, d, rc.scheduled))
             self._firm_load(rc)
             # what the firm order still draws from stock: components, or goods at a transfer's origin
@@ -233,8 +237,11 @@ class _Planner:
     def receipt_date(self, rc) -> date:
         """A firm receipt is available after goods-receipt processing, like a planned order; a purchase line the
         supplier confirmed arrives on the confirmed date."""
+        return self._available(rc, rc.expected_date)
+
+    def _available(self, rc, day: date) -> date:
         gr = gr_days(self.ds.location_product_by_key.get((rc.location, rc.product)))
-        return max(rc.expected_date + timedelta(days=math.ceil(gr - 1e-9)), self.start)
+        return max(day + timedelta(days=math.ceil(gr - 1e-9)), self.start)
 
     def _split(self, node: Node, d: date, qty: float, period_days: int | None) -> list[tuple[date, float]]:
         """PIR splitting: spread a period forecast evenly over the working days of its window."""

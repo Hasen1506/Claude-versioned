@@ -72,6 +72,17 @@ async def gate(request: Request, call_next):
     return await call_next(request)
 
 
+def who_asks() -> str | None:
+    """The signed-in account's e-mail behind this request, if any (a release of a purchase order is theirs)."""
+    token, _ = asker.get()
+    if not token:
+        return None
+    try:
+        return get_companies().whoami(token).email
+    except CompanyError:
+        return None
+
+
 def signed_in(request: Request) -> User:
     return get_companies().whoami(token_of(request))
 

@@ -293,7 +293,31 @@ The supply plan goes further into how a plant really plans, mostly in `engine/sc
 - **Documents**: the order confirmation, the invoice and the credit note print, download or start an e-mail, in exact
   amounts.
 
-The next plan (phases N, Q) is at the end of
+## Procure to pay (Phase N)
+
+*Buying* now follows a purchase past the goods receipt to the payment (`engine/scp/purchasing/payables.py`, and
+`engine/scp/model/purchasing.py`):
+
+- **Firming sends what it ordered** (R20): its result offers to send the purchase orders it made, all but those still
+  to be released.
+- **Release strategy.** Levels by order value (e.g. a buyer above 500, a director above 1,000), each with the people
+  who may release it; on a server the release is the signed-in account's, and one account never releases two levels of
+  one order. Without levels, the approval limit is the one level.
+- **Contracts** fix a supplier's prices for a period; orders made while one is valid take its price, name it, and count
+  against its quantity and value. **Scheduling agreements** take planning's purchases of one product as delivery
+  schedule lines, sent as one schedule.
+- **Confirmations in several deliveries**: the supplier's dates and quantities for one line, each expected by planning
+  and promising on its own day.
+- **Supplier invoices** are checked against the order's price and the goods received (three-way match). A difference
+  beyond the tolerances blocks payment; a quantity block lifts once the goods arrive, a price block when someone
+  releases it. Payments follow the supplier's terms and take the cash discount in time. The same invoice number is
+  never entered twice.
+- **Returns to the supplier** take goods out of stock against their order line: replaced (the line opens again) or
+  credited (the line is reduced and the credit memo is entered at the price paid).
+- **What we owe**: open invoices per supplier (overdue, due within a week, blocked) and goods received but not
+  invoiced. Blocked and overdue bills, credit holds and overdue customer invoices are in the worklist.
+
+The next plan (phase Q) is at the end of
 [docs/USABILITY_LOG.md](docs/USABILITY_LOG.md#the-next-plan-after-phase-o).
 
 ## What is here (P0–P10)

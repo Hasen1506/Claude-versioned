@@ -264,9 +264,10 @@ def run_sop(ds: Dataset, *, time_limit: float = 60.0) -> SopResult:
     # firm receipts (past due land in bucket 0)
     firm: dict[Node, list[float]] = defaultdict(lambda: [0.0] * T)
     for r in ds.receipts:
-        i = 0 if r.expected_date < start else bk.index_of(r.expected_date)
-        if 0 <= i < T:
-            firm[(r.location, r.product)][i] += r.expected_qty
+        for d, q in r.expected_parts():
+            i = 0 if d < start else bk.index_of(d)
+            if 0 <= i < T:
+                firm[(r.location, r.product)][i] += q
         for rv in r.reservations:      # still to be issued: components, or a transfer's goods at its origin
             j = 0 if rv.date < start else bk.index_of(rv.date)
             if 0 <= j < T:

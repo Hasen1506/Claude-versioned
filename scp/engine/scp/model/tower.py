@@ -6,7 +6,7 @@ from pydantic import Field
 
 from .common import Model, Unit
 
-CATEGORIES = ("coverage", "capacity", "inventory", "orders", "delivery", "demand")
+CATEGORIES = ("coverage", "capacity", "inventory", "orders", "delivery", "demand", "payables", "receivables")
 
 
 def _default_sla() -> dict[str, int]:

@@ -32,9 +32,11 @@ def _next_numbers(ds: Dataset) -> dict[str, int]:
 
 
 def firm_orders(ds: Dataset, plan: PlanResult, ids: list[str] | None = None,
-                within_days: int | None = None, starts: dict[str, date] | None = None) -> tuple[Dataset, FirmReport]:
+                within_days: int | None = None, starts: dict[str, date] | None = None,
+                send: bool = False) -> tuple[Dataset, FirmReport]:
     """``starts``: planned production orders moved by hand (levelling by dragging a run to another day): each is made
-    firm starting on that day, its due date and reservations moved with it."""
+    firm starting on that day, its due date and reservations moved with it. ``send``: the purchase orders it makes
+    go to their suppliers at once, all but those still to be released (R20)."""
     rep = FirmReport(ok=False, firmed=[], skipped={})
     starts = starts or {}
     if not plan.ok:
@@ -103,6 +105,13 @@ def firm_orders(ds: Dataset, plan: PlanResult, ids: list[str] | None = None,
                                           reservations=0))
         rep.purchase_orders = [c.id for c in made.created]
         rep.notes = [n for c in made.created for n in c.notes]
+        if send and rep.purchase_orders:
+            from ..purchasing import PurchasingError, send_all
+            try:
+                out, sent = send_all(out, rep.purchase_orders, ds.settings.planning_start)
+                rep.sent = sent.sent
+            except PurchasingError:
+                pass                      # nothing that could go yet
     if wanted is not None:
         for oid in sorted(wanted - {f.planned_id for f in rep.firmed} - set(rep.skipped)):
             rep.skipped[oid] = "not in the current plan (re-run supply planning)"

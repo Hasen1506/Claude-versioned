@@ -607,6 +607,23 @@ function Firming({ ds }: { ds: Dataset }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [toSend, setToSend] = useState<string[]>([]);
+  const sendThem = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const before = store.get().dataset!;
+      const out = await api.poAction(before, "send_all", "", { orders: toSend });
+      store.replace(out.dataset, before);
+      setToSend([]);
+      setMsg(namesOf(out.dataset).text(out.report.message));
+      await store.run("purchasing");
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   const firm = async () => {
     setBusy(true);
     setErr(null);
@@ -616,6 +633,7 @@ function Firming({ ds }: { ds: Dataset }) {
       setPick(null);
       const r = out.report;
       const pos = r.purchase_orders ?? [];
+      setToSend(pos);
       setMsg(`${plural(r.firmed.length, "planned order")} firmed: ${r.firmed.slice(0, 4).map((f) => `${f.planned_id} → ${f.receipt_id}`).join(", ")}${r.firmed.length > 4 ? "…" : ""}.`
         + (pos.length ? ` Purchases went onto ${plural(pos.length, "purchase order")} (${pos.join(", ")}), grouped per supplier as on Buying${(r.notes ?? []).length ? `: ${(r.notes ?? []).map(namesOf(ds).text).join("; ")}` : ""}.` : "")
         + (Object.keys(r.skipped).length ? ` Not firmed: ${Object.entries(r.skipped).slice(0, 3).map(([k, v]) => `${k} (${v})`).join(", ")}.` : "")
@@ -639,7 +657,9 @@ function Firming({ ds }: { ds: Dataset }) {
         {chosen.size ? "Select none" : "Select all"}</button><button className="btn sm accent" disabled={busy || planStale || chosen.size === 0} onClick={firm}
         title={planStale ? "Recalculate the supply plan first" : "Turns these planned orders into firm purchase, production and transfer orders in your data. Undo reverts it."}>
         {busy ? "Saving…" : `Make ${chosen.size} order${chosen.size === 1 ? "" : "s"} firm`}</button></></Edits> : null}>
-      {msg && <div className="banner info" style={{ margin: 12 }}><Badge sev="ok">Firmed</Badge><span>{msg}</span><span className="spacer" />
+      {msg && <div className="banner info" role="status" style={{ margin: 12 }}><Badge sev="ok">Firmed</Badge><span>{msg}</span><span className="spacer" />
+        {toSend.length > 0 && <Edits><button className="btn sm accent" disabled={busy} onClick={sendThem}
+          title="Sends every one of them that needs no release; the rest wait on Buying">Send the {plural(toSend.length, "purchase order")} now</button></Edits>}
         <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
       {err && <div className="banner error" style={{ margin: 12 }}><Badge sev="error">Firming failed</Badge>{err}</div>}
       {!plan.data ? <Empty title="No supply plan yet"><button className="btn" onClick={() => store.run("plan")} disabled={plan.running}>Calculate the supply plan</button></Empty>
@@ -670,8 +690,8 @@ function Firming({ ds }: { ds: Dataset }) {
 }
 
 // ------------------------------------------------------------------------------------------------
-const TYPES = ["all", "opening", "receipt", "issue", "sale", "transfer_out", "scrap", "adjustment", "status"] as const;
-const TYPE_TEXT: Record<string, string> = { transfer_out: "transfer out", adjustment: "count difference", status: "stock change" };
+const TYPES = ["all", "opening", "receipt", "issue", "sale", "transfer_out", "scrap", "return", "adjustment", "status"] as const;
+const TYPE_TEXT: Record<string, string> = { transfer_out: "transfer out", adjustment: "count difference", status: "stock change", return: "back to supplier" };
 const STOCK_TEXT: Record<string, string> = { quality: "inspection", blocked: "blocked" };
 
 /** The quantity as it counts in stock: + in, − out, count differences and stock changes as signed; a reversal the other way. */

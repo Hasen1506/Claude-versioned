@@ -23,6 +23,7 @@ class MovementType(str, Enum):
     TRANSFER_OUT = "transfer_out"    # − goods issue of a stock transfer (reference = the transfer receipt)
     SCRAP = "scrap"                  # −
     ADJUSTMENT = "adjustment"        # ± inventory count difference (signed quantity)
+    RETURN = "return"                # − goods sent back to the supplier (reference = the purchase order line)
     STATUS = "status"                # ± stock moved between stock types or batches at one place (signed; the pair
                                      #   posted together sums to zero: release from inspection, block, unblock)
 
@@ -30,6 +31,7 @@ class MovementType(str, Enum):
 SIGN: dict[MovementType, float] = {
     MovementType.OPENING: 1.0, MovementType.RECEIPT: 1.0, MovementType.ISSUE: -1.0, MovementType.SALE: -1.0,
     MovementType.TRANSFER_OUT: -1.0, MovementType.SCRAP: -1.0, MovementType.ADJUSTMENT: 1.0, MovementType.STATUS: 1.0,
+    MovementType.RETURN: -1.0,
 }
 SIGNED = {MovementType.ADJUSTMENT, MovementType.STATUS}
 

@@ -260,3 +260,12 @@ def test_the_api_runs_order_to_cash():
     assert r.status_code == 200 and r.json()["to_bill"][0]["order"] == "SO-00001/10"
     r = client.post("/api/sales/act", json={"dataset": x, "action": "pay", "id": "INV-1"})
     assert r.status_code == 409 and "no invoice" in r.json()["detail"]
+
+
+def test_credit_holds_and_overdue_invoices_reach_the_worklist():
+    from scp.tower.worklist import collect
+    x, _ = taken(limit=1000)
+    items = {r.code: r for r in collect(x, None, None, None)}
+    assert items["CREDIT_BLOCK"].category == "receivables" and items["CREDIT_BLOCK"].order_id == "SO-00001"
+    y, _ = release_credit(x, "SO-00001")
+    assert "CREDIT_BLOCK" not in {r.code for r in collect(y, None, None, None)}

@@ -8,7 +8,8 @@ export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
   | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides"
   | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches" | "mrp_groups"
-  | "customers" | "payment_terms" | "sales_orders" | "quotations" | "deliveries" | "invoices" | "returns";
+  | "customers" | "payment_terms" | "sales_orders" | "quotations" | "deliveries" | "invoices" | "returns"
+  | "contracts" | "supplier_invoices" | "supplier_returns";
 
 export interface Column {
   label: string;
@@ -234,6 +235,36 @@ export const COLLECTIONS: CollectionDef[] = [
     ],
   },
   {
+    key: "contracts", label: "Contracts", singular: "contract", defName: "PurchaseContract", issueType: "contract",
+    group: "Make & buy", keyOf: (o) => s(o.id),
+    blurb: "Prices agreed with a supplier for a period, per product, with the quantity or value agreed. Purchase orders made while a contract is valid take its price and count against it.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Supplier", get: (o) => s(o.supplier) },
+      { label: "From", get: (o) => s(o.valid_from) }, { label: "To", get: (o) => s(o.valid_to) },
+      { label: "Products", get: (o) => ((o.lines as Obj[]) ?? []).length, num: true },
+    ],
+  },
+  {
+    key: "supplier_invoices", label: "Supplier invoices", singular: "supplier invoice", defName: "SupplierInvoice",
+    issueType: "supplier_invoice", group: "Execution", keyOf: (o) => s(o.id),
+    blurb: "Suppliers' invoices and credit memos, checked against the order and the goods received, with the payments made (Buying manages them).",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Kind", get: (o) => (o.kind === "credit_memo" ? "credit memo" : "invoice") },
+      { label: "Supplier", get: (o) => s(o.supplier) }, { label: "Their number", get: (o) => s(o.reference) },
+      { label: "Date", get: (o) => s(o.date) }, { label: "Due", get: (o) => s(o.due_date) },
+    ],
+  },
+  {
+    key: "supplier_returns", label: "Returns to suppliers", singular: "return to a supplier", defName: "SupplierReturn",
+    issueType: "supplier_return", group: "Execution", keyOf: (o) => s(o.id),
+    blurb: "Goods sent back to a supplier against the order line they came on, to be replaced or credited.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Supplier", get: (o) => s(o.supplier) },
+      { label: "Order line", get: (o) => s(o.order) }, { label: "Qty", get: (o) => o.qty as number, num: true },
+      { label: "Date", get: (o) => s(o.date) }, { label: "Credit memo", get: (o) => s(o.credit_memo) },
+    ],
+  },
+  {
     key: "customers", label: "Customer sales data", singular: "customer record", defName: "Customer", issueType: "customer",
     group: "Demand inputs", keyOf: (o) => s(o.customer),
     blurb: "How you sell to each customer: contact, payment terms, a credit limit, a discount on everything they buy, the tax on their invoices and a sales block. A customer without a record buys on the defaults.",
@@ -391,6 +422,8 @@ export function whereUsed(ds: Dataset, kind: "location" | "product" | "resource"
     for (const v of ds.vendors ?? []) add(v.supplier === id, "its supplier purchasing data");
     for (const p of ds.purchase_orders ?? []) add(p.supplier === id || p.location === id, `purchase order ${p.id}`);
     for (const c of ds.customers ?? []) add(c.customer === id, "its customer sales data");
+    for (const k of ds.contracts ?? []) add(k.supplier === id || k.location === id, `contract ${k.id}`);
+    for (const i of ds.supplier_invoices ?? []) add(i.supplier === id, `supplier ${i.kind === "credit_memo" ? "credit memo" : "invoice"} ${i.id}`);
     for (const o of ds.sales_orders ?? []) add(o.customer === id, `sales order ${o.id}`);
     for (const i of ds.invoices ?? []) add(i.customer === id, `${i.kind === "credit_note" ? "credit note" : "invoice"} ${i.id}`);
     for (const l of ds.lanes ?? []) add(l.origin === id || l.destination === id, `route ${l.id}`);

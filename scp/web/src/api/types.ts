@@ -164,6 +164,13 @@ export type CreatePoResponse = S["CreatePoResponse"];
 export type PoActionResponse = S["PoActionResponse"];
 export type PoAction = S["PoActionRequest"]["action"];
 export type PoLineInput = S["PoLineInput"];
+export type PoActionInput = Omit<Partial<S["PoActionRequest"]>, "dataset" | "action" | "po">;
+export type PayablesView = S["PayablesView"];
+export type SupplierInvoiceView = S["SupplierInvoiceView"];
+export type ToInvoice = S["ToInvoice"];
+export type PayableRow = S["PayableRow"];
+export type ContractView = S["ContractView"];
+export type SupplierReturnView = S["SupplierReturnView"];
 export type RequisitionPick = S["RequisitionPick"];
 
 // Phase M: order to cash

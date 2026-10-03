@@ -265,11 +265,30 @@ inspection and credited, and a quotation won; every Selling tab was then opened 
 | N119 | There are two places to take an order: *Orders → New order* (one line, availability checked before taking it) and *Selling → New order or quotation* (several lines, prices, quotations, the credit check). | Minor | Open: the two forms are linked to each other; one form that checks every line before taking the order is for a later pass. An order of one line taken on *Orders* has no header and is shown, delivered and billed on *Selling* all the same. |
 | N120 | *Mark as sent* on an order confirmation changed the order but showed nothing: its result went to a message nobody displayed. | Serious | **Fixed (M).** The document buttons report through the order's own message line. |
 | N121 | Money on documents was the compact screen format: an invoice total read "₹2.1K", and so did every purchase order document since Q23. | Serious | **Fixed (M).** Documents (purchase orders, order confirmations, invoices, credit notes) and the Selling page show exact amounts (₹2,257.20); summaries keep the short form. |
-| N122 | Orders held over a credit limit and overdue invoices are on *Selling* only: not in the worklist on *Performance*, not on Home. | Minor | Open: Selling's answer line names both under "Needs you". |
+| N122 | Orders held over a credit limit and overdue invoices are on *Selling* only: not in the worklist on *Performance*, not on Home. | Minor | **Fixed (N)** for the worklist: credit holds and overdue invoices are there under *receivables*, supplier invoices blocked or overdue under *payables*, each linking to its page. Home shows the worklist's count. |
 | N123 | Tax is one rate per customer (or the company's): no rate per product and no split into its parts (CGST, SGST, IGST by place of supply). | Minor | Open: recorded with the SD gaps below. |
 | N124 | Overdue invoices have no reminder (dunning) and customers no statement of account. | Minor | Open: **Q** (e-mail from the application). |
 | N125 | Proof of delivery records the day the customer signed, but on-time delivery (OTIF) still counts the shipping day plus the route's transit days. | Minor | Open: by design until OTIF can choose its date; recorded. |
 | N126 | *Money* shows the plan's revenue, not what was invoiced. | Minor | By design, recorded: *Money* is the plan's economics; what was billed, paid and is owed is on *Selling*. |
+
+## Found while building Phase N
+
+N was built against the tests' small plant and then used in a real browser from an imported company: a sales order's
+purchase made firm and, as R20 asks, offered to be sent at once (it waited, being worth more than two release levels);
+released by the buyer and the director and sent; confirmed by the supplier in two deliveries; the first received; its
+invoice entered at a price over the contract's, blocked, released and paid within the discount days; five tins sent back
+and the supplier's credit memo entered; what is owed read back; a scheduling agreement made; every Buying tab opened at
+phone width.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N127 | Goods invoiced at 9.50 and sent back were credited at the order's 9.00, leaving 2.50 a tin owed on a return. | Serious | **Fixed (N).** A credit memo for a return takes the price the goods were invoiced at, else the order's. |
+| N128 | The supplier list said "30 d terms" for a supplier with 2 % / 10 days / net 30 terms. | Minor | **Fixed (N).** The terms read as they are agreed. |
+| N129 | A scheduling agreement with nothing scheduled yet counted as an open purchase order in Buying's answer line. | Minor | **Fixed (N).** Only agreements with open delivery schedule lines count. |
+| N130 | Releases name who gave them only when people sign in on a server; in a company kept in the browser nobody is named, so one person can release every level of an order. | Minor | By design, recorded: four eyes needs accounts. On a server the release is the signed-in account's, a level with approvers takes only them, and one account never releases two levels of one order. |
+| N131 | Contract prices price the orders and requisitions, but the plan's cost on *Money* still uses the info record's price. | Minor | Open: recorded with the MM gaps below. |
+| N132 | A supplier invoice cannot carry freight or other unplanned delivery costs, and a price difference cannot be put right with a debit or credit for the price alone (subsequent debit/credit). | Minor | Open: recorded with the MM gaps below. |
+| N133 | Invoice verification books nothing in a ledger: "received, not invoiced" is a list for the month-end accrual, not a GR/IR account. | Minor | By design, recorded: there is no general ledger here; *What we owe* and *Received, not invoiced* are what an accountant posts from. |
 
 ## Found while building Phase P
 
@@ -392,7 +411,7 @@ Ranked: the critical ones first (all fixed in K), then what is open, with the ph
 | R17 | Raw milk ends every week slightly negative (−306): the plan buys exactly what the runs need and any yield or rounding takes it below zero; nothing suggests a buffer. The roll's "set to 0" leaves the journal and the plan disagreeing until someone counts. | Serious | **Half fixed (O):** stock below zero is a company rule: refuse the posting, allow it and ask for a count (the plan starts from zero and says so), or count the missing stock as found when the week moves on, so the journal and the plan agree. **Fixed (P):** each part's loss is in the bill of materials (component scrap), and *Parts used* on Actuals measures it from the orders posted with actual usage, beside what the bill of materials plans with, and writes it in with one click. |
 | R18 | A person conflicts with their own save: a reload while a save is in flight is refused next time as "Ravi saved … after your changes began", shown to Ravi. | Serious | **Fixed (L).** Each browser window has its own id sent with every save; a save refused only because of saves from the same window (a reload while one was in flight) is taken as one's own, and the same person in another window is merged, never shown as a colleague. |
 | R19 | History keeps a state to put back only every ~10 minutes per person, so "just before the release" was not there; *Undo* is gone after a reload. | Serious | **Fixed (L).** Every save is kept (as the changes from the one before, with a full copy every 25), so *History* can put back any of them; undo steps are kept in the browser and survive a reload. |
-| R20 | Firming makes purchase orders after the day's orders were sent on *Buying*; they wait "to send" until someone goes back. | Serious | Open: **N** (firming offers to send what it created). |
+| R20 | Firming makes purchase orders after the day's orders were sent on *Buying*; they wait "to send" until someone goes back. | Serious | **Fixed (N).** Firming's result offers "Send the N purchase orders now"; orders still to be released wait and are named. `POST /api/orders/firm` takes `send`. |
 | R21 | Demand events are entered only in Master data; *+ New event* saves at once an event on every product at every place with the measured lift. | Serious | **Fixed (P).** A series' events are on the Demand page, beside its forecast, added for that series only and starting with no lift until one is typed. |
 | R22 | Two numbers called accuracy: Home "92 % accurate on past weeks" (backtest), Actuals "73 % against real sales". | Minor | **Fixed (L).** Home says "accurate on past weeks (backtest)" and, once weeks are rolled, "against real sales" separately. |
 | R23 | One negative count refused all three counts; the count grid showed a negative book stock (−905) as the suggested count. | Minor | **Fixed (K).** A negative count is flagged before saving; a stock below zero is marked and suggests 0. |
@@ -452,14 +471,17 @@ against SAP (the gaps below). Proposed, in the order recommended:
   e-mail; quotations won into orders at their prices; deliveries picked, packed, shipped (one material document) and
   signed for; invoices with tax, payments and the cash discount; returns into quality inspection and credit notes;
   what each customer owes.
-- **N: procure to pay, complete** (R20 and the MM gaps). Firming offers to send the purchase orders it created
-  (R20); invoice verification (three-way match) and what is owed to whom; contracts and scheduling agreements;
-  several confirmation lines per order line; returns to the supplier; a release strategy with more than one level.
+- **N: procure to pay, complete**: **done**, see R20 and N127–N133. Firming offers to send the purchase orders it
+  created (R20); supplier invoices checked against the order and the goods received (three-way match), blocked and
+  released, paid with the cash discount; what is owed to whom and what was received but not invoiced; contracts that
+  price the orders made under them; scheduling agreements whose delivery schedule planning extends; a supplier's
+  confirmation in several deliveries that planning expects one by one; returns to the supplier, replaced or credited;
+  a release strategy of several levels with named approvers and four eyes; payables and receivables in the worklist.
 - **Q: connected to the rest of the company**. Scheduled imports and an API for an ERP to send orders, stock and
   movements and to take back purchase and production orders; e-mail sent from the application (orders to suppliers,
   confirmations to customers, the worklist's reminders).
 
-Order after O: **P, M, N, Q**; P and M are done, so **N** is next. P stays ahead of M and N for K's reasons: every open serious finding of K left is about
+Order after O: **P, M, N, Q**; P, M and N are done, so **Q** is next. P stays ahead of M and N for K's reasons: every open serious finding of K left is about
 stock that is really there (shelf life, short receipts, stock below zero) or a plan that acts on it.
 
 ## Gaps against SAP recorded for later phases
@@ -499,9 +521,14 @@ stock that is really there (shelf life, short receipts, stock below zero) or a p
   dunning and statements (N124), down payments, invoice lists, and consignment stock at the customer.
 - MM: supplier purchasing data with a purchasing block, info records with price scales, the source list (fixed
   and blocked), requisitions from MRP, purchase orders with an approval limit, supplier confirmations that planning
-  uses, and goods receipts with delivery tolerances (**E**, done). Still missing: invoice verification (three-way
-  match) and payment, outline agreements (contracts and scheduling agreements), several confirmation lines per
-  order line, quality inspection stock, returns to the supplier, and a release strategy with more than one level.
+  uses, and goods receipts with delivery tolerances (**E**, done). Quality inspection stock (**O**, done). Invoice
+  verification (three-way match) with payment blocks and their release, payments with the cash discount, payables
+  and goods received not invoiced, contracts and scheduling agreements, several confirmation lines per order line,
+  returns to the supplier with credit memos, and a release strategy of several levels (**N**, done). Still missing:
+  freight and unplanned delivery costs on invoices and subsequent debits or credits (N132), contract prices in the
+  plan's cost (N131), evaluated receipt settlement (paying from the goods receipt without an invoice), consignment
+  and subcontracting stock at the supplier, and forecast delivery schedules (JIT and forecast releases) on
+  scheduling agreements.
 - Users and authorisations: accounts, companies with owner, planner and viewer roles, invitations, conflict-safe saves
   with a merge, and a change log per company (**I**, done). Still missing: authorisation by object (a planner for
   one plant or product group only), approval steps (four eyes) on master data changes, single sign-on (SAML or

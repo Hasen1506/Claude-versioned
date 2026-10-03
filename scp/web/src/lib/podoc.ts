@@ -69,7 +69,7 @@ export function poDocument(po: PoView, ds: Dataset): string {
   ul { padding-left: 18px; } footer { margin-top: 28px; font-size: 11px; color: #5b6470; }
   @media print { .page { padding: 0; } @page { margin: 18mm; } }
 </style></head><body><div class="page">
-<header><div><h1>Purchase order ${esc(po.id)}</h1>${draft ? `<div class="draft">${draft}</div>` : ""}</div>
+<header><div><h1>${po.kind === "scheduling_agreement" ? "Delivery schedule" : "Purchase order"} ${esc(po.id)}</h1>${draft ? `<div class="draft">${draft}</div>` : ""}</div>
 <div style="text-align:right"><b>${esc(company)}</b><div class="muted">Order date ${esc(long(po.order_date ?? po.sent_on))}</div>
 ${po.vendor_reference ? `<div class="muted">Your reference ${esc(po.vendor_reference)}</div>` : ""}</div></header>
 <div class="grid">
@@ -94,7 +94,7 @@ export function poEmail(po: PoView, ds: Dataset): { to: string; subject: string;
   const addr = poAddresses(po, ds);
   const body = [
     `Hello${vendor?.contact ? ` ${vendor.contact}` : ""},`, "",
-    `Please supply the following on purchase order ${po.id}, delivered to ${nm.loc(po.location)}${addr.deliver.address ? `, ${addr.deliver.address.split(/\n+/).map((x) => x.trim()).filter(Boolean).join(", ")}` : ""}:`, "",
+    `Please supply the following on ${po.kind === "scheduling_agreement" ? "scheduling agreement" : "purchase order"} ${po.id}, delivered to ${nm.loc(po.location)}${addr.deliver.address ? `, ${addr.deliver.address.split(/\n+/).map((x) => x.trim()).filter(Boolean).join(", ")}` : ""}:`, "",
     ...lines.map((l) => `- ${nm.prod(l.product)} (${l.product}): ${qty(l.ordered)} ${unit(l.product)}${l.price != null ? ` at ${exactMoney(l.price, po.currency)}` : ""}, by ${long(l.due_date)}`),
     "", `Total ${exactMoney(po.value, po.currency)}.`,
     "Please confirm quantities and delivery dates, and quote the order number on the delivery note and invoice.", "",
@@ -102,5 +102,5 @@ export function poEmail(po: PoView, ds: Dataset): { to: string; subject: string;
     ...addr.company.address.split(/\n+/).map((x) => x.trim()).filter(Boolean),
     ...(addr.company.tax ? [`Tax no. ${addr.company.tax}`] : []),
   ].join("\n");
-  return { to: vendor?.email ?? "", subject: `Purchase order ${po.id} from ${company}`, body };
+  return { to: vendor?.email ?? "", subject: `${po.kind === "scheduling_agreement" ? "Delivery schedule" : "Purchase order"} ${po.id} from ${company}`, body };
 }

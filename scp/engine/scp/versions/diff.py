@@ -21,7 +21,8 @@ KEYS: dict[str, tuple[str, ...]] = {
     "accuracy": ("location", "product", "start"), "customer_prices": ("customer", "product"), "vendors": ("supplier",),
     "purchase_orders": ("id",), "stock_targets": ("location", "product", "date"), "rolled_weeks": ("start",),
     "customers": ("customer",), "payment_terms": ("id",), "sales_orders": ("id",), "quotations": ("id",),
-    "deliveries": ("id",), "invoices": ("id",), "returns": ("id",),
+    "deliveries": ("id",), "invoices": ("id",), "returns": ("id",), "contracts": ("id",), "supplier_invoices": ("id",),
+    "supplier_returns": ("id",),
 }
 SINGLE = ("settings", "forecasting", "inventory", "sop", "scheduling", "promising", "execution", "purchasing", "finance",
           "tower", "sales")
