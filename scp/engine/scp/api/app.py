@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -57,7 +57,7 @@ from ..validate.setup import SetupItem, checklist
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
 from ..companies import CompanyError
 from .connect import router as connect_router
-from .companies import EditScope, Scope, company_error, gate, router as companies_router, who_asks
+from .companies import EditScope, Scope, company_error, gate, require_signin, router as companies_router, signup_policy, who_asks
 from .working import PlanData, answer, is_ref, read as read_ref, respond, send
 
 ROOT = Path(__file__).resolve().parents[3]          # scp/
@@ -75,6 +75,8 @@ async def lifespan(_app: FastAPI):
 
     from ..connect.scheduler import start as start_clock
 
+    signup_policy()
+    require_signin()
     store = get_store()
     start_nightly(store.db, store.lock)
     start_clock()       # scheduled imports and worklist reminders (Phase Q)
@@ -642,6 +644,7 @@ class ConfirmPart(Out):
 
 
 class PoLineInput(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
     id: str = ""                                    # the order line (an invoice line: the line invoiced)
     order: str | None = None                        # enter_invoice: the order line invoiced (same as id)
     qty: float | None = None
@@ -656,6 +659,7 @@ class PoLineInput(Out):
 
 
 class PoActionRequest(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
     dataset: PlanData
     action: Literal["approve", "send", "send_all", "confirm", "receive", "change", "cancel", "create_agreement",
                     "enter_invoice", "release_invoice", "pay_invoice", "cancel_invoice", "return_goods"]
@@ -711,6 +715,7 @@ def post_sales(ds: PlanData, as_of: dt.date | None = None) -> Response:
 
 
 class SalesLineInput(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
     order: str | None = None                        # deliveries, picking, proof: the order line
     product: str | None = None                      # orders and quotations: the product
     qty: float | None = None
@@ -725,6 +730,7 @@ class SalesLineInput(Out):
 
 
 class SalesActionRequest(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
     dataset: PlanData
     action: Literal["create_order", "add_lines", "release_credit", "send_confirmation", "cancel_order",
                     "create_quotation", "win_quotation", "lose_quotation", "create_deliveries", "pick", "pack",

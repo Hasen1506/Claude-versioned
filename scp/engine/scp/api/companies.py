@@ -38,11 +38,16 @@ OPEN_PATHS = ("/api/health", "/api/auth/config", "/api/auth/signin", "/api/auth/
 
 def signup_policy() -> str:
     p = os.environ.get("SCP_SIGNUP", "open").strip().lower()
-    return p if p in ("open", "invite", "closed") else "open"
+    if p not in ("open", "invite", "closed"):
+        raise CompanyError("SCP_SIGNUP must be open, invite, or closed", 503)
+    return p
 
 
 def require_signin() -> bool:
-    return os.environ.get("SCP_REQUIRE_SIGNIN", "").strip().lower() in ("1", "true", "yes", "on")
+    value = os.environ.get("SCP_REQUIRE_SIGNIN", "").strip().lower()
+    if value not in ("", "0", "false", "no", "off", "1", "true", "yes", "on"):
+        raise CompanyError("SCP_REQUIRE_SIGNIN must be a boolean (1/0, true/false, yes/no, on/off)", 503)
+    return value in ("1", "true", "yes", "on")
 
 
 def token_of(request: Request) -> str | None:
@@ -65,7 +70,11 @@ async def gate(request: Request, call_next):
     asker.set((token_of(request), request.headers.get("x-company", "").strip()))
     takes_gzip.set("gzip" in request.headers.get("accept-encoding", ""))
     takes_rows.set(request.headers.get("x-pack", "") == "rows")
-    if require_signin() and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS":
+    try:
+        signin_required = require_signin()
+    except CompanyError as e:
+        return company_error(request, e)
+    if signin_required and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS":
         try:
             get_companies().whoami(token_of(request))
         except CompanyError as e:
@@ -197,8 +206,8 @@ def auth_me(user: Signed) -> Me:
 
 
 @router.post("/auth/password")
-def auth_password(body: PasswordChange, user: Signed) -> dict:
-    get_companies().change_password(user, body.old, body.new)
+def auth_password(body: PasswordChange, user: Signed, request: Request) -> dict:
+    get_companies().change_password(user, body.old, body.new, keep_token=token_of(request))
     return {"ok": True}
 
 

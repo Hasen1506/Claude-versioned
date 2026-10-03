@@ -448,7 +448,7 @@ class Companies:
         with self.lock:
             r = self.db.execute("SELECT * FROM sessions WHERE token_hash = ?", (_token_hash(token),)).fetchone()
             now = _now()
-            if r is None or dt.datetime.fromisoformat(r["expires_at"]) < now:
+            if r is None or dt.datetime.fromisoformat(r["expires_at"]) <= now:
                 raise CompanyError("your sign-in has expired; sign in again", 401)
             self.db.execute("UPDATE sessions SET expires_at = ? WHERE token_hash = ?",
                             (_iso(now + dt.timedelta(days=SESSION_DAYS)), r["token_hash"]))
@@ -546,22 +546,35 @@ class Companies:
         with self.lock:
             self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
 
-    def change_password(self, user: User, old: str, new: str) -> None:
+    def _set_password(self, uid: str, new: str, keep_token: str | None = None) -> None:
+        """Change credentials and revoke recovery links and other sessions atomically (the lock is held)."""
+        salt = secrets.token_hex(16)
+        self.db.execute("BEGIN")
+        try:
+            self.db.execute("UPDATE users SET pw_salt = ?, pw_hash = ? WHERE id = ?", (salt, _hash_pw(new, salt), uid))
+            self.db.execute("UPDATE password_resets SET used = 1 WHERE user_id = ?", (uid,))
+            self.db.execute("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",
+                            (uid, _token_hash(keep_token) if keep_token else ""))
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
+
+    def change_password(self, user: User, old: str, new: str, keep_token: str | None = None) -> None:
         if len(new) < 8:
             raise CompanyError("a password needs at least 8 characters", 422)
         with self.lock:
             r = self.db.execute("SELECT * FROM users WHERE id = ?", (user.id,)).fetchone()
             if not hmac.compare_digest(_hash_pw(old, r["pw_salt"]), r["pw_hash"]):
                 raise CompanyError("the current password is not right", 403)
-            salt = secrets.token_hex(16)
-            self.db.execute("UPDATE users SET pw_salt = ?, pw_hash = ? WHERE id = ?", (salt, _hash_pw(new, salt), user.id))
+            self._set_password(user.id, new, keep_token)
 
     # ---- a forgotten password and single sign-on (Phase L) ---------------------------------------------------
     def reset_token(self, email: str, made_by: str | None = None, hours: float = 1) -> str | None:
         """A one-time token to set a new password for the account with this e-mail (None: no such account)."""
         with self.lock:
-            r = self.db.execute("SELECT id FROM users WHERE email = ?", (email.strip(),)).fetchone()
-            if r is None:
+            r = self.db.execute("SELECT id, pw_hash, kind FROM users WHERE email = ?", (email.strip(),)).fetchone()
+            if r is None or not r["pw_hash"] or r["kind"] != "person":
                 return None
             token = secrets.token_urlsafe(24)
             self.db.execute("INSERT INTO password_resets (token_hash, user_id, expires_at, made_by) VALUES (?, ?, ?, ?)",
@@ -596,7 +609,14 @@ class Companies:
             if r["role"] == "owner" and r["id"] != user.id:
                 raise CompanyError("an owner's password is reset by the owner (Forgot your password) or the server's "
                                    "administrator", 403)
+            if r["id"] != user.id and self.db.execute(
+                    "SELECT 1 FROM members WHERE user_id = ? AND company_id != ?", (r["id"], cid)).fetchone():
+                raise CompanyError("this account also belongs to another company: its password must be reset by "
+                                   "the account holder (Forgot your password) or the server administrator", 403)
             token = self.reset_token(email, made_by=user.id, hours=hours)
+            if token is None:
+                raise CompanyError("this account signs in through single sign-on or an integration key; "
+                                   "its credentials are managed there", 403)
             self._log(cid, None, user.id, "member", f"a link to set a new password was made for {self._name(r['id'])}")
             return token or "", _iso(_now() + dt.timedelta(hours=hours))
 
@@ -605,12 +625,12 @@ class Companies:
             raise CompanyError("a password needs at least 8 characters", 422)
         with self.lock:
             r = self.db.execute("SELECT * FROM password_resets WHERE token_hash = ?", (_token_hash(token),)).fetchone()
-            if r is None or r["used"] or dt.datetime.fromisoformat(r["expires_at"]) < _now():
+            if r is None or r["used"] or dt.datetime.fromisoformat(r["expires_at"]) <= _now():
                 raise CompanyError("this link has expired or was used already: ask for a new one", 410)
-            salt = secrets.token_hex(16)
-            self.db.execute("UPDATE users SET pw_salt = ?, pw_hash = ? WHERE id = ?", (salt, _hash_pw(new, salt), r["user_id"]))
-            self.db.execute("UPDATE password_resets SET used = 1 WHERE user_id = ?", (r["user_id"],))
-            self.db.execute("DELETE FROM sessions WHERE user_id = ?", (r["user_id"],))   # signed out everywhere
+            account = self.db.execute("SELECT pw_hash, kind FROM users WHERE id = ?", (r["user_id"],)).fetchone()
+            if account is None or not account["pw_hash"] or account["kind"] != "person":
+                raise CompanyError("this account's credentials are managed by its sign-on service", 410)
+            self._set_password(r["user_id"], new)
             email = self._user(r["user_id"]).email
             self.failures.pop(email.lower(), None)
             return self._session(r["user_id"])

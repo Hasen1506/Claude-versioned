@@ -19,6 +19,7 @@ outline agreements).
 from __future__ import annotations
 
 import re
+from math import isfinite
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -430,7 +431,7 @@ def pay_invoice(ds: Dataset, iid: str, amount: float | None = None, on: date | N
         disc = round(inv.total * inv.discount, 2)
     due = round(inv.open - disc, 2)
     amt = due if amount is None else round(float(amount), 2)
-    if amt <= EPS:
+    if not isfinite(amt) or amt <= EPS:
         raise PayablesError("the amount must be more than zero")
     if amt > due + 0.005:
         raise PayablesError(f"{_money(amt, cur)} is more than the {_money(due, cur)} still open on {iid}")

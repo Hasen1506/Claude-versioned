@@ -69,6 +69,9 @@ Everything is set by environment variables. None is needed to try it; the ones m
 Keep the secrets (`SCP_SMTP_PASSWORD`, `SCP_OIDC_CLIENT_SECRET`) out of the image: pass them with `--env-file`
 or your platform's secrets.
 
+Invalid `SCP_SIGNUP` or `SCP_REQUIRE_SIGNIN` values stop startup. For sign-in, use `1`/`0`,
+`true`/`false`, `yes`/`no` or `on`/`off`.
+
 ### Mail
 
 Any SMTP server works: your company's, or a sending service (Amazon SES, Postmark, SendGrid, Mailgun). For Microsoft
@@ -80,8 +83,14 @@ The same mail server sends documents (*Send from here* on Buying and Selling, on
 at most 500 a company a day) and worklist reminders; see [INTEGRATION.md](INTEGRATION.md).
 
 Without mail, "Forgot your password?" tells the person to ask their company's owner: on *Account*, each planner and
-viewer has *Link to set a new password* (valid a day), and the administrator can make one for anyone:
+viewer with a local password and membership only in that company can use *Link to set a new password*
+(valid a day). Accounts shared across companies must use the mail recovery flow or ask the server administrator.
+Single sign-on accounts recover access through their identity provider. The administrator can make a link for
+a local password account:
 `python -m scp.admin reset-link person@example.com`.
+
+Changing a password signs out other sessions and invalidates outstanding reset links. Resetting a password
+signs out all previous sessions and signs in the person using the reset link.
 
 ### Single sign-on
 
@@ -148,8 +157,9 @@ nginx's defaults (1 MB bodies, 60 s answers) refuse a medium-sized company's sav
 ## 4. Backups and putting one back
 
 With `SCP_BACKUP_DIR` set, the server copies the database there every night (`scp-YYYYMMDD-HHMMSS.sqlite`, a
-consistent copy taken while people work) and keeps the newest `SCP_BACKUP_KEEP`. Copy that folder off the machine
-as well (your backup tool, `rclone`, a storage bucket): a backup on the same disk does not survive the disk.
+consistent copy taken while people work) and keeps the newest `SCP_BACKUP_KEEP`. Copies taken in the same second
+receive a numbered suffix; a completed backup is published atomically without overwriting an existing copy.
+Copy that folder off the machine as well (your backup tool, `rclone`, a storage bucket): a backup on the same disk does not survive the disk.
 
 By hand, next to the running server (same `SCP_DB`):
 

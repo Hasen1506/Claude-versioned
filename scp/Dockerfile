@@ -25,7 +25,8 @@ COPY engine/ engine/
 COPY examples/ examples/
 RUN pip install --no-cache-dir --no-deps -e ./engine
 COPY --from=web /app/web/dist web/dist
-RUN useradd --system --uid 10001 --home /data scp && mkdir -p /data && chown scp /data
+# Build contexts can have restrictive directory modes; the runtime user must be able to read the application.
+RUN chmod -R a+rX /app && useradd --system --uid 10001 --home /data scp && mkdir -p /data && chown scp /data
 USER scp
 VOLUME ["/data"]
 EXPOSE 8000

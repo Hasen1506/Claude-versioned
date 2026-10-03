@@ -24,6 +24,7 @@ their unpaid invoices less credit notes not yet paid out.
 from __future__ import annotations
 
 import re
+from math import isfinite
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -559,7 +560,9 @@ def create_deliveries(ds: Dataset, lines: list[dict] | None = None, on: date | N
         if h is not None and h.credit_block:
             raise SalesError(f"{h.id} is blocked over the credit limit: release it first")
         left = ordered_now(ds, d) - delivered(ds, lid) - on_dl.get(lid, 0.0)
-        q = float(x.get("qty") or (due[lid].qty if lid in due else left))
+        q = float(x["qty"]) if x.get("qty") is not None else min(due[lid].qty, left) if lid in due else left
+        if not isfinite(q) or q <= EPS:
+            raise SalesError(f"{lid}: a delivery needs a finite quantity greater than zero")
         if left <= EPS:
             raise SalesError(f"{lid} is already on a delivery or delivered")
         if q > left + EPS:
@@ -570,6 +573,7 @@ def create_deliveries(ds: Dataset, lines: list[dict] | None = None, on: date | N
                              "route from a plant or warehouse")
         key = (d.location, frm)
         groups[key].append(DeliveryLine(order=lid, product=d.product, qty=round(q, 6), batch=x.get("batch")))
+        on_dl[lid] = on_dl.get(lid, 0.0) + q
         cf = [c.ship_date for c in ds.confirmations if c.order == lid]
         plan_day[key] = min(plan_day.get(key, date.max), max(day, min(cf, default=day)))
     ids = [dl.id for dl in ds.deliveries]
@@ -778,7 +782,7 @@ def pay(ds: Dataset, iid: str, amount: float | None = None, on: date | None = No
     in_time = inv.discount > 0 and inv.discount_date is not None and day <= inv.discount_date and not inv.payments
     with_disc = round(inv.total * (1 - inv.discount), 2) if in_time else left
     amt = round(float(amount), 2) if amount is not None else with_disc
-    if amt <= 0:
+    if not isfinite(amt) or amt <= 0:
         raise SalesError("a payment needs an amount")
     if amt > left + 0.005:
         raise SalesError(f"{iid} only has {_m(ds, left)} open")
@@ -827,7 +831,8 @@ def create_return(ds: Dataset, customer: str, product: str, qty: float, *, order
         d = line_record(ds, order)
         if d is None or d.location != customer or d.product != product:
             raise SalesError(f"{order} is not an order line of {_name(ds, product)} for {_name(ds, customer)}")
-        back = sum(r.qty for r in ds.returns if r.order == order)
+        back = sum((r.received_qty if r.received_on is not None and r.received_qty is not None else r.qty)
+                   for r in ds.returns if r.order == order)
         shipped = sum(m.qty for m in sold)
         if qty > shipped - back + EPS:
             raise SalesError(f"{_n(shipped - back)} of {order} were shipped and not returned yet")
@@ -894,30 +899,57 @@ def receive_return(ds: Dataset, rid: str, qty: float | None = None, on: date | N
 def credit_return(ds: Dataset, rid: str, on: date | None = None) -> tuple[Dataset, SalesReport]:
     """A credit note for a received return: what came back at the price agreed."""
     r = _ret(ds, rid)
-    if r.credit_note:
-        raise SalesError(f"{rid} has already been credited ({r.credit_note})")
     if r.received_on is None:
         raise SalesError(f"{rid} has not come back yet: receive it first")
     day = _today(ds, on)
-    billed = next(((i, ln) for i in ds.invoices if i.kind == "invoice" and not i.cancelled and i.customer == r.customer
-                   for ln in i.lines if r.order and ln.order == r.order and ln.product == r.product), None)
-    cid = _next(_invoice_ids(ds), "CN")
+    credits = [i for i in ds.invoices if i.kind == "credit_note" and not i.cancelled and i.customer == r.customer]
+    already = sum(ln.qty for i in credits for ln in i.lines if ln.ret == rid)
+    remaining = (r.received_qty if r.received_qty is not None else r.qty) - already
+    if remaining <= EPS or (r.credit_note and not already and any(i.id == r.credit_note for i in credits)):
+        raise SalesError(f"{rid} has already been credited ({r.credit_note})")
     known, _, _, _ = _dates(ds, r.customer, None, day)
-    ln = InvoiceLine(order=r.order, product=r.product, qty=r.received_qty or r.qty, price=r.price, ret=rid)
-    if billed:
-        inv, original = billed
-        ln = ln.model_copy(update={"tax_rate": original.tax_rate})
-        rate, split, reference = inv.tax_rate, inv.tax_split, inv.id
-    else:
-        ln = _rated(ds, r.customer, ln)
-        rate, split, reference = _tax_rate(ds, r.customer), tax_split(ds, r.customer), None
-    cn = Invoice(id=cid, kind="credit_note", customer=r.customer, date=day, due_date=day, payment_terms=known,
-                 lines=[ln], tax_rate=rate, tax_split=split, reference=reference,
-                 note=f"Return {rid}")
-    new = r.model_copy(update={"credit_note": cid})
-    return (ds.model_copy(update={"invoices": [*ds.invoices, cn], "returns": _replace(ds.returns, r, new)}),
-            SalesReport(message=f"Credit note {cid} for {_name(ds, r.customer)}: {_m(ds, cn.total)}"
-                                + (f" against {reference}" if reference else "") + ".", documents=[cid, rid]))
+    allocations = []
+    billed_qty = 0.0
+    for inv in ds.invoices:
+        if inv.kind != "invoice" or inv.cancelled or inv.customer != r.customer:
+            continue
+        originals = [ln for ln in inv.lines if r.order and ln.order == r.order and ln.product == r.product]
+        billed_qty += sum(ln.qty for ln in originals)
+        used = sum(ln.qty for cn in credits if cn.reference == inv.id for ln in cn.lines
+                   if ln.order == r.order and ln.product == r.product)
+        lines = []
+        for original in originals:
+            available = max(0.0, original.qty - used)
+            used = max(0.0, used - original.qty)
+            take = min(remaining, available)
+            if take > EPS:
+                lines.append(InvoiceLine(order=r.order, product=r.product, qty=round(take, 6), price=r.price,
+                                         ret=rid, tax_rate=original.tax_rate))
+                remaining = max(0.0, remaining - take)
+        if lines:
+            allocations.append((lines, inv.tax_rate, inv.tax_split, inv.id))
+    if remaining > EPS:
+        # A return made before billing can still be credited, but never reuse quantity already credited on a bill.
+        if r.order:
+            shipped = sum(m.qty for m in _sales_moves(ds) if m.reference == r.order and m.product == r.product)
+            unlinked = sum(ln.qty for cn in credits if not cn.reference for ln in cn.lines
+                           if ln.order == r.order and ln.product == r.product)
+            if remaining > max(0.0, shipped - billed_qty - unlinked) + EPS:
+                raise SalesError(f"{rid}: the billed goods have already been credited")
+        ln = _rated(ds, r.customer, InvoiceLine(order=r.order, product=r.product, qty=round(remaining, 6),
+                                                price=r.price, ret=rid))
+        allocations.append(([ln], _tax_rate(ds, r.customer), tax_split(ds, r.customer), None))
+    ids, made = _invoice_ids(ds), []
+    for lines, rate, split, reference in allocations:
+        cid = _next(ids, "CN")
+        ids.append(cid)
+        made.append(Invoice(id=cid, kind="credit_note", customer=r.customer, date=day, due_date=day, payment_terms=known,
+                            lines=lines, tax_rate=rate, tax_split=split, reference=reference, note=f"Return {rid}"))
+    new = r.model_copy(update={"credit_note": made[0].id})
+    notes = "; ".join(f"Credit note {cn.id} for {_name(ds, r.customer)}: {_m(ds, cn.total)}"
+                      + (f" against {cn.reference}" if cn.reference else "") for cn in made)
+    return (ds.model_copy(update={"invoices": [*ds.invoices, *made], "returns": _replace(ds.returns, r, new)}),
+            SalesReport(message=notes + ".", documents=[*[cn.id for cn in made], rid]))
 
 
 # ------------------------------------------------------------------------------------------------ the view
