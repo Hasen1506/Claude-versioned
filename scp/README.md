@@ -85,6 +85,9 @@ any time); signed in, it is kept on the server (see Phase I below).
 - **The board.** Drag a step along its row to run it earlier or later, or onto another machine that can run it; the
   schedule is re-timed at once and the page says what changed. Orders inside the **frozen zone** (a setting) keep
   their place and machine. *Use these dates in the plan* writes exactly the schedule on screen.
+- **Overtime as a choice** (a setting): the window is scheduled again with each machine's overtime hours after its
+  last shift, and that schedule is kept only when it lowers the weighted objective; the page shows the hours used
+  per machine and their cost, or that the schedule keeps to the shifts.
 - **Levelling** can prefer finishing later to building ahead, with a limit on days ahead; **promising** books
   machine hours on the days a step runs, on its own machine or an alternative.
 
@@ -280,18 +283,25 @@ The supply plan goes further into how a plant really plans, mostly in `engine/sc
 - **Orders with several lines.** Each line is priced from the customer's price at its quantity scale (else the
   product's) less the customer's discounts, unless a price is agreed on the line, and promised like any order; new
   production it needs is made firm at once (R13). Lines are the sales-order demand the plan already reads, under an
-  order header (`SO-00001/10`, `/20`, …).
+  order header (`SO-00001/10`, `/20`, …). Before it is taken, *Check what can be promised* checks every line
+  together: each after the orders already promised and the lines before it.
 - **Credit.** A customer's credit limit counts their open order lines, goods shipped and not invoiced, and unpaid
   invoices less credit notes, with tax. An order beyond it is promised but held for delivery until someone releases it.
 - **Quotations** price an offer without promising it; won, they become an order at the quoted prices.
 - **Deliveries** gather the lines due to ship, one per customer and shipping place: picked (short if need be), packed,
   shipped as one material document, and signed for.
-- **Invoices** bill what was shipped, one per customer and payment terms, with the customer's tax rate; payments settle
-  them, with the cash discount when paid in time. A cancelled invoice frees its goods to be billed again.
+- **Invoices** bill what was shipped, one per customer and payment terms; payments settle them, with the cash discount
+  when paid in time. A cancelled invoice frees its goods to be billed again. Tax is per line: the customer's own rate
+  (an exemption, an export) first, then the product's, then the company's. With the GST split on (*Selling settings*),
+  tax to a customer in the company's state shows as CGST and SGST, to one in another state as IGST, per rate; the
+  state is a place's region, else the first two digits of its GSTIN.
 - **Returns** come back into quality inspection (or blocked, or ready to sell) as a receipt naming the return, and a
   credit note pays them back.
 - **Documents**: the order confirmation, the invoice and the credit note print, download or start an e-mail, in exact
   amounts.
+- **Payment reminders and statements** (N124): reminder days past the due date (7, 21 and 35 by default, in *Selling
+  settings*) make each overdue invoice due its next reminder; the reminder letter and a customer's statement of
+  account (by document and by age) print, mail or go from the server, and a reminder sent is recorded on its invoices.
 
 ## Procure to pay (Phase N)
 
@@ -311,7 +321,9 @@ The supply plan goes further into how a plant really plans, mostly in `engine/sc
 - **Supplier invoices** are checked against the order's price and the goods received (three-way match). A difference
   beyond the tolerances blocks payment; a quantity block lifts once the goods arrive, a price block when someone
   releases it. Payments follow the supplier's terms and take the cash discount in time. The same invoice number is
-  never entered twice.
+  never entered twice. Freight and other delivery costs the order did not plan go on the invoice as their own amount,
+  and a price put right later is a subsequent debit or credit on what was invoiced, without a quantity (a debit
+  beyond the tolerance is blocked like an invoice; goods sent back are credited at the corrected price).
 - **Returns to the supplier** take goods out of stock against their order line: replaced (the line opens again) or
   credited (the line is reduced and the credit memo is entered at the price paid).
 - **What we owe**: open invoices per supplier (overdue, due within a week, blocked) and goods received but not
@@ -325,15 +337,16 @@ The company on the server talks to the rest of the business (`engine/scp/connect
 - **Keys** (`scpk_…`) let an ERP or a script work in one company as a planner or a viewer; an owner makes and
   withdraws them.
 - **Messages in**: customer orders matched by the ERP's number (new, changed line by line, cancelled), stock (an
-  opening balance or a count difference), goods movements by the ERP's own order numbers, and master records. Each is
+  opening balance or a count difference, or lot by lot when rows name a batch or stock type), goods movements by the ERP's own order numbers, and master records. Each is
   saved as a revision by the key, in the History, and merged into open windows like a colleague's change; a message
   sent twice is not applied twice, and every item says whether it was taken, already so, or refused and why.
 - **Orders out**: released purchase orders and firm production and transfer orders, with a version, for the ERP to
-  take and acknowledge with its own numbers.
+  take and acknowledge with its own numbers; one the ERP numbered and then deleted here goes to it as withdrawn.
 - **Scheduled imports** read a web address or a server folder (CSV with SAP column names, or JSON) every hour, day or
   week; the same file is never taken twice, and nothing inside the server's own network is read.
-- **E-mail from the server**: *Send from here* on purchase orders, confirmations, invoices and credit notes (to
-  addresses the company knows, the document attached, replies to the sender), an outbox, and worklist reminders to
+- **E-mail from the server**: *Send from here* on purchase orders, delivery schedules, confirmations, invoices, credit
+  notes, statements and payment reminders, and firming e-mails the orders it made (to
+  addresses the company knows, the document attached as a PDF and as its page, replies to the sender), an outbox, and worklist reminders to
   each owner of open exceptions on the days set.
 
 What is still missing is in [docs/USABILITY_LOG.md](docs/USABILITY_LOG.md#found-while-building-phase-q).

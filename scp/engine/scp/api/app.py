@@ -41,7 +41,7 @@ from ..purchasing import PurchasingError, act as purchasing_act, create_purchase
 from ..purchasing.result import ActionReport, CreateReport, PurchasingView
 from ..sales import SalesError, act as sales_act, sales_view
 from ..sales.result import SalesReport, SalesView
-from ..promise import PromiseResult, check_order, commit, run_bop, run_promise
+from ..promise import PromiseResult, check_lines, check_order, commit, run_bop, run_promise
 from ..promise.orders import (
     OrderError, SalesOrderReport, accept as accept_order, cancel as cancel_order, change as change_order,
 )
@@ -438,11 +438,16 @@ def post_bop(ds: PlanData) -> Response:
 
 class PromiseCheckRequest(Out):
     dataset: PlanData
-    order: DemandRecord
+    order: DemandRecord | None = None                                  # one line, or
+    lines: list[DemandRecord] = Field(default_factory=list, max_length=500)   # the lines of one order, checked together
 
 
 @app.post("/api/promise/check", response_model=PromiseResult)
 def post_promise_check(req: PromiseCheckRequest) -> PromiseResult:
+    if req.lines:
+        return check_lines(req.dataset, req.lines)
+    if req.order is None:
+        raise HTTPException(422, "send the order to check, or its lines")
     return check_order(req.dataset, req.order)
 
 
@@ -668,8 +673,9 @@ class PoActionRequest(Out):
     valid_to: dt.date | None = None                 # create_agreement
     qty: float | None = None                        # create_agreement: the target quantity
     tax: float | None = None                        # enter_invoice: as charged (default: the supplier's rate)
-    kind: Literal["invoice", "credit_memo"] = "invoice"
+    kind: Literal["invoice", "credit_memo", "subsequent_debit", "subsequent_credit"] = "invoice"
     return_id: str | None = None                    # enter_invoice: the return a credit memo credits
+    delivery_costs: float = Field(0.0, ge=0)        # enter_invoice: freight and other costs the order did not plan
     amount: float | None = None                     # pay_invoice (default: what is open, less the discount in time)
     stock_type: StockType | None = None             # return_goods: where the goods are (default: blocked)
     replace: bool = False                           # return_goods: the supplier replaces them (else credits them)
@@ -690,7 +696,8 @@ def post_po_action(req: PoActionRequest) -> PoActionResponse:
                                   note=req.note, by=who_asks() or req.by, orders=req.orders, supplier=req.supplier,
                                   location=req.location, product=req.product, valid_to=req.valid_to, qty=req.qty,
                                   tax=req.tax, kind=req.kind, return_id=req.return_id, amount=req.amount,
-                                  stock_type=req.stock_type, replace=req.replace)
+                                  stock_type=req.stock_type, replace=req.replace,
+                                  delivery_costs=req.delivery_costs)
     except PurchasingError as e:
         raise HTTPException(409, str(e)) from e
     return PoActionResponse(**answer(req.dataset, new), report=rep)
@@ -722,7 +729,7 @@ class SalesActionRequest(Out):
     action: Literal["create_order", "add_lines", "release_credit", "send_confirmation", "cancel_order",
                     "create_quotation", "win_quotation", "lose_quotation", "create_deliveries", "pick", "pack",
                     "issue", "proof", "cancel_delivery", "create_invoices", "pay", "cancel_invoice", "create_return",
-                    "receive_return", "credit_return"]
+                    "receive_return", "credit_return", "remind"]
     id: str | None = None                           # the order, quotation, delivery, invoice or return
     customer: str | None = None
     lines: list[SalesLineInput] | None = None
@@ -737,7 +744,7 @@ class SalesActionRequest(Out):
     gross_kg: float | None = None
     amount: float | None = None
     reference: str = ""
-    orders: list[str] | None = None                 # invoices: only these order lines or orders
+    orders: list[str] | None = None                 # invoices: only these order lines or orders; remind: these invoices
     product: str | None = None                      # returns
     qty: float | None = None
     order: str | None = None

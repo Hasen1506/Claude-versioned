@@ -653,7 +653,8 @@ export interface paths {
         put?: never;
         /**
          * Erp Acknowledge
-         * @description The ERP took these orders: the number it gave each, and the version it took.
+         * @description The ERP took these orders: the number it gave each, and the version it took. An order listed as withdrawn
+         *     (deleted here) is acknowledged with its ERP number when the ERP has closed its copy.
          */
         post: operations["erp_acknowledge_api_companies__cid__erp_acknowledge_post"];
         delete?: never;
@@ -3126,6 +3127,11 @@ export interface components {
              * @default false
              */
             blocked: boolean;
+            /**
+             * Reminder Due
+             * @default 0
+             */
+            reminder_due: number;
         };
         /** CvSuggestion */
         CvSuggestion: {
@@ -3811,9 +3817,21 @@ export interface components {
             product: string;
             /**
              * Qty
-             * @description On hand at the end of the day, every stock type
+             * @description On hand at the end of the day: every batch and stock type, or the batch and stock type named
              */
             qty: number;
+            /**
+             * Batch
+             * @description The batch: the place's stock is then given lot by lot
+             */
+            batch?: string | null;
+            /**
+             * Expires On
+             * @description A batch not known here yet: its expiry date
+             */
+            expires_on?: string | null;
+            /** @description unrestricted, quality or blocked: the place's stock is then given lot by lot */
+            stock_type?: components["schemas"]["StockType"] | null;
         };
         /**
          * EventKind
@@ -4769,9 +4787,17 @@ export interface components {
             lines: components["schemas"]["InvoiceLine"][];
             /**
              * Tax Rate
+             * @description For lines without their own rate
              * @default 0
              */
             tax_rate: number;
+            /**
+             * Tax Split
+             * @description How the tax is shown, fixed when billed: CGST and SGST within the state, IGST between states
+             * @default
+             * @enum {string}
+             */
+            tax_split: "" | "cgst_sgst" | "igst";
             /** Payments */
             payments?: components["schemas"]["Payment"][];
             /**
@@ -4792,6 +4818,17 @@ export interface components {
              * @default
              */
             note: string;
+            /**
+             * Reminder Level
+             * @description The last payment reminder sent for it: 1 the first, …
+             * @default 0
+             */
+            reminder_level: number;
+            /**
+             * Reminded On
+             * @description When that reminder was sent
+             */
+            reminded_on?: string | null;
         };
         /** InvoiceLine */
         InvoiceLine: {
@@ -4809,6 +4846,11 @@ export interface components {
              * @description Net price per unit
              */
             price: number;
+            /**
+             * Tax Rate
+             * @description The line's tax rate when billed; empty = the invoice's
+             */
+            tax_rate?: number | null;
             /**
              * Movements
              * @description Invoice: the sale movements billed
@@ -4879,6 +4921,20 @@ export interface components {
              * @default 0
              */
             discount_amount: number;
+            /**
+             * Reminder Level
+             * @default 0
+             */
+            reminder_level: number;
+            /** Reminded On */
+            reminded_on: string | null;
+            /**
+             * Reminder Due
+             * @default 0
+             */
+            reminder_due: number;
+            /** Tax Parts */
+            tax_parts: components["schemas"]["TaxPart"][];
         };
         /** Issue */
         Issue: {
@@ -5630,7 +5686,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "purchase_order" | "delivery_schedule" | "confirmation" | "invoice" | "credit_note";
+            kind: "purchase_order" | "delivery_schedule" | "confirmation" | "invoice" | "credit_note" | "reminder" | "statement";
             /**
              * Ref
              * @description The document's number (PO-00001, SO-00003, INV-00002)
@@ -6698,7 +6754,7 @@ export interface components {
              * Change
              * @enum {string}
              */
-            change: "new" | "changed" | "taken";
+            change: "new" | "changed" | "taken" | "withdrawn";
             /** Erp Ref */
             erp_ref: string;
             /**
@@ -6744,6 +6800,41 @@ export interface components {
          * @enum {string}
          */
         OutlierMethod: "none" | "mad";
+        /**
+         * OvertimeUse
+         * @description Overtime as a choice of the schedule (N117).
+         */
+        OvertimeUse: {
+            /**
+             * Allowed
+             * @default false
+             */
+            allowed: boolean;
+            /**
+             * Used
+             * @default false
+             */
+            used: boolean;
+            /** Hours */
+            hours: {
+                [key: string]: number;
+            };
+            /**
+             * Cost
+             * @default 0
+             */
+            cost: number;
+            /**
+             * Objective Without
+             * @default 0
+             */
+            objective_without: number;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
         /**
          * OwnerRule
          * @description The first rule that matches an exception names its owner. Empty lists match anything.
@@ -7195,9 +7286,14 @@ export interface components {
              * @default invoice
              * @enum {string}
              */
-            kind: "invoice" | "credit_memo";
+            kind: "invoice" | "credit_memo" | "subsequent_debit" | "subsequent_credit";
             /** Return Id */
             return_id?: string | null;
+            /**
+             * Delivery Costs
+             * @default 0
+             */
+            delivery_costs: number;
             /** Amount */
             amount?: number | null;
             stock_type?: components["schemas"]["StockType"] | null;
@@ -7550,6 +7646,11 @@ export interface components {
              */
             price?: number | null;
             /**
+             * Tax Rate
+             * @description Tax on its sales (0.12 = 12 %); empty = the company's rate. A customer's own rate (an exemption, an export) goes before it
+             */
+            tax_rate?: number | null;
+            /**
              * Setup Group
              * @description Sequence-dependent setup family (colour, allergen, grade…)
              */
@@ -7670,7 +7771,9 @@ export interface components {
         /** PromiseCheckRequest */
         PromiseCheckRequest: {
             dataset: components["schemas"]["Dataset"];
-            order: components["schemas"]["DemandRecord"];
+            order?: components["schemas"]["DemandRecord"] | null;
+            /** Lines */
+            lines?: components["schemas"]["DemandRecord"][];
         };
         /** PromiseCommitRequest */
         PromiseCommitRequest: {
@@ -7781,6 +7884,8 @@ export interface components {
             bop: components["schemas"]["BopRow"][];
             kpis: components["schemas"]["PromiseKpis"];
             checked: components["schemas"]["OrderPromise"] | null;
+            /** Checked Lines */
+            checked_lines: components["schemas"]["OrderPromise"][];
             /** Issues */
             issues: components["schemas"]["Issue"][];
         };
@@ -8896,7 +9001,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "create_order" | "add_lines" | "release_credit" | "send_confirmation" | "cancel_order" | "create_quotation" | "win_quotation" | "lose_quotation" | "create_deliveries" | "pick" | "pack" | "issue" | "proof" | "cancel_delivery" | "create_invoices" | "pay" | "cancel_invoice" | "create_return" | "receive_return" | "credit_return";
+            action: "create_order" | "add_lines" | "release_credit" | "send_confirmation" | "cancel_order" | "create_quotation" | "win_quotation" | "lose_quotation" | "create_deliveries" | "pick" | "pack" | "issue" | "proof" | "cancel_delivery" | "create_invoices" | "pay" | "cancel_invoice" | "create_return" | "receive_return" | "credit_return" | "remind";
             /** Id */
             id?: string | null;
             /** Customer */
@@ -9188,10 +9293,17 @@ export interface components {
             payment_terms?: string | null;
             /**
              * Tax Rate
-             * @description Tax on invoices (0.18 = 18 %)
+             * @description Tax on invoices (0.18 = 18 %) for products without their own rate
              * @default 0
              */
             tax_rate: number;
+            /**
+             * Tax Split
+             * @description gst: tax on an invoice to a customer in the company's own state is shown as CGST and SGST (half each), to one in another state as IGST; the state is the region, else the first two digits of the GSTIN
+             * @default none
+             * @enum {string}
+             */
+            tax_split: "none" | "gst";
             /**
              * Credit Check
              * @description Orders beyond a customer's credit limit are blocked for delivery
@@ -9210,6 +9322,11 @@ export interface components {
              * @default 3
              */
             delivery_days: number;
+            /**
+             * Reminder Days
+             * @description Days past the due date for the first, second, third … payment reminder (dunning levels). Empty: no reminders
+             */
+            reminder_days?: number[];
         };
         /** SalesView */
         SalesView: {
@@ -9566,6 +9683,7 @@ export interface components {
              * @default 0
              */
             without_routing: number;
+            overtime: components["schemas"]["OvertimeUse"];
             /** Issues */
             issues: components["schemas"]["Issue"][];
         };
@@ -9656,6 +9774,12 @@ export interface components {
              * @default true
              */
             improve: boolean;
+            /**
+             * Overtime
+             * @description May use each machine's overtime (its overtime hours a day, after the last shift) when that lowers the weighted objective; the schedule keeps to the shifts otherwise
+             * @default false
+             */
+            overtime: boolean;
             /**
              * Time Limit Seconds
              * @description Search time budget: the local search gets this much, and the optimiser as much again
@@ -10125,6 +10249,12 @@ export interface components {
              * @default
              */
             company_tax_id: string;
+            /**
+             * Company Region
+             * @description The company's state or region for the place of supply; empty = the first two digits of a GSTIN
+             * @default
+             */
+            company_region: string;
             /**
              * Currency
              * @description ISO 4217 company currency
@@ -10778,7 +10908,8 @@ export interface components {
          * SupplierInvoice
          * @description A supplier's invoice or credit memo (≈ MIRO). Checked when entered against the order's price and the goods
          *     received (three-way match); a difference beyond tolerance blocks it for payment until someone releases it, or
-         *     until the goods it bills arrive.
+         *     until the goods it bills arrive. A subsequent debit or credit corrects the price of what was already invoiced:
+         *     its lines carry the difference per unit and leave the quantity invoiced as it was (N132).
          */
         SupplierInvoice: {
             /** Id */
@@ -10788,7 +10919,7 @@ export interface components {
              * @default invoice
              * @enum {string}
              */
-            kind: "invoice" | "credit_memo";
+            kind: "invoice" | "credit_memo" | "subsequent_debit" | "subsequent_credit";
             /** Supplier */
             supplier: string;
             /**
@@ -10821,6 +10952,12 @@ export interface components {
             currency?: string | null;
             /** Lines */
             lines: components["schemas"]["SupplierInvoiceLine"][];
+            /**
+             * Delivery Costs
+             * @description Freight and other delivery costs billed that the order did not plan
+             * @default 0
+             */
+            delivery_costs: number;
             /**
              * Tax
              * @description Tax on the invoice, as the supplier charged it
@@ -10870,7 +11007,7 @@ export interface components {
             qty: number;
             /**
              * Price
-             * @description Price per unit as invoiced, before tax
+             * @description Price per unit as invoiced, before tax; on a subsequent debit or credit, the difference per unit
              */
             price: number;
         };
@@ -10902,6 +11039,11 @@ export interface components {
             currency: string;
             /** Net */
             net: number;
+            /**
+             * Delivery Costs
+             * @default 0
+             */
+            delivery_costs: number;
             /** Tax */
             tax: number;
             /** Total */
@@ -11053,6 +11195,17 @@ export interface components {
             ss_shortfall: number[];
             /** Unit Value */
             unit_value: number;
+        };
+        /** TaxPart */
+        TaxPart: {
+            /** Name */
+            name: string;
+            /** Rate */
+            rate: number;
+            /** Base */
+            base: number;
+            /** Amount */
+            amount: number;
         };
         /**
          * ToBill

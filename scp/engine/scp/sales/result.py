@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import datetime as dt
 
+from pydantic import Field
+
 from ..actuals.result import FirmedOrder
 from ..model.common import Out
 from ..promise.result import OrderPromise
@@ -83,6 +85,13 @@ class DeliveryView(Out):
     invoiced: bool = False
 
 
+class TaxPart(Out):
+    name: str                             # Tax · CGST · SGST · IGST
+    rate: float
+    base: float                           # the amount it is charged on
+    amount: float
+
+
 class InvoiceView(Out):
     id: str
     kind: str
@@ -97,6 +106,10 @@ class InvoiceView(Out):
     days_overdue: int = 0
     discount_until: dt.date | None = None
     discount_amount: float = 0.0          # the cash discount if paid by then
+    reminder_level: int = 0               # the last payment reminder sent
+    reminded_on: dt.date | None = None
+    reminder_due: int = 0                 # the reminder it has reached and not had yet (0: none)
+    tax_parts: list[TaxPart] = Field(default_factory=list)   # per rate, split into CGST and SGST or IGST (N123)
 
 
 class ReturnView(Out):
@@ -148,6 +161,7 @@ class CustomerRow(Out):
     headroom: float | None = None         # credit limit less exposure
     payment_terms: str
     blocked: bool = False
+    reminder_due: int = 0                 # the highest payment reminder an overdue invoice has reached and not had
 
 
 class SalesView(Out):

@@ -1,7 +1,7 @@
 // The documents a customer receives (Phase M): the order confirmation, the invoice and the credit note, each a page of its
-// own to print, save as PDF or download, and the text of an e-mail. Built from the selling view and the company's data;
-// nothing is sent from here.
-import type { Dataset, OrderView } from "../api/types";
+// own to print, save as PDF or download, and the text of an e-mail; and (N124) the statement of account and the payment
+// reminder. Built from the selling view and the company's data; nothing is sent from here.
+import type { Dataset, InvoiceView, OrderView } from "../api/types";
 import { exactMoney, qty } from "./format";
 import { namesOf } from "./names";
 
@@ -25,6 +25,50 @@ function parts(ds: Dataset, customer: string) {
     to: { name: nm.loc(customer), address: place?.address?.trim() ?? "", tax: place?.tax_id?.trim() ?? "" },
   };
 }
+
+const r2 = (v: number) => Math.round(v * 100) / 100;
+const pct = (r: number) => `${Math.round(r * 1000) / 10} %`;
+
+/** The tax on a line (N123), as the server bills it: the customer's own rate, then the product's, then the company's. */
+export function lineRate(ds: Dataset, customer: string, product: string): number {
+  const c = (ds.customers ?? []).find((x) => x.customer === customer);
+  if (c?.tax_rate != null) return c.tax_rate;
+  const p = (ds.products ?? []).find((x) => x.id === product);
+  return p?.tax_rate ?? ds.sales?.tax_rate ?? 0;
+}
+
+const supplyPlace = (taxId?: string | null, region?: string | null) =>
+  (region ?? "").trim() ? (region ?? "").trim().toLowerCase() : /^\d\d/.test((taxId ?? "").trim()) ? (taxId ?? "").trim().slice(0, 2) : "";
+
+/** How tax to this customer is shown with the GST split: CGST and SGST within the company's state, else IGST. */
+export function taxSplit(ds: Dataset, customer: string): "" | "cgst_sgst" | "igst" {
+  if (ds.sales?.tax_split !== "gst") return "";
+  const loc = (ds.locations ?? []).find((l) => l.id === customer);
+  const ours = supplyPlace(ds.settings.company_tax_id, ds.settings.company_region);
+  return ours && ours === supplyPlace(loc?.tax_id, loc?.region) ? "cgst_sgst" : "igst";
+}
+
+/** Tax per rate on amounts at their rates, split as the invoice says (mirrors the server's Invoice.tax_parts). */
+export function taxParts(lines: { amount: number; rate: number }[], split: string): { name: string; rate: number; base: number; amount: number }[] {
+  const base = new Map<number, number>();
+  for (const l of lines) base.set(l.rate, (base.get(l.rate) ?? 0) + l.amount);
+  const out: { name: string; rate: number; base: number; amount: number }[] = [];
+  for (const [r, b] of [...base.entries()].sort((a, c) => a[0] - c[0])) {
+    if (r <= 0) continue;
+    const t = r2(b * r);
+    if (split === "cgst_sgst") {
+      const c = r2(t / 2);
+      out.push({ name: "CGST", rate: r / 2, base: r2(b), amount: c }, { name: "SGST", rate: r / 2, base: r2(b), amount: r2(t - c) });
+    } else out.push({ name: split === "igst" ? "IGST" : "Tax", rate: r, base: r2(b), amount: t });
+  }
+  return out;
+}
+
+const taxRows = (ps: ReturnType<typeof taxParts>, currency: string, cols: number) => {
+  const several = new Set(ps.map((x) => x.rate)).size > 1 || ps.some((x) => x.name !== "Tax");
+  const pad = "<td></td>".repeat(cols);
+  return ps.map((x) => `<tr><td></td><td>${x.name} ${pct(x.rate)}${several ? ` <span class="muted">on ${esc(exactMoney(x.base, currency))}</span>` : ""}</td><td></td><td></td><td class="num">${esc(exactMoney(x.amount, currency))}</td>${pad}</tr>`).join("");
+};
 
 /** The places a customer document prints and which of them have no address yet. */
 export function customerAddresses(ds: Dataset, customer: string): { what: string; href: string }[] {
@@ -71,8 +115,9 @@ export function confirmationDocument(o: OrderView, ds: Dataset): string {
       <td class="num">${l.value != null ? esc(exactMoney(l.value, p.currency)) : "—"}</td>
       <td>${esc(long(l.promised ?? l.date))}${l.promised && l.promised > l.date ? `<div class="muted">asked for ${esc(long(l.date))}</div>` : ""}</td></tr>`;
   }).join("");
-  const tax = p.cust?.tax_rate ?? ds.sales?.tax_rate ?? 0;
   const net = o.value ?? 0;
+  const ps = taxParts(lines.map((l) => ({ amount: l.value ?? 0, rate: lineRate(ds, o.customer, l.product) })), taxSplit(ds, o.customer));
+  const tax = ps.reduce((a, x) => a + x.amount, 0);
   const body = `<header><div><h1>Order confirmation ${esc(o.id)}</h1>${o.credit_block ? `<div class="flag">Held: awaiting credit release</div>` : ""}</div>
 <div style="text-align:right"><b>${esc(p.company)}</b>${block(p.from.address)}<div class="muted">Order date ${esc(long(o.order_date))}</div>
 ${o.customer_ref ? `<div class="muted">Your order ${esc(o.customer_ref)}</div>` : ""}</div></header>
@@ -85,8 +130,8 @@ ${o.customer_ref ? `<div class="muted">Your order ${esc(o.customer_ref)}</div>` 
 <table><thead><tr><th>Line</th><th>Item</th><th class="num">Quantity</th><th class="num">Price</th><th class="num">Value</th><th>Delivery</th></tr></thead>
 <tbody>${rows}</tbody>
 <tfoot><tr><td></td><td>Net</td><td></td><td></td><td class="num">${esc(exactMoney(net, p.currency))}</td><td></td></tr>
-${tax ? `<tr><td></td><td>Tax ${Math.round(tax * 1000) / 10} %</td><td></td><td></td><td class="num">${esc(exactMoney(net * tax, p.currency))}</td><td></td></tr>` : ""}
-<tr class="total"><td></td><td>Total</td><td></td><td></td><td class="num">${esc(exactMoney(net * (1 + tax), p.currency))}</td><td></td></tr></tfoot></table>
+${taxRows(ps, p.currency, 1)}
+<tr class="total"><td></td><td>Total</td><td></td><td></td><td class="num">${esc(exactMoney(net + tax, p.currency))}</td><td></td></tr></tfoot></table>
 <p>Thank you for your order. Please quote ${esc(o.id)} in any correspondence.</p>
 <footer>${esc(p.company)}${p.from.tax ? ` · Tax no. ${esc(p.from.tax)}` : ""} · ${esc(o.id)}</footer>`;
   return page(`Order confirmation ${o.id}`, p.company, body);
@@ -98,11 +143,13 @@ export function invoiceDocument(inv: Inv, ds: Dataset): string {
   const credit = inv.kind === "credit_note";
   const amt = (x: { qty: number; price: number }) => Math.round(x.qty * x.price * 100) / 100;
   const net = inv.lines.reduce((a, l) => a + amt(l), 0);
-  const tax = Math.round(net * (inv.tax_rate ?? 0) * 100) / 100;
+  const ps = taxParts(inv.lines.map((l) => ({ amount: amt(l), rate: l.tax_rate ?? inv.tax_rate ?? 0 })), inv.tax_split ?? "");
+  const tax = r2(ps.reduce((a, x) => a + x.amount, 0));
+  const rated = new Set(inv.lines.map((l) => l.tax_rate ?? inv.tax_rate ?? 0)).size > 1;
   const paid = (inv.payments ?? []).reduce((a, x) => a + x.amount + (x.discount ?? 0), 0);
   const rows = inv.lines.map((l, i) => `<tr><td>${(i + 1) * 10}</td><td><b>${esc(p.nm.prod(l.product))}</b><div class="id">${esc(l.product)}${l.order ? ` · order ${esc(l.order)}` : ""}</div></td>
     <td class="num">${qty(l.qty)} ${esc(p.unit(l.product))}</td><td class="num">${esc(exactMoney(l.price, p.currency))}</td>
-    <td class="num">${esc(exactMoney(amt(l), p.currency))}</td></tr>`).join("");
+    <td class="num">${esc(exactMoney(amt(l), p.currency))}${rated ? `<div class="muted">tax ${pct(l.tax_rate ?? inv.tax_rate ?? 0)}</div>` : ""}</td></tr>`).join("");
   const terms = credit ? "" : `<div>Due ${esc(long(inv.due_date))}</div>${inv.discount && inv.discount_date
     ? `<div>${Math.round(inv.discount * 1000) / 10} % off (${esc(exactMoney((net + tax) * inv.discount, p.currency))}) if paid by ${esc(long(inv.discount_date))}</div>` : ""}`;
   const title = `${credit ? "Credit note" : "Invoice"} ${inv.id}`;
@@ -116,12 +163,65 @@ export function invoiceDocument(inv: Inv, ds: Dataset): string {
 <table><thead><tr><th>Line</th><th>Item</th><th class="num">Quantity</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
 <tbody>${rows}</tbody>
 <tfoot><tr><td></td><td>Net</td><td></td><td></td><td class="num">${esc(exactMoney(net, p.currency))}</td></tr>
-<tr><td></td><td>Tax ${Math.round((inv.tax_rate ?? 0) * 1000) / 10} %</td><td></td><td></td><td class="num">${esc(exactMoney(tax, p.currency))}</td></tr>
+${taxRows(ps, p.currency, 0)}
 <tr class="total"><td></td><td>${credit ? "Credited" : "Total"}</td><td></td><td></td><td class="num">${esc(exactMoney(net + tax, p.currency))}</td></tr>
 ${paid > 0 ? `<tr><td></td><td>${credit ? "Paid out" : "Paid"}</td><td></td><td></td><td class="num">${esc(exactMoney(paid, p.currency))}</td></tr>` : ""}</tfoot></table>
 ${credit ? "" : `<p>Please quote ${esc(inv.id)} with your payment.</p>`}
 <footer>${esc(p.company)} · ${esc(inv.id)}</footer>`;
   return page(title, p.company, body);
+}
+
+/** What a customer owes on a day: their unpaid invoices and credit notes not paid out, and how long overdue. */
+export function openItems(invoices: InvoiceView[], customer: string) {
+  const items = invoices.filter((i) => i.customer === customer && i.status !== "cancelled" && i.open > 0.005)
+    .sort((a, b) => a.due_date.localeCompare(b.due_date) || a.id.localeCompare(b.id));
+  const sign = (i: InvoiceView) => (i.kind === "credit_note" ? -1 : 1);
+  const owed = items.reduce((a, i) => a + sign(i) * i.open, 0);
+  const overdue = items.filter((i) => i.status === "overdue");
+  const ages: [string, (d: number) => boolean][] = [["not yet due", (d) => d === 0], ["1–30 days", (d) => d >= 1 && d <= 30],
+    ["31–60 days", (d) => d > 30 && d <= 60], ["61–90 days", (d) => d > 60 && d <= 90], ["over 90 days", (d) => d > 90]];
+  const aging = ages.map(([label, f]) => ({ label, amount: items.filter((i) => f(i.days_overdue)).reduce((a, i) => a + sign(i) * i.open, 0) }));
+  return { items, owed, overdue, overdueAmount: overdue.reduce((a, i) => a + i.open, 0), aging };
+}
+
+/** The statement of account (what the customer owes, by document and by age) or, with ``reminder``, the payment reminder
+ * of that number for the overdue invoices. */
+export function statementDocument(customer: string, invoices: InvoiceView[], asOf: string, ds: Dataset, reminder = 0): string {
+  const p = parts(ds, customer);
+  const o = openItems(invoices, customer);
+  const items = reminder ? o.overdue : o.items;
+  const m = (x: number) => esc(exactMoney(x, p.currency));
+  const rows = items.map((i) => {
+    const credit = i.kind === "credit_note";
+    return `<tr><td><b>${esc(i.id)}</b><div class="muted">${credit ? "credit note" : "invoice"}</div></td><td>${esc(long(i.date))}</td>
+      <td>${credit ? "" : esc(long(i.due_date))}</td><td class="num">${m((credit ? -1 : 1) * i.total)}</td>
+      <td class="num">${m((credit ? -1 : 1) * i.open)}</td><td class="num">${i.days_overdue ? `${i.days_overdue} days` : ""}</td></tr>`;
+  }).join("");
+  const total = reminder ? o.overdueAmount : o.owed;
+  const title = reminder ? (reminder === 1 ? "Payment reminder" : `Payment reminder ${reminder}`) : "Statement of account";
+  const payBy = new Date(new Date(asOf + "T00:00:00").getTime() + 7 * 86400_000).toISOString().slice(0, 10);
+  const words = !reminder ? `<p>This is what we have open for you on ${esc(long(asOf))}. If your records differ, please tell us.</p>`
+    : reminder === 1 ? `<p>Our records show the invoices below as unpaid past their due date. Perhaps they were overlooked: please pay
+      ${m(total)} by ${esc(long(payBy))}, quoting the invoice numbers. If you have paid in the last few days, thank you, and please disregard this.</p>`
+    : `<p>Despite our earlier reminder${reminder > 2 ? "s" : ""}, the invoices below are still unpaid. Please pay ${m(total)} by ${esc(long(payBy))}.
+      If there is a reason they are not paid, please tell us at once${reminder >= 3 ? `; otherwise we must hold further deliveries until they are` : ""}.</p>`;
+  const aging = reminder ? "" : `<table><thead><tr>${o.aging.map((a) => `<th class="num">${esc(a.label)}</th>`).join("")}</tr></thead>
+<tbody><tr>${o.aging.map((a) => `<td class="num">${m(a.amount)}</td>`).join("")}</tr></tbody></table>`;
+  const body = `<header><div><h1>${esc(title)}</h1></div>
+<div style="text-align:right"><b>${esc(p.company)}</b>${block(p.from.address)}${p.from.tax ? `<div class="muted">Tax no. ${esc(p.from.tax)}</div>` : ""}
+<div class="muted">Date ${esc(long(asOf))}</div></div></header>
+<div class="grid">
+  <div><h2>Customer</h2><b>${esc(p.to.name)}</b>${block(p.to.address)}${p.cust?.contact ? `<div>${esc(p.cust.contact)}</div>` : ""}</div>
+  <div><h2>${reminder ? "Overdue" : "Owed"}</h2><div style="font-size:18px;font-weight:700">${m(total)}</div>${!reminder && o.overdueAmount > 0
+    ? `<div class="muted">of which overdue ${m(o.overdueAmount)}</div>` : ""}</div>
+</div>
+${words}
+<table><thead><tr><th>Document</th><th>Date</th><th>Due</th><th class="num">Amount</th><th class="num">Open</th><th class="num">Overdue</th></tr></thead>
+<tbody>${rows || `<tr><td colspan="6" class="muted">Nothing open.</td></tr>`}</tbody>
+<tfoot><tr class="total"><td>${reminder ? "Overdue" : "Owed"}</td><td></td><td></td><td></td><td class="num">${m(total)}</td><td></td></tr></tfoot></table>
+${aging}
+<footer>${esc(p.company)} · ${esc(title)} · ${esc(long(asOf))}</footer>`;
+  return page(`${title} ${p.to.name}`, p.company, body);
 }
 
 /** Subject and body of an e-mail with the order confirmation or invoice in plain text. */

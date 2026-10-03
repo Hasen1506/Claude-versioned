@@ -40,7 +40,7 @@ from ..model.sales import (
 from ..promise.orders import OrderError, _promise, make_supply, next_order_id
 from .result import (
     CustomerRow, DeliveryView, InvoiceView, OrderLineView, OrderView, QuotationView, ReturnView, SalesReport, SalesView,
-    ToBill, ToDeliver,
+    TaxPart, ToBill, ToDeliver,
 )
 
 
@@ -200,19 +200,54 @@ def exposure(ds: Dataset, customer: str) -> tuple[float, float, float]:
     for d in ds.demand:
         if d.kind is DemandKind.SALES_ORDER and d.location == customer:
             p = net_price(ds, d) or 0.0
-            open_v += max(0.0, ordered_now(ds, d) - delivered(ds, d.id or "")) * p
-    unbilled = sum(b.value or 0.0 for b in to_bill(ds) if b.customer == customer)
-    tax = _tax_rate(ds, customer)
+            open_v += max(0.0, ordered_now(ds, d) - delivered(ds, d.id or "")) * p * (1 + line_rate(ds, customer,
+                                                                                                     d.product))
+    unbilled = sum((b.value or 0.0) * (1 + line_rate(ds, customer, b.product)) for b in to_bill(ds)
+                   if b.customer == customer)
     rec = 0.0
     for inv in ds.invoices:
         if inv.customer == customer and not inv.cancelled:
             rec += inv.open if inv.kind == "invoice" else -inv.open
-    return round(open_v * (1 + tax), 2), round(unbilled * (1 + tax), 2), round(rec, 2)
+    return round(open_v, 2), round(unbilled, 2), round(rec, 2)
 
 
 def _tax_rate(ds: Dataset, customer: str) -> float:
     c = ds.customer_by_id.get(customer)
     return c.tax_rate if c and c.tax_rate is not None else ds.sales.tax_rate
+
+
+def line_rate(ds: Dataset, customer: str, product: str) -> float:
+    """The tax on a line (N123): the customer's own rate (an exemption, an export) first, then the product's, then
+    the company's."""
+    c = ds.customer_by_id.get(customer)
+    if c and c.tax_rate is not None:
+        return c.tax_rate
+    p = ds.product_by_id.get(product)
+    return p.tax_rate if p and p.tax_rate is not None else ds.sales.tax_rate
+
+
+def _place(tax_id: str, region: str) -> str:
+    """The state for the place of supply: the region, else a GSTIN's first two digits (its state code)."""
+    if region.strip():
+        return region.strip().lower()
+    t = tax_id.strip()
+    return t[:2] if len(t) >= 2 and t[:2].isdigit() else ""
+
+
+def tax_split(ds: Dataset, customer: str) -> str:
+    """How an invoice to this customer shows its tax (N123): with the company's GST split, CGST and SGST when the
+    customer is in the company's state, IGST when in another or not known."""
+    if ds.sales.tax_split != "gst":
+        return ""
+    loc = ds.location_by_id.get(customer)
+    ours = _place(ds.settings.company_tax_id, ds.settings.company_region)
+    theirs = _place(loc.tax_id, loc.region) if loc else ""
+    return "cgst_sgst" if ours and ours == theirs else "igst"
+
+
+def _rated(ds: Dataset, customer: str, ln: InvoiceLine) -> InvoiceLine:
+    r = line_rate(ds, customer, ln.product)
+    return ln if r == _tax_rate(ds, customer) else ln.model_copy(update={"tax_rate": r})
 
 
 def _credit(ds: Dataset, customer: str, adding: float) -> tuple[bool, str]:
@@ -270,7 +305,7 @@ def create_order(ds: Dataset, customer: str, lines: list[dict], *, order_date: d
                                  qty=q, kind=DemandKind.SALES_ORDER, priority=int(ln.get("priority") or 5),
                                  complete_delivery=bool(ln.get("complete_delivery")), price=net,
                                  discount=round(max(0.0, disc), 6), customer_ref=customer_ref[:64]))
-    value = sum(r.qty * (r.price or 0.0) for r in recs) * (1 + _tax_rate(ds, customer))
+    value = sum(r.qty * (r.price or 0.0) * (1 + line_rate(ds, customer, r.product)) for r in recs)
     blocked, why = _credit(ds, customer, round(value, 2))
     head = SalesOrder(id=oid, customer=customer, order_date=_today(ds, order_date), customer_ref=customer_ref[:64],
                       payment_terms=payment_terms, quotation=quotation, credit_block=blocked, credit_note=why[:200],
@@ -686,7 +721,8 @@ def create_invoices(ds: Dataset, orders: list[str] | None = None, on: date | Non
                 merged[k] = InvoiceLine(order=b.order, product=b.product, qty=b.qty, price=b.price or 0.0,
                                         movements=list(b.movements))
         made.append(Invoice(id=iid, customer=cust, date=day, due_date=due_on, discount_date=disc_on, discount=disc,
-                            payment_terms=known, lines=list(merged.values()), tax_rate=_tax_rate(ds, cust)))
+                            payment_terms=known, lines=[_rated(ds, cust, x) for x in merged.values()],
+                            tax_rate=_tax_rate(ds, cust), tax_split=tax_split(ds, cust)))
     msg = "; ".join(f"{i.id} to {_name(ds, i.customer)}: {_m(ds, i.total)} due {_day(i.due_date)}" for i in made)
     return (ds.model_copy(update={"invoices": [*ds.invoices, *made]}),
             SalesReport(message=msg + ".", documents=[i.id for i in made]))
@@ -839,9 +875,10 @@ def credit_return(ds: Dataset, rid: str, on: date | None = None) -> tuple[Datase
     cid = _next(_invoice_ids(ds), "CN")
     known, _, _, _ = _dates(ds, r.customer, None, day)
     cn = Invoice(id=cid, kind="credit_note", customer=r.customer, date=day, due_date=day, payment_terms=known,
-                 lines=[InvoiceLine(order=r.order, product=r.product, qty=r.received_qty or r.qty, price=r.price,
-                                    ret=rid)],
-                 tax_rate=_tax_rate(ds, r.customer), reference=billed, note=f"Return {rid}")
+                 lines=[_rated(ds, r.customer, InvoiceLine(order=r.order, product=r.product,
+                                                           qty=r.received_qty or r.qty, price=r.price, ret=rid))],
+                 tax_rate=_tax_rate(ds, r.customer), tax_split=tax_split(ds, r.customer), reference=billed,
+                 note=f"Return {rid}")
     new = r.model_copy(update={"credit_note": cid})
     return (ds.model_copy(update={"invoices": [*ds.invoices, cn], "returns": _replace(ds.returns, r, new)}),
             SalesReport(message=f"Credit note {cid} for {_name(ds, r.customer)}: {_m(ds, cn.total)}"
@@ -925,7 +962,10 @@ def sales_view(ds: Dataset, as_of: date | None = None) -> SalesView:
         invs.append(InvoiceView(id=i.id, kind=i.kind, customer=i.customer, date=i.date, due_date=i.due_date, net=i.net,
                                 tax=i.tax, total=i.total, open=i.open, status=st, days_overdue=max(0, late),
                                 discount_until=i.discount_date if in_time else None,
-                                discount_amount=round(i.total * i.discount, 2) if in_time else 0.0))
+                                discount_amount=round(i.total * i.discount, 2) if in_time else 0.0,
+                                reminder_level=i.reminder_level, reminded_on=i.reminded_on,
+                                reminder_due=_reminder_due(ds, i, day),
+                                tax_parts=[TaxPart(name=n, rate=r, base=b, amount=a) for n, r, b, a in i.tax_parts]))
     rets = [ReturnView(id=r.id, customer=r.customer, product=r.product, qty=r.qty, received_qty=r.received_qty,
                        status=r.status, value=round((r.received_qty or r.qty) * r.price, 2), order=r.order,
                        credit_note=r.credit_note) for r in ds.returns]
@@ -939,7 +979,8 @@ def sales_view(ds: Dataset, as_of: date | None = None) -> SalesView:
         custs.append(CustomerRow(customer=cu, credit_limit=c.credit_limit if c else None, open_orders=o, to_bill=u,
                                  receivable=r, exposure=exp, overdue=overdue,
                                  headroom=None if not c or c.credit_limit is None else round(c.credit_limit - exp, 2),
-                                 payment_terms=ds.terms_for(cu).text(), blocked=bool(c and c.blocked)))
+                                 payment_terms=ds.terms_for(cu).text(), blocked=bool(c and c.blocked),
+                                 reminder_due=max((i.reminder_due for i in invs if i.customer == cu), default=0)))
     return SalesView(currency=ds.settings.currency, as_of=day, orders=sorted(orders, key=lambda o: o.id, reverse=True),
                      quotations=sorted(quotes, key=lambda q: q.id, reverse=True),
                      deliveries=sorted(dels, key=lambda d: d.id, reverse=True),
@@ -948,9 +989,35 @@ def sales_view(ds: Dataset, as_of: date | None = None) -> SalesView:
                      to_bill=to_bill(ds), customers=custs)
 
 
+# ---- payment reminders (dunning) ----------------------------------------------------------------------------------
+def _reminder_due(ds: Dataset, i, day: date) -> int:
+    """The payment reminder an unpaid invoice has reached by ``day`` and not had yet: the number of the company's
+    reminder days it is overdue by (0: none due)."""
+    if i.kind != "invoice" or i.cancelled or i.open <= 0.005 or i.due_date >= day:
+        return 0
+    reached = sum(1 for d in ds.sales.reminder_days if (day - i.due_date).days >= d)
+    return reached if reached > i.reminder_level else 0
+
+
+def remind(ds: Dataset, customer: str, on: date | None = None, ids: list[str] | None = None) -> tuple[Dataset, SalesReport]:
+    """Record a payment reminder to a customer (≈ a dunning run for one customer): every unpaid invoice that has
+    reached a reminder it has not had (or only those in ``ids``) goes up to that reminder, sent on ``on``."""
+    day = _today(ds, on)
+    due = [(i, n) for i in ds.invoices if i.customer == customer and (ids is None or i.id in ids)
+           and (n := _reminder_due(ds, i, day))]
+    if not due:
+        raise SalesError(f"no invoice of {_name(ds, customer)} is due a payment reminder on {_day(day)}")
+    upd = {i.id: i.model_copy(update={"reminder_level": n, "reminded_on": day}) for i, n in due}
+    level = max(n for _, n in due)
+    said = "; ".join(f"{i.id} ({(day - i.due_date).days} days overdue, {_m(ds, i.open)})" for i, _ in due)
+    return (ds.model_copy(update={"invoices": [upd.get(i.id, i) for i in ds.invoices]}),
+            SalesReport(message=f"Payment reminder {level} to {_name(ds, customer)} on {_day(day)}: {said}.",
+                        documents=[i.id for i, _ in due]))
+
+
 ACTIONS = ("create_order", "add_lines", "release_credit", "send_confirmation", "cancel_order", "create_quotation",
            "win_quotation", "lose_quotation", "create_deliveries", "pick", "pack", "issue", "proof", "cancel_delivery",
-           "create_invoices", "pay", "cancel_invoice", "create_return", "receive_return", "credit_return")
+           "create_invoices", "pay", "cancel_invoice", "create_return", "receive_return", "credit_return", "remind")
 
 
 def act(ds: Dataset, action: str, *, id: str | None = None, customer: str | None = None,
@@ -1009,6 +1076,8 @@ def act(ds: Dataset, action: str, *, id: str | None = None, customer: str | None
                               kw.get("batch"))
     if action == "credit_return":
         return credit_return(ds, need(id, "return"), on)
+    if action == "remind":
+        return remind(ds, need(customer, "customer"), on, kw.get("orders"))
     raise SalesError(f"unknown action {action!r}")
 
 
@@ -1016,5 +1085,5 @@ __all__ = [
     "ACTIONS", "SalesError", "act", "add_lines", "cancel_delivery", "cancel_invoice", "cancel_order", "create_deliveries",
     "create_invoices", "create_order", "create_quotation", "create_return", "credit_return", "exposure", "issue",
     "line_record", "lose_quotation", "net_price", "pack", "pay", "pick", "price", "proof", "receive_return",
-    "release_credit", "sales_view", "send_confirmation", "to_bill", "to_deliver", "win_quotation",
+    "release_credit", "remind", "sales_view", "send_confirmation", "to_bill", "to_deliver", "win_quotation",
 ]

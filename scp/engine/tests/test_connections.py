@@ -163,6 +163,54 @@ def test_the_erps_stock_is_posted_as_count_differences():
     assert r.json()["message"]["items"][0]["message"] == "40 on hand: −2 posted (count difference)"
 
 
+def test_the_erps_stock_by_batch_and_stock_type_is_counted_lot_by_lot():
+    d = company()
+    d["products"][1]["batches"] = True
+    for lp in d["location_products"]:
+        lp["on_hand"] = 0
+    owner, cid, key = setup(d)
+    r = client.post(f"/api/companies/{cid}/erp/stock", headers=h(key), json={"stock": [
+        {"location": "P", "product": "B", "batch": "L1", "expires_on": "2026-06-30", "qty": 30},
+        {"location": "P", "product": "B", "batch": "L2", "stock_type": "quality", "qty": 10},
+        {"location": "P", "product": "A", "stock_type": "unrestricted", "qty": 90},
+        {"location": "P", "product": "A", "stock_type": "blocked", "qty": 5},
+        {"location": "P", "product": "B", "qty": 3},
+        {"location": "P", "product": "A", "batch": "Z", "qty": 1}]})
+    items = r.json()["message"]["items"]
+    assert [(i["ref"], i["status"]) for i in items] == [
+        ("P / B / L1", "applied"), ("P / B / L2 / quality", "applied"), ("P / A / unrestricted", "applied"),
+        ("P / A / blocked", "applied"), ("P / B", "refused"), ("P / A / Z", "refused")]
+    assert items[4]["message"] == "B is kept by batch: name the batch"
+    assert items[5]["message"] == "A is not kept by batch here"
+    assert items[0]["message"].startswith("30 on hand: +30 posted (count difference) (PI-")
+    data = doc_of(owner, cid)["dataset"]
+    assert sorted((m["product"], m["batch"] or "", m["stock_type"], m["qty"]) for m in data["movements"]) == [
+        ("A", "", "blocked", 5), ("A", "", "unrestricted", 90), ("B", "L1", "unrestricted", 30),
+        ("B", "L2", "quality", 10)]
+    assert [(b["id"], b["expires_on"]) for b in data["batches"]] == [("L1", "2026-06-30"), ("L2", None)]
+    [pi] = data["inventory_docs"]
+    assert (pi["status"], pi["block"], pi["note"]) == ("posted", False, "Stock from the ERP")
+    # the next day's stock no longer lists L2: it is counted as none
+    r = client.post(f"/api/companies/{cid}/erp/stock", headers=h(key), json={"stock": [
+        {"location": "P", "product": "B", "batch": "L1", "qty": 25}]})
+    [it] = r.json()["message"]["items"]
+    assert it["status"] == "applied"
+    assert it["message"].endswith("; not in the ERP's stock, so counted as none: L2 (quality) 10 → 0")
+    moves = doc_of(owner, cid)["dataset"]["movements"]
+    assert sorted((m["batch"], m["qty"]) for m in moves[4:]) == [("L1", -5), ("L2", -10)]
+
+
+def test_stock_from_a_csv_with_a_column_per_stock_type_becomes_a_row_per_stock_type():
+    from scp.connect.imports import parse
+
+    rows = parse("stock", "csv", b"Plant;Material;Batch;Unrestricted;Quality inspection;Blocked\n"
+                                 b"P;B;L1;1.234,5;10;0\n")
+    assert rows == [
+        {"location": "P", "product": "B", "batch": "L1", "qty": 1234.5, "stock_type": "unrestricted"},
+        {"location": "P", "product": "B", "batch": "L1", "qty": 10, "stock_type": "quality"},
+        {"location": "P", "product": "B", "batch": "L1", "qty": 0, "stock_type": "blocked"}]
+
+
 def test_a_purchase_order_goes_to_the_erp_comes_back_with_its_number_and_is_received_by_it_once():
     owner, cid, key = setup()
     r = client.get(f"/api/companies/{cid}/erp/purchase-orders", headers=h(key)).json()
@@ -214,6 +262,42 @@ def test_a_production_order_changed_after_the_erp_took_it_goes_to_it_again():
     r = client.post(f"/api/companies/{cid}/erp/postings", headers=h(key), json={"postings": [
         {"ref": "C-1", "action": "receive", "order": "1000077", "qty": 20, "date": "2026-01-10"}]})
     assert r.json()["message"]["items"][0]["status"] == "applied", r.text
+
+
+def test_an_order_the_erp_took_and_then_deleted_here_goes_to_it_as_withdrawn_until_it_closes_its_copy():
+    owner, cid, key = setup()
+    [po] = client.get(f"/api/companies/{cid}/erp/purchase-orders", headers=h(key)).json()["orders"]
+    [mo] = client.get(f"/api/companies/{cid}/erp/production-orders", headers=h(key)).json()["orders"]
+    client.post(f"/api/companies/{cid}/erp/acknowledge", headers=h(key), json={"orders": [
+        {"kind": "purchase_order", "id": "PO-00001", "erp_ref": "4500000123", "version": po["version"]},
+        {"kind": "production_order", "id": "MO-1", "erp_ref": "1000077", "version": mo["version"]}]})
+    # a planner deletes both outright and saves
+    c = doc_of(owner, cid)
+    d = c["dataset"]
+    d["purchase_orders"], d["receipts"] = [], []
+    r = client.put(f"/api/companies/{cid}", headers=h(owner), json={"dataset": d, "base_revision": c["meta"]["revision"]})
+    assert r.status_code == 200, r.text
+    [gone] = client.get(f"/api/companies/{cid}/erp/purchase-orders", headers=h(key)).json()["orders"]
+    assert (gone["id"], gone["change"], gone["erp_ref"], gone["location"], gone["lines"]) == \
+        ("PO-00001", "withdrawn", "4500000123", "P", [])
+    [made] = client.get(f"/api/companies/{cid}/erp/production-orders", headers=h(key)).json()["orders"]
+    assert (made["id"], made["change"]) == ("MO-1", "withdrawn")
+    # the wrong number is refused; the right one closes it
+    r = client.post(f"/api/companies/{cid}/erp/acknowledge", headers=h(key), json={"orders": [
+        {"kind": "purchase_order", "id": "PO-00001", "erp_ref": "999", "version": gone["version"]}]})
+    assert r.json()["message"]["items"][0]["message"] == "PO-00001 was 4500000123 in the ERP, not 999"
+    r = client.post(f"/api/companies/{cid}/erp/acknowledge", headers=h(key), json={"orders": [
+        {"kind": "purchase_order", "id": "PO-00001", "erp_ref": "4500000123", "version": gone["version"]}]})
+    assert r.json()["message"]["items"][0]["message"] == \
+        "PO-00001 (4500000123) was deleted here: the ERP closed its copy"
+    assert client.get(f"/api/companies/{cid}/erp/purchase-orders", headers=h(key)).json()["orders"] == []
+    every = client.get(f"/api/companies/{cid}/erp/purchase-orders?all=true", headers=h(key)).json()["orders"]
+    assert [(o["id"], o["change"]) for o in every] == [("PO-00001", "taken")]
+    # the production order is put back before the ERP closed it: it is no longer withdrawn
+    rev = doc_of(owner, cid)["meta"]["revision"]
+    r = client.post(f"/api/companies/{cid}/restore", headers=h(owner), json={"revision": rev - 1, "base_revision": rev})
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/companies/{cid}/erp/production-orders", headers=h(key)).json()["orders"] == []
 
 
 # ---- master data ------------------------------------------------------------------------------------------------
@@ -381,14 +465,17 @@ def test_a_document_goes_from_the_server_to_the_suppliers_address_with_the_docum
     assert r.status_code == 200, r.text
     row = r.json()
     assert (row["status"], row["by"], row["to"], row["cc"], row["attachment"]) == \
-        ("sent", "Asha", ["orders@sharma.example"], ["buying@kumar.example"], "PO-00001.html")
+        ("sent", "Asha", ["orders@sharma.example"], ["buying@kumar.example"], "PO-00001.pdf, PO-00001.html")
     [msg] = sent
     assert (msg["From"], msg["To"], msg["Cc"], msg["Reply-To"], msg["Subject"]) == \
         ("plan@example.com", "orders@sharma.example", "buying@kumar.example", "Asha <owner@example.com>",
          "Purchase order PO-00001")
     assert msg.get_body(("plain",)).get_content().strip() == "Please find our order attached."
-    [att] = list(msg.iter_attachments())
+    pdf, att = list(msg.iter_attachments())
     assert (att.get_filename(), att.get_content()) == ("PO-00001.html", "<h1>Purchase order PO-00001</h1>")
+    # the same document as a PDF first (N140)
+    assert (pdf.get_filename(), pdf.get_content_type()) == ("PO-00001.pdf", "application/pdf")
+    assert pdf.get_content().startswith(b"%PDF-1.4")
 
     # only addresses the company knows: a stranger is refused and nothing is sent
     r = client.post(f"/api/companies/{cid}/mail", headers=h(owner), json=po_mail(to=["someone@elsewhere.example"]))

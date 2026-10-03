@@ -24,7 +24,7 @@ from .core import Decoded, Instance, is_changeover, Job, OpSpec, Res, check, com
 from .heuristics import HEURISTICS, start
 from .optimize import optimize
 from .result import (
-    CompareRow, LabourDay, OptimizerInfo, PartSupply, ScheduleComparison, ScheduledOp, ScheduledOrder, ScheduleKpis,
+    CompareRow, LabourDay, OptimizerInfo, OvertimeUse, PartSupply, ScheduleComparison, ScheduledOp, ScheduledOrder, ScheduleKpis,
     ScheduleResource, ScheduleResult, SearchInfo,
 )
 
@@ -34,17 +34,22 @@ def group_of(ds: Dataset, product: str) -> str:
     return (p.setup_group if p and p.setup_group else product)
 
 
-def resource_clocks(ds: Dataset, rid: str) -> Res:
-    """A resource's working time, one clock per unit: its shifts, breaks and capacity changes by day."""
+def resource_clocks(ds: Dataset, rid: str, overtime: bool = False) -> Res:
+    """A resource's working time, one clock per unit: its shifts, breaks and capacity changes by day. With
+    ``overtime``, each working day runs on for the resource's overtime hours after its last shift (N117)."""
     r = ds.resource_by_id[rid]
     cal = resource_calendar(ds, rid)
     origin, start = ds.settings.planning_start, ds.scheduling.day_start_hour
-    plain = not r.shifts and not r.capacity_changes
+    ot = r.overtime_hours_per_day if overtime else 0.0
+    plain = not r.shifts and not r.capacity_changes and ot <= 0
 
     def unit_clock(u: int) -> ResourceClock:
         def days(d: dt.date) -> tuple[list[tuple[float, float]], float]:
             dc = day_capacity(r, cal, d, start)
-            return (list(dc.windows) if dc.units > u else []), dc.efficiency
+            wins = list(dc.windows) if dc.units > u else []
+            if wins and ot > 0:
+                wins.append((wins[-1][1], wins[-1][1] + ot))
+            return wins, dc.efficiency
         return ResourceClock(cal, origin, start, r.shifts_per_day * r.hours_per_shift, r.efficiency,
                              None if plain else days)
 
@@ -53,7 +58,8 @@ def resource_clocks(ds: Dataset, rid: str) -> Res:
     return Res(rid, n, clocks[0] if clocks else unit_clock(0), r.finite, clocks)
 
 
-def build_instance(ds: Dataset, plan: PlanResult | None = None) -> tuple[Instance, dict, int, int]:
+def build_instance(ds: Dataset, plan: PlanResult | None = None,
+                   overtime: bool = False) -> tuple[Instance, dict, int, int]:
     s = ds.settings
     cfg = ds.scheduling
     origin = s.planning_start
@@ -63,7 +69,7 @@ def build_instance(ds: Dataset, plan: PlanResult | None = None) -> tuple[Instanc
 
     def res(rid: str) -> Res:
         if rid not in resources:
-            resources[rid] = resource_clocks(ds, rid)
+            resources[rid] = resource_clocks(ds, rid, overtime)
         return resources[rid]
 
     jobs: dict[str, Job] = {}
@@ -234,6 +240,27 @@ def _kpis(inst: Instance, d: Decoded) -> ScheduleKpis:
                         objective=d.objective)
 
 
+def _overtime(ds: Dataset, regular: Instance, inst: Instance, d: Decoded, before: float) -> OvertimeUse:
+    """The overtime the schedule uses: clock hours its blocks run outside the regular shifts, per machine."""
+    hours: dict[str, float] = defaultdict(float)
+    if inst is not regular:
+        for b in d.blocks:
+            res, reg = inst.resources[b.resource], regular.resources[b.resource]
+            u = b.unit if res.finite else -1
+            extra = res.at(u).open_between(b.setup_start, b.end) - reg.at(u).open_between(b.setup_start, b.end)
+            if extra > 1e-6:
+                hours[b.resource] += extra
+    used = {r: round(h, 2) for r, h in sorted(hours.items())}
+    cost = sum(h * ds.resource_by_id[r].overtime_cost_per_hour for r, h in used.items())
+    if used:
+        note = (f"Overtime on {', '.join(f'{r} {h:,.1f} h' for r, h in used.items())} lowers the objective from "
+                f"{before:,.1f} to {d.objective:,.1f}")
+    else:
+        note = "Overtime would not lower the objective: the schedule keeps to the shifts"
+    return OvertimeUse(allowed=True, used=bool(used), hours=used, cost=round(cost, 2), objective_without=before,
+                       note=note)
+
+
 def _labour(ds: Dataset, inst: Instance, d: Decoded) -> list[LabourDay]:
     ops = {o.key: o for j in inst.jobs.values() for o in j.ops}
     need: dict[tuple[str, int], float] = defaultdict(float)
@@ -273,35 +300,49 @@ def _run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None,
     out.issues = validate(ds)
     if has_errors(out.issues):
         return out
+    plan = plan or run_mrp(ds)
     inst, meta, out.beyond_horizon, out.without_routing = build_instance(ds, plan)
     out.origin = dt.datetime.combine(s.planning_start, dt.time())
 
-    base_seq = edd(inst)
-    base = decode(inst, base_seq)
-    out.baseline = _kpis(inst, base)
-    seq0, rule_hold = start(inst, cfg.start_rule, cfg.backward_buffer_days)
-    rule = cfg.start_rule
-    if sequence:
-        seqs = complete(inst, sequence)
-        holds = rule_hold if hold is None else {k: v for k, v in hold.items() if k in inst.jobs}
-        final = decode(inst, seqs, holds, pin=True)
-        out.search = SearchInfo(mode="manual", start_rule=rule)
-    elif cfg.optimizer:
-        seqs, final, holds, _, info = optimize(inst, seq0, rule_hold, cfg.time_limit_seconds)
-        out.search = SearchInfo(mode="optimized", start_rule=rule, seconds=info.seconds, stopped="time_limit",
+    def solve(inst: Instance):
+        base = decode(inst, edd(inst))
+        seq0, rule_hold = start(inst, cfg.start_rule, cfg.backward_buffer_days)
+        rule = cfg.start_rule
+        if sequence:
+            seqs = complete(inst, sequence)
+            holds = rule_hold if hold is None else {k: v for k, v in hold.items() if k in inst.jobs}
+            final = decode(inst, seqs, holds, pin=True)
+            search = SearchInfo(mode="manual", start_rule=rule)
+        elif cfg.optimizer:
+            seqs, final, holds, _, info = optimize(inst, seq0, rule_hold, cfg.time_limit_seconds)
+            search = SearchInfo(mode="optimized", start_rule=rule, seconds=info.seconds, stopped="time_limit",
                                 trace=info.trace, optimizer=OptimizerInfo(
                                     status=info.status, seconds=info.seconds, model_objective=info.model_objective,
                                     model_bound=info.model_bound, steps=info.steps,
                                     machines_changed=info.machines_changed, kept=info.kept, note=info.note))
-    elif cfg.improve:
-        seqs, final, st = improve(inst, seq0, time_limit=cfg.time_limit_seconds, hold=rule_hold)
-        holds = rule_hold
-        out.search = SearchInfo(mode="improved", start_rule=rule, moves_tried=st.tried, moves_accepted=st.accepted,
+        elif cfg.improve:
+            seqs, final, st = improve(inst, seq0, time_limit=cfg.time_limit_seconds, hold=rule_hold)
+            holds = rule_hold
+            search = SearchInfo(mode="improved", start_rule=rule, moves_tried=st.tried, moves_accepted=st.accepted,
                                 passes=st.passes, seconds=st.seconds, stopped=st.stopped, trace=st.trace)
-    else:
-        seqs, holds = seq0, rule_hold
-        final = decode(inst, seqs, holds)
-        out.search = SearchInfo(mode="edd" if rule == "edd" else "rule", start_rule=rule)
+        else:
+            seqs, holds = seq0, rule_hold
+            final = decode(inst, seqs, holds)
+            search = SearchInfo(mode="edd" if rule == "edd" else "rule", start_rule=rule)
+        return base, seqs, final, holds, search
+
+    base, _, final, holds, out.search = solve(inst)
+    regular = inst
+    # overtime as a choice (N117): the window is scheduled again with each machine's overtime after its shifts, and
+    # that schedule is kept only when it lowers the weighted objective
+    if cfg.overtime and any(ds.resource_by_id[r].overtime_hours_per_day > 0 for r in inst.resources):
+        inst_ot = build_instance(ds, plan, overtime=True)[0]
+        alt = solve(inst_ot)
+        before = final.objective
+        if alt[2].objective < before - 1e-6:
+            inst, (base, _, final, holds, out.search) = inst_ot, alt
+        out.overtime = _overtime(ds, regular, inst, final, before)
+    out.baseline = _kpis(inst, base)
     out.holds = {k: v for k, v in holds.items() if k in inst.jobs and v > inst.jobs[k].release + 1e-9}
     out.kpis = _kpis(inst, final)
     out.violations = check(inst, final)

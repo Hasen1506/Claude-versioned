@@ -75,6 +75,46 @@ def test_an_invoice_for_what_was_received_at_the_order_price_matches_and_is_paid
     assert payables_view(x).invoices[0].status == "paid" and not payables_view(x).payables
 
 
+def test_freight_on_an_invoice_and_a_later_price_correction_by_subsequent_debit_and_credit():
+    x = received()
+    x, rep = act(x, "enter_invoice", "PO-00001", on=JAN, reference="INV-9", delivery_costs=80)
+    inv = x.supplier_invoices[0]
+    assert inv.delivery_costs == 80 and inv.net == 1230 and inv.tax == 123 and inv.total == 1353 and not inv.blocks
+    assert "2 lines and INR 80.00 delivery costs; matches the order" in rep.message
+    assert payables_view(x).invoices[0].delivery_costs == 80
+    # the price of what was invoiced goes up 0.10 on B (within tolerance): a debit, the quantity invoiced unchanged
+    x, rep = act(x, "enter_invoice", "", on=JAN, kind="subsequent_debit", reference="DN-1",
+                 lines=[{"order": "PO-00001-10", "price": 0.1}])
+    sd = x.supplier_invoices[1]
+    assert sd.id == "SD-00001" and sd.lines[0].qty == 100 and sd.total == 11 and not sd.blocks
+    assert rep.message == ("Subsequent debit SD-00001 from Sharma Metals (their DN-1): INR 11.00 "
+                           "(more per unit: PO-00001-10 0.10 on 100).")
+    assert [g.order for g in payables_view(x).to_invoice] == []       # still all invoiced, nothing billed twice
+    # a further 0.50 takes B to 10.60, beyond the 2 % tolerance: blocked like an invoice
+    y, rep = act(x, "enter_invoice", "", on=JAN, kind="subsequent_debit",
+                 lines=[{"order": "PO-00001-10", "price": 0.5}])
+    assert y.supplier_invoices[2].blocks and still_blocked(y, y.supplier_invoices[2])
+    assert "blocked for payment: PO-00001-10 invoiced at 10.60" in rep.message
+    # a credit for 0.20 on 50 units is owed to us; what we owe falls by it
+    x, rep = act(x, "enter_invoice", "", on=JAN, kind="subsequent_credit",
+                 lines=[{"order": "PO-00001-10", "qty": 50, "price": 0.2}])
+    sc = x.supplier_invoices[2]
+    assert sc.id == "SC-00001" and sc.total == 11 and sc.due_date == JAN
+    assert payables_view(x).payables[0].open == pytest.approx(1353 + 11 - 11)
+    # a correction needs an invoice, a difference and no more than was invoiced
+    with pytest.raises(PurchasingError, match="not invoiced yet"):
+        act(received(), "enter_invoice", "", kind="subsequent_debit", lines=[{"order": "PO-00001-10", "price": 1}])
+    with pytest.raises(PurchasingError, match="at most the 100 invoiced"):
+        act(x, "enter_invoice", "", kind="subsequent_credit", lines=[{"order": "PO-00001-10", "qty": 101,
+                                                                       "price": 1}])
+    with pytest.raises(PurchasingError, match="give the price difference"):
+        act(x, "enter_invoice", "", kind="subsequent_debit", lines=[{"order": "PO-00001-10"}])
+    # returned goods are credited at the corrected price: 10 + 0.10 − 0.20
+    x, _ = act(x, "return_goods", "", lines=[{"id": "PO-00001-10", "qty": 10}], on=JAN, stock_type="unrestricted")
+    x, rep = act(x, "enter_invoice", "", on=JAN, kind="credit_memo", return_id=x.supplier_returns[0].id)
+    assert x.supplier_invoices[-1].lines[0].price == pytest.approx(9.9)
+
+
 def test_a_price_over_tolerance_blocks_the_invoice_until_someone_releases_it():
     x = received()
     # 1 % over is within the 2 % tolerance
@@ -224,6 +264,13 @@ def test_orders_take_the_contract_price_and_count_against_its_target():
     plan = run_mrp(x)
     req = next(r for r in requisitions(x, plan) if r.product == "B")
     assert req.price == 8 and req.contract == "CT-00001"
+    # the plan's cost uses the contract price too (N131), and the info record's price without the contract
+    buys = [o for o in plan.orders if o.kind == "buy" and o.product == "B"]
+    assert buys and all(o.costs["purchase"] == pytest.approx(o.qty * 8) for o in buys)
+    plain = run_mrp(ds({**d, "contracts": []}))
+    info = ds(d).purchasing_source_by_id[buys[0].source_id].price_for(buys[0].qty)
+    assert info != 8 and next(o for o in plain.orders if o.id == buys[0].id).costs["purchase"] == pytest.approx(
+        buys[0].qty * info)
     y, rep = create_purchase_orders(x, plan, [{"id": r.id} for r in requisitions(x, plan)])
     lines = [r for r in y.receipts if r.product == "B"]
     assert lines and all(r.price == 8 and r.contract == "CT-00001" for r in lines)

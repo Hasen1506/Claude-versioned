@@ -12,6 +12,7 @@ from scp.actuals import PostingError, post, roll_forward
 from scp.api.app import app
 from scp.model import StockType
 from scp.sales import (
+    remind,
     SalesError, act, cancel_invoice, create_deliveries, create_invoices, create_order, create_quotation,
     create_return, credit_return, exposure, issue, lose_quotation, pack, pay, pick, proof, receive_return,
     release_credit, sales_view, to_bill, to_deliver, win_quotation,
@@ -155,6 +156,53 @@ def test_a_delivery_is_picked_packed_shipped_and_signed_for_then_invoiced_and_pa
         pay(x, "INV-00001")
 
 
+def test_tax_per_product_and_its_cgst_sgst_or_igst_split_by_place_of_supply():
+    d = shop()
+    d["customers"][0]["tax_rate"] = None                         # K has no rate of its own
+    d["sales"] = {"tax_rate": 0.18, "tax_split": "gst"}
+    d["products"][-1]["tax_rate"] = 0.12                         # the thinner is taxed at 12 %, the paint at 18 %
+    d["settings"]["company_tax_id"] = "27AAACM1234A1Z5"          # Maharashtra
+    d["locations"][-1]["tax_id"] = "27AAFCK9876B1Z2"             # Kumar Stores, also Maharashtra
+    x, _ = create_order(ds(d), "K", LINES)
+    assert exposure(x, "K")[0] == pytest.approx(1900 * 1.18 + 190 * 1.12)
+    x, _ = create_deliveries(x)
+    x, _ = issue(x, "DL-00001")
+    y, _ = create_invoices(x, on=date(2026, 1, 7))
+    inv = y.invoices[0]
+    assert inv.tax_split == "cgst_sgst" and [ln.tax_rate for ln in inv.lines] == [None, 0.12]
+    assert inv.tax_parts == [("CGST", 0.06, 190, 11.4), ("SGST", 0.06, 190, 11.4),
+                             ("CGST", 0.09, 1900, 171), ("SGST", 0.09, 1900, 171)]
+    assert inv.tax == pytest.approx(364.8) and inv.total == pytest.approx(2454.8)
+    assert [p.name for p in sales_view(y).invoices[0].tax_parts] == ["CGST", "SGST", "CGST", "SGST"]
+    # a customer in another state (Karnataka, by region) pays IGST
+    x2 = x.model_copy(update={"locations": [lo.model_copy(update={"region": "KA"}) if lo.id == "K" else lo
+                                            for lo in x.locations]})
+    x2 = x2.model_copy(update={"settings": x2.settings.model_copy(update={"company_region": "MH"})})
+    inv = create_invoices(x2, on=date(2026, 1, 7))[0].invoices[0]
+    assert inv.tax_split == "igst" and inv.tax_parts == [("IGST", 0.12, 190, 22.8), ("IGST", 0.18, 1900, 342)]
+    # the customer's own rate (here an export at 0 %) goes before the product's
+    x3 = x.model_copy(update={"customers": [c.model_copy(update={"tax_rate": 0.0}) for c in x.customers]})
+    inv = create_invoices(x3, on=date(2026, 1, 7))[0].invoices[0]
+    assert inv.tax == 0 and inv.tax_parts == [] and all(ln.tax_rate is None for ln in inv.lines)
+
+
+def test_on_time_delivery_counts_the_day_the_customer_signed_when_a_proof_of_delivery_is_recorded():
+    x, _ = taken()
+    x, _ = create_deliveries(x)
+    x, _ = issue(x, "DL-00001")                                  # shipped on 5 January, a day in transit
+    plain, _ = roll_forward(x, date(2026, 1, 12))
+    by = {c.id: c for c in plain.closed_orders}
+    assert by["SO-00001/10"].last_delivery == date(2026, 1, 6)   # no proof of delivery: issue plus transit
+    signed, _ = proof(x, "DL-00001", date(2026, 1, 9), by="R. Kumar")
+    rolled, _ = roll_forward(signed, date(2026, 1, 12))
+    c = next(c for c in rolled.closed_orders if c.id == "SO-00001/10")
+    assert c.first_delivery == c.last_delivery == date(2026, 1, 9) and c.due_date == date(2026, 1, 8)  # a day late
+    # signed for after the order closed: the closed order takes the day it was signed for
+    later, _ = proof(plain, "DL-00001", date(2026, 1, 7), by="R. Kumar")
+    again, _ = roll_forward(later, date(2026, 1, 19))
+    assert next(c for c in again.closed_orders if c.id == "SO-00001/10").last_delivery == date(2026, 1, 7)
+
+
 def test_a_late_part_payment_takes_no_discount_and_the_rest_goes_overdue():
     x, _ = taken()
     x, _ = create_deliveries(x)
@@ -167,6 +215,43 @@ def test_a_late_part_payment_takes_no_discount_and_the_rest_goes_overdue():
     assert v.status == "overdue" and v.days_overdue == 6 and sales_view(x, date(2026, 2, 10)).customers[0].overdue > 0
     with pytest.raises(SalesError, match="has payments"):
         cancel_invoice(x, "INV-00001")
+
+
+def test_an_overdue_invoice_reaches_payment_reminders_by_the_days_it_is_overdue():
+    x, _ = taken()
+    x, _ = create_deliveries(x)
+    x, _ = issue(x, "DL-00001")
+    x, _ = create_invoices(x)
+    due = x.invoices[0].due_date
+    assert x.sales.reminder_days == [7, 21, 35]
+    assert sales_view(x, date(2026, 2, 10)).invoices[0].reminder_due == 0          # 6 days overdue: none yet
+    v = sales_view(x, date(2026, 2, 12))
+    assert (v.invoices[0].reminder_due, v.customers[0].reminder_due) == (1, 1)
+    x, rep = remind(x, "K", on=date(2026, 2, 12))
+    assert rep.message.startswith("Payment reminder 1 to ") and "INV-00001 (8 days overdue, " in rep.message
+    assert (x.invoices[0].reminder_level, x.invoices[0].reminded_on) == (1, date(2026, 2, 12))
+    assert sales_view(x, date(2026, 2, 12)).invoices[0].reminder_due == 0
+    with pytest.raises(SalesError, match="is due a payment reminder"):
+        remind(x, "K", on=date(2026, 2, 12))
+    # long overdue: straight to the last reminder reached
+    assert (date(2026, 3, 15) - due).days >= 35
+    x, rep = remind(x, "K", on=date(2026, 3, 15))
+    assert rep.message.startswith("Payment reminder 3 to ") and x.invoices[0].reminder_level == 3
+    # paid, nothing is due; a company without reminder days has none
+    paid, _ = pay(x, "INV-00001", x.invoices[0].open, on=date(2026, 3, 16))
+    assert sales_view(paid, date(2026, 6, 1)).invoices[0].reminder_due == 0
+    none = x.model_copy(update={"sales": x.sales.model_copy(update={"reminder_days": []}), "invoices": [
+        x.invoices[0].model_copy(update={"reminder_level": 0})]})
+    assert sales_view(none, date(2026, 6, 1)).invoices[0].reminder_due == 0
+
+
+def test_reminder_days_are_kept_in_order_once_each_and_within_a_year():
+    d = shop()
+    d["sales"] = {"reminder_days": [21, 7, 7]}
+    assert ds(d).sales.reminder_days == [7, 21]
+    d["sales"] = {"reminder_days": [0]}
+    with pytest.raises(Exception, match="1 to 365 days"):
+        ds(d)
 
 
 def test_a_cancelled_invoice_frees_its_goods_to_be_billed_again():

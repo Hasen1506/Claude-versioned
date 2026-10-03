@@ -241,6 +241,26 @@ def check_order(ds: Dataset, order: DemandRecord) -> PromiseResult:
     return res
 
 
+def check_lines(ds: Dataset, lines: list[DemandRecord]) -> PromiseResult:
+    """Check the lines of one order before taking it (N119): each line after the orders already promised and after the
+    lines before it, so two lines of one product do not both count the same stock."""
+    res, P = _start(ds, "check")
+    if P is None:
+        return res
+    orders = _entry(ds, P)
+    out = []
+    for i, ln in enumerate(lines):
+        rec = ln.model_copy(update={"kind": DemandKind.SALES_ORDER})
+        c = P.check(rec, rec.id or f"LINE {10 * (i + 1)}")
+        _value(ds, rec, c)
+        out.append(c)
+    res = _finish(ds, P, res, orders)
+    res.checked = out[0] if out else None
+    res.checked_lines = out
+    res.mode = "check"
+    return res
+
+
 def commit(ds: Dataset, mode: str = "entry") -> tuple[Dataset, PromiseResult]:
     res = run_bop(ds) if mode == "bop" else run_promise(ds)
     if not res.ok:

@@ -3,14 +3,17 @@
 // terms and payments; returns and credit notes; and what each customer owes against their credit limit.
 import { useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { Dataset, DeliveryView, InvoiceView, OrderView, SalesAction, SalesActionInput, SalesView } from "../api/types";
+import type {
+  Dataset, DeliveryView, DemandRecord, InvoiceView, OrderView, PromiseResult, SalesAction, SalesActionInput, SalesView,
+} from "../api/types";
 import {
   Badge, Edits, Empty, Panel, Provenance, RunButton, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
 } from "../components/ui";
 import { addDays, day, exactMoney, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Msg, Prod, namesOf, useNames } from "../lib/names";
-import { confirmationDocument, customerAddresses, customerEmail, invoiceDocument } from "../lib/sodoc";
+import { confirmationDocument, customerAddresses, customerEmail, invoiceDocument, openItems, statementDocument } from "../lib/sodoc";
 import { ServerSend } from "../components/ServerSend";
+import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { download } from "../lib/tabular";
 import { go, href } from "../lib/router";
 import { isStale, store, useFreshResult, useReadOnly, useStore } from "../state/store";
@@ -109,7 +112,7 @@ export function Selling({ route }: { route: string[] }) {
     {view === "deliver" && <Deliveries res={res} ds={ds} sel={route[2]} />}
     {view === "bill" && <Invoices res={res} ds={ds} sel={route[2]} />}
     {view === "returns" && <Returns res={res} ds={ds} />}
-    {view === "customers" && <Customers res={res} />}
+    {view === "customers" && <Customers res={res} ds={ds} sel={route[2]} />}
   </>);
 }
 
@@ -291,9 +294,36 @@ function LinesForm({ ds, customer, busy, submit, onSubmit, second }: {
   const set = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const ok = customer && lines.length > 0 && lines.every((l) => l.product && l.qty > 0 && l.date);
   const total = lines.reduce((a, l) => a + l.qty * (l.price ?? linePrice(ds, customer, l.product, l.qty).net ?? 0), 0);
+  // N119: every line checked together before the order is taken, each after the orders already promised and the lines before it
+  const [checked, setChecked] = useState<{ key: string; res: PromiseResult } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkErr, setCheckErr] = useState<string | null>(null);
+  const key = JSON.stringify([customer, lines]);
+  const fresh = checked?.key === key ? checked.res.checked_lines ?? [] : null;
+  const check = async () => {
+    setChecking(true);
+    setCheckErr(null);
+    try {
+      const recs = lines.map((l) => ({ location: customer, product: l.product, date: l.date, qty: l.qty, kind: "sales_order", priority: 5,
+        complete_delivery: false, price: l.price }) as DemandRecord);
+      setChecked({ key, res: await api.promiseCheckLines(ds, recs) });
+    } catch (e) {
+      setCheckErr(String(e).replace(/^Error:\s*/, ""));
+    } finally {
+      setChecking(false);
+    }
+  };
+  const verdict = (c: NonNullable<typeof fresh>[number]) => {
+    const last = c.lines.reduce((a, x) => (x.date > a ? x.date : a), "");
+    if (c.status === "on_time") return <><Badge sev="ok">on time</Badge> <span className="small">{day(last)}</span></>;
+    if (c.confirmed <= 1e-9) return <><Badge sev="error">cannot be promised</Badge>{c.reason && <div className="faint small">{c.reason}</div>}</>;
+    return <><Badge sev="warning">{c.status === "late" ? "late" : `${qty(c.confirmed)} of ${qty(c.qty)}`}</Badge> <span className="small">
+      {c.on_time > 1e-9 ? `${qty(c.on_time)} on time, ` : ""}the rest by {day(last)}</span>{c.reason && <div className="faint small">{c.reason}</div>}</>;
+  };
   return <div className="stack">
     <div className="table-wrap"><table className="t">
-      <thead><tr><th>Line</th><th>Product</th><th className="num">Quantity</th><th>Wanted on</th><th className="num">Price a unit</th><th className="num">Value</th><th /></tr></thead>
+      <thead><tr><th>Line</th><th>Product</th><th className="num">Quantity</th><th>Wanted on</th><th className="num">Price a unit</th><th className="num">Value</th>
+        {fresh && <th>Can be promised</th>}<th /></tr></thead>
       <tbody>{lines.map((l, i) => {
         const pr = linePrice(ds, customer, l.product, l.qty);
         return <tr key={i}>
@@ -306,13 +336,17 @@ function LinesForm({ ds, customer, busy, submit, onSubmit, second }: {
             placeholder={pr.net != null ? `${Math.round(pr.net * 100) / 100}` : "no price"} onChange={(e) => set(i, { price: e.target.value === "" ? null : Number(e.target.value) })} />
             {l.price == null && pr.discount > 1e-9 && pr.list != null && <div className="faint small">{unitMoney(pr.list, cur)} less {pct(pr.discount, 1)}</div>}</td>
           <td className="num">{exactMoney(l.qty * (l.price ?? pr.net ?? 0), cur)}</td>
+          {fresh && <td aria-label={`Line ${(i + 1) * 10} can be promised`}>{fresh[i] ? verdict(fresh[i]) : ""}</td>}
           <td>{lines.length > 1 && <button className="btn sm ghost" aria-label={`Remove line ${(i + 1) * 10}`} onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>✕</button>}</td>
         </tr>;
       })}</tbody>
       <tfoot><tr><td /><td><button className="btn sm ghost" onClick={() => setLines((ls) => [...ls, blank()])}>+ Add a line</button></td><td /><td />
-        <td className="num faint">before tax</td><td className="num"><b>{exactMoney(total, cur)}</b></td><td /></tr></tfoot>
+        <td className="num faint">before tax</td><td className="num"><b>{exactMoney(total, cur)}</b></td>{fresh && <td />}<td /></tr></tfoot>
     </table></div>
+    {checkErr && <div className="banner error" role="alert"><Badge sev="error">Not checked</Badge><span>{checkErr}</span></div>}
+    {checked && !fresh && <p className="small faint" role="status">The lines changed since they were checked: check again.</p>}
     <Edits><div className="row wrap">
+      <button className="btn" disabled={busy || checking || !ok} onClick={check}>{checking ? "Checking…" : "Check what can be promised"}</button>
       <button className="btn accent" disabled={busy || !ok} onClick={() => onSubmit(lines)}>{busy ? "Working…" : submit}</button>
       {second && <button className="btn" disabled={busy || !ok} onClick={() => second.onClick(lines)}>{second.label}</button>}
     </div></Edits>
@@ -352,8 +386,9 @@ function NewOrder({ res, ds }: { res: SalesView; ds: Dataset }) {
         second={{ label: "Make a quotation", onClick: (lines) => run("create_quotation", payload(lines)) }} />
       <p className="faint small">Prices come from the customer's price (and its quantity scale), else the product's, less their discounts; type a price
         to agree another. <b>Take the order</b> promises every line after the orders already promised and makes any new production it needs
-        firm. <b>Make a quotation</b> promises nothing; it holds for {ds.sales?.quotation_days ?? 30} days.
-        To see first what can be promised for one product, use <a href={href("promise", "simulate")}>Orders → New order</a>.</p>
+        firm. <b>Make a quotation</b> promises nothing; it holds for {ds.sales?.quotation_days ?? 30} days. <b>Check what can be promised</b> shows
+        every line's date before you take it, each line after the orders already promised and the lines before it; nothing is kept.
+        For one product in depth (what production could add, other places to ship from), use <a href={href("promise", "simulate")}>Orders → New order</a>.</p>
     </Panel>
   </div>;
 }
@@ -521,7 +556,8 @@ function Invoices({ res, ds, sel }: { res: SalesView; ds: Dataset; sel?: string 
               <td>{day(i.date)}</td><td>{day(i.due_date)}{i.discount_until && <div className="faint small">{exactMoney(i.discount_amount, res.currency)} off by {day(i.discount_until)}</div>}</td>
               <td className="num">{exactMoney(i.kind === "credit_note" ? -i.total : i.total, res.currency)}</td>
               <td className="num">{exactMoney(i.kind === "credit_note" ? -i.open : i.open, res.currency)}</td>
-              <td><Badge sev={INVOICE_SEV[i.status] ?? "info"}>{i.status}{i.days_overdue ? ` ${i.days_overdue} d` : ""}</Badge></td>
+              <td><Badge sev={INVOICE_SEV[i.status] ?? "info"}>{i.status}{i.days_overdue ? ` ${i.days_overdue} d` : ""}</Badge>
+                {i.reminder_level > 0 && <div className="faint small">reminder {i.reminder_level} sent {i.reminded_on ? day(i.reminded_on) : ""}</div>}</td>
             </tr>))}
           </tbody>
         </table></div>}
@@ -611,9 +647,81 @@ function Returns({ res, ds }: { res: SalesView; ds: Dataset }) {
 }
 
 // ------------------------------------------------------------------------------------------------ customers
-function Customers({ res }: { res: SalesView }) {
+const reminderName = (n: number) => (n === 1 ? "Payment reminder" : `Payment reminder ${n}`);
+
+/** The statement of account or a payment reminder for a customer (N124): print, download, e-mail or send from the server.
+ * A reminder sent from the server is recorded on its invoices; one printed or mailed otherwise is recorded with the button. */
+function CustomerDocButtons({ customer, res, ds, reminder = 0, action }: { customer: string; res: SalesView; ds: Dataset; reminder?: number; action: Runner }) {
+  const o = openItems(res.invoices, customer);
+  const items = reminder ? o.overdue : o.items;
+  const cur = res.currency;
+  const html = () => statementDocument(customer, res.invoices, res.as_of, ds, reminder);
+  const name = reminder ? reminderName(reminder) : "Statement of account";
+  const file = `${customer}-${reminder ? `reminder-${reminder}` : `statement-${res.as_of}`}`;
+  const mail = customerEmail(ds, customer, name,
+    reminder ? `Our records show these invoices as unpaid past their due date:` : `This is what we have open for you on ${day(res.as_of)}:`,
+    items.map((i) => `- ${i.kind === "credit_note" ? "Credit note" : "Invoice"} ${i.id} of ${day(i.date)}${i.kind === "invoice" ? `, due ${day(i.due_date)}` : ""}: ` +
+      `${exactMoney(i.kind === "credit_note" ? -i.open : i.open, cur)} open${i.days_overdue ? ` (${i.days_overdue} days overdue)` : ""}`),
+    reminder ? [`Please pay ${exactMoney(o.overdueAmount, cur)}, quoting the invoice numbers. If you have paid in the last few days, thank you, and please disregard this.`]
+      : [`In all ${exactMoney(o.owed, cur)}${o.overdueAmount > 0 ? `, of which ${exactMoney(o.overdueAmount, cur)} overdue` : ""}. If your records differ, please tell us.`]);
+  const mailto = `mailto:${encodeURIComponent(mail.to)}?subject=${encodeURIComponent(mail.subject)}&body=${encodeURIComponent(mail.body)}`;
+  const print = () => {
+    const w = window.open("", "_blank");
+    if (!w) return download(`${file}.html`, html(), "text/html");
+    w.document.write(html());
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 250);
+  };
+  const record = () => action.run("remind", { customer, date: res.as_of });
+  return <span className="row wrap" style={{ gap: 6 }}>
+    <button className="btn sm ghost" onClick={print} title="Opens the document as a page and the print dialog, where it can be saved as PDF">Print or PDF</button>
+    <button className="btn sm ghost" onClick={() => download(`${file}.html`, html(), "text/html")}>Download</button>
+    <a className="btn sm ghost" href={mailto}>E-mail</a>
+    <ServerSend kind={reminder ? "reminder" : "statement"} docRef={file} to={mail.to} subject={mail.subject} text={mail.body} html={html}
+      onSent={reminder ? record : undefined} />
+    {reminder > 0 && <Edits><button className="btn sm" disabled={action.busy} onClick={record}
+      title="Records the reminder on its invoices, so the next one follows when they are later still unpaid">Record {reminderName(reminder).toLowerCase()} as sent</button></Edits>}
+  </span>;
+}
+
+function Customers({ res, ds, sel }: { res: SalesView; ds: Dataset; sel?: string }) {
+  const action = useAction();
   if (res.customers.length === 0) return <Panel><Empty title="No customers yet">Customers appear here once they order or have sales data.</Empty></Panel>;
-  return <Panel flush title="What customers owe" actions={<>
+  const due = res.customers.filter((c) => c.reminder_due > 0);
+  const open = res.customers.find((c) => c.customer === sel);
+  const days = ds.sales?.reminder_days ?? [7, 21, 35];
+  return <div className="stack">
+    {action.banners}
+    {due.length > 0 && <Panel flush title="Payment reminders due" actions={<span className="faint small"
+      title="Change them in Selling settings below">{days.length ? `Reminders ${days.join(", ")} days after the due date` : "No reminder days set"}</span>}>
+      <div className="table-wrap"><table className="t">
+        <thead><tr><th>Customer</th><th>Reminder</th><th className="num">Overdue</th><th>Invoices</th><th /></tr></thead>
+        <tbody>{due.map((c) => {
+          const o = openItems(res.invoices, c.customer);
+          return <tr key={c.customer}>
+            <td><b><Loc id={c.customer} /></b></td><td>{reminderName(c.reminder_due)}</td>
+            <td className="num"><Badge sev="error">{exactMoney(c.overdue, res.currency)}</Badge></td>
+            <td className="small">{o.overdue.map((i) => `${i.id} (${i.days_overdue} d)`).join(", ")}</td>
+            <td><CustomerDocButtons customer={c.customer} res={res} ds={ds} reminder={c.reminder_due} action={action} /></td>
+          </tr>;
+        })}</tbody>
+      </table></div>
+    </Panel>}
+    {open && <Panel title={<>Statement of account: <Loc id={open.customer} /></>} actions={<button className="btn sm ghost" onClick={() => go("selling", "customers")}>Close</button>}>
+      {(() => {
+        const o = openItems(res.invoices, open.customer);
+        return <div className="stack">
+          <div className="row wrap" style={{ gap: 18 }}>
+            <StatTile label="Owed" value={exactMoney(o.owed, res.currency)} />
+            {o.aging.map((a) => <StatTile key={a.label} label={a.label} value={exactMoney(a.amount, res.currency)} />)}
+          </div>
+          {o.items.length === 0 ? <p className="faint" style={{ margin: 0 }}>Nothing open on {day(res.as_of)}.</p> :
+            <CustomerDocButtons customer={open.customer} res={res} ds={ds} action={action} />}
+        </div>;
+      })()}
+    </Panel>}
+    <Panel flush title="What customers owe" actions={<>
     <a className="btn sm ghost" href={href("data", "customers")}>Edit customer sales data</a>
     <a className="btn sm ghost" href={href("data", "payment_terms")}>Payment terms</a>
     <a className="btn sm ghost" href={href("data", "customer_prices")}>Prices</a></>}>
@@ -621,7 +729,8 @@ function Customers({ res }: { res: SalesView }) {
       <thead><tr><th>Customer</th><th>Terms</th><th className="num">Open orders</th><th className="num">Shipped, not invoiced</th><th className="num">Unpaid</th>
         <th className="num">Owes in all</th><th className="num">Credit limit</th><th className="num">Left</th><th className="num">Overdue</th></tr></thead>
       <tbody>{res.customers.map((c) => (
-        <tr key={c.customer}>
+        <tr key={c.customer} className={`clickable ${sel === c.customer ? "selected" : ""}`} title="Show the statement of account"
+          onClick={() => go("selling", "customers", sel === c.customer ? undefined : c.customer)}>
           <td><b><Loc id={c.customer} /></b>{c.blocked && <> <Badge sev="error">blocked</Badge></>}</td><td className="small">{c.payment_terms}</td>
           <td className="num">{exactMoney(c.open_orders, res.currency)}</td><td className="num">{exactMoney(c.to_bill, res.currency)}</td>
           <td className="num">{exactMoney(c.receivable, res.currency)}</td><td className="num"><b>{exactMoney(c.exposure, res.currency)}</b></td>
@@ -632,6 +741,14 @@ function Customers({ res }: { res: SalesView }) {
       </tbody>
     </table></div>
     <p className="faint small" style={{ padding: "0 12px" }}>Amounts include tax. What a customer owes counts their open order lines, goods shipped and not invoiced,
-      and unpaid invoices less credit notes not yet paid out.</p>
-  </Panel>;
+      and unpaid invoices less credit notes not yet paid out. Click a customer for their statement of account.</p>
+  </Panel>
+    <details className="panel" style={{ padding: "10px 14px" }}>
+      <summary><b>Selling settings</b> <span className="muted small">default payment terms, tax, credit check, how long quotations hold, what is due to ship, payment reminder days</span></summary>
+      <div style={{ marginTop: 10 }}>
+        <SchemaForm defName="SalesSettings" value={(ds.sales ?? {}) as unknown as Obj}
+          onChange={(next) => store.update((d) => { d.sales = next as unknown as Dataset["sales"]; })} />
+      </div>
+    </details>
+  </div>;
 }

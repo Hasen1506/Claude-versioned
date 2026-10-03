@@ -24,7 +24,7 @@ from .result import WorkItem
 
 CATEGORY = {
     "STOCKOUT": "coverage", "BELOW_SAFETY_STOCK": "coverage", "DEMAND_AT_RISK": "coverage",
-    "CAPACITY_OVERLOAD": "capacity", "CAPACITY_OVERTIME": "capacity", "SUPPLIER_CAPACITY": "capacity",
+    "CAPACITY_OVERLOAD": "capacity", "CAPACITY_OVERTIME": "capacity", "CAPACITY_DAY_OVERLOAD": "capacity", "SUPPLIER_CAPACITY": "capacity",
     "LANE_CAPACITY": "capacity", "EXCESS_STOCK": "inventory", "SHELF_LIFE_RISK": "inventory",
     "STOCK_EXPIRES": "inventory", "LOT_EXPIRES": "inventory", "OVERTIME_PLANNED": "capacity",
     "SUPPLY_SPLIT": "capacity", "FOLLOW_UP": "inventory",
@@ -131,7 +131,7 @@ def _money(ds: Dataset, add) -> None:
     start = ds.settings.planning_start
     cur = ds.settings.currency
     for inv in ds.supplier_invoices:
-        if inv.cancelled or inv.kind != "invoice" or inv.open <= 0.005:
+        if inv.cancelled or inv.credit or inv.open <= 0.005:
             continue
         if why := still_blocked(ds, inv):
             add(Raw("INVOICE_BLOCKED", "warning", f"Supplier invoice {inv.id} from {inv.supplier} is blocked for payment: "

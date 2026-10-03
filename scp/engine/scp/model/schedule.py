@@ -62,5 +62,8 @@ class ScheduleSettings(Model):
     wait_for_parts: bool = Field(True, description="A step starts only once the parts it uses are there: from stock, "
                                                    "a receipt, or the order that makes them (along the pegging)")
     improve: bool = Field(True, description="Improve the first sequence by campaign / swap local search")
+    overtime: bool = Field(False, description="May use each machine's overtime (its overtime hours a day, after the "
+                                              "last shift) when that lowers the weighted objective; the schedule "
+                                              "keeps to the shifts otherwise")
     time_limit_seconds: float = Unit("seconds", gt=0, le=120, default=4.0,
                                      description="Search time budget: the local search gets this much, and the optimiser as much again")

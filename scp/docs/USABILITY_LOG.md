@@ -100,7 +100,7 @@ After J: **K** third reality check (six weeks, R-findings) · then **L** platfor
 | N44 | The firm zone preselects everything (110 orders with the default daily lot size) and had no way to clear the selection. | Minor | **Fixed (F).** *Select none* / *Select all*. |
 | N45 | Posting messages named places by id and printed six significant digits ("35.6631 still to come", "shipped from MUMBAI-WAREHOUSE"); the firm zone and open orders showed a production version's id as *From*. | Minor | **Fixed (F)** for posting and firming; the roll-forward's warnings and the firm zone's notes name places and products since **J**. |
 | N46 | The product wizard's *On hand today* and the planning-policy table still set on-hand directly. At a place that already has movements this makes stock disagree with the journal until it is counted or re-booked (Home now says so at once). | Minor | **Fixed (H)** in the product wizard: at a place with goods movements *On hand today* becomes *Counted today*, which posts a count. The planning-policy table in Master data still edits on-hand directly; Home and the data check flag the difference at once (**J**). |
-| N47 | Receiving by quantity only: there is no batch or serial number, no stock in quality inspection, and a transfer's goods in transit are a quantity on the order, not a stock type of their own. | Minor | Open: SAP gap below. |
+| N47 | Receiving by quantity only: there is no batch or serial number, no stock in quality inspection, and a transfer's goods in transit are a quantity on the order, not a stock type of their own. | Minor | **Fixed (O)**, found stale after Q: receipts take a batch with its expiry and the supplier's batch, serial numbers, and go into quality inspection where the product asks; stock shows by batch and stock type, and a transfer shipped and not yet received shows as in transit at the receiving place. |
 
 ## Found while building Phase H
 
@@ -262,13 +262,13 @@ inspection and credited, and a quotation won; every Selling tab was then opened 
 
 | # | Finding | Severity | Status |
 |---|---|---|---|
-| N119 | There are two places to take an order: *Orders → New order* (one line, availability checked before taking it) and *Selling → New order or quotation* (several lines, prices, quotations, the credit check). | Minor | Open: the two forms are linked to each other; one form that checks every line before taking the order is for a later pass. An order of one line taken on *Orders* has no header and is shown, delivered and billed on *Selling* all the same. |
+| N119 | There are two places to take an order: *Orders → New order* (one line, availability checked before taking it) and *Selling → New order or quotation* (several lines, prices, quotations, the credit check). | Minor | Fixed (gaps after Q): *Selling → New order or quotation* checks every line before the order is taken (*Check what can be promised*): the lines go to the promise check together, each after the orders already promised and the lines before it, so two lines of one product do not count the same stock; each line shows on time, late or how much, and the result is marked out of date when a line changes. *Orders → New order* stays as the one-product check in depth (what production could add, other places to ship from) and points to it. |
 | N120 | *Mark as sent* on an order confirmation changed the order but showed nothing: its result went to a message nobody displayed. | Serious | **Fixed (M).** The document buttons report through the order's own message line. |
 | N121 | Money on documents was the compact screen format: an invoice total read "₹2.1K", and so did every purchase order document since Q23. | Serious | **Fixed (M).** Documents (purchase orders, order confirmations, invoices, credit notes) and the Selling page show exact amounts (₹2,257.20); summaries keep the short form. |
 | N122 | Orders held over a credit limit and overdue invoices are on *Selling* only: not in the worklist on *Performance*, not on Home. | Minor | **Fixed (N)** for the worklist: credit holds and overdue invoices are there under *receivables*, supplier invoices blocked or overdue under *payables*, each linking to its page. Home shows the worklist's count. |
-| N123 | Tax is one rate per customer (or the company's): no rate per product and no split into its parts (CGST, SGST, IGST by place of supply). | Minor | Open: recorded with the SD gaps below. |
-| N124 | Overdue invoices have no reminder (dunning) and customers no statement of account. | Minor | Open: **Q** (e-mail from the application). |
-| N125 | Proof of delivery records the day the customer signed, but on-time delivery (OTIF) still counts the shipping day plus the route's transit days. | Minor | Open: by design until OTIF can choose its date; recorded. |
+| N123 | Tax is one rate per customer (or the company's): no rate per product and no split into its parts (CGST, SGST, IGST by place of supply). | Minor | Fixed (gaps after Q): products carry a tax rate; a line takes the customer's own rate first, then the product's, then the company's, and keeps it on the invoice. With *Selling settings → tax split: gst*, an invoice to a customer in the company's state (region, else the GSTIN's state code) shows CGST and SGST per rate, to one in another state IGST; the split is fixed on the invoice when billed, the documents and the credit check use the same rates. |
+| N124 | Overdue invoices have no reminder (dunning) and customers no statement of account. | Minor | Fixed (gaps after Q): the company sets reminder days (default 7, 21 and 35 days past due) in *Selling settings*. *Selling → Customers* lists the payment reminders due: each has its letter to print, download, e-mail or send from the server, and sending it from the server (or *Record … as sent*) records the reminder on its invoices. A very late invoice goes straight to the reminder it has reached. Clicking a customer shows their statement of account, by document and by age, sent the same ways. |
+| N125 | Proof of delivery records the day the customer signed, but on-time delivery (OTIF) still counts the shipping day plus the route's transit days. | Minor | Fixed (gaps after Q): a sales order line closed by the roll counts as delivered on the day the customer signed for it when its delivery has a proof of delivery, else on goods issue plus the lane's transit; a proof of delivery recorded after the line closed moves its dates in the closed-order log. OTIF and perfect order read those dates. |
 | N126 | *Money* shows the plan's revenue, not what was invoiced. | Minor | By design, recorded: *Money* is the plan's economics; what was billed, paid and is owed is on *Selling*. |
 
 ## Found while building Phase N
@@ -286,8 +286,8 @@ phone width.
 | N128 | The supplier list said "30 d terms" for a supplier with 2 % / 10 days / net 30 terms. | Minor | **Fixed (N).** The terms read as they are agreed. |
 | N129 | A scheduling agreement with nothing scheduled yet counted as an open purchase order in Buying's answer line. | Minor | **Fixed (N).** Only agreements with open delivery schedule lines count. |
 | N130 | Releases name who gave them only when people sign in on a server; in a company kept in the browser nobody is named, so one person can release every level of an order. | Minor | By design, recorded: four eyes needs accounts. On a server the release is the signed-in account's, a level with approvers takes only them, and one account never releases two levels of one order. |
-| N131 | Contract prices price the orders and requisitions, but the plan's cost on *Money* still uses the info record's price. | Minor | Open: recorded with the MM gaps below. |
-| N132 | A supplier invoice cannot carry freight or other unplanned delivery costs, and a price difference cannot be put right with a debit or credit for the price alone (subsequent debit/credit). | Minor | Open: recorded with the MM gaps below. |
+| N131 | Contract prices price the orders and requisitions, but the plan's cost on *Money* still uses the info record's price. | Minor | Fixed (gaps after Q): a planned purchase takes the price of a contract valid on its order day, as its requisition will, so the plan's purchase cost on *Money* matches what will be ordered; stock is still valued at the info record's price. |
+| N132 | A supplier invoice cannot carry freight or other unplanned delivery costs, and a price difference cannot be put right with a debit or credit for the price alone (subsequent debit/credit). | Minor | Fixed (gaps after Q): an invoice carries delivery costs (freight and other costs the order did not plan), counted in its net and its tax. A subsequent debit or credit (`SD-`/`SC-`) puts the price of invoiced goods right per unit without changing the quantity invoiced; a debit beyond the price tolerance is blocked, a credit lowers what we owe, and goods sent back later are credited at the corrected price. *Buying → Invoices* has the field and a *Price put right later* form on each invoice. |
 | N133 | Invoice verification books nothing in a ledger: "received, not invoiced" is a list for the month-end accrual, not a GR/IR account. | Minor | By design, recorded: there is no general ledger here; *What we owe* and *Received, not invoiced* are what an accountant posts from. |
 
 ## Found while building Phase Q
@@ -304,13 +304,14 @@ Mail was tested in the engine with a stand-in mail server.
 | N134 | A scheduled import could name any web address, so an owner could make the server read from its own network (a database's admin page, a cloud metadata address). A redirect could lead there too, and carried the import's Authorization header along. | Critical | **Fixed (Q).** Without `SCP_IMPORT_HOSTS`, a name that resolves inside the server's own network is refused, redirects included. Headers given for an import are not sent on after a redirect. |
 | N135 | Worklist reminders named the company by its id ("Worklist: 2 open · C0001") when its settings had no company name. | Minor | **Fixed (Q).** They fall back to the name the company has on the server. |
 | N136 | A refusal in plain words that came back as 422 was shown in the browser as "N schema error(s)". This applied to an e-mail address the company does not know, an import that cannot be read, and the other plain refusals. | Serious | **Fixed (Q).** The browser shows the server's sentence. |
-| N137 | A purchase order deleted outright here (not cancelled) disappears from the orders the ERP takes, so the ERP keeps its copy open. | Minor | Open: the ERP is told about cancelled lines but not about a deleted order. Cancel rather than delete; a deletion message is for later. |
-| N138 | The ERP's stock message is per place and product. A company with batches or stock types gets its count difference posted on the stock without a batch. | Minor | Open: batch and stock-type counts come from the physical inventory on *Actuals* or as postings. |
-| N139 | Firming with *send* (R20) marks the purchase orders as sent but does not e-mail them. *Send from here* is order by order. | Minor | Open: sending the documents of a firming at once is for later. |
-| N140 | The document sent is the page *Print* shows, attached as an HTML file, not a PDF. | Minor | Open: a supplier who needs a PDF gets one from Print. Server-side PDF needs a renderer on the server. |
-| N141 | Delivery schedules of scheduling agreements have no *Send from here* yet, though the server accepts them. | Minor | Open. |
+| N137 | A purchase order deleted outright here (not cancelled) disappears from the orders the ERP takes, so the ERP keeps its copy open. | Minor | Fixed (gaps after Q): an order the ERP numbered that is deleted here goes to it as `withdrawn`, with no lines, until it acknowledges with its number; then it is `taken` (listed with `all=true`). Putting the save back before the ERP closed it drops the withdrawal. |
+| N138 | The ERP's stock message is per place and product. A company with batches or stock types gets its count difference posted on the stock without a batch. | Minor | Fixed (gaps after Q): rows may name a `batch` (with `expires_on` for a batch new here) and a `stock_type`. A place and product given so is counted lot by lot on a physical inventory document marked "Stock from the ERP"; a lot here the ERP does not list is counted as none. A stock file with a column per stock type (as SAP's MARD) becomes a row per stock type. |
+| N139 | Firming with *send* (R20) marks the purchase orders as sent but does not e-mail them. *Send from here* is order by order. | Minor | Fixed (gaps after Q): when the server sends mail, *Firming* says "E-mail the N purchase orders to the suppliers" and sends each document from the server; an order whose supplier has no e-mail address, or whose mail fails, is named and stays unsent. |
+| N140 | The document sent is the page *Print* shows, attached as an HTML file, not a PDF. | Minor | Fixed (gaps after Q): the server lays the page out as an A4 PDF itself (`engine/scp/connect/pdf.py`: header and address columns, tables sized to their contents and continued on new pages, page numbers; Helvetica, with the rupee sign as "INR"). The PDF goes first and the page beside it as the exact copy. |
+| N141 | Delivery schedules of scheduling agreements have no *Send from here* yet, though the server accepts them. | Minor | Fixed (gaps after Q): *Send from here* on a scheduling agreement sends its delivery schedule. New schedule lines already mark it as not sent, so it can be sent again. |
 | N142 | A host name could resolve to a public address when checked and to an inside one when read (DNS rebinding). | Minor | By design, recorded: production servers set `SCP_IMPORT_HOSTS`, as the deployment guide says. |
-| N143 | *Send from here* has no browser test against a real mail server (the test server sends no mail). | Minor | Open. The engine tests cover what is sent, to whom, attached, refused and kept in the outbox. The browser test covers the page without mail. |
+| N143 | *Send from here* has no browser test against a real mail server (the test server sends no mail). | Minor | Fixed (gaps after Q): the browser tests run a second server that sends to a small mail server of their own (`e2e/smtp_sink.py`). `e2e/mail.spec.ts` firms and e-mails a purchase order, sends it again with *Send from here*, has an unknown address refused and checks what the mail server took: sender, recipient, reply-to and the order attached. |
+| N144 | The selling settings (default payment terms, tax, credit check, how long quotations hold, what is due to ship) had no place on screen: only a company file could change them. | Minor | Fixed (gaps after Q): *Selling settings* at the foot of *Selling → Customers*, as *Purchasing settings* is on *Buying*. A list of numbers (the reminder days) is typed as "7, 21, 35". |
 
 ## Found while building Phase P
 
@@ -324,8 +325,8 @@ onto a day square, and both stayed firm there when the plan was recalculated.
 | N113 | A day on the Capacity chart could be picked only with a mouse: no keyboard or screen reader could open a day's orders. | Serious | **Fixed (P).** A strip of day squares under the chart, darker when fuller and red when over, each a button that opens its day; runs are dragged onto them, or moved with a date field. |
 | N114 | Supplier and lane capacity were only flagged ("Supplier over capacity") even with planning within capacity on. | Serious | **Fixed (P).** Within capacity, what a supplier cannot make or a lane cannot carry in a week goes to the next valid source, else to earlier weeks, and only what fits nowhere is ordered over the limit (and flagged). |
 | N115 | Taking a made-to-order order now makes its production firm at once (R13), so the zone's firming afterwards finds the purchases only: the manufacturing journey expected three orders to firm and found two. | Minor | By design, recorded: the saved message names the run made firm ("Made firm for it: PRD-…"); *promise_firms* off leaves it to the planner. The journey checks the new behaviour. |
-| N116 | The plan's capacity exceptions are weekly: a day over capacity inside a week with room does not raise "Over capacity", though the Capacity page shows it red. | Minor | Open: the Capacity page and its answer line name the day; a daily exception is for a later phase. |
-| N117 | Overtime is a levelling choice in the supply plan, but not yet a choice of the shop floor optimiser, which still keeps to the shift hours. | Minor | Open: recorded below with the PP/DS gaps. |
+| N116 | The plan's capacity exceptions are weekly: a day over capacity inside a week with room does not raise "Over capacity", though the Capacity page shows it red. | Minor | Fixed (gaps after Q): the plan checks each day of a week that has room against the day's shifts and overtime and raises "Over capacity on a day" (`CAPACITY_DAY_OVERLOAD`) with the first day, the number of days and the worst; Situations and the worklist show it under capacity and link to the Capacity page. |
+| N117 | Overtime is a levelling choice in the supply plan, but not yet a choice of the shop floor optimiser, which still keeps to the shift hours. | Minor | Fixed (gaps after Q): *Schedule → Settings → overtime* lets the schedule (dispatching, local search or optimiser) use each machine's overtime hours after its last shift: the window is scheduled with and without it and the overtime schedule is kept only when it lowers the weighted objective. The result names the hours per machine, their cost and the objective without overtime; the Schedule page shows them. |
 | N118 | Measured yield is worked out per production version and part from orders whose parts were posted as used; backflushed orders only repeat the bill of materials and are left out, as are parts through a phantom assembly (their loss is the phantom's). | Minor | By design, recorded: *Parts used* on Actuals says which orders it counted. |
 
 ## Found in the second reality check (after Phase E)
@@ -485,7 +486,7 @@ against SAP (the gaps below). Proposed, in the order recommended:
   that stay within shelf life (R15); yield in the bill of materials so a part is bought with the loss in it (R17);
   demand events on the Demand page, a new one starting without effect (R21); MRP groups; withdrawal from another
   plant and direct production; a discontinued product with its follow-up; alternative BOMs; overtime as a levelling
-  choice (the optimiser's is open, N117); supplier and lane capacity in planning; steps needing a machine and a tool
+  choice (the schedule's followed after Q, N117); supplier and lane capacity in planning; steps needing a machine and a tool
   together; dragging orders between days to level.
 - **M: order to cash, complete**: **done**, see N119–N126. Orders with several lines, each priced from the
   customer's price at its quantity scale (else the product's) less the customer's discounts; payment terms with a cash
@@ -523,12 +524,12 @@ stock that is really there (shelf life, short receipts, stock below zero) or a p
   (engineering, costing), routing alternative sequences, change-number history.
 - Capacity: material-aware scheduling along the pegging, schedule dates back into supply and promising, a levelling
   view by day and week, and capacity-constrained MRP with alternative machines (**C**, done). Levelling by dragging
-  runs between days, overtime as a levelling choice, and supplier and lane capacity in planning (**P**, done). Still
-  missing: a daily capacity exception in the plan (N116).
+  runs between days, overtime as a levelling choice, and supplier and lane capacity in planning (**P**, done). A daily
+  capacity exception in the plan (N116, done after Q).
 - PP/DS: strategy profiles, a heuristics catalogue (due date, shortest first, least slack, campaigns, backward),
   a local search, a constraint-solver optimiser choosing machines and sequence, a frozen zone and a drag-and-drop
-  board (**D**, done); steps holding a machine and a tool together (**P**). Still missing: overtime and shift changes
-  as optimiser choices (N117), setup matrices by product (not only group), pegging-aware re-scheduling of dependent
+  board (**D**, done); steps holding a machine and a tool together (**P**). Overtime as a scheduling choice followed after Q
+  (N117). Still missing: shift changes as optimiser choices, setup matrices by product (not only group), pegging-aware re-scheduling of dependent
   orders when one moves.
 - Inventory management: opening balances, counts with differences, transfers shipped and received with stock in
   transit, production confirmations with backflush or actual usage and co-products (**F**, done). Batches with an
@@ -542,17 +543,17 @@ stock that is really there (shelf life, short receipts, stock below zero) or a p
   the order logged, deliveries in part or in full, and customer-specific prices (**G**, done). Orders with several
   lines, prices with quantity scales and discounts, payment terms with a cash discount, a credit limit with a delivery
   block and its release, quotations, an order confirmation, delivery documents (picking, packing, goods issue, proof
-  of delivery), invoices with tax and payments, returns and credit notes (**M**, done). Still missing: surcharges and
-  freight conditions, tax per product and its parts (N123), contracts and scheduling agreements with customers,
-  dunning and statements (N124), down payments, invoice lists, and consignment stock at the customer.
+  of delivery), invoices with tax and payments, returns and credit notes (**M**, done). Tax per product and its
+  CGST, SGST and IGST parts followed after Q (N123). Still missing: surcharges and freight conditions, contracts and
+  scheduling agreements with customers, down payments, invoice lists, and consignment stock at the customer.
 - MM: supplier purchasing data with a purchasing block, info records with price scales, the source list (fixed
   and blocked), requisitions from MRP, purchase orders with an approval limit, supplier confirmations that planning
   uses, and goods receipts with delivery tolerances (**E**, done). Quality inspection stock (**O**, done). Invoice
   verification (three-way match) with payment blocks and their release, payments with the cash discount, payables
   and goods received not invoiced, contracts and scheduling agreements, several confirmation lines per order line,
-  returns to the supplier with credit memos, and a release strategy of several levels (**N**, done). Still missing:
-  freight and unplanned delivery costs on invoices and subsequent debits or credits (N132), contract prices in the
-  plan's cost (N131), evaluated receipt settlement (paying from the goods receipt without an invoice), consignment
+  returns to the supplier with credit memos, and a release strategy of several levels (**N**, done). Freight and
+  unplanned delivery costs on invoices, subsequent debits or credits (N132) and contract prices in the plan's cost
+  (N131) followed after Q. Still missing: evaluated receipt settlement (paying from the goods receipt without an invoice), consignment
   and subcontracting stock at the supplier, and forecast delivery schedules (JIT and forecast releases) on
   scheduling agreements.
 - Users and authorisations: accounts, companies with owner, planner and viewer roles, invitations, conflict-safe saves

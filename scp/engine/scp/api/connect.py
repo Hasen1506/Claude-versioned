@@ -18,7 +18,7 @@ from ..connect import (
     apply_postings, apply_records, apply_stock, history, log, outbound, read_company, receive, record_lists,
 )
 from ..connect import imports, outbox
-from ..connect.erp import ItemResult
+from ..connect.erp import ItemResult, withdrawn
 from ..connect.imports import ImportJobs
 from ..model.common import Model, Out
 from .companies import Signed
@@ -120,10 +120,16 @@ class OutAnswer(Out):
     orders: list[OutOrder]
 
 
+def _gone(c, cid: str) -> list[dict]:
+    return [dict(r) for r in c.db.execute("SELECT * FROM erp_withdrawn WHERE company_id = ? ORDER BY at, id", (cid,))]
+
+
 def _out(cid: str, user, kind: str, everything: bool) -> OutAnswer:
     c = get_companies()
     ds, rev = read_company(c, user, cid)
-    orders = outbound(ds, kind, everything)  # type: ignore[arg-type]
+    with c.lock:
+        gone = [o for o in withdrawn(kind, _gone(c, cid)) if everything or o.change != "taken"]  # type: ignore[arg-type]
+    orders = outbound(ds, kind, everything) + gone  # type: ignore[arg-type]
     pending = [o for o in orders if o.change != "taken"]
     if pending:
         items = [ItemResult(ref=o.id, status="applied", id=o.id, message=f"{o.change}, version {o.version}")
@@ -159,9 +165,19 @@ def erp_transfer_orders(cid: str, user: Signed, all: bool = False) -> OutAnswer:
 
 @router.post("/erp/acknowledge", response_model=MessageAnswer)
 def erp_acknowledge(cid: str, body: AckMessage, user: Signed) -> MessageAnswer:
-    """The ERP took these orders: the number it gave each, and the version it took."""
-    return receive(get_companies(), user, cid, "acknowledgements", body.message_id,
-                   lambda ds: acknowledge(ds, body.orders))
+    """The ERP took these orders: the number it gave each, and the version it took. An order listed as withdrawn
+    (deleted here) is acknowledged with its ERP number when the ERP has closed its copy."""
+    c = get_companies()
+    with c.lock:
+        gone = {(r["kind"], r["id"]): r["erp_ref"] for r in _gone(c, cid) if not r["taken_at"]}
+    answer = receive(c, user, cid, "acknowledgements", body.message_id, lambda ds: acknowledge(ds, body.orders, gone))
+    closed = [(i.id, a.kind) for i, a in zip(answer.message.items, body.orders, strict=False)
+              if i.status == "applied" and (a.kind, a.id) in gone and "deleted here" in i.message]
+    if closed and answer.message.status != "duplicate":
+        with c.lock:
+            c.db.executemany("UPDATE erp_withdrawn SET taken_at = ? WHERE company_id = ? AND kind = ? AND id = ?",
+                             [(answer.message.at, cid, k, oid) for oid, k in closed])
+    return answer
 
 
 # ---- scheduled imports -----------------------------------------------------------------------------------------

@@ -249,7 +249,7 @@ export const COLLECTIONS: CollectionDef[] = [
     issueType: "supplier_invoice", group: "Execution", keyOf: (o) => s(o.id),
     blurb: "Suppliers' invoices and credit memos, checked against the order and the goods received, with the payments made (Buying manages them).",
     columns: [
-      { label: "Id", get: (o) => s(o.id) }, { label: "Kind", get: (o) => (o.kind === "credit_memo" ? "credit memo" : "invoice") },
+      { label: "Id", get: (o) => s(o.id) }, { label: "Kind", get: (o) => (s(o.kind) || "invoice").replace(/_/g, " ") },
       { label: "Supplier", get: (o) => s(o.supplier) }, { label: "Their number", get: (o) => s(o.reference) },
       { label: "Date", get: (o) => s(o.date) }, { label: "Due", get: (o) => s(o.due_date) },
     ],
@@ -423,7 +423,7 @@ export function whereUsed(ds: Dataset, kind: "location" | "product" | "resource"
     for (const p of ds.purchase_orders ?? []) add(p.supplier === id || p.location === id, `purchase order ${p.id}`);
     for (const c of ds.customers ?? []) add(c.customer === id, "its customer sales data");
     for (const k of ds.contracts ?? []) add(k.supplier === id || k.location === id, `contract ${k.id}`);
-    for (const i of ds.supplier_invoices ?? []) add(i.supplier === id, `supplier ${i.kind === "credit_memo" ? "credit memo" : "invoice"} ${i.id}`);
+    for (const i of ds.supplier_invoices ?? []) add(i.supplier === id, `supplier ${(i.kind ?? "invoice").replace(/_/g, " ")} ${i.id}`);
     for (const o of ds.sales_orders ?? []) add(o.customer === id, `sales order ${o.id}`);
     for (const i of ds.invoices ?? []) add(i.customer === id, `${i.kind === "credit_note" ? "credit note" : "invoice"} ${i.id}`);
     for (const l of ds.lanes ?? []) add(l.origin === id || l.destination === id, `route ${l.id}`);

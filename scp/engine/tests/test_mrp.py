@@ -313,3 +313,16 @@ def test_a_route_of_half_a_day_arrives_the_same_day():
     monday = _d(2026, 1, 12)
     assert schedule_transfer(x, "L-PK", "A", available=monday).start_date == monday
     assert arrival(x, "P", "K", "A", monday) == monday
+
+
+def test_a_day_over_capacity_in_a_week_with_room_raises_its_own_exception():
+    d = textbook()
+    d["resources"][0]["hours_per_shift"] = 5  # 35 h a week against 12 h of work, but 6 h on each of its two days
+    r = plan(d)
+    codes = {e.code for e in r.exceptions}
+    assert "CAPACITY_OVERLOAD" not in codes
+    day = next(e for e in r.exceptions if e.code == "CAPACITY_DAY_OVERLOAD")
+    assert day.resource == "M1" and day.qty == pytest.approx(1)
+    assert "4 day(s)" in day.message and day.date == D("2026-01-10")
+    d["resources"][0]["hours_per_shift"] = 8
+    assert "CAPACITY_DAY_OVERLOAD" not in {e.code for e in plan(d).exceptions}

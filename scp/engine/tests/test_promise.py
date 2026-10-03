@@ -9,7 +9,7 @@ from datetime import date
 import pytest
 
 from scp.model import DemandRecord
-from scp.promise import check_order, commit, run_bop, run_promise
+from scp.promise import check_lines, check_order, commit, run_bop, run_promise
 from scp.promise.atp import AtpSeries
 
 from .factory import base, demand, ds, load_example, lp
@@ -266,6 +266,19 @@ def test_check_simulates_without_persisting():
     r = check_order(ds(d), DemandRecord(location="C1", product="A", date=date(2026, 1, 10), qty=5))
     assert r.mode == "check" and r.checked is not None and r.checked.status == "unconfirmed"  # all 100 taken
     assert ds(d).confirmations == []
+
+
+def test_the_lines_of_one_order_are_checked_together_and_do_not_count_the_same_stock_twice():
+    d = net()
+    lp(d, "D", "A")["on_hand"] = 100
+    rec = DemandRecord(location="C1", product="A", date=date(2026, 1, 10), qty=60)
+    alone = check_order(ds(d), rec)
+    assert alone.checked.status == "on_time" and alone.checked.confirmed == 60
+    r = check_lines(ds(d), [rec, rec])
+    assert r.mode == "check" and [c.order for c in r.checked_lines] == ["LINE 10", "LINE 20"]
+    first, second = r.checked_lines
+    assert first.on_time == 60 and second.on_time == pytest.approx(40)     # 100 in stock, 60 already on line 10
+    assert r.checked is first and ds(d).confirmations == []
 
 
 # ---- example -------------------------------------------------------------------------------

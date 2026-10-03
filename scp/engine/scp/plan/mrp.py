@@ -989,7 +989,10 @@ class _Planner:
         total = 0.0
         if opt.kind == "buy":
             pu = ds.purchasing_source_by_id[opt.source_id]
-            price = pu.price_for(qty) * costing.fx(ds, ds.price_currency(pu)) * (1.0 + pu.duty_rate)
+            # a contract valid on the order day prices it as the requisition will be (N131), else the info record
+            deal = costing.contract_for(ds, pu.supplier, pu.location, pu.product, order.start_date, ds.price_currency(pu))
+            base = deal[1] if deal else pu.price_for(qty)
+            price = base * costing.fx(ds, ds.price_currency(pu)) * (1.0 + pu.duty_rate)
             lane = supplier_lane(ds, pu.supplier, pu.location, pu.product)
             freight = 0.0
             if lane:
@@ -1347,6 +1350,24 @@ class _Planner:
                 self._exc("CAPACITY_OVERTIME", "warning",
                           f"{rp.resource}: overtime needed in {len(ot)} bucket(s) from {b0.label}",
                           resource=rp.resource, when=b0.start)
+            # a day over capacity and overtime inside a bucket that has room overall (N116): the bucket check above
+            # does not see it, but the work cannot be done on that day as planned
+            full = {b.bucket for b in over}
+            r = self.ds.resource_by_id[rp.resource]
+            cal = resource_calendar(self.ds, rp.resource)
+            days = []
+            for d, h in rp.daily_load.items():
+                if self.b.index_of(d) in full:
+                    continue
+                room = self._cap(rp.resource, d) + overtime_between(r, cal, d, d + timedelta(days=1))
+                if h > room + 1e-6:
+                    days.append((d, h - room))
+            if days:
+                worst = max(days, key=lambda x: x[1])
+                self._exc("CAPACITY_DAY_OVERLOAD", "warning" if rp.finite else "info",
+                          f"{rp.resource}: {len(days)} day(s) loaded beyond the day's capacity and overtime in "
+                          f"weeks with room, from {days[0][0].isoformat()}; worst {worst[1]:,.1f} h over on "
+                          f"{worst[0].isoformat()}", resource=rp.resource, when=days[0][0], qty=worst[1])
         for src_id, loads in self.supplier_load.items():
             pu = self.ds.purchasing_source_by_id[src_id]
             if not pu.capacity_per_week:

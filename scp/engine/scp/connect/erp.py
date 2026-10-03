@@ -10,7 +10,9 @@ and the others are still taken, as an ERP's interface expects.
   (priced, promised and checked against the credit limit as one typed in), a known one is changed line by line (a line
   more is added, a line less cancelled, a quantity, date or price changed and promised again), and ``cancelled``
   cancels what is still open.
-* **Stock** is the ERP's stock at a place at the end of a day: a difference is posted as a count difference.
+* **Stock** is the ERP's stock at a place at the end of a day: a difference is posted as a count difference. Rows
+  that name a batch or a stock type give the place's stock lot by lot: it is counted as a physical inventory is, and a
+  lot here that the ERP does not list is counted as zero.
 * **Goods movements** are posted as postings typed in are (a goods receipt against an order, a transfer shipped, a
   delivery to a customer, stock moved between stock types, scrap), each taken once: the ERP's document number is kept
   on the movements it made and a second message with it is a duplicate. An order is named by its number here or by
@@ -30,10 +32,11 @@ from typing import Any, Literal, get_args
 
 from pydantic import Field, TypeAdapter, ValidationError
 
+from ..actuals.documents import StockError, count_doc, enter_counts, post_counts
 from ..actuals.post import PostingError, count_stock, ordered_now, post
 from ..actuals.stock import EPS
 from ..model import Dataset, DemandKind, ReceiptKind
-from ..model.actuals import StockType
+from ..model.actuals import Batch, StockType
 from ..model.common import Model, Out
 from ..promise.orders import OrderError, cancel, change
 from ..sales import SalesError, _lines_of, add_lines, cancel_order, create_order
@@ -73,7 +76,12 @@ class ErpOrder(Model):
 class ErpStock(Model):
     location: str = Field(min_length=1, max_length=64)
     product: str = Field(min_length=1, max_length=64)
-    qty: float = Field(ge=0, description="On hand at the end of the day, every stock type")
+    qty: float = Field(ge=0, description="On hand at the end of the day: every batch and stock type, or the batch "
+                                         "and stock type named")
+    batch: str | None = Field(None, max_length=40, description="The batch: the place's stock is then given lot by lot")
+    expires_on: dt.date | None = Field(None, description="A batch not known here yet: its expiry date")
+    stock_type: StockType | None = Field(None, description="unrestricted, quality or blocked: the place's stock is "
+                                                           "then given lot by lot")
 
 
 class ErpPosting(Model):
@@ -193,43 +201,129 @@ def _order(ds: Dataset, o: ErpOrder) -> tuple[Dataset, ItemResult]:
 
 # ------------------------------------------------------------------------------------------------ stock
 def apply_stock(ds: Dataset, rows: list[ErpStock], on: dt.date | None = None) -> tuple[Dataset, list[ItemResult]]:
-    """The ERP's stock at the end of ``on`` (default the day before the planning start): differences are posted."""
+    """The ERP's stock at the end of ``on`` (default the day before the planning start): differences are posted. A
+    place and product with a row naming a batch or a stock type is counted lot by lot (see :func:`_lot_counts`)."""
     out: list[ItemResult | None] = []
     good: list[ErpStock] = []
-    seen: set[tuple[str, str]] = set()
+    by_lot = {(r.location, r.product) for r in rows if r.batch or r.stock_type}
+    seen: set[tuple] = set()
     for r in rows:
-        ref = f"{r.location} / {r.product}"
+        ref = _stock_ref(r)
+        node = (r.location, r.product)
+        key = (*node, r.batch, r.stock_type or StockType.UNRESTRICTED) if node in by_lot else node
+        prod = ds.product_by_id.get(r.product)
         if r.location not in ds.location_by_id:
             out.append(ItemResult(ref=ref, status="refused", message=f"there is no place {r.location!r}"))
-        elif r.product not in ds.product_by_id:
+        elif prod is None:
             out.append(ItemResult(ref=ref, status="refused", message=f"there is no product {r.product!r}"))
-        elif (r.location, r.product) in seen:
+        elif key in seen:
             out.append(ItemResult(ref=ref, status="refused", message="listed twice in the message"))
+        elif r.batch and not prod.batch_managed:
+            out.append(ItemResult(ref=ref, status="refused", message=f"{r.product} is not kept by batch here"))
+        elif node in by_lot and prod.batch_managed and not r.batch and r.qty > EPS:
+            out.append(ItemResult(ref=ref, status="refused", message=f"{r.product} is kept by batch: name the batch"))
         else:
-            seen.add((r.location, r.product))
+            seen.add(key)
             good.append(r)
             out.append(None)
-    if not good:
-        return ds, [x for x in out if x is not None]
-    try:
-        new, rep = count_stock(ds, [r.model_dump() for r in good], on, note="Stock from the ERP")
-    except PostingError as e:
-        return ds, [x or ItemResult(ref="", status="refused", message=str(e)) for x in out]
-    made = {(m.location, m.product): m for m in new.movements if m.id in set(rep.movements)}
+    plain = [r for r in good if (r.location, r.product) not in by_lot]
+    lots = [r for r in good if (r.location, r.product) in by_lot]
+    cur = ds
+    said: dict[int, ItemResult] = {}
+    if plain:
+        try:
+            cur, rep = count_stock(cur, [r.model_dump(include={"location", "product", "qty"}) for r in plain], on,
+                                   note="Stock from the ERP")
+        except PostingError as e:
+            for r in plain:
+                said[id(r)] = ItemResult(ref=_stock_ref(r), status="refused", message=str(e))
+        else:
+            made = {(m.location, m.product): m for m in cur.movements if m.id in set(rep.movements)}
+            for r in plain:
+                m = made.get((r.location, r.product))
+                said[id(r)] = (ItemResult(ref=_stock_ref(r), status="unchanged", message=f"{_n(r.qty)} on hand, as here")
+                               if m is None else _counted(r, m.id, m.signed, m.type.value == "opening"))
+    if lots:
+        cur, more = _lot_counts(cur, lots, on)
+        said.update(more)
     it = iter(good)
-    res: list[ItemResult] = []
-    for x in out:
-        if x is not None:
-            res.append(x)
-            continue
-        r = next(it)
-        m = made.get((r.location, r.product))
-        ref = f"{r.location} / {r.product}"
-        res.append(ItemResult(ref=ref, status="unchanged", message=f"{_n(r.qty)} on hand, as here") if m is None else
-                   ItemResult(ref=ref, status="applied", id=m.id,
-                              message=f"{_n(r.qty)} on hand: {'+' if m.signed > 0 else '−'}{_n(abs(m.signed))} "
-                                      f"posted ({'opening balance' if m.type.value == 'opening' else 'count difference'})"))
-    return new, res
+    return cur, [x if x is not None else said[id(next(it))] for x in out]
+
+
+def _stock_ref(r: ErpStock) -> str:
+    return " / ".join([r.location, r.product, *([r.batch] if r.batch else []),
+                       *([r.stock_type.value] if r.stock_type else [])])
+
+
+def _counted(r: ErpStock, mid: str, diff: float, opening: bool = False) -> ItemResult:
+    return ItemResult(ref=_stock_ref(r), status="applied", id=mid,
+                      message=f"{_n(r.qty)} on hand: {'+' if diff > 0 else '−'}{_n(abs(diff))} posted "
+                              f"({'opening balance' if opening else 'count difference'})")
+
+
+def _lot_counts(ds: Dataset, rows: list[ErpStock], on: dt.date | None) -> tuple[Dataset, dict[int, ItemResult]]:
+    """The ERP's stock lot by lot, for places and products whose rows name a batch or a stock type: one physical
+    inventory document (not blocking) is made for them, the ERP's quantities entered, the lots here the ERP does not
+    list entered as zero, and the differences posted. A batch new here is made with the expiry the ERP gives. A place
+    and product being counted on an open document here is refused."""
+    busy = {(it.location, it.product): d.id for d in ds.inventory_docs if d.status == "open" for it in d.items}
+    said: dict[int, ItemResult] = {}
+    take = []
+    for r in rows:
+        if (r.location, r.product) in busy:
+            said[id(r)] = ItemResult(ref=_stock_ref(r), status="refused",
+                                     message=f"being counted here on {busy[(r.location, r.product)]}: post or cancel "
+                                             "that count first")
+        else:
+            take.append(r)
+    if not take:
+        return ds, said
+    known = {(b.product, b.id) for b in ds.batches}
+    fresh = {}
+    for r in take:
+        if r.batch and (r.product, r.batch) not in known and (r.product, r.batch) not in fresh:
+            fresh[(r.product, r.batch)] = Batch(product=r.product, id=r.batch, expires_on=r.expires_on,
+                                                note="From the ERP's stock")
+    nodes = list(dict.fromkeys((r.location, r.product) for r in take))
+    try:
+        cur = ds.model_copy(update={"batches": [*ds.batches, *fresh.values()]}) if fresh else ds
+        cur, made = count_doc(cur, nodes, on, block=False, note="Stock from the ERP")
+        cur, _ = enter_counts(cur, made.doc or "", [{"location": r.location, "product": r.product, "batch": r.batch,
+                                                     "stock_type": (r.stock_type or StockType.UNRESTRICTED).value,
+                                                     "qty": r.qty} for r in take])
+        before = {m.id for m in cur.movements}
+        cur, rep = post_counts(cur, made.doc or "", uncounted_zero=True)
+    except (StockError, PostingError, ValidationError, ValueError) as e:
+        for r in take:
+            said[id(r)] = ItemResult(ref=_stock_ref(r), status="refused", message=str(e))
+        return ds, said
+    doc = next(d for d in cur.inventory_docs if d.id == made.doc)
+    diffs: dict[tuple, list] = {}
+    for m in cur.movements:
+        if m.id not in before:
+            diffs.setdefault((m.location, m.product, m.batch, m.stock_type), []).append(m)
+    listed = {(r.location, r.product, r.batch, r.stock_type or StockType.UNRESTRICTED) for r in take}
+    zeroed: dict[tuple, list[str]] = {}
+    for it in doc.items:
+        k = (it.location, it.product, it.batch, it.stock_type)
+        if k not in listed and abs(it.book_qty) > EPS:
+            zeroed.setdefault(k[:2], []).append(f"{it.batch or 'no batch'} ({it.stock_type.value}) "
+                                                f"{_n(it.book_qty)} → 0")
+    first: set[tuple] = set()
+    for r in take:
+        node = (r.location, r.product)
+        ms = diffs.get((*node, r.batch, r.stock_type or StockType.UNRESTRICTED), [])
+        diff = sum(m.qty for m in ms)
+        res = (ItemResult(ref=_stock_ref(r), status="unchanged", message=f"{_n(r.qty)} on hand, as here") if not ms
+               else _counted(r, ms[0].id, diff))
+        res.message += f" ({doc.id})"
+        if node not in first and zeroed.get(node):
+            res.message += "; not in the ERP's stock, so counted as none: " + ", ".join(zeroed[node])
+            if res.status == "unchanged":
+                res.status = "applied"
+        first.add(node)
+        said[id(r)] = res
+    return cur, said
 
 
 # ------------------------------------------------------------------------------------------------ goods movements
@@ -352,7 +446,7 @@ class OutOrder(Out):
     kind: OutKind
     id: str
     version: str                   # what the ERP needs of the order, fingerprinted: a new one means it changed
-    change: Literal["new", "changed", "taken"]
+    change: Literal["new", "changed", "taken", "withdrawn"]   # withdrawn: deleted here, the ERP should close its copy
     erp_ref: str
     cancelled: bool = False         # purchase: every remaining line was cancelled and the header was removed
     location: str
@@ -433,14 +527,34 @@ def outbound(ds: Dataset, kind: OutKind, everything: bool = False) -> list[OutOr
     return out
 
 
-def acknowledge(ds: Dataset, acks: list[ErpAck]) -> tuple[Dataset, list[ItemResult]]:
-    """The ERP took these orders: keep the number it gave each and the version it took."""
+def withdrawn_version(kind: str, oid: str, erp_ref: str) -> str:
+    return _version({"withdrawn": [kind, oid, erp_ref]})
+
+
+def withdrawn(kind: OutKind, rows: list[dict]) -> list[OutOrder]:
+    """Orders the ERP numbered that were deleted here (N137): ``rows`` as kept by the company store (kind, id,
+    erp_ref, location, taken_at)."""
+    return [OutOrder(kind=kind, id=r["id"], version=withdrawn_version(kind, r["id"], r["erp_ref"]),
+                     change="taken" if r.get("taken_at") else "withdrawn", erp_ref=r["erp_ref"],
+                     location=r.get("location") or "")
+            for r in rows if r["kind"] == kind]
+
+
+def acknowledge(ds: Dataset, acks: list[ErpAck], gone: dict[tuple[str, str], str] | None = None
+                ) -> tuple[Dataset, list[ItemResult]]:
+    """The ERP took these orders: keep the number it gave each and the version it took. ``gone``: orders deleted
+    here, (kind, id) → the ERP's number; an acknowledgement of one says the ERP closed its copy."""
     current = {(k, o.id): o for k in ("purchase_order", "production_order", "transfer_order")
                for o in outbound(ds, k, everything=True)} if acks else {}
-    return _each(ds, acks, lambda a: a.id, lambda d, a: _ack(d, a, current))
+    return _each(ds, acks, lambda a: a.id, lambda d, a: _ack(d, a, current, gone or {}))
 
 
-def _ack(ds: Dataset, a: ErpAck, current: dict) -> tuple[Dataset, ItemResult]:
+def _ack(ds: Dataset, a: ErpAck, current: dict, gone: dict[tuple[str, str], str]) -> tuple[Dataset, ItemResult]:
+    if (a.kind, a.id) in gone and (a.kind, a.id) not in current:
+        if gone[(a.kind, a.id)] != a.erp_ref:
+            raise ValueError(f"{a.id} was {gone[(a.kind, a.id)]} in the ERP, not {a.erp_ref}")
+        return ds, ItemResult(ref=a.id, status="applied", id=a.id,
+                              message=f"{a.id} ({a.erp_ref}) was deleted here: the ERP closed its copy")
     now = current.get((a.kind, a.id))
     later = " The order changed since that version: it goes to the ERP again." if now and now.version != a.version else ""
     if a.kind == "purchase_order":

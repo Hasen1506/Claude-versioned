@@ -43,6 +43,17 @@ test('order to cash: a two-line order over the credit limit is released, deliver
   await page.getByLabel('Line 20 quantity').fill('10');
   await page.getByLabel('Line 20 wanted on').fill('2026-01-08');
   await page.getByLabel('Their order number').fill('PO-77');
+  // every line checked together before taking it (N119): a third line of 80 tins finds only 75 left after line 10's 25
+  await page.getByRole('button',{name:'+ Add a line'}).click();
+  await page.getByLabel('Line 30 product').selectOption('A');
+  await page.getByLabel('Line 30 quantity').fill('80');
+  await page.getByLabel('Line 30 wanted on').fill('2026-01-08');
+  await page.getByRole('button',{name:'Check what can be promised'}).click();
+  await expect(page.getByLabel('Line 10 can be promised')).toContainText('on time',{timeout:45000});
+  await expect(page.getByLabel('Line 20 can be promised')).toContainText('on time');
+  await expect(page.getByLabel('Line 30 can be promised')).toContainText(/late 75 on time, the rest by /);
+  await page.getByRole('button',{name:'Remove line 30'}).click();
+  await expect(page.getByText('The lines changed since they were checked')).toBeVisible();
   await page.getByRole('button',{name:'Take the order'}).click();
   await expect(done(page)).toContainText(/SO-00001 taken for Kumar Stores: 2 lines, INR 2,299.00 with tax/,{timeout:45000});
   await expect(done(page)).toContainText(/Blocked for delivery/);
@@ -120,4 +131,28 @@ test('order to cash: a two-line order over the credit limit is released, deliver
     expect(wide,`#/selling/${tab} scrolls sideways`).toBeLessThanOrEqual(1);
   }
   await page.screenshot({path:'test-results/selling-phone.png',fullPage:true});
+});
+
+test('tax per product with the GST split (N123): the invoice shows CGST and SGST per rate, the total as the server bills it',async ({page})=>{
+  const f:any=fixture();
+  f.settings.company_tax_id='27AAACM1234A1Z5';
+  f.locations[2].tax_id='27AAFCK9876B1Z2';
+  f.customers[0].tax_rate=null;
+  f.products[1].tax_rate=0.12;
+  f.sales={tax_rate:0.18,tax_split:'gst'};
+  f.invoices=[{id:'INV-00001',customer:'K',date:'2026-01-05',due_date:'2026-02-04',tax_rate:0.18,tax_split:'cgst_sgst',
+    lines:[{product:'A',qty:25,price:76},{product:'D',qty:10,price:19,tax_rate:0.12}]}];
+  await page.goto('/');
+  const chooser=page.waitForEvent('filechooser');
+  await page.getByRole('button',{name:'Import a file',exact:true}).click();
+  await (await chooser).setFiles({name:'gst.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(f))});
+  await expect(page.getByText(/Everything is up to date/)).toBeVisible({timeout:45000});
+  await page.goto('/#/selling/bill/INV-00001');
+  await expect(page.getByRole('row',{name:/INV-00001/})).toContainText('₹2,454.80',{timeout:45000});
+  const [dl]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Download'}).first().click()]);
+  const fs=await import('node:fs');
+  const html=fs.readFileSync((await dl.path())!,'utf8');
+  for (const t of ['CGST 6 %','SGST 6 %','CGST 9 %','SGST 9 %','on ₹1,900.00','on ₹190.00','₹171.00','₹11.40','₹2,454.80','tax 12 %'])
+    expect(html,t).toContain(t);
+  expect(html).not.toContain('IGST');
 });

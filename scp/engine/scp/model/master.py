@@ -26,6 +26,9 @@ class Settings(Model):
                                  description="The company's postal address for invoices, a line per row: printed on "
                                              "purchase orders as the address to invoice")
     company_tax_id: str = Field("", max_length=40, description="The company's tax registration (GSTIN, VAT number)")
+    company_region: str = Field("", max_length=40,
+                                description="The company's state or region for the place of supply; empty = the "
+                                            "first two digits of a GSTIN")
     currency: str = Field("INR", min_length=3, max_length=3, description="ISO 4217 company currency")
     planning_start: date = Field(description="First day of the plan ('today' for planning)")
     horizon_days: int = Field(182, ge=7, le=1100, description="Planning horizon length in calendar days")
@@ -152,6 +155,9 @@ class Product(Model):
     standard_cost: float | None = Unit("money_per_unit", default=None,
                                        description="Override for the computed cost roll-up")
     price: float | None = Unit("money_per_unit", default=None, description="Default selling price")
+    tax_rate: float | None = Unit("fraction", le=1, default=None,
+                                  description="Tax on its sales (0.12 = 12 %); empty = the company's rate. A customer's "
+                                              "own rate (an exemption, an export) goes before it")
     setup_group: str | None = Field(None, max_length=40,
                                     description="Sequence-dependent setup family (colour, allergen, grade…)")
 

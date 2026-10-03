@@ -125,6 +125,17 @@ class SearchInfo(Out):
     optimizer: OptimizerInfo | None = None
 
 
+class OvertimeUse(Out):
+    """Overtime as a choice of the schedule (N117)."""
+
+    allowed: bool = False
+    used: bool = False               # the schedule with overtime was better and is the one shown
+    hours: dict[str, float] = Field(default_factory=dict)   # machine -> clock hours run after its shifts
+    cost: float = 0.0                # at each machine's overtime cost per hour
+    objective_without: float = 0.0   # the weighted objective keeping to the shifts
+    note: str = ""
+
+
 class ScheduleResult(Out):
     ok: bool
     origin: dt.datetime | None = None
@@ -142,6 +153,7 @@ class ScheduleResult(Out):
     violations: list[str] = Field(default_factory=list)
     beyond_horizon: int = 0          # make orders starting after the scheduling window
     without_routing: int = 0         # make orders whose source has no operations
+    overtime: OvertimeUse = Field(default_factory=OvertimeUse)
     issues: list[Issue] = Field(default_factory=list)
 
 
