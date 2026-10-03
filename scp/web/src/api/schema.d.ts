@@ -9780,6 +9780,11 @@ export interface components {
              */
             ordered_qty?: number | null;
             /**
+             * Delivery Target Qty
+             * @description Purchase: total delivery quantity when goods are returned for replacement; the original order quantity is retained for history
+             */
+            delivery_target_qty?: number | null;
+            /**
              * Due Date
              * Format: date
              */

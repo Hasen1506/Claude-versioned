@@ -30,7 +30,7 @@ from ..purchasing.result import ActionReport, ShortOrder
 from .lots import EPS, new_batch, node_lots, pick
 from .stock import before, movement_ids, pending_openings
 
-OUT = (MovementType.ISSUE, MovementType.SALE, MovementType.TRANSFER_OUT, MovementType.SCRAP)
+OUT = (MovementType.ISSUE, MovementType.SALE, MovementType.TRANSFER_OUT, MovementType.SCRAP, MovementType.RETURN)
 Node = tuple[str, str]
 
 

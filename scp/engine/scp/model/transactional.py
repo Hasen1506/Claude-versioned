@@ -74,6 +74,10 @@ class ScheduledReceipt(Model):
     qty: float = Unit("qty", gt=0, description="Still to be received")
     ordered_qty: float | None = Unit("qty", default=None,
                                      description="Originally ordered; empty = `qty` (nothing received yet)")
+    delivery_target_qty: float | None = Unit(
+        "qty", default=None,
+        description="Purchase: total delivery quantity when goods are returned for replacement; "
+                    "the original order quantity is retained for history")
     due_date: dt.date
     start_date: dt.date | None = Field(None, description="Production start / shipping date (information; "
                                                          "scheduling releases a production order from here)")
@@ -110,6 +114,13 @@ class ScheduledReceipt(Model):
                                                         "took last (empty: never)")
 
     @property
+    def target_qty(self) -> float:
+        """Total quantity to receive, retaining any remainder cancelled by a final delivery."""
+        if self.delivery_target_qty is not None:
+            return self.delivery_target_qty
+        return self.ordered_qty if self.ordered_qty is not None else self.qty
+
+    @property
     def expected_date(self) -> dt.date:
         """When the goods are expected: the confirmed date, else the due date."""
         return self.confirmed_date or self.due_date
@@ -119,7 +130,7 @@ class ScheduledReceipt(Model):
         """What is still expected: the open quantity, capped by what the supplier confirmed and has not delivered."""
         if self.confirmed_qty is None:
             return self.qty
-        received = (self.ordered_qty if self.ordered_qty is not None else self.qty) - self.qty
+        received = self.target_qty - self.qty
         return max(0.0, min(self.qty, self.confirmed_qty - received))
 
     def expected_parts(self) -> list[tuple[dt.date, float]]:
@@ -127,7 +138,7 @@ class ScheduledReceipt(Model):
         against the earliest lines first), else the expected quantity on the expected date."""
         if not self.confirmations:
             return [(self.expected_date, self.expected_qty)]
-        received = (self.ordered_qty if self.ordered_qty is not None else self.qty) - self.qty
+        received = self.target_qty - self.qty
         left = self.qty
         out = []
         for c in sorted(self.confirmations, key=lambda c: c.date):
