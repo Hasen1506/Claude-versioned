@@ -8,6 +8,7 @@ import {
 import { day, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Prod, namesOf } from "../lib/names";
 import { poAddresses, poDocument, poEmail } from "../lib/podoc";
+import { ServerSend } from "../components/ServerSend";
 import { download } from "../lib/tabular";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
@@ -349,7 +350,7 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
           {po.target_qty != null ? `: ${qty(po.released_qty)} of ${qty(po.target_qty)} scheduled` : ""}</span>}
         {po.approvals.length > 0 && <span>Released {po.approvals.map((a) => `${a.level}${a.by ? ` by ${a.by}` : ""} ${day(a.on)}`).join(", ")}</span>}
         {!po.approved && po.levels_needed.length > 1 && <span>Needs {po.levels_needed.join(", then ")}</span>}
-        {po.header && <PoDocButtons po={po} ds={ds} />}
+        {po.header && <PoDocButtons po={po} ds={ds} onSent={po.approved && !po.sent_on && hasOpen ? () => act("send") : undefined} />}
       </div>
       {po.attention.length > 0 && <div className="banner warning" style={{ marginBottom: 10 }}><div>{po.attention.map((a) => <div key={a}>• {a}</div>)}</div></div>}
       {msg && <div className="banner ok" role="status" style={{ marginBottom: 10 }}>{msg}</div>}
@@ -442,7 +443,7 @@ const MODE_HINT: Record<Exclude<Mode, null>, string> = {
 
 // ------------------------------------------------------------------------------------------------
 /** The order as a document: print it (or save it as PDF from the print dialog), download it, or start an e-mail. */
-function PoDocButtons({ po, ds }: { po: PoView; ds: Dataset }) {
+function PoDocButtons({ po, ds, onSent }: { po: PoView; ds: Dataset; onSent?: () => unknown }) {
   const file = `${po.id}.html`;
   const print = () => {
     const html = poDocument(po, ds);
@@ -462,6 +463,7 @@ function PoDocButtons({ po, ds }: { po: PoView; ds: Dataset }) {
     <button className="btn sm ghost" onClick={print} title="Opens the order as a page and the print dialog, where it can be saved as PDF">Print or PDF</button>
     <button className="btn sm ghost" onClick={() => download(file, poDocument(po, ds), "text/html")}>Download</button>
     <a className="btn sm ghost" href={mailto} title={mail.to ? `An e-mail to ${mail.to} with the order in its text` : "An e-mail with the order in its text (no e-mail address on the supplier's purchasing data)"}>E-mail</a>
+    <ServerSend kind="purchase_order" docRef={po.id} to={mail.to} subject={mail.subject} text={mail.body} html={() => poDocument(po, ds)} onSent={onSent} />
   </span>;
 }
 

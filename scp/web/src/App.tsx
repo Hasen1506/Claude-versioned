@@ -29,6 +29,7 @@ import { Machines } from "./pages/Machines";
 import { Capacity } from "./pages/Capacity";
 import { Account, CompanyList, SignIn, useAuthConfig } from "./pages/Account";
 import { History } from "./pages/History";
+import { Connections } from "./pages/Connections";
 import { SaveBanner, SaveChip } from "./components/SaveStatus";
 import { freshness, isModified, planFreshness, store, useStore, NO_ISSUES } from "./state/store";
 
@@ -104,6 +105,7 @@ export function App() {
           : page === "tower" ? <Tower route={route} />
           : page === "versions" ? <Versions />
           : page === "history" ? <History />
+          : page === "connections" ? <Connections route={route} />
           : <div className="content"><Home ds={ds} /></div>}
       </main>
     </div>
@@ -193,6 +195,7 @@ function TopBar({ navOpen, onNav }: { navOpen: boolean; onNav: () => void }) {
           <button role="menuitem" data-close onClick={exportJson}>Export this dataset</button>
           <a role="menuitem" data-close href={href("versions")}>Versions and what-ifs</a>
           {company && <a role="menuitem" data-close href={href("history")}>History: who changed what</a>}
+          {company?.live && <a role="menuitem" data-close href={href("connections")}>Connections: ERP, imports, e-mail</a>}
           <a role="menuitem" data-close href={href("proof")}>Proof: check the numbers</a>
           <hr />
         </>}
@@ -228,6 +231,7 @@ function Rail({ page }: { page: string }) {
   const tower = s.runs.tower.data;
   const offTrack = tower?.ok ? tower.kpis.filter((k) => k.status === "critical").length : 0;
   const active = navItemFor(page);
+  const live = !!s.company?.live;
   const right = (it: NavItem) => {
     if (it.id === "network" && errors) return <Badge sev="error">{errors}</Badge>;
     if (it.id === "tower" && offTrack && freshness(s, "tower") !== "none") return <span className="rail-count" title={`${offTrack} measures off target`}>{offTrack}</span>;
@@ -253,6 +257,7 @@ function Rail({ page }: { page: string }) {
       <div className="rail-foot">
         <a className={page === "versions" ? "active" : ""} href={href("versions")}>Versions and what-ifs</a>
         <a className={page === "account" || page === "history" ? "active" : ""} href={href("account")}>Sign in, companies, people</a>
+        {live && <a className={page === "connections" ? "active" : ""} href={href("connections")}>Connections</a>}
         <a className={page === "proof" ? "active" : ""} href={href("proof")}>Proof</a>
       </div>
     </nav>

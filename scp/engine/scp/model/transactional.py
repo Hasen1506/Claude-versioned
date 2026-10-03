@@ -105,6 +105,9 @@ class ScheduledReceipt(Model):
         description="Purchase: the supplier's confirmation in several deliveries (date and quantity each); "
                     "`confirmed_date` is then the last of them and `confirmed_qty` their total")
     contract: str | None = Field(None, max_length=64, description="Purchase: the contract the line releases against")
+    erp_ref: str = Field("", max_length=64, description="Production or transfer: the order's number in the ERP")
+    erp_sent: str = Field("", max_length=32, description="Production or transfer: the version of the order the ERP "
+                                                        "took last (empty: never)")
 
     @property
     def expected_date(self) -> dt.date:

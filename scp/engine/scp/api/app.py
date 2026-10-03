@@ -56,6 +56,7 @@ from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, len
 from ..validate.setup import SetupItem, checklist
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
 from ..companies import CompanyError
+from .connect import router as connect_router
 from .companies import EditScope, Scope, company_error, gate, router as companies_router, who_asks
 from .working import PlanData, answer, is_ref, read as read_ref, respond, send
 
@@ -67,12 +68,16 @@ WEB_DIST = ROOT / "web" / "dist"
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """With SCP_BACKUP_DIR set, the database is copied there every night (scp.backup)."""
+    """With SCP_BACKUP_DIR set, the database is copied there every night (scp.backup); scheduled imports and worklist
+    reminders run on their own clock (scp.connect.scheduler)."""
     from ..backup import start_nightly
     from ..versions.store import get_store
 
+    from ..connect.scheduler import start as start_clock
+
     store = get_store()
     start_nightly(store.db, store.lock)
+    start_clock()       # scheduled imports and worklist reminders (Phase Q)
     yield
 
 
@@ -86,6 +91,7 @@ app.middleware("http")(gate)
 
 app.add_exception_handler(CompanyError, company_error)  # type: ignore[arg-type]
 app.include_router(companies_router)
+app.include_router(connect_router)
 
 
 @app.exception_handler(RequestValidationError)

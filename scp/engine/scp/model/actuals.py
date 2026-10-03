@@ -84,6 +84,8 @@ class GoodsMovement(Model):
                                                                         "quantity counts with the opposite sign")
     serials: list[str] = Field(default_factory=list, max_length=10000,
                                description="Serial numbers moved (serialised products: one per unit)")
+    erp_ref: str | None = Field(None, max_length=64, description="The ERP's document it came with: an ERP posting is "
+                                                                 "taken once")
 
     @model_validator(mode="after")
     def _qty(self) -> GoodsMovement:

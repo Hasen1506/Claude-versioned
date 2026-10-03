@@ -317,8 +317,26 @@ The supply plan goes further into how a plant really plans, mostly in `engine/sc
 - **What we owe**: open invoices per supplier (overdue, due within a week, blocked) and goods received but not
   invoiced. Blocked and overdue bills, credit holds and overdue customer invoices are in the worklist.
 
-The next plan (phase Q) is at the end of
-[docs/USABILITY_LOG.md](docs/USABILITY_LOG.md#the-next-plan-after-phase-o).
+## Connected (Phase Q)
+
+The company on the server talks to the rest of the business (`engine/scp/connect`, `engine/scp/api/connect.py`,
+*Connections* in the web client). The guide with every message is [docs/INTEGRATION.md](docs/INTEGRATION.md).
+
+- **Keys** (`scpk_…`) let an ERP or a script work in one company as a planner or a viewer; an owner makes and
+  withdraws them.
+- **Messages in**: customer orders matched by the ERP's number (new, changed line by line, cancelled), stock (an
+  opening balance or a count difference), goods movements by the ERP's own order numbers, and master records. Each is
+  saved as a revision by the key, in the History, and merged into open windows like a colleague's change; a message
+  sent twice is not applied twice, and every item says whether it was taken, already so, or refused and why.
+- **Orders out**: released purchase orders and firm production and transfer orders, with a version, for the ERP to
+  take and acknowledge with its own numbers.
+- **Scheduled imports** read a web address or a server folder (CSV with SAP column names, or JSON) every hour, day or
+  week; the same file is never taken twice, and nothing inside the server's own network is read.
+- **E-mail from the server**: *Send from here* on purchase orders, confirmations, invoices and credit notes (to
+  addresses the company knows, the document attached, replies to the sender), an outbox, and worklist reminders to
+  each owner of open exceptions on the days set.
+
+What is still missing is in [docs/USABILITY_LOG.md](docs/USABILITY_LOG.md#found-while-building-phase-q).
 
 ## What is here (P0–P10)
 

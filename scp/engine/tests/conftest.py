@@ -1,6 +1,10 @@
+import os
+
 import pytest
 
 from scp.versions import Store, set_store
+
+os.environ.setdefault("SCP_SCHEDULER", "0")   # no clock thread for imports and reminders in tests
 
 
 @pytest.fixture(autouse=True)

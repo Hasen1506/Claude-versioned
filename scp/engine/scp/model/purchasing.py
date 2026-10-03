@@ -96,6 +96,9 @@ class PurchaseOrder(Model):
     valid_to: dt.date | None = Field(None, description="Scheduling agreement: no schedule lines after this day")
     target_qty: float | None = Unit("qty", gt=0, default=None,
                                     description="Scheduling agreement: the quantity agreed over its life")
+    erp_ref: str = Field("", max_length=64, description="The order's number in the ERP, once the ERP has taken it")
+    erp_sent: str = Field("", max_length=32, description="The version of the order the ERP took last (empty: never); "
+                                                        "a changed order goes to the ERP again")
 
     @field_validator("currency")
     @classmethod

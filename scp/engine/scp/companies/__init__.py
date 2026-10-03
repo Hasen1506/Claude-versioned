@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 from .store import (
-    CAN_EDIT, ROLES, CompanyDoc, CompanyError, CompanyMeta, Companies, FieldChangeRow, HeldChange, ListChange, LogRow,
+    CAN_EDIT, ROLES, ApiKey, CompanyDoc, CompanyError, CompanyMeta, Companies, FieldChangeRow, HeldChange, ListChange, LogRow,
     Member, MergeResult, SaveReport, Session, User, get_companies, summarise,
 )
 
 __all__ = [
-    "CAN_EDIT", "ROLES", "CompanyDoc", "CompanyError", "CompanyMeta", "Companies", "FieldChangeRow", "HeldChange",
+    "CAN_EDIT", "ROLES", "ApiKey", "CompanyDoc", "CompanyError", "CompanyMeta", "Companies", "FieldChangeRow", "HeldChange",
     "ListChange", "LogRow", "Member",
     "MergeResult", "SaveReport", "Session", "User", "get_companies", "summarise",
 ]
