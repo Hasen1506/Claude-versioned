@@ -88,6 +88,11 @@ CREATE INDEX IF NOT EXISTS change_docs_by_revision ON change_docs (company_id, r
 CREATE TABLE IF NOT EXISTS password_resets (
   token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at TEXT NOT NULL, made_by TEXT, used INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id), user_id TEXT NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL, role TEXT NOT NULL, prefix TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL, last_used TEXT, revoked_at TEXT, revoked_by TEXT
+);
 CREATE TABLE IF NOT EXISTS sign_in_states (
   state TEXT PRIMARY KEY, verifier TEXT NOT NULL, nonce TEXT NOT NULL, at TEXT NOT NULL, next TEXT NOT NULL DEFAULT ''
 );
@@ -99,6 +104,7 @@ SESSION_DAYS = 30
 FULL_EVERY = 25               # a whole copy at least every this many revisions; deltas in between
 PBKDF2_ROUNDS = 200_000
 LOG_ITEMS = 12                # records named per list in a save's detail
+KEY_PREFIX = "scpk_"           # an integration key, not a session (Phase Q)
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 # plain names of the dataset's lists, for the audit trail
@@ -227,6 +233,19 @@ class ListChange(Out):
     names: list[str]              # the first few records, "+ SO-00012", "~ PAINT-WHITE at DC-MUMBAI", …
 
 
+class ApiKey(Out):
+    """A key another system (an ERP, a scheduled import) uses to work in one company as a member (Phase Q)."""
+    id: str
+    name: str
+    role: str                     # planner (sends data) or viewer (only takes orders back)
+    prefix: str                   # the key's first characters, to tell keys apart; the key itself is shown once
+    created_by: str               # a name
+    created_at: str
+    last_used: str | None = None
+    revoked_at: str | None = None
+    token: str | None = None      # only in the answer that made it
+
+
 class LogRow(Out):
     seq: int
     revision: int | None
@@ -305,8 +324,11 @@ class Companies:
                     self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT NOT NULL DEFAULT '[]'")
         if "approval" not in {r[1] for r in self.db.execute("PRAGMA table_info(companies)")}:
             self.db.execute("ALTER TABLE companies ADD COLUMN approval INTEGER NOT NULL DEFAULT 0")
-        if "sso_subject" not in {r[1] for r in self.db.execute("PRAGMA table_info(users)")}:
+        ucols = {r[1] for r in self.db.execute("PRAGMA table_info(users)")}
+        if "sso_subject" not in ucols:
             self.db.execute("ALTER TABLE users ADD COLUMN sso_subject TEXT")
+        if "kind" not in ucols:      # Phase Q: an account behind an integration key is not a person
+            self.db.execute("ALTER TABLE users ADD COLUMN kind TEXT NOT NULL DEFAULT 'person'")
         self.failures: dict[str, list[dt.datetime]] = {}
 
     # ---- accounts ------------------------------------------------------------------------------------------
@@ -393,6 +415,8 @@ class Companies:
         """The account a session token belongs to; the session is extended on use."""
         if not token:
             raise CompanyError("sign in first", 401)
+        if token.startswith(KEY_PREFIX):
+            return self._key_user(token)
         with self.lock:
             r = self.db.execute("SELECT * FROM sessions WHERE token_hash = ?", (_token_hash(token),)).fetchone()
             now = _now()
@@ -402,6 +426,93 @@ class Companies:
                             (_iso(now + dt.timedelta(days=SESSION_DAYS)), r["token_hash"]))
             self.db.execute("UPDATE users SET last_seen = ? WHERE id = ?", (_iso(now), r["user_id"]))
             return self._user(r["user_id"])
+
+    # ---- integration keys (Phase Q) --------------------------------------------------------------------------
+    def _key_user(self, token: str) -> User:
+        with self.lock:
+            r = self.db.execute("SELECT k.*, c.deleted FROM api_keys k JOIN companies c ON c.id = k.company_id "
+                                "WHERE k.token_hash = ?", (_token_hash(token),)).fetchone()
+            if r is None or r["revoked_at"] or r["deleted"]:
+                raise CompanyError("this key is not valid (unknown or withdrawn): ask the company's owner for a new "
+                                   "one", 401)
+            now = _iso(_now())
+            if not r["last_used"] or r["last_used"][:16] != now[:16]:   # once a minute is enough
+                self.db.execute("UPDATE api_keys SET last_used = ? WHERE id = ?", (now, r["id"]))
+            return self._user(r["user_id"])
+
+    def is_key(self, user: User) -> bool:
+        with self.lock:
+            r = self.db.execute("SELECT kind FROM users WHERE id = ?", (user.id,)).fetchone()
+            return bool(r) and r["kind"] == "key"
+
+    def key_company(self, user: User) -> str | None:
+        """The company a key's account works in (a key belongs to one company), else None."""
+        with self.lock:
+            r = self.db.execute("SELECT company_id FROM api_keys WHERE user_id = ? AND revoked_at IS NULL",
+                                (user.id,)).fetchone()
+            return r["company_id"] if r else None
+
+    def _key_row(self, r: Any, token: str | None = None) -> ApiKey:
+        return ApiKey(id=r["id"], name=r["name"], role=r["role"], prefix=r["prefix"],
+                      created_by=self._name(r["created_by"]), created_at=r["created_at"], last_used=r["last_used"],
+                      revoked_at=r["revoked_at"], token=token)
+
+    def create_key(self, user: User, cid: str, name: str, role: str = "planner") -> ApiKey:
+        """A new key for another system, acting as a member of this company with ``role``; only an owner may."""
+        name = " ".join(name.split())[:60]
+        if not name:
+            raise CompanyError("name the key after the system that uses it (\"SAP\", \"Nightly stock file\")", 422)
+        if role not in ("planner", "viewer"):
+            raise CompanyError("a key is a planner (it sends data) or a viewer (it only reads)", 422)
+        with self.lock:
+            self._need(user, cid, "owner")
+            n = self.db.execute("SELECT COUNT(*) FROM api_keys").fetchone()[0] + 1
+            kid = f"K{n:04d}"
+            while self.db.execute("SELECT 1 FROM api_keys WHERE id = ?", (kid,)).fetchone():
+                n += 1
+                kid = f"K{n:04d}"
+            token = KEY_PREFIX + secrets.token_urlsafe(32)
+            now = _iso(_now())
+            self.db.execute("BEGIN")
+            try:
+                m = self.db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+                uid = f"U{m + 1:04d}"
+                while self.db.execute("SELECT 1 FROM users WHERE id = ?", (uid,)).fetchone():
+                    m += 1
+                    uid = f"U{m + 1:04d}"
+                self.db.execute("INSERT INTO users (id, email, name, pw_salt, pw_hash, created_at, kind) "
+                                "VALUES (?, ?, ?, '', '', ?, 'key')",
+                                (uid, f"{kid.lower()}.{cid.lower()}@keys.invalid", f"{name} (key)", now))
+                self.db.execute("INSERT INTO members (company_id, user_id, role, added_at, added_by) VALUES (?, ?, ?, ?, ?)",
+                                (cid, uid, role, now, user.id))
+                self.db.execute("INSERT INTO api_keys (id, company_id, user_id, name, role, prefix, token_hash, created_by, "
+                                "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                (kid, cid, uid, name, role, token[:12], _token_hash(token), user.id, now))
+                self._log(cid, None, user.id, "member", f"key {kid} \u201c{name}\u201d made, as a {role}")
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+            return self._key_row(self.db.execute("SELECT * FROM api_keys WHERE id = ?", (kid,)).fetchone(), token)
+
+    def keys(self, user: User, cid: str) -> list[ApiKey]:
+        with self.lock:
+            self._need(user, cid, "owner")
+            return [self._key_row(r) for r in self.db.execute(
+                "SELECT * FROM api_keys WHERE company_id = ? ORDER BY revoked_at IS NOT NULL, created_at, id", (cid,))]
+
+    def revoke_key(self, user: User, cid: str, kid: str) -> list[ApiKey]:
+        with self.lock:
+            self._need(user, cid, "owner")
+            r = self.db.execute("SELECT * FROM api_keys WHERE id = ? AND company_id = ?", (kid, cid)).fetchone()
+            if r is None:
+                raise CompanyError(f"no key {kid} in this company", 404)
+            if r["revoked_at"]:
+                raise CompanyError(f"key {kid} was already withdrawn on {r['revoked_at'][:10]}")
+            self.db.execute("UPDATE api_keys SET revoked_at = ?, revoked_by = ? WHERE id = ?", (_iso(_now()), user.id, kid))
+            self.db.execute("DELETE FROM members WHERE company_id = ? AND user_id = ?", (cid, r["user_id"]))
+            self._log(cid, None, user.id, "member", f"key {kid} \u201c{r['name']}\u201d withdrawn")
+        return self.keys(user, cid)
 
     def signout(self, token: str) -> None:
         with self.lock:
@@ -930,7 +1041,7 @@ class Companies:
                           places=json.loads(r["places"]), families=json.loads(r["families"]))
                    for r in self.db.execute("SELECT m.user_id, u.email, u.name, m.role, m.added_at, m.places, m.families "
                                             "FROM members m JOIN users u ON u.id = m.user_id WHERE m.company_id = ? "
-                                            "ORDER BY m.added_at, u.email", (cid,))]
+                                            "AND u.kind != 'key' ORDER BY m.added_at, u.email", (cid,))]
             out += [Member(user_id=None, email=r["email"], name="", role=r["role"], since=r["at"],
                            places=json.loads(r["places"]), families=json.loads(r["families"]))
                     for r in self.db.execute("SELECT * FROM invites WHERE company_id = ? ORDER BY at, email", (cid,))]

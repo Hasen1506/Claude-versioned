@@ -96,6 +96,7 @@ class SalesOrder(Model):
     credit_note: str = Field("", max_length=200, description="Why it was blocked, or who released it")
     confirmation_sent_on: dt.date | None = Field(None, description="When the order confirmation went to the customer")
     note: str = Field("", max_length=400)
+    erp_ref: str = Field("", max_length=64, description="The order's number in the ERP it came from")
 
 
 class QuoteLine(Model):
