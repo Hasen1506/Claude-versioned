@@ -18,6 +18,10 @@ from ..model import CapacityChange, Resource
 from . import WorkCalendar
 
 
+class NoWorkingTime(ValueError):
+    """An operation cannot finish within the capacity lookahead."""
+
+
 @dataclass(frozen=True)
 class DayCapacity:
     windows: tuple[tuple[float, float], ...]   # clock hours from the start of the day (may pass 24)

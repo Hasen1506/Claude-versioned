@@ -17,8 +17,8 @@ from ..plan import run_mrp
 from ..plan.leadtime import gr_days, location_calendar, resource_calendar
 from ..plan.result import PlanResult
 from ..plan.structure import entering, needs
-from ..time.capacity import day_capacity, max_units
-from ..validate import has_errors, validate
+from ..time.capacity import NoWorkingTime, day_capacity, max_units
+from ..validate import Issue, has_errors, validate
 from .clock import ResourceClock, after_queue
 from .core import Decoded, Instance, is_changeover, Job, OpSpec, Res, check, complete, decode, edd, improve, setup_rule
 from .heuristics import HEURISTICS, start
@@ -262,7 +262,7 @@ def _labour(ds: Dataset, inst: Instance, d: Decoded) -> list[LabourDay]:
     return out
 
 
-def run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None,
+def _run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None,
                  plan: PlanResult | None = None, hold: dict[str, float] | None = None) -> ScheduleResult:
     """Schedule the window. With ``sequence`` (per resource, e.g. handed back from the board) every listed step runs
     on the resource it is listed on, in that order; ``hold`` gives not-before times per order (default: the start
@@ -370,7 +370,7 @@ def _gr(ds: Dataset, m: dict) -> float:
     return gr_days(ds.location_product_by_key.get((m["location"], m["product"])))
 
 
-def compare_schedules(ds: Dataset) -> ScheduleComparison:
+def _compare_schedules(ds: Dataset) -> ScheduleComparison:
     """Every start rule, the local search and the optimiser on the same window, scored with the current weights."""
     import time
 
@@ -403,3 +403,27 @@ def compare_schedules(ds: Dataset) -> ScheduleComparison:
             r.best = r.kpis.objective <= low + 1e-7
     out.ok = True
     return out
+
+
+def _capacity_issue(failure: NoWorkingTime) -> Issue:
+    return Issue(code="NO_WORKING_TIME", severity="error", object_type="schedule", object_id="schedule",
+                 message=str(failure), hint="Open capacity, select a usable alternative, or reschedule the order.")
+
+
+def run_schedule(ds: Dataset, sequence: dict[str, list[str]] | None = None,
+                 plan: PlanResult | None = None, hold: dict[str, float] | None = None) -> ScheduleResult:
+    try:
+        return _run_schedule(ds, sequence, plan, hold)
+    except NoWorkingTime as failure:
+        return ScheduleResult(ok=False, profile=ds.scheduling.profile,
+                              day_start_hour=ds.scheduling.day_start_hour, issues=[_capacity_issue(failure)])
+
+
+def compare_schedules(ds: Dataset) -> ScheduleComparison:
+    try:
+        return _compare_schedules(ds)
+    except NoWorkingTime as failure:
+        cfg = ds.scheduling
+        return ScheduleComparison(ok=False, issues=[_capacity_issue(failure)],
+                                  weights={"tardiness": cfg.tardiness_weight, "setup": cfg.setup_weight,
+                                           "earliness": cfg.earliness_weight, "makespan": cfg.makespan_weight})

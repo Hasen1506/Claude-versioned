@@ -38,7 +38,7 @@ from ..model import (
 )
 from ..network import NetworkGraph, Node, SupplyOption, build_graph
 from ..time import Buckets
-from ..time.capacity import day_capacity, hours_between, overtime_between
+from ..time.capacity import NoWorkingTime, day_capacity, hours_between, overtime_between
 from ..validate import has_errors, validate
 from . import costing, rates
 from .consumption import effective_demand
@@ -208,10 +208,18 @@ class _Planner:
         ps = self.ds.production_source_by_id.get(rc.source or "")
         if rc.kind.value != "production" or ps is None or ps.location != rc.location or ps.product != rc.product:
             return
-        if rc.start_date is not None and rc.start_date >= self.start:
-            sch = schedule_make(self.ds, ps, rc.qty, start=rc.start_date)
-        else:
-            sch = schedule_make(self.ds, ps, rc.qty, available=self.receipt_date(rc))
+        ps = ps.model_copy(update={"operations": [
+            op.model_copy(update={"resource": rc.step_resources[op.seq]})
+            if rc.step_resources.get(op.seq) in self.ds.resource_by_id else op for op in ps.operations]})
+        try:
+            if rc.start_date is not None and rc.start_date >= self.start:
+                sch = schedule_make(self.ds, ps, rc.qty, start=rc.start_date)
+            else:
+                sch = schedule_make(self.ds, ps, rc.qty, available=self.receipt_date(rc))
+        except NoWorkingTime as failure:
+            self._exc("FIRM_NO_WORKING_TIME", "error", str(failure),
+                      node=(rc.location, rc.product), order=rc.id)
+            return
         who = (rc.id, rc.product, True)
         for w in sch.ops:
             if w.resource is None:
@@ -458,15 +466,18 @@ class _Planner:
     def _earliest_new(self, node: Node, st: _NodeState, need: date, qty: float) -> date | None:
         """When a new order for ``need`` would be available: on time if its backward-scheduled start is not in
         the past (nor inside the fence), else its forward-scheduled date from today (or the fence end)."""
-        opt = self._choose(node, need, qty)
-        if opt is None:
-            return None
+        excluded: set[tuple[str, str]] = set()
         fence_end = self.start + timedelta(days=st.lp.planning_time_fence_days)
         target = max(need, fence_end) if st.lp.planning_time_fence_days > 0 else need
-        sch = schedule(self.ds, opt, qty, available=target)
-        if sch.start_date >= self.start:
-            return target
-        return schedule(self.ds, opt, qty, start=self.start).available_date
+        while (opt := self._choose(node, need, qty, excluded)) is not None:
+            try:
+                sch = schedule(self.ds, opt, qty, available=target)
+                if sch.start_date >= self.start:
+                    return target
+                return schedule(self.ds, opt, qty, start=self.start).available_date
+            except NoWorkingTime:
+                excluded.add((opt.kind, opt.source_id))
+        return None
 
     def _reschedule_in(self, node: Node, st: _NodeState, receipts: list[_Supply], rec_on: dict[date, float],
                        d: date, short: float, lot: float) -> float:
@@ -507,8 +518,10 @@ class _Planner:
         return got
 
     def _supply(self, node: Node, st: _NodeState, qty: float, need: date, *, shortage: float | None = None,
-                ceiling: float | None = None, below_zero: float | None = None) -> float:
-        opt = self._choose(node, need, qty)
+                ceiling: float | None = None, below_zero: float | None = None,
+                excluded: set[tuple[str, str]] | None = None) -> float:
+        excluded = set(excluded or ())
+        opt = self._choose(node, need, qty, excluded)
         if opt is None:
             self._exc("NO_VALID_SOURCE", "error", f"No valid source on {need.isoformat()} for {qty:,.1f}",
                       node=node, when=need, qty=qty)
@@ -543,7 +556,20 @@ class _Planner:
         req_left = qty if below_zero is None else below_zero
         buf_left = 0.0 if shortage is None else max(0.0, shortage - req_left)
         for lot in lots:
-            for o in self._within_limits(node, st, opt, lot, need):
+            try:
+                made = self._within_limits(node, st, opt, lot, need)
+            except NoWorkingTime as failure:
+                self._exc("SOURCE_NO_WORKING_TIME", "warning", f"{opt.source_id}: {failure}",
+                          node=node, when=need, qty=lot)
+                excluded.add((opt.kind, opt.source_id))
+                remaining = max(0.0, qty - total)
+                if remaining <= EPS:
+                    return total
+                return total + self._supply(node, st, remaining, need,
+                                            shortage=None if shortage is None else max(0.0, shortage - total),
+                                            ceiling=None if ceiling is None else max(0.0, ceiling - total),
+                                            below_zero=req_left, excluded=excluded)
+            for o in made:
                 q = o.qty
                 for_req = min(q, req_left)
                 o.for_buffer = min(q - for_req, buf_left)
@@ -650,8 +676,10 @@ class _Planner:
             return True
         return (src.valid_from is None or src.valid_from <= d) and (src.valid_to is None or src.valid_to >= d)
 
-    def _choose(self, node: Node, need: date, qty: float) -> SupplyOption | None:
-        valid = [o for o in self.g.options.get(node, []) if self._valid(o, need)]
+    def _choose(self, node: Node, need: date, qty: float,
+                excluded: set[tuple[str, str]] | None = None) -> SupplyOption | None:
+        valid = [o for o in self.g.options.get(node, [])
+                 if self._valid(o, need) and (o.kind, o.source_id) not in (excluded or ())]
         if not valid:
             return None
         quota = [o for o in valid if o.quota]
@@ -698,6 +726,9 @@ class _Planner:
                              origin=origin, need_date=need, start_date=sch.start_date, due_date=sch.due_date,
                              available_date=sch.available_date, start_in_past=past, fence_shifted=fenced,
                              wanted_start=wanted if past else None)
+        if opt.kind == "make":
+            order.step_resources = {w.seq: w.resource for w in sch.ops
+                                    if w.resource and w.resource != self._primary(opt.source_id, w.seq)}
         if placed is not None:
             order.capacity_shift_days = (sch.available_date - base_avail).days
             order.step_resources = {seq: r for seq, r in placed.items() if r != self._primary(opt.source_id, seq)}
@@ -966,8 +997,7 @@ class _Planner:
             total = qty * price + freight + pu.ordering_cost + hand
             order.costs = {"purchase": qty * price, "transport": freight, "ordering": pu.ordering_cost, "handling": hand}
         elif opt.kind == "make":
-            conv = qty * costing.conversion_unit_cost(ds, opt.source_id)
-            setup = costing.setup_cost(ds, opt.source_id)
+            conv, setup = costing.production_order_cost(ds, opt.source_id, qty, order.step_resources)
             k.production_cost += conv
             k.setup_cost += setup
             total = conv + setup

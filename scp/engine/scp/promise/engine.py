@@ -21,6 +21,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from ..time.capacity import NoWorkingTime
+
 from ..model import (
     Dataset, DemandKind, DemandRecord, LocationType,
 )
@@ -408,7 +410,10 @@ class Promiser:
                                  + (f" (alternative to {op.resource})" if rid != op.resource else "")))
             t = last
             finish = max(finish, last + 1)
-        sched = schedule_make(ds, ps, qty, start=self.date(start))
+        try:
+            sched = schedule_make(ds, ps, qty, start=self.date(start))
+        except NoWorkingTime:
+            return None
         done = max(self.day(sched.available_date), finish + math.ceil(gr_days(ds.location_product_by_key.get(node)) - 1e-9))
         steps.append(CtpStep(kind="make", location=loc, product=prod, qty=qty, start=self.date(start), end=self.date(done),
                              note=f"new production via {ps_id}"))
