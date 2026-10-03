@@ -3,7 +3,9 @@
 // terms and payments; returns and credit notes; and what each customer owes against their credit limit.
 import { useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { Dataset, DeliveryView, InvoiceView, OrderView, SalesAction, SalesActionInput, SalesView } from "../api/types";
+import type {
+  Dataset, DeliveryView, DemandRecord, InvoiceView, OrderView, PromiseResult, SalesAction, SalesActionInput, SalesView,
+} from "../api/types";
 import {
   Badge, Edits, Empty, Panel, Provenance, RunButton, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
 } from "../components/ui";
@@ -292,9 +294,36 @@ function LinesForm({ ds, customer, busy, submit, onSubmit, second }: {
   const set = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const ok = customer && lines.length > 0 && lines.every((l) => l.product && l.qty > 0 && l.date);
   const total = lines.reduce((a, l) => a + l.qty * (l.price ?? linePrice(ds, customer, l.product, l.qty).net ?? 0), 0);
+  // N119: every line checked together before the order is taken, each after the orders already promised and the lines before it
+  const [checked, setChecked] = useState<{ key: string; res: PromiseResult } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkErr, setCheckErr] = useState<string | null>(null);
+  const key = JSON.stringify([customer, lines]);
+  const fresh = checked?.key === key ? checked.res.checked_lines ?? [] : null;
+  const check = async () => {
+    setChecking(true);
+    setCheckErr(null);
+    try {
+      const recs = lines.map((l) => ({ location: customer, product: l.product, date: l.date, qty: l.qty, kind: "sales_order", priority: 5,
+        complete_delivery: false, price: l.price }) as DemandRecord);
+      setChecked({ key, res: await api.promiseCheckLines(ds, recs) });
+    } catch (e) {
+      setCheckErr(String(e).replace(/^Error:\s*/, ""));
+    } finally {
+      setChecking(false);
+    }
+  };
+  const verdict = (c: NonNullable<typeof fresh>[number]) => {
+    const last = c.lines.reduce((a, x) => (x.date > a ? x.date : a), "");
+    if (c.status === "on_time") return <><Badge sev="ok">on time</Badge> <span className="small">{day(last)}</span></>;
+    if (c.confirmed <= 1e-9) return <><Badge sev="error">cannot be promised</Badge>{c.reason && <div className="faint small">{c.reason}</div>}</>;
+    return <><Badge sev="warning">{c.status === "late" ? "late" : `${qty(c.confirmed)} of ${qty(c.qty)}`}</Badge> <span className="small">
+      {c.on_time > 1e-9 ? `${qty(c.on_time)} on time, ` : ""}the rest by {day(last)}</span>{c.reason && <div className="faint small">{c.reason}</div>}</>;
+  };
   return <div className="stack">
     <div className="table-wrap"><table className="t">
-      <thead><tr><th>Line</th><th>Product</th><th className="num">Quantity</th><th>Wanted on</th><th className="num">Price a unit</th><th className="num">Value</th><th /></tr></thead>
+      <thead><tr><th>Line</th><th>Product</th><th className="num">Quantity</th><th>Wanted on</th><th className="num">Price a unit</th><th className="num">Value</th>
+        {fresh && <th>Can be promised</th>}<th /></tr></thead>
       <tbody>{lines.map((l, i) => {
         const pr = linePrice(ds, customer, l.product, l.qty);
         return <tr key={i}>
@@ -307,13 +336,17 @@ function LinesForm({ ds, customer, busy, submit, onSubmit, second }: {
             placeholder={pr.net != null ? `${Math.round(pr.net * 100) / 100}` : "no price"} onChange={(e) => set(i, { price: e.target.value === "" ? null : Number(e.target.value) })} />
             {l.price == null && pr.discount > 1e-9 && pr.list != null && <div className="faint small">{unitMoney(pr.list, cur)} less {pct(pr.discount, 1)}</div>}</td>
           <td className="num">{exactMoney(l.qty * (l.price ?? pr.net ?? 0), cur)}</td>
+          {fresh && <td aria-label={`Line ${(i + 1) * 10} can be promised`}>{fresh[i] ? verdict(fresh[i]) : ""}</td>}
           <td>{lines.length > 1 && <button className="btn sm ghost" aria-label={`Remove line ${(i + 1) * 10}`} onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>✕</button>}</td>
         </tr>;
       })}</tbody>
       <tfoot><tr><td /><td><button className="btn sm ghost" onClick={() => setLines((ls) => [...ls, blank()])}>+ Add a line</button></td><td /><td />
-        <td className="num faint">before tax</td><td className="num"><b>{exactMoney(total, cur)}</b></td><td /></tr></tfoot>
+        <td className="num faint">before tax</td><td className="num"><b>{exactMoney(total, cur)}</b></td>{fresh && <td />}<td /></tr></tfoot>
     </table></div>
+    {checkErr && <div className="banner error" role="alert"><Badge sev="error">Not checked</Badge><span>{checkErr}</span></div>}
+    {checked && !fresh && <p className="small faint" role="status">The lines changed since they were checked: check again.</p>}
     <Edits><div className="row wrap">
+      <button className="btn" disabled={busy || checking || !ok} onClick={check}>{checking ? "Checking…" : "Check what can be promised"}</button>
       <button className="btn accent" disabled={busy || !ok} onClick={() => onSubmit(lines)}>{busy ? "Working…" : submit}</button>
       {second && <button className="btn" disabled={busy || !ok} onClick={() => second.onClick(lines)}>{second.label}</button>}
     </div></Edits>
@@ -353,8 +386,9 @@ function NewOrder({ res, ds }: { res: SalesView; ds: Dataset }) {
         second={{ label: "Make a quotation", onClick: (lines) => run("create_quotation", payload(lines)) }} />
       <p className="faint small">Prices come from the customer's price (and its quantity scale), else the product's, less their discounts; type a price
         to agree another. <b>Take the order</b> promises every line after the orders already promised and makes any new production it needs
-        firm. <b>Make a quotation</b> promises nothing; it holds for {ds.sales?.quotation_days ?? 30} days.
-        To see first what can be promised for one product, use <a href={href("promise", "simulate")}>Orders → New order</a>.</p>
+        firm. <b>Make a quotation</b> promises nothing; it holds for {ds.sales?.quotation_days ?? 30} days. <b>Check what can be promised</b> shows
+        every line's date before you take it, each line after the orders already promised and the lines before it; nothing is kept.
+        For one product in depth (what production could add, other places to ship from), use <a href={href("promise", "simulate")}>Orders → New order</a>.</p>
     </Panel>
   </div>;
 }

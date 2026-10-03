@@ -41,7 +41,7 @@ from ..purchasing import PurchasingError, act as purchasing_act, create_purchase
 from ..purchasing.result import ActionReport, CreateReport, PurchasingView
 from ..sales import SalesError, act as sales_act, sales_view
 from ..sales.result import SalesReport, SalesView
-from ..promise import PromiseResult, check_order, commit, run_bop, run_promise
+from ..promise import PromiseResult, check_lines, check_order, commit, run_bop, run_promise
 from ..promise.orders import (
     OrderError, SalesOrderReport, accept as accept_order, cancel as cancel_order, change as change_order,
 )
@@ -438,11 +438,16 @@ def post_bop(ds: PlanData) -> Response:
 
 class PromiseCheckRequest(Out):
     dataset: PlanData
-    order: DemandRecord
+    order: DemandRecord | None = None                                  # one line, or
+    lines: list[DemandRecord] = Field(default_factory=list, max_length=500)   # the lines of one order, checked together
 
 
 @app.post("/api/promise/check", response_model=PromiseResult)
 def post_promise_check(req: PromiseCheckRequest) -> PromiseResult:
+    if req.lines:
+        return check_lines(req.dataset, req.lines)
+    if req.order is None:
+        raise HTTPException(422, "send the order to check, or its lines")
     return check_order(req.dataset, req.order)
 
 

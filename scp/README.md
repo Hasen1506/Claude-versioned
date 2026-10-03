@@ -280,7 +280,8 @@ The supply plan goes further into how a plant really plans, mostly in `engine/sc
 - **Orders with several lines.** Each line is priced from the customer's price at its quantity scale (else the
   product's) less the customer's discounts, unless a price is agreed on the line, and promised like any order; new
   production it needs is made firm at once (R13). Lines are the sales-order demand the plan already reads, under an
-  order header (`SO-00001/10`, `/20`, …).
+  order header (`SO-00001/10`, `/20`, …). Before it is taken, *Check what can be promised* checks every line
+  together: each after the orders already promised and the lines before it.
 - **Credit.** A customer's credit limit counts their open order lines, goods shipped and not invoiced, and unpaid
   invoices less credit notes, with tax. An order beyond it is promised but held for delivery until someone releases it.
 - **Quotations** price an offer without promising it; won, they become an order at the quoted prices.

@@ -43,6 +43,17 @@ test('order to cash: a two-line order over the credit limit is released, deliver
   await page.getByLabel('Line 20 quantity').fill('10');
   await page.getByLabel('Line 20 wanted on').fill('2026-01-08');
   await page.getByLabel('Their order number').fill('PO-77');
+  // every line checked together before taking it (N119): a third line of 80 tins finds only 75 left after line 10's 25
+  await page.getByRole('button',{name:'+ Add a line'}).click();
+  await page.getByLabel('Line 30 product').selectOption('A');
+  await page.getByLabel('Line 30 quantity').fill('80');
+  await page.getByLabel('Line 30 wanted on').fill('2026-01-08');
+  await page.getByRole('button',{name:'Check what can be promised'}).click();
+  await expect(page.getByLabel('Line 10 can be promised')).toContainText('on time',{timeout:45000});
+  await expect(page.getByLabel('Line 20 can be promised')).toContainText('on time');
+  await expect(page.getByLabel('Line 30 can be promised')).toContainText(/late 75 on time, the rest by /);
+  await page.getByRole('button',{name:'Remove line 30'}).click();
+  await expect(page.getByText('The lines changed since they were checked')).toBeVisible();
   await page.getByRole('button',{name:'Take the order'}).click();
   await expect(done(page)).toContainText(/SO-00001 taken for Kumar Stores: 2 lines, INR 2,299.00 with tax/,{timeout:45000});
   await expect(done(page)).toContainText(/Blocked for delivery/);

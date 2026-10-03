@@ -122,4 +122,5 @@ class PromiseResult(Out):
     bop: list[BopRow] = Field(default_factory=list)
     kpis: PromiseKpis = Field(default_factory=PromiseKpis)
     checked: OrderPromise | None = None   # mode "check": the simulated order
+    checked_lines: list[OrderPromise] = Field(default_factory=list)   # the lines of an order checked together
     issues: list[Issue] = Field(default_factory=list)

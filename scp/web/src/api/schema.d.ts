@@ -7726,7 +7726,9 @@ export interface components {
         /** PromiseCheckRequest */
         PromiseCheckRequest: {
             dataset: components["schemas"]["Dataset"];
-            order: components["schemas"]["DemandRecord"];
+            order?: components["schemas"]["DemandRecord"] | null;
+            /** Lines */
+            lines?: components["schemas"]["DemandRecord"][];
         };
         /** PromiseCommitRequest */
         PromiseCommitRequest: {
@@ -7837,6 +7839,8 @@ export interface components {
             bop: components["schemas"]["BopRow"][];
             kpis: components["schemas"]["PromiseKpis"];
             checked: components["schemas"]["OrderPromise"] | null;
+            /** Checked Lines */
+            checked_lines: components["schemas"]["OrderPromise"][];
             /** Issues */
             issues: components["schemas"]["Issue"][];
         };

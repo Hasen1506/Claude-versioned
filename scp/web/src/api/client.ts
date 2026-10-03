@@ -230,6 +230,9 @@ export const api = {
   bop: (ds: Dataset) => planPost<PromiseResult>("/api/promise/bop", ds),
   promiseCheck: (dataset: Dataset, order: DemandRecord) =>
     withDataset<PromiseResult>("/api/promise/check", dataset, { order }),
+  /** The lines of one order checked together, each after the ones before it (N119). */
+  promiseCheckLines: (dataset: Dataset, lines: DemandRecord[]) =>
+    withDataset<PromiseResult>("/api/promise/check", dataset, { lines }),
   promiseCommit: (dataset: Dataset, mode: "entry" | "bop") =>
     write<PromiseCommitResponse>("/api/promise/commit", dataset, { mode }),
   /** Detailed schedule; `sequence` (resource → operation keys) fixes the order on those resources and puts a step
