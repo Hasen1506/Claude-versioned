@@ -114,7 +114,9 @@ EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 def erp_orders(doc: dict) -> dict[tuple[str, str], tuple[str, str]]:
     """The orders of a company's data the ERP has numbered: (kind, id) → (the ERP's number, the place)."""
     out: dict[tuple[str, str], tuple[str, str]] = {}
-    for p in doc.get("purchase_orders") or []:
+    # a cancelled order's header is kept in cancelled_purchase_orders and goes to the ERP as cancelled from there:
+    # it is not withdrawn
+    for p in [*(doc.get("purchase_orders") or []), *(doc.get("cancelled_purchase_orders") or [])]:
         if isinstance(p, dict) and p.get("erp_ref") and p.get("id"):
             out[("purchase_order", p["id"])] = (p["erp_ref"], str(p.get("location") or ""))
     for r in doc.get("receipts") or []:
