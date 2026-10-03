@@ -352,7 +352,7 @@ class OutOrder(Out):
     kind: OutKind
     id: str
     version: str                   # what the ERP needs of the order, fingerprinted: a new one means it changed
-    change: Literal["new", "changed", "taken"]
+    change: Literal["new", "changed", "taken", "withdrawn"]   # withdrawn: deleted here, the ERP should close its copy
     erp_ref: str
     location: str
     supplier: str | None = None    # purchase: the supplier; transfer: the place it comes from
@@ -423,14 +423,34 @@ def outbound(ds: Dataset, kind: OutKind, everything: bool = False) -> list[OutOr
     return out
 
 
-def acknowledge(ds: Dataset, acks: list[ErpAck]) -> tuple[Dataset, list[ItemResult]]:
-    """The ERP took these orders: keep the number it gave each and the version it took."""
+def withdrawn_version(kind: str, oid: str, erp_ref: str) -> str:
+    return _version({"withdrawn": [kind, oid, erp_ref]})
+
+
+def withdrawn(kind: OutKind, rows: list[dict]) -> list[OutOrder]:
+    """Orders the ERP numbered that were deleted here (N137): ``rows`` as kept by the company store (kind, id,
+    erp_ref, location, taken_at)."""
+    return [OutOrder(kind=kind, id=r["id"], version=withdrawn_version(kind, r["id"], r["erp_ref"]),
+                     change="taken" if r.get("taken_at") else "withdrawn", erp_ref=r["erp_ref"],
+                     location=r.get("location") or "")
+            for r in rows if r["kind"] == kind]
+
+
+def acknowledge(ds: Dataset, acks: list[ErpAck], gone: dict[tuple[str, str], str] | None = None
+                ) -> tuple[Dataset, list[ItemResult]]:
+    """The ERP took these orders: keep the number it gave each and the version it took. ``gone``: orders deleted
+    here, (kind, id) → the ERP's number; an acknowledgement of one says the ERP closed its copy."""
     current = {(k, o.id): o for k in ("purchase_order", "production_order", "transfer_order")
                for o in outbound(ds, k, everything=True)} if acks else {}
-    return _each(ds, acks, lambda a: a.id, lambda d, a: _ack(d, a, current))
+    return _each(ds, acks, lambda a: a.id, lambda d, a: _ack(d, a, current, gone or {}))
 
 
-def _ack(ds: Dataset, a: ErpAck, current: dict) -> tuple[Dataset, ItemResult]:
+def _ack(ds: Dataset, a: ErpAck, current: dict, gone: dict[tuple[str, str], str]) -> tuple[Dataset, ItemResult]:
+    if (a.kind, a.id) in gone and (a.kind, a.id) not in current:
+        if gone[(a.kind, a.id)] != a.erp_ref:
+            raise ValueError(f"{a.id} was {gone[(a.kind, a.id)]} in the ERP, not {a.erp_ref}")
+        return ds, ItemResult(ref=a.id, status="applied", id=a.id,
+                              message=f"{a.id} ({a.erp_ref}) was deleted here: the ERP closed its copy")
     now = current.get((a.kind, a.id))
     later = " The order changed since that version: it goes to the ERP again." if now and now.version != a.version else ""
     if a.kind == "purchase_order":

@@ -216,6 +216,42 @@ def test_a_production_order_changed_after_the_erp_took_it_goes_to_it_again():
     assert r.json()["message"]["items"][0]["status"] == "applied", r.text
 
 
+def test_an_order_the_erp_took_and_then_deleted_here_goes_to_it_as_withdrawn_until_it_closes_its_copy():
+    owner, cid, key = setup()
+    [po] = client.get(f"/api/companies/{cid}/erp/purchase-orders", headers=h(key)).json()["orders"]
+    [mo] = client.get(f"/api/companies/{cid}/erp/production-orders", headers=h(key)).json()["orders"]
+    client.post(f"/api/companies/{cid}/erp/acknowledge", headers=h(key), json={"orders": [
+        {"kind": "purchase_order", "id": "PO-00001", "erp_ref": "4500000123", "version": po["version"]},
+        {"kind": "production_order", "id": "MO-1", "erp_ref": "1000077", "version": mo["version"]}]})
+    # a planner deletes both outright and saves
+    c = doc_of(owner, cid)
+    d = c["dataset"]
+    d["purchase_orders"], d["receipts"] = [], []
+    r = client.put(f"/api/companies/{cid}", headers=h(owner), json={"dataset": d, "base_revision": c["meta"]["revision"]})
+    assert r.status_code == 200, r.text
+    [gone] = client.get(f"/api/companies/{cid}/erp/purchase-orders", headers=h(key)).json()["orders"]
+    assert (gone["id"], gone["change"], gone["erp_ref"], gone["location"], gone["lines"]) == \
+        ("PO-00001", "withdrawn", "4500000123", "P", [])
+    [made] = client.get(f"/api/companies/{cid}/erp/production-orders", headers=h(key)).json()["orders"]
+    assert (made["id"], made["change"]) == ("MO-1", "withdrawn")
+    # the wrong number is refused; the right one closes it
+    r = client.post(f"/api/companies/{cid}/erp/acknowledge", headers=h(key), json={"orders": [
+        {"kind": "purchase_order", "id": "PO-00001", "erp_ref": "999", "version": gone["version"]}]})
+    assert r.json()["message"]["items"][0]["message"] == "PO-00001 was 4500000123 in the ERP, not 999"
+    r = client.post(f"/api/companies/{cid}/erp/acknowledge", headers=h(key), json={"orders": [
+        {"kind": "purchase_order", "id": "PO-00001", "erp_ref": "4500000123", "version": gone["version"]}]})
+    assert r.json()["message"]["items"][0]["message"] == \
+        "PO-00001 (4500000123) was deleted here: the ERP closed its copy"
+    assert client.get(f"/api/companies/{cid}/erp/purchase-orders", headers=h(key)).json()["orders"] == []
+    every = client.get(f"/api/companies/{cid}/erp/purchase-orders?all=true", headers=h(key)).json()["orders"]
+    assert [(o["id"], o["change"]) for o in every] == [("PO-00001", "taken")]
+    # the production order is put back before the ERP closed it: it is no longer withdrawn
+    rev = doc_of(owner, cid)["meta"]["revision"]
+    r = client.post(f"/api/companies/{cid}/restore", headers=h(owner), json={"revision": rev - 1, "base_revision": rev})
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/companies/{cid}/erp/production-orders", headers=h(key)).json()["orders"] == []
+
+
 # ---- master data ------------------------------------------------------------------------------------------------
 def test_master_data_records_are_added_or_changed_in_the_fields_sent():
     owner, cid, key = setup()

@@ -9,6 +9,8 @@ import { day, pct, plural, qty } from "../lib/format";
 import { Loc, Msg, namesOf, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
+import { addressList, useServerMail } from "../components/ServerSend";
+import { poDocument, poEmail } from "../lib/podoc";
 import { isStale, store, useFreshResult, useReadOnly, useStore } from "../state/store";
 import {
   daysBetween, hasDetail, LotFields, lotExtra, LotsDetail, NO_LOT, PhysicalInventory, postAct, ShortOrders, StockRules, StockTypeCells, type LotInput,
@@ -608,15 +610,50 @@ function Firming({ ds }: { ds: Dataset }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [toSend, setToSend] = useState<string[]>([]);
+  const company = useStore((s) => s.company);
+  const serverMail = useServerMail() && !!company?.live && company.role !== "viewer";
   const sendThem = async () => {
     setBusy(true);
     setErr(null);
     try {
+      let orders = toSend;
+      const said: string[] = [];
+      if (serverMail && company) {
+        // N139: on a server that sends mail, each order goes to its supplier's address first; only those e-mailed are
+        // recorded as sent, the rest are named (no address, or the mail server refused) to send from Buying
+        const before = store.get().dataset!;
+        await store.run("purchasing");
+        const views = store.get().runs.purchasing.data?.orders ?? [];
+        const mailed: string[] = [], none: string[] = [], failed: string[] = [];
+        for (const id of toSend) {
+          const po = views.find((v) => v.id === id);
+          if (!po || !po.approved) continue;                     // waiting to be released: send_all names it
+          const m = poEmail(po, before);
+          const to = addressList(m.to);
+          if (!to.length) { none.push(id); continue; }
+          try {
+            const row = await api.sendMail(company.id, { kind: po.kind === "scheduling_agreement" ? "delivery_schedule" : "purchase_order", ref: id, to, cc: [], subject: m.subject, text: m.body, html: poDocument(po, before) });
+            if (row.status === "sent") mailed.push(`${id} to ${to.join(", ")}`);
+            else failed.push(`${id} (${row.error || "the mail server did not take it"})`);
+          } catch (x) {
+            failed.push(`${id} (${x instanceof Error ? x.message : String(x)})`);
+          }
+        }
+        if (mailed.length) said.push(`E-mailed ${mailed.join("; ")}.`);
+        if (none.length) said.push(`Not e-mailed, no address on the supplier's purchasing data: ${none.join(", ")}; send ${none.length === 1 ? "it" : "them"} from Buying.`);
+        if (failed.length) said.push(`Not e-mailed: ${failed.join("; ")}.`);
+        const skip = new Set([...none, ...failed.map((f) => f.split(" ")[0])]);
+        orders = toSend.filter((id) => !skip.has(id));
+      }
       const before = store.get().dataset!;
-      const out = await api.poAction(before, "send_all", "", { orders: toSend });
-      store.replace(out.dataset, before);
+      let text = "";
+      if (orders.length) {
+        const out = await api.poAction(before, "send_all", "", { orders });
+        store.replace(out.dataset, before);
+        text = namesOf(out.dataset).text(out.report.message);
+      }
       setToSend([]);
-      setMsg(namesOf(out.dataset).text(out.report.message));
+      setMsg([text, ...said].filter(Boolean).join(" "));
       await store.run("purchasing");
     } catch (e) {
       setErr(String(e));
@@ -659,7 +696,9 @@ function Firming({ ds }: { ds: Dataset }) {
         {busy ? "Saving…" : `Make ${chosen.size} order${chosen.size === 1 ? "" : "s"} firm`}</button></></Edits> : null}>
       {msg && <div className="banner info" role="status" style={{ margin: 12 }}><Badge sev="ok">Firmed</Badge><span>{msg}</span><span className="spacer" />
         {toSend.length > 0 && <Edits><button className="btn sm accent" disabled={busy} onClick={sendThem}
-          title="Sends every one of them that needs no release; the rest wait on Buying">Send the {plural(toSend.length, "purchase order")} now</button></Edits>}
+          title={serverMail ? "The server e-mails each one that needs no release to its supplier, the order attached, and records it as sent; the rest wait on Buying"
+            : "Records every one of them that needs no release as sent; the rest wait on Buying"}>
+          {serverMail ? `E-mail the ${plural(toSend.length, "purchase order")} to the suppliers` : `Send the ${plural(toSend.length, "purchase order")} now`}</button></Edits>}
         <button className="btn sm ghost" aria-label="Dismiss" onClick={() => setMsg(null)}>✕</button></div>}
       {err && <div className="banner error" style={{ margin: 12 }}><Badge sev="error">Firming failed</Badge>{err}</div>}
       {!plan.data ? <Empty title="No supply plan yet"><button className="btn" onClick={() => store.run("plan")} disabled={plan.running}>Calculate the supply plan</button></Empty>

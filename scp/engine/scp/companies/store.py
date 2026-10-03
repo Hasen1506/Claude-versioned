@@ -93,6 +93,10 @@ CREATE TABLE IF NOT EXISTS api_keys (
   name TEXT NOT NULL, role TEXT NOT NULL, prefix TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, created_by TEXT NOT NULL,
   created_at TEXT NOT NULL, last_used TEXT, revoked_at TEXT, revoked_by TEXT
 );
+CREATE TABLE IF NOT EXISTS erp_withdrawn (
+  company_id TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, erp_ref TEXT NOT NULL, location TEXT NOT NULL,
+  at TEXT NOT NULL, user_id TEXT NOT NULL, taken_at TEXT, PRIMARY KEY (company_id, kind, id)
+);
 CREATE TABLE IF NOT EXISTS sign_in_states (
   state TEXT PRIMARY KEY, verifier TEXT NOT NULL, nonce TEXT NOT NULL, at TEXT NOT NULL, next TEXT NOT NULL DEFAULT ''
 );
@@ -106,6 +110,18 @@ PBKDF2_ROUNDS = 200_000
 LOG_ITEMS = 12                # records named per list in a save's detail
 KEY_PREFIX = "scpk_"           # an integration key, not a session (Phase Q)
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+def erp_orders(doc: dict) -> dict[tuple[str, str], tuple[str, str]]:
+    """The orders of a company's data the ERP has numbered: (kind, id) → (the ERP's number, the place)."""
+    out: dict[tuple[str, str], tuple[str, str]] = {}
+    for p in doc.get("purchase_orders") or []:
+        if isinstance(p, dict) and p.get("erp_ref") and p.get("id"):
+            out[("purchase_order", p["id"])] = (p["erp_ref"], str(p.get("location") or ""))
+    for r in doc.get("receipts") or []:
+        if isinstance(r, dict) and r.get("erp_ref") and r.get("id") and r.get("kind") in ("production", "transfer"):
+            out[(f"{r['kind']}_order", r["id"])] = (r["erp_ref"], str(r.get("location") or ""))
+    return out
+
 
 # plain names of the dataset's lists, for the audit trail
 LABELS = {
@@ -764,6 +780,7 @@ class Companies:
                 self._keep(cid, rev, user.id, action, text, now, current, doc, client)
                 self._log(cid, rev, user.id, action, (note + ": " if note else "") + (summary or "no change"), changes)
                 self._document(cid, rev, user.id, now, current, doc)
+                self._withdraw(cid, user.id, now, current, doc)
                 request = self._hold(cid, rev, user, held, now) if held else None
                 self.db.execute("COMMIT")
             except Exception:
@@ -923,6 +940,21 @@ class Companies:
         return HeldChange(id=r["id"], at=r["at"], by=self._name(r["user_id"]), by_me=r["user_id"] == uid,
                           summary=r["summary"], status=r["status"], decided_by=self._name(r["decided_by"]) if r["decided_by"] else "",
                           decided_at=r["decided_at"] or "", note=r["note"], changes=rows)
+
+    def _withdraw(self, cid: str, uid: str, now: str, before: dict, after: dict) -> None:
+        """An order the ERP numbered that this save removed (deleted, not completed) is kept to tell the ERP it is
+        withdrawn (N137); one that comes back (a save put back) is no longer withdrawn."""
+        old, new = erp_orders(before), erp_orders(after)
+        closed = {(f"{c.get('kind')}_order", c.get("id")) for c in after.get("closed_orders") or [] if isinstance(c, dict)}
+        for (kind, oid), (ref, place) in old.items():
+            if (kind, oid) not in new and (kind, oid) not in closed:
+                self.db.execute("INSERT INTO erp_withdrawn (company_id, kind, id, erp_ref, location, at, user_id) "
+                                "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (company_id, kind, id) DO UPDATE SET erp_ref = "
+                                "excluded.erp_ref, location = excluded.location, at = excluded.at, user_id = "
+                                "excluded.user_id, taken_at = NULL", (cid, kind, oid, ref, place, now, uid))
+        for kind, oid in set(new) - set(old):
+            self.db.execute("DELETE FROM erp_withdrawn WHERE company_id = ? AND kind = ? AND id = ? AND taken_at IS NULL",
+                            (cid, kind, oid))
 
     def _document(self, cid: str, rev: int, uid: str, now: str, before: dict, after: dict) -> None:
         """Keep every field this save changed, with its old and new value (change documents)."""

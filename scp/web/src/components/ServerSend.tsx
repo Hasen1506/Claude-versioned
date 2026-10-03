@@ -9,7 +9,7 @@ import { Edits } from "./ui";
 
 let config: Promise<AuthConfig | null> | null = null;
 /** Whether the server sends mail (asked once per page load). */
-function useServerMail(): boolean {
+export function useServerMail(): boolean {
   const [on, setOn] = useState(false);
   useEffect(() => {
     config ??= api.authConfig().catch(() => null);

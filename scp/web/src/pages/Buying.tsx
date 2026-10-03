@@ -463,7 +463,7 @@ function PoDocButtons({ po, ds, onSent }: { po: PoView; ds: Dataset; onSent?: ()
     <button className="btn sm ghost" onClick={print} title="Opens the order as a page and the print dialog, where it can be saved as PDF">Print or PDF</button>
     <button className="btn sm ghost" onClick={() => download(file, poDocument(po, ds), "text/html")}>Download</button>
     <a className="btn sm ghost" href={mailto} title={mail.to ? `An e-mail to ${mail.to} with the order in its text` : "An e-mail with the order in its text (no e-mail address on the supplier's purchasing data)"}>E-mail</a>
-    <ServerSend kind="purchase_order" docRef={po.id} to={mail.to} subject={mail.subject} text={mail.body} html={() => poDocument(po, ds)} onSent={onSent} />
+    <ServerSend kind={po.kind === "scheduling_agreement" ? "delivery_schedule" : "purchase_order"} docRef={po.id} to={mail.to} subject={mail.subject} text={mail.body} html={() => poDocument(po, ds)} onSent={onSent} />
   </span>;
 }
 
