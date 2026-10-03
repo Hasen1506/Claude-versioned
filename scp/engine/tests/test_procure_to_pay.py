@@ -402,3 +402,191 @@ def test_goods_sent_back_are_credited_at_the_price_they_were_invoiced_at():
     x, _ = act(x, "return_goods", "", lines=[{"id": "PO-00001-10", "qty": 10}], on=JAN, stock_type="unrestricted")
     x, rep = act(x, "enter_invoice", "", on=JAN, return_id="RS-00001")
     assert x.supplier_invoices[1].lines[0].price == 10.5 and x.supplier_invoices[1].total == pytest.approx(115.5)
+
+
+# ---- PR #14 audit regressions -------------------------------------------------------------------------------
+def test_invoice_quantity_match_totals_repeated_order_lines_until_all_goods_arrive():
+    d = ordered()
+    d["receipts"][0]["qty"] = 200
+    x, _ = act(ds(d), "receive", "PO-00001", lines=[{"id": "PO-00001-10", "qty": 100}], on=JAN)
+    x, _ = act(x, "enter_invoice", lines=[{"order": "PO-00001-10", "qty": 100},
+                                        {"order": "PO-00001-10", "qty": 100}])
+    inv = x.supplier_invoices[0]
+    assert inv.blocks == ["quantity: PO-00001-10 bills 200; 100 received and not yet invoiced"]
+    with pytest.raises(PurchasingError, match="blocked for payment"):
+        act(x, "pay_invoice", inv.id)
+    x, _ = act(x, "receive", "PO-00001", lines=[{"id": "PO-00001-10", "qty": 50}], on=JAN)
+    assert still_blocked(x, inv) == ["quantity: PO-00001-10 bills 200; 150 received and not yet invoiced"]
+    x, _ = act(x, "receive", "PO-00001", lines=[{"id": "PO-00001-10", "qty": 50}], on=JAN)
+    assert still_blocked(x, inv) == []
+    x, _ = act(x, "pay_invoice", inv.id)
+    assert x.supplier_invoices[0].open == 0
+
+
+def test_duplicate_invoice_lines_within_received_quantity_are_allowed_through_the_api():
+    x = received(b=100, c=0)
+    r = client.post("/api/purchasing/act", json={"dataset": x.model_dump(mode="json"), "action": "enter_invoice",
+        "lines": [{"order": "PO-00001-10", "qty": 60}, {"order": "PO-00001-10", "qty": 40}]})
+    assert r.status_code == 200, r.text
+    y = ds(r.json()["dataset"])
+    assert not y.supplier_invoices[0].blocks
+    assert y.supplier_invoices[0].net == 1000
+    r = client.post("/api/purchasing/act", json={"dataset": x.model_dump(mode="json"), "action": "enter_invoice",
+        "lines": [{"order": "PO-00001-10", "qty": 100}, {"order": "PO-00001-10", "qty": 100}]})
+    assert r.status_code == 200, r.text
+    r = client.post("/api/purchasing/act", json={"dataset": r.json()["dataset"], "action": "pay_invoice", "po": "SI-00001"})
+    assert r.status_code == 409 and "blocked for payment" in r.json()["detail"]
+
+
+@pytest.mark.parametrize(("agreement_currency", "source_currency", "matches"), [("USD", "EUR", False), (None, "INR", True)])
+def test_scheduling_agreements_only_take_lines_in_their_currency(agreement_currency, source_currency, matches):
+    d = base(horizon=42)
+    d["settings"].update(currency="INR", fx_rates={"USD": 80, "EUR": 90})
+    lp(d, "P", "B").update(on_hand=0, lot_sizing={"policy": "L4L"})
+    d["demand"] = [demand("P", "B", "2026-01-14", 10)]
+    d["purchasing_sources"][0].update(currency=agreement_currency, price=10, priority=2)
+    d["purchasing_sources"].append({**d["purchasing_sources"][0], "id": "PIR-B-ALT", "currency": source_currency,
+                                     "price": 5, "priority": 1})
+    x, _ = create_agreement(ds(d), "S", "P", "B", target_qty=100)
+    plan = run_mrp(x)
+    req = requisitions(x, plan)[0]
+    assert req.source_id == "PIR-B-ALT"
+    assert req.agreement == ("SA-00001" if matches else None)
+    y, rep = create_purchase_orders(x, plan, [{"id": req.id}])
+    receipt = next(r for r in y.receipts if r.id == rep.lines[req.id])
+    header = y.purchase_order_by_id[receipt.po]
+    assert receipt.po == ("SA-00001" if matches else "PO-00001")
+    assert (header.currency or y.settings.currency) == source_currency
+    assert receipt.price == 5
+    # Explicitly choosing the original source still takes the matching agreement.
+    z, rep = create_purchase_orders(x, plan, [{"id": req.id, "source_id": "PIR-B"}])
+    assert next(r for r in z.receipts if r.id == rep.lines[req.id]).po == "SA-00001"
+
+
+@pytest.mark.parametrize(("on", "open_now", "stock_now"), [(JAN, 50, 70), (date(2026, 1, 6), 40, 80)])
+def test_credit_return_after_partial_roll_preserves_supply_before_and_after_the_next_roll(on, open_now, stock_now):
+    x, _ = roll_forward(received(b=50, c=0), date(2026, 1, 6))
+    d = x.model_dump(mode="json")
+    d["demand"] = [demand("P", "B", "2026-01-20", 120)]
+    x, _ = act(ds(d), "return_goods", lines=[{"id": "PO-00001-10", "qty": 10}], on=on, stock_type="unrestricted")
+    r = next(r for r in x.receipts if r.id == "PO-00001-10")
+    assert r.ordered_qty == 90 and r.qty == open_now
+    assert lp_on_hand(x, "B") == stock_now
+    assert not [o for o in run_mrp(x).orders if o.product == "B"]
+    y, _ = roll_forward(x, date(2026, 1, 7))
+    r = next(r for r in y.receipts if r.id == "PO-00001-10")
+    assert r.qty == 50 and lp_on_hand(y, "B") == 70
+    assert not [o for o in run_mrp(y).orders if o.product == "B"]
+
+
+@pytest.mark.parametrize("batch_managed", [False, True])
+def test_serialised_returns_select_available_serials_across_lots_without_reusing_them(batch_managed):
+    from scp.actuals.documents import _serials_here
+    d = ordered()
+    d["products"][1].update(serial_numbers=True, batches=batch_managed)
+    lp(d, "P", "B")["on_hand"] = 0
+    x = ds(d)
+    for qty, batch in [(60, "LOT-1"), (40, "LOT-2")]:
+        x, _ = act(x, "receive", "PO-00001", lines=[{"id": "PO-00001-10", "qty": qty,
+                   **({"batch": batch} if batch_managed else {})}], on=JAN)
+    x, rep = act(x, "return_goods", lines=[{"id": "PO-00001-10", "qty": 70}], on=JAN, stock_type="unrestricted")
+    first = [sn for m in x.movements if m.id in rep.movements for sn in m.serials]
+    assert len(first) == len(set(first)) == 70
+    x, rep = act(x, "return_goods", lines=[{"id": "PO-00001-10", "qty": 10}], on=JAN, stock_type="unrestricted")
+    second = [sn for m in x.movements if m.id in rep.movements for sn in m.serials]
+    assert len(second) == 10 and not set(first) & set(second)
+    assert len(_serials_here(x.movements, ("P", "B"))) == 20
+    with pytest.raises(PurchasingError, match="whole units"):
+        act(x, "return_goods", lines=[{"id": "PO-00001-10", "qty": 0.5}], on=JAN, stock_type="unrestricted")
+
+
+@pytest.mark.parametrize("under_tolerance", [0.0, 0.25])
+def test_replacement_return_reopens_final_short_receipt_without_reviving_cancelled_supply(under_tolerance):
+    d = ordered()
+    d["vendors"][0]["under_delivery_tolerance"] = under_tolerance
+    x, _ = act(ds(d), "receive", "PO-00001",
+               lines=[{"id": "PO-00001-10", "qty": 75, "final": not under_tolerance}], on=JAN)
+    original = next(m for m in x.movements if m.reference == "PO-00001-10")
+    assert original.final
+    x, _ = act(x, "return_goods", lines=[{"id": "PO-00001-10", "qty": 25}], on=JAN,
+               stock_type="unrestricted", replace=True)
+    y, _ = roll_forward(x, date(2026, 1, 6))
+    r = next(r for r in y.receipts if r.id == "PO-00001-10")
+    assert r.ordered_qty == 100 and r.target_qty == 75 and r.qty == r.expected_qty == 25
+    assert payables_view(y).returns[0].status == "replacement due"
+    assert next(p for p in purchase_orders(y) if p.id == "PO-00001").lines[0].open == 25
+    from scp.actuals.stock import open_orders
+    assert next(o for o in open_orders(y, y.settings.planning_start) if o.id == r.id).open == 25
+    assert next(m for m in y.movements if m.id == original.id).final  # retain the original journal
+    # A second return adds only its own replacement; the first one's target is retained.
+    y, _ = act(y, "return_goods", lines=[{"id": "PO-00001-10", "qty": 10}], on=JAN,
+               stock_type="unrestricted", replace=True)
+    r = next(r for r in y.receipts if r.id == "PO-00001-10")
+    assert r.target_qty == 75 and r.qty == r.expected_qty == 35
+    y, _ = act(y, "receive", "PO-00001", lines=[{"id": "PO-00001-10"}], on=date(2026, 1, 6))
+    assert y.movements[-1].qty == 35
+    y, _ = roll_forward(y, date(2026, 1, 7))
+    assert not any(r.id == "PO-00001-10" for r in y.receipts)
+    closed = next(c for c in y.closed_orders if c.id == "PO-00001-10")
+    assert closed.ordered_qty == 100 and closed.delivered_qty == 75
+    assert all(r.status == "replaced" for r in payables_view(y).returns)
+
+
+def test_replacement_return_uses_confirmations_and_can_be_credited_or_finished_short_later():
+    x = ds(ordered())
+    x, _ = act(x, "confirm", "PO-00001", lines=[{"id": "PO-00001-10", "parts": [
+        {"date": "2026-01-05", "qty": 50}, {"date": "2026-01-06", "qty": 50}]}])
+    x, _ = act(x, "receive", "PO-00001", lines=[{"id": "PO-00001-10", "qty": 75, "final": True}], on=JAN)
+    x, _ = act(x, "return_goods", lines=[{"id": "PO-00001-10", "qty": 25}], on=JAN,
+               stock_type="unrestricted", replace=True)
+    x, _ = roll_forward(x, date(2026, 1, 6))
+    r = next(r for r in x.receipts if r.id == "PO-00001-10")
+    assert r.expected_parts() == [(date(2026, 1, 6), 25)]
+    # Returning another ten for credit cancels those ten, without cancelling the replacements.
+    credited, _ = act(x, "return_goods", lines=[{"id": "PO-00001-10", "qty": 10}], on=JAN,
+                      stock_type="unrestricted")
+    r = next(r for r in credited.receipts if r.id == "PO-00001-10")
+    assert r.ordered_qty == 90 and r.target_qty == 65 and r.expected_qty == 25
+    # A later final receipt is still allowed to finish short explicitly.
+    finished, _ = act(x, "receive", "PO-00001", lines=[{"id": "PO-00001-10", "qty": 10, "final": True}],
+                     on=date(2026, 1, 6))
+    finished, _ = roll_forward(finished, date(2026, 1, 7))
+    assert not any(r.id == "PO-00001-10" for r in finished.receipts)
+
+
+def test_reversed_replacement_return_does_not_override_the_original_final_delivery():
+    from scp.actuals.documents import reverse
+    x, _ = act(ds(ordered()), "receive", "PO-00001", lines=[{"id": "PO-00001-10", "qty": 75, "final": True}], on=JAN)
+    x, rep = act(x, "return_goods", lines=[{"id": "PO-00001-10", "qty": 25}], on=JAN,
+                 stock_type="unrestricted", replace=True)
+    x, _ = reverse(x, rep.movements[0], on=JAN)
+    x, _ = roll_forward(x, date(2026, 1, 6))
+    assert not any(r.id == "PO-00001-10" for r in x.receipts)
+    assert next(c for c in x.closed_orders if c.id == "PO-00001-10").delivered_qty == 75
+
+
+def test_replacement_of_a_full_delivery_is_not_closed_by_the_short_delivery_tolerance():
+    d = ordered()
+    d["vendors"][0]["under_delivery_tolerance"] = 0.25
+    x, _ = act(ds(d), "receive", "PO-00001", lines=[{"id": "PO-00001-10", "qty": 100}], on=JAN)
+    assert not x.movements[-1].final
+    x, _ = act(x, "return_goods", lines=[{"id": "PO-00001-10", "qty": 25}], on=JAN,
+               stock_type="unrestricted", replace=True)
+    x, _ = roll_forward(x, date(2026, 1, 6))
+    r = next(r for r in x.receipts if r.id == "PO-00001-10")
+    assert r.qty == r.expected_qty == 25
+    assert payables_view(x).returns[0].status == "replacement due"
+
+
+def test_another_return_after_a_later_final_receipt_keeps_its_new_completion_target():
+    x = received(b=50, c=0)
+    x, _ = act(x, "return_goods", lines=[{"id": "PO-00001-10", "qty": 10}], on=JAN,
+               stock_type="unrestricted", replace=True)
+    x, _ = roll_forward(x, date(2026, 1, 6))
+    x, _ = act(x, "receive", "PO-00001", lines=[{"id": "PO-00001-10", "qty": 35, "final": True}],
+               on=date(2026, 1, 6))
+    x, _ = act(x, "return_goods", lines=[{"id": "PO-00001-10", "qty": 10}], on=date(2026, 1, 6),
+               stock_type="unrestricted", replace=True)
+    x, _ = roll_forward(x, date(2026, 1, 7))
+    r = next(r for r in x.receipts if r.id == "PO-00001-10")
+    assert r.ordered_qty == 100 and r.target_qty == 75 and r.qty == r.expected_qty == 10

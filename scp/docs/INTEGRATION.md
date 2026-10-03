@@ -26,6 +26,7 @@ Authorization: Bearer scpk_…
 What a key can do:
 
 - It works in its own company only. In any other company the answer is `404`.
+- A key cannot create a company or gain another role by being added as a member. Its role is the one its owner gave the key.
 - It is not a member: it is not listed among the people and cannot send e-mail.
 - It can be withdrawn at any time. After that every call with it gets `401`.
 
@@ -215,12 +216,27 @@ Without `?all=true`, only orders the ERP has not taken in their current form are
 - An order the ERP has already numbered is not renumbered: an acknowledgement with a different number is refused.
 - A `withdrawn` order is acknowledged with the ERP's number it had. Putting a save back that brings the order back here cancels the withdrawal.
 
+### Purchase order cancellations
+
+A cancelled line is retained for the ERP with `cancelled: true` and `open: 0`, alongside any remaining lines.
+Cancelling the last line removes the order from Buying but keeps its cancellation in the ERP feed. The order also
+has `cancelled: true`. Acknowledge its new `version` just like a quantity or date change; it stays in the feed until
+that version is taken. An acknowledgement of the earlier order, including one arriving after cancellation, keeps
+the ERP number and leaves the cancellation pending. `?all=true` also includes acknowledged cancellations.
+
+The saved dataset keeps these removed headers in `cancelled_purchase_orders`, and each header's `cancelled_lines`
+holds its removed line snapshots. These records preserve the history and prevent cancelled order or line numbers
+from being reused.
+
 ## Scheduled imports
 
 Where the ERP cannot call an API, it writes an export that the server reads. An owner sets this up on **Connections → Scheduled imports**: what the file brings, where it is, and when to read it.
 
 **Where.** One of:
 - **A web address.** Optional headers are sent with it, e.g. `Authorization`; their values are not shown again.
+  When changing an import, omitted or `null` headers retain saved values only if the protocol, host and port stay
+  the same. An explicit `"headers": {}` removes them. Changing to another origin or to a folder clears saved headers
+  unless new headers are explicitly provided for the new web address. The browser also offers **Remove saved request headers**.
 - **A file pattern in the company's folder on the server**, e.g. `orders-*.csv`. Each file read is moved to `done/` (or `failed/`).
 
 **When.** Every hour, every day or every week, at a time in the server's time zone.

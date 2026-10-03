@@ -143,11 +143,19 @@ def _price_block(ds: Dataset, ln: SupplierInvoiceLine, order_price: float | None
 def _qty_blocks(ds: Dataset, lines: list[SupplierInvoiceLine], skip: str | None = None) -> list[str]:
     got = received(ds)
     billed = invoiced(ds, skip)
-    out = []
+    return _quantity_blocks(lines, got, billed)
+
+
+def _quantity_blocks(lines: list[SupplierInvoiceLine], got: dict[str, float],
+                     billed: dict[str, float]) -> list[str]:
+    quantities: dict[str, float] = defaultdict(float)
     for ln in lines:
-        free = got.get(ln.order, 0.0) - billed.get(ln.order, 0.0)
-        if ln.qty > free + EPS:
-            out.append(f"quantity: {ln.order} bills {ln.qty:,.0f}; {max(0.0, free):,.0f} received and not yet "
+        quantities[ln.order] += ln.qty
+    out = []
+    for order, qty in quantities.items():
+        free = got.get(order, 0.0) - billed.get(order, 0.0)
+        if qty > free + EPS:
+            out.append(f"quantity: {order} bills {qty:,.0f}; {max(0.0, free):,.0f} received and not yet "
                        f"invoiced")
     return out
 
@@ -168,13 +176,7 @@ def still_blocked(ds: Dataset, inv: SupplierInvoice) -> list[str]:
         sign = -1.0 if other.kind == "credit_memo" else 1.0
         for ln in other.lines:
             billed[ln.order] += sign * ln.qty
-    qty = []
-    for ln in inv.lines:
-        free = got.get(ln.order, 0.0) - billed.get(ln.order, 0.0)
-        if ln.qty > free + EPS:
-            qty.append(f"quantity: {ln.order} bills {ln.qty:,.0f}; {max(0.0, free):,.0f} received and not yet "
-                       f"invoiced")
-    return price + qty
+    return price + _quantity_blocks(inv.lines, got, billed)
 
 
 def to_invoice(ds: Dataset) -> list[ToInvoice]:
@@ -497,10 +499,33 @@ def return_goods(ds: Dataset, order: str, qty: float, *, on: date | None = None,
                          movement=moves[0].id)
     receipts = ds.receipts
     tail = ""
+    if li.open_receipt:
+        rc = next(r for r in receipts if r.id == order)
+        target = rc.target_qty
+        booked = target - rc.qty
+        reversed_ids = {m.reversal_of for m in ds.movements if m.reversal_of}
+        active = [(m, (m.date, i)) for i, m in enumerate(ds.movements) if m.reference == order and m.date <= on
+                  and not m.reversal_of and m.id not in reversed_ids]
+        replacement_ids = {r.movement for r in ds.supplier_returns if r.replace}
+        last_final = max((when for m, when in active if m.type is MovementType.RECEIPT and m.final), default=None)
+        last_return = max((when for m, when in active if m.id in replacement_ids), default=None)
+        final = last_final is not None and (last_return is None or last_final > last_return)
+        # A final short receipt cancelled the undelivered remainder. Reopen only what can be replaced,
+        # keeping the original quantity for history. Repeated returns keep the same delivery target.
+        if replace and final:
+            target = min(target, have)
+        elif not replace:
+            target = max(target - q, EPS)
+        # A backdated return is booked into opening stock by _settle below. It also takes back that much
+        # booked receipt; a current/future posting stays in the journal until the next roll.
+        if on < ds.settings.planning_start:
+            booked -= q
+        patch = {"qty": max(target - booked, EPS), "ordered_qty": li.ordered if replace else max(li.ordered - q, EPS)}
+        if rc.delivery_target_qty is not None or replace:
+            patch["delivery_target_qty"] = target
+        receipts = [r.model_copy(update=patch) if r.id == order else r for r in receipts]
     if li.open_receipt and not replace:
         # credited: the line was for that much less, so it closes on what is kept
-        receipts = [r.model_copy(update={"ordered_qty": max(li.ordered - q, EPS), "qty": max(r.qty - q, EPS)})
-                    if r.id == order else r for r in ds.receipts]
         tail = f" {order} is now for {li.ordered - q:,.0f}; a credit memo is expected."
     elif not replace:
         tail = " A credit memo is expected."

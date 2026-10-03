@@ -26,6 +26,7 @@ from ..companies import (
     SaveReport, Session, User, get_companies,
 )
 from ..companies import mail, sso
+from ..companies.store import KEY_PREFIX
 from ..model.common import Out
 from .working import asker, send_raw, takes_gzip, takes_rows
 
@@ -89,13 +90,17 @@ def signed_in(request: Request) -> User:
 
 def _scope(request: Request, roles: tuple[str, ...]) -> str:
     cid = request.headers.get("x-company", "").strip()
+    c = get_companies()
+    token = token_of(request)
+    user = c.whoami(token) if token and token.startswith(KEY_PREFIX) else None
+    if user is not None and not cid:
+        cid = c.key_company(user) or ""
     if not cid:
         if require_signin():
             raise CompanyError("open a company first: on this server plan versions and the worklist belong to a "
                                "company", 403)
         return ""
-    c = get_companies()
-    user = c.whoami(token_of(request))
+    user = user or c.whoami(token)
     role = c.role(user, cid)
     if roles and role not in roles:
         raise CompanyError(f"as a {role} of this company you cannot change it; ask an owner", 403)

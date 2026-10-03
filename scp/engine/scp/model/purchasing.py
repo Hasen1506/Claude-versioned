@@ -23,6 +23,7 @@ from pydantic import Field, field_validator, model_validator
 from .actuals import StockType
 from .common import Id, Model, Ref, Unit
 from .sales import Payment
+from .transactional import ScheduledReceipt
 
 
 class Vendor(Model):
@@ -99,6 +100,8 @@ class PurchaseOrder(Model):
     erp_ref: str = Field("", max_length=64, description="The order's number in the ERP, once the ERP has taken it")
     erp_sent: str = Field("", max_length=32, description="The version of the order the ERP took last (empty: never); "
                                                         "a changed order goes to the ERP again")
+    cancelled_lines: list[ScheduledReceipt] = Field(default_factory=list, description="Cancelled line snapshots, "
+                                                    "retained so the ERP also receives their cancellation")
 
     @field_validator("currency")
     @classmethod

@@ -49,6 +49,8 @@ class Dataset(Model):
     lanes: list[TransportLane] = Field(default_factory=list)
     vendors: list[Vendor] = Field(default_factory=list)
     purchase_orders: list[PurchaseOrder] = Field(default_factory=list)
+    cancelled_purchase_orders: list[PurchaseOrder] = Field(default_factory=list,
+        description="Removed purchase orders retained for cancellation delivery and acknowledgement by the ERP")
     purchasing: PurchasingSettings = Field(default_factory=PurchasingSettings)
     contracts: list[PurchaseContract] = Field(default_factory=list)
     supplier_invoices: list[SupplierInvoice] = Field(default_factory=list)

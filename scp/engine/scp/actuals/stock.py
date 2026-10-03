@@ -156,18 +156,24 @@ def in_transit(ds: Dataset) -> dict[Node, float]:
     return dict(out)
 
 
-def _sum(movs: list[GoodsMovement], types: set[MovementType]) -> tuple[dict, dict, dict, set]:
+def _sum(movs: list[GoodsMovement], types: set[MovementType],
+         replacements: Iterable[str] = ()) -> tuple[dict, dict, dict, set]:
     """Quantity, first and last date per (reference, location, product), and references closed as final. Receipts
     count less what went back to the supplier against the same order line."""
     qty: dict[tuple[str, str, str], float] = defaultdict(float)
     first: dict[tuple[str, str, str], date] = {}
     last: dict[tuple[str, str, str], date] = {}
     final: set[str] = set()
+    final_at: dict[str, tuple[date, int]] = {}
+    replaced_at: dict[str, tuple[date, int]] = {}
+    replacement_ids = set(replacements)
     reversed_ids = {m.reversal_of for m in movs if m.reversal_of}
     back = MovementType.RECEIPT in types
-    for m in movs:
+    for i, m in enumerate(movs):
         if back and m.type is MovementType.RETURN and m.reference:
             qty[(m.reference, m.location, m.product)] -= m.net
+            if m.id in replacement_ids and not m.reversal_of and m.id not in reversed_ids:
+                replaced_at[m.reference] = max(replaced_at.get(m.reference, (m.date, i)), (m.date, i))
             continue
         if m.type not in types or not m.reference:
             continue
@@ -178,6 +184,10 @@ def _sum(movs: list[GoodsMovement], types: set[MovementType]) -> tuple[dict, dic
             last[k] = max(last.get(k, m.date), m.date)
         if m.final and not m.reversal_of and m.id not in reversed_ids:
             final.add(m.reference)
+            final_at[m.reference] = max(final_at.get(m.reference, (m.date, i)), (m.date, i))
+    # A replacement return reopens a final delivery without rewriting the original posting. A later
+    # final receipt can finish it again; a reversed return never reopens it.
+    final -= {ref for ref, when in replaced_at.items() if ref in final_at and when > final_at[ref]}
     return qty, first, last, final
 
 
@@ -224,8 +234,8 @@ def open_orders(ds: Dataset, as_of: date) -> list[OpenOrderRow]:
             transit = max(0.0, shipped - delivered)
         rows.append(OpenOrderRow(kind=rc.kind.value, id=rc.id, location=rc.location, product=rc.product,
                                  counterparty=counterparty(ds, rc), ordered=ordered, delivered=delivered,
-                                 open=max(0.0, ordered - delivered), in_transit=transit, due_date=rc.due_date,
-                                 past_due=rc.due_date < as_of and ordered - delivered > EPS,
+                                 open=max(0.0, rc.target_qty - delivered), in_transit=transit, due_date=rc.due_date,
+                                 past_due=rc.due_date < as_of and rc.target_qty - delivered > EPS,
                                  reservations_open=open_rv, planned_as=rc.planned_as))
     for d in ds.demand:
         if d.kind is not DemandKind.SALES_ORDER or not d.id:

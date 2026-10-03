@@ -102,3 +102,47 @@ test("connections: a key for the ERP, its orders taken and refused line by line,
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
   }
 });
+
+test("scheduled import changes preserve credentials only at the same origin and can clear them", async ({ page }) => {
+  const { token, cid } = await ownerOnServer(page);
+  const headers = { Authorization: `Bearer ${token}` };
+  await page.goto("/#/connections/imports");
+  await page.getByRole("button", { name: "New import" }).click();
+  await page.getByLabel("Import name").fill("ERP stock");
+  await page.getByLabel("What it brings").selectOption("stock");
+  await page.getByLabel("Source").fill("https://erp.example.com/stock.csv");
+  await page.getByLabel("Authorization header").fill("Bearer TEST-ONLY");
+  await page.getByRole("button", { name: "Save the import" }).click();
+  await expect(page.getByRole("status")).toContainText("ERP stock saved");
+  const saved = async () => (await (await page.request.get(`/api/companies/${cid}/imports`, { headers })).json()).jobs[0];
+  expect((await saved()).header_names).toEqual(["Authorization"]);
+
+  await page.getByRole("button", { name: "Change", exact: true }).click();
+  await expect(page.getByLabel("Authorization header")).toHaveValue("");
+  await page.getByLabel("Source").fill("https://erp.example.com/next.csv");
+  const sameOrigin = page.waitForRequest((r) => r.method() === "PUT" && /\/imports\//.test(r.url()));
+  await page.getByRole("button", { name: "Save the import" }).click();
+  expect((await sameOrigin).postDataJSON()).not.toHaveProperty("headers");
+  await expect(page.getByRole("button", { name: "Save the import" })).toHaveCount(0);
+  expect((await saved()).header_names).toEqual(["Authorization"]);
+
+  await page.getByRole("button", { name: "Change", exact: true }).click();
+  await page.getByLabel("Source").fill("https://other.example.com/stock.csv");
+  await page.getByRole("button", { name: "Save the import" }).click();
+  await expect(page.getByRole("button", { name: "Save the import" })).toHaveCount(0);
+  expect((await saved()).header_names).toEqual([]);
+
+  await page.getByRole("button", { name: "Change", exact: true }).click();
+  await page.getByLabel("Authorization header").fill("Bearer REPLACEMENT-TEST");
+  await page.getByRole("button", { name: "Save the import" }).click();
+  await expect(page.getByRole("button", { name: "Save the import" })).toHaveCount(0);
+  expect((await saved()).header_names).toEqual(["Authorization"]);
+
+  await page.getByRole("button", { name: "Change", exact: true }).click();
+  await page.getByRole("checkbox", { name: "Remove saved request headers" }).check();
+  const clear = page.waitForRequest((r) => r.method() === "PUT" && /\/imports\//.test(r.url()));
+  await page.getByRole("button", { name: "Save the import" }).click();
+  expect((await clear).postDataJSON().headers).toEqual({});
+  await expect(page.getByRole("button", { name: "Save the import" })).toHaveCount(0);
+  expect((await saved()).header_names).toEqual([]);
+});

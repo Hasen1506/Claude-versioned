@@ -81,7 +81,13 @@ def test_a_change_to_the_kept_company_comes_back_as_what_changed():
     assert out["dataset"] is None and out["report"] == whole["report"] and whole["report"]["firmed"]
     after = apply_patch(doc, {**out["patch"], "sizes": {}})
     assert after == whole["dataset"]
-    assert len(str(out["patch"])) < len(str(whole["dataset"])) / 5
+    # Firm orders now include delivery targets and ERP metadata. Only newly firmed records belong in the patch;
+    # the existing pipeline must not be resent. Keep a size bound without tying it to the earlier record schema.
+    for name in ("purchase_orders", "receipts"):
+        before_ids = {r["id"] for r in doc[name]}
+        added_ids = {r["id"] for r in whole["dataset"][name]} - before_ids
+        assert {r["id"] for r in out["patch"]["lists"][name]["upsert"]} == added_ids
+    assert len(str(out["patch"])) < len(str(whole["dataset"])) / 4
 
 
 def test_changes_never_touch_the_kept_company_and_come_back_as_made():

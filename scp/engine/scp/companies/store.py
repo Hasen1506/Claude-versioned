@@ -131,6 +131,7 @@ LABELS = {
     "customers": "customers", "payment_terms": "payment terms", "sales_orders": "sales orders",
     "quotations": "quotations", "deliveries": "deliveries", "invoices": "invoices and credit notes", "returns": "returns",
     "contracts": "contracts", "supplier_invoices": "supplier invoices", "supplier_returns": "returns to suppliers",
+    "cancelled_purchase_orders": "purchase order cancellations",
     "sales": "sales settings",
     "demand": "orders and forecasts", "receipts": "open orders", "history": "sales history", "events": "events",
     "npi": "new products", "overrides": "forecast overrides", "stock_targets": "stock targets",
@@ -637,11 +638,17 @@ class Companies:
     # ---- companies -----------------------------------------------------------------------------------------
     def role(self, user: User, cid: str) -> str:
         with self.lock:
+            key = None
+            if self.is_key(user):
+                key = self.db.execute("SELECT company_id, role FROM api_keys WHERE user_id = ? AND revoked_at IS NULL",
+                                      (user.id,)).fetchone()
+                if key is None or key["company_id"] != cid:
+                    raise CompanyError(f"no company {cid} of yours", 404)
             r = self.db.execute("SELECT m.role FROM members m JOIN companies c ON c.id = m.company_id "
                                 "WHERE m.company_id = ? AND m.user_id = ? AND c.deleted = 0", (cid, user.id)).fetchone()
             if r is None:
                 raise CompanyError(f"no company {cid} of yours", 404)
-            return r["role"]
+            return key["role"] if key is not None else r["role"]
 
     def _need(self, user: User, cid: str, *roles: str) -> str:
         role = self.role(user, cid)
@@ -670,10 +677,15 @@ class Companies:
             rows = self.db.execute("SELECT c.id, m.role FROM companies c JOIN members m ON m.company_id = c.id "
                                    "WHERE m.user_id = ? AND c.deleted = 0 ORDER BY c.updated_at DESC, c.id",
                                    (user.id,)).fetchall()
-            return [self._meta(r["id"], r["role"], user.id) for r in rows]
+            if self.is_key(user):
+                cid = self.key_company(user)
+                rows = [r for r in rows if r["id"] == cid]
+            return [self._meta(r["id"], self.role(user, r["id"]), user.id) for r in rows]
 
     def create(self, user: User, doc: dict, note: str = "") -> CompanyMeta:
         with self.lock:
+            if self.is_key(user):
+                raise CompanyError("a key works only in its company; a person must create a company", 403)
             n = self.db.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
             cid = f"C{n + 1:04d}"
             while self.db.execute("SELECT 1 FROM companies WHERE id = ?", (cid,)).fetchone():
@@ -1185,4 +1197,3 @@ def get_companies() -> Companies:
             _by_store.clear()
             _by_store[id(store)] = c
         return c
-

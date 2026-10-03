@@ -54,7 +54,8 @@ class PurchasingError(ValueError):
 def next_numbers(ds: Dataset) -> dict[str, int]:
     """Highest number used per prefix (PRD, PO, STO) by receipts, closed orders and purchase order headers."""
     out: dict[str, int] = defaultdict(int)
-    ids = [r.id for r in ds.receipts] + [c.id for c in ds.closed_orders] + [p.id for p in ds.purchase_orders]
+    ids = ([r.id for r in ds.receipts] + [c.id for c in ds.closed_orders]
+           + [p.id for p in [*ds.purchase_orders, *ds.cancelled_purchase_orders]])
     for oid in ids:
         m = re.fullmatch(r"(PRD|PO|STO)-(\d+)", oid)
         if m:
@@ -157,11 +158,13 @@ def price_on(ds: Dataset, pu, qty: float, on: date, location: str) -> tuple[floa
     return pu.price_for(qty), None
 
 
-def agreement_for(ds: Dataset, supplier: str, location: str, product: str, on: date) -> PurchaseOrder | None:
+def agreement_for(ds: Dataset, supplier: str, location: str, product: str, on: date,
+                  currency: str | None) -> PurchaseOrder | None:
     """An approved scheduling agreement that takes delivery schedule lines for this product on that day."""
     for po in ds.purchase_orders:
         if (po.kind == "scheduling_agreement" and po.supplier == supplier and po.location == location
-                and po.product == product and po.approved and po.order_date <= on
+                and po.product == product and _currency(ds, po.currency) == _currency(ds, currency)
+                and po.approved and po.order_date <= on
                 and (po.valid_to is None or on <= po.valid_to)):
             return po
     return None
@@ -195,7 +198,7 @@ def requisitions(ds: Dataset, plan: PlanResult) -> list[Requisition]:
             choices.append(_choice(ds, alt, o.qty, order_on, o.need_date, alt.id == pu.id))
         choices.sort(key=lambda c: (not c.assigned, bool(c.blocked), c.days_late, c.value))
         price, contract = price_on(ds, pu, o.qty, order_on, o.location)
-        sa = agreement_for(ds, pu.supplier, o.location, o.product, o.due_date)
+        sa = agreement_for(ds, pu.supplier, o.location, o.product, o.due_date, ds.price_currency(pu))
         out.append(Requisition(
             id=o.id, location=o.location, product=o.product, qty=o.qty, need_date=o.need_date,
             order_date=o.start_date, due_date=o.due_date, source_id=pu.id, supplier=pu.supplier, price=price,
@@ -259,7 +262,7 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
                              f"{(earliest - due).days} d after it is needed there")
                 due = earliest
         # Keep the planned quantity: continuous units can require less than 0.001.
-        sa = agreement_for(ds, pu.supplier, o.location, o.product, due)
+        sa = agreement_for(ds, pu.supplier, o.location, o.product, due, ds.price_currency(pu))
         if sa is not None:
             agreements[sa.id].append((rid, pu, qty, due, notes))
             continue
@@ -270,7 +273,8 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
     headers = list(ds.purchase_orders)
     for sa_id, items in sorted(agreements.items()):
         sa = ds.purchase_order_by_id[sa_id]
-        taken = [int(m.group(1)) for x in [*(r.id for r in receipts), *(c.id for c in ds.closed_orders)]
+        taken = [int(m.group(1)) for x in [*(r.id for r in receipts), *(c.id for c in ds.closed_orders),
+                                         *(r.id for r in sa.cancelled_lines)]
                  if (m := re.fullmatch(rf"{re.escape(sa_id)}-(\d+)", x))]
         n = max(taken, default=0)
         created = CreatedPo(id=sa_id, supplier=sa.supplier, location=sa.location,
@@ -461,9 +465,10 @@ def create_agreement(ds: Dataset, supplier: str, location: str, product: str, *,
         raise PurchasingError(why)
     if valid_to is not None and valid_to < on:
         raise PurchasingError("the agreement cannot end before it starts")
-    if (old := agreement_for(ds, supplier, location, product, on)) is not None:
+    if (old := agreement_for(ds, supplier, location, product, on, ds.price_currency(pu))) is not None:
         raise PurchasingError(f"{old.id} already schedules {product} from {supplier} to {location}")
-    n = max([int(m.group(1)) for p in ds.purchase_orders if (m := re.fullmatch(r"SA-(\d+)", p.id))], default=0)
+    n = max([int(m.group(1)) for p in [*ds.purchase_orders, *ds.cancelled_purchase_orders]
+             if (m := re.fullmatch(r"SA-(\d+)", p.id))], default=0)
     sid = f"SA-{n + 1:05d}"
     price, contract = price_on(ds, pu, target_qty or 1.0, on, location)
     value = (target_qty or 0.0) * price * fx(ds, ds.price_currency(pu))
@@ -541,7 +546,7 @@ def receive(ds: Dataset, po_id: str, lines: list[dict] | None, on: date | None =
     for r, w in _pick(_po_lines(ds, po_id), lines, po_id):
         ordered = r.ordered_qty if r.ordered_qty is not None else r.qty
         before = got.get(r.id, 0.0)
-        q = float(w["qty"]) if w.get("qty") is not None else max(0.0, ordered - before)
+        q = float(w["qty"]) if w.get("qty") is not None else max(0.0, r.target_qty - before)
         if q <= EPS:
             continue
         sup = _supplier_of(ds, r)
@@ -599,8 +604,9 @@ def change(ds: Dataset, po_id: str, lines: list[dict]) -> tuple[Dataset, ActionR
         if w.get("price") is not None:
             patch["price"] = float(w["price"])
         if abs(new_q - ordered) > EPS:
-            open_q = new_q - (ordered - r.qty)       # open = new order less what was already booked off it
-            patch.update(qty=max(open_q, EPS), ordered_qty=new_q if r.ordered_qty is not None else None)
+            open_q = new_q - (r.target_qty - r.qty)   # open = new order less what was already booked off it
+            patch.update(qty=max(open_q, EPS), ordered_qty=new_q if r.ordered_qty is not None else None,
+                         delivery_target_qty=None)
         if (abs(new_q - ordered) > EPS or due != r.due_date) and ds.vendor(_supplier_of(ds, r) or "").confirmation_required:
             patch.update(confirmed_date=None, confirmed_qty=None, confirmations=[])
         upd[r.id] = r.model_copy(update=patch)
@@ -628,9 +634,22 @@ def cancel(ds: Dataset, po_id: str, lines: list[dict] | None) -> tuple[Dataset, 
         drop.add(r.id)
     receipts = [r for r in ds.receipts if r.id not in drop]
     left = any(r.po == po_id for r in receipts) or any(c.po == po_id for c in ds.closed_orders)
-    headers = ds.purchase_orders if left else [p for p in ds.purchase_orders if p.id != po_id]
+    po = ds.purchase_order_by_id.get(po_id)
+    cancelled = list(ds.cancelled_purchase_orders)
+    headers = list(ds.purchase_orders)
+    if po is not None:
+        view = next(v for v in purchase_orders(ds) if v.id == po_id and v.header)
+        prices = {ln.id: ln.price for ln in view.lines}
+        saved = po.model_copy(update={"cancelled_lines": [*po.cancelled_lines,
+                                      *(r.model_copy(update={"price": prices.get(r.id)})
+                                        for r in ds.receipts if r.id in drop)],
+                                      "currency": po.currency or view.currency})
+        headers = [saved if p.id == po_id else p for p in headers] if left else [p for p in headers if p.id != po_id]
+        if not left:
+            cancelled.append(saved)
     msg = f"{len(drop)} line{'s' if len(drop) != 1 else ''} of {po_id} cancelled" + ("" if left else "; the order is removed")
-    return ds.model_copy(update={"receipts": receipts, "purchase_orders": headers}), ActionReport(ok=True, message=msg)
+    return ds.model_copy(update={"receipts": receipts, "purchase_orders": headers,
+                                 "cancelled_purchase_orders": cancelled}), ActionReport(ok=True, message=msg)
 
 
 ACTIONS = {"approve", "send", "send_all", "confirm", "receive", "change", "cancel", "create_agreement",
@@ -700,7 +719,7 @@ def _line_status(ds: Dataset, r, got: dict[str, float], last: dict[str, date], a
                       expected_date=exp, status="closed", days_late=late, closed=True, last_receipt=r.last_delivery)
     ordered = r.ordered_qty if r.ordered_qty is not None else r.qty
     rec = got.get(r.id, 0.0)
-    open_q = max(0.0, ordered - rec)
+    open_q = max(0.0, r.target_qty - rec)
     v = ds.vendor(_supplier_of(ds, r) or "")
     pu = ds.purchasing_source_by_id.get(r.source or "")
     price = r.price if r.price is not None else pu.price_for(ordered) if pu else None   # an imported line: its source's price

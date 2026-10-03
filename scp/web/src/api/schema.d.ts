@@ -3197,6 +3197,11 @@ export interface components {
             vendors?: components["schemas"]["Vendor"][];
             /** Purchase Orders */
             purchase_orders?: components["schemas"]["PurchaseOrder"][];
+            /**
+             * Cancelled Purchase Orders
+             * @description Removed purchase orders retained for cancellation delivery and acknowledgement by the ERP
+             */
+            cancelled_purchase_orders?: components["schemas"]["PurchaseOrder"][];
             purchasing?: components["schemas"]["PurchasingSettings"];
             /** Contracts */
             contracts?: components["schemas"]["PurchaseContract"][];
@@ -5006,11 +5011,11 @@ export interface components {
             source: string;
             /**
              * Headers
-             * @description A web address: headers to send (Authorization)
+             * @description A web address: headers to send (Authorization); omitted keeps them only for the same origin, {} removes them
              */
             headers?: {
                 [key: string]: string;
-            };
+            } | null;
             /**
              * Format
              * @default csv
@@ -6752,6 +6757,11 @@ export interface components {
             change: "new" | "changed" | "taken" | "withdrawn";
             /** Erp Ref */
             erp_ref: string;
+            /**
+             * Cancelled
+             * @default false
+             */
+            cancelled: boolean;
             /** Location */
             location: string;
             /** Supplier */
@@ -8054,6 +8064,11 @@ export interface components {
              * @default
              */
             erp_sent: string;
+            /**
+             * Cancelled Lines
+             * @description Cancelled line snapshots, retained so the ERP also receives their cancellation
+             */
+            cancelled_lines?: components["schemas"]["ScheduledReceipt"][];
         };
         /** PurchasingSettings */
         PurchasingSettings: {
@@ -9903,6 +9918,11 @@ export interface components {
              * @description Originally ordered; empty = `qty` (nothing received yet)
              */
             ordered_qty?: number | null;
+            /**
+             * Delivery Target Qty
+             * @description Purchase: total delivery quantity when goods are returned for replacement; the original order quantity is retained for history
+             */
+            delivery_target_qty?: number | null;
             /**
              * Due Date
              * Format: date

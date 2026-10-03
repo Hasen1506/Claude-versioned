@@ -75,18 +75,21 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
             rep.stock.append(StockChange(location=node[0], product=node[1], before=before_q, after=after_q))
 
     # ② firm receipts -------------------------------------------------------------------------------------
-    got, g_first, g_last, g_final = _sum(movs, {MovementType.RECEIPT})
+    got, g_first, g_last, g_final = _sum(movs, {MovementType.RECEIPT},
+                                      (r.movement for r in ds.supplier_returns if r.replace and r.movement))
     iss, *_ = _sum(movs, {MovementType.ISSUE, MovementType.TRANSFER_OUT})
     receipts = []
     for rc in ds.receipts:
         ordered = rc.ordered_qty if rc.ordered_qty is not None else rc.qty
         k = (rc.id, rc.location, rc.product)
         delivered = got.get(k, 0.0)
-        open_q = ordered - delivered
+        open_q = rc.target_qty - delivered
         # a purchase closes at the supplier's under-delivery tolerance, or once what they confirmed (if less) is in
         line_tol = max(tol, ds.vendor(counterparty(ds, rc) or "").under_delivery_tolerance) \
             if rc.kind.value == "purchase" else tol
-        target = min(ordered, rc.confirmed_qty) if rc.confirmed_qty is not None and delivered > EPS else ordered
+        if rc.delivery_target_qty is not None:
+            line_tol = 0.0  # the cancelled remainder was already taken off the target; replacements are still due
+        target = min(rc.target_qty, rc.confirmed_qty) if rc.confirmed_qty is not None and delivered > EPS else rc.target_qty
         closed = open_q <= ordered * line_tol + EPS or rc.id in g_final or delivered >= target - EPS > 0
         if closed:
             rep.closed.append(ClosedOrder(kind=rc.kind.value, id=rc.id, location=rc.location, product=rc.product,
@@ -94,7 +97,7 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
                                           due_date=rc.due_date, first_delivery=g_first.get(k), last_delivery=g_last.get(k),
                                           closed_on=g_last.get(k, as_of), po=rc.po, price=rc.price,
                                           confirmed_date=rc.confirmed_date,
-                                          source_order=rc.model_copy(update={"qty": ordered, "ordered_qty": ordered,
+                                          source_order=rc.model_copy(update={"qty": rc.target_qty, "ordered_qty": ordered,
                                               "original_reservations": [],
                                               "reservations": [rv.model_copy(update={"qty": rv.required_qty
                                                   if rv.required_qty is not None else rv.qty, "required_qty": None})

@@ -140,12 +140,16 @@ function schedule(j: Pick<ImportJob, "every" | "at" | "weekday">): string {
 function JobForm({ data, initial, onSave, onCancel }: { data: ImportJobs; initial: JobInput; onSave: (j: JobInput) => Promise<void>; onCancel: () => void }) {
   const [j, setJ] = useState<JobInput>(initial);
   const [auth, setAuth] = useState("");
+  const [clearAuth, setClearAuth] = useState(false);
   const [e, setE] = useState<string | null>(null);
   const set = (p: Partial<JobInput>) => setJ({ ...j, ...p });
   return <form className="stack" style={{ gap: 10 }} aria-label="Scheduled import" onSubmit={async (ev) => {
     ev.preventDefault();
     setE(null);
-    try { await onSave({ ...j, headers: auth.trim() ? { Authorization: auth.trim() } : j.headers }); } catch (x) { setE(err(x)); }
+    const headers = clearAuth || j.source_type !== "url" ? {} : auth.trim() ? { Authorization: auth.trim() } : j.headers;
+    const { name, kind, source_type, source, format, day_first, every, at, weekday, enabled } = j;
+    try { await onSave({ name, kind, source_type, source, format, day_first, every, at, weekday, enabled, headers }); }
+    catch (x) { setE(err(x)); }
   }}>
     <div className="qrow">
       <label className="qf"><span className="qf-l">Name</span>
@@ -168,9 +172,12 @@ function JobForm({ data, initial, onSave, onCancel }: { data: ImportJobs; initia
           : <>files matching this in <code>{data.folder}</code>; each read file moves to <code>done/</code> (or <code>failed/</code>)</>}</span></label>
     </div>
     {j.source_type === "url" && <label className="qf"><span className="qf-l">Authorization header <span className="faint">(optional)</span></span>
-      <input className="input" type="password" value={auth} onChange={(ev) => setAuth(ev.target.value)} aria-label="Authorization header" autoComplete="off"
+      <input className="input" type="password" disabled={clearAuth} value={auth} onChange={(ev) => setAuth(ev.target.value)} aria-label="Authorization header" autoComplete="off"
         placeholder={(initial.headers && Object.keys(initial.headers).length) || (initial as Partial<ImportJob>).header_names?.length ? "kept as it is" : "Bearer …"} />
-      <span className="qf-h">sent with each request; not shown again</span></label>}
+      <span className="qf-h">sent with each request; not shown again. Saved credentials are cleared if the host, protocol or port changes.</span>
+      {(initial as Partial<ImportJob>).header_names?.length ? <span className="row small">
+        <input type="checkbox" checked={clearAuth} onChange={(ev) => setClearAuth(ev.target.checked)} aria-label="Remove saved request headers" />
+        Remove saved request headers</span> : null}</label>}
     <div className="qrow">
       <label className="qf"><span className="qf-l">How often</span>
         <select className="select" value={j.every} onChange={(ev) => set({ every: ev.target.value as JobInput["every"] })} aria-label="How often">
@@ -215,7 +222,7 @@ function Imports({ id, owner }: { id: string; owner: boolean }) {
       takes it in as that system's message would be: each line taken or refused with why, in Messages. The same file is never
       taken twice. Column names are recognised in English and as SAP exports name them; see the integration guide.</p>
     {editing && <div className="hcard" style={{ marginBottom: 12 }}>
-      <JobForm data={data} initial={editing === "new" ? blank(data.kinds) : { ...editing, headers: {} } as unknown as JobInput}
+      <JobForm data={data} initial={editing === "new" ? blank(data.kinds) : { ...editing, headers: undefined } as unknown as JobInput}
         onCancel={() => setEditing(null)} onSave={async (j) => {
           setData(await api.saveImport(id, j, editing === "new" ? undefined : editing.id));
           setEditing(null);
