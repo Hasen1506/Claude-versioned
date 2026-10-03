@@ -54,7 +54,8 @@ class PurchasingError(ValueError):
 def next_numbers(ds: Dataset) -> dict[str, int]:
     """Highest number used per prefix (PRD, PO, STO) by receipts, closed orders and purchase order headers."""
     out: dict[str, int] = defaultdict(int)
-    ids = [r.id for r in ds.receipts] + [c.id for c in ds.closed_orders] + [p.id for p in ds.purchase_orders]
+    ids = ([r.id for r in ds.receipts] + [c.id for c in ds.closed_orders]
+           + [p.id for p in [*ds.purchase_orders, *ds.cancelled_purchase_orders]])
     for oid in ids:
         m = re.fullmatch(r"(PRD|PO|STO)-(\d+)", oid)
         if m:
@@ -272,7 +273,8 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
     headers = list(ds.purchase_orders)
     for sa_id, items in sorted(agreements.items()):
         sa = ds.purchase_order_by_id[sa_id]
-        taken = [int(m.group(1)) for x in [*(r.id for r in receipts), *(c.id for c in ds.closed_orders)]
+        taken = [int(m.group(1)) for x in [*(r.id for r in receipts), *(c.id for c in ds.closed_orders),
+                                         *(r.id for r in sa.cancelled_lines)]
                  if (m := re.fullmatch(rf"{re.escape(sa_id)}-(\d+)", x))]
         n = max(taken, default=0)
         created = CreatedPo(id=sa_id, supplier=sa.supplier, location=sa.location,
@@ -465,7 +467,8 @@ def create_agreement(ds: Dataset, supplier: str, location: str, product: str, *,
         raise PurchasingError("the agreement cannot end before it starts")
     if (old := agreement_for(ds, supplier, location, product, on, ds.price_currency(pu))) is not None:
         raise PurchasingError(f"{old.id} already schedules {product} from {supplier} to {location}")
-    n = max([int(m.group(1)) for p in ds.purchase_orders if (m := re.fullmatch(r"SA-(\d+)", p.id))], default=0)
+    n = max([int(m.group(1)) for p in [*ds.purchase_orders, *ds.cancelled_purchase_orders]
+             if (m := re.fullmatch(r"SA-(\d+)", p.id))], default=0)
     sid = f"SA-{n + 1:05d}"
     price, contract = price_on(ds, pu, target_qty or 1.0, on, location)
     value = (target_qty or 0.0) * price * fx(ds, ds.price_currency(pu))
@@ -631,9 +634,22 @@ def cancel(ds: Dataset, po_id: str, lines: list[dict] | None) -> tuple[Dataset, 
         drop.add(r.id)
     receipts = [r for r in ds.receipts if r.id not in drop]
     left = any(r.po == po_id for r in receipts) or any(c.po == po_id for c in ds.closed_orders)
-    headers = ds.purchase_orders if left else [p for p in ds.purchase_orders if p.id != po_id]
+    po = ds.purchase_order_by_id.get(po_id)
+    cancelled = list(ds.cancelled_purchase_orders)
+    headers = list(ds.purchase_orders)
+    if po is not None:
+        view = next(v for v in purchase_orders(ds) if v.id == po_id and v.header)
+        prices = {ln.id: ln.price for ln in view.lines}
+        saved = po.model_copy(update={"cancelled_lines": [*po.cancelled_lines,
+                                      *(r.model_copy(update={"price": prices.get(r.id)})
+                                        for r in ds.receipts if r.id in drop)],
+                                      "currency": po.currency or view.currency})
+        headers = [saved if p.id == po_id else p for p in headers] if left else [p for p in headers if p.id != po_id]
+        if not left:
+            cancelled.append(saved)
     msg = f"{len(drop)} line{'s' if len(drop) != 1 else ''} of {po_id} cancelled" + ("" if left else "; the order is removed")
-    return ds.model_copy(update={"receipts": receipts, "purchase_orders": headers}), ActionReport(ok=True, message=msg)
+    return ds.model_copy(update={"receipts": receipts, "purchase_orders": headers,
+                                 "cancelled_purchase_orders": cancelled}), ActionReport(ok=True, message=msg)
 
 
 ACTIONS = {"approve", "send", "send_all", "confirm", "receive", "change", "cancel", "create_agreement",

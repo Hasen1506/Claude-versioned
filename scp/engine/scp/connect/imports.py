@@ -86,7 +86,8 @@ class JobInput(Model):
     kind: str = Field(description="orders, stock, postings or records:<list>")
     source_type: Literal["url", "folder"]
     source: str = Field(min_length=1, max_length=500, description="The web address, or the file pattern in the folder")
-    headers: dict[str, str] = Field(default_factory=dict, description="A web address: headers to send (Authorization)")
+    headers: dict[str, str] | None = Field(None, description="A web address: headers to send (Authorization); omitted "
+                                         "keeps them only for the same origin, {} removes them")
     format: Literal["csv", "json"] = "csv"
     day_first: bool = Field(True, description="CSV dates such as 05/01/2026 are day first (5 January)")
     every: Every = "day"
@@ -155,6 +156,10 @@ def _check(c: Companies, cid: str, body: JobInput) -> None:
         u = urlparse(body.source)
         if u.scheme not in ("http", "https") or not u.hostname:
             raise CompanyError("a web address starts with https:// (or http://)", 422)
+        try:
+            _origin(body.source)
+        except ValueError as e:
+            raise CompanyError("the web address has an invalid port", 422) from e
         allowed = _hosts()
         if allowed and u.hostname.lower() not in allowed:
             raise CompanyError(f"this server reads files only from {', '.join(allowed)}", 422)
@@ -206,7 +211,8 @@ def save_job(c: Companies, user: User, cid: str, body: JobInput, jid: str | None
             c.db.execute("INSERT INTO import_jobs (id, company_id, name, kind, source_type, source, headers, format, "
                          "day_first, every, at, weekday, enabled, run_as, created_at, next_run) VALUES "
                          "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                         (jid, cid, body.name, body.kind, body.source_type, body.source, json.dumps(body.headers),
+                         (jid, cid, body.name, body.kind, body.source_type, body.source,
+                          json.dumps((body.headers or {}) if body.source_type == "url" else {}),
                           body.format, int(body.day_first), body.every, body.at, body.weekday, int(body.enabled),
                           user.id, _iso(now), nxt))
             c._log(cid, None, user.id, "member", f"import {jid} “{body.name}” made: {body.kind} every {body.every}")
@@ -215,7 +221,11 @@ def save_job(c: Companies, user: User, cid: str, body: JobInput, jid: str | None
                              (jid, cid)).fetchone()
             if r is None:
                 raise CompanyError(f"no import {jid} in this company", 404)
-            headers = body.headers or json.loads(r["headers"])     # values not shown again: kept unless sent
+            same_origin = (r["source_type"] == body.source_type == "url"
+                           and _origin(r["source"]) == _origin(body.source))
+            headers = body.headers if body.headers is not None else json.loads(r["headers"]) if same_origin else {}
+            if body.source_type != "url":
+                headers = {}
             c.db.execute("UPDATE import_jobs SET name = ?, kind = ?, source_type = ?, source = ?, headers = ?, format = ?, "
                          "day_first = ?, every = ?, at = ?, weekday = ?, enabled = ?, run_as = ?, next_run = ? "
                          "WHERE id = ?", (body.name, body.kind, body.source_type, body.source, json.dumps(headers),
@@ -236,6 +246,12 @@ def delete_job(c: Companies, user: User, cid: str, jid: str) -> ImportJobs:
         c.db.execute("UPDATE import_jobs SET deleted = 1, enabled = 0, next_run = NULL WHERE id = ?", (jid,))
         c._log(cid, None, user.id, "member", f"import {jid} “{r['name']}” removed")
     return jobs(c, user, cid)
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    u = urlparse(url)
+    return (u.scheme.lower(), (u.hostname or "").lower(),
+            u.port if u.port is not None else (443 if u.scheme == "https" else 80))
 
 
 # ------------------------------------------------------------------------------------------------ reading files
@@ -410,7 +426,8 @@ def _typed(kind: str, items: list[Any]) -> tuple[list[Any], list[ItemResult]]:
     good, bad = [], []
     for i, it in enumerate(items):
         if kind == "postings" and isinstance(it, dict) and "number" in it:
-            it = {**it, "order": it.pop("number")}
+            it = dict(it)
+            it["order"] = it.pop("number")
         try:
             good.append(form.model_validate(it))
         except Exception as e:  # noqa: BLE001 - reported per row

@@ -282,7 +282,7 @@ def _posting(ds: Dataset, p: ErpPosting) -> tuple[Dataset, ItemResult]:
 #: lists an ERP may send record by record; orders, documents and the journal have their own messages
 NOT_RECORDS = {"movements", "sales_orders", "purchase_orders", "deliveries", "invoices", "returns", "quotations",
                "supplier_invoices", "supplier_returns", "confirmations", "closed_orders", "inventory_docs", "batches",
-               "allocations", "accuracy", "rolled_weeks"}
+               "allocations", "accuracy", "rolled_weeks", "cancelled_purchase_orders"}
 
 
 def record_lists() -> list[str]:
@@ -354,6 +354,7 @@ class OutOrder(Out):
     version: str                   # what the ERP needs of the order, fingerprinted: a new one means it changed
     change: Literal["new", "changed", "taken"]
     erp_ref: str
+    cancelled: bool = False         # purchase: every remaining line was cancelled and the header was removed
     location: str
     supplier: str | None = None    # purchase: the supplier; transfer: the place it comes from
     supplier_name: str | None = None
@@ -387,13 +388,21 @@ def outbound(ds: Dataset, kind: OutKind, everything: bool = False) -> list[OutOr
     out: list[OutOrder] = []
     if kind == "purchase_order":
         from ..purchasing import purchase_orders
-        heads = {p.id: p for p in ds.purchase_orders}
-        for v in purchase_orders(ds):
+        archived = {p.id for p in ds.cancelled_purchase_orders}
+        all_heads = [*ds.purchase_orders, *ds.cancelled_purchase_orders]
+        heads = {p.id: p for p in all_heads}
+        for v in purchase_orders(ds.model_copy(update={"purchase_orders": all_heads})):
             h = heads.get(v.id)
-            if h is None or not v.header or not h.approved or v.status == "awaiting approval":
+            if h is None or not v.header:
+                continue
+            if h.id not in archived and (not h.approved or v.status == "awaiting approval"):
                 continue
             lines = [OutLine(id=x.id, item=_item(x.id), product=x.product, qty=x.ordered, open=x.open, date=x.due_date,
                              price=x.price, cancelled=x.closed and "cancel" in x.status) for x in v.lines]
+            lines += [OutLine(id=x.id, item=_item(x.id), product=x.product,
+                              qty=x.ordered_qty if x.ordered_qty is not None else x.qty, open=0.0,
+                              date=x.due_date, price=x.price, cancelled=True) for x in h.cancelled_lines]
+            lines.sort(key=lambda x: x.id)
             if not lines:
                 continue
             ver = _version({"s": h.supplier, "l": h.location, "c": v.currency, "k": h.kind, "to": h.valid_to,
@@ -401,6 +410,7 @@ def outbound(ds: Dataset, kind: OutKind, everything: bool = False) -> list[OutOr
             ch = _change(h.erp_ref, h.erp_sent, ver)
             if everything or ch != "taken":
                 out.append(OutOrder(kind=kind, id=h.id, version=ver, change=ch, erp_ref=h.erp_ref, location=h.location,
+                                    cancelled=h.id in archived,
                                     supplier=h.supplier, supplier_name=ds.location_by_id[h.supplier].name
                                     if h.supplier in ds.location_by_id else h.supplier, order_date=h.order_date,
                                     currency=v.currency, agreement=h.kind == "scheduling_agreement", sent_on=h.sent_on,
@@ -435,20 +445,24 @@ def _ack(ds: Dataset, a: ErpAck, current: dict) -> tuple[Dataset, ItemResult]:
     later = " The order changed since that version: it goes to the ERP again." if now and now.version != a.version else ""
     if a.kind == "purchase_order":
         h = next((p for p in ds.purchase_orders if p.id == a.id), None)
+        collection = "purchase_orders"
+        if h is None:
+            h = next((p for p in ds.cancelled_purchase_orders if p.id == a.id), None)
+            collection = "cancelled_purchase_orders"
         if h is None:
             raise ValueError(f"there is no purchase order {a.id}")
         if h.erp_ref and h.erp_ref != a.erp_ref:
             raise ValueError(f"{a.id} is {h.erp_ref} in the ERP already, not {a.erp_ref}")
         upd: dict[str, Any] = {"erp_ref": a.erp_ref, "erp_sent": a.version}
         sent = ""
-        if a.sent_to_supplier and h.sent_on is None and h.approved:
+        if a.sent_to_supplier and h.sent_on is None and h.approved and collection == "purchase_orders":
             upd["sent_on"] = ds.settings.planning_start
             sent = " Sent to the supplier by the ERP."
         if h.erp_ref == a.erp_ref and h.erp_sent == a.version and "sent_on" not in upd:
             return ds, ItemResult(ref=a.id, status="unchanged", message=f"{a.id} was taken as {a.erp_ref} already",
                                   id=a.id)
         new = h.model_copy(update=upd)
-        return (ds.model_copy(update={"purchase_orders": [new if p is h else p for p in ds.purchase_orders]}),
+        return (ds.model_copy(update={collection: [new if p is h else p for p in getattr(ds, collection)]}),
                 ItemResult(ref=a.id, status="applied", id=a.id, message=f"{a.id} is {a.erp_ref} in the ERP.{sent}{later}"))
     want = ReceiptKind.PRODUCTION if a.kind == "production_order" else ReceiptKind.TRANSFER
     r = next((x for x in ds.receipts if x.id == a.id and x.kind is want), None)
