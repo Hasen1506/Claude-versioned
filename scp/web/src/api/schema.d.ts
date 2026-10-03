@@ -443,6 +443,380 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/companies/{cid}/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Keys */
+        get: operations["list_keys_api_companies__cid__keys_get"];
+        put?: never;
+        /**
+         * Make Key
+         * @description A key for another system; the key itself (``token``) is in this answer only: give it to that system now.
+         */
+        post: operations["make_key_api_companies__cid__keys_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/keys/{kid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke Key */
+        delete: operations["revoke_key_api_companies__cid__keys__kid__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/erp/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Erp Orders
+         * @description Customer orders from the ERP, new or changed (by the ERP's order number), or cancelled.
+         */
+        post: operations["erp_orders_api_companies__cid__erp_orders_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/erp/stock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Erp Stock
+         * @description The ERP's stock per place and product: differences are posted as count differences.
+         */
+        post: operations["erp_stock_api_companies__cid__erp_stock_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/erp/postings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Erp Postings
+         * @description Goods movements from the ERP, each taken once by its document number.
+         */
+        post: operations["erp_postings_api_companies__cid__erp_postings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/erp/records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Erp Record Lists
+         * @description The lists of master data the ERP can send record by record.
+         */
+        get: operations["erp_record_lists_api_companies__cid__erp_records_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/erp/records/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Erp Records
+         * @description Master data records of one list (products, locations, …), added or changed in the fields sent.
+         */
+        post: operations["erp_records_api_companies__cid__erp_records__name__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/erp/purchase-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Erp Purchase Orders
+         * @description Purchase orders released for sending that the ERP has not taken, or that changed since it took them
+         *     (``all``: every one).
+         */
+        get: operations["erp_purchase_orders_api_companies__cid__erp_purchase_orders_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/erp/production-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Erp Production Orders
+         * @description Firm production orders the ERP has not taken or that changed since.
+         */
+        get: operations["erp_production_orders_api_companies__cid__erp_production_orders_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/erp/transfer-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Erp Transfer Orders
+         * @description Firm transfers between places the ERP has not taken or that changed since.
+         */
+        get: operations["erp_transfer_orders_api_companies__cid__erp_transfer_orders_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/erp/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Erp Acknowledge
+         * @description The ERP took these orders: the number it gave each, and the version it took.
+         */
+        post: operations["erp_acknowledge_api_companies__cid__erp_acknowledge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Imports */
+        get: operations["list_imports_api_companies__cid__imports_get"];
+        put?: never;
+        /**
+         * Make Import
+         * @description A scheduled import; only an owner may make one (it reads from outside with the owner's rights).
+         */
+        post: operations["make_import_api_companies__cid__imports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/imports/{jid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Change Import */
+        put: operations["change_import_api_companies__cid__imports__jid__put"];
+        post?: never;
+        /** Remove Import */
+        delete: operations["remove_import_api_companies__cid__imports__jid__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/imports/{jid}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Import
+         * @description Run an import now, whatever its schedule says.
+         */
+        post: operations["run_import_api_companies__cid__imports__jid__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/mail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Mail Setup */
+        get: operations["mail_setup_api_companies__cid__mail_get"];
+        put?: never;
+        /**
+         * Send Mail
+         * @description Send a document (a purchase order, an order confirmation, an invoice) from the server, with the page attached;
+         *     only to addresses in the company's supplier and customer data or of its members.
+         */
+        post: operations["send_mail_api_companies__cid__mail_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/mail/sent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Mail Sent */
+        get: operations["mail_sent_api_companies__cid__mail_sent_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/mail/reminders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Mail Reminders
+         * @description Worklist reminders: on which days and at what time each owner of open exceptions gets them by e-mail.
+         */
+        put: operations["mail_reminders_api_companies__cid__mail_reminders_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/mail/reminders/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mail Reminders Now
+         * @description Send the worklist reminders now.
+         */
+        post: operations["mail_reminders_now_api_companies__cid__mail_reminders_send_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Messages */
+        get: operations["messages_api_companies__cid__messages_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -1435,6 +1809,16 @@ export interface components {
             /** Actual */
             actual: number;
         };
+        /** AckMessage */
+        AckMessage: {
+            /**
+             * Message Id
+             * @default
+             */
+            message_id: string;
+            /** Orders */
+            orders: components["schemas"]["ErpAck"][];
+        };
         /** ActionReport */
         ActionReport: {
             /** Ok */
@@ -1551,6 +1935,30 @@ export interface components {
             used: number;
             /** Fallback */
             fallback: string;
+        };
+        /**
+         * ApiKey
+         * @description A key another system (an ERP, a scheduled import) uses to work in one company as a member (Phase Q).
+         */
+        ApiKey: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Role */
+            role: string;
+            /** Prefix */
+            prefix: string;
+            /** Created By */
+            created_by: string;
+            /** Created At */
+            created_at: string;
+            /** Last Used */
+            last_used: string | null;
+            /** Revoked At */
+            revoked_at: string | null;
+            /** Token */
+            token: string | null;
         };
         /** AppliedOrder */
         AppliedOrder: {
@@ -3263,6 +3671,145 @@ export interface components {
              */
             unpriced: string[];
         };
+        /** ErpAck */
+        ErpAck: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "purchase_order" | "production_order" | "transfer_order";
+            /**
+             * Id
+             * @description The order's number here
+             */
+            id: string;
+            /**
+             * Erp Ref
+             * @description The number the ERP gave it
+             */
+            erp_ref: string;
+            /**
+             * Version
+             * @description The version the ERP took (from the order sent)
+             */
+            version: string;
+            /**
+             * Sent To Supplier
+             * @description A purchase order: the ERP sent it to the supplier
+             * @default false
+             */
+            sent_to_supplier: boolean;
+        };
+        /** ErpLine */
+        ErpLine: {
+            /** Product */
+            product: string;
+            /**
+             * Qty
+             * @description The whole quantity ordered on the line
+             */
+            qty: number;
+            /**
+             * Date
+             * Format: date
+             * @description Wanted on
+             */
+            date: string;
+            /**
+             * Price
+             * @description Net price per unit; empty = the customer's price here
+             */
+            price?: number | null;
+        };
+        /** ErpOrder */
+        ErpOrder: {
+            /**
+             * Number
+             * @description The order's number in the ERP
+             */
+            number: string;
+            /** Customer */
+            customer: string;
+            /** Order Date */
+            order_date?: string | null;
+            /**
+             * Customer Ref
+             * @description The customer's own order number
+             * @default
+             */
+            customer_ref: string;
+            /** Payment Terms */
+            payment_terms?: string | null;
+            /** Lines */
+            lines?: components["schemas"]["ErpLine"][];
+            /**
+             * Cancelled
+             * @description Cancelled in the ERP: what is open here is cancelled
+             * @default false
+             */
+            cancelled: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** ErpPosting */
+        ErpPosting: {
+            /**
+             * Ref
+             * @description The ERP's document number: a posting is taken once
+             */
+            ref: string;
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "receive" | "ship" | "deliver" | "move" | "scrap";
+            /**
+             * Order
+             * @description receive / ship / deliver: the order, by our number or the ERP's (4500001234/10)
+             */
+            order?: string | null;
+            /** Qty */
+            qty?: number | null;
+            /** Date */
+            date?: string | null;
+            /**
+             * Final
+             * @default false
+             */
+            final: boolean;
+            /** Location */
+            location?: string | null;
+            /** Product */
+            product?: string | null;
+            /** Batch */
+            batch?: string | null;
+            /** Expires On */
+            expires_on?: string | null;
+            /** Supplier Batch */
+            supplier_batch?: string | null;
+            stock_type?: components["schemas"]["StockType"] | null;
+            to_type?: components["schemas"]["StockType"] | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** ErpStock */
+        ErpStock: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /**
+             * Qty
+             * @description On hand at the end of the day, every stock type
+             */
+            qty: number;
+        };
         /**
          * EventKind
          * @enum {string}
@@ -3793,6 +4340,11 @@ export interface components {
              * @description Serial numbers moved (serialised products: one per unit)
              */
             serials?: string[];
+            /**
+             * Erp Ref
+             * @description The ERP's document it came with: an ERP posting is taken once
+             */
+            erp_ref?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -3877,6 +4429,54 @@ export interface components {
              * @default []
              */
             events: string[];
+        };
+        /** ImportJob */
+        ImportJob: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Kind */
+            kind: string;
+            /** Source Type */
+            source_type: string;
+            /** Source */
+            source: string;
+            /** Header Names */
+            header_names: string[];
+            /** Format */
+            format: string;
+            /** Day First */
+            day_first: boolean;
+            /** Every */
+            every: string;
+            /** At */
+            at: string;
+            /** Weekday */
+            weekday: number;
+            /** Enabled */
+            enabled: boolean;
+            /** Run As */
+            run_as: string;
+            /** Next Run */
+            next_run: string | null;
+            /** Last Run */
+            last_run: string | null;
+            /** Last Status */
+            last_status: string;
+            /** Last Summary */
+            last_summary: string;
+        };
+        /** ImportJobs */
+        ImportJobs: {
+            /** Jobs */
+            jobs: components["schemas"]["ImportJob"][];
+            /** Folder */
+            folder: string | null;
+            /** Timezone */
+            timezone: string;
+            /** Kinds */
+            kinds: string[];
         };
         /** InfoRecord */
         InfoRecord: {
@@ -4311,6 +4911,85 @@ export interface components {
              * @default 0
              */
             more: number;
+        };
+        /**
+         * ItemResult
+         * @description What became of one item of a message.
+         */
+        ItemResult: {
+            /** Ref */
+            ref: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "applied" | "unchanged" | "duplicate" | "refused";
+            /** Message */
+            message: string;
+            /** Id */
+            id: string | null;
+        };
+        /** JobInput */
+        JobInput: {
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @description orders, stock, postings or records:<list>
+             */
+            kind: string;
+            /**
+             * Source Type
+             * @enum {string}
+             */
+            source_type: "url" | "folder";
+            /**
+             * Source
+             * @description The web address, or the file pattern in the folder
+             */
+            source: string;
+            /**
+             * Headers
+             * @description A web address: headers to send (Authorization)
+             */
+            headers?: {
+                [key: string]: string;
+            };
+            /**
+             * Format
+             * @default csv
+             * @enum {string}
+             */
+            format: "csv" | "json";
+            /**
+             * Day First
+             * @description CSV dates such as 05/01/2026 are day first (5 January)
+             * @default true
+             */
+            day_first: boolean;
+            /**
+             * Every
+             * @default day
+             * @enum {string}
+             */
+            every: "hour" | "day" | "week";
+            /**
+             * At
+             * @description Time of day (the minute, hourly)
+             * @default 06:00
+             */
+            at: string;
+            /**
+             * Weekday
+             * @description Weekly: 0 Monday … 6 Sunday
+             * @default 0
+             */
+            weekday: number;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
         };
         /** Kpi */
         Kpi: {
@@ -4940,6 +5619,78 @@ export interface components {
              */
             ordering_cost: number;
         };
+        /** MailInput */
+        MailInput: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "purchase_order" | "delivery_schedule" | "confirmation" | "invoice" | "credit_note";
+            /**
+             * Ref
+             * @description The document's number (PO-00001, SO-00003, INV-00002)
+             */
+            ref: string;
+            /** To */
+            to: string[];
+            /** Cc */
+            cc?: string[];
+            /** Subject */
+            subject: string;
+            /**
+             * Text
+             * @description The e-mail's text
+             */
+            text: string;
+            /**
+             * Html
+             * @description The document as a page, attached as <ref>.html
+             * @default
+             */
+            html: string;
+        };
+        /** MailRow */
+        MailRow: {
+            /** Seq */
+            seq: number;
+            /** At */
+            at: string;
+            /** By */
+            by: string;
+            /** Kind */
+            kind: string;
+            /** Ref */
+            ref: string;
+            /** To */
+            to: string[];
+            /** Cc */
+            cc: string[];
+            /** Subject */
+            subject: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "sent" | "failed";
+            /** Error */
+            error: string;
+            /** Attachment */
+            attachment: string;
+        };
+        /** MailSetup */
+        MailSetup: {
+            /** Mail */
+            mail: boolean;
+            /** Sender */
+            sender: string;
+            /** Timezone */
+            timezone: string;
+            reminders: components["schemas"]["ReminderSettings"];
+            /** Next Reminder */
+            next_reminder: string | null;
+            /** Last Reminder */
+            last_reminder: string | null;
+        };
         /** Me */
         Me: {
             user: components["schemas"]["User"];
@@ -5051,6 +5802,57 @@ export interface components {
              */
             saved: boolean;
             held: components["schemas"]["HeldChange"] | null;
+        };
+        /**
+         * MessageAnswer
+         * @description The answer to a message: what became of it and of each item.
+         */
+        MessageAnswer: {
+            message: components["schemas"]["MessageRow"];
+            /** Revision */
+            revision: number;
+            /** Held */
+            held: string | null;
+        };
+        /**
+         * MessageRow
+         * @description A message logged: what came in (or went out), from whom, and what became of each item.
+         */
+        MessageRow: {
+            /** Seq */
+            seq: number;
+            /** At */
+            at: string;
+            /** By */
+            by: string;
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "in" | "out";
+            /** Kind */
+            kind: string;
+            /** Message Id */
+            message_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "applied" | "partly" | "refused" | "unchanged" | "duplicate" | "sent" | "failed";
+            /** Summary */
+            summary: string;
+            /** Revision */
+            revision: number | null;
+            /**
+             * Source
+             * @default
+             */
+            source: string;
+            /**
+             * Items
+             * @default []
+             */
+            items: components["schemas"]["ItemResult"][];
         };
         /** ModelInfo */
         ModelInfo: {
@@ -5230,6 +6032,17 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /** NewKey */
+        NewKey: {
+            /** Name */
+            name: string;
+            /**
+             * Role
+             * @default planner
+             * @enum {string}
+             */
+            role: "planner" | "viewer";
         };
         /** NodeBucket */
         NodeBucket: {
@@ -5821,6 +6634,100 @@ export interface components {
              * @default true
              */
             header: boolean;
+        };
+        /** OrdersMessage */
+        OrdersMessage: {
+            /**
+             * Message Id
+             * @description The sender's id for the message: sent again, it is not applied twice
+             * @default
+             */
+            message_id: string;
+            /** Orders */
+            orders: components["schemas"]["ErpOrder"][];
+        };
+        /** OutAnswer */
+        OutAnswer: {
+            /** Revision */
+            revision: number;
+            /** Orders */
+            orders: components["schemas"]["OutOrder"][];
+        };
+        /** OutLine */
+        OutLine: {
+            /** Id */
+            id: string;
+            /** Item */
+            item: number;
+            /** Product */
+            product: string;
+            /** Qty */
+            qty: number;
+            /** Open */
+            open: number;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Price */
+            price: number | null;
+            /** Cancelled */
+            cancelled: boolean;
+        };
+        /**
+         * OutOrder
+         * @description An order for the ERP to take: the ERP gives its number and the ``version`` back when it has taken it.
+         */
+        OutOrder: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "purchase_order" | "production_order" | "transfer_order";
+            /** Id */
+            id: string;
+            /** Version */
+            version: string;
+            /**
+             * Change
+             * @enum {string}
+             */
+            change: "new" | "changed" | "taken";
+            /** Erp Ref */
+            erp_ref: string;
+            /** Location */
+            location: string;
+            /** Supplier */
+            supplier: string | null;
+            /** Supplier Name */
+            supplier_name: string | null;
+            /** Order Date */
+            order_date: string | null;
+            /** Currency */
+            currency: string | null;
+            /**
+             * Agreement
+             * @default false
+             */
+            agreement: boolean;
+            /** Sent On */
+            sent_on: string | null;
+            /** Product */
+            product: string | null;
+            /** Qty */
+            qty: number | null;
+            /** Start */
+            start: string | null;
+            /** Due */
+            due: string | null;
+            /** Source */
+            source: string | null;
+            /**
+             * Lines
+             * @default []
+             */
+            lines: components["schemas"]["OutLine"][];
         };
         /**
          * OutlierMethod
@@ -6534,6 +7441,16 @@ export interface components {
              */
             uncounted_zero: boolean;
         };
+        /** PostingsMessage */
+        PostingsMessage: {
+            /**
+             * Message Id
+             * @default
+             */
+            message_id: string;
+            /** Postings */
+            postings: components["schemas"]["ErpPosting"][];
+        };
         /**
          * PriceScale
          * @description A quantity break on an info record: from this quantity per order line, this price.
@@ -7020,6 +7937,18 @@ export interface components {
              * @description Scheduling agreement: the quantity agreed over its life
              */
             target_qty?: number | null;
+            /**
+             * Erp Ref
+             * @description The order's number in the ERP, once the ERP has taken it
+             * @default
+             */
+            erp_ref: string;
+            /**
+             * Erp Sent
+             * @description The version of the order the ERP took last (empty: never); a changed order goes to the ERP again
+             * @default
+             */
+            erp_sent: string;
         };
         /** PurchasingSettings */
         PurchasingSettings: {
@@ -7366,6 +8295,18 @@ export interface components {
                 [key: string]: number;
             };
         };
+        /** RecordsMessage */
+        RecordsMessage: {
+            /**
+             * Message Id
+             * @default
+             */
+            message_id: string;
+            /** Records */
+            records: {
+                [key: string]: unknown;
+            }[];
+        };
         /**
          * ReleaseLevel
          * @description A level of the release strategy: orders worth more than ``above`` need a release at this level, in order of
@@ -7418,6 +8359,21 @@ export interface components {
              * @description Series of a product made to order there: not written (customer orders drive them), and any forecast an earlier release wrote for them removed
              */
             made_to_order: components["schemas"]["DroppedSeries"][];
+        };
+        /** ReminderSettings */
+        ReminderSettings: {
+            /**
+             * On
+             * @default false
+             */
+            on: boolean;
+            /**
+             * At
+             * @default 08:00
+             */
+            at: string;
+            /** Weekdays */
+            weekdays?: number[];
         };
         /** Requirement */
         Requirement: {
@@ -8104,6 +9060,12 @@ export interface components {
              * @default
              */
             note: string;
+            /**
+             * Erp Ref
+             * @description The order's number in the ERP it came from
+             * @default
+             */
+            erp_ref: string;
         };
         /** SalesOrderChange */
         SalesOrderChange: {
@@ -8890,6 +9852,18 @@ export interface components {
              * @description Purchase: the contract the line releases against
              */
             contract?: string | null;
+            /**
+             * Erp Ref
+             * @description Production or transfer: the order's number in the ERP
+             * @default
+             */
+            erp_ref: string;
+            /**
+             * Erp Sent
+             * @description Production or transfer: the version of the order the ERP took last (empty: never)
+             * @default
+             */
+            erp_sent: string;
         };
         /** ScheduledReceiptOut */
         ScheduledReceiptOut: {
@@ -9600,6 +10574,21 @@ export interface components {
             before: number;
             /** After */
             after: number;
+        };
+        /** StockMessage */
+        StockMessage: {
+            /**
+             * Message Id
+             * @default
+             */
+            message_id: string;
+            /**
+             * As Of
+             * @description Stock at the end of this day (default: the day before the planning start)
+             */
+            as_of?: string | null;
+            /** Stock */
+            stock: components["schemas"]["ErpStock"][];
         };
         /** StockRow */
         StockRow: {
@@ -11538,6 +12527,779 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_keys_api_companies__cid__keys_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKey"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    make_key_api_companies__cid__keys_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewKey"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKey"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_key_api_companies__cid__keys__kid__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                kid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKey"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    erp_orders_api_companies__cid__erp_orders_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrdersMessage"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageAnswer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    erp_stock_api_companies__cid__erp_stock_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StockMessage"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageAnswer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    erp_postings_api_companies__cid__erp_postings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PostingsMessage"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageAnswer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    erp_record_lists_api_companies__cid__erp_records_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    erp_records_api_companies__cid__erp_records__name__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordsMessage"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageAnswer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    erp_purchase_orders_api_companies__cid__erp_purchase_orders_get: {
+        parameters: {
+            query?: {
+                all?: boolean;
+            };
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutAnswer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    erp_production_orders_api_companies__cid__erp_production_orders_get: {
+        parameters: {
+            query?: {
+                all?: boolean;
+            };
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutAnswer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    erp_transfer_orders_api_companies__cid__erp_transfer_orders_get: {
+        parameters: {
+            query?: {
+                all?: boolean;
+            };
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutAnswer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    erp_acknowledge_api_companies__cid__erp_acknowledge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AckMessage"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageAnswer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_imports_api_companies__cid__imports_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJobs"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    make_import_api_companies__cid__imports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JobInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJobs"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_import_api_companies__cid__imports__jid__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                jid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JobInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJobs"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_import_api_companies__cid__imports__jid__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                jid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJobs"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_import_api_companies__cid__imports__jid__run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                jid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mail_setup_api_companies__cid__mail_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailSetup"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_mail_api_companies__cid__mail_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MailInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailRow"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mail_sent_api_companies__cid__mail_sent_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                ref?: string;
+                before?: number | null;
+            };
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mail_reminders_api_companies__cid__mail_reminders_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReminderSettings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailSetup"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mail_reminders_now_api_companies__cid__mail_reminders_send_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    messages_api_companies__cid__messages_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                kind?: string;
+                status?: string;
+                before?: number | null;
+            };
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageRow"][];
                 };
             };
             /** @description Validation Error */
