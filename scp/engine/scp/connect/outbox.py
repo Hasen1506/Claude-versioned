@@ -244,7 +244,7 @@ def _owners(c: Companies, cid: str) -> dict[str, str]:
 
 def _items(c: Companies, cid: str) -> tuple[list[dict], str, dict[str, int]]:
     """The company's open worklist items (as the last look at the worklist left them), its name and SLA days."""
-    r = c.db.execute("SELECT dataset FROM companies WHERE id = ?", (cid,)).fetchone()
+    r = c.db.execute("SELECT name, dataset FROM companies WHERE id = ?", (cid,)).fetchone()
     doc = json.loads(r["dataset"]) if r else {}
     settings = doc.get("settings") or {}
     sla = {**{"coverage": 2, "capacity": 5, "inventory": 10, "orders": 3, "delivery": 1, "demand": 7},
@@ -264,7 +264,7 @@ def _items(c: Companies, cid: str) -> tuple[list[dict], str, dict[str, int]]:
         s = sla.get(x["category"])
         items.append({"owner": x["owner"], "category": x["category"], "severity": x["severity"], "message": x["message"],
                       "age": age, "over": age - s if s is not None and age > s else 0, "status": x["status"]})
-    return items, settings.get("company_name") or cid, sla
+    return items, settings.get("company_name") or (r["name"] if r else "") or cid, sla
 
 
 def remind(c: Companies, cid: str, now: dt.datetime | None = None) -> list[MailRow]:

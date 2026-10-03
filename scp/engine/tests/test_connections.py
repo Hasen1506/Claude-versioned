@@ -338,3 +338,143 @@ def test_master_data_from_a_csv_names_fields_by_the_header():
                  b"location,product,lot_sizing.policy,lot_sizing.fixed_qty,safety_stock\nP,A,FIXED,50,5\n")
     assert rows == [{"location": "P", "product": "A", "lot_sizing": {"policy": "FIXED", "fixed_qty": "50"},
                      "safety_stock": "5"}]
+
+
+# ---- e-mail ------------------------------------------------------------------------------------------------------
+def mailing(monkeypatch) -> list:
+    """The server has a mail server; what it would send is kept here instead."""
+    from scp.companies import mail
+    sent: list = []
+    monkeypatch.setenv("SCP_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SCP_SMTP_FROM", "plan@example.com")
+    monkeypatch.setenv("SCP_PUBLIC_URL", "https://plan.example.com")
+    monkeypatch.setattr(mail, "deliver", sent.append)
+    return sent
+
+
+def with_contacts() -> dict:
+    d = company()
+    d["vendors"] = [{"supplier": "S", "email": "orders@sharma.example; accounts@sharma.example"}]
+    d["customers"] = [{"customer": "K", "email": "buying@kumar.example"}]
+    d["settings"]["company_name"] = "Mehta Paints"
+    return d
+
+
+def po_mail(**kw) -> dict:
+    return {"kind": "purchase_order", "ref": "PO-00001", "to": ["orders@sharma.example"],
+            "subject": "Purchase order PO-00001", "text": "Please find our order attached.",
+            "html": "<h1>Purchase order PO-00001</h1>", **kw}
+
+
+def test_a_document_goes_from_the_server_to_the_suppliers_address_with_the_document_attached(monkeypatch):
+    owner, cid, key = setup(with_contacts())
+    # no mail server: the browser opens the planner's own mail program instead
+    monkeypatch.delenv("SCP_SMTP_HOST", raising=False)
+    r = client.post(f"/api/companies/{cid}/mail", headers=h(owner), json=po_mail())
+    assert r.status_code == 409 and "sends no mail" in r.json()["detail"]
+    assert client.get(f"/api/companies/{cid}/mail", headers=h(owner)).json()["mail"] is False
+
+    sent = mailing(monkeypatch)
+    setup_ = client.get(f"/api/companies/{cid}/mail", headers=h(owner)).json()
+    assert (setup_["mail"], setup_["sender"], setup_["timezone"]) == (True, "plan@example.com", "UTC")
+    r = client.post(f"/api/companies/{cid}/mail", headers=h(owner), json=po_mail(cc=["buying@kumar.example"]))
+    assert r.status_code == 200, r.text
+    row = r.json()
+    assert (row["status"], row["by"], row["to"], row["cc"], row["attachment"]) == \
+        ("sent", "Asha", ["orders@sharma.example"], ["buying@kumar.example"], "PO-00001.html")
+    [msg] = sent
+    assert (msg["From"], msg["To"], msg["Cc"], msg["Reply-To"], msg["Subject"]) == \
+        ("plan@example.com", "orders@sharma.example", "buying@kumar.example", "Asha <owner@example.com>",
+         "Purchase order PO-00001")
+    assert msg.get_body(("plain",)).get_content().strip() == "Please find our order attached."
+    [att] = list(msg.iter_attachments())
+    assert (att.get_filename(), att.get_content()) == ("PO-00001.html", "<h1>Purchase order PO-00001</h1>")
+
+    # only addresses the company knows: a stranger is refused and nothing is sent
+    r = client.post(f"/api/companies/{cid}/mail", headers=h(owner), json=po_mail(to=["someone@elsewhere.example"]))
+    assert r.status_code == 422
+    assert r.json()["detail"].startswith("someone@elsewhere.example is not an address of this company's suppliers")
+    # a key sends data, not mail
+    r = client.post(f"/api/companies/{cid}/mail", headers=h(key), json=po_mail())
+    assert r.status_code == 403 and "a key sends data" in r.json()["detail"]
+    assert len(sent) == 1
+
+    # a mail server that refuses: kept in the outbox as failed, with why
+    from scp.companies import mail
+
+    def refuse(_msg):
+        raise OSError("connection refused")
+    monkeypatch.setattr(mail, "deliver", refuse)
+    r = client.post(f"/api/companies/{cid}/mail", headers=h(owner),
+                    json=po_mail(kind="delivery_schedule", ref="SA-1", to=["accounts@sharma.example"]))
+    assert (r.json()["status"], r.json()["error"]) == ("failed", "connection refused")
+    out = client.get(f"/api/companies/{cid}/mail/sent", headers=h(owner)).json()
+    assert [(m["ref"], m["status"]) for m in out] == [("SA-1", "failed"), ("PO-00001", "sent")]
+    assert [m["ref"] for m in client.get(f"/api/companies/{cid}/mail/sent?ref=PO-00001", headers=h(owner)).json()] \
+        == ["PO-00001"]
+
+
+def test_worklist_reminders_reach_each_owner_once_on_the_days_set(monkeypatch):
+    import datetime as dt
+
+    from scp.companies import get_companies
+    from scp.connect import outbox
+    from scp.tower import get_tracker
+
+    sent = mailing(monkeypatch)
+    owner, cid, _ = setup(with_contacts())
+    ravi = client.post("/api/auth/signup", json={"email": "ravi@example.com", "name": "Ravi",
+                                                 "password": "correct horse"}).json()["token"]
+    assert client.post(f"/api/companies/{cid}/members", headers=h(owner),
+                       json={"email": "ravi@example.com", "role": "planner"}).status_code == 200
+    db = get_tracker().db
+    rows = [  # owner, category, message, first seen (the company plans from Monday 5 January 2026)
+        ("owner@example.com", "coverage", "B at P runs out on 7 Jan", "2025-12-29"),
+        ("Ravi", "orders", "PO-00001 not confirmed", "2026-01-04"),
+        ("ravi", "capacity", "Line 1 overloaded in week 2", "2025-12-26"),
+        ("Unassigned", "demand", "Forecast for A runs high", "2026-01-01"),
+    ]
+    for i, (who, cat, text, first) in enumerate(rows):
+        db.execute("INSERT INTO tower_items (id, company, key, code, category, severity, message, owner, owner_source, "
+                   "status, first_seen, last_seen) VALUES (?, ?, ?, 'X', ?, 'high', ?, ?, 'manual', ?, ?, ?)",
+                   (f"r{cid}{i}", f"@{cid}", f"k{i}", cat, text, who, "acknowledged" if i == 1 else "open", first,
+                    "2026-01-05"))
+    db.execute("INSERT INTO tower_items (id, company, key, code, category, severity, message, owner, owner_source, "
+               "status, first_seen, last_seen) VALUES (?, ?, 'done', 'X', 'orders', 'low', 'done already', 'Ravi', "
+               "'manual', 'resolved', '2026-01-01', '2026-01-05')", (f"r{cid}x", f"@{cid}"))
+
+    c = get_companies()
+    asha = c.whoami(owner)
+    # only an owner sets them; a planner may not
+    r = client.put(f"/api/companies/{cid}/mail/reminders", headers=h(ravi), json={"on": True})
+    assert r.status_code == 403
+    friday = dt.datetime(2026, 1, 9, 12, 0, tzinfo=dt.UTC)
+    s = outbox.set_reminders(c, asha, cid, outbox.ReminderSettings(on=True, at="07:30", weekdays=[0, 2, 2]), friday)
+    assert (s.reminders.weekdays, s.next_reminder) == ([0, 2], "2026-01-12T07:30:00+00:00")   # Monday
+    assert client.get(f"/api/companies/{cid}/history", headers=h(owner)).json()[0]["summary"] == \
+        "worklist reminders on: Mon, Wed at 07:30"
+
+    assert outbox.remind_due(c, dt.datetime(2026, 1, 12, 7, 29, tzinfo=dt.UTC)) == {}
+    done = outbox.remind_due(c, dt.datetime(2026, 1, 12, 7, 31, tzinfo=dt.UTC))
+    assert [m.to for m in done[cid]] == [["owner@example.com"], ["ravi@example.com"]]
+    asha_mail, ravi_mail = sent
+    assert asha_mail["Subject"] == "Worklist: 1 open, 1 past their time · Mehta Paints"
+    assert ravi_mail["Subject"] == "Worklist: 2 open, 1 past their time · Mehta Paints"
+    assert ravi_mail["To"] == "ravi@example.com"
+    assert ravi_mail.get_content().splitlines()[2:6] == [
+        "You own 2 open exceptions on the worklist of Mehta Paints, 1 past its time:",
+        "",
+        "- Line 1 overloaded in week 2 (capacity, open 10 days, 5 past its time)",
+        "- PO-00001 not confirmed (orders, open 1 day)",
+    ]
+    assert "Open the worklist: https://plan.example.com/#/tower" in ravi_mail.get_content()
+    assert "Unassigned" not in asha_mail.get_content() + ravi_mail.get_content()
+    after = outbox.setup(c, asha, cid)
+    assert (after.last_reminder, after.next_reminder) == ("2026-01-12T07:31:00+00:00", "2026-01-14T07:30:00+00:00")
+    assert outbox.remind_due(c, dt.datetime(2026, 1, 12, 8, 0, tzinfo=dt.UTC)) == {}             # once a day
+    assert [m["by"] for m in client.get(f"/api/companies/{cid}/mail/sent", headers=h(owner)).json()] == \
+        ["the server", "the server"]
+    # switched off: no more
+    s = outbox.set_reminders(c, asha, cid, outbox.ReminderSettings(on=False), friday)
+    assert s.next_reminder is None
+    assert outbox.remind_due(c, dt.datetime(2026, 1, 14, 8, 0, tzinfo=dt.UTC)) == {}
