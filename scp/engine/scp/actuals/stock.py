@@ -181,6 +181,26 @@ def _sum(movs: list[GoodsMovement], types: set[MovementType]) -> tuple[dict, dic
     return qty, first, last, final
 
 
+def sale_days(ds: Dataset, movs: list[GoodsMovement]) -> dict[tuple[str, str, str], list[tuple[date, date | None]]]:
+    """Per (reference, shipping location, product): each sale's goods-issue day and the day the customer signed for it
+    on the delivery's proof of delivery, if recorded (N125). Reversed sales are left out."""
+    signed = {mid: dl.pod_on for dl in ds.deliveries if dl.pod_on for mid in dl.movements}
+    reversed_ids = {m.reversal_of for m in movs if m.reversal_of}
+    out: dict[tuple[str, str, str], list[tuple[date, date | None]]] = defaultdict(list)
+    for m in movs:
+        if m.type is MovementType.SALE and m.reference and not m.reversal_of and m.id not in reversed_ids:
+            out[(m.reference, m.location, m.product)].append((m.date, signed.get(m.id)))
+    return out
+
+
+def delivered_between(ds: Dataset, days: dict, ref: str, product: str, to: str) -> tuple[date | None, date | None]:
+    """First and last day an order line reached the customer: the proof of delivery's day where one is recorded, else
+    goods issue plus the lane's transit."""
+    got = [pod or arrival(ds, k[1], to, product, gi) for k, v in days.items() if k[0] == ref and k[2] == product
+           for gi, pod in v]
+    return (min(got), max(got)) if got else (None, None)
+
+
 def by_ref(d: dict, ref: str, product: str, location: str | None = None) -> float:
     return sum(v for (r, lo, p), v in d.items() if r == ref and p == product and (location is None or lo == location))
 

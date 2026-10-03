@@ -269,6 +269,29 @@ def test_schedule_waits_for_a_subassembly_made_in_the_same_schedule():
     assert a2.parts_from == [] and r2.kpis.waiting_for_parts == 0
 
 
+def test_overtime_is_a_choice_of_the_schedule_kept_only_when_it_lowers_the_objective():
+    """M1 may run 8 h of overtime a day at 50 an hour: SUB's 16 h then fit one day and A is no longer as late."""
+    d = _made_sub()
+    d["scheduling"] = {"improve": False}
+    d["resources"][0].update(overtime_hours_per_day=8, overtime_cost_per_hour=50)
+    shifts = run_schedule(make_ds(d))
+    assert not shifts.overtime.allowed and shifts.kpis.tardiness_hours > 0
+    d["scheduling"] = {"improve": False, "overtime": True}
+    r = run_schedule(make_ds(d))
+    assert r.ok and r.violations == [] and r.overtime.allowed and r.overtime.used
+    assert r.overtime.hours["M1"] > 0 and "M2" not in r.overtime.hours
+    assert r.overtime.cost == pytest.approx(r.overtime.hours["M1"] * 50)
+    assert r.kpis.objective < r.overtime.objective_without == pytest.approx(shifts.kpis.objective)
+    assert r.overtime.note.startswith("Overtime on M1 ")
+    # with three days planned for SUB nothing is late: overtime would not help, so the schedule keeps to the shifts
+    d["production_sources"][1]["fixed_lead_time_workdays"] = 3
+    shifts = run_schedule(make_ds({**d, "scheduling": {"improve": False}}))
+    r = run_schedule(make_ds(d))
+    assert r.overtime.allowed and not r.overtime.used and r.overtime.hours == {}
+    assert r.kpis.objective == pytest.approx(shifts.kpis.objective)
+    assert r.overtime.note == "Overtime would not lower the objective: the schedule keeps to the shifts"
+
+
 def test_schedule_waits_for_a_late_firm_purchase():
     """C comes only on an open purchase order due day 6 (a new one would take 20 days): MRP pegs A's parts to it,
     and the schedule holds A until it is there; the finish and available dates report the slip."""

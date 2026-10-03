@@ -268,7 +268,7 @@ inspection and credited, and a quotation won; every Selling tab was then opened 
 | N122 | Orders held over a credit limit and overdue invoices are on *Selling* only: not in the worklist on *Performance*, not on Home. | Minor | **Fixed (N)** for the worklist: credit holds and overdue invoices are there under *receivables*, supplier invoices blocked or overdue under *payables*, each linking to its page. Home shows the worklist's count. |
 | N123 | Tax is one rate per customer (or the company's): no rate per product and no split into its parts (CGST, SGST, IGST by place of supply). | Minor | Fixed (gaps after Q): products carry a tax rate; a line takes the customer's own rate first, then the product's, then the company's, and keeps it on the invoice. With *Selling settings → tax split: gst*, an invoice to a customer in the company's state (region, else the GSTIN's state code) shows CGST and SGST per rate, to one in another state IGST; the split is fixed on the invoice when billed, the documents and the credit check use the same rates. |
 | N124 | Overdue invoices have no reminder (dunning) and customers no statement of account. | Minor | Fixed (gaps after Q): the company sets reminder days (default 7, 21 and 35 days past due) in *Selling settings*. *Selling → Customers* lists the payment reminders due: each has its letter to print, download, e-mail or send from the server, and sending it from the server (or *Record … as sent*) records the reminder on its invoices. A very late invoice goes straight to the reminder it has reached. Clicking a customer shows their statement of account, by document and by age, sent the same ways. |
-| N125 | Proof of delivery records the day the customer signed, but on-time delivery (OTIF) still counts the shipping day plus the route's transit days. | Minor | Open: by design until OTIF can choose its date; recorded. |
+| N125 | Proof of delivery records the day the customer signed, but on-time delivery (OTIF) still counts the shipping day plus the route's transit days. | Minor | Fixed (gaps after Q): a sales order line closed by the roll counts as delivered on the day the customer signed for it when its delivery has a proof of delivery, else on goods issue plus the lane's transit; a proof of delivery recorded after the line closed moves its dates in the closed-order log. OTIF and perfect order read those dates. |
 | N126 | *Money* shows the plan's revenue, not what was invoiced. | Minor | By design, recorded: *Money* is the plan's economics; what was billed, paid and is owed is on *Selling*. |
 
 ## Found while building Phase N
@@ -326,7 +326,7 @@ onto a day square, and both stayed firm there when the plan was recalculated.
 | N114 | Supplier and lane capacity were only flagged ("Supplier over capacity") even with planning within capacity on. | Serious | **Fixed (P).** Within capacity, what a supplier cannot make or a lane cannot carry in a week goes to the next valid source, else to earlier weeks, and only what fits nowhere is ordered over the limit (and flagged). |
 | N115 | Taking a made-to-order order now makes its production firm at once (R13), so the zone's firming afterwards finds the purchases only: the manufacturing journey expected three orders to firm and found two. | Minor | By design, recorded: the saved message names the run made firm ("Made firm for it: PRD-…"); *promise_firms* off leaves it to the planner. The journey checks the new behaviour. |
 | N116 | The plan's capacity exceptions are weekly: a day over capacity inside a week with room does not raise "Over capacity", though the Capacity page shows it red. | Minor | Fixed (gaps after Q): the plan checks each day of a week that has room against the day's shifts and overtime and raises "Over capacity on a day" (`CAPACITY_DAY_OVERLOAD`) with the first day, the number of days and the worst; Situations and the worklist show it under capacity and link to the Capacity page. |
-| N117 | Overtime is a levelling choice in the supply plan, but not yet a choice of the shop floor optimiser, which still keeps to the shift hours. | Minor | Open: recorded below with the PP/DS gaps. |
+| N117 | Overtime is a levelling choice in the supply plan, but not yet a choice of the shop floor optimiser, which still keeps to the shift hours. | Minor | Fixed (gaps after Q): *Schedule → Settings → overtime* lets the schedule (dispatching, local search or optimiser) use each machine's overtime hours after its last shift: the window is scheduled with and without it and the overtime schedule is kept only when it lowers the weighted objective. The result names the hours per machine, their cost and the objective without overtime; the Schedule page shows them. |
 | N118 | Measured yield is worked out per production version and part from orders whose parts were posted as used; backflushed orders only repeat the bill of materials and are left out, as are parts through a phantom assembly (their loss is the phantom's). | Minor | By design, recorded: *Parts used* on Actuals says which orders it counted. |
 
 ## Found in the second reality check (after Phase E)
@@ -486,7 +486,7 @@ against SAP (the gaps below). Proposed, in the order recommended:
   that stay within shelf life (R15); yield in the bill of materials so a part is bought with the loss in it (R17);
   demand events on the Demand page, a new one starting without effect (R21); MRP groups; withdrawal from another
   plant and direct production; a discontinued product with its follow-up; alternative BOMs; overtime as a levelling
-  choice (the optimiser's is open, N117); supplier and lane capacity in planning; steps needing a machine and a tool
+  choice (the schedule's followed after Q, N117); supplier and lane capacity in planning; steps needing a machine and a tool
   together; dragging orders between days to level.
 - **M: order to cash, complete**: **done**, see N119–N126. Orders with several lines, each priced from the
   customer's price at its quantity scale (else the product's) less the customer's discounts; payment terms with a cash
@@ -528,8 +528,8 @@ stock that is really there (shelf life, short receipts, stock below zero) or a p
   capacity exception in the plan (N116, done after Q).
 - PP/DS: strategy profiles, a heuristics catalogue (due date, shortest first, least slack, campaigns, backward),
   a local search, a constraint-solver optimiser choosing machines and sequence, a frozen zone and a drag-and-drop
-  board (**D**, done); steps holding a machine and a tool together (**P**). Still missing: overtime and shift changes
-  as optimiser choices (N117), setup matrices by product (not only group), pegging-aware re-scheduling of dependent
+  board (**D**, done); steps holding a machine and a tool together (**P**). Overtime as a scheduling choice followed after Q
+  (N117). Still missing: shift changes as optimiser choices, setup matrices by product (not only group), pegging-aware re-scheduling of dependent
   orders when one moves.
 - Inventory management: opening balances, counts with differences, transfers shipped and received with stock in
   transit, production confirmations with backflush or actual usage and co-products (**F**, done). Batches with an

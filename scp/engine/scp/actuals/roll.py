@@ -31,8 +31,8 @@ from ..model import (
 from .lots import batch_index, lots, planning_stock
 from .result import OrderChange, RollReport, StockChange
 from .stock import (
-    EPS, _sum, accuracy_records, arrival, before, by_ref, counterparty, demand_keys, pending_openings, refresh_actuals,
-    sale_point, stock, week_grid, forecast_days,
+    EPS, _sum, accuracy_records, before, by_ref, counterparty, demand_keys, pending_openings, refresh_actuals,
+    delivered_between, sale_days, sale_point, stock, week_grid, forecast_days,
 )
 
 
@@ -116,6 +116,7 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
 
     # ③ sales orders and ④ elapsed forecast -------------------------------------------------------------------
     sold, s_first, s_last, s_final = _sum(movs, {MovementType.SALE})
+    s_days = sale_days(ds, movs)
     confs = defaultdict(list)
     for c in ds.confirmations:
         confs[c.order].append(c)
@@ -144,8 +145,7 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
         ordered = d.ordered_qty if d.ordered_qty is not None else d.qty
         delivered = by_ref(sold, d.id, d.product)
         ks = [k for k in s_first if k[0] == d.id and k[2] == d.product]
-        first = min((arrival(ds, k[1], d.location, d.product, s_first[k]) for k in ks), default=None)
-        last = max((arrival(ds, k[1], d.location, d.product, s_last[k]) for k in ks), default=None)
+        first, last = delivered_between(ds, s_days, d.id, d.product, d.location)
         open_q = ordered - delivered
         closed = open_q <= ordered * tol + EPS or d.id in s_final
         if closed:
@@ -222,7 +222,7 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
     rolled = [RolledWeek(start=w, end=we) for w, we in sorted(set(earlier) | now)]
     closed_ids = {(c.kind, c.id) for c in rep.closed}
     referenced = {m.reference for m in ds.movements if m.reference}
-    closed_log = [_redeliver(ds, c, (got, g_first, g_last), (sold, s_first, s_last), referenced)
+    closed_log = [_redeliver(ds, c, (got, g_first, g_last), (sold, s_days), referenced)
                   for c in ds.closed_orders if (c.kind, c.id) not in closed_ids] + rep.closed
     closed_log.sort(key=lambda c: (c.closed_on, c.kind, c.id))   # one order however many rolls it took
     new = ds.model_copy(update={
@@ -278,23 +278,23 @@ def expired_now(ds: Dataset, movs, as_of: date) -> list[tuple[str, str, str, flo
     return out
 
 
-def _redeliver(ds: Dataset, c: ClosedOrder, receipts: tuple[dict, dict, dict], sales: tuple[dict, dict, dict],
+def _redeliver(ds: Dataset, c: ClosedOrder, receipts: tuple[dict, dict, dict], sales: tuple[dict, dict],
                referenced: set[str]) -> ClosedOrder:
     """A closed order's deliveries as the journal now has them (a late posting may add one). An order the journal has
     no movement for (closed before the journal began, imported with the log) is kept as it came."""
     if c.id not in referenced:
         return c
     if c.kind == "sales":
-        sold, first, last = sales
-        ks = [k for k in first if k[0] == c.id and k[2] == c.product]
+        sold, days = sales
         delivered = by_ref(sold, c.id, c.product)
-        lo = min((arrival(ds, k[1], c.location, c.product, first[k]) for k in ks), default=None)
-        hi = max((arrival(ds, k[1], c.location, c.product, last[k]) for k in ks), default=None)
+        lo, hi = delivered_between(ds, days, c.id, c.product, c.location)
     else:
         got, first, last = receipts
         k = (c.id, c.location, c.product)
         delivered, lo, hi = got.get(k, 0.0), first.get(k), last.get(k)
-    if abs(delivered - c.delivered_qty) <= EPS:
+    signed = c.kind == "sales" and (lo, hi) != (c.first_delivery, c.last_delivery) and any(
+        pod for k, v in sales[1].items() if k[0] == c.id and k[2] == c.product for _, pod in v)
+    if abs(delivered - c.delivered_qty) <= EPS and not signed:   # a proof of delivery since it closed moves its dates
         return c
     return c.model_copy(update={"delivered_qty": delivered, "first_delivery": lo, "last_delivery": hi,
                                 "closed_on": hi or c.closed_on})

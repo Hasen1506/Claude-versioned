@@ -217,6 +217,9 @@ function Kpis({ res }: { res: ScheduleResult }) {
       {busiest && <StatTile label="Busiest resource" value={pct(busiest.utilization, 0)} sub={`${busiest.name || busiest.id}: busy ÷ shift hours over the ${Math.round(res.span_hours / 24)}-day window`} />}
       {k.earliness_hours > 0.05 && <StatTile label="Finished early" value={hours(k.earliness_hours)}
         sub={`order hours before due${(res.kpis.orders && Object.keys(res.holds).length) ? ` · ${plural(Object.keys(res.holds).length, "order")} held back` : ""}`} />}
+      {res.overtime?.allowed && <StatTile label="Overtime" value={res.overtime.used ? hours(Object.values(res.overtime.hours).reduce((a, h) => a + h, 0)) : "None"}
+        sub={res.overtime.used ? `${res.overtime.note}${res.overtime.cost ? ` · costs ${res.overtime.cost.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : ""}` : res.overtime.note}
+        tone={res.overtime.used ? "hl" : undefined} />}
       <Sequencer res={res} />
     </div>
   );

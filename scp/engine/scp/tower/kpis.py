@@ -133,14 +133,15 @@ class Kpis:
         self.add(Kpi(id="otif_confirmed", name="OTIF to confirmed date", unit="ratio", direction="up",
                      definition="Sales orders delivered in full (within the delivery tolerance) by the confirmed date ÷ "
                                 "orders closed in the window that had a confirmation",
-                     source="Closed-order log (deliveries vs last confirmed date)", value=v, numerator=num,
+                     source="Closed-order log (deliveries vs last confirmed date; a delivery counts on the day the customer "
+                            "signed for it, else on goods issue plus the lane's transit)", value=v, numerator=num,
                      denominator=den, n=len(conf), breakdown_by="customer", breakdown=brk,
                      note="" if conf else "No closed, confirmed sales orders in the window yet."))
         v, num, den, brk = self._share(sales, lambda c: self._in_full(c) and on_time(c, c.due_date), lambda c: 1.0,
                                        lambda c: c.location)
         self.add(Kpi(id="otif_requested", name="OTIF to requested date", unit="ratio", direction="up",
                      definition="Sales orders delivered in full by the customer's requested date ÷ orders closed in "
-                                "the window", source="Closed-order log (deliveries vs requested date)", value=v,
+                                "the window", source="Closed-order log (deliveries vs requested date; signed-for day, else issue plus transit)", value=v,
                      numerator=num, denominator=den, n=len(sales), breakdown_by="customer", breakdown=brk,
                      note="" if sales else "No sales orders closed in the window yet: roll forward to log deliveries."))
         v, num, den, brk = self._share(

@@ -6791,6 +6791,41 @@ export interface components {
          */
         OutlierMethod: "none" | "mad";
         /**
+         * OvertimeUse
+         * @description Overtime as a choice of the schedule (N117).
+         */
+        OvertimeUse: {
+            /**
+             * Allowed
+             * @default false
+             */
+            allowed: boolean;
+            /**
+             * Used
+             * @default false
+             */
+            used: boolean;
+            /** Hours */
+            hours: {
+                [key: string]: number;
+            };
+            /**
+             * Cost
+             * @default 0
+             */
+            cost: number;
+            /**
+             * Objective Without
+             * @default 0
+             */
+            objective_without: number;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /**
          * OwnerRule
          * @description The first rule that matches an exception names its owner. Empty lists match anything.
          */
@@ -9633,6 +9668,7 @@ export interface components {
              * @default 0
              */
             without_routing: number;
+            overtime: components["schemas"]["OvertimeUse"];
             /** Issues */
             issues: components["schemas"]["Issue"][];
         };
@@ -9723,6 +9759,12 @@ export interface components {
              * @default true
              */
             improve: boolean;
+            /**
+             * Overtime
+             * @description May use each machine's overtime (its overtime hours a day, after the last shift) when that lowers the weighted objective; the schedule keeps to the shifts otherwise
+             * @default false
+             */
+            overtime: boolean;
             /**
              * Time Limit Seconds
              * @description Search time budget: the local search gets this much, and the optimiser as much again

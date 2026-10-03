@@ -85,6 +85,9 @@ any time); signed in, it is kept on the server (see Phase I below).
 - **The board.** Drag a step along its row to run it earlier or later, or onto another machine that can run it; the
   schedule is re-timed at once and the page says what changed. Orders inside the **frozen zone** (a setting) keep
   their place and machine. *Use these dates in the plan* writes exactly the schedule on screen.
+- **Overtime as a choice** (a setting): the window is scheduled again with each machine's overtime hours after its
+  last shift, and that schedule is kept only when it lowers the weighted objective; the page shows the hours used
+  per machine and their cost, or that the schedule keeps to the shifts.
 - **Levelling** can prefer finishing later to building ahead, with a limit on days ahead; **promising** books
   machine hours on the days a step runs, on its own machine or an alternative.
 

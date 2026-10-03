@@ -186,6 +186,23 @@ def test_tax_per_product_and_its_cgst_sgst_or_igst_split_by_place_of_supply():
     assert inv.tax == 0 and inv.tax_parts == [] and all(ln.tax_rate is None for ln in inv.lines)
 
 
+def test_on_time_delivery_counts_the_day_the_customer_signed_when_a_proof_of_delivery_is_recorded():
+    x, _ = taken()
+    x, _ = create_deliveries(x)
+    x, _ = issue(x, "DL-00001")                                  # shipped on 5 January, a day in transit
+    plain, _ = roll_forward(x, date(2026, 1, 12))
+    by = {c.id: c for c in plain.closed_orders}
+    assert by["SO-00001/10"].last_delivery == date(2026, 1, 6)   # no proof of delivery: issue plus transit
+    signed, _ = proof(x, "DL-00001", date(2026, 1, 9), by="R. Kumar")
+    rolled, _ = roll_forward(signed, date(2026, 1, 12))
+    c = next(c for c in rolled.closed_orders if c.id == "SO-00001/10")
+    assert c.first_delivery == c.last_delivery == date(2026, 1, 9) and c.due_date == date(2026, 1, 8)  # a day late
+    # signed for after the order closed: the closed order takes the day it was signed for
+    later, _ = proof(plain, "DL-00001", date(2026, 1, 7), by="R. Kumar")
+    again, _ = roll_forward(later, date(2026, 1, 19))
+    assert next(c for c in again.closed_orders if c.id == "SO-00001/10").last_delivery == date(2026, 1, 7)
+
+
 def test_a_late_part_payment_takes_no_discount_and_the_rest_goes_overdue():
     x, _ = taken()
     x, _ = create_deliveries(x)
