@@ -312,6 +312,7 @@ def _subsequent(ds: Dataset, supplier: str | None, lines: list[dict] | None, kin
     if not lines:
         raise PayablesError("say which invoiced order lines the price difference is for, and by how much each")
     billed = invoiced(ds)
+    taken: dict[str, float] = defaultdict(float)     # per order line, over the lines of this note
     got_lines: list[SupplierInvoiceLine] = []
     blocks: list[str] = []
     cur = None
@@ -330,9 +331,10 @@ def _subsequent(ds: Dataset, supplier: str | None, lines: list[dict] | None, kin
             raise PayablesError(f"{li.id} is not invoiced yet: a subsequent debit or credit corrects an invoice")
         if w.get("price") is None or float(w["price"]) <= 0:
             raise PayablesError(f"{li.id}: give the price difference per unit, more than zero")
-        q = float(w["qty"]) if w.get("qty") is not None else done
-        if q <= EPS or q > done + EPS:
+        q = float(w["qty"]) if w.get("qty") is not None else done - taken[li.id]
+        if q <= EPS or taken[li.id] + q > done + EPS:
             raise PayablesError(f"{li.id}: the difference applies to at most the {done:,.0f} invoiced")
+        taken[li.id] += q
         ln = SupplierInvoiceLine(order=li.id, product=li.product, qty=round(q, 6), price=float(w["price"]))
         got_lines.append(ln)
         paid = _invoiced_price(ds, li.id)
@@ -340,6 +342,12 @@ def _subsequent(ds: Dataset, supplier: str | None, lines: list[dict] | None, kin
                                                              li.price)):
             blocks.append(b)
     assert supplier is not None
+    if reference.strip():
+        dup = next((i for i in ds.supplier_invoices if i.supplier == supplier and not i.cancelled and i.kind == kind
+                    and i.reference.strip().lower() == reference.strip().lower()), None)
+        if dup is not None:
+            who = ds.location_by_id[supplier].name if supplier in ds.location_by_id else supplier
+            raise PayablesError(f"{who or supplier}'s {dup.reference} is already entered as {dup.id}")
     terms = ds.vendor_terms(supplier)
     net = round(sum(x.amount for x in got_lines) + delivery_costs, 2)
     v = ds.vendor(supplier)
