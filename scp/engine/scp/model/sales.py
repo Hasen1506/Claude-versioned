@@ -76,7 +76,12 @@ class Customer(Model):
 class SalesSettings(Model):
     payment_terms: str | None = Ref("payment_terms", default=None,
                                     description="Payment terms for customers without their own; empty = net 30 days")
-    tax_rate: float = Unit("fraction", le=1, default=0.0, description="Tax on invoices (0.18 = 18 %)")
+    tax_rate: float = Unit("fraction", le=1, default=0.0,
+                           description="Tax on invoices (0.18 = 18 %) for products without their own rate")
+    tax_split: Literal["none", "gst"] = Field(
+        "none", description="gst: tax on an invoice to a customer in the company's own state is shown as CGST and SGST "
+                            "(half each), to one in another state as IGST; the state is the region, else the first two "
+                            "digits of the GSTIN")
     credit_check: bool = Field(True, description="Orders beyond a customer's credit limit are blocked for delivery")
     quotation_days: int = Unit("days", ge=1, le=366, default=30, description="How long a new quotation is valid")
     delivery_days: int = Unit("days", le=60, default=3,
@@ -187,6 +192,8 @@ class InvoiceLine(Model):
     product: str = Ref("product")
     qty: float = Unit("qty", gt=0)
     price: float = Unit("money_per_unit", description="Net price per unit")
+    tax_rate: float | None = Unit("fraction", le=1, default=None,
+                                  description="The line's tax rate when billed; empty = the invoice's")
     movements: list[str] = Field(default_factory=list, description="Invoice: the sale movements billed")
     ret: str | None = Field(None, max_length=64, description="Credit note: the return it pays back")
 
@@ -215,7 +222,9 @@ class Invoice(Model):
     discount: float = Unit("fraction", lt=1, default=0.0, description="Cash discount for paying by the discount date")
     payment_terms: str | None = Ref("payment_terms", default=None)
     lines: list[InvoiceLine] = Field(min_length=1, max_length=500)
-    tax_rate: float = Unit("fraction", le=1, default=0.0)
+    tax_rate: float = Unit("fraction", le=1, default=0.0, description="For lines without their own rate")
+    tax_split: Literal["", "cgst_sgst", "igst"] = Field(
+        "", description="How the tax is shown, fixed when billed: CGST and SGST within the state, IGST between states")
     payments: list[Payment] = Field(default_factory=list)
     reference: str | None = Field(None, max_length=64, description="Credit note: the invoice it credits")
     sent_on: dt.date | None = None
@@ -228,9 +237,31 @@ class Invoice(Model):
     def net(self) -> float:
         return round(sum(x.amount for x in self.lines), 2)
 
+    def rate_of(self, ln: InvoiceLine) -> float:
+        return self.tax_rate if ln.tax_rate is None else ln.tax_rate
+
+    @property
+    def tax_parts(self) -> list[tuple[str, float, float, float]]:
+        """(name, rate, taxable amount, tax) per rate: "Tax", or CGST and SGST (half each), or IGST."""
+        base: dict[float, float] = {}
+        for ln in self.lines:
+            r = self.rate_of(ln)
+            base[r] = base.get(r, 0.0) + ln.amount
+        out = []
+        for r, b in sorted(base.items()):
+            if r <= 0:
+                continue
+            t = round(b * r, 2)
+            if self.tax_split == "cgst_sgst":
+                c = round(t / 2, 2)
+                out += [("CGST", r / 2, round(b, 2), c), ("SGST", r / 2, round(b, 2), round(t - c, 2))]
+            else:
+                out.append(("IGST" if self.tax_split == "igst" else "Tax", r, round(b, 2), t))
+        return out
+
     @property
     def tax(self) -> float:
-        return round(self.net * self.tax_rate, 2)
+        return round(sum(p[3] for p in self.tax_parts), 2)
 
     @property
     def total(self) -> float:

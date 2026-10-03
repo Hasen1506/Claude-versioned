@@ -4782,9 +4782,17 @@ export interface components {
             lines: components["schemas"]["InvoiceLine"][];
             /**
              * Tax Rate
+             * @description For lines without their own rate
              * @default 0
              */
             tax_rate: number;
+            /**
+             * Tax Split
+             * @description How the tax is shown, fixed when billed: CGST and SGST within the state, IGST between states
+             * @default
+             * @enum {string}
+             */
+            tax_split: "" | "cgst_sgst" | "igst";
             /** Payments */
             payments?: components["schemas"]["Payment"][];
             /**
@@ -4833,6 +4841,11 @@ export interface components {
              * @description Net price per unit
              */
             price: number;
+            /**
+             * Tax Rate
+             * @description The line's tax rate when billed; empty = the invoice's
+             */
+            tax_rate?: number | null;
             /**
              * Movements
              * @description Invoice: the sale movements billed
@@ -4915,6 +4928,8 @@ export interface components {
              * @default 0
              */
             reminder_due: number;
+            /** Tax Parts */
+            tax_parts: components["schemas"]["TaxPart"][];
         };
         /** Issue */
         Issue: {
@@ -7586,6 +7601,11 @@ export interface components {
              */
             price?: number | null;
             /**
+             * Tax Rate
+             * @description Tax on its sales (0.12 = 12 %); empty = the company's rate. A customer's own rate (an exemption, an export) goes before it
+             */
+            tax_rate?: number | null;
+            /**
              * Setup Group
              * @description Sequence-dependent setup family (colour, allergen, grade…)
              */
@@ -9219,10 +9239,17 @@ export interface components {
             payment_terms?: string | null;
             /**
              * Tax Rate
-             * @description Tax on invoices (0.18 = 18 %)
+             * @description Tax on invoices (0.18 = 18 %) for products without their own rate
              * @default 0
              */
             tax_rate: number;
+            /**
+             * Tax Split
+             * @description gst: tax on an invoice to a customer in the company's own state is shown as CGST and SGST (half each), to one in another state as IGST; the state is the region, else the first two digits of the GSTIN
+             * @default none
+             * @enum {string}
+             */
+            tax_split: "none" | "gst";
             /**
              * Credit Check
              * @description Orders beyond a customer's credit limit are blocked for delivery
@@ -10156,6 +10183,12 @@ export interface components {
              * @default
              */
             company_tax_id: string;
+            /**
+             * Company Region
+             * @description The company's state or region for the place of supply; empty = the first two digits of a GSTIN
+             * @default
+             */
+            company_region: string;
             /**
              * Currency
              * @description ISO 4217 company currency
@@ -11096,6 +11129,17 @@ export interface components {
             ss_shortfall: number[];
             /** Unit Value */
             unit_value: number;
+        };
+        /** TaxPart */
+        TaxPart: {
+            /** Name */
+            name: string;
+            /** Rate */
+            rate: number;
+            /** Base */
+            base: number;
+            /** Amount */
+            amount: number;
         };
         /**
          * ToBill

@@ -286,8 +286,11 @@ The supply plan goes further into how a plant really plans, mostly in `engine/sc
 - **Quotations** price an offer without promising it; won, they become an order at the quoted prices.
 - **Deliveries** gather the lines due to ship, one per customer and shipping place: picked (short if need be), packed,
   shipped as one material document, and signed for.
-- **Invoices** bill what was shipped, one per customer and payment terms, with the customer's tax rate; payments settle
-  them, with the cash discount when paid in time. A cancelled invoice frees its goods to be billed again.
+- **Invoices** bill what was shipped, one per customer and payment terms; payments settle them, with the cash discount
+  when paid in time. A cancelled invoice frees its goods to be billed again. Tax is per line: the customer's own rate
+  (an exemption, an export) first, then the product's, then the company's. With the GST split on (*Selling settings*),
+  tax to a customer in the company's state shows as CGST and SGST, to one in another state as IGST, per rate; the
+  state is a place's region, else the first two digits of its GSTIN.
 - **Returns** come back into quality inspection (or blocked, or ready to sell) as a receipt naming the return, and a
   credit note pays them back.
 - **Documents**: the order confirmation, the invoice and the credit note print, download or start an e-mail, in exact

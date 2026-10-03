@@ -156,6 +156,36 @@ def test_a_delivery_is_picked_packed_shipped_and_signed_for_then_invoiced_and_pa
         pay(x, "INV-00001")
 
 
+def test_tax_per_product_and_its_cgst_sgst_or_igst_split_by_place_of_supply():
+    d = shop()
+    d["customers"][0]["tax_rate"] = None                         # K has no rate of its own
+    d["sales"] = {"tax_rate": 0.18, "tax_split": "gst"}
+    d["products"][-1]["tax_rate"] = 0.12                         # the thinner is taxed at 12 %, the paint at 18 %
+    d["settings"]["company_tax_id"] = "27AAACM1234A1Z5"          # Maharashtra
+    d["locations"][-1]["tax_id"] = "27AAFCK9876B1Z2"             # Kumar Stores, also Maharashtra
+    x, _ = create_order(ds(d), "K", LINES)
+    assert exposure(x, "K")[0] == pytest.approx(1900 * 1.18 + 190 * 1.12)
+    x, _ = create_deliveries(x)
+    x, _ = issue(x, "DL-00001")
+    y, _ = create_invoices(x, on=date(2026, 1, 7))
+    inv = y.invoices[0]
+    assert inv.tax_split == "cgst_sgst" and [ln.tax_rate for ln in inv.lines] == [None, 0.12]
+    assert inv.tax_parts == [("CGST", 0.06, 190, 11.4), ("SGST", 0.06, 190, 11.4),
+                             ("CGST", 0.09, 1900, 171), ("SGST", 0.09, 1900, 171)]
+    assert inv.tax == pytest.approx(364.8) and inv.total == pytest.approx(2454.8)
+    assert [p.name for p in sales_view(y).invoices[0].tax_parts] == ["CGST", "SGST", "CGST", "SGST"]
+    # a customer in another state (Karnataka, by region) pays IGST
+    x2 = x.model_copy(update={"locations": [lo.model_copy(update={"region": "KA"}) if lo.id == "K" else lo
+                                            for lo in x.locations]})
+    x2 = x2.model_copy(update={"settings": x2.settings.model_copy(update={"company_region": "MH"})})
+    inv = create_invoices(x2, on=date(2026, 1, 7))[0].invoices[0]
+    assert inv.tax_split == "igst" and inv.tax_parts == [("IGST", 0.12, 190, 22.8), ("IGST", 0.18, 1900, 342)]
+    # the customer's own rate (here an export at 0 %) goes before the product's
+    x3 = x.model_copy(update={"customers": [c.model_copy(update={"tax_rate": 0.0}) for c in x.customers]})
+    inv = create_invoices(x3, on=date(2026, 1, 7))[0].invoices[0]
+    assert inv.tax == 0 and inv.tax_parts == [] and all(ln.tax_rate is None for ln in inv.lines)
+
+
 def test_a_late_part_payment_takes_no_discount_and_the_rest_goes_overdue():
     x, _ = taken()
     x, _ = create_deliveries(x)

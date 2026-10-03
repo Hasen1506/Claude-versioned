@@ -26,6 +26,50 @@ function parts(ds: Dataset, customer: string) {
   };
 }
 
+const r2 = (v: number) => Math.round(v * 100) / 100;
+const pct = (r: number) => `${Math.round(r * 1000) / 10} %`;
+
+/** The tax on a line (N123), as the server bills it: the customer's own rate, then the product's, then the company's. */
+export function lineRate(ds: Dataset, customer: string, product: string): number {
+  const c = (ds.customers ?? []).find((x) => x.customer === customer);
+  if (c?.tax_rate != null) return c.tax_rate;
+  const p = (ds.products ?? []).find((x) => x.id === product);
+  return p?.tax_rate ?? ds.sales?.tax_rate ?? 0;
+}
+
+const supplyPlace = (taxId?: string | null, region?: string | null) =>
+  (region ?? "").trim() ? (region ?? "").trim().toLowerCase() : /^\d\d/.test((taxId ?? "").trim()) ? (taxId ?? "").trim().slice(0, 2) : "";
+
+/** How tax to this customer is shown with the GST split: CGST and SGST within the company's state, else IGST. */
+export function taxSplit(ds: Dataset, customer: string): "" | "cgst_sgst" | "igst" {
+  if (ds.sales?.tax_split !== "gst") return "";
+  const loc = (ds.locations ?? []).find((l) => l.id === customer);
+  const ours = supplyPlace(ds.settings.company_tax_id, ds.settings.company_region);
+  return ours && ours === supplyPlace(loc?.tax_id, loc?.region) ? "cgst_sgst" : "igst";
+}
+
+/** Tax per rate on amounts at their rates, split as the invoice says (mirrors the server's Invoice.tax_parts). */
+export function taxParts(lines: { amount: number; rate: number }[], split: string): { name: string; rate: number; base: number; amount: number }[] {
+  const base = new Map<number, number>();
+  for (const l of lines) base.set(l.rate, (base.get(l.rate) ?? 0) + l.amount);
+  const out: { name: string; rate: number; base: number; amount: number }[] = [];
+  for (const [r, b] of [...base.entries()].sort((a, c) => a[0] - c[0])) {
+    if (r <= 0) continue;
+    const t = r2(b * r);
+    if (split === "cgst_sgst") {
+      const c = r2(t / 2);
+      out.push({ name: "CGST", rate: r / 2, base: r2(b), amount: c }, { name: "SGST", rate: r / 2, base: r2(b), amount: r2(t - c) });
+    } else out.push({ name: split === "igst" ? "IGST" : "Tax", rate: r, base: r2(b), amount: t });
+  }
+  return out;
+}
+
+const taxRows = (ps: ReturnType<typeof taxParts>, currency: string, cols: number) => {
+  const several = new Set(ps.map((x) => x.rate)).size > 1 || ps.some((x) => x.name !== "Tax");
+  const pad = "<td></td>".repeat(cols);
+  return ps.map((x) => `<tr><td></td><td>${x.name} ${pct(x.rate)}${several ? ` <span class="muted">on ${esc(exactMoney(x.base, currency))}</span>` : ""}</td><td></td><td></td><td class="num">${esc(exactMoney(x.amount, currency))}</td>${pad}</tr>`).join("");
+};
+
 /** The places a customer document prints and which of them have no address yet. */
 export function customerAddresses(ds: Dataset, customer: string): { what: string; href: string }[] {
   const p = parts(ds, customer);
@@ -71,8 +115,9 @@ export function confirmationDocument(o: OrderView, ds: Dataset): string {
       <td class="num">${l.value != null ? esc(exactMoney(l.value, p.currency)) : "—"}</td>
       <td>${esc(long(l.promised ?? l.date))}${l.promised && l.promised > l.date ? `<div class="muted">asked for ${esc(long(l.date))}</div>` : ""}</td></tr>`;
   }).join("");
-  const tax = p.cust?.tax_rate ?? ds.sales?.tax_rate ?? 0;
   const net = o.value ?? 0;
+  const ps = taxParts(lines.map((l) => ({ amount: l.value ?? 0, rate: lineRate(ds, o.customer, l.product) })), taxSplit(ds, o.customer));
+  const tax = ps.reduce((a, x) => a + x.amount, 0);
   const body = `<header><div><h1>Order confirmation ${esc(o.id)}</h1>${o.credit_block ? `<div class="flag">Held: awaiting credit release</div>` : ""}</div>
 <div style="text-align:right"><b>${esc(p.company)}</b>${block(p.from.address)}<div class="muted">Order date ${esc(long(o.order_date))}</div>
 ${o.customer_ref ? `<div class="muted">Your order ${esc(o.customer_ref)}</div>` : ""}</div></header>
@@ -85,8 +130,8 @@ ${o.customer_ref ? `<div class="muted">Your order ${esc(o.customer_ref)}</div>` 
 <table><thead><tr><th>Line</th><th>Item</th><th class="num">Quantity</th><th class="num">Price</th><th class="num">Value</th><th>Delivery</th></tr></thead>
 <tbody>${rows}</tbody>
 <tfoot><tr><td></td><td>Net</td><td></td><td></td><td class="num">${esc(exactMoney(net, p.currency))}</td><td></td></tr>
-${tax ? `<tr><td></td><td>Tax ${Math.round(tax * 1000) / 10} %</td><td></td><td></td><td class="num">${esc(exactMoney(net * tax, p.currency))}</td><td></td></tr>` : ""}
-<tr class="total"><td></td><td>Total</td><td></td><td></td><td class="num">${esc(exactMoney(net * (1 + tax), p.currency))}</td><td></td></tr></tfoot></table>
+${taxRows(ps, p.currency, 1)}
+<tr class="total"><td></td><td>Total</td><td></td><td></td><td class="num">${esc(exactMoney(net + tax, p.currency))}</td><td></td></tr></tfoot></table>
 <p>Thank you for your order. Please quote ${esc(o.id)} in any correspondence.</p>
 <footer>${esc(p.company)}${p.from.tax ? ` · Tax no. ${esc(p.from.tax)}` : ""} · ${esc(o.id)}</footer>`;
   return page(`Order confirmation ${o.id}`, p.company, body);
@@ -98,11 +143,13 @@ export function invoiceDocument(inv: Inv, ds: Dataset): string {
   const credit = inv.kind === "credit_note";
   const amt = (x: { qty: number; price: number }) => Math.round(x.qty * x.price * 100) / 100;
   const net = inv.lines.reduce((a, l) => a + amt(l), 0);
-  const tax = Math.round(net * (inv.tax_rate ?? 0) * 100) / 100;
+  const ps = taxParts(inv.lines.map((l) => ({ amount: amt(l), rate: l.tax_rate ?? inv.tax_rate ?? 0 })), inv.tax_split ?? "");
+  const tax = r2(ps.reduce((a, x) => a + x.amount, 0));
+  const rated = new Set(inv.lines.map((l) => l.tax_rate ?? inv.tax_rate ?? 0)).size > 1;
   const paid = (inv.payments ?? []).reduce((a, x) => a + x.amount + (x.discount ?? 0), 0);
   const rows = inv.lines.map((l, i) => `<tr><td>${(i + 1) * 10}</td><td><b>${esc(p.nm.prod(l.product))}</b><div class="id">${esc(l.product)}${l.order ? ` · order ${esc(l.order)}` : ""}</div></td>
     <td class="num">${qty(l.qty)} ${esc(p.unit(l.product))}</td><td class="num">${esc(exactMoney(l.price, p.currency))}</td>
-    <td class="num">${esc(exactMoney(amt(l), p.currency))}</td></tr>`).join("");
+    <td class="num">${esc(exactMoney(amt(l), p.currency))}${rated ? `<div class="muted">tax ${pct(l.tax_rate ?? inv.tax_rate ?? 0)}</div>` : ""}</td></tr>`).join("");
   const terms = credit ? "" : `<div>Due ${esc(long(inv.due_date))}</div>${inv.discount && inv.discount_date
     ? `<div>${Math.round(inv.discount * 1000) / 10} % off (${esc(exactMoney((net + tax) * inv.discount, p.currency))}) if paid by ${esc(long(inv.discount_date))}</div>` : ""}`;
   const title = `${credit ? "Credit note" : "Invoice"} ${inv.id}`;
@@ -116,7 +163,7 @@ export function invoiceDocument(inv: Inv, ds: Dataset): string {
 <table><thead><tr><th>Line</th><th>Item</th><th class="num">Quantity</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
 <tbody>${rows}</tbody>
 <tfoot><tr><td></td><td>Net</td><td></td><td></td><td class="num">${esc(exactMoney(net, p.currency))}</td></tr>
-<tr><td></td><td>Tax ${Math.round((inv.tax_rate ?? 0) * 1000) / 10} %</td><td></td><td></td><td class="num">${esc(exactMoney(tax, p.currency))}</td></tr>
+${taxRows(ps, p.currency, 0)}
 <tr class="total"><td></td><td>${credit ? "Credited" : "Total"}</td><td></td><td></td><td class="num">${esc(exactMoney(net + tax, p.currency))}</td></tr>
 ${paid > 0 ? `<tr><td></td><td>${credit ? "Paid out" : "Paid"}</td><td></td><td></td><td class="num">${esc(exactMoney(paid, p.currency))}</td></tr>` : ""}</tfoot></table>
 ${credit ? "" : `<p>Please quote ${esc(inv.id)} with your payment.</p>`}

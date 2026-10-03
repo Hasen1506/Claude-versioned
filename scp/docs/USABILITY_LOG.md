@@ -266,7 +266,7 @@ inspection and credited, and a quotation won; every Selling tab was then opened 
 | N120 | *Mark as sent* on an order confirmation changed the order but showed nothing: its result went to a message nobody displayed. | Serious | **Fixed (M).** The document buttons report through the order's own message line. |
 | N121 | Money on documents was the compact screen format: an invoice total read "₹2.1K", and so did every purchase order document since Q23. | Serious | **Fixed (M).** Documents (purchase orders, order confirmations, invoices, credit notes) and the Selling page show exact amounts (₹2,257.20); summaries keep the short form. |
 | N122 | Orders held over a credit limit and overdue invoices are on *Selling* only: not in the worklist on *Performance*, not on Home. | Minor | **Fixed (N)** for the worklist: credit holds and overdue invoices are there under *receivables*, supplier invoices blocked or overdue under *payables*, each linking to its page. Home shows the worklist's count. |
-| N123 | Tax is one rate per customer (or the company's): no rate per product and no split into its parts (CGST, SGST, IGST by place of supply). | Minor | Open: recorded with the SD gaps below. |
+| N123 | Tax is one rate per customer (or the company's): no rate per product and no split into its parts (CGST, SGST, IGST by place of supply). | Minor | Fixed (gaps after Q): products carry a tax rate; a line takes the customer's own rate first, then the product's, then the company's, and keeps it on the invoice. With *Selling settings → tax split: gst*, an invoice to a customer in the company's state (region, else the GSTIN's state code) shows CGST and SGST per rate, to one in another state IGST; the split is fixed on the invoice when billed, the documents and the credit check use the same rates. |
 | N124 | Overdue invoices have no reminder (dunning) and customers no statement of account. | Minor | Fixed (gaps after Q): the company sets reminder days (default 7, 21 and 35 days past due) in *Selling settings*. *Selling → Customers* lists the payment reminders due: each has its letter to print, download, e-mail or send from the server, and sending it from the server (or *Record … as sent*) records the reminder on its invoices. A very late invoice goes straight to the reminder it has reached. Clicking a customer shows their statement of account, by document and by age, sent the same ways. |
 | N125 | Proof of delivery records the day the customer signed, but on-time delivery (OTIF) still counts the shipping day plus the route's transit days. | Minor | Open: by design until OTIF can choose its date; recorded. |
 | N126 | *Money* shows the plan's revenue, not what was invoiced. | Minor | By design, recorded: *Money* is the plan's economics; what was billed, paid and is owed is on *Selling*. |
@@ -543,9 +543,9 @@ stock that is really there (shelf life, short receipts, stock below zero) or a p
   the order logged, deliveries in part or in full, and customer-specific prices (**G**, done). Orders with several
   lines, prices with quantity scales and discounts, payment terms with a cash discount, a credit limit with a delivery
   block and its release, quotations, an order confirmation, delivery documents (picking, packing, goods issue, proof
-  of delivery), invoices with tax and payments, returns and credit notes (**M**, done). Still missing: surcharges and
-  freight conditions, tax per product and its parts (N123), contracts and scheduling agreements with customers,
-  down payments, invoice lists, and consignment stock at the customer.
+  of delivery), invoices with tax and payments, returns and credit notes (**M**, done). Tax per product and its
+  CGST, SGST and IGST parts followed after Q (N123). Still missing: surcharges and freight conditions, contracts and
+  scheduling agreements with customers, down payments, invoice lists, and consignment stock at the customer.
 - MM: supplier purchasing data with a purchasing block, info records with price scales, the source list (fixed
   and blocked), requisitions from MRP, purchase orders with an approval limit, supplier confirmations that planning
   uses, and goods receipts with delivery tolerances (**E**, done). Quality inspection stock (**O**, done). Invoice
