@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from urllib.parse import parse_qs, urlsplit
 
+import certifi
 import psycopg
 
 
@@ -63,7 +64,7 @@ class Postgres:
         if not local and mode != 'verify-full':
             raise ValueError('Hosted PostgreSQL requires sslmode=verify-full')
         self.connection = psycopg.connect(url, autocommit=True, row_factory=row_factory,
-                                         **({} if local else {'sslmode': 'verify-full', 'sslrootcert': 'system'}))
+                                         **({} if local else {'sslmode': 'verify-full', 'sslrootcert': certifi.where()}))
         self.connection.execute('CREATE SCHEMA IF NOT EXISTS scp')
         self.connection.execute('SET search_path TO scp, public')
         self.connection.execute('CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public')
