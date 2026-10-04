@@ -271,7 +271,10 @@ def get_store() -> Store:
     global _store
     with _store_lock:
         if _store is None:
-            _store = Store(os.environ.get("DATABASE_URL") or os.environ.get("SCP_DB") or Path.home() / ".scp" / "scp.sqlite")
+            database_url = os.environ.get("DATABASE_URL", "").strip()
+            if database_url and not database_url.startswith(("postgres://", "postgresql://")):
+                raise ValueError("DATABASE_URL must be a PostgreSQL URL")
+            _store = Store(database_url or os.environ.get("SCP_DB") or Path.home() / ".scp" / "scp.sqlite")
         return _store
 
 
