@@ -4,6 +4,8 @@ Never run against a production branch. SCP_POSTGRES_SMOKE=1 is required.
 """
 import os
 import secrets
+import subprocess
+import sys
 from pathlib import Path
 
 import psycopg
@@ -60,7 +62,9 @@ def main():
     reopened = Store(os.environ['DATABASE_URL'])
     assert Companies(reopened).open(session.user, company.id).dataset == changed
     reopened.db.close()
-    print('POSTGRES SMOKE: accounts, isolation, compressed revisions, versions, immutable trigger and restart passed')
+    print('POSTGRES SMOKE: accounts, isolation, compressed revisions, versions, immutable trigger and restart passed', flush=True)
+    if os.environ.get('SCP_MIGRATION_TEST_URL'):
+        subprocess.run([sys.executable, str(Path(__file__).with_name('postgres_migration_smoke.py'))], check=True)
 
 
 if __name__ == '__main__':
