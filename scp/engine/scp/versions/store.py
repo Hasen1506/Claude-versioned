@@ -101,10 +101,15 @@ def _now() -> str:
 class Store:
     def __init__(self, path: str | os.PathLike = ":memory:"):
         self.path = str(path)
-        if self.path != ":memory:":
-            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
-        self.db.row_factory = sqlite3.Row
+        self.backend = "postgresql" if self.path.startswith(("postgres://", "postgresql://")) else "sqlite"
+        if self.backend == "postgresql":
+            from ..postgres import Postgres
+            self.db = Postgres(self.path)
+        else:
+            if self.path != ":memory:":
+                Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+            self.db = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
+            self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(SCHEMA)
         if "scope" not in {r["name"] for r in self.db.execute("PRAGMA table_info(versions)")}:
@@ -266,7 +271,10 @@ def get_store() -> Store:
     global _store
     with _store_lock:
         if _store is None:
-            _store = Store(os.environ.get("SCP_DB") or Path.home() / ".scp" / "scp.sqlite")
+            database_url = os.environ.get("DATABASE_URL", "").strip()
+            if database_url and not database_url.startswith(("postgres://", "postgresql://")):
+                raise ValueError("DATABASE_URL must be a PostgreSQL URL")
+            _store = Store(database_url or os.environ.get("SCP_DB") or Path.home() / ".scp" / "scp.sqlite")
         return _store
 
 

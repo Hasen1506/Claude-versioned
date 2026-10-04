@@ -115,6 +115,10 @@ def restore(backup_file: str | os.PathLike, db_path: str | os.PathLike) -> Path:
 
 def start_nightly(db: sqlite3.Connection, lock: threading.RLock) -> threading.Thread | None:
     """With SCP_BACKUP_DIR set, a thread that backs the database up once a day at SCP_BACKUP_HOUR (UTC)."""
+    if getattr(db, "backend", "sqlite") == "postgresql":
+        if os.environ.get("SCP_BACKUP_DIR"):
+            raise ValueError("SCP_BACKUP_DIR is SQLite-only; use PostgreSQL backups and Neon restore history")
+        return None
     folder = os.environ.get("SCP_BACKUP_DIR", "").strip()
     if not folder:
         return None
