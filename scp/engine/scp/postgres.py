@@ -106,6 +106,7 @@ class Postgres:
         script = re.sub(r'CREATE TRIGGER IF NOT EXISTS base_is_immutable.*?END;', '', script, flags=re.S)
         script = re.sub(r'\bINTEGER PRIMARY KEY AUTOINCREMENT\b', 'BIGSERIAL PRIMARY KEY', script)
         script = re.sub(r'\bBLOB\b', 'BYTEA', script)
+        script = re.sub(r'\bREAL\b', 'DOUBLE PRECISION', script)
         script = re.sub(r'email TEXT NOT NULL( UNIQUE)? COLLATE NOCASE',
                         lambda m: 'email CITEXT NOT NULL' + (m[1] or ''), script)
         with self.connection.transaction():
