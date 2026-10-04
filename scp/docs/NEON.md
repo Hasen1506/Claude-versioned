@@ -1,12 +1,12 @@
 # Neon PostgreSQL for SCP
 
-Prepared 4 October 2026. Production cutover is pending preservation of the live SQLite database.
+Configured 4 October 2026. The owner approved a fresh production database; no historical SQLite data is imported.
 
 | Resource | Value |
 | --- | --- |
 | Neon project | `Claude Versioned` (`lucky-river-59434445`) |
 | Region | AWS Singapore |
-| Empty production branch | `br-super-rain-b3ighzk3` |
+| Production branch | `br-super-rain-b3ighzk3` |
 | PostgreSQL validation branch | `br-polished-violet-b3yl7asf` |
 | Migration validation branch | `br-little-mouse-b3ba6m68` |
 | Validation service | `claude-neon-validation` (`srv-db0rf9c9v7es73cncja0`) |
@@ -26,13 +26,13 @@ Forty-seven existing account, version, working-copy and recovery tests pass with
 
 `tests/postgres_migration_smoke.py` checks a fictional SQLite source against the separate migration branch: dry-run rollback, full-field verification, binary revisions, version parents and refusal to overwrite a nonempty destination. Its execution is explicitly gated by SCP_POSTGRES_SMOKE=1 and a separate SCP_MIGRATION_TEST_URL. This variable is only for validation, never normal production startup.
 
-## Preserve the source before cutover
+## Fresh production cutover
 
-The current free Render service stores SQLite on its ephemeral filesystem. Its dashboard blocks shell/SSH on the free plan. Redeploying or merging this branch to main would trigger existing auto-deploys and can discard that file. Do not merge or switch its environment until a backup has been obtained, or the owner explicitly approves a fresh database. Read-only public checks currently report no accounts and no anonymous saved versions, but do not establish that every remaining table is empty.
+The owner explicitly approved starting fresh on 4 October 2026. Production uses branch `br-super-rain-b3ighzk3`; fictional fixtures stay on development branches. No historical accounts, sessions, companies or versions are imported. Set the production DATABASE_URL privately on the existing Render service, retain its email/SSO/settings, and keep the full build (`pip install -e scp/engine && cd scp/web && npm ci && npm run build`) and single-worker uvicorn startup. Main auto-deploys this service. The old Enterprise Simulator services are unrelated to the active SCP deployment.
 
-With access to the running instance, freeze writes and use SQLite's online backup API or the existing admin backup command. Keep the source instance stopped from writing until cutover; a stale backup will omit later writes. The old Enterprise Simulator services are unrelated to this active SCP deployment and were not changed.
+## Optional migration for other installations
 
-On a host with the backup and a private destination URL:
+For an installation that needs to preserve SQLite data, freeze writes and obtain a consistent backup using SQLite's online backup API or the existing admin backup command before redeploying an ephemeral host. With a backup and a private, empty destination URL:
 
 ```sh
 pip install -e scp/engine
@@ -42,5 +42,3 @@ python -m scp.migrate_postgres backup.sqlite --apply
 ```
 
 The helper opens the source read-only, checks SQLite integrity, rejects unknown tables/columns and nonempty destinations, orders foreign keys and version parents, compares every copied field, and commits only after verification. Dry-run rows are rolled back; schema initialization remains. Sequence values may advance during validation. Preserve the backup. A post-cutover rollback must account for new PostgreSQL writes.
-
-After preservation and validation, merge the PR, set the production DATABASE_URL securely in the existing Render service, retain the existing email/SSO/settings, and keep its normal full build (`pip install -e scp/engine && cd scp/web && npm ci && npm run build`) and single-worker uvicorn startup. Confirm health, login, company/revision persistence and version operations on the live app. The Neon production branch is intentionally empty until this decision.
