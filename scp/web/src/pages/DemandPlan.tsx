@@ -1,11 +1,12 @@
 // The demand plan: exactly the demand the supply plan works to, product by place and week. Type into the grid, upload a
 // spreadsheet, or release a forecast into it. A forecast record that covers several weeks (a monthly bucket) is shown
 // spread over its working days, as planning spreads it; editing one of its weeks splits it into weekly records first, so nothing is lost.
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import type { Dataset, DemandRecord } from "../api/types";
 import { ImportPanel } from "../components/Import";
 import { Badge, Edits, Empty, MoreRows, Panel } from "../components/ui";
 import { addDays, day, qty } from "../lib/format";
+import { cell, fillKey, parseGrid, pasteNote, placeBlock } from "../lib/gridpaste";
 import { href } from "../lib/router";
 import { store } from "../state/store";
 
@@ -115,10 +116,13 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
   const places = (ds.locations ?? []).filter((l) => l.type !== "supplier");
 
   /** Set the forecast of one product at one place in one week. Records spanning other weeks are split into weekly ones. */
-  const setWeek = (s: Series, i: number, value: number) => {
+  const setWeek = (s: Series, i: number, value: number) => setWeeks([{ s, i, value }]);
+  /** Several cells in one change (a paste, a fill): one undo step. */
+  const setWeeks = (cells: { s: Series; i: number; value: number }[]) => store.update((d) => {
+    for (const { s, i, value } of cells) {
     const from = toDate(cols[i]), to = from + 7 * DAY;
     const isWork = workdays(ds)(s.location);
-    store.update((d) => {
+    {
       const list = (d.demand ??= []);
       const mine = (r: DemandRecord) => r.location === s.location && r.product === s.product && r.kind === "forecast";
       const touching = list.filter((r) => mine(r) && share(r, from, to, isWork) > 0);
@@ -142,7 +146,33 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
       const at = Math.max(from, toDate(ds.settings.planning_start));
       if (value > 0) d.demand.push({ location: s.location, product: s.product, date: iso(at), qty: value, kind: "forecast",
         period_days: Math.round((to - at) / DAY) } as DemandRecord);
-    });
+    }
+    }
+  });
+  const [note, setNote] = useState<string | null>(null);
+  /** A block pasted from a spreadsheet, from this cell rightwards and downwards over the rows shown. */
+  const paste = (e: ClipboardEvent<HTMLInputElement>, row: number, col: number) => {
+    const block = parseGrid(e.clipboardData.getData("text/plain"));
+    if (!block) return;
+    e.preventDefault();
+    const rows = shown.slice(0, DP_ROWS);
+    const { writes, skipped, clipped } = placeBlock(block, row, col, rows.length, cols.length);
+    if (writes.length) setWeeks(writes.map((w) => ({ s: rows[w.r], i: w.c, value: w.v })));
+    setNote(pasteNote(writes.length, skipped, clipped));
+  };
+  /** Ctrl+R: this week's value into every later week of the row; Ctrl+D: into the same week of every row below. */
+  const fill = (e: KeyboardEvent<HTMLInputElement>, row: number, col: number) => {
+    const how = fillKey(e);
+    if (!how) return false;
+    e.preventDefault();
+    const t = e.currentTarget.value.trim(), v = t === "" ? 0 : cell(t);
+    if (Number.isNaN(v)) return true;
+    const rows = shown.slice(0, DP_ROWS);
+    const cells = how === "right" ? cols.map((_, i) => i).filter((i) => i >= col).map((i) => ({ s: rows[row], i, value: v }))
+      : rows.map((_, r) => r).filter((r) => r >= row).map((r) => ({ s: rows[r], i: col, value: v }));
+    setWeeks(cells);
+    setNote(pasteNote(cells.length, 0, 0));
+    return true;
   };
 
   const addSeries = () => {
@@ -161,6 +191,9 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
             </> : <>No demand yet. </>}
           Type a week's forecast into the grid, upload a spreadsheet, or <a href={href("demand", "overview")}>forecast it from past sales</a> and use that.
           Customer orders show under each row and are changed on the <a href={href("promise")}>Orders</a> page.</p>
+        <p className="small muted" style={{ marginBottom: 0 }}>Spreadsheet keys: paste a block copied from Excel into any week and it fills
+          rightwards and downwards; <kbd>Ctrl</kbd>+<kbd>R</kbd> fills a week's value to the right, <kbd>Ctrl</kbd>+<kbd>D</kbd> copies it down.</p>
+        {note && <p className="small" role="status" style={{ marginBottom: 0 }}>{note}</p>}
       </Panel>
       {upload && <ImportPanel ds={ds} ckey="demand" onClose={() => setUpload(false)} />}
       {series.length === 0 && !upload ? (
@@ -178,7 +211,7 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
                 {cols.map((w) => <th key={w} className="num" title={`Week of ${day(w)} to ${day(addDays(w, 6))}`}>{day(w)}</th>)}
                 <th className="num">Total</th>
               </tr></thead>
-              <tbody>{shown.slice(0, DP_ROWS).map((s) => {
+              <tbody>{shown.slice(0, DP_ROWS).map((s, row) => {
                 const fcT = s.fc.reduce((a, b) => a + b, 0), soT = s.so.reduce((a, b) => a + b, 0);
                 return [
                   <tr key={`${s.location}|${s.product}`}>
@@ -193,7 +226,8 @@ export function DemandPlan({ ds }: { ds: Dataset }) {
                           if (!(n >= 0)) { e.target.value = v ? String(+v.toFixed(2)) : ""; return; }
                           if (Math.abs(n - v) > 1e-9) setWeek(s, i, n);
                         }}
-                        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} /></td>)}
+                        onPaste={(e) => paste(e, row, i)}
+                        onKeyDown={(e) => { if (fill(e, row, i)) return; if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} /></td>)}
                     <td className="num"><b>{qty(Math.round(fcT + soT))}</b></td>
                   </tr>,
                   soT > 0 && <tr key={`${s.location}|${s.product}|so`} className="dp-so">

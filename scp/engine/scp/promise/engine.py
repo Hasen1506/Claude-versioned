@@ -136,7 +136,7 @@ class Promiser:
         if self.cfg.include_planned_orders:
             for o in self.plan.orders:
                 if (o.location, o.product) == node:
-                    s.add_in(self.day(o.available_date), o.qty)
+                    self._add_planned(s, o)
         other = [0.0] * self.days
         for rq in self.plan.requirements:
             if (rq.location, rq.product) != node or rq.kind not in ("dependent", "transfer"):
@@ -153,6 +153,23 @@ class Promiser:
         self.series[node] = s
         self.other[node] = other
         return s
+
+    def _add_planned(self, s: AtpSeries, o) -> None:
+        """A planned receipt counts on the date the plan projects it, not the date MRP wanted it: an order whose
+        components arrive late (a 21-day motor with no stock) is available only when they do, so it cannot confirm an
+        order on time while the plan itself says the order is late. An order with an uncovered input (delay −1) has no
+        projected date at all and confirms nothing; capable-to-promise or the replenishment lead time quote it."""
+        if o.delay_days < 0:
+            return
+        late = o.projected_available_date
+        if late is None or late <= o.available_date or o.delay_days <= 0:
+            s.add_in(self.day(o.available_date), o.qty)
+            return
+        on_time = min(max(o.projected_on_time_qty or 0.0, 0.0), o.qty)
+        if on_time > EPS:
+            s.add_in(self.day(o.available_date), on_time)
+        if o.qty - on_time > EPS:
+            s.add_in(self.day(late), o.qty - on_time)
 
     def ships(self, d: DemandRecord) -> list[Ship]:
         node = (d.location, d.product)

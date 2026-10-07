@@ -1514,6 +1514,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/purchasing/one-off": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post One Off Po
+         * @description A purchase order no requisition asked for: one line on a purchasing source.
+         */
+        post: operations["post_one_off_po_api_purchasing_one_off_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/purchasing/act": {
         parameters: {
             query?: never;
@@ -4415,6 +4435,13 @@ export interface components {
              */
             interval: number;
             /**
+             * Service Levels
+             * @description Suggested cycle service level per ABC-XYZ cell, keyed AX … CZ (fractions); a cell left out keeps the default table (A·X 98 % … C·Z 90 %)
+             */
+            service_levels?: {
+                [key: string]: number;
+            } | null;
+            /**
              * Released Inputs
              * @description Written by a forecast release: a fingerprint of the events, new-product rules, overrides and these settings it was made with, so a later change to them is noticed
              */
@@ -6496,6 +6523,18 @@ export interface components {
              * @default 0
              */
             cannibalisation: number;
+        };
+        /** OneOffPoRequest */
+        OneOffPoRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Source Id */
+            source_id: string;
+            /** Qty */
+            qty: number;
+            /** Due Date */
+            due_date?: string | null;
+            /** Order Date */
+            order_date?: string | null;
         };
         /** OpenOrderRow */
         OpenOrderRow: {
@@ -10511,6 +10550,11 @@ export interface components {
              * @default 0.95
              */
             default_service_level: number;
+            /**
+             * Timezone
+             * @description The company's time zone (IANA, e.g. Asia/Kolkata): the times of day of its scheduled imports; empty = the server's (SCP_TIMEZONE, else UTC)
+             */
+            timezone?: string | null;
             /** Default Calendar */
             default_calendar?: string | null;
             /**
@@ -14806,6 +14850,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CreatePoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatePoResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_one_off_po_api_purchasing_one_off_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OneOffPoRequest"];
             };
         };
         responses: {
