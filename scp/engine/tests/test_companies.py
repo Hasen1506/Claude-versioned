@@ -14,7 +14,7 @@ from scp.companies import store as company_store
 
 from .factory import load_example
 
-client = TestClient(app)
+client = TestClient(app, headers={"X-Browser-Key": "tests-browser-key-0001"})
 
 
 def signup(email: str, name: str = "", password: str = "correct horse") -> str:
@@ -28,6 +28,18 @@ def h(token: str, company: str | None = None) -> dict:
     if company:
         out["X-Company"] = company
     return out
+
+
+def join(owner: str, cid: str, email: str, role: str, **kw) -> list[dict]:
+    """Invite ``email`` and accept the invitation as that account (CV-C01: nobody joins unasked)."""
+    r = client.post(f"/api/companies/{cid}/members", headers=h(owner), json={"email": email, "role": role, **kw})
+    assert r.status_code == 200, r.text
+    link = next((m["invite_link"] for m in r.json() if m["email"] == email and m.get("invite_link")), None)
+    if link is not None:
+        c = get_companies()
+        uid = c.db.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()["id"]
+        c.accept_invite(c._user(uid), token=link.rsplit("/", 1)[1])
+    return r.json()
 
 
 def example() -> dict:
@@ -98,8 +110,13 @@ def test_new_accounts_by_invitation_only(monkeypatch):
     r = client.post("/api/auth/signup", json={"email": "stranger@x.com", "password": "12345678"})
     assert r.status_code == 403 and "invitation" in r.json()["detail"]
     cid = new_company(owner)
-    client.post(f"/api/companies/{cid}/members", headers=h(owner), json={"email": "ravi@kaveri.in", "role": "planner"})
-    ravi = signup("ravi@kaveri.in", "Ravi")
+    r = client.post(f"/api/companies/{cid}/members", headers=h(owner), json={"email": "ravi@kaveri.in", "role": "planner"})
+    link = next(m["invite_link"] for m in r.json() if m["email"] == "ravi@kaveri.in")
+    assert "/#/account/invite/" in link
+    ravi = signup("ravi@kaveri.in", "Ravi")                                       # the invitation lets him sign up …
+    assert client.get("/api/auth/me", headers=h(ravi)).json()["companies"] == []  # … but he joins only by accepting
+    r = client.post("/api/auth/invites/accept", headers=h(ravi), json={"token": link.rsplit("/", 1)[1]})
+    assert r.status_code == 200, r.text
     (c,) = client.get("/api/auth/me", headers=h(ravi)).json()["companies"]
     assert c["id"] == cid and c["role"] == "planner"
     monkeypatch.setenv("SCP_SIGNUP", "closed")
@@ -110,7 +127,7 @@ def test_new_accounts_by_invitation_only(monkeypatch):
 def test_a_save_based_on_an_older_revision_is_refused_and_says_who_saved(clock):
     asha, ravi = signup("asha@kaveri.in", "Asha"), signup("ravi@kaveri.in", "Ravi")
     cid = new_company(asha)
-    client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "ravi@kaveri.in", "role": "planner"})
+    join(asha, cid, "ravi@kaveri.in", "planner")
     a = client.get(f"/api/companies/{cid}", headers=h(asha)).json()
     b = client.get(f"/api/companies/{cid}", headers=h(ravi)).json()
     assert a["meta"]["revision"] == b["meta"]["revision"] == 1 and a["meta"]["name"].startswith("Kaveri")
@@ -140,8 +157,8 @@ def test_a_save_based_on_an_older_revision_is_refused_and_says_who_saved(clock):
 def test_roles_decide_who_may_change_the_data_and_the_members():
     asha, ravi, meera, other = (signup(e) for e in ("asha@k.in", "ravi@k.in", "meera@k.in", "other@x.in"))
     cid = new_company(asha)
-    client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "ravi@k.in", "role": "planner"})
-    client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "meera@k.in", "role": "viewer"})
+    join(asha, cid, "ravi@k.in", "planner")
+    join(asha, cid, "meera@k.in", "viewer")
     doc = client.get(f"/api/companies/{cid}", headers=h(meera)).json()["dataset"]  # a viewer reads it
     doc["products"][0]["price"] = 1
     r = client.put(f"/api/companies/{cid}", headers=h(meera), json={"dataset": doc, "base_revision": 1})
@@ -169,7 +186,7 @@ def test_roles_decide_who_may_change_the_data_and_the_members():
 def test_every_save_is_kept_and_a_company_can_be_put_back_to_any_of_them(clock):
     asha, ravi = signup("asha@k.in", "Asha"), signup("ravi@k.in", "Ravi")
     cid = new_company(asha)
-    client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "ravi@k.in", "role": "planner"})
+    join(asha, cid, "ravi@k.in", "planner")
     doc = example()
     rev = 1
     for i in range(3):                                   # Asha: three saves in four minutes
@@ -190,7 +207,7 @@ def test_every_save_is_kept_and_a_company_can_be_put_back_to_any_of_them(clock):
     assert "orders and forecasts: 2 removed" in top["summary"] and "places: 1 changed" in top["summary"]
     lists = {c["list"]: c for c in top["changes"]}
     assert lists["places"]["names"] == ["~ PLT-PUNE"] and len(lists["orders and forecasts"]["names"]) == 2
-    assert any(x["action"] == "member" and x["summary"] == "Ravi added as planner" for x in hist)
+    assert any(x["action"] == "member" and x["summary"] == "Ravi accepted the invitation and joined as planner" for x in hist)
     # every save opens as it was (R19), though only the first is kept whole
     for r, price in ((2, 100), (3, 101), (4, 102)):
         assert client.get(f"/api/companies/{cid}/revisions/{r}", headers=h(asha)).json()["products"][0]["price"] == price
@@ -279,7 +296,7 @@ def test_the_keys_the_browser_patches_by_are_the_servers():
 def test_a_reload_during_a_save_is_not_taken_for_a_colleague(clock):
     asha, ravi = signup("asha@k.in", "Asha"), signup("ravi@k.in", "Ravi")
     cid = new_company(asha)
-    client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "ravi@k.in", "role": "planner"})
+    join(asha, cid, "ravi@k.in", "planner")
     doc = example()
     w1 = {**h(ravi), "X-Client": "tab-1"}
     doc["products"][0]["price"] = 10
@@ -315,7 +332,7 @@ def test_a_clash_shows_both_versions_and_each_record_is_kept_as_chosen(clock):
     asha, ravi = signup("asha@k.in", "Asha"), signup("ravi@k.in", "Ravi")
     base = example()
     cid = new_company(asha, base)
-    client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "ravi@k.in", "role": "planner"})
+    join(asha, cid, "ravi@k.in", "planner")
     theirs, mine = json.loads(json.dumps(base)), json.loads(json.dumps(base))
     p0, p1 = base["products"][0]["id"], base["products"][1]["id"]
     theirs["products"][0]["price"], mine["products"][0]["price"] = 111, 222
@@ -346,7 +363,7 @@ def test_a_clash_shows_both_versions_and_each_record_is_kept_as_chosen(clock):
 def test_plan_versions_and_the_worklist_are_kept_per_company():
     asha, meera, other = signup("asha@k.in"), signup("meera@k.in"), signup("other@x.in")
     cid = new_company(asha)
-    client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "meera@k.in", "role": "viewer"})
+    join(asha, cid, "meera@k.in", "viewer")
     ds = example()
     r = client.post("/api/versions", headers=h(asha, cid), json={"dataset": ds, "name": "Oct cycle"})
     assert r.status_code == 200
@@ -410,7 +427,7 @@ def test_two_people_taking_an_order_at_once_both_keep_theirs_after_a_merge():
     asha, ravi = signup("asha@k.in", "Asha"), signup("ravi@k.in", "Ravi")
     base = example()
     cid = new_company(asha, base)
-    client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "ravi@k.in", "role": "planner"})
+    join(asha, cid, "ravi@k.in", "planner")
     ds = Dataset.model_validate(base)
     cust = next(d for d in ds.demand if d.kind == "sales_order")
 
@@ -458,7 +475,7 @@ def test_an_autosave_merge_refuses_when_a_record_changed_on_both_sides():
     asha, ravi = signup("asha@k.in", "Asha"), signup("ravi@k.in", "Ravi")
     base = example()
     cid = new_company(asha, base)
-    client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "ravi@k.in", "role": "planner"})
+    join(asha, cid, "ravi@k.in", "planner")
     theirs, mine = json.loads(json.dumps(base)), json.loads(json.dumps(base))
     theirs["products"][0]["price"] = 111
     mine["products"][0]["price"] = 222
@@ -483,8 +500,8 @@ def _lp(doc: dict, loc: str, prod: str) -> dict:
 def test_a_planner_limited_to_a_place_and_a_product_group_changes_only_those_records(clock):
     asha, ravi = signup("asha@k.in", "Asha"), signup("ravi@k.in", "Ravi")
     cid = new_company(asha)
-    r = client.post(f"/api/companies/{cid}/members", headers=h(asha), json={
-        "email": "ravi@k.in", "role": "planner", "places": ["DC-DELHI"], "families": ["Mixer grinders"]})
+    join(asha, cid, "ravi@k.in", "planner", places=["DC-DELHI"], families=["Mixer grinders"])
+    r = client.get(f"/api/companies/{cid}/members", headers=h(asha))
     assert [(m["email"], m["places"], m["families"]) for m in r.json() if m["email"] == "ravi@k.in"] == [
         ("ravi@k.in", ["DC-DELHI"], ["Mixer grinders"])]
     assert client.get("/api/companies", headers=h(ravi)).json()[0]["places"] == ["DC-DELHI"]
@@ -516,7 +533,8 @@ def test_a_planner_limited_to_a_place_and_a_product_group_changes_only_those_rec
     mine["settings"]["company_name"] = "Mine"
     assert client.put(f"/api/companies/{cid}", headers=h(ravi), json={"dataset": mine, "base_revision": 3}).status_code == 200
     log = [x["summary"] for x in client.get(f"/api/companies/{cid}/history", headers=h(asha)).json() if x["action"] == "member"]
-    assert "Ravi added as planner, limited to places DC-DELHI and product groups Mixer grinders" in log
+    assert "ravi@k.in invited as planner, limited to places DC-DELHI and product groups Mixer grinders" in log
+    assert "Ravi accepted the invitation and joined as planner" in log
     assert "Ravi: planner, no longer limited" in log
 
 
@@ -525,7 +543,7 @@ def test_master_data_waits_for_a_second_persons_approval_and_the_rest_saves_at_o
     cid = new_company(asha)
     r = client.put(f"/api/companies/{cid}/approval", headers=h(asha), json={"approval": True})
     assert r.status_code == 409 and "second person" in r.json()["detail"]                   # nobody to approve yet
-    client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "ravi@k.in", "role": "planner"})
+    join(asha, cid, "ravi@k.in", "planner")
     assert client.put(f"/api/companies/{cid}/approval", headers=h(ravi), json={"approval": True}).status_code == 403
     assert client.put(f"/api/companies/{cid}/approval", headers=h(asha), json={"approval": True}).json()["approval"]
     doc = example()
@@ -597,7 +615,7 @@ def test_a_forgotten_password_is_reset_by_mail_or_by_a_link_an_owner_makes(monke
 
     asha, ravi = signup("asha@k.in", "Asha"), signup("ravi@k.in", "Ravi")
     cid = new_company(asha)
-    client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "ravi@k.in", "role": "planner"})
+    join(asha, cid, "ravi@k.in", "planner")
     sent: list[tuple[str, str, str]] = []
     monkeypatch.setattr(mail, "send", lambda *a: sent.append(a))
     # no mail set up: the page says so, and nothing is sent
@@ -617,12 +635,19 @@ def test_a_forgotten_password_is_reset_by_mail_or_by_a_link_an_owner_makes(monke
     assert client.get("/api/auth/me", headers=h(ravi)).status_code == 401        # signed out everywhere else
     assert client.post("/api/auth/signin", json={"email": "ravi@k.in", "password": "a new horse"}).status_code == 200
     assert client.post("/api/auth/reset", json={"token": token, "password": "another one"}).status_code == 410
-    # an owner makes a link for a planner (a server without mail); not for another owner, and a planner cannot
+    # an owner asks for a link for a planner: with mail, it goes to the planner's own address (CV-H01) …
+    r = client.post(f"/api/companies/{cid}/members/ravi@k.in/reset", headers=h(asha))
+    assert r.status_code == 200 and r.json()["mailed"] and r.json()["link"] == ""
+    assert sent[-1][0] == "ravi@k.in" and "https://plan.example.com/#/account/reset/" in sent[-1][2]
+    mailed = next(w for w in sent[-1][2].split() if "/#/account/reset/" in w)
+    # … and on a server without mail the owner is shown it to hand over; not for another owner, and a planner cannot
+    monkeypatch.delenv("SCP_SMTP_HOST")
     r = client.post(f"/api/companies/{cid}/members/ravi@k.in/reset", headers=h(asha))
     assert r.status_code == 200 and r.json()["link"].startswith("https://plan.example.com/#/account/reset/")
+    assert mailed.startswith("https://plan.example.com/")
     ravi2 = client.post("/api/auth/signin", json={"email": "ravi@k.in", "password": "a new horse"}).json()["token"]
     assert client.post(f"/api/companies/{cid}/members/asha@k.in/reset", headers=h(ravi2)).status_code == 403
-    client.post(f"/api/companies/{cid}/members", headers=h(asha), json={"email": "ravi@k.in", "role": "owner"})
+    join(asha, cid, "ravi@k.in", "owner")
     assert client.post(f"/api/companies/{cid}/members/ravi@k.in/reset", headers=h(asha)).status_code == 403
     tok = r.json()["link"].rsplit("/", 1)[1]
     assert client.post("/api/auth/reset", json={"token": tok, "password": "third horse"}).status_code == 200
@@ -632,6 +657,16 @@ def test_a_forgotten_password_is_reset_by_mail_or_by_a_link_an_owner_makes(monke
     t2 = client.post(f"/api/companies/{cid}/members/asha@k.in/reset", headers=h(asha)).json()["link"].rsplit("/", 1)[1]
     clock.tick(25 * 60)
     assert client.post("/api/auth/reset", json={"token": t2, "password": "too late!"}).status_code == 410
+
+
+def id_token(sub: str, nonce: str, iss: str = "https://id.example.com", aud: str = "scp") -> str:
+    import base64
+    import time
+
+    def part(d: dict) -> str:
+        return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+    return ".".join([part({"alg": "RS256"}), part({"iss": iss, "aud": aud, "sub": sub, "nonce": nonce,
+                                                   "exp": int(time.time()) + 300}), "sig"])
 
 
 def test_single_sign_on_signs_in_with_the_company_identity_provider(monkeypatch):
@@ -647,6 +682,7 @@ def test_single_sign_on_signs_in_with_the_company_identity_provider(monkeypatch)
     monkeypatch.setattr(sso, "_discovery", {})
     seen: dict = {}
     who = {"sub": "42", "email": "meera@k.in", "email_verified": True, "name": "Meera"}
+    nonce = {"now": ""}
 
     def get(url, **kw):
         if url.endswith("/.well-known/openid-configuration"):
@@ -657,7 +693,7 @@ def test_single_sign_on_signs_in_with_the_company_identity_provider(monkeypatch)
 
     def post(url, data):
         seen.update(data)
-        return {"access_token": "at-1", "id_token": "x"}
+        return {"access_token": "at-1", "id_token": id_token(who["sub"], nonce["now"])}
 
     monkeypatch.setattr(sso, "_get", get)
     monkeypatch.setattr(sso, "_post", post)
@@ -665,6 +701,7 @@ def test_single_sign_on_signs_in_with_the_company_identity_provider(monkeypatch)
     r = client.get("/api/auth/sso/start", follow_redirects=False)
     assert r.status_code == 302
     q = parse_qs(urlparse(r.headers["location"]).query)
+    nonce["now"] = q["nonce"][0]
     assert r.headers["location"].startswith("https://id.example.com/authorize?")
     assert q["redirect_uri"] == ["https://plan.example.com/api/auth/sso/callback"] and q["code_challenge_method"] == ["S256"]
     r = client.get(f"/api/auth/sso/callback?code=c-1&state={q['state'][0]}", follow_redirects=False)
@@ -681,11 +718,13 @@ def test_single_sign_on_signs_in_with_the_company_identity_provider(monkeypatch)
     assert "/#/account/sso-failed/" in r.headers["location"]
     who["email_verified"] = False
     q2 = parse_qs(urlparse(client.get("/api/auth/sso/start", follow_redirects=False).headers["location"]).query)
+    nonce["now"] = q2["nonce"][0]
     r = client.get(f"/api/auth/sso/callback?code=c-2&state={q2['state'][0]}", follow_redirects=False)
     assert "not%20verified" in r.headers["location"]
     # the same person again, by the provider's id: the same account
     who.update(email_verified=True, email="meera.k@k.in")
     q3 = parse_qs(urlparse(client.get("/api/auth/sso/start", follow_redirects=False).headers["location"]).query)
+    nonce["now"] = q3["nonce"][0]
     t3 = client.get(f"/api/auth/sso/callback?code=c-3&state={q3['state'][0]}", follow_redirects=False).headers["location"].rsplit("/", 1)[1]
     assert client.get("/api/auth/me", headers=h(t3)).json()["user"]["id"] == me["id"]
 

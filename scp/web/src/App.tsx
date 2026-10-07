@@ -4,7 +4,7 @@ import type { Dataset, ExampleInfo } from "./api/types";
 import { Badge, Empty, ThemeSwitch } from "./components/ui";
 import { setPlanYear } from "./lib/format";
 import { href, go, useRoute } from "./lib/router";
-import { NAV, navItemFor, type NavItem } from "./lib/nav";
+import { NAV, PAGES, navItemFor, type NavItem } from "./lib/nav";
 import { Demand } from "./pages/Demand";
 import { Buying } from "./pages/Buying";
 import { Selling } from "./pages/Selling";
@@ -154,6 +154,9 @@ function TopBar({ navOpen, onNav }: { navOpen: boolean; onNav: () => void }) {
   const ds = useStore((s) => s.dataset);
   const canUndo = useStore((s) => s.canUndo);
   const canRedo = useStore((s) => s.canRedo);
+  const undoElsewhere = useStore((s) => s.undoElsewhere);
+  const redoElsewhere = useStore((s) => s.redoElsewhere);
+  const where = (id: string) => PAGES.find((p) => p.id === id)?.label ?? (id === "data" ? "Master data" : id);
   const engineError = useStore((s) => s.engineError);
   const schemaBad = useStore((s) => s.schemaErrors.length > 0);
   const file = useRef<HTMLInputElement>(null);
@@ -185,8 +188,10 @@ function TopBar({ navOpen, onNav }: { navOpen: boolean; onNav: () => void }) {
       <span className="spacer" />
       {ds && <>
         <PlanButton />
-        <button className="btn ghost icon-btn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!canUndo} onClick={() => store.undo()}>↶</button>
-        <button className="btn ghost icon-btn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled={!canRedo} onClick={() => store.redo()}>↷</button>
+        <button className="btn ghost icon-btn" aria-label="Undo" disabled={!canUndo} onClick={() => store.undo()}
+          title={undoElsewhere ? `The last change was made on ${where(undoElsewhere)}: open it to undo it` : "Undo the last change on this screen (Ctrl+Z)"}>↶</button>
+        <button className="btn ghost icon-btn" aria-label="Redo" disabled={!canRedo} onClick={() => store.redo()}
+          title={redoElsewhere ? `The change to redo was made on ${where(redoElsewhere)}: open it to redo it` : "Redo on this screen (Ctrl+Shift+Z)"}>↷</button>
       </>}
       {!ds && <button className="btn" onClick={() => file.current?.click()}>Import a file</button>}
       <Menu label="More">

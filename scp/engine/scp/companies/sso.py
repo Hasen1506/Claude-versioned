@@ -7,15 +7,21 @@ Workspace, Okta, Keycloak and the like. Set up by the server's environment:
 
 The authorisation-code flow with PKCE: the server sends the browser to the provider, takes the code back, exchanges
 it for tokens over its own connection (with the client secret), and asks the provider's user-info endpoint who
-signed in. Only a verified e-mail address is accepted. Who may make a new account follows ``SCP_SIGNUP`` as for
+signed in. Only an e-mail address the provider says it verified is accepted (``email_verified`` true, or Entra ID's
+``xms_edov``); a missing claim is not taken for a verified one (CV-H02). The ID token the provider returns over that
+same TLS connection must be for this client, from this issuer, unexpired, carry the nonce this server sent and name
+the same subject as the user-info answer (CV-L09; OpenID Connect Core 3.1.3.7 lets a token received directly from
+the token endpoint over TLS skip the signature check). Who may make a new account follows ``SCP_SIGNUP`` as for
 passwords.
 """
 from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import secrets
+import threading
 import time
 from typing import Any
 from urllib.parse import urlencode
@@ -47,16 +53,49 @@ def _post(url: str, data: dict) -> dict:
 
 
 _discovery: dict[str, tuple[float, dict]] = {}
+_discovery_lock = threading.Lock()
 
 
 def discovery() -> dict:
     issuer = os.environ["SCP_OIDC_ISSUER"].strip().rstrip("/")
-    hit = _discovery.get(issuer)
-    if hit and time.time() - hit[0] < 3600:
-        return hit[1]
-    doc = _get(f"{issuer}/.well-known/openid-configuration")
-    _discovery[issuer] = (time.time(), doc)
-    return doc
+    with _discovery_lock:
+        hit = _discovery.get(issuer)
+        if hit and time.time() - hit[0] < 3600:
+            return hit[1]
+        doc = _get(f"{issuer}/.well-known/openid-configuration")
+        _discovery[issuer] = (time.time(), doc)
+        return doc
+
+
+def _claims(id_token: str) -> dict:
+    try:
+        part = id_token.split(".")[1]
+        return json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+    except (IndexError, ValueError):
+        raise CompanyError("the sign-on service gave an ID token that cannot be read", 401) from None
+
+
+def check_id_token(id_token: str, nonce: str, sub: str) -> None:
+    """The ID token is for this client, from the configured issuer, unexpired, with our nonce and the same subject."""
+    c = _claims(id_token)
+    issuer = os.environ["SCP_OIDC_ISSUER"].strip().rstrip("/")
+    client = os.environ["SCP_OIDC_CLIENT_ID"].strip()
+    aud = c.get("aud")
+    auds = aud if isinstance(aud, list) else [aud]
+    if str(c.get("iss") or "").rstrip("/") != issuer or client not in auds:
+        raise CompanyError("the sign-on service gave an ID token for another issuer or application", 401)
+    if not isinstance(c.get("exp"), int | float) or c["exp"] < time.time() - 60:
+        raise CompanyError("the sign-on service gave an expired ID token: try again", 401)
+    if not nonce or not secrets.compare_digest(str(c.get("nonce") or ""), nonce):
+        raise CompanyError("this sign-on answer was not for this sign-in (nonce): try again", 401)
+    if sub and str(c.get("sub") or "") != sub:
+        raise CompanyError("the sign-on service named two different people", 401)
+
+
+def verified(info: dict) -> bool:
+    """The provider says it verified the address: ``email_verified`` true (as a bool or "true"), or Entra ID's
+    ``xms_edov``; nothing said is not verified."""
+    return any(info.get(k) is True or str(info.get(k)).lower() == "true" for k in ("email_verified", "xms_edov"))
 
 
 def begin(redirect_uri: str) -> tuple[str, str, str, str]:
@@ -69,7 +108,7 @@ def begin(redirect_uri: str) -> tuple[str, str, str, str]:
     return f"{discovery()['authorization_endpoint']}?{urlencode(q)}", state, verifier, nonce
 
 
-def finish(code: str, verifier: str, redirect_uri: str) -> tuple[str, str, str]:
+def finish(code: str, verifier: str, redirect_uri: str, nonce: str = "") -> tuple[str, str, str]:
     """Exchange the code, and say who signed in: (subject, e-mail, name)."""
     d = discovery()
     tokens = _post(d["token_endpoint"], {
@@ -79,9 +118,12 @@ def finish(code: str, verifier: str, redirect_uri: str) -> tuple[str, str, str]:
     if not tokens.get("access_token"):
         raise CompanyError("the sign-on service gave no access", 401)
     info = _get(d["userinfo_endpoint"], headers={"Authorization": f"Bearer {tokens['access_token']}"})
-    if info.get("email_verified") is False:
-        raise CompanyError("the sign-on service has not verified that e-mail address", 403)
     sub = str(info.get("sub") or "")
     if not sub:
         raise CompanyError("the sign-on service did not say who signed in", 401)
+    if not tokens.get("id_token"):
+        raise CompanyError("the sign-on service gave no ID token (ask for the openid scope)", 401)
+    check_id_token(str(tokens["id_token"]), nonce, sub)
+    if not verified(info):
+        raise CompanyError("the sign-on service has not verified this e-mail address (or did not say so)", 403)
     return f"{os.environ['SCP_OIDC_ISSUER'].strip()}#{sub}", str(info.get("email") or ""), str(info.get("name") or "")

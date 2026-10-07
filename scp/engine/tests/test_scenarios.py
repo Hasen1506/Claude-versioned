@@ -42,7 +42,7 @@ def test_scenario_engine(sc):
 
 @pytest.mark.parametrize("sc", SCENARIOS, ids=IDS)
 def test_scenario_over_http(sc):
-    r = sc.execute(HttpClient(TestClient(app)))
+    r = sc.execute(HttpClient(TestClient(app, headers={"X-Browser-Key": "tests-browser-key-0001"})))
     assert r.ok, _explain(r)
 
 
@@ -62,7 +62,7 @@ def test_the_declared_stages_are_the_stages_the_steps_check():
 
 
 def test_scenario_api_lists_serves_and_runs_in_isolation():
-    api = TestClient(app)
+    api = TestClient(app, headers={"X-Browser-Key": "tests-browser-key-0001"})
     listed = api.get("/api/scenarios").json()
     assert [x["id"] for x in listed] == IDS and all(x["proves"] and x["stages"] for x in listed)
     ds = Dataset.model_validate(api.get(f"/api/scenarios/{IDS[0]}/dataset").json())

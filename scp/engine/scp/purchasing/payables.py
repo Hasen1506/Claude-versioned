@@ -267,7 +267,8 @@ def enter_invoice(ds: Dataset, supplier: str | None, lines: list[dict] | None, *
         got_lines.append(ln)
         if not credit and (b := _price_block(ds, ln, li.price)):
             blocks.append(b)
-    assert supplier is not None
+    if supplier is None:   # CV-L01: not an assert, which python -O removes
+        raise PayablesError("the invoice has no lines to say which supplier it is from")
     _check_reference(ds, supplier, reference, "credit_memo" if credit else "invoice")
     if not credit:
         blocks = _qty_blocks(ds, got_lines) + blocks
@@ -343,7 +344,8 @@ def _subsequent(ds: Dataset, supplier: str | None, lines: list[dict] | None, kin
         if debit and paid is not None and (b := _price_block(ds, ln.model_copy(update={"price": paid + ln.price}),
                                                              li.price)):
             blocks.append(b)
-    assert supplier is not None
+    if supplier is None:   # CV-L01: not an assert, which python -O removes
+        raise PayablesError("the invoice has no lines to say which supplier it is from")
     _check_reference(ds, supplier, reference, kind)
     terms = ds.vendor_terms(supplier)
     net = round(sum(x.amount for x in got_lines) + delivery_costs, 2)

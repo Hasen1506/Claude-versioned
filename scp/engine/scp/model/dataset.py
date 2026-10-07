@@ -93,7 +93,7 @@ class Dataset(Model):
                  "npi": [n.model_dump(mode="json") for n in self.npi],
                  "overrides": [o.model_dump(mode="json") for o in self.overrides],
                  "settings": self.forecasting.model_dump(mode="json", exclude={"released_inputs"})}
-        return hashlib.sha1(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]
+        return hashlib.sha1(json.dumps(parts, sort_keys=True).encode(), usedforsecurity=False).hexdigest()[:16]
 
     def model_copy(self, *, update: dict | None = None, deep: bool = False) -> Dataset:
         """A copy without the lookup indices below: pydantic copies the instance dict, cached indices included, so

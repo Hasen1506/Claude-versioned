@@ -57,8 +57,9 @@ def _previous_base(ds: Dataset, store: Store | None = None, scope: str | None = 
 
 
 def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult | None = None,
-              store: Store | None = None, scope: str | None = None) -> TowerResult:
-    """``scope``: the server company the worklist and the previous plan belong to (none: the browser's own)."""
+              store: Store | None = None, scope: str | None = None, record: bool = True) -> TowerResult:
+    """``scope``: the server company the worklist and the previous plan belong to (none: the browser's own).
+    ``record``: write this run into the worklist (open, refresh, clear); False shows it without changing it."""
     tracker = tracker or (Tracker(store) if store is not None else get_tracker())
     issues = validate(ds)
     out = TowerResult(ok=True, company=ds.settings.company_name, as_of=ds.settings.planning_start, issues=issues)
@@ -74,7 +75,8 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
     promise = run_promise(ds) if plan.ok else None
     window = ds.settings.planning_start - dt.timedelta(days=ds.tower.kpi_window_days)
     acc = accuracy_report([r for r in ds.accuracy if r.end > window and r.start < ds.settings.planning_start])
-    live, cleared = tracker.sync(ds, collect(ds, plan if plan.ok else None, promise, acc), scope)
+    raws = collect(ds, plan if plan.ok else None, promise, acc)
+    live, cleared = tracker.sync(ds, raws, scope) if record else tracker.peek(ds, raws, scope)
     order = {"open": 0, "acknowledged": 1, "resolved": 2}
     out.worklist = sorted(live, key=lambda w: (order.get(w.status, 3), not w.breached, SEV[w.severity], -w.age_days,
                                                w.category, w.key))

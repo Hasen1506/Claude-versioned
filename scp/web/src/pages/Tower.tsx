@@ -289,7 +289,11 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
           <option value="live">Open + acknowledged</option><option value="open">Open</option><option value="acknowledged">Acknowledged</option>
           <option value="resolved">Resolved</option><option value="all">All</option></select></label>
         <label className="small row" style={{ gap: 6 }}><input type="checkbox" checked={lateOnly} onChange={(e) => setLateOnly(e.target.checked)} />Past SLA only</label>
-        <span className="spacer" /><span className="faint small">{shown.length} of {items.length}</span>
+        <span className="spacer" /><span className="faint small" title="Resolved exceptions stay on the worklist; the Status filter hides them unless it is All">
+          {/* QA: "18 of 19" beside counters that total 18 read as a missing exception; the rest are hidden by the filters */}
+          {shown.length} shown{items.length - shown.length > 0
+            ? ` · ${items.length - shown.length} hidden by the filters (${items.filter((w) => w.status === "resolved").length} resolved)`
+            : ""}</span>
       </div>
       <datalist id="tower-owners">{owners.map((o) => <option key={o} value={o} />)}</datalist>
       <Panel flush>

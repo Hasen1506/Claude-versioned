@@ -267,6 +267,7 @@ When the server has a mail server set up (`SCP_SMTP_HOST`, see [DEPLOY.md](DEPLO
 
 The document is attached twice: as a PDF the server lays out itself (A4, no browser needed), and as the page *Print* shows, the exact copy. It comes from the server's address, and replies go to whoever sent it. Rules:
 - It goes only to addresses the company knows: the supplier's or customer's e-mail in their purchasing or sales data, or a member's.
+- The sender's own address must be confirmed (*Account → Confirm my address*); one person sends at most `SCP_MAIL_DAILY_PER_ACCOUNT` (100) a day across every company; and a server where anyone may make an account (`SCP_SIGNUP=open`) mails documents only with `SCP_MAIL_OPEN_SIGNUP=1`. Each mail ends with who sent it and for which company.
 - A company sends at most 500 e-mails a day.
 - Sending a purchase order or a confirmation also records it as sent.
 - On a scheduling agreement, it sends the delivery schedule.
@@ -277,7 +278,7 @@ The document is attached twice: as a PDF the server lays out itself (A4, no brow
 - the ones past their time first, then the oldest;
 - with a link to the worklist.
 
-An owner of an exception is found by e-mail address or by a member's name.
+An owner of an exception is found by a member's e-mail address or name; an address written on an exception that is not a member's gets no mail.
 
 Every e-mail sent, or refused by the mail server, is listed under **Sent**.
 

@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Field
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 
@@ -57,7 +58,10 @@ from ..validate.setup import SetupItem, checklist
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
 from ..companies import CompanyError
 from .connect import router as connect_router
-from .companies import EditScope, Scope, company_error, gate, require_signin, router as companies_router, signup_policy, who_asks
+from .companies import (
+    Scope, StoredEditScope, StoredScope, company_error, edit_scope, gate, is_company, require_signin,
+    router as companies_router, signup_policy, who_asks,
+)
 from .working import PlanData, answer, is_ref, read as read_ref, respond, send
 
 ROOT = Path(__file__).resolve().parents[3]          # scp/
@@ -83,8 +87,20 @@ async def lifespan(_app: FastAPI):
     yield
 
 
+def _docs_on() -> bool:
+    """The interactive API pages (/docs, /redoc, /openapi.json): on unless SCP_DOCS is off, and off by default on a
+    server that requires sign-in (CV-L03)."""
+    v = os.environ.get("SCP_DOCS", "").strip().lower()
+    if v:
+        return v not in ("0", "false", "no", "off")
+    return os.environ.get("SCP_REQUIRE_SIGNIN", "").strip().lower() not in ("1", "true", "yes", "on")
+
+
+_DOCS = _docs_on()
 app = FastAPI(title="SCP — Supply Chain Planning", version=__version__, lifespan=lifespan,
-              description="Typed network master data, readiness gate, demand planning, network MRP/DRP.")
+              description="Typed network master data, readiness gate, demand planning, network MRP/DRP.",
+              docs_url="/docs" if _DOCS else None, redoc_url="/redoc" if _DOCS else None,
+              openapi_url="/openapi.json" if _DOCS else None)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "https://hasen1506.github.io"],
                    allow_methods=["*"], allow_headers=["*"], expose_headers=["X-Rows"])
 
@@ -886,34 +902,44 @@ class CompareRequest(Out):
 
 
 @app.get("/api/versions", response_model=list[VersionMeta])
-def list_versions(sc: Scope) -> list[VersionMeta]:
+def list_versions(sc: StoredScope) -> list[VersionMeta]:
     return get_store().list(sc)
 
 
 @app.post("/api/versions", response_model=VersionMeta)
-def save_base(req: SaveBaseRequest, sc: EditScope) -> VersionMeta:
+def save_base(req: SaveBaseRequest, sc: StoredEditScope) -> VersionMeta:
     return get_store().save_base(req.dataset, req.name, req.note, sc)
 
 
 @app.get("/api/versions/{vid}", response_model=VersionDoc)
-def get_version(vid: str, sc: Scope) -> VersionDoc:
+def get_version(vid: str, sc: StoredScope) -> VersionDoc:
     return get_store().get(vid, sc)
 
 
 @app.put("/api/versions/{vid}", response_model=VersionMeta)
-def update_version(vid: str, ds: Dataset, sc: EditScope) -> VersionMeta:
+def update_version(vid: str, ds: Dataset, sc: StoredEditScope) -> VersionMeta:
     return get_store().update(vid, ds, sc)
 
 
 @app.post("/api/versions/{vid}/branch", response_model=VersionMeta)
-def branch_version(vid: str, req: BranchRequest, sc: EditScope) -> VersionMeta:
+def branch_version(vid: str, req: BranchRequest, sc: StoredEditScope) -> VersionMeta:
     return get_store().branch(vid, req.name, req.note, sc)
 
 
 @app.post("/api/tower", response_model=TowerResult)
-def post_tower(ds: PlanData, sc: Scope) -> Response:
-    """KPIs, the exception worklist (recorded in the version store: first seen, owner, status) and data quality."""
-    return send(run_tower(ds, scope=sc or None))   # records the worklist: made anew each time
+def post_tower(ds: PlanData, sc: Scope, request: Request) -> Response:
+    """KPIs, the exception worklist (recorded in the version store: first seen, owner, status) and data quality.
+    Only a member who may change the company records the run in its worklist; a viewer sees it as it stands
+    (CV-H05)."""
+    record = True
+    if not sc:                    # nowhere to keep it (CV-H06): shown as it would open, recorded nowhere
+        sc, record = "anon:-", False
+    elif is_company(sc):
+        try:
+            edit_scope(request)
+        except CompanyError:
+            record = False
+    return send(run_tower(ds, scope=sc or None, record=record))
 
 
 class WorkItemUpdate(Out):
@@ -930,28 +956,28 @@ class WorkItemEntry(Out):
 
 
 @app.post("/api/tower/items/{iid}", response_model=WorkItem)
-def update_work_item(iid: str, body: WorkItemUpdate, sc: EditScope) -> WorkItem:
+def update_work_item(iid: str, body: WorkItemUpdate, sc: StoredEditScope) -> WorkItem:
     return get_tracker().update(iid, owner=body.owner, status=body.status, note=body.note, sla=body.sla_days,
                                 scope=sc or None)
 
 
 @app.get("/api/tower/items/{iid}/history", response_model=list[WorkItemEntry])
-def work_item_history(iid: str, sc: Scope) -> list[WorkItemEntry]:
+def work_item_history(iid: str, sc: StoredScope) -> list[WorkItemEntry]:
     return [WorkItemEntry(at=a, action=b, detail=c) for a, b, c in get_tracker().history(iid, sc or None)]
 
 
 @app.post("/api/versions/{vid}/discard", response_model=VersionMeta)
-def discard_version(vid: str, sc: EditScope) -> VersionMeta:
+def discard_version(vid: str, sc: StoredEditScope) -> VersionMeta:
     return get_store().discard(vid, sc)
 
 
 @app.post("/api/versions/{vid}/promote", response_model=VersionMeta)
-def promote_version(vid: str, req: PromoteRequest, sc: EditScope) -> VersionMeta:
+def promote_version(vid: str, req: PromoteRequest, sc: StoredEditScope) -> VersionMeta:
     return get_store().promote(vid, req.name, req.note, sc)
 
 
 @app.get("/api/versions/{a}/compare/{b}", response_model=Comparison)
-def compare_versions(a: str, b: str, sc: Scope) -> Comparison:
+def compare_versions(a: str, b: str, sc: StoredScope) -> Comparison:
     st = get_store()
     return compare(st.dataset(a, sc), st.dataset(b, sc), a, b)
 

@@ -95,7 +95,8 @@ def _predict(model: M, y: np.ndarray, h: int, m: int, cache: dict[M, np.ndarray]
             raise Infeasible("not available on this engine")
         return f
     fn = SPECS[model].fn
-    assert fn is not None
+    if fn is None:   # CV-L01
+        raise Infeasible("not available on this engine")
     return fn(y, h, m)
 
 

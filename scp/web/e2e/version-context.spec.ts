@@ -173,7 +173,14 @@ test('an edit during a version open survives the delayed version response',async
 });
 
 test('a working-copy comparison reports edits made during its calculation instead of displaying stale results',async({page})=>{
-  await open(page); const base=await saveBase(page); await stock(page,40); await page.goto('/#/versions');
+  await open(page); const base=await saveBase(page); await stock(page,40);
+  // Undo acts only on the screen a change was made on, and the stock edit was made in Master data. A step kept from
+  // before screens were recorded counts as any screen's: drop the record and reload, so this step can be undone on
+  // Versions while the comparison runs there (the only way left to edit the working copy without leaving the page).
+  await page.waitForTimeout(1500);                                   // the undo steps are kept 0.8 s after an edit
+  await page.evaluate(()=>localStorage.removeItem('scp.undo.where'));
+  await page.goto('/#/versions'); await page.reload();
+  await expect(page.getByRole('button',{name:'Undo',exact:true})).toBeEnabled();
   const delayed=await hold(page,'**/api/compare');
   await page.getByRole('button',{name:`Compare ${base} as A`,exact:true}).click();
   await page.getByRole('button',{name:'Compare __working__ as B',exact:true}).click();

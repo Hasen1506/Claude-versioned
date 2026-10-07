@@ -76,7 +76,8 @@ def label(name: str, key: tuple) -> str:
 
 
 def _allowed_places(doc: dict, places: list[str]) -> set[str]:
-    """The places themselves, and the customers and suppliers they ship to or buy from."""
+    """The places themselves, and the customers and suppliers they ship to or buy from. Read only from the company
+    as saved (``before``), never from the document being saved, so a save cannot widen its own limits (CV-H03)."""
     kind = {x.get("id"): x.get("type") for x in doc.get("locations") or [] if isinstance(x, dict)}
     out = set(places)
     for ln in doc.get("lanes") or []:
@@ -88,7 +89,8 @@ def _allowed_places(doc: dict, places: list[str]) -> set[str]:
         if d in places and kind.get(o) in ("customer", "supplier"):
             out.add(o)
     for s in doc.get("purchasing_sources") or []:
-        if isinstance(s, dict) and s.get("location") in places and isinstance(s.get("supplier"), str):
+        if (isinstance(s, dict) and s.get("location") in places and isinstance(s.get("supplier"), str)
+                and kind.get(s["supplier"]) == "supplier"):
             out.add(s["supplier"])
     return out
 
@@ -108,7 +110,16 @@ def out_of_scope(before: dict, after: dict, places: list[str], families: list[st
     """The records a save changes that a member limited to ``places`` and ``families`` may not change (plain names)."""
     if not places and not families:
         return []
-    allowed = _allowed_places(before, places) | _allowed_places(after, places) if places else set()
+    allowed = _allowed_places(before, places) if places else set()
+    kind = {x.get("id"): x.get("type") for x in before.get("locations") or [] if isinstance(x, dict)}
+    if places:
+        # a customer or supplier this save adds (a place that did not exist) may be linked to an allowed place in the
+        # same save; an existing place never becomes allowed by what the save says about it
+        new = {x.get("id"): x.get("type") for x in after.get("locations") or [] if isinstance(x, dict)
+               and x.get("id") not in kind and x.get("type") in ("customer", "supplier")}
+        allowed |= {x for x in _allowed_places({**after, "locations": [{"id": i, "type": t} for i, t in new.items()]},
+                                               places) if x in new}
+        kind = {**new, **kind}
     family = {p.get("id"): p.get("family") or "" for d in (before, after) for p in d.get("products") or []
               if isinstance(p, dict)}
     bad: list[str] = []
@@ -126,6 +137,11 @@ def out_of_scope(before: dict, after: dict, places: list[str], families: list[st
                 if name == "locations":
                     at = {rec.get("id")}
                 if not at & allowed:
+                    ok = False
+                # a record added or changed (not one removed) may name as its supplier only an allowed place or a
+                # real supplier: a decoy "way to buy" from a plant outside the limits is refused (CV-H03)
+                sup = rec.get("supplier")
+                if rec is b and isinstance(sup, str) and sup not in allowed and kind.get(sup) != "supplier":
                     ok = False
             if families:
                 prods = {rec.get("id")} if name == "products" else _products_of(rec)

@@ -24,6 +24,15 @@ async function openExample(page: Page, name: string) {
 
 /** A page's freshness, as the rail (or its section's tabs) shows it. */
 const freshness = (page: Page, id: string) => page.locator(`.rail a[href="#/${id}"], .section-tabs a[href="#/${id}"]`).first();
+/** Accept an invitation by its link, signed in as the invited address (CV-C01), then come back to the account page. */
+const acceptInvite = async (p: Page, link: string) => {
+  await expect(p.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await p.goto(link.replace(/^https?:\/\/[^/]+/, ""));
+  await p.getByRole("button", { name: "Accept the invitation" }).click();
+  await expect(p.getByText(/You joined /)).toBeVisible();
+  await p.goto("/#/account");
+  await p.reload();
+};
 
 test("golden path: example opens planned → home → network → data check → plan → drill-down → edit → out of date → re-plan", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
@@ -108,7 +117,14 @@ test("demand planning: forecast → workbench → consensus override → release
   await page.getByLabel("Search").fill("KT-15");
   const released = page.locator("td", { hasText: /^777$/ });
   await expect(released).toHaveCount(1);
-  await page.getByRole("button", { name: "Undo" }).click();
+  // the release was made on Demand: Undo acts there, never from another screen (QA: a global stack resurrected deletions)
+  const undo = page.getByRole("button", { name: "Undo" });
+  await expect(undo).toBeDisabled();
+  await expect(undo).toHaveAttribute("title", /made on Demand/);
+  await page.goto("/#/demand/consensus");
+  await undo.click();
+  await page.goto("/#/data/demand");
+  await page.getByLabel("Search").fill("KT-15");
   await expect(released).toHaveCount(0);
 });
 
@@ -117,15 +133,18 @@ test("typed inputs: a percent typed as a fraction is rejected with the field nam
   await page.goto("/#/settings");
   const wacc = page.locator('input[id="wacc"]');
   await expect(wacc).toHaveValue("12"); // shown as percent, stored as 0.12
+  // its limits are said in the unit it is typed in (QA: "0 … 1" beside a WACC of 12 %)
+  await expect(wacc).toHaveAttribute("title", "Allowed: 0 … 100 %");
+  // a value outside them is not saved (QA: out-of-range values were accepted): the field goes back and says why
   await wacc.fill("1200");
   await wacc.press("Enter");
-  await expect(page.getByText("Invalid values", { exact: true })).toBeVisible();
-  await page.goto("/#/readiness");
-  await expect(page.getByText("WACC must be 100% or less")).toBeVisible();
-  await page.goto("/#/settings");
-  await page.locator('input[id="wacc"]').fill("12");
-  await page.locator('input[id="wacc"]').press("Enter");
+  await expect(page.getByRole("alert").filter({ hasText: "1200 is outside the range. Allowed: 0 … 100 %." })).toBeVisible();
+  await expect(wacc).toHaveValue("12");
   await expect(page.getByText("Invalid values", { exact: true })).toHaveCount(0);
+  await wacc.fill("13");
+  await wacc.press("Enter");
+  await expect(page.locator(".input-wrap .err")).toHaveCount(0);
+  await expect(wacc).toHaveValue("13");
 });
 
 test("blank network: the checklist and guided setup take a planner from nothing to a plan", async ({ page }) => {
@@ -277,7 +296,10 @@ test("S&OP: solve → pin → cut capacity → shadow prices → release to MRP 
   await page.goto("/#/data/demand");
   await page.getByLabel("Search").fill("SOP-");
   await expect(page.locator("td", { hasText: /^SOP-/ }).first()).toBeVisible();
+  await page.goto("/#/sop");                                              // undone where it was made
   await page.getByRole("button", { name: "Undo" }).click();
+  await page.goto("/#/data/demand");
+  await page.getByLabel("Search").fill("SOP-");
   await expect(page.locator("td", { hasText: /^SOP-/ })).toHaveCount(0);
 });
 
@@ -415,7 +437,12 @@ test("customer orders: check a new order → take it → change it → deliver p
   await expect(saved).toContainText("SO-88222 cancelled: 20 delivered, 30 no longer wanted");
   await page.goto("/#/data/closed_orders");
   await expect(page.locator("tr", { hasText: "SO-88222" })).toBeVisible();
-  await page.getByRole("button", { name: "Undo" }).first().click();
+  // Undo acts on the screen the change was made on (the cancel was made on Orders), never from another one
+  const undo = page.getByRole("button", { name: "Undo" }).first();
+  await expect(undo).toBeDisabled();
+  await expect(undo).toHaveAttribute("title", /open it to undo it/);
+  await page.goto("/#/promise/orders");
+  await undo.click();
   await page.goto("/#/data/demand");
   await expect(page.locator("tr", { hasText: "SO-88222" })).toBeVisible();                          // undo brings it back
 });
@@ -619,7 +646,9 @@ test("buying: requisitions → purchase order → approve → send → confirm l
   await expect(freshness(page, "buying")).toHaveAttribute("data-fresh", "stale");
   await page.goto("/#/readiness");
   await expect(page.getByText(/only purchasing sources are blocked \(PIR-CU\)/)).toBeVisible();
+  await page.goto("/#/buying");                                           // undone where it was made
   await page.getByRole("button", { name: "Undo" }).first().click();
+  await page.goto("/#/readiness");
   await expect(page.getByText(/only purchasing sources are blocked/)).toHaveCount(0);
 });
 
@@ -813,8 +842,11 @@ test("shop floor: steps wait for parts, and the schedule's dates go back into th
   // the plan now shows the late ones as late, not as new orders
   await page.goto("/#/plan");
   await expect(page.getByText(/production orders? the shop floor schedule finishes late/)).toBeVisible();
-  // undo puts the planned orders back
+  // undo puts the planned orders back, from the shop floor where the dates were taken over
+  await expect(page.getByRole("button", { name: "Undo" })).toBeDisabled();
+  await page.goto("/#/schedule/orders");
   await page.getByRole("button", { name: "Undo" }).click();
+  await page.goto("/#/plan");
   await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "stale");
 });
 
@@ -833,13 +865,17 @@ test("company on the server: sign up → keep it there → saves itself → a co
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await expect(chip).toHaveText("Saved");
+  // nobody joins unasked (CV-C01): adding someone makes an invitation whose link they accept
+  const invites: Record<string, string> = {};
   await page.getByLabel("Colleague's e-mail").fill("ravi@kaveri.in");
-  await page.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.locator("tr", { hasText: "ravi@kaveri.in" })).toContainText("invited");
+  invites["ravi@kaveri.in"] = await page.getByLabel("Invitation link").inputValue();
   await page.getByLabel("Colleague's e-mail").fill("meera@kaveri.in");
   await page.getByLabel("Their role").selectOption("viewer");
-  await page.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.locator("tr", { hasText: "meera@kaveri.in" })).toContainText("viewer");
+  invites["meera@kaveri.in"] = await page.getByLabel("Invitation link").inputValue();
 
   const take = async (p: Page, q: number, ref: string) => {
     await p.goto("/#/promise/simulate");
@@ -856,6 +892,7 @@ test("company on the server: sign up → keep it there → saves itself → a co
     await p.getByLabel("Your name").fill(name);
     await p.getByLabel(/^Password/).fill("colleague-1");
     await p.getByRole("button", { name: "Make the account" }).click();
+    await acceptInvite(p, invites[email]);
     await p.getByRole("button", { name: /Open Kaveri Kitchenware/ }).click();
     await expect(p.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
     return p;
@@ -947,7 +984,8 @@ test("rights and four eyes: a planner limited to a place is refused elsewhere; m
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await page.getByLabel("Colleague's e-mail").fill("plan@kaveri.in");
-  await page.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  const invitation = await page.getByLabel("Invitation link").inputValue();
   const p = await (await browser.newContext()).newPage();
   p.on("dialog", (d) => d.accept());
   await p.goto("/#/account");
@@ -956,6 +994,7 @@ test("rights and four eyes: a planner limited to a place is refused elsewhere; m
   await p.getByLabel("Your name").fill("Om Planner");
   await p.getByLabel(/^Password/).fill("colleague-1");
   await p.getByRole("button", { name: "Make the account" }).click();
+  await acceptInvite(p, invitation);
   await p.getByRole("button", { name: /Open Kaveri Kitchenware/ }).click();
 
   // limited to the Delhi warehouse, he may not change the company's settings

@@ -30,6 +30,10 @@ def test_company_owner_cannot_reset_an_account_with_access_to_another_company():
     private = client.post("/api/companies", headers=h(victim), json={"dataset": company()}).json()["id"]
     r = client.post(f"/api/companies/{cid}/members", headers=h(owner), json={"email": "victim@example.com", "role": "viewer"})
     assert r.status_code == 200, r.text
+    # not a member until they accept (CV-C01): no reset link at all
+    assert client.post(f"/api/companies/{cid}/members/victim@example.com/reset", headers=h(owner)).status_code == 404
+    link = next(m["invite_link"] for m in r.json() if m["email"] == "victim@example.com")
+    assert client.post("/api/auth/invites/accept", headers=h(victim), json={"token": link.rsplit("/", 1)[1]}).status_code == 200
     r = client.post(f"/api/companies/{cid}/members/victim@example.com/reset", headers=h(owner))
     assert r.status_code == 403, "Company membership must not grant a reset link for a global account"
     assert client.get(f"/api/companies/{private}", headers=h(victim)).status_code == 200

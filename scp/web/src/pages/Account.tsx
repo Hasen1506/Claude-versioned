@@ -183,9 +183,13 @@ function ResetLinkButton({ id, m }: { id: string; m: Member }) {
   const [err, setErr] = useState<string | null>(null);
   if (!m.user_id || m.role === "owner") return null;
   return <div className="small" style={{ marginTop: 4 }}>
-    {!link ? <button className="linkish" onClick={async () => {
-      try { setLink((await api.memberResetLink(id, m.email)).link); } catch (x) { setErr(x instanceof Error ? x.message : String(x)); }
+    {link === null ? <button className="linkish" onClick={async () => {
+      try {
+        const r = await api.memberResetLink(id, m.email);
+        setLink(r.mailed ? "" : r.link);
+      } catch (x) { setErr(x instanceof Error ? x.message : String(x)); }
     }}>Link to set a new password</button>
+      : link === "" ? <span>A link to set a new password went to {m.email} (it works once, for a day).</span>
       : <span>Give {m.name || m.email} this link (works once, for a day): <input className="input" readOnly value={link} aria-label="Link to set a new password"
           onFocus={(e) => e.target.select()} style={{ width: "100%", maxWidth: 420 }} /></span>}
     {err && <span className="banner error">{err}</span>}
@@ -224,10 +228,18 @@ function Members({ id, role }: { id: string; role: string }) {
   const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => { api.members(id).then(setList).catch((e) => setErr(String(e))); }, [id]);
   const owner = role === "owner";
+  const [invite, setInvite] = useState<{ email: string; link: string } | null>(null);
   const act = async (f: () => Promise<Member[]>, done: string) => {
     setErr(null);
     setMsg(null);
-    try { setList(await f()); setMsg(done); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    setInvite(null);
+    try {
+      const l = await f();
+      setList(l);
+      setMsg(done);
+      const made = l.find((m) => m.invite_link);
+      if (made?.invite_link) setInvite({ email: made.email, link: made.invite_link });
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   };
   return (
     <div className="stack" style={{ gap: 10 }}>
@@ -239,7 +251,7 @@ function Members({ id, role }: { id: string; role: string }) {
               {list.map((m) => (
                 <tr key={m.email}>
                   <td><b>{m.name || m.email}</b>{m.name && <div className="faint small">{m.email}</div>}
-                    {!m.user_id && <div><Badge sev="info">invited</Badge> <span className="faint small">joins on signing up with this e-mail</span></div>}</td>
+                    {!m.user_id && <div><Badge sev="info">invited</Badge> <span className="faint small">joins when they open the invitation and sign in with this e-mail</span></div>}</td>
                   <td>{owner && m.email !== me?.email ? (
                     <select className="select" aria-label={`Role of ${m.email}`} value={m.role}
                       onChange={(e) => act(() => api.setMember(id, m.email, e.target.value), `${m.name || m.email} is now ${e.target.value === "owner" ? "an" : "a"} ${e.target.value}.`)}>
@@ -260,7 +272,7 @@ function Members({ id, role }: { id: string; role: string }) {
       {owner && <form className="row wrap inline-form" style={{ gap: 8 }} onSubmit={(e) => {
         e.preventDefault();
         const who = email.trim();
-        void act(() => api.setMember(id, who, newRole), `${who} added as ${newRole}; if they have no account yet, they join on signing up with that e-mail.`).then(() => setEmail(""));
+        void act(() => api.setMember(id, who, newRole), `${who} is invited as ${newRole}: they join when they accept the invitation, signed in with that e-mail.`).then(() => setEmail(""));
       }}>
         <input className="input" type="email" required placeholder="colleague@company.com" aria-label="Colleague's e-mail" value={email}
           onChange={(e) => setEmail(e.target.value)} />
@@ -271,9 +283,71 @@ function Members({ id, role }: { id: string; role: string }) {
       </form>}
       {!owner && <p className="small muted" style={{ margin: 0 }}>Only an owner adds people or changes their role.</p>}
       {msg && <div className="banner ok" style={{ margin: 0 }}>{msg}</div>}
+      {invite && <div className="small">Send {invite.email} this invitation (it works for 14 days, only for that address; a server that
+        sends mail has mailed it too): <input className="input" readOnly value={invite.link} aria-label="Invitation link"
+          onFocus={(e) => e.target.select()} style={{ width: "100%", maxWidth: 480 }} /></div>}
       {err && <div className="banner error" style={{ margin: 0 }}>{err}</div>}
     </div>
   );
+}
+
+/** An invitation's link: accept it, signed in with the invited address (CV-C01: nobody joins a company unasked). */
+function AcceptInvite({ token }: { token: string }) {
+  const session = useStore((s) => s.session);
+  const [state, setState] = useState<"ready" | "busy" | "done">("ready");
+  const [err, setErr] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  if (!session) return <div className="banner info" role="status">You are invited to a company. Sign in, or make an account, with
+    the address the invitation was sent to; this page then lets you accept it.</div>;
+  if (state === "done") return <div className="banner ok" role="status">You joined {name}. Open it from your companies below.</div>;
+  return <div className="banner info row wrap" style={{ gap: 10 }} role="status">
+    <span>You are invited to a company, as {session.user.email}.</span>
+    <button className="btn accent" disabled={state === "busy"} onClick={async () => {
+      setState("busy"); setErr(null);
+      try { const m = await api.acceptInvite({ token }); setName(m.name); setState("done"); }
+      catch (x) { setErr(x instanceof Error ? x.message : String(x)); setState("ready"); }
+    }}>Accept the invitation</button>
+    {err && <span className="banner error">{err}</span>}
+  </div>;
+}
+
+/** A link from the mail that confirms the account's address. */
+function VerifyEmail({ token }: { token: string }) {
+  const [msg, setMsg] = useState<[string, boolean] | null>(null);
+  useEffect(() => {
+    api.verifyEmail(token).then((u) => setMsg([`${u.email} is confirmed as yours.`, true]))
+      .catch((x) => setMsg([x instanceof Error ? x.message : String(x), false]));
+  }, [token]);
+  return msg ? <div className={`banner ${msg[1] ? "ok" : "error"}`} role="status">{msg[0]}</div> : <div className="faint">Confirming…</div>;
+}
+
+/** The account's address (confirmed or not), the invitations waiting for it, and linking the company's sign-on. */
+function Identity({ sso }: { sso: string | null | undefined }) {
+  const [me, setMe] = useState<Awaited<ReturnType<typeof api.me>> | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const load = () => { api.me().then(setMe).catch(() => setMe(null)); };
+  useEffect(load, []);
+  if (!me) return null;
+  return <div className="stack small" style={{ gap: 6 }}>
+    <div className="row wrap" style={{ gap: 8 }}>
+      {me.user.verified ? <Badge sev="ok">address confirmed</Badge> : <>
+        <Badge sev="warning">address not confirmed</Badge>
+        <button className="btn sm" onClick={async () => {
+          try { const r = await api.requestEmailCheck(); setMsg(r.mail ? `A link is on its way to ${me.user.email}.` : "This server sends no mail: an invitation's link joins you to a company instead."); }
+          catch (x) { setMsg(x instanceof Error ? x.message : String(x)); }
+        }}>Confirm my address</button></>}
+      {sso && <button className="btn sm ghost" onClick={async () => {
+        try { window.location.href = (await api.ssoLink()).url; } catch (x) { setMsg(x instanceof Error ? x.message : String(x)); }
+      }}>Link sign-in with {sso}</button>}
+    </div>
+    {me.invites.map((i) => <div key={i.company} className="row wrap" style={{ gap: 8 }}>
+      <span>{i.invited_by} invited you to <b>{i.name}</b> as {i.role}.</span>
+      <button className="btn sm accent" onClick={async () => {
+        try { await api.acceptInvite({ company: i.company }); setMsg(`You joined ${i.name}.`); load(); }
+        catch (x) { setMsg(x instanceof Error ? x.message : String(x)); }
+      }}>Accept</button></div>)}
+    {msg && <span className="faint">{msg}</span>}
+  </div>;
 }
 
 function Password() {
@@ -372,6 +446,8 @@ export function Account({ route = [] }: { route?: string[] }) {
         {route[1] === "reset" && route[2] ? <ResetPassword token={route[2]} />
           : route[1] === "sso" && route[2] ? <SsoDone token={route[2]} />
           : route[1] === "sso-failed" ? <div className="banner error" role="alert">Signing in with the company account did not work: {decodeURIComponent(route[2] ?? "")}</div>
+          : route[1] === "invite" && route[2] ? <AcceptInvite token={route[2]} />
+          : route[1] === "verify" && route[2] ? <VerifyEmail token={route[2]} />
           : null}
         {route[1] === "reset" || route[1] === "sso" ? null : !session ? (
           <div className="welcome-grid">
@@ -394,6 +470,7 @@ export function Account({ route = [] }: { route?: string[] }) {
           <>
             <Panel title={`Signed in as ${session.user.name}`} actions={<button className="btn sm" onClick={signOut}>Sign out</button>}>
               <p className="small muted" style={{ marginTop: 0 }}>{session.user.email}{company && <> · signing out closes {company.name} on this browser; it stays on the server</>}</p>
+              <Identity sso={config?.sso} />
               <Password />
             </Panel>
             {ds && !company && (

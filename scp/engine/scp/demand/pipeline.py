@@ -353,7 +353,7 @@ def _job_key(job: tuple) -> str | None:
     y, n, m, cands, origins, horizon, metric, fb = job
     if fb is not None:
         return None
-    return hashlib.sha1(repr((tuple(y), n, m, tuple(str(c) for c in cands), origins, horizon, str(metric))).encode()).hexdigest()
+    return hashlib.sha1(repr((tuple(y), n, m, tuple(str(c) for c in cands), origins, horizon, str(metric))).encode(), usedforsecurity=False).hexdigest()
 
 
 def _compete_all(jobs: dict[tuple[str, str], tuple]) -> dict[tuple[str, str], Outcome]:
