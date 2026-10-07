@@ -4384,6 +4384,13 @@ export interface components {
              */
             interval: number;
             /**
+             * Service Levels
+             * @description Suggested cycle service level per ABC-XYZ cell, keyed AX … CZ (fractions); a cell left out keeps the default table (A·X 98 % … C·Z 90 %)
+             */
+            service_levels?: {
+                [key: string]: number;
+            } | null;
+            /**
              * Released Inputs
              * @description Written by a forecast release: a fingerprint of the events, new-product rules, overrides and these settings it was made with, so a later change to them is noticed
              */
@@ -10490,6 +10497,11 @@ export interface components {
              * @default 0.95
              */
             default_service_level: number;
+            /**
+             * Timezone
+             * @description The company's time zone (IANA, e.g. Asia/Kolkata): the times of day of its scheduled imports; empty = the server's (SCP_TIMEZONE, else UTC)
+             */
+            timezone?: string | null;
             /** Default Calendar */
             default_calendar?: string | null;
             /**

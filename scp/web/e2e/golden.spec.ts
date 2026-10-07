@@ -172,6 +172,7 @@ test("blank network: the checklist and guided setup take a planner from nothing 
   // connect two places on the map
   await page.getByRole("button", { name: "Pune plant (Plant)" }).click();
   await page.getByRole("button", { name: "Mumbai DC (Distribution centre)" }).click();
+  await page.getByLabel("Days in transit", { exact: true }).fill("2");   // no silent default any more (roadmap C)
   await page.getByRole("button", { name: "Add route" }).click();
   await expect(page.getByLabel("Days from Pune plant to Mumbai DC")).toHaveValue("2");
 
