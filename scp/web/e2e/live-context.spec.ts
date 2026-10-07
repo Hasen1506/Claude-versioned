@@ -256,9 +256,12 @@ async function peerChange(page:Page,field:'stock'|'demand') {
       if(!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
       return await response.json();
     };
-    await json(`/api/companies/${company.id}/members`,{method:'POST',headers:ownerHeaders,body:JSON.stringify({email,role:'planner'})});
-    const peer=await json('/api/auth/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,name:'Audit peer',password:'live-audit-peer-20261001'})});
+    const members=await json(`/api/companies/${company.id}/members`,{method:'POST',headers:ownerHeaders,body:JSON.stringify({email,role:'planner'})});
+    const peer=await json('/api/auth/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,name:'Audit peer',password:`peer-${crypto.randomUUID()}`})});
     const headers={'Content-Type':'application/json',Authorization:`Bearer ${peer.token}`};
+    // nobody joins unasked: the peer accepts the invitation's link
+    const link=members.find((m:{email:string;invite_link?:string|null})=>m.email===email).invite_link as string;
+    await json('/api/auth/invites/accept',{method:'POST',headers,body:JSON.stringify({token:link.split('/').pop()})});
     const doc=await json(`/api/companies/${company.id}`,{headers});
     if(field==='stock') doc.dataset.location_products[0].on_hand=25;
     else doc.dataset.demand[0].qty=110;
