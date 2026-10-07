@@ -217,9 +217,11 @@ def examples() -> list[ExampleInfo]:
 
 @app.get("/api/examples/{name}", response_model=Dataset)
 def example(name: str) -> Dataset:
-    p = EXAMPLES / f"{name}.json"
-    if not p.is_file() or p.parent != EXAMPLES:
-        raise HTTPException(404, f"no example '{name}'")
+    # looked up among the examples there are, never opened by a name the caller made up: a name too long for the
+    # file system (or naming another folder) is simply not an example, not a server error
+    p = next((x for x in EXAMPLES.glob("*.json") if x.stem == name), None)
+    if p is None:
+        raise HTTPException(404, f"no example '{name[:80]}'")
     return Dataset.model_validate_json(p.read_text())
 
 
@@ -1021,7 +1023,10 @@ if WEB_DIST.is_dir():
     def spa(path: str) -> FileResponse:
         if path == "api" or path.startswith("api/"):
             raise HTTPException(404, "unknown API route")
-        f = (WEB_DIST / path).resolve()
-        if path and f.is_file() and WEB_DIST in f.parents:
-            return FileResponse(f)
+        try:   # a name too long for the file system, or with a NUL in it, is no file of ours: the app's page
+            f = (WEB_DIST / path).resolve()
+            if path and f.is_file() and WEB_DIST in f.parents:
+                return FileResponse(f)
+        except (OSError, ValueError):
+            pass
         return FileResponse(WEB_DIST / "index.html")
