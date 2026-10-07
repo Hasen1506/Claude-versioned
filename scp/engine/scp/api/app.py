@@ -59,6 +59,7 @@ from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compar
 from ..companies import CompanyError
 from .connect import router as connect_router
 from .companies import (
+    CORS_ORIGINS,
     Scope, StoredEditScope, StoredScope, company_error, edit_scope, gate, is_company, require_signin,
     router as companies_router, signup_policy, who_asks,
 )
@@ -101,7 +102,7 @@ app = FastAPI(title="SCP — Supply Chain Planning", version=__version__, lifesp
               description="Typed network master data, readiness gate, demand planning, network MRP/DRP.",
               docs_url="/docs" if _DOCS else None, redoc_url="/redoc" if _DOCS else None,
               openapi_url="/openapi.json" if _DOCS else None)
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "https://hasen1506.github.io"],
+app.add_middleware(CORSMiddleware, allow_origins=list(CORS_ORIGINS), allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"], expose_headers=["X-Rows"])
 
 

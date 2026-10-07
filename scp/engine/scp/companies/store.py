@@ -195,6 +195,7 @@ class Session(Out):
     token: str
     user: User
     expires_at: str
+    csrf: str | None = None       # a browser's double-submit token (also in the scp_csrf cookie), roadmap D
 
 
 class CompanyMeta(Out):
@@ -431,8 +432,8 @@ class Companies:
         email = email.strip()
         if not EMAIL.match(email):
             raise CompanyError("that does not look like an e-mail address", 422)
-        if len(password) < 8:
-            raise CompanyError("a password needs at least 8 characters", 422)
+        from . import passwords
+        passwords.check(password, email)         # roadmap D: length, breached list, not the e-mail (CV-L07)
         with self.lock:
             self._may_sign_up(email, policy)
         salt = secrets.token_hex(16)
@@ -586,6 +587,18 @@ class Companies:
             self.db.execute("UPDATE users SET last_seen = ? WHERE id = ?", (_iso(now), r["user_id"]))
             return self._user(r["user_id"])
 
+    def signed_in(self, token: str | None) -> bool:
+        """Whether ``token`` is a live session or key, read only (nothing is extended): for the anonymous limits."""
+        if not token:
+            return False
+        with self.lock:
+            if token.startswith(KEY_PREFIX):
+                r = self.db.execute("SELECT 1 FROM api_keys WHERE token_hash = ? AND revoked_at IS NULL",
+                                    (_token_hash(token),)).fetchone()
+                return r is not None
+            r = self.db.execute("SELECT expires_at FROM sessions WHERE token_hash = ?", (_token_hash(token),)).fetchone()
+            return r is not None and dt.datetime.fromisoformat(r["expires_at"]) > _now()
+
     # ---- integration keys (Phase Q) --------------------------------------------------------------------------
     def _key_user(self, token: str) -> User:
         with self.lock:
@@ -673,6 +686,22 @@ class Companies:
             self._log(cid, None, user.id, "member", f"key {kid} \u201c{r['name']}\u201d withdrawn")
         return self.keys(user, cid)
 
+    def adopt(self, token: str) -> Session:
+        """Swap a session token a browser kept in its own storage (before roadmap D) for a new session, once: the old
+        token stops working, so a copy of it left in the browser's storage is worth nothing afterwards."""
+        if not token or token.startswith(KEY_PREFIX):
+            raise CompanyError("only a browser's sign-in can be moved to a cookie", 400)
+        user = self.whoami(token)
+        with self.lock:
+            old = self.db.execute("SELECT created_at FROM sessions WHERE token_hash = ?", (_token_hash(token),)).fetchone()
+            if old is None:                       # adopted (or signed out) meanwhile: once only
+                raise CompanyError("your sign-in has expired; sign in again", 401)
+            self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
+            s = self._session(user.id)
+            # the absolute lifetime (CV-L06) still counts from the original sign-in
+            self.db.execute("UPDATE sessions SET created_at = ? WHERE token_hash = ?", (old["created_at"], _token_hash(s.token)))
+            return s
+
     def signout(self, token: str) -> None:
         with self.lock:
             self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
@@ -696,8 +725,8 @@ class Companies:
             raise
 
     def change_password(self, user: User, old: str, new: str, keep_token: str | None = None) -> None:
-        if len(new) < 8:
-            raise CompanyError("a password needs at least 8 characters", 422)
+        from . import passwords
+        passwords.check(new, user.email)
         with self.lock:
             r = self.db.execute("SELECT * FROM users WHERE id = ?", (user.id,)).fetchone()
         if not hmac.compare_digest(_hash_pw(old, r["pw_salt"]), r["pw_hash"]):
@@ -766,8 +795,11 @@ class Companies:
             return token or "", _iso(_now() + dt.timedelta(hours=hours))
 
     def reset_password(self, token: str, new: str) -> Session:
-        if len(new) < 8:
-            raise CompanyError("a password needs at least 8 characters", 422)
+        from . import passwords
+        with self.lock:
+            r = self.db.execute("SELECT u.email FROM password_resets p JOIN users u ON u.id = p.user_id "
+                                "WHERE p.token_hash = ?", (_token_hash(token),)).fetchone()
+        passwords.check(new, r["email"] if r else None)
         salt = secrets.token_hex(16)
         pw_hash = _hash_pw(new, salt)            # outside the lock (CV-H11)
         with self.lock:

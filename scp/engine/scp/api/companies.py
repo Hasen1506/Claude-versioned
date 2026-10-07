@@ -13,10 +13,21 @@ Server settings (environment):
 * ``SCP_PUBLIC_URL``: where people open the application. Links that leave the server (a reset or invitation mailed,
   the single sign-on redirect) are made only from it, never from the request's Host header (CV-H10).
 * ``SCP_AUTH_RATE``: sign-ins, sign-ups and resets a minute per client address (default 30; 0: no limit, CV-H11).
-* ``SCP_ANON_RATE``: other API calls a minute per client address without a session (default 120; 0: no limit),
+* ``SCP_ANON_RATE``: the work a minute per client address without a session, in cost units (default 120; 0: no
+  limit). A cheap call costs 1, a heavy one more (a plan 20, a schedule 30, a comparison 40: ``ANON_COSTS``), from
+  one token bucket per address; a refusal says when to come back (``Retry-After``). Roadmap D.
   ``SCP_ANON_MAX_MB``: the largest request body without a session (default 64), and ``SCP_ANON_CONCURRENCY``: how
   many of them run at once (default half the CPUs; the rest wait up to ``SCP_ANON_WAIT_S``, 60 s), against
   CPU-heavy anonymous use (CV-M04). A public server should still set ``SCP_REQUIRE_SIGNIN=1``.
+
+**Browser sessions (roadmap D).** The web client asks for its session in a cookie (``X-SCP-Session: cookie`` on the
+sign-in, sign-up, reset and adopt calls; the single sign-on callback always does): ``scp_session`` is HttpOnly,
+``SameSite=Lax`` (``None`` for the cross-site Pages client) and ``Secure`` whenever the server is reached over HTTPS
+(``SCP_COOKIE_SECURE=1``/``0`` forces it). A request that signs in with that cookie and changes something must carry
+the double-submit token: header ``X-CSRF-Token`` equal to the ``scp_csrf`` cookie (also handed out in the sign-in
+answer and by ``GET /api/auth/csrf``). ``Authorization: Bearer`` still works for integration keys and scripts and
+needs no CSRF token (a browser never adds it by itself). A token a browser kept in its storage before this change is
+swapped for a cookie once (``POST /api/auth/adopt``), and stops working.
 
 Without a company, the "browser's own" plan versions and worklist belong to the browser that made them: the client
 sends a random key it keeps (``X-Browser-Key``), and they are kept under a hash of it (CV-H06); a signed-in person
@@ -26,8 +37,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
+import math
 import os
-from threading import BoundedSemaphore
+import secrets
+import time
+from collections import OrderedDict
+from threading import BoundedSemaphore, Lock
 from typing import Annotated, Any, Literal
 
 from urllib.parse import quote
@@ -48,7 +64,19 @@ from .working import asker, send_raw, takes_gzip, takes_rows
 router = APIRouter(prefix="/api", tags=["companies"])
 
 OPEN_PATHS = ("/api/health", "/api/auth/config", "/api/auth/signin", "/api/auth/signup", "/api/auth/reset",
-              "/api/auth/reset/request", "/api/auth/sso/start", "/api/auth/sso/callback", "/api/auth/email/verify")
+              "/api/auth/reset/request", "/api/auth/sso/start", "/api/auth/sso/callback", "/api/auth/email/verify",
+              "/api/auth/csrf", "/api/auth/adopt")
+# calls that never act on the session cookie, so they need no CSRF token (sign-in itself, and swapping a token)
+NO_CSRF = ("/api/auth/signin", "/api/auth/signup", "/api/auth/reset", "/api/auth/reset/request", "/api/auth/adopt",
+           "/api/auth/email/verify")
+SESSION_COOKIE, CSRF_COOKIE, CSRF_HEADER = "scp_session", "scp_csrf", "x-csrf-token"
+# the cost in units of one anonymous call (roadmap D): what is not listed costs 1
+ANON_COSTS: dict[str, int] = {
+    "/api/plan": 20, "/api/plan/trace": 10, "/api/schedule": 30, "/api/schedule/compare": 40, "/api/sop": 20,
+    "/api/forecast": 10, "/api/inventory": 10, "/api/finance": 10, "/api/capacity/level": 10, "/api/compare": 40,
+    "/api/promise": 5, "/api/promise/bop": 5, "/api/promise/check": 5, "/api/tower": 10, "/api/actuals": 5,
+    "/api/purchasing": 5, "/api/sales": 5, "/api/network": 2, "/api/validate": 1,
+}
 RATED_PATHS = ("/api/auth/signin", "/api/auth/signup", "/api/auth/reset", "/api/auth/reset/request",
                "/api/auth/email/verify", "/api/auth/email/request")
 
@@ -82,9 +110,98 @@ def require_signin() -> bool:
     return value in ("1", "true", "yes", "on")
 
 
-def token_of(request: Request) -> str | None:
+def bearer_of(request: Request) -> str | None:
     h = request.headers.get("authorization", "")
     return h[7:].strip() or None if h.lower().startswith("bearer ") else None
+
+
+def token_of(request: Request) -> str | None:
+    """The session or key this request signs in with: ``Authorization: Bearer``, else the browser's session cookie."""
+    return bearer_of(request) or request.cookies.get(SESSION_COOKIE) or None
+
+
+def via_cookie(request: Request) -> bool:
+    return not bearer_of(request) and bool(request.cookies.get(SESSION_COOKIE))
+
+
+def wants_cookie(request: Request) -> bool:
+    return request.headers.get("x-scp-session", "").strip().lower() == "cookie"
+
+
+def _cross_site(request: Request) -> bool:
+    """A call from the client served elsewhere (the GitHub Pages build talking to this server)."""
+    origin = request.headers.get("origin", "")
+    return bool(origin) and origin.rstrip("/") != str(request.base_url).rstrip("/") and origin in CORS_ORIGINS
+
+
+CORS_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173", "https://hasen1506.github.io")
+
+
+def cookie_secure(request: Request) -> bool:
+    forced = os.environ.get("SCP_COOKIE_SECURE", "").strip().lower()
+    if forced:
+        return forced not in ("0", "false", "no", "off")
+    return (request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").lower() == "https"
+            or mail.public_url().startswith("https://"))
+
+
+def set_session_cookies(response: Response, request: Request, token: str, csrf: str | None = None) -> str:
+    """Put a session in the browser's HttpOnly cookie, with its double-submit token; returns the token."""
+    from ..companies.store import SESSION_MAX_DAYS
+    csrf = csrf or request.cookies.get(CSRF_COOKIE) or secrets.token_urlsafe(24)
+    cross = _cross_site(request)
+    secure = cookie_secure(request) or cross            # SameSite=None needs Secure
+    same = "none" if cross else "lax"
+    age = SESSION_MAX_DAYS * 86400
+    response.set_cookie(SESSION_COOKIE, token, max_age=age, path="/", httponly=True, secure=secure, samesite=same)
+    response.set_cookie(CSRF_COOKIE, csrf, max_age=age, path="/", httponly=False, secure=secure, samesite=same)
+    return csrf
+
+
+def clear_session_cookies(response: Response, request: Request) -> None:
+    secure = cookie_secure(request) or _cross_site(request)
+    same = "none" if _cross_site(request) else "lax"
+    for name in (SESSION_COOKIE, CSRF_COOKIE):
+        response.delete_cookie(name, path="/", secure=secure, httponly=name == SESSION_COOKIE, samesite=same)
+
+
+def csrf_ok(request: Request) -> bool:
+    cookie, header = request.cookies.get(CSRF_COOKIE, ""), request.headers.get(CSRF_HEADER, "")
+    return bool(cookie) and bool(header) and hmac.compare_digest(cookie.encode(), header.encode())
+
+
+# ---- the cost-weighted limit on anonymous work (roadmap D) -----------------------------------------------------
+_BUCKETS: OrderedDict[str, tuple[float, float]] = OrderedDict()
+_BUCKETS_LOCK = Lock()
+BUCKET_KEYS = 10_000
+
+
+def anon_cost(path: str) -> int:
+    if path.startswith("/api/scenarios/") and path.endswith("/run"):
+        return 30
+    return ANON_COSTS.get(path.rstrip("/"), 1)
+
+
+def anon_take(key: str, cost: int, per_minute: int, now: float | None = None) -> float:
+    """Take ``cost`` units from the address's bucket (``per_minute`` units, refilled evenly). 0 when it fits, else
+    the seconds until it would. ``per_minute`` 0: no limit."""
+    if per_minute <= 0:
+        return 0.0
+    now = time.monotonic() if now is None else now
+    cost = min(cost, per_minute)            # one call never costs more than a full bucket
+    rate = per_minute / 60.0
+    with _BUCKETS_LOCK:
+        tokens, at = _BUCKETS.pop(key, (float(per_minute), now))
+        tokens = min(float(per_minute), tokens + (now - at) * rate)
+        if tokens >= cost:
+            _BUCKETS[key] = (tokens - cost, now)
+            wait = 0.0
+        else:
+            _BUCKETS[key] = (tokens, now)
+            wait = (cost - tokens) / rate
+        while len(_BUCKETS) > BUCKET_KEYS:
+            _BUCKETS.popitem(last=False)
+    return wait
 
 
 def client_of(request: Request) -> str:
@@ -110,13 +227,19 @@ async def gate(request: Request, call_next):
             not get_companies().auth_rate(client_ip(request), _int_env("SCP_AUTH_RATE", 30)):
         return JSONResponse(status_code=429, content={"detail": "too many sign-in attempts from your address; try again "
                                                                 "in a minute"})
+    if (request.method in ("POST", "PUT", "PATCH", "DELETE") and path.startswith("/api/") and via_cookie(request)
+            and path not in NO_CSRF and not csrf_ok(request)):
+        # roadmap D: a change made with the session cookie must prove it comes from this application's own page
+        return JSONResponse(status_code=403, content={"detail": "this request is missing its security token "
+                                                                "(X-CSRF-Token); reload the page and try again"})
     if signin_required and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS":
         try:
             get_companies().whoami(token_of(request))
         except CompanyError as e:
             return company_error(request, e)
-    elif (path.startswith("/api/") and request.method == "POST" and not token_of(request)
-          and path not in OPEN_PATHS and path not in RATED_PATHS):
+    elif (path.startswith("/api/") and request.method == "POST" and path not in OPEN_PATHS
+          and path not in RATED_PATHS and not get_companies().signed_in(token_of(request))):
+        # a made-up Bearer token or cookie is no session: it is limited like no token at all (roadmap D)
         # CV-M04: CPU-heavy planning calls without a session are limited per address and in size
         cap = _int_env("SCP_ANON_MAX_MB", 64) * 1024 * 1024
         try:
@@ -125,9 +248,11 @@ async def gate(request: Request, call_next):
             size = 0
         if cap > 0 and size > cap:
             return JSONResponse(status_code=413, content={"detail": "the request is too large without signing in"})
-        if not get_companies().auth_rate("anon:" + client_ip(request), _int_env("SCP_ANON_RATE", 120)):
-            return JSONResponse(status_code=429, content={"detail": "too many requests from your address without "
-                                                                    "signing in; sign in or try again in a minute"})
+        wait = anon_take("anon:" + client_ip(request), anon_cost(path), _int_env("SCP_ANON_RATE", 120))
+        if wait > 0:
+            return JSONResponse(status_code=429, headers={"Retry-After": str(max(1, math.ceil(wait)))},
+                                content={"detail": "too much work from your address without signing in; sign in or "
+                                                   f"try again in {max(1, math.ceil(wait))} seconds"})
         # and only a few run at once, so anonymous work never takes every CPU from signed-in people
         waited = 0.0
         while not _ANON_SLOTS.acquire(blocking=False):
@@ -236,6 +361,7 @@ class AuthConfig(Out):
     mail: bool = False            # the server sends mail (and knows its public address, SCP_PUBLIC_URL): a forgotten
     #                               password is reset by a link sent to the address
     sso: str | None = None        # single sign-on is set up: "Sign in with <sso>"
+    password_min: int = 12        # the shortest password a new account, a reset or a change accepts (roadmap D)
 
 
 class ResetRequest(Out):
@@ -293,28 +419,68 @@ class PasswordChange(Out):
     new: str
 
 
+class Csrf(Out):
+    csrf: str                     # send it back as X-CSRF-Token on every change made with the session cookie
+
+
 @router.get("/auth/config", response_model=AuthConfig)
 def auth_config() -> AuthConfig:
+    from ..companies import passwords
     return AuthConfig(signup=signup_policy(), require_signin=require_signin(),  # type: ignore[arg-type]
                       first_account=get_companies().users() == 0, mail=links_by_mail(),
-                      sso=sso.button() if mail.public_url() else None)
+                      sso=sso.button() if mail.public_url() else None, password_min=passwords.min_length())
+
+
+def browser_session(s: Session, request: Request, response: Response) -> Session:
+    """A browser that asked for it (``X-SCP-Session: cookie``) gets the session in its HttpOnly cookie, and the
+    double-submit token in the answer; other callers get the answer as before."""
+    if wants_cookie(request):
+        s.csrf = set_session_cookies(response, request, s.token)
+    return s
 
 
 @router.post("/auth/signup", response_model=Session)
-def auth_signup(body: SignUp) -> Session:
-    return get_companies().signup(body.email, body.name, body.password, signup_policy())
+def auth_signup(body: SignUp, request: Request, response: Response) -> Session:
+    return browser_session(get_companies().signup(body.email, body.name, body.password, signup_policy()),
+                           request, response)
 
 
 @router.post("/auth/signin", response_model=Session)
-def auth_signin(body: SignIn) -> Session:
-    return get_companies().signin(body.email, body.password)
+def auth_signin(body: SignIn, request: Request, response: Response) -> Session:
+    return browser_session(get_companies().signin(body.email, body.password), request, response)
+
+
+@router.post("/auth/adopt", response_model=Session)
+def auth_adopt(request: Request, response: Response) -> Session:
+    """Once, for a browser that kept its session token in its own storage before roadmap D: the token (as
+    ``Authorization: Bearer``) is swapped for a new session in the HttpOnly cookie, and stops working."""
+    token = bearer_of(request)
+    if not token:
+        raise CompanyError("send the token kept in this browser to move it to a cookie", 400)
+    s = get_companies().adopt(token)
+    s.csrf = set_session_cookies(response, request, s.token)
+    s.token = ""                  # the new session lives in the cookie only
+    return s
+
+
+@router.get("/auth/csrf", response_model=Csrf)
+def auth_csrf(request: Request, response: Response) -> Csrf:
+    """The double-submit token of this browser (a client served from another site cannot read the cookie)."""
+    token = request.cookies.get(CSRF_COOKIE)
+    if not token:
+        token = secrets.token_urlsafe(24)
+        secure = cookie_secure(request) or _cross_site(request)
+        response.set_cookie(CSRF_COOKIE, token, path="/", httponly=False, secure=secure,
+                            samesite="none" if _cross_site(request) else "lax")
+    return Csrf(csrf=token)
 
 
 @router.post("/auth/signout")
-def auth_signout(request: Request) -> dict:
+def auth_signout(request: Request, response: Response) -> dict:
     t = token_of(request)
     if t:
         get_companies().signout(t)
+    clear_session_cookies(response, request)
     return {"ok": True}
 
 
@@ -549,9 +715,9 @@ def auth_reset_request(body: ResetRequest, request: Request) -> dict:
 
 
 @router.post("/auth/reset", response_model=Session)
-def auth_reset(body: ResetPassword) -> Session:
+def auth_reset(body: ResetPassword, request: Request, response: Response) -> Session:
     """Set a new password with a reset link's token; signs out every other session of the account."""
-    return get_companies().reset_password(body.token, body.password)
+    return browser_session(get_companies().reset_password(body.token, body.password), request, response)
 
 
 @router.post("/companies/{cid}/members/{email}/reset", response_model=ResetLink)
@@ -607,4 +773,7 @@ def auth_sso_callback(request: Request, code: str = "", state: str = "", error: 
                                         link_to=next_.removeprefix("link:") if next_.startswith("link:") else "")
     except CompanyError as e:
         return RedirectResponse(f"{home}/#/account/sso-failed/{quote(str(e), safe='')}", status_code=302)
-    return RedirectResponse(f"{home}/#/account/sso/{s.token}", status_code=302)
+    # roadmap D: the session goes into the HttpOnly cookie, never into the address (history, logs, referrers)
+    out = RedirectResponse(f"{home}/#/account/sso", status_code=302)
+    set_session_cookies(out, request, s.token)
+    return out

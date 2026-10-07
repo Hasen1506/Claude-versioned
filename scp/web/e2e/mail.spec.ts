@@ -43,7 +43,7 @@ async function onServer(page: Page, data = fixture()): Promise<string> {
   await page.getByRole("tab", { name: "Make an account" }).click();
   await page.getByLabel("E-mail").fill(email);
   await page.getByLabel("Your name").fill("Ravi Buyer");
-  await page.getByLabel(/^Password/).fill("mehta-2026");
+  await page.getByLabel(/^Password/).fill("mehta-2026-plans");
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/);

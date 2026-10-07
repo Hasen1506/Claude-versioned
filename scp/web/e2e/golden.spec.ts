@@ -862,7 +862,7 @@ test("company on the server: sign up → keep it there → saves itself → a co
   await page.getByRole("tab", { name: "Make an account" }).click();
   await page.getByLabel("E-mail").fill("asha@kaveri.in");
   await page.getByLabel("Your name").fill("Asha Rao");
-  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByLabel(/^Password/).fill("kaveri-2026-pumps");
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await expect(chip).toHaveText("Saved");
@@ -891,7 +891,7 @@ test("company on the server: sign up → keep it there → saves itself → a co
     await p.getByRole("tab", { name: "Make an account" }).click();
     await p.getByLabel("E-mail").fill(email);
     await p.getByLabel("Your name").fill(name);
-    await p.getByLabel(/^Password/).fill("colleague-1");
+    await p.getByLabel(/^Password/).fill("colleague-pw-0001");
     await p.getByRole("button", { name: "Make the account" }).click();
     await acceptInvite(p, invites[email]);
     await p.getByRole("button", { name: /Open Kaveri Kitchenware/ }).click();
@@ -981,7 +981,7 @@ test("rights and four eyes: a planner limited to a place is refused elsewhere; m
   await page.getByRole("tab", { name: "Make an account" }).click();
   await page.getByLabel("E-mail").fill("owner@kaveri.in");
   await page.getByLabel("Your name").fill("Nisha Owner");
-  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByLabel(/^Password/).fill("kaveri-2026-pumps");
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await page.getByLabel("Colleague's e-mail").fill("plan@kaveri.in");
@@ -993,7 +993,7 @@ test("rights and four eyes: a planner limited to a place is refused elsewhere; m
   await p.getByRole("tab", { name: "Make an account" }).click();
   await p.getByLabel("E-mail").fill("plan@kaveri.in");
   await p.getByLabel("Your name").fill("Om Planner");
-  await p.getByLabel(/^Password/).fill("colleague-1");
+  await p.getByLabel(/^Password/).fill("colleague-pw-0001");
   await p.getByRole("button", { name: "Make the account" }).click();
   await acceptInvite(p, invitation);
   await p.getByRole("button", { name: /Open Kaveri Kitchenware/ }).click();
@@ -1039,14 +1039,15 @@ test("opening another company while one is planning: the first one's results are
   await page.getByRole("tab", { name: "Make an account" }).click();
   await page.getByLabel("E-mail").fill("switch@kaveri.in");
   await page.getByLabel("Your name").fill("Sam Switch");
-  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByLabel(/^Password/).fill("kaveri-2026-pumps");
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await expect(page.locator(".save-chip .save-long")).toHaveText("Saved");
   // a second company, the bottler, made on the server by the same person
-  const token = await page.evaluate(() => JSON.parse(localStorage.getItem("scp.session.v1") ?? "{}").token as string);
+  // roadmap D: the session cookie signs page.request in; a change carries the double-submit token
+  const csrf = (await page.context().cookies()).find((c) => c.name === "scp_csrf")?.value ?? "";
   const bottler = await (await page.request.get("/api/examples/single_product_plant")).json();
-  expect((await page.request.post("/api/companies", { headers: { Authorization: `Bearer ${token}` },
+  expect((await page.request.post("/api/companies", { headers: { "X-CSRF-Token": csrf },
     data: { dataset: bottler, note: "second company" } })).ok()).toBe(true);
   await page.goto("/#/account");
   await page.reload();
@@ -1083,7 +1084,7 @@ test("a company on the server is planned from the server's copy: calls name the 
   await page.getByRole("tab", { name: "Make an account" }).click();
   await page.getByLabel("E-mail").fill("ref@kaveri.in");
   await page.getByLabel("Your name").fill("Rhea Ref");
-  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByLabel(/^Password/).fill("kaveri-2026-pumps");
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await expect(page.locator(".save-chip .save-long")).toHaveText("Saved");

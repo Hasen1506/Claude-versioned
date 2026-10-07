@@ -138,14 +138,14 @@ def test_c01_an_invitation_expires(monkeypatch):
 
 # ---- CV-H01: owner-minted resets ---------------------------------------------------------------------------------
 def test_h01_an_owner_cannot_mint_a_reset_for_an_account_that_never_joined():
-    victim = signup("victim@other.example", "victim-secret-1")
+    victim = signup("victim@other.example", "other-secret-901")
     attacker = signup("mallory@evil.example")
     cid = new_company(attacker)
     invite(attacker, cid, "victim@other.example", "planner")
     r = client.post(f"/api/companies/{cid}/members/victim@other.example/reset", headers=h(attacker))
     assert r.status_code == 404
     assert client.post("/api/auth/signin", json={"email": "victim@other.example",
-                                                 "password": "victim-secret-1"}).status_code == 200
+                                                 "password": "other-secret-901"}).status_code == 200
     assert client.get("/api/auth/me", headers=h(victim)).status_code == 200
 
 
@@ -208,8 +208,10 @@ def idp(monkeypatch):
             url = client.get("/api/auth/sso/start", follow_redirects=False).headers["location"]
         q = parse_qs(urlparse(url).query)
         state["nonce"] = q["nonce"][0] if nonce is None else nonce
-        return client.get(f"/api/auth/sso/callback?code=c&state={q['state'][0]}",
-                          follow_redirects=False).headers["location"]
+        r = client.get(f"/api/auth/sso/callback?code=c&state={q['state'][0]}", follow_redirects=False)
+        login.last = r.cookies.get("scp_session", "")    # roadmap D: the session comes in the cookie
+        return r.headers["location"]
+    login.last = ""
     return login
 
 
@@ -219,23 +221,23 @@ def test_h02_sso_without_a_verified_address_is_refused(idp):
 
 
 def test_h02_sso_never_takes_over_a_password_account_by_e_mail(idp):
-    owner = signup("owner@acme.example", "owner-password-1")
+    owner = signup("owner@acme.example", "acme-head-secret-1")
     new_company(owner)
     loc = idp({"sub": "attacker", "email": "owner@acme.example", "email_verified": True})
     assert "/#/account/sso-failed/" in loc and "already%20an%20account" in loc
     # the holder links it, signed in; later sign-ons with that subject reach the account; a binding is kept
     loc = idp({"sub": "owner-sub", "email": "owner@acme.example", "email_verified": True}, begin="link", token=owner)
-    assert "/#/account/sso/" in loc
+    assert loc.endswith("/#/account/sso") and idp.last
     loc = idp({"sub": "owner-sub", "email": "owner@acme.example", "email_verified": True})
-    tok = loc.rsplit("/", 1)[1]
+    tok = idp.last
     assert client.get("/api/auth/me", headers=h(tok)).json()["user"]["email"] == "owner@acme.example"
     loc = idp({"sub": "other-sub", "email": "owner@acme.example", "email_verified": True}, begin="link", token=tok)
     assert "already%20linked" in loc
 
 
 def test_h02_a_new_sso_account_is_verified_and_a_wrong_nonce_or_audience_is_refused(idp):
-    loc = idp({"sub": "s2", "email": "meera@acme.example", "email_verified": "true"})
-    tok = loc.rsplit("/", 1)[1]
+    assert idp({"sub": "s2", "email": "meera@acme.example", "email_verified": "true"}).endswith("/#/account/sso")
+    tok = idp.last
     assert client.get("/api/auth/me", headers=h(tok)).json()["user"]["verified"] is True
     assert "nonce" in idp({"sub": "s2", "email": "meera@acme.example", "email_verified": True}, nonce="forged")
     assert "sso-failed" in idp({"sub": "s2", "email": "meera@acme.example", "email_verified": True}, aud="other-app")

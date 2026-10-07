@@ -55,6 +55,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/adopt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Adopt
+         * @description Once, for a browser that kept its session token in its own storage before roadmap D: the token (as
+         *     ``Authorization: Bearer``) is swapped for a new session in the HttpOnly cookie, and stops working.
+         */
+        post: operations["auth_adopt_api_auth_adopt_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/csrf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auth Csrf
+         * @description The double-submit token of this browser (a client served from another site cannot read the cookie).
+         */
+        get: operations["auth_csrf_api_auth_csrf_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/signout": {
         parameters: {
             query?: never;
@@ -2184,6 +2225,11 @@ export interface components {
             mail: boolean;
             /** Sso */
             sso: string | null;
+            /**
+             * Password Min
+             * @default 12
+             */
+            password_min: number;
         };
         /** BacktestPoint */
         BacktestPoint: {
@@ -3085,6 +3131,11 @@ export interface components {
             approved: boolean;
             /** Notes */
             notes: string[];
+        };
+        /** Csrf */
+        Csrf: {
+            /** Csrf */
+            csrf: string;
         };
         /** CtpStep */
         CtpStep: {
@@ -10398,6 +10449,8 @@ export interface components {
             user: components["schemas"]["User"];
             /** Expires At */
             expires_at: string;
+            /** Csrf */
+            csrf: string | null;
         };
         /**
          * SetAside
@@ -12142,6 +12195,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_adopt_api_auth_adopt_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+        };
+    };
+    auth_csrf_api_auth_csrf_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Csrf"];
                 };
             };
         };
