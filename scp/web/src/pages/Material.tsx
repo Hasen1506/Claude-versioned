@@ -3,6 +3,7 @@
 // with the stock after each. The index lists every product at every place, filterable by who plans it.
 import { useMemo, useState } from "react";
 import type { Dataset, LocationProduct, PlanResult, ProductionSource, Requirement } from "../api/types";
+import { StockGrid } from "../components/StockGrid";
 import { Badge, Edits, Empty, Panel, StageHeader, Tabs } from "../components/ui";
 import { day, ORDER_LABEL, qty, TYPE_LABEL } from "../lib/format";
 import { useNames } from "../lib/names";
@@ -13,15 +14,23 @@ import { freshness, store, usePlanTrace, useStore } from "../state/store";
 
 type Tab = "stock" | "mrp1" | "mrp2" | "mrp3" | "mrp4";
 const TABS: { id: Tab; label: string }[] = [
-  { id: "stock", label: "Stock & requirements" }, { id: "mrp1", label: "MRP 1 · Ordering" },
-  { id: "mrp2", label: "MRP 2 · Supply" }, { id: "mrp3", label: "MRP 3 · Strategy & buffers" },
-  { id: "mrp4", label: "MRP 4 · Structure" },
+  // plain labels (UX audit: "MRP 1–4" is SAP jargon); the SAP names stay in the page's how-it-works note
+  { id: "stock", label: "Stock & requirements" }, { id: "mrp1", label: "Ordering" },
+  { id: "mrp2", label: "How it is supplied" }, { id: "mrp3", label: "Strategy & buffers" },
+  { id: "mrp4", label: "What it is made from" },
 ];
 const MRP1 = ["mrp_group", "mrp_type", "mrp_controller", "reorder_point", "lot_sizing", "max_stock", "planning_time_fence_days"];
 const MRP2 = ["procurement", "phantom", "withdraw_from", "direct_production", "on_hand", "gr_processing_days", "safety_time_days",
   "float_before_workdays", "float_after_workdays", "unit_cost", "discontinued_on", "follow_up"];
 const MRP3 = ["strategy", "consumption_backward_days", "consumption_forward_days", "safety_stock", "holding_rate",
   "ddmrp_buffer", "max_service_days"];
+/** Each order covers…: the lot-size rule in plain words (L4L, POQ and EOQ are glossary terms, not labels). */
+export function orderingLabel(policy?: string | null, periods?: number | null): string {
+  if (!policy) return "company default";
+  const n = periods ?? 1;
+  return ({ L4L: "exactly what's needed", FIXED: "fixed batches", EOQ: "economic batch size", MIN_MAX: "top up to a maximum",
+    POQ: n === 1 ? "a period's need" : `${n} periods' need` } as Record<string, string>)[policy] ?? policy.toLowerCase();
+}
 const PROC: Record<string, string> = { any: "made or got from outside", make: "made here only", external: "bought or shipped in only" };
 
 export function Material({ route }: { route: string[] }) {
@@ -49,6 +58,7 @@ function MaterialIndex({ ds }: { ds: Dataset }) {
   const [q, setQ] = useState("");
   const [ctl, setCtl] = useState("");
   const [place, setPlace] = useState("");
+  const [grid, setGrid] = useState(false);
   const kept = useMemo(() => new Set((ds.locations ?? []).filter((l) => l.type !== "supplier" && l.type !== "customer").map((l) => l.id)), [ds]);
   const rows = useMemo(() => {
     const m = new Map<string, { loc: string; prod: string; lp?: LocationProduct }>();
@@ -98,7 +108,9 @@ function MaterialIndex({ ds }: { ds: Dataset }) {
             {[...kept].map((l) => <option key={l} value={l}>{nm.loc(l)}</option>)}
           </select>
           <span className="small muted">{shown.length} of {rows.length}</span>
+          <Edits><button className="btn sm" onClick={() => setGrid(!grid)} aria-expanded={grid}>Enter stock on hand as a grid</button></Edits>
         </div>
+        {grid && <StockGrid ds={ds} onClose={() => setGrid(false)} />}
         {rows.length === 0 ? <Panel><Empty title="No products at places yet">
           <p>Say where each product is kept, and how it gets there, in <a href={href("setup", "products")}>Set up → Products</a>.</p></Empty></Panel> : (
           <Panel flush>
@@ -116,7 +128,7 @@ function MaterialIndex({ ds }: { ds: Dataset }) {
                       <td>{nm.loc(r.loc)}</td>
                       <td>{r.lp?.mrp_controller || <span className="faint">—</span>}</td>
                       <td className="small">{how}{r.lp && r.lp.procurement && r.lp.procurement !== "any" && <div className="faint">{PROC[r.lp.procurement]}</div>}</td>
-                      <td className="small">{r.lp ? (r.lp.mrp_type === "none" ? "not replenished" : r.lp.mrp_type === "reorder_point" ? `reorder at ${qty(r.lp.reorder_point)}` : r.lp.lot_sizing?.policy ?? "company default") : <span className="faint">defaults</span>}</td>
+                      <td className="small">{r.lp ? (r.lp.mrp_type === "none" ? "not replenished" : r.lp.mrp_type === "reorder_point" ? `reorder at ${qty(r.lp.reorder_point)}` : orderingLabel(r.lp.lot_sizing?.policy, r.lp.lot_sizing?.periods)) : <span className="faint">company defaults</span>}</td>
                       <td className="small">{!r.lp || r.lp.safety_stock?.method === "none" || !r.lp.safety_stock ? "none" : r.lp.safety_stock.method.replace(/_/g, " ")}</td>
                       <td className="num">{qty(r.lp?.on_hand ?? 0)}</td>
                       <td>{!plan ? <span className="faint small">not planned</span> : x ? <Badge sev={x.error ? "error" : "warning"}>{x.n}</Badge> : <Badge sev="ok">OK</Badge>}</td>

@@ -295,6 +295,9 @@ export const api = {
   /** Turn requisitions into purchase orders (`lines` = which, on which source; none = everything due now). */
   createPurchaseOrders: (dataset: Dataset, lines?: RequisitionPick[], orderDate?: string) =>
     write<CreatePoResponse>("/api/purchasing/create", dataset, { lines: lines ?? null, order_date: orderDate ?? null }),
+  /** A purchase order no requisition asked for: one line on a purchasing source (null date = as soon as it can come). */
+  oneOffPo: (dataset: Dataset, sourceId: string, qty: number, dueDate?: string | null) =>
+    write<CreatePoResponse>("/api/purchasing/one-off", dataset, { source_id: sourceId, qty, due_date: dueDate || null }),
   /** An action on a purchase order (approve, send, confirm, receive, change, cancel), a scheduling agreement, a
    * supplier invoice (enter, release, pay, cancel) or a return to the supplier. */
   poAction: (dataset: Dataset, action: PoAction, po: string, extra: PoActionInput = {}) =>

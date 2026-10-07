@@ -180,7 +180,7 @@ test("blank network: the checklist and guided setup take a planner from nothing 
   await page.getByPlaceholder("e.g. Oil filter").fill("Oil filter");
   await page.getByRole("button", { name: "Add product" }).click();
   await page.goto("/#/setup/product/OIL-FILTER/PUNE-PLANT");
-  await page.getByRole("button", { name: "Make it here" }).click();
+  await page.getByRole("button", { name: "Make Oil filter at Pune plant" }).click();
   await page.getByRole("button", { name: "+ Add a part" }).click();
   const make = page.locator(".wz-card.attn .wz-form").first();
   await make.locator("label.qf", { hasText: "Part" }).first().locator("select").selectOption("+new");
@@ -194,7 +194,7 @@ test("blank network: the checklist and guided setup take a planner from nothing 
   await make.getByLabel("Hours per batch").fill("2");
   await make.getByRole("button", { name: "Save" }).click();
   await page.getByRole("link", { name: "Set it up" }).click();
-  await page.getByRole("button", { name: "Buy it" }).click();
+  await page.getByRole("button", { name: "Buy Filter media for Pune plant" }).click();
   // the supplier invoices in dollars: the price stays in USD with the rate kept once (Q16)
   const buy = page.locator(".wz-card.attn .wz-form").first();
   await buy.locator("label.qf", { hasText: "Price per unit" }).locator("input").fill("0.5");
@@ -791,9 +791,9 @@ test("products at places: MRP views, the structure explorer and the stock/requir
   await expect(page.getByRole("heading", { name: /Receipts and requirements/ })).toBeVisible();
   await expect(page.getByRole("cell", { name: "On hand today" })).toBeVisible();
   // MRP 1: give it an owner, then filter the index by that owner
-  await page.getByRole("tab", { name: /MRP 1/ }).click();
+  await page.getByRole("tab", { name: "Ordering", exact: true }).click();
   await page.getByLabel(/MRP controller/).fill("Asha");
-  await page.getByRole("tab", { name: /MRP 4/ }).click();
+  await page.getByRole("tab", { name: "What it is made from" }).click();
   await expect(page.getByRole("heading", { name: /What one Mixer grinder 500 W is made from/ })).toBeVisible();
   await expect(page.getByRole("cell", { name: /Enamelled copper wire/ })).toBeVisible();   // second level, through the motor
   await page.goto("/#/material");
