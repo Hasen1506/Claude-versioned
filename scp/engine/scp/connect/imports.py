@@ -295,7 +295,10 @@ def read_grid(text: str) -> list[list[str]]:
     text = text.lstrip("﻿")
     first = text.splitlines()[0] if text else ""
     delim = max((",", ";", "\t", "|"), key=first.count)
-    return [row for row in csv.reader(io.StringIO(text), delimiter=delim) if any(c.strip() for c in row)]
+    try:   # newline="": a lone carriage return inside a cell is the file's business, not a crash
+        return [row for row in csv.reader(io.StringIO(text, newline=""), delimiter=delim) if any(c.strip() for c in row)]
+    except csv.Error as e:   # a file that is not CSV at all is refused like any unreadable file, never a crash
+        raise ValueError(f"the file cannot be read as CSV: {e}") from e
 
 
 def parse_date(v: str, day_first: bool) -> str | None:
