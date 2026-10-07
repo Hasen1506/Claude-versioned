@@ -8,6 +8,16 @@ function parse(): Route {
   return h ? h.split("/").map(decodeURIComponent) : [];
 }
 
+// BACK-01: a value typed into a field is kept when the field loses focus (every grid and form commits on blur). Moving to
+// another page — a link, the browser's Back or Forward — took the field away without that blur, and the edit with it.
+// The field is blurred first (capture: before the page changes), so what was typed is kept wherever the planner goes.
+if (typeof window !== "undefined") {
+  window.addEventListener("hashchange", () => {
+    const a = document.activeElement as HTMLElement | null;
+    if (a && a !== document.body && typeof a.blur === "function") a.blur();
+  }, true);
+}
+
 export function useRoute(): Route {
   const [route, setRoute] = useState<Route>(parse);
   useEffect(() => {
