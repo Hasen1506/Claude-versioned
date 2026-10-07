@@ -1,11 +1,17 @@
 name: scp
 
 on:
+  # Branch pushes are covered by their PR run; only main runs on push.
   push:
+    branches: [main]
     paths: ["scp/**", ".github/workflows/scp.yml"]
   pull_request:
     paths: ["scp/**", ".github/workflows/scp.yml"]
   workflow_dispatch:           # run by hand: the property-based suite explores beyond the fixed CI examples
+
+concurrency:
+  group: scp-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   engine:
