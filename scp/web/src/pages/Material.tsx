@@ -70,6 +70,14 @@ function MaterialIndex({ ds }: { ds: Dataset }) {
     for (const lp of ds.location_products ?? []) put(lp.location, lp.product, lp);
     for (const n of plan?.nodes ?? []) put(n.location, n.product);
     for (const d of ds.demand ?? []) put(d.location, d.product);
+    // every place a product is sourced at is a product at a place, before any plan has run and before it has a policy
+    // of its own (UX audit: "0 of 0, no products at places yet" while the data check listed six without a policy)
+    for (const ps of ds.production_sources ?? []) {
+      put(ps.location, ps.product);
+      for (const c of ps.components ?? []) put(ps.location, c.product);
+    }
+    for (const pu of ds.purchasing_sources ?? []) if (pu.location) put(pu.location, pu.product);
+    for (const ln of ds.lanes ?? []) for (const pr of ln.products ?? []) { put(ln.origin, pr); put(ln.destination, pr); }
     return [...m.values()].sort((a, b) => nm.prod(a.prod).localeCompare(nm.prod(b.prod)) || nm.loc(a.loc).localeCompare(nm.loc(b.loc)));
   }, [ds, plan, kept, nm]);
   const problems = useMemo(() => {

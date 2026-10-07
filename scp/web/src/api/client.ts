@@ -9,6 +9,7 @@ import type {
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
+import { done } from "../lib/guide";
 
 /** Thrown when the engine rejects the dataset shape (HTTP 422). Carries field-level errors. */
 export class SchemaRejected extends Error {
@@ -248,10 +249,10 @@ export const api = {
   promise: (ds: Dataset) => planPost<PromiseResult>("/api/promise", ds),
   bop: (ds: Dataset) => planPost<PromiseResult>("/api/promise/bop", ds),
   promiseCheck: (dataset: Dataset, order: DemandRecord) =>
-    withDataset<PromiseResult>("/api/promise/check", dataset, { order }),
+    withDataset<PromiseResult>("/api/promise/check", dataset, { order }).then(done("check")),
   /** The lines of one order checked together, each after the ones before it (N119). */
   promiseCheckLines: (dataset: Dataset, lines: DemandRecord[]) =>
-    withDataset<PromiseResult>("/api/promise/check", dataset, { lines }),
+    withDataset<PromiseResult>("/api/promise/check", dataset, { lines }).then(done("check")),
   promiseCommit: (dataset: Dataset, mode: "entry" | "bop") =>
     write<PromiseCommitResponse>("/api/promise/commit", dataset, { mode }),
   /** Detailed schedule; `sequence` (resource → operation keys) fixes the order on those resources and puts a step
@@ -395,9 +396,9 @@ export const api = {
   discard: (id: string) => call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/discard`, { method: "POST" }),
   promote: (id: string, name?: string) =>
     call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/promote`, { method: "POST", body: JSON.stringify({ name: name ?? null }) }),
-  compareVersions: (a: string, b: string) => call<Comparison>(`/api/versions/${encodeURIComponent(a)}/compare/${encodeURIComponent(b)}`),
+  compareVersions: (a: string, b: string) => call<Comparison>(`/api/versions/${encodeURIComponent(a)}/compare/${encodeURIComponent(b)}`).then(done("whatif")),
   compare: (a: Dataset, b: Dataset, labelA: string, labelB: string) =>
-    call<Comparison>("/api/compare", { method: "POST", body: JSON.stringify({ a: clean(a), b: clean(b), label_a: labelA, label_b: labelB }) }),
+    call<Comparison>("/api/compare", { method: "POST", body: JSON.stringify({ a: clean(a), b: clean(b), label_a: labelA, label_b: labelB }) }).then(done("whatif")),
   finance: (ds: Dataset) => planPost<FinanceResult>("/api/finance", ds),
   tower: (ds: Dataset) => planPost<TowerResult>("/api/tower", ds),
   /** Assign (owner "" = back to the rules), acknowledge / resolve / reopen, or annotate a worklist item. */
