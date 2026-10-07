@@ -236,7 +236,7 @@ def test_h02_sso_never_takes_over_a_password_account_by_e_mail(idp):
 
 
 def test_h02_a_new_sso_account_is_verified_and_a_wrong_nonce_or_audience_is_refused(idp):
-    loc = idp({"sub": "s2", "email": "meera@acme.example", "email_verified": "true"})
+    assert idp({"sub": "s2", "email": "meera@acme.example", "email_verified": "true"}).endswith("/#/account/sso")
     tok = idp.last
     assert client.get("/api/auth/me", headers=h(tok)).json()["user"]["verified"] is True
     assert "nonce" in idp({"sub": "s2", "email": "meera@acme.example", "email_verified": True}, nonce="forged")
