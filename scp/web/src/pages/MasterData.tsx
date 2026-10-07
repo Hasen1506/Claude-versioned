@@ -215,7 +215,9 @@ function Editor({ ds, ckey, index, obj, errors, issues }: {
     if (nk !== k) go("data", ckey, nk);
   };
   const remove = () => {
-    if (used.length && !window.confirm(`${String(obj.id)} is used by ${used.length} object(s):\n${used.join("\n")}\n\nDelete anyway?`)) return;
+    // QA: a delete is always confirmed, not only when something points at the record
+    if (!window.confirm(used.length ? `${String(obj.id)} is used by ${used.length} object(s):\n${used.join("\n")}\n\nDelete anyway?`
+      : `Delete ${def.singular} ${k}? Undo brings it back.`)) return;
     store.update((d) => { items(d, ckey).splice(index, 1); });
     go("data", ckey);
   };
