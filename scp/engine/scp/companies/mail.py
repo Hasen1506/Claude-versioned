@@ -35,7 +35,7 @@ def _smtp(to: str, subject: str, body: str) -> None:
     msg["To"] = to
     msg["Subject"] = subject
     msg.set_content(body)
-    _deliver(msg)
+    deliver(msg)          # the module's deliver, so what tests replace catches account mail too
 
 
 def _deliver(msg: EmailMessage) -> None:
