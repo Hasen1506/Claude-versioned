@@ -7,6 +7,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { api, ApiError, SchemaRejected, setAuth, setDataRef, setPlanningView, setWriteGuard, type DataRef } from "../api/client";
 import { makePatch, patchIsSmall, type Patch } from "../lib/patch";
+import { leavingScreen } from "../lib/router";
 import { keepSteps, stepsFor } from "./undoStore";
 import type { CompanyDoc, CompanyMeta, PlanTrace, User, ActualsView, PurchasingView, SalesView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
 
@@ -184,6 +185,8 @@ const WHERE_KEY = "scp.undo.where";
 
 /** The screen in view: the first part of the route ("data", "tower", "demand"); "" before any. */
 export function screen(): string {
+  const left = leavingScreen();          // a field blurred by Back/Forward/a link: its edit is the screen it was on
+  if (left !== null) return left;
   return (typeof window === "undefined" ? "" : window.location.hash.replace(/^#\/?/, "").split("/")[0]) || "home";
 }
 
@@ -264,7 +267,9 @@ function set(patch: Partial<State>) {
     canUndo: past.length > 0 && sameScreen(u), canRedo: future.length > 0 && sameScreen(r),
     undoElsewhere: past.length > 0 && !sameScreen(u) ? u : null,
     redoElsewhere: future.length > 0 && !sameScreen(r) ? r : null };
-  keepWhere();
+  // not while a reload reads its undo steps back: the screens kept for them would be overwritten by the empty lists
+  // of the moment before they are back (UNDO-04: after a reload every step counted as every screen's)
+  if (!restoringSteps) keepWhere();
   if ("runs" in patch) keepCalculated();
   // undo survives a reload (R19); not for a company too large to keep here (thirty steps of it would be gigabytes)
   if ("dataset" in patch && !restoringSteps) keepSteps(() => state.dataset && rowsOf(state.dataset) > LOCAL_ROWS ? [null, [], []] : [state.dataset, past, future]);
@@ -992,8 +997,9 @@ export const store = {
           future.push(...(st.future as Dataset[]));
           try {
             const w = JSON.parse(localStorage.getItem(WHERE_KEY) ?? "{}") as { past?: string[]; future?: string[] };
-            if (w.past?.length === past.length) pastWhere.splice(0, pastWhere.length, ...w.past);
-            if (w.future?.length === future.length) futureWhere.splice(0, futureWhere.length, ...w.future);
+            // the steps kept across a reload are the latest few: their screens are the latest as many
+            if (w.past && w.past.length >= past.length) pastWhere.splice(0, pastWhere.length, ...w.past.slice(w.past.length - past.length));
+            if (w.future && w.future.length >= future.length) futureWhere.splice(0, futureWhere.length, ...w.future.slice(w.future.length - future.length));
           } catch { /* unreadable: the steps count as any screen's */ }
           set({});
         });
