@@ -40,3 +40,6 @@ class TowerSettings(Model):
     excess_cover_days: int = Field(90, ge=1, le=730, description="Stock above this many days of requirements is excess")
     slow_moving_days: int = Field(90, ge=1, le=730, description="Stock with no issue or sale for this long is slow-moving")
     bias_alert: float = Unit("fraction", le=5, default=0.2, description="Flag a series whose forecast bias exceeds this")
+    late_revenue_factor: float = Unit("fraction", le=1, default=1.0,
+                                      description="Exception inbox: the share of a late sale's revenue counted as at "
+                                                  "risk (1 = all of it, 0.2 = a fifth, e.g. a late-delivery penalty)")

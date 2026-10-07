@@ -13,6 +13,7 @@ from ..promise import run_promise
 from ..validate import RULES, validate
 from ..versions.store import Store, canonical, get_store, sha
 from .kpis import Kpis
+from .money import inbox_order, price_items
 from .result import DataQualityRow, Kpi, KpiRow, TowerResult, WorkItem
 from .worklist import Tracker, collect, get_tracker
 
@@ -81,6 +82,10 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
     out.worklist = sorted(live, key=lambda w: (order.get(w.status, 3), not w.breached, SEV[w.severity], -w.age_days,
                                                w.category, w.key))
     out.cleared = cleared
+    price_items(ds, plan if plan.ok else None, out.worklist)          # roadmap F: money at risk and one action each
+    out.inbox = inbox_order(out.worklist)
+    by_id = {w.id: w for w in out.worklist}
+    out.money_at_risk = round(sum(by_id[i].money_at_risk for i in out.inbox), 2)
 
     k = Kpis(ds)
     k.forecast()
