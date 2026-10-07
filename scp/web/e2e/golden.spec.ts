@@ -741,7 +741,7 @@ test("phone: the menu opens the pages, each page answers first, nothing scrolls 
   await expect(page.locator(".stage-head .answer")).toContainText("customer orders can ship in full");
   for (const hash of ["#/", "#/plan", "#/promise", "#/finance", "#/tower", "#/data", "#/capacity", "#/schedule/orders", "#/schedule/methods", "#/buying", "#/buying/orders", "#/buying/suppliers", "#/execution/count", "#/execution/orders"]) {
     await page.goto(`/${hash}`);
-    await page.waitForTimeout(300);
+    await expect(page.locator("main :is(h1, h2)").first()).toBeVisible();   // the page drawn, not a wait on time
     expect(await page.evaluate(() => document.documentElement.scrollWidth), hash).toBeLessThanOrEqual(390);
   }
 });

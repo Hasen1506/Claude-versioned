@@ -558,7 +558,8 @@ class _Planner:
                 # replenish-to-max: round DOWN when that still covers the shortage and the minimums
                 down = math.floor(ceiling / step + 1e-9) * step
                 if down >= max([shortage or 0.0, *mins]) - EPS:
-                    lots = apply_modifiers(down, mins=[], roundings=[], maxes=maxes)
+                    # split by the maximum in whole rounding steps: a lot of 35 when lots come in tens is no lot
+                    lots = apply_modifiers(down, mins=[], roundings=[step], maxes=maxes)
         total = 0.0
         req_left = qty if below_zero is None else below_zero
         buf_left = 0.0 if shortage is None else max(0.0, shortage - req_left)

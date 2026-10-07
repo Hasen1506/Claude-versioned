@@ -472,6 +472,7 @@ button.tile.choice.on { border: 1px solid var(--ink); box-shadow: inset 4px 0 0 
 .banner { display: flex; align-items: center; gap: 10px; padding: 9px 12px; margin-bottom: 14px; font-size: 12.5px; border: var(--rule) solid; border-left-width: 6px; flex-wrap: wrap; }
 .banner.warning { background: var(--warning-soft); color: var(--warning-text); border-color: var(--warning); }
 .banner.error { background: var(--critical-soft); color: var(--critical-text); border-color: var(--critical); }
+.field-error { color: var(--critical-text); }
 .banner.ok { background: var(--good-soft); color: var(--good-text); border-color: var(--good); }
 .banner.info { background: var(--accent-soft); color: var(--accent-text); border-color: var(--accent); }
 .bar-list .bar-row { display: grid; grid-template-columns: 130px minmax(0, 1fr) 90px; gap: 10px; align-items: center; padding: 4px 0; font-size: 12.5px; }

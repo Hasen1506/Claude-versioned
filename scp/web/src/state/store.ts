@@ -7,6 +7,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { api, ApiError, SchemaRejected, setAuth, setDataRef, setPlanningView, setWriteGuard, type DataRef } from "../api/client";
 import { makePatch, patchIsSmall, type Patch } from "../lib/patch";
+import { leavingScreen } from "../lib/router";
 import { keepSteps, stepsFor } from "./undoStore";
 import type { CompanyDoc, CompanyMeta, PlanTrace, User, ActualsView, PurchasingView, SalesView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
 
@@ -184,6 +185,8 @@ const WHERE_KEY = "scp.undo.where";
 
 /** The screen in view: the first part of the route ("data", "tower", "demand"); "" before any. */
 export function screen(): string {
+  const left = leavingScreen();          // a field blurred by Back/Forward/a link: its edit is the screen it was on
+  if (left !== null) return left;
   return (typeof window === "undefined" ? "" : window.location.hash.replace(/^#\/?/, "").split("/")[0]) || "home";
 }
 
@@ -237,6 +240,23 @@ setPlanningView((ds) => {
 /** True while the undo steps kept for the reloaded working copy are read back (nothing is kept over them meanwhile). */
 let restoringSteps = false;
 
+// REFRESH-01/02: results a reload must not lose. The forecast (the workbench and consensus tabs exist only with it) and
+// the performance measures (the rail's count of measures off target) are calculated again after a reload when they had
+// been calculated before it; the other results recalculate when their page opens (useFreshResult) or with Plan everything.
+const CALCULATED_KEY = "scp.calculated.v1";
+const AFTER_RELOAD: readonly RunKey[] = ["forecast", "tower"];
+let pendingCalc = new Set<RunKey>();   // asked for again after the reload, not back yet
+let pendingEpoch = -1;
+let calculatedKept: string | null = null;
+function keepCalculated() {
+  if (pendingEpoch !== loadEpoch) pendingCalc = new Set();   // another company was opened since: its results are its own
+  const had = AFTER_RELOAD.filter((k) => state.runs[k].data !== null || state.runs[k].running || pendingCalc.has(k));
+  const v = JSON.stringify(had);
+  if (v === calculatedKept) return;
+  calculatedKept = v;
+  try { if (had.length) localStorage.setItem(CALCULATED_KEY, v); else localStorage.removeItem(CALCULATED_KEY); } catch { /* full */ }
+}
+
 function set(patch: Partial<State>) {
   while (pastWhere.length < past.length) pastWhere.unshift("");
   while (pastWhere.length > past.length) pastWhere.shift();
@@ -247,7 +267,10 @@ function set(patch: Partial<State>) {
     canUndo: past.length > 0 && sameScreen(u), canRedo: future.length > 0 && sameScreen(r),
     undoElsewhere: past.length > 0 && !sameScreen(u) ? u : null,
     redoElsewhere: future.length > 0 && !sameScreen(r) ? r : null };
-  keepWhere();
+  // not while a reload reads its undo steps back: the screens kept for them would be overwritten by the empty lists
+  // of the moment before they are back (UNDO-04: after a reload every step counted as every screen's)
+  if (!restoringSteps) keepWhere();
+  if ("runs" in patch) keepCalculated();
   // undo survives a reload (R19); not for a company too large to keep here (thirty steps of it would be gigabytes)
   if ("dataset" in patch && !restoringSteps) keepSteps(() => state.dataset && rowsOf(state.dataset) > LOCAL_ROWS ? [null, [], []] : [state.dataset, past, future]);
   listeners.forEach((l) => l());
@@ -889,9 +912,11 @@ export const store = {
     try {
       const data = await RUNNERS[key](ds);
       if (epoch !== loadEpoch || runRequests[key] !== request) return;
+      pendingCalc.delete(key);
       setRun(key, { data, revision: rev, on: ds, running: false, at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
     } catch (e) {
       if (epoch !== loadEpoch || runRequests[key] !== request) return;
+      pendingCalc.delete(key);
       if (e instanceof SchemaRejected) {
         set({ schemaErrors: e.errors });
         setRun(key, { running: false, error: "The dataset has invalid values." });
@@ -972,8 +997,9 @@ export const store = {
           future.push(...(st.future as Dataset[]));
           try {
             const w = JSON.parse(localStorage.getItem(WHERE_KEY) ?? "{}") as { past?: string[]; future?: string[] };
-            if (w.past?.length === past.length) pastWhere.splice(0, pastWhere.length, ...w.past);
-            if (w.future?.length === future.length) futureWhere.splice(0, futureWhere.length, ...w.future);
+            // the steps kept across a reload are the latest few: their screens are the latest as many
+            if (w.past && w.past.length >= past.length) pastWhere.splice(0, pastWhere.length, ...w.past.slice(w.past.length - past.length));
+            if (w.future && w.future.length >= future.length) futureWhere.splice(0, futureWhere.length, ...w.future.slice(w.future.length - future.length));
           } catch { /* unreadable: the steps count as any screen's */ }
           set({});
         });
@@ -991,6 +1017,13 @@ export const store = {
           void store.refreshCompany();
         }
         scheduleCheck();
+        // what had been calculated before the reload is calculated again (REFRESH-01/02)
+        let again: RunKey[] = [];
+        try { again = (JSON.parse(localStorage.getItem(CALCULATED_KEY) ?? "[]") as RunKey[]).filter((k) => AFTER_RELOAD.includes(k)); }
+        catch { again = []; }
+        pendingCalc = new Set(again);
+        pendingEpoch = loadEpoch;
+        for (const k of again) void store.run(k);
       }
     } catch {
       /* ignore unreadable storage */

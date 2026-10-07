@@ -7,6 +7,7 @@ import {
 } from "../components/ui";
 import { addDays, day, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Prod, namesOf, useNames } from "../lib/names";
+import { orderProblems, orderWarnings } from "../lib/orderchecks";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useFreshResult, useStore } from "../state/store";
@@ -451,6 +452,12 @@ function Simulate({ ds, onDone }: { ds: Dataset; onDone: (m: string) => void }) 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const set = (patch: Partial<DemandRecord>) => setOrder((o) => ({ ...o, ...patch }));
+  // ORDER-NEW-01/02: what is typed is kept as typed and checked here, never turned into another number (−50 into 50, an
+  // empty priority into 0) nor sent for the engine to refuse; a quantity far above any order so far, or a date before
+  // the plan starts, is taken only after a warning
+  const [raw, setRaw] = useState({ qty: String(order.qty), priority: String(order.priority) });
+  const problems = orderProblems(raw);
+  const warnings = orderWarnings(ds, order, start);
   const key = JSON.stringify(order);
   const list = listPrice(ds, order.location, order.product);
   const nm = useNames();
@@ -496,7 +503,9 @@ function Simulate({ ds, onDone }: { ds: Dataset; onDone: (m: string) => void }) 
             <select value={order.product} onChange={(e) => set({ product: e.target.value })} aria-label="Product">
               {products.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}</select></label>
           <label className="field"><span className="label">Quantity</span>
-            <input type="number" min={0} value={order.qty} onChange={(e) => set({ qty: Number(e.target.value) })} aria-label="Quantity" /></label>
+            <input type="number" min={0} value={raw.qty} aria-label="Quantity" aria-invalid={!!problems.qty}
+              onChange={(e) => { setRaw((r) => ({ ...r, qty: e.target.value })); const n = Number(e.target.value); if (e.target.value.trim() !== "" && Number.isFinite(n) && n > 0) set({ qty: n }); }} />
+            {problems.qty && <span className="small field-error" role="alert">{problems.qty}</span>}</label>
           <label className="field"><span className="label">Wanted on</span>
             <input type="date" value={order.date} onChange={(e) => set({ date: e.target.value })} aria-label="Wanted on" /></label>
           <label className="field"><span className="label">Price a unit</span>
@@ -507,11 +516,14 @@ function Simulate({ ds, onDone }: { ds: Dataset; onDone: (m: string) => void }) 
           {twin && <p className="small" role="status" style={{ color: "var(--warning-text)", margin: 0 }}>Already taken as {twin.id}: {qty(twin.qty)} {nm.prod(twin.product)} for {day(twin.date)}.
             Taking it again makes a second order.</p>}
           <label className="field"><span className="label">Priority (1 = first)</span>
-            <input type="number" min={1} max={9} value={order.priority} onChange={(e) => set({ priority: Number(e.target.value) })} aria-label="Priority" /></label>
+            <input type="number" min={1} max={9} step={1} value={raw.priority} aria-label="Priority" aria-invalid={!!problems.priority}
+              onChange={(e) => { setRaw((r) => ({ ...r, priority: e.target.value })); const n = Number(e.target.value); if (e.target.value.trim() !== "" && Number.isInteger(n) && n >= 1 && n <= 9) set({ priority: n }); }} />
+            {problems.priority && <span className="small field-error" role="alert">{problems.priority}</span>}</label>
+          {warnings.map((w) => <p key={w} className="small" role="status" style={{ color: "var(--warning-text)", margin: 0 }}>{w}</p>)}
           <label className="row small"><input type="checkbox" checked={!!order.complete_delivery} onChange={(e) => set({ complete_delivery: e.target.checked })} />Complete delivery only</label>
           <div className="row wrap">
-            <button className="btn" onClick={check} disabled={busy || !order.qty || !order.location || !order.product}>{busy && !fresh ? "Checking…" : "Check availability"}</button>
-            <Edits><button className="btn accent" onClick={take} disabled={busy || !fresh} title={fresh ? "Save it as a sales order with this promise" : "Check it first"}>Take this order</button></Edits>
+            <button className="btn" onClick={check} disabled={busy || !order.qty || !order.location || !order.product || !!problems.qty || !!problems.priority}>{busy && !fresh ? "Checking…" : "Check availability"}</button>
+            <Edits><button className="btn accent" onClick={take} disabled={busy || !fresh || !!problems.qty || !!problems.priority} title={fresh ? "Save it as a sales order with this promise" : "Check it first"}>Take this order</button></Edits>
           </div>
         </div>
         <p className="faint small">Checking saves nothing: it comes after every order already promised. <b>Take this order</b> saves it as a

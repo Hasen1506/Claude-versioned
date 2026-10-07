@@ -15,6 +15,7 @@ import { confirmationDocument, customerAddresses, customerEmail, invoiceDocument
 import { ServerSend } from "../components/ServerSend";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { download } from "../lib/tabular";
+import { orderWarnings } from "../lib/orderchecks";
 import { go, href } from "../lib/router";
 import { isStale, store, useFreshResult, useReadOnly, useStore } from "../state/store";
 
@@ -343,6 +344,10 @@ function LinesForm({ ds, customer, busy, submit, onSubmit, second }: {
       <tfoot><tr><td /><td><button className="btn sm ghost" onClick={() => setLines((ls) => [...ls, blank()])}>+ Add a line</button></td><td /><td />
         <td className="num faint">before tax</td><td className="num"><b>{exactMoney(total, cur)}</b></td>{fresh && <td />}<td /></tr></tfoot>
     </table></div>
+    {lines.map((l, i) => !(l.qty > 0) && <p key={`q${i}`} className="small field-error" role="alert" style={{ margin: 0 }}>
+      Line {(i + 1) * 10}: {Number.isFinite(l.qty) && l.qty < 0 ? "the quantity must be more than zero" : "type the quantity ordered, more than zero"}.</p>)}
+    {lines.flatMap((l, i) => l.qty > 0 ? orderWarnings(ds, l, start).map((w) => <p key={`w${i}${w}`} className="small" role="status"
+      style={{ color: "var(--warning-text)", margin: 0 }}>Line {(i + 1) * 10}: {w}</p>) : [])}
     {checkErr && <div className="banner error" role="alert"><Badge sev="error">Not checked</Badge><span>{checkErr}</span></div>}
     {checked && !fresh && <p className="small faint" role="status">The lines changed since they were checked: check again.</p>}
     <Edits><div className="row wrap">

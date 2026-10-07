@@ -18,7 +18,9 @@ const kb = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(
 
 export function useAuthConfig(): AuthConfig | null {
   const [cfg, setCfg] = useState<AuthConfig | null>(null);
-  useEffect(() => { api.authConfig().then(setCfg).catch(() => setCfg(null)); }, []);
+  // read again on signing in or out: "first account" stops being true once one is made (AUTH-01)
+  const token = useStore((s) => s.session?.token);
+  useEffect(() => { api.authConfig().then(setCfg).catch(() => setCfg(null)); }, [token]);
   return cfg;
 }
 
@@ -32,7 +34,12 @@ export function SignIn({ config, onDone }: { config: AuthConfig | null; onDone?:
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (config?.first_account) setMode("up"); }, [config?.first_account]);
+  const wasFirst = useRef(config?.first_account);
+  useEffect(() => {
+    if (config?.first_account) setMode("up");
+    else if (wasFirst.current && config) setMode((m) => m === "up" ? "in" : m);   // the first account exists now
+    wasFirst.current = config?.first_account;
+  }, [config?.first_account]);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);

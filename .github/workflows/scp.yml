@@ -5,19 +5,26 @@ on:
     paths: ["scp/**", ".github/workflows/scp.yml"]
   pull_request:
     paths: ["scp/**", ".github/workflows/scp.yml"]
+  workflow_dispatch:           # run by hand: the property-based suite explores beyond the fixed CI examples
 
 jobs:
   engine:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: scp/engine } }
+    env:
+      # derandomised Hypothesis on pushes and PRs (the same examples every run: a red build is reproducible, never
+      # flaky); a run started by hand explores
+      HYPOTHESIS_PROFILE: ${{ github.event_name == 'workflow_dispatch' && 'deep' || 'ci' }}
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # the differential test reads the engine before PR #22 from history
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
       - run: pip install -e ".[dev]"
       - name: Lint
         run: ruff check scp tests ../examples
-      - run: python -m pytest -q
+      - name: Tests (parallel)
+        run: python -m pytest -q -n auto --durations=15
       - name: Examples are reproducible
         run: python ../examples/build_examples.py && git diff --exit-code ../examples
 
@@ -36,5 +43,8 @@ jobs:
       - name: API types match the engine (no drift)
         run: npm run gen:api && git diff --exit-code src/api/schema.d.ts
       - run: npm run build
+      - name: Engine tests that need the built client (skipped in the engine job, which has no build)
+        working-directory: scp/engine
+        run: python -m pytest -q tests/test_prop_regressions.py -k ts05
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test --reporter=line
