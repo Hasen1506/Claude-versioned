@@ -89,6 +89,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/invites/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Accept Invite
+         * @description Join a company you were invited to: with the invitation's link, or by its id once your address is verified
+         *     (CV-C01: an invitation is never taken by registering its address).
+         */
+        post: operations["auth_accept_invite_api_auth_invites_accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/email/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Email Request
+         * @description Mail a link that confirms the account's address (needs the server's mail and SCP_PUBLIC_URL).
+         */
+        post: operations["auth_email_request_api_auth_email_request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/email/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Auth Email Verify */
+        post: operations["auth_email_verify_api_auth_email_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/password": {
         parameters: {
             query?: never;
@@ -235,7 +293,9 @@ export interface paths {
         put?: never;
         /**
          * Set Company Member
-         * @description Add a member or change their role; an e-mail without an account is invited.
+         * @description Change a member's role, or invite an address (with or without an account): the answer carries the
+         *     invitation's link once (``invite_link``), and it is mailed to the address when the server sends mail. Nobody
+         *     joins until they accept it (CV-C01).
          */
         post: operations["set_company_member_api_companies__cid__members_post"];
         delete?: never;
@@ -417,6 +477,26 @@ export interface paths {
         get: operations["auth_sso_start_api_auth_sso_start_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/sso/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Sso Link
+         * @description Begin binding the company's sign-on to the signed-in account (the only way an existing account gets it).
+         */
+        post: operations["auth_sso_link_api_auth_sso_link_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1556,6 +1636,8 @@ export interface paths {
         /**
          * Post Tower
          * @description KPIs, the exception worklist (recorded in the version store: first seen, owner, status) and data quality.
+         *     Only a member who may change the company records the run in its worklist; a viewer sees it as it stands
+         *     (CV-H05).
          */
         post: operations["post_tower_api_tower_post"];
         delete?: never;
@@ -3682,6 +3764,11 @@ export interface components {
              */
             unpriced: string[];
         };
+        /** EmailVerify */
+        EmailVerify: {
+            /** Token */
+            token: string;
+        };
         /** ErpAck */
         ErpAck: {
             /**
@@ -4744,6 +4831,19 @@ export interface components {
              */
             types: string[];
         };
+        /** InviteAccept */
+        InviteAccept: {
+            /**
+             * Token
+             * @default
+             */
+            token: string;
+            /**
+             * Company
+             * @default
+             */
+            company: string;
+        };
         /**
          * Invoice
          * @description A billing document (≈ VBRK): an invoice for goods delivered, or a credit note for goods returned or a price
@@ -5757,6 +5857,11 @@ export interface components {
             user: components["schemas"]["User"];
             /** Companies */
             companies: components["schemas"]["CompanyMeta"][];
+            /**
+             * Invites
+             * @default []
+             */
+            invites: components["schemas"]["PendingInvite"][];
         };
         /** Member */
         Member: {
@@ -5780,6 +5885,8 @@ export interface components {
              * @default []
              */
             families: string[];
+            /** Invite Link */
+            invite_link: string | null;
         };
         /** MemberChange */
         MemberChange: {
@@ -6995,6 +7102,22 @@ export interface components {
             requirement_id: string;
             /** Qty */
             qty: number;
+        };
+        /**
+         * PendingInvite
+         * @description An invitation to a company waiting for the account to accept it (nobody joins a company unasked).
+         */
+        PendingInvite: {
+            /** Company */
+            company: string;
+            /** Name */
+            name: string;
+            /** Role */
+            role: string;
+            /** Invited By */
+            invited_by: string;
+            /** At */
+            at: string;
         };
         /** PlacementApplied */
         PlacementApplied: {
@@ -8636,6 +8759,11 @@ export interface components {
             link: string;
             /** Expires At */
             expires_at: string;
+            /**
+             * Mailed
+             * @default false
+             */
+            mailed: boolean;
         };
         /** ResetPassword */
         ResetPassword: {
@@ -10121,6 +10249,16 @@ export interface components {
          * @enum {string}
          */
         SelectionMetric: "mase" | "wape" | "rmse";
+        /** Sent */
+        Sent: {
+            /**
+             * Ok
+             * @default true
+             */
+            ok: boolean;
+            /** Mail */
+            mail: boolean;
+        };
         /** Series */
         Series: {
             /** Key */
@@ -10700,6 +10838,11 @@ export interface components {
             blocked: string;
             /** Contract */
             contract: string | null;
+        };
+        /** SsoLink */
+        SsoLink: {
+            /** Url */
+            url: string;
         };
         /** StepReport */
         StepReport: {
@@ -11501,6 +11644,11 @@ export interface components {
             email: string;
             /** Name */
             name: string;
+            /**
+             * Verified
+             * @default false
+             */
+            verified: boolean;
         };
         /** ValidationError */
         ValidationError: {
@@ -11992,6 +12140,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Me"];
+                };
+            };
+        };
+    };
+    auth_accept_invite_api_auth_invites_accept_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteAccept"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_email_request_api_auth_email_request_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Sent"];
+                };
+            };
+        };
+    };
+    auth_email_verify_api_auth_email_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailVerify"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12687,6 +12921,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_sso_link_api_auth_sso_link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SsoLink"];
                 };
             };
         };
