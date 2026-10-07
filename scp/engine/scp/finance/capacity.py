@@ -17,13 +17,15 @@ CASH = ("purchase", "production", "transport", "holding", "overtime")
 
 def objective(r: SopResult) -> float:
     """The LP objective the duals refer to (minimised)."""
-    assert r.economics is not None
+    if r.economics is None:   # CV-L01
+        raise ValueError("the capacity plan has no economics to price")
     return -r.economics.profit if r.mode.value == "profit" else r.economics.total_cost
 
 
 def cash(r: SopResult) -> float:
     e = r.economics
-    assert e is not None
+    if e is None:   # CV-L01
+        raise ValueError("the capacity plan has no economics to price")
     return e.revenue + e.valued_at_cost - sum(getattr(e, c) for c in CASH)
 
 
