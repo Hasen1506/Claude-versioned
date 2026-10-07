@@ -110,6 +110,9 @@ export interface State {
   engineError: string | null;
   canUndo: boolean;
   canRedo: boolean;
+  /** The screen the next undo (redo) would change, when it is another screen than this one (it is then disabled). */
+  undoElsewhere: string | null;
+  redoElsewhere: string | null;
   /** "Plan everything" in progress: which step of how many, and what it is doing now. */
   planning: { done: number; of: number; label: string; since: number } | null;   // since: when this step began (ms)
 }
@@ -168,11 +171,29 @@ const localSave = (): SaveState => ({ status: "local", at: null, error: null, co
 let state: State = {
   session: null, company: null, save: localSave(),
   dataset: null, version: null, revision: 0, touched: {}, validation: null, schemaErrors: [], network: null, runs: emptyRuns(),
-  checking: false, engineError: null, canUndo: false, canRedo: false, planning: null,
+  checking: false, engineError: null, canUndo: false, canRedo: false, undoElsewhere: null, redoElsewhere: null, planning: null,
 };
 const listeners = new Set<() => void>();
 const past: Dataset[] = [];
 const future: Dataset[] = [];
+// QA (Undo/Redo spans screens): each step remembers the screen it was made on, and Undo/Redo act only on a step of the
+// screen in view, so a press on one screen never silently brings back a deletion made on another
+const pastWhere: string[] = [];
+const futureWhere: string[] = [];
+const WHERE_KEY = "scp.undo.where";
+
+/** The screen in view: the first part of the route ("data", "tower", "demand"); "" before any. */
+export function screen(): string {
+  return (typeof window === "undefined" ? "" : window.location.hash.replace(/^#\/?/, "").split("/")[0]) || "home";
+}
+
+function keepWhere() {
+  try { localStorage.setItem(WHERE_KEY, JSON.stringify({ past: pastWhere, future: futureWhere })); } catch { /* full */ }
+}
+
+function sameScreen(where: string | undefined): boolean {
+  return !where || where === screen();          // "" (a step kept before this) is any screen's
+}
 let timer: ReturnType<typeof setTimeout> | undefined;
 /** Revision the last data check answered for (validation and set-aside records are current at it). */
 let checkedRevision = -1;
@@ -217,11 +238,22 @@ setPlanningView((ds) => {
 let restoringSteps = false;
 
 function set(patch: Partial<State>) {
-  state = { ...state, ...patch, canUndo: past.length > 0, canRedo: future.length > 0 };
+  while (pastWhere.length < past.length) pastWhere.unshift("");
+  while (pastWhere.length > past.length) pastWhere.shift();
+  while (futureWhere.length < future.length) futureWhere.unshift("");
+  while (futureWhere.length > future.length) futureWhere.shift();
+  const u = pastWhere[pastWhere.length - 1], r = futureWhere[futureWhere.length - 1];
+  state = { ...state, ...patch,
+    canUndo: past.length > 0 && sameScreen(u), canRedo: future.length > 0 && sameScreen(r),
+    undoElsewhere: past.length > 0 && !sameScreen(u) ? u : null,
+    redoElsewhere: future.length > 0 && !sameScreen(r) ? r : null };
+  keepWhere();
   // undo survives a reload (R19); not for a company too large to keep here (thirty steps of it would be gigabytes)
   if ("dataset" in patch && !restoringSteps) keepSteps(() => state.dataset && rowsOf(state.dataset) > LOCAL_ROWS ? [null, [], []] : [state.dataset, past, future]);
   listeners.forEach((l) => l());
 }
+
+if (typeof window !== "undefined") window.addEventListener("hashchange", () => set({}));
 
 function setRun<K extends RunKey>(key: K, patch: Partial<Run<RunResults[K]>>) {
   set({ runs: { ...state.runs, [key]: { ...state.runs[key], ...patch } } });
@@ -568,8 +600,10 @@ function refused(): boolean {
 function commit(next: Dataset) {
   if (refused()) return;
   past.push(state.dataset!);
-  if (past.length > HISTORY) past.shift();
+  pastWhere.push(screen());
+  if (past.length > HISTORY) { past.shift(); pastWhere.shift(); }
   future.length = 0;
+  futureWhere.length = 0;
   persist(next);
   if (state.version) persistVersion(state.version, true);
   advance(next);
@@ -818,8 +852,9 @@ export const store = {
   },
 
   undo() {
-    if (!state.dataset || !past.length || refused()) return;
+    if (!state.dataset || !past.length || !sameScreen(pastWhere[pastWhere.length - 1]) || refused()) return;
     const prev = past.pop()!;
+    futureWhere.push(pastWhere.pop() ?? "");
     future.push(state.dataset);
     persist(prev);
     advance(prev);
@@ -829,8 +864,9 @@ export const store = {
   },
 
   redo() {
-    if (!state.dataset || !future.length || refused()) return;
+    if (!state.dataset || !future.length || !sameScreen(futureWhere[futureWhere.length - 1]) || refused()) return;
     const next = future.pop()!;
+    pastWhere.push(futureWhere.pop() ?? "");
     past.push(state.dataset);
     persist(next);
     advance(next);
@@ -934,6 +970,11 @@ export const store = {
           if (!st || state.dataset !== ds || past.length || future.length) return;
           past.push(...(st.past as Dataset[]));
           future.push(...(st.future as Dataset[]));
+          try {
+            const w = JSON.parse(localStorage.getItem(WHERE_KEY) ?? "{}") as { past?: string[]; future?: string[] };
+            if (w.past?.length === past.length) pastWhere.splice(0, pastWhere.length, ...w.past);
+            if (w.future?.length === future.length) futureWhere.splice(0, futureWhere.length, ...w.future);
+          } catch { /* unreadable: the steps count as any screen's */ }
           set({});
         });
         const cr = localStorage.getItem(COMPANY_KEY);
