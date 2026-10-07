@@ -101,7 +101,7 @@ export function Setup({ route }: { route: string[] }) {
   if (sub === "company") return <Edits><CompanySetup ds={ds} /></Edits>;
   if (sub === "network") return <Edits><NetworkBuilder ds={ds} /></Edits>;
   if (sub === "products") return <Edits><Products ds={ds} /></Edits>;
-  if (sub === "product") return <Edits><ProductWizard ds={ds} product={route[2]} place={route[3]} /></Edits>;
+  if (sub === "product") return <Edits><ProductWizard ds={ds} product={route[2]} place={route[3]} how={route[4]} /></Edits>;
   return <Edits><SetupHome ds={ds} /></Edits>;
 }
 
@@ -464,7 +464,7 @@ function placesNeeding(ds: Dataset, net: NetworkView | null, product: string, ex
   return [...out].filter((l) => stocking.has(l) || (ds.locations ?? []).find((x) => x.id === l)?.type === "customer");
 }
 
-function ProductWizard({ ds, product, place }: { ds: Dataset; product?: string; place?: string }) {
+function ProductWizard({ ds, product, place, how }: { ds: Dataset; product?: string; place?: string; how?: string }) {
   const net = useStore((s) => s.network);
   const prods = ds.products ?? [];
   const p = prods.find((x) => x.id === product);
@@ -485,6 +485,7 @@ function ProductWizard({ ds, product, place }: { ds: Dataset; product?: string; 
   const places = needed;
   const open = place && places.includes(place) ? place : places[0];
   const others = (ds.locations ?? []).filter((l) => STOCKING.includes(l.type) && !places.includes(l.id));
+  const plants = (ds.locations ?? []).filter((l) => l.type === "plant");
   return (
     <div>
       <StageHeader title={p.name || p.id} kicker={<>{PRODUCT_TYPES.find((t) => t.type === p.type)?.label}. For each place that needs it, say how it gets
@@ -494,8 +495,13 @@ function ProductWizard({ ds, product, place }: { ds: Dataset; product?: string; 
           <a className="btn" href={href("setup")}>Back to setup</a></>} />
       <div className="content stack">
         {!places.length && <div className="banner warning">{p.name || p.id} isn't needed anywhere yet: it has no demand and isn't a part of anything.
-          {p.type === "FG" ? <> <a href={href("demand")}>Add demand for it</a>, or plan it at a place below.</> : <> Use it as a part when you set up how something is made, or plan it at a place below.</>}</div>}
-        {places.map((loc) => <PlaceCard key={loc} ds={ds} net={net} product={p.id} place={loc} open={loc === open} />)}
+          {p.type === "FG" ? <> <a href={href("demand")}>Add demand for it</a>, or plan it at a place below.</> : <> Use it as a part when you set up how something is made, or plan it at a place below.</>}
+          {/* the bill of material can be entered straight away: making it at a plant is what plans it there */}
+          {p.type !== "RM" && plants.length > 0 && <div className="row wrap" style={{ marginTop: 8 }}>
+            <span className="small">Know what it is made from?</span>
+            {plants.map((l) => <button key={l.id} className="btn sm primary" onClick={() => go("setup", "product", p.id, l.id, "make")}>Make it at {l.name || l.id}</button>)}
+          </div>}</div>}
+        {places.map((loc) => <PlaceCard key={`${p.id}|${loc}`} ds={ds} net={net} product={p.id} place={loc} open={loc === open} start={loc === place && how === "make" ? "make" : undefined} />)}
         {others.length > 0 && <div className="row wrap">
           <span className="muted small">Also plan it at</span>
           <select className="select" value={extra} onChange={(e) => setExtra(e.target.value)} aria-label="Also plan it at" style={{ width: "auto" }}>
@@ -511,10 +517,13 @@ function ProductWizard({ ds, product, place }: { ds: Dataset; product?: string; 
 
 type Mode = null | "make" | "buy" | "ship";
 
-function PlaceCard({ ds, net, product, place, open }: { ds: Dataset; net: NetworkView | null; product: string; place: string; open: boolean }) {
+function PlaceCard({ ds, net, product, place, open, start }: { ds: Dataset; net: NetworkView | null; product: string; place: string; open: boolean; start?: Mode }) {
   const nm = names(ds);
-  const [mode, setMode] = useState<Mode>(null);
+  const [mode, setMode] = useState<Mode>(start ?? null);
+  const ptype = (ds.products ?? []).find((x) => x.id === product)?.type;
   const [expanded, setExpanded] = useState(open);
+  // a link to this product at this place (a part's "Set it up", the checklist) opens its card even when it was shown closed
+  useEffect(() => { if (open) setExpanded(true); }, [open]);
   const loc = (ds.locations ?? []).find((l) => l.id === place);
   const make = (ds.production_sources ?? []).map((x, i) => [x, i] as const).filter(([x]) => x.product === product && x.location === place);
   const buy = (ds.purchasing_sources ?? []).map((x, i) => [x, i] as const).filter(([x]) => x.product === product && x.location === place);
@@ -547,9 +556,10 @@ function PlaceCard({ ds, net, product, place, open }: { ds: Dataset; net: Networ
             <a className="btn sm ghost" href={href("setup", "product", product, x.origin)}>How it gets to {nm.loc(x.origin)}</a></li>)}
         </ul> : <p className="muted">{isCustomer ? `Customers are delivered to by a route from a warehouse or plant.` : `Nothing brings ${nm.prod(product)} to ${nm.loc(place)} yet.`} How does it get here?</p>}
         <div className="row wrap">
-          {loc?.type === "plant" && !make.length && <button className={`btn ${mode === "make" ? "primary" : ""}`} onClick={() => setMode("make")}>Make it here</button>}
-          {!isCustomer && <button className={`btn ${mode === "buy" ? "primary" : ""}`} onClick={() => setMode("buy")}>{buy.length ? "Add another supplier" : "Buy it"}</button>}
-          <button className={`btn ${mode === "ship" ? "primary" : ""}`} onClick={() => setMode("ship")}>{isCustomer ? "Deliver it from…" : "Ship it from another place"}</button>
+          {/* each card names its own product and place: several open cards no longer show identical buttons */}
+          {loc?.type === "plant" && !make.length && ptype !== "RM" && <button className={`btn ${mode === "make" ? "primary" : ""}`} onClick={() => setMode("make")}>Make {nm.prod(product)} at {nm.loc(place)}</button>}
+          {!isCustomer && <button className={`btn ${mode === "buy" ? "primary" : ""}`} onClick={() => setMode("buy")}>{buy.length ? `Add another supplier for ${nm.loc(place)}` : `Buy ${nm.prod(product)} for ${nm.loc(place)}`}</button>}
+          <button className={`btn ${mode === "ship" ? "primary" : ""}`} onClick={() => setMode("ship")}>{isCustomer ? `Deliver to ${nm.loc(place)} from…` : `Ship to ${nm.loc(place)} from another place`}</button>
         </div>
         {mode === "make" && <MakeForm ds={ds} product={product} place={place} existing={make[0]?.[0]} index={make[0]?.[1]} done={() => setMode(null)} />}
         {mode === "buy" && <BuyForm ds={ds} product={product} place={place} done={() => setMode(null)} />}
@@ -752,15 +762,20 @@ function BuyForm({ ds, product, place, done }: { ds: Dataset; product: string; p
 function ShipForm({ ds, product, place, done }: { ds: Dataset; product: string; place: string; done: () => void }) {
   const nm = names(ds);
   const origins = (ds.locations ?? []).filter((l) => STOCKING.includes(l.type) && l.id !== place);
-  const [from, setFrom] = useState(origins.length === 1 ? origins[0].id : "");
+  // never pre-picked, even when there is one place to pick: a card saved without reading it routed goods backwards
+  const [from, setFrom] = useState("");
   const [mode, setMode] = useState("truck_ftl");
   const [days, setDays] = useState("");
-  const [only, setOnly] = useState(false);
+  const [only, setOnly] = useState(true);       // a new route carries this product only, unless widened on purpose
   const [err, setErr] = useState<string | null>(null);
   const lane = (ds.lanes ?? []).findIndex((l) => l.origin === from && l.destination === place);
+  // the reverse route already carries this product: saving would make supply go round in a circle
+  const reverse = from ? (ds.lanes ?? []).find((l) => l.origin === place && l.destination === from
+    && (!l.products?.length || l.products.includes(product))) : undefined;
   const existing = lane >= 0 ? ds.lanes![lane] : null;
   const save = () => {
     if (!from) return setErr("Choose where it ships from.");
+    if (reverse) return setErr(`${nm.loc(place)} already ships ${nm.prod(product)} to ${nm.loc(from)}. A route back would go round in a circle and stop planning: set this up on the card of the place that receives it.`);
     if (lane < 0 && days.trim() === "") return setErr("Enter the days in transit (0 for the same day).");
     if (lane < 0 && !(num(days) >= 0)) return setErr("Transit days must be 0 or more.");
     store.update((d) => {
@@ -794,8 +809,10 @@ function ShipForm({ ds, product, place, done }: { ds: Dataset; product: string; 
         </div>
         <p className="small muted">This adds a route from {nm.loc(from)} to {nm.loc(place)}{only ? ` for ${nm.prod(product)} only; other products can be added to it later` : " for all products"}. Then set up how {nm.prod(product)} gets to {nm.loc(from)}.</p>
       </>}
+      {reverse && !err && <div className="banner warning" role="alert">{nm.loc(place)} already ships {nm.prod(product)} to {nm.loc(from)}: a route back
+        would go round in a circle.</div>}
       {err && <div className="banner warning" role="alert">{err}</div>}
-      <div className="row"><button className="btn primary" onClick={save}>Save</button><button className="btn ghost" onClick={done}>Cancel</button></div>
+      <div className="row"><button className="btn primary" onClick={save}>Save the route to {nm.loc(place)}</button><button className="btn ghost" onClick={done}>Cancel</button></div>
     </div>
   );
 }
@@ -882,7 +899,7 @@ function StockForm({ ds, product, place, lp }: { ds: Dataset; product: string; p
           <SetupInput className="input" type="number" min={Number.MIN_VALUE} step="any" required value={pending === "FIXED" ? "" : lp?.lot_sizing?.fixed_qty ?? ""} style={{ width: 90 }}
           aria-label="Batch size" placeholder="units"
           commit={(v) => { const n = num(v); if (n > 0) { setPending(null); write((x) => { x.lot_sizing = { ...(x.lot_sizing ?? {}), policy: "FIXED", fixed_qty: n }; }); } }} /></Field>}
-        <a className="btn sm ghost" href={href("material", product, place, "mrp1")}>All planning settings (MRP 1–4)</a>
+        <a className="btn sm ghost" href={href("material", product, place, "mrp1")}>All planning settings for this product here</a>
       </div>
       {msg && <p className="small muted" role="status">{msg}</p>}
     </div>

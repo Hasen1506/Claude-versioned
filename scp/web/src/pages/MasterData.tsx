@@ -238,7 +238,7 @@ function Editor({ ds, ckey, index, obj, errors, issues }: {
       {typeof obj.name === "string" && obj.name && obj.name !== k && <span className="faint small">{k}</span>}</div>}
       actions={<>
         {ckey === "resources" && <a className="btn sm" href={href("machines", String(obj.id))}>Shifts and capacity</a>}
-        {ckey === "location_products" && <a className="btn sm" href={href("material", String(obj.product), String(obj.location))}>Open as MRP 1–4</a>}
+        {ckey === "location_products" && <a className="btn sm" href={href("material", String(obj.product), String(obj.location))}>Open its planning settings</a>}
         {ckey === "production_sources" && <a className="btn sm" href={href("material", String(obj.product), String(obj.location), "mrp4")}>See the structure</a>}
         <Edits><button className="btn sm" onClick={duplicate}>Duplicate</button>
         <button className="btn sm danger" onClick={remove}>Delete</button></Edits>
