@@ -135,9 +135,26 @@ def _iso(t: dt.datetime) -> str:
     return t.astimezone(dt.UTC).replace(microsecond=0).isoformat()
 
 
-def next_run(every: str, at: str, weekday: int, after: dt.datetime) -> dt.datetime:
-    """The first time after ``after`` the schedule falls on (times of day in the server's time zone)."""
-    z = _zone()
+def company_timezone(c: Companies, cid: str) -> str:
+    """The company's own time zone (its settings), else the server's: a 06:00 import of a company in Chennai runs at
+    06:00 in Chennai, not 06:00 UTC (UX audit: the scheduler's zone was a server setting only)."""
+    try:
+        r = c.db.execute("SELECT dataset FROM companies WHERE id = ?", (cid,)).fetchone()
+        tz = (json.loads(r["dataset"]).get("settings") or {}).get("timezone") if r and r["dataset"] else None
+        if tz:
+            ZoneInfo(tz)
+            return tz
+    except Exception:  # noqa: BLE001 - an unreadable or unknown zone: the server's, rather than no imports at all
+        pass
+    return timezone()
+
+
+def next_run(every: str, at: str, weekday: int, after: dt.datetime, zone: str | None = None) -> dt.datetime:
+    """The first time after ``after`` the schedule falls on (times of day in ``zone``, else the server's time zone)."""
+    try:
+        z = ZoneInfo(zone) if zone else _zone()
+    except Exception:  # noqa: BLE001
+        z = _zone()
     local = after.astimezone(z)
     h, m = (int(x) for x in at.split(":"))
     if every == "hour":
@@ -191,7 +208,7 @@ def jobs(c: Companies, user: User, cid: str) -> ImportJobs:
         c._need(user, cid)
         rows = c.db.execute("SELECT * FROM import_jobs WHERE company_id = ? AND deleted = 0 ORDER BY id", (cid,)).fetchall()
         f = folder_of(cid)
-        return ImportJobs(jobs=[_job(c, r) for r in rows], folder=str(f) if f else None, timezone=timezone(),
+        return ImportJobs(jobs=[_job(c, r) for r in rows], folder=str(f) if f else None, timezone=company_timezone(c, cid),
                           kinds=kinds())
 
 
@@ -203,7 +220,7 @@ def save_job(c: Companies, user: User, cid: str, body: JobInput, jid: str | None
     with c.lock:
         _ensure(c)
         c._need(user, cid, "owner")
-        nxt = _iso(next_run(body.every, body.at, body.weekday, now)) if body.enabled else None
+        nxt = _iso(next_run(body.every, body.at, body.weekday, now, company_timezone(c, cid))) if body.enabled else None
         if jid is None:
             n = c.db.execute("SELECT COUNT(*) FROM import_jobs").fetchone()[0] + 1
             jid = f"J{n:04d}"
@@ -672,7 +689,8 @@ def run_job(c: Companies, jid: str, user: User | None = None, now: dt.datetime |
     with c.lock:
         c.db.execute("UPDATE import_jobs SET last_run = ?, last_status = ?, last_summary = ?, next_run = ? WHERE id = ?",
                      (_iso(now), last.status if last else "nothing", last.summary if last else "no file to read",
-                      _iso(next_run(job["every"], job["at"], job["weekday"], now)) if job["enabled"] else None, jid))
+                      _iso(next_run(job["every"], job["at"], job["weekday"], now, company_timezone(c, job["company_id"])))
+                      if job["enabled"] else None, jid))
     return out
 
 
@@ -716,7 +734,8 @@ def _gave_up(c: Companies, jid: str, now: dt.datetime, why: str) -> list[Message
             return []
         c.db.execute("UPDATE import_jobs SET last_run = ?, last_status = 'failed', last_summary = ?, next_run = ? "
                      "WHERE id = ?", (_iso(now), f"could not run: {why}"[:300],
-                                      _iso(next_run(job["every"], job["at"], job["weekday"], now)) if job["enabled"]
+                                      _iso(next_run(job["every"], job["at"], job["weekday"], now,
+                                                    company_timezone(c, job["company_id"]))) if job["enabled"]
                                       else None, jid))
     try:
         return [_failed(c, job, job["source"], why)]

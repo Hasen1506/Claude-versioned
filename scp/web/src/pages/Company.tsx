@@ -1,6 +1,6 @@
 // The company itself: its name, currency, when planning starts, the working week, how much each order covers, and
 // exchange rates. The first step of a blank company (Q12), and #/setup/company afterwards.
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { Dataset } from "../api/types";
 import { Panel } from "../components/ui";
 
@@ -39,13 +39,23 @@ export function nextMonday(): string {
 export function blankCompany(v: CompanyValues): Dataset {
   return {
     schema_version: "1",
-    settings: { company_name: v.name, company_address: v.address ?? "", company_tax_id: v.taxId ?? "", currency: v.currency, planning_start: v.start, horizon_days: 182, bucket: "week",
-      week_start: 0, fx_rates: v.fx, wacc: 0.12, holding_spread: 0.08, default_service_level: 0.95, default_calendar: "CAL-STD",
+    settings: { company_name: v.name, company_address: v.address ?? "", company_tax_id: v.taxId ?? "", currency: v.currency, planning_start: v.start,
+      horizon_days: 7 * (v.horizonWeeks ?? ASSUMPTIONS.horizonWeeks), bucket: "week", week_start: 0, fx_rates: v.fx,
+      wacc: (v.wacc ?? ASSUMPTIONS.wacc) / 100, holding_spread: (v.spread ?? ASSUMPTIONS.spread) / 100,
+      default_service_level: (v.service ?? ASSUMPTIONS.service) / 100, default_calendar: "CAL-STD", ...(v.timezone ? { timezone: v.timezone } : {}),
       default_lot_policy: COVER.find((c) => c.id === v.cover)!.policy, default_lot_periods: COVER.find((c) => c.id === v.cover)!.periods },
     calendars: [{ id: "CAL-STD", name: workweekName(v.workdays), workdays: v.workdays, holidays: [] }],
     locations: [], products: [], location_products: [], resources: [], production_sources: [],
     purchasing_sources: [], lanes: [], demand: [], receipts: [], history: [], events: [], npi: [], overrides: [],
+    ...(levelsOut(v.levels) ? { forecasting: { service_levels: levelsOut(v.levels) } } : {}),
   } as unknown as Dataset;
+}
+
+/** The cells that differ from the default table, as fractions (null when none differs). */
+function levelsOut(levels?: Record<string, number>): Record<string, number> | null {
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(levels ?? {})) if (k in LEVELS && Number.isFinite(v) && v !== LEVELS[k]) out[k] = v / 100;
+  return Object.keys(out).length ? out : null;
 }
 
 function workweekName(days: number[]): string {
@@ -57,7 +67,22 @@ function workweekName(days: number[]): string {
 export interface CompanyValues {
   name: string; currency: string; start: string; workdays: number[]; cover: string; fx: Record<string, number>;
   address?: string; taxId?: string;
+  // finance and planning assumptions, shown and editable (UX audit: set at creation without being shown), in percent
+  // and weeks as the form shows them
+  wacc?: number; spread?: number; service?: number; horizonWeeks?: number; timezone?: string;
+  levels?: Record<string, number>;      // ABC-XYZ cell → service level in percent; a cell left out keeps the default
 }
+
+/** A time zone the browser knows (the engine checks it again against its own zone database). */
+function validZone(tz: string): boolean {
+  try { new Intl.DateTimeFormat("en", { timeZone: tz }); return true; } catch { return false; }
+}
+
+/** What a new company assumes until the planner says otherwise. */
+export const ASSUMPTIONS = { wacc: 12, spread: 8, service: 95, horizonWeeks: 26, timezone: "" };
+/** The engine's default service level per ABC-XYZ cell, in percent (demand/pipeline.py SERVICE_LEVEL). */
+export const LEVELS: Record<string, number> = { AX: 98, AY: 97, AZ: 95, BX: 96, BY: 95, BZ: 93, CX: 93, CY: 92, CZ: 90 };
+const pct = (f: unknown, dflt: number) => (typeof f === "number" ? Math.round(f * 10000) / 100 : dflt);
 
 /** The company's own settings as the form edits them. */
 export function companyValues(ds: Dataset): CompanyValues {
@@ -67,6 +92,10 @@ export function companyValues(ds: Dataset): CompanyValues {
     name: String(s.company_name ?? ""), currency: String(s.currency ?? "INR"), start: String(s.planning_start),
     workdays: cal?.workdays ?? [0, 1, 2, 3, 4], cover: coverOf(s as never), fx: { ...((s.fx_rates as Record<string, number>) ?? {}) },
     address: String(s.company_address ?? ""), taxId: String(s.company_tax_id ?? ""),
+    wacc: pct(s.wacc, ASSUMPTIONS.wacc), spread: pct(s.holding_spread, ASSUMPTIONS.spread), service: pct(s.default_service_level, ASSUMPTIONS.service),
+    horizonWeeks: Math.round(Number(s.horizon_days ?? 182) / 7), timezone: String(s.timezone ?? ""),
+    levels: { ...LEVELS, ...Object.fromEntries(Object.entries(((ds.forecasting as Obj | undefined)?.service_levels as Record<string, number>) ?? {})
+      .map(([k, v]) => [k, Math.round(v * 10000) / 100])) },
   };
 }
 
@@ -76,6 +105,17 @@ export function applyCompany(d: Dataset, v: CompanyValues, alsoExact: boolean) {
   const c = COVER.find((x) => x.id === v.cover)!;
   Object.assign(s, { company_name: v.name, company_address: (v.address ?? "").trim(), company_tax_id: (v.taxId ?? "").trim(), currency: v.currency, planning_start: v.start, fx_rates: v.fx,
     default_lot_policy: c.policy, default_lot_periods: c.periods });
+  if (v.wacc !== undefined) s.wacc = v.wacc / 100;
+  if (v.spread !== undefined) s.holding_spread = v.spread / 100;
+  if (v.service !== undefined) s.default_service_level = v.service / 100;
+  if (v.horizonWeeks !== undefined && Math.round(Number(s.horizon_days ?? 182) / 7) !== v.horizonWeeks) s.horizon_days = v.horizonWeeks * 7;
+  if (v.timezone !== undefined) { if (v.timezone.trim()) s.timezone = v.timezone.trim(); else delete s.timezone; }
+  if (v.levels !== undefined) {
+    const out = levelsOut(v.levels);
+    const f = (d as unknown as Obj).forecasting as Obj | undefined;
+    if (out) ((d as unknown as Obj).forecasting ??= {} as Obj, ((d as unknown as Obj).forecasting as Obj).service_levels = out);
+    else if (f && "service_levels" in f) delete f.service_levels;
+  }
   const cals = (d.calendars ??= []);
   let cal = cals.find((x) => x.id === s.default_calendar);
   if (!cal) {
@@ -111,7 +151,9 @@ export function exactNodes(ds: Dataset | null): number {
 export function CompanyForm({ ds, initial, submit, submitLabel, cancel }: {
   ds: Dataset | null; initial: CompanyValues; submit: (v: CompanyValues, alsoExact: boolean) => void; submitLabel: string; cancel?: () => void;
 }) {
-  const [v, setV] = useState<CompanyValues>(initial);
+  const [v, setV] = useState<CompanyValues>({ ...ASSUMPTIONS, levels: { ...LEVELS }, ...initial });
+  const [showLevels, setShowLevels] = useState(false);
+  const zones = useMemo(() => { try { return (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.("timeZone") ?? []; } catch { return []; } }, []);
   const [alsoExact, setAlsoExact] = useState(false);
   const [newCur, setNewCur] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -123,6 +165,13 @@ export function CompanyForm({ ds, initial, submit, submitLabel, cancel }: {
     if (!/^[A-Za-z]{3}$/.test(v.currency)) return setErr("The currency is a three-letter code, e.g. INR, USD or EUR.");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(v.start)) return setErr("Choose the day planning starts.");
     if (!v.workdays.length) return setErr("Tick at least one working day.");
+    const bad = (x: number | undefined, lo: number, hi: number) => !(typeof x === "number" && x >= lo && x <= hi);
+    if (bad(v.wacc, 0, 100)) return setErr("The cost of capital is a percentage from 0 to 100.");
+    if (bad(v.spread, 0, 100)) return setErr("The storage and risk cost is a percentage from 0 to 100.");
+    if (bad(v.service, 50, 99.9)) return setErr("The service level is a percentage from 50 to 99.9.");
+    if (bad(v.horizonWeeks, 1, 157) || !Number.isInteger(v.horizonWeeks)) return setErr("Plan ahead a whole number of weeks, from 1 to 157.");
+    if (Object.values(v.levels ?? {}).some((x) => bad(x, 50, 99.9))) return setErr("Each class's service level is a percentage from 50 to 99.9.");
+    if (v.timezone?.trim() && !validZone(v.timezone.trim())) return setErr(`${v.timezone} is not a time zone name such as Asia/Kolkata.`);
     const missing = foreign.filter((c) => !(v.fx[c] > 0));
     if (missing.length) return setErr(`Enter what one ${missing.join(", one ")} costs in ${v.currency.toUpperCase()}.`);
     setErr(null);
@@ -176,6 +225,40 @@ export function CompanyForm({ ds, initial, submit, submitLabel, cancel }: {
             onClick={() => { set({ fx: { ...v.fx, [newCur]: 0 } }); setNewCur(""); }}>Add a currency</button>
         </div>
         <span className="qf-h">for suppliers who invoice in another currency: their prices are kept in it and turned into {v.currency} with this rate</span></div>
+      <fieldset className="qf assumptions" aria-label="Finance and planning assumptions">
+        <span className="qf-l">Finance and planning assumptions</span>
+        <span className="qf-h">what holding stock costs, how sure you want to be of having it, and how far ahead to plan. Money pages and
+          safety stocks use these; change them any time.</span>
+        <div className="qrow">
+          {([["wacc", "Cost of capital, % a year", "what money tied up in stock costs (WACC)"],
+            ["spread", "Storage and risk, % a year", "warehousing, insurance, shrinkage and obsolescence on top"],
+            ["service", "Service level, %", "the chance of having stock when it is asked for, where a product doesn't say"]] as const).map(([k, l, h]) =>
+            <label key={k} className="qf"><span className="qf-l">{l}</span>
+              <input className="input num" type="number" step="0.1" value={v[k] ?? ""} style={{ width: 90 }} aria-label={l}
+                onChange={(e) => set({ [k]: e.target.value === "" ? undefined : Number(e.target.value) } as Partial<CompanyValues>)} />
+              <span className="qf-h">{h}</span></label>)}
+          <label className="qf"><span className="qf-l">Plan ahead, weeks</span>
+            <input className="input num" type="number" step="1" min={1} value={v.horizonWeeks ?? ""} style={{ width: 80 }} aria-label="Plan ahead, weeks"
+              onChange={(e) => set({ horizonWeeks: e.target.value === "" ? undefined : Number(e.target.value) })} />
+            <span className="qf-h">the planning horizon</span></label>
+          <label className="qf"><span className="qf-l">Time zone</span>
+            <input className="input" list="timezones" value={v.timezone ?? ""} placeholder={Intl.DateTimeFormat().resolvedOptions().timeZone} style={{ width: 170 }}
+              aria-label="Time zone" onChange={(e) => set({ timezone: e.target.value })} />
+            <datalist id="timezones">{zones.map((z) => <option key={z} value={z} />)}</datalist>
+            <span className="qf-h">scheduled imports run at their time of day here; empty: the server's</span></label>
+        </div>
+        <button type="button" className="linkish small" onClick={() => setShowLevels(!showLevels)} aria-expanded={showLevels}>
+          Service level by ABC-XYZ class{showLevels ? "" : "…"}</button>
+        {showLevels && <table className="t abcxyz" aria-label="Service level by ABC-XYZ class">
+          <thead><tr><th /><th>X (steady)</th><th>Y (variable)</th><th>Z (erratic)</th></tr></thead>
+          <tbody>{["A", "B", "C"].map((a) => <tr key={a}><th>{a}</th>{["X", "Y", "Z"].map((x) => <td key={x}>
+            <input className="input num" type="number" step="0.1" style={{ width: 72 }} aria-label={`Service level ${a}${x}`}
+              value={v.levels?.[a + x] ?? ""} onChange={(e) => set({ levels: { ...(v.levels ?? LEVELS), [a + x]: e.target.value === "" ? NaN : Number(e.target.value) } })} />
+          </td>)}</tr>)}</tbody>
+          <caption className="small muted" style={{ captionSide: "bottom", textAlign: "left" }}>what the forecast suggests for each class: A sells most, X is
+            the steadiest. Defaults 98 % (AX) to 90 % (CZ).</caption>
+        </table>}
+      </fieldset>
       {err && <div className="banner warning" role="alert">{err}</div>}
       <div className="row"><button className="btn primary" onClick={save}>{submitLabel}</button>{cancel && <button className="btn ghost" onClick={cancel}>Cancel</button>}</div>
     </div>

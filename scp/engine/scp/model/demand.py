@@ -76,6 +76,9 @@ class ForecastSettings(Model):
     xyz_y: float = Unit("ratio", gt=0, default=1.0, description="Forecast-error CV that closes class Y")
     interval: float = Unit("fraction", gt=0.5, lt=1, default=0.8,
                            description="Central prediction interval shown with the forecast (80 % = P10–P90)")
+    service_levels: dict[str, float] | None = Field(
+        None, description="Suggested cycle service level per ABC-XYZ cell, keyed AX … CZ (fractions); a cell left out "
+                          "keeps the default table (A·X 98 % … C·Z 90 %)")
     released_inputs: str | None = Field(
         None, description="Written by a forecast release: a fingerprint of the events, new-product rules, overrides "
                           "and these settings it was made with, so a later change to them is noticed")
@@ -88,6 +91,12 @@ class ForecastSettings(Model):
             raise ValueError("xyz_x must be below xyz_y")
         if not self.models:
             raise ValueError("choose at least one forecast model")
+        cells = {f"{a}{x}" for a in "ABC" for x in "XYZ"}
+        for k, v in (self.service_levels or {}).items():
+            if k not in cells:
+                raise ValueError(f"service_levels: {k} is not an ABC-XYZ cell (AX … CZ)")
+            if not (0.5 <= v < 1):
+                raise ValueError(f"service_levels: {k} must be from 0.5 to below 1")
         return self
 
 

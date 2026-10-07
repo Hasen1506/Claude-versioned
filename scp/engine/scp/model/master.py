@@ -41,6 +41,9 @@ class Settings(Model):
     holding_spread: float = Unit("fraction", le=1, default=0.08,
                                  description="Storage + insurance + obsolescence on top of WACC, per year")
     default_service_level: float = Unit("fraction", gt=0, lt=1, default=0.95)
+    timezone: str | None = Field(
+        None, max_length=64, description="The company's time zone (IANA, e.g. Asia/Kolkata): the times of day of its "
+                                         "scheduled imports; empty = the server's (SCP_TIMEZONE, else UTC)")
     default_calendar: str | None = Ref("calendar", default=None)
     capacity_constrained: bool = Field(
         False, description="Plan make orders within the capacity of finite machines and labour: an order that does "
@@ -71,6 +74,18 @@ class Settings(Model):
     @classmethod
     def _upper(cls, v: str) -> str:
         return v.upper()
+
+    @field_validator("timezone")
+    @classmethod
+    def _zone(cls, v: str | None) -> str | None:
+        v = (v or "").strip() or None
+        if v is not None:
+            from zoneinfo import ZoneInfo
+            try:
+                ZoneInfo(v)
+            except Exception:
+                raise ValueError(f"{v} is not a time zone name such as Asia/Kolkata or Europe/London") from None
+        return v
 
     @field_validator("default_lot_policy")
     @classmethod
