@@ -229,8 +229,49 @@ function PurchasingSettings({ ds }: { ds: Dataset }) {
 }
 
 // ------------------------------------------------------------------------------------------------
+/** A purchase order no requisition asked for: a sample, a spare, a buy ahead of a price rise (UX audit: orders could only
+ *  be made from requisitions, so a one-off meant editing master data). */
+function OneOffPo({ ds, onClose }: { ds: Dataset; onClose: () => void }) {
+  const nm = namesOf(ds);
+  const sources = (ds.purchasing_sources ?? []).filter((p) => p.location);
+  const [src, setSrc] = useState(sources[0]?.id ?? "");
+  const [n, setN] = useState("");
+  const [due, setDue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const q = Number(n.replace(/,/g, ""));
+  const create = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const out = await apply(() => api.oneOffPo(ds, src, q, due || null));
+      const po = out.report.created[0];
+      setMsg(`${po.id} created${po.approved ? "" : ", needs approval"}.` + po.notes.map((x) => " " + nm.text(x)).join(""));
+      setN(""); setDue("");
+      go("buying", "orders", po.id);
+    } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Panel title={<h3>New purchase order</h3>} actions={<button className="btn sm ghost" onClick={onClose}>Close</button>}>
+      {sources.length === 0 ? <p className="muted">Say who sells each part first: a product's Buy card in Set up.</p> : <Edits>
+        <div className="row wrap">
+          <label className="small">What, from whom, to where<br />
+            <select className="select" value={src} onChange={(e) => setSrc(e.target.value)} aria-label="What to buy">
+              {sources.map((p) => <option key={p.id} value={p.id}>{nm.prod(p.product)} from {nm.loc(p.supplier)} to {nm.loc(p.location ?? "")}</option>)}
+            </select></label>
+          <label className="small">Quantity<br /><input className="input" inputMode="decimal" style={{ width: 110 }} value={n}
+            onChange={(e) => setN(e.target.value)} aria-label="Quantity to buy" /></label>
+          <label className="small">Wanted on (blank: as soon as possible)<br /><input className="input" type="date" value={due}
+            onChange={(e) => setDue(e.target.value)} aria-label="Wanted on" /></label>
+          <button className="btn primary" disabled={busy || !src || !(q > 0)} onClick={create}>Create the purchase order</button>
+        </div></Edits>}
+      {msg && <p className="small" role="status">{msg}</p>}
+    </Panel>
+  );
+}
+
 function Orders({ res, ds, sel }: { res: PurchasingView; ds: Dataset; sel?: string }) {
   const [showClosed, setShowClosed] = useState(false);
+  const [adding, setAdding] = useState(false);
   const list = res.orders.filter((p) => showClosed || !["received", "closed"].includes(p.status));
   const cur = res.orders.find((p) => p.id === sel);
   return (
@@ -242,9 +283,12 @@ function Orders({ res, ds, sel }: { res: PurchasingView; ds: Dataset; sel?: stri
         <StatTile label="Confirmations to chase" value={qty(res.totals.confirmations_overdue)} />
         <StatTile label="Late lines" value={qty(res.totals.late_lines)} sub="confirmed after the date asked, or overdue" />
       </div>
-      <Panel flush title="Purchase orders" actions={<label className="row small"><input type="checkbox" checked={showClosed}
-        onChange={(e) => setShowClosed(e.target.checked)} /> Show received and closed</label>}>
-        {list.length === 0 ? <Empty title="No open purchase orders">Create them from <a href={href("buying")}>To order</a>.</Empty> : (
+      {adding && <OneOffPo ds={ds} onClose={() => setAdding(false)} />}
+      <Panel flush title="Purchase orders" actions={<>
+        {!adding && <Edits><button className="btn sm" onClick={() => setAdding(true)}>New purchase order</button></Edits>}
+        <label className="row small"><input type="checkbox" checked={showClosed}
+        onChange={(e) => setShowClosed(e.target.checked)} /> Show received and closed</label></>}>
+        {list.length === 0 ? <Empty title="No open purchase orders">Create them from <a href={href("buying")}>To order</a>, or make a one-off with <b>New purchase order</b>.</Empty> : (
           <div className="table-wrap" style={{ maxHeight: 380 }}>
             <table className="t">
               <thead><tr><th>Order</th><th>Supplier</th><th>To</th><th>Status</th><th className="num">Lines</th><th className="num">Value</th>
