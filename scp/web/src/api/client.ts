@@ -5,6 +5,7 @@ import type {
   PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoActionInput, RequisitionPick, PostAction, CountInput, UsageInput, StockType, SalesOrderChange, SalesOrderResponse,
   SalesView, SalesAction, SalesActionInput, SalesActionResponse,
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
+  User,
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
@@ -42,6 +43,23 @@ export const CLIENT_ID = (() => {
     return id;
   } catch {
     return Math.random().toString(36).slice(2);
+  }
+})();
+
+/** This browser's own random key, kept across reloads and tabs: without an open company the server keeps this
+ *  browser's plan versions and worklist under it, never in one space shared by everyone (CV-H06). */
+export const BROWSER_KEY = (() => {
+  const make = () => {
+    const b = new Uint8Array(24);
+    (globalThis.crypto ?? window.crypto).getRandomValues(b);
+    return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  };
+  try {
+    let k = localStorage.getItem("scp.browser-key");
+    if (!k || k.length < 16) { k = make(); localStorage.setItem("scp.browser-key", k); }
+    return k;
+  } catch {
+    return make();
   }
 })();
 
@@ -91,6 +109,7 @@ async function call<T>(path: string, init?: RequestInit, timeoutMs?: number): Pr
         ...(who.token ? { Authorization: `Bearer ${who.token}` } : {}),
         ...(who.company ? { "X-Company": who.company } : {}),
         "X-Client": CLIENT_ID,
+        "X-Browser-Key": BROWSER_KEY,
         "X-Pack": "rows",
         ...(init?.headers ?? {}),
       },
@@ -333,6 +352,14 @@ export const api = {
   resetPassword: (token: string, password: string) => call<Session>("/api/auth/reset", { method: "POST", body: JSON.stringify({ token, password }) }),
   /** Who a sign-on token belongs to (the provider's sign-in brings the browser back with one). */
   meWith: (token: string) => call<Me>("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } }),
+  /** Join a company invited to: with the invitation's link, or by its id once the address is verified (CV-C01). */
+  acceptInvite: (o: { token?: string; company?: string }) =>
+    call<CompanyMeta>("/api/auth/invites/accept", { method: "POST", body: JSON.stringify({ token: o.token ?? "", company: o.company ?? "" }) }),
+  /** Mail a link that confirms the account's address (mail: false when the server sends none). */
+  requestEmailCheck: () => call<{ ok: boolean; mail: boolean }>("/api/auth/email/request", { method: "POST" }),
+  verifyEmail: (token: string) => call<User>("/api/auth/email/verify", { method: "POST", body: JSON.stringify({ token }) }),
+  /** Begin binding the company's sign-on to the signed-in account: the address to open. */
+  ssoLink: () => call<{ url: string }>("/api/auth/sso/link", { method: "POST" }),
   removeMember: (id: string, email: string) =>
     call<Member[]>(`/api/companies/${encodeURIComponent(id)}/members/${encodeURIComponent(email)}`, { method: "DELETE" }),
 
