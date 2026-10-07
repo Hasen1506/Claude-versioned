@@ -177,9 +177,17 @@ test('a working-copy comparison reports edits made during its calculation instea
   // Undo acts only on the screen a change was made on, and the stock edit was made in Master data. A step kept from
   // before screens were recorded counts as any screen's: drop the record and reload, so this step can be undone on
   // Versions while the comparison runs there (the only way left to edit the working copy without leaving the page).
-  await page.waitForTimeout(1500);                                   // the undo steps are kept 0.8 s after an edit
+  // the undo steps are kept a moment after an edit: wait until they are (an outcome, not a time), then drop the screens
+  // record on the page reloaded (opening Versions writes it again, so it is dropped after that)
+  await expect.poll(()=>page.evaluate(()=>new Promise<number>((done)=>{
+    const r=indexedDB.open('scp'); r.onupgradeneeded=()=>r.transaction?.abort(); r.onerror=()=>done(0);
+    r.onsuccess=()=>{ const db=r.result; if(!db.objectStoreNames.contains('undo')){db.close(); done(0); return;}
+      const g=db.transaction('undo').objectStore('undo').get('steps');
+      g.onsuccess=()=>{db.close(); done((g.result as {past?:unknown[]}|undefined)?.past?.length??0);}; g.onerror=()=>{db.close(); done(0);}; };
+  })),{timeout:15_000}).toBeGreaterThan(0);
+  await page.goto('/#/versions');
   await page.evaluate(()=>localStorage.removeItem('scp.undo.where'));
-  await page.goto('/#/versions'); await page.reload();
+  await page.reload();
   await expect(page.getByRole('button',{name:'Undo',exact:true})).toBeEnabled();
   const delayed=await hold(page,'**/api/compare');
   await page.getByRole('button',{name:`Compare ${base} as A`,exact:true}).click();
