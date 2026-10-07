@@ -23,13 +23,14 @@ async function ownerOnServer(page: Page): Promise<{ token: string; cid: string }
   await page.getByRole("tab", { name: "Make an account" }).click();
   await page.getByLabel("E-mail").fill(`connect-${Date.now()}@kaveri.in`);
   await page.getByLabel("Your name").fill("Asha Owner");
-  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByLabel(/^Password/).fill("kaveri-2026-pumps");
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/);
-  const token = await page.evaluate(() => JSON.parse(localStorage.getItem("scp.session.v1") ?? "{}").token as string);
-  const list = await (await page.request.get("/api/companies", { headers: { Authorization: `Bearer ${token}` } })).json();
-  return { token, cid: list[0].id as string };
+  // roadmap D: the browser's session is the HttpOnly cookie, which page.request shares; nothing in storage signs in
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("scp.session.v1") ?? "{}").token as string)).toMatch(/^cookie:/);
+  const list = await (await page.request.get("/api/companies")).json();
+  return { token: "", cid: list[0].id as string };
 }
 
 test("connections: a key for the ERP, its orders taken and refused line by line, a scheduled import, e-mail", async ({ page }) => {
@@ -105,7 +106,7 @@ test("connections: a key for the ERP, its orders taken and refused line by line,
 
 test("scheduled import changes preserve credentials only at the same origin and can clear them", async ({ page }) => {
   const { token, cid } = await ownerOnServer(page);
-  const headers = { Authorization: `Bearer ${token}` };
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
   await page.goto("/#/connections/imports");
   await page.getByRole("button", { name: "New import" }).click();
   await page.getByLabel("Import name").fill("ERP stock");

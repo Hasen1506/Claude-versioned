@@ -5,7 +5,7 @@
 // cascade, done by construction: every result reads the whole dataset except the parts only the shop floor
 // schedule reads (its settings and the changeover matrix), which leave the other results fresh.
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { api, ApiError, SchemaRejected, setAuth, setDataRef, setPlanningView, setWriteGuard, type DataRef } from "../api/client";
+import { api, ApiError, COOKIE_SESSION, cookieSession, SchemaRejected, setAuth, setDataRef, setPlanningView, setWriteGuard, type DataRef } from "../api/client";
 import { makePatch, patchIsSmall, type Patch } from "../lib/patch";
 import { leavingScreen } from "../lib/router";
 import { keepSteps, stepsFor } from "./undoStore";
@@ -57,7 +57,8 @@ export interface WorkingSnapshot extends WorkingContext {
   dataset: Dataset;
 }
 
-/** Signed in to the server (Phase I). */
+/** Signed in to the server (Phase I). Roadmap D: `token` is a marker ("cookie:…", no secret: the session itself is
+ *  in an HttpOnly cookie); a real token here was kept before the change and is swapped for the cookie once. */
 export interface Session { token: string; user: User }
 
 /** The company kept on the server that the working copy belongs to. `live`: the working copy is the company's
@@ -315,7 +316,8 @@ function persistCompany() {
 
 function persistSession() {
   try {
-    if (state.session) localStorage.setItem(SESSION_KEY, JSON.stringify(state.session));
+    // only the marker is kept: never a token that signs in (roadmap D)
+    if (state.session?.token.startsWith(COOKIE_SESSION)) localStorage.setItem(SESSION_KEY, JSON.stringify(state.session));
     else localStorage.removeItem(SESSION_KEY);
   } catch {
     /* ignore */
@@ -644,7 +646,7 @@ export const store = {
 
   captureContext(): WorkingContext {
     return { epoch: loadEpoch, revision: state.revision, version: state.version,
-      company: state.company?.id ?? null, session: state.session?.token ?? null };
+      company: state.company?.id ?? null, session: state.session?.user.id ?? null };
   },
 
   captureWorking(): WorkingSnapshot {
@@ -654,7 +656,7 @@ export const store = {
 
   currentContext(before: WorkingContext, unchanged = false) {
     return before.epoch === loadEpoch && before.version === state.version && before.company === (state.company?.id ?? null)
-      && before.session === (state.session?.token ?? null) && (!unchanged || before.revision === state.revision);
+      && before.session === (state.session?.user.id ?? null) && (!unchanged || before.revision === state.revision);
   },
 
   /** A completed action must still belong to this working copy; opening a version also requires no new edits. */
@@ -695,8 +697,9 @@ export const store = {
   },
 
   // ---- sign-in and the company on the server (Phase I) --------------------------------------------------------
-  signedIn(session: Session) {
-    set({ session });
+  signedIn(session: { user: User; token?: string }) {
+    // the session itself is in the HttpOnly cookie the sign-in set; the store keeps a marker (roadmap D)
+    set({ session: { token: cookieSession(), user: session.user } });
     persistSession();
     if (state.company?.live && unsaved(state)) scheduleSave(100);
   },
@@ -964,7 +967,19 @@ export const store = {
   restore() {
     try {
       const sr = localStorage.getItem(SESSION_KEY);
-      if (sr) set({ session: JSON.parse(sr) as Session });
+      if (sr) {
+        const kept = JSON.parse(sr) as Session;
+        set({ session: kept });
+        if (kept.token && !kept.token.startsWith(COOKIE_SESSION)) {
+          // kept before roadmap D: swap it for the HttpOnly cookie, once; the token in storage then stops working
+          void api.adopt(kept.token).then((s) => {
+            if (state.session?.token === kept.token) { set({ session: { token: cookieSession(), user: s.user } }); persistSession(); }
+          }, (e) => {
+            if (state.session?.token === kept.token && e instanceof ApiError && e.status === 401) { set({ session: null }); persistSession(); }
+          });
+          try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+        }
+      }
     } catch {
       /* ignore */
     }

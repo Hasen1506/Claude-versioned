@@ -16,7 +16,7 @@ from .factory import base
 def database(path, name):
     store = Store(path)
     companies = Companies(store)
-    account = companies.signup("recovery@example.test", "Recovery", "recovery-test-password")
+    account = companies.signup("recovery@example.test", "Recovery", "edge-case-secret-77")
     data = base()
     data["settings"]["company_name"] = name
     companies.create(account.user, data)

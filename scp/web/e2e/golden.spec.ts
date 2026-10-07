@@ -172,6 +172,7 @@ test("blank network: the checklist and guided setup take a planner from nothing 
   // connect two places on the map
   await page.getByRole("button", { name: "Pune plant (Plant)" }).click();
   await page.getByRole("button", { name: "Mumbai DC (Distribution centre)" }).click();
+  await page.getByLabel("Days in transit", { exact: true }).fill("2");   // no silent default any more (roadmap C)
   await page.getByRole("button", { name: "Add route" }).click();
   await expect(page.getByLabel("Days from Pune plant to Mumbai DC")).toHaveValue("2");
 
@@ -180,7 +181,7 @@ test("blank network: the checklist and guided setup take a planner from nothing 
   await page.getByPlaceholder("e.g. Oil filter").fill("Oil filter");
   await page.getByRole("button", { name: "Add product" }).click();
   await page.goto("/#/setup/product/OIL-FILTER/PUNE-PLANT");
-  await page.getByRole("button", { name: "Make it here" }).click();
+  await page.getByRole("button", { name: "Make Oil filter at Pune plant" }).click();
   await page.getByRole("button", { name: "+ Add a part" }).click();
   const make = page.locator(".wz-card.attn .wz-form").first();
   await make.locator("label.qf", { hasText: "Part" }).first().locator("select").selectOption("+new");
@@ -194,7 +195,7 @@ test("blank network: the checklist and guided setup take a planner from nothing 
   await make.getByLabel("Hours per batch").fill("2");
   await make.getByRole("button", { name: "Save" }).click();
   await page.getByRole("link", { name: "Set it up" }).click();
-  await page.getByRole("button", { name: "Buy it" }).click();
+  await page.getByRole("button", { name: "Buy Filter media for Pune plant" }).click();
   // the supplier invoices in dollars: the price stays in USD with the rate kept once (Q16)
   const buy = page.locator(".wz-card.attn .wz-form").first();
   await buy.locator("label.qf", { hasText: "Price per unit" }).locator("input").fill("0.5");
@@ -791,9 +792,9 @@ test("products at places: MRP views, the structure explorer and the stock/requir
   await expect(page.getByRole("heading", { name: /Receipts and requirements/ })).toBeVisible();
   await expect(page.getByRole("cell", { name: "On hand today" })).toBeVisible();
   // MRP 1: give it an owner, then filter the index by that owner
-  await page.getByRole("tab", { name: /MRP 1/ }).click();
+  await page.getByRole("tab", { name: "Ordering", exact: true }).click();
   await page.getByLabel(/MRP controller/).fill("Asha");
-  await page.getByRole("tab", { name: /MRP 4/ }).click();
+  await page.getByRole("tab", { name: "What it is made from" }).click();
   await expect(page.getByRole("heading", { name: /What one Mixer grinder 500 W is made from/ })).toBeVisible();
   await expect(page.getByRole("cell", { name: /Enamelled copper wire/ })).toBeVisible();   // second level, through the motor
   await page.goto("/#/material");
@@ -861,7 +862,7 @@ test("company on the server: sign up → keep it there → saves itself → a co
   await page.getByRole("tab", { name: "Make an account" }).click();
   await page.getByLabel("E-mail").fill("asha@kaveri.in");
   await page.getByLabel("Your name").fill("Asha Rao");
-  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByLabel(/^Password/).fill("kaveri-2026-pumps");
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await expect(chip).toHaveText("Saved");
@@ -890,7 +891,7 @@ test("company on the server: sign up → keep it there → saves itself → a co
     await p.getByRole("tab", { name: "Make an account" }).click();
     await p.getByLabel("E-mail").fill(email);
     await p.getByLabel("Your name").fill(name);
-    await p.getByLabel(/^Password/).fill("colleague-1");
+    await p.getByLabel(/^Password/).fill("colleague-pw-0001");
     await p.getByRole("button", { name: "Make the account" }).click();
     await acceptInvite(p, invites[email]);
     await p.getByRole("button", { name: /Open Kaveri Kitchenware/ }).click();
@@ -980,7 +981,7 @@ test("rights and four eyes: a planner limited to a place is refused elsewhere; m
   await page.getByRole("tab", { name: "Make an account" }).click();
   await page.getByLabel("E-mail").fill("owner@kaveri.in");
   await page.getByLabel("Your name").fill("Nisha Owner");
-  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByLabel(/^Password/).fill("kaveri-2026-pumps");
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await page.getByLabel("Colleague's e-mail").fill("plan@kaveri.in");
@@ -992,7 +993,7 @@ test("rights and four eyes: a planner limited to a place is refused elsewhere; m
   await p.getByRole("tab", { name: "Make an account" }).click();
   await p.getByLabel("E-mail").fill("plan@kaveri.in");
   await p.getByLabel("Your name").fill("Om Planner");
-  await p.getByLabel(/^Password/).fill("colleague-1");
+  await p.getByLabel(/^Password/).fill("colleague-pw-0001");
   await p.getByRole("button", { name: "Make the account" }).click();
   await acceptInvite(p, invitation);
   await p.getByRole("button", { name: /Open Kaveri Kitchenware/ }).click();
@@ -1038,14 +1039,15 @@ test("opening another company while one is planning: the first one's results are
   await page.getByRole("tab", { name: "Make an account" }).click();
   await page.getByLabel("E-mail").fill("switch@kaveri.in");
   await page.getByLabel("Your name").fill("Sam Switch");
-  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByLabel(/^Password/).fill("kaveri-2026-pumps");
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await expect(page.locator(".save-chip .save-long")).toHaveText("Saved");
   // a second company, the bottler, made on the server by the same person
-  const token = await page.evaluate(() => JSON.parse(localStorage.getItem("scp.session.v1") ?? "{}").token as string);
+  // roadmap D: the session cookie signs page.request in; a change carries the double-submit token
+  const csrf = (await page.context().cookies()).find((c) => c.name === "scp_csrf")?.value ?? "";
   const bottler = await (await page.request.get("/api/examples/single_product_plant")).json();
-  expect((await page.request.post("/api/companies", { headers: { Authorization: `Bearer ${token}` },
+  expect((await page.request.post("/api/companies", { headers: { "X-CSRF-Token": csrf },
     data: { dataset: bottler, note: "second company" } })).ok()).toBe(true);
   await page.goto("/#/account");
   await page.reload();
@@ -1082,7 +1084,7 @@ test("a company on the server is planned from the server's copy: calls name the 
   await page.getByRole("tab", { name: "Make an account" }).click();
   await page.getByLabel("E-mail").fill("ref@kaveri.in");
   await page.getByLabel("Your name").fill("Rhea Ref");
-  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByLabel(/^Password/).fill("kaveri-2026-pumps");
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await expect(page.locator(".save-chip .save-long")).toHaveText("Saved");

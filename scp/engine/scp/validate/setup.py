@@ -136,6 +136,14 @@ def checklist(ds: Dataset, aside: list[SetAside] | None = None) -> list[SetupIte
             missing += 1
             add("supply", "todo", f"{pname[p.id]} is neither made nor bought anywhere.", "Set up how it is supplied",
                 ["setup", "product", p.id])
+    # a loop (a reverse lane, a BOM that uses its own product) stops planning: the data check calls it an error, so
+    # this step must not say done (UX audit: "DONE: every product can reach every place" beside "circular sourcing")
+    for cyc in g.cycles:
+        missing += 1
+        loc0, prod0 = cyc[0]
+        path = " → ".join(f"{pname.get(p, p)} at {lname.get(loc, loc)}" for loc, p in cyc)
+        add("supply", "todo", f"Supply goes round in a circle ({path}), so nothing can be planned there. Remove the "
+            "reverse route or limit the products the route carries.", "Fix the route", ["setup", "product", prod0, loc0])
     if not missing and needed:
         add("supply", "done", "Every product can reach every place that needs it.", "Open the network", ["setup", "network"])
 

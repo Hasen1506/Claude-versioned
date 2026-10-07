@@ -38,7 +38,7 @@ from ..plan import PlanResult, run_mrp
 from ..plan.mrp import with_kept_plan
 from ..plan.trace import PlanTrace, index as trace_index, trace
 from ..plan.level import LevelPreview, level_preview
-from ..purchasing import PurchasingError, act as purchasing_act, create_purchase_orders, purchasing_view
+from ..purchasing import PurchasingError, act as purchasing_act, create_one_off_po, create_purchase_orders, purchasing_view
 from ..purchasing.result import ActionReport, CreateReport, PurchasingView
 from ..sales import SalesError, act as sales_act, sales_view
 from ..sales.result import SalesReport, SalesView
@@ -59,6 +59,7 @@ from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compar
 from ..companies import CompanyError
 from .connect import router as connect_router
 from .companies import (
+    CORS_ORIGINS,
     Scope, StoredEditScope, StoredScope, company_error, edit_scope, gate, is_company, require_signin,
     router as companies_router, signup_policy, who_asks,
 )
@@ -101,7 +102,7 @@ app = FastAPI(title="SCP — Supply Chain Planning", version=__version__, lifesp
               description="Typed network master data, readiness gate, demand planning, network MRP/DRP.",
               docs_url="/docs" if _DOCS else None, redoc_url="/redoc" if _DOCS else None,
               openapi_url="/openapi.json" if _DOCS else None)
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "https://hasen1506.github.io"],
+app.add_middleware(CORSMiddleware, allow_origins=list(CORS_ORIGINS), allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"], expose_headers=["X-Rows"])
 
 
@@ -653,6 +654,24 @@ def post_create_pos(req: CreatePoRequest) -> CreatePoResponse:
     new, rep = create_purchase_orders(req.dataset, plan, lines, req.order_date)
     if not rep.ok:
         raise HTTPException(409, "the readiness gate has errors; fix them before ordering")
+    return CreatePoResponse(**answer(req.dataset, new), report=rep)
+
+
+class OneOffPoRequest(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
+    dataset: PlanData
+    source_id: str = Field(min_length=1)
+    qty: float = Field(gt=0)
+    due_date: dt.date | None = None       # None = as soon as the supplier can deliver
+    order_date: dt.date | None = None
+
+
+@app.post("/api/purchasing/one-off", response_model=CreatePoResponse)
+def post_one_off_po(req: OneOffPoRequest) -> CreatePoResponse:
+    """A purchase order no requisition asked for: one line on a purchasing source."""
+    new, rep = create_one_off_po(req.dataset, req.source_id, req.qty, req.due_date, req.order_date)
+    if not rep.ok:
+        raise HTTPException(409, "; ".join(rep.skipped.values()) or "the order could not be made")
     return CreatePoResponse(**answer(req.dataset, new), report=rep)
 
 

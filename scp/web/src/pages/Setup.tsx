@@ -101,7 +101,7 @@ export function Setup({ route }: { route: string[] }) {
   if (sub === "company") return <Edits><CompanySetup ds={ds} /></Edits>;
   if (sub === "network") return <Edits><NetworkBuilder ds={ds} /></Edits>;
   if (sub === "products") return <Edits><Products ds={ds} /></Edits>;
-  if (sub === "product") return <Edits><ProductWizard ds={ds} product={route[2]} place={route[3]} /></Edits>;
+  if (sub === "product") return <Edits><ProductWizard ds={ds} product={route[2]} place={route[3]} how={route[4]} /></Edits>;
   return <Edits><SetupHome ds={ds} /></Edits>;
 }
 
@@ -163,7 +163,8 @@ function NetworkBuilder({ ds }: { ds: Dataset }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [mode, setMode] = useState("truck_ftl");
-  const [days, setDays] = useState("2");
+  // no silent 2-day default (UX audit): the planner says how long the route takes
+  const [days, setDays] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
 
   const addPlace = () => {
@@ -178,6 +179,7 @@ function NetworkBuilder({ ds }: { ds: Dataset }) {
     const ft = locs.find((l) => l.id === from)?.type, tt = locs.find((l) => l.id === to)?.type;
     if (ft === "customer") return "Goods don't ship on from a customer.";
     if (tt === "supplier") return "Goods don't ship to a supplier.";
+    if (days.trim() === "") return "Enter the days in transit (0 for the same day).";
     if (!(num(days) >= 0)) return "Transit days must be 0 or more.";
     if ((ds.lanes ?? []).some((l) => l.origin === from && l.destination === to))
       return `There is already a route from ${nm.loc(from)} to ${nm.loc(to)}; change its days in the list.`;
@@ -188,7 +190,7 @@ function NetworkBuilder({ ds }: { ds: Dataset }) {
     if (p) return setMsg(p);
     const id = newId(`${from}-${to}`, (ds.lanes ?? []).map((l) => l.id), "LANE");
     store.update((d) => add(d, "lanes", { id, origin: from, destination: to, modes: [{ mode, transit_days: num(days) }] }));
-    setFrom(""); setTo(""); setMode("truck_ftl"); setDays("2"); setMsg(null);   // the next route starts from the defaults
+    setFrom(""); setTo(""); setMode("truck_ftl"); setDays(""); setMsg(null);   // the next route starts empty again
   };
   const pick = (id: string) => {
     if (!from || (from && to)) { setFrom(id); setTo(""); }
@@ -248,7 +250,7 @@ function NetworkBuilder({ ds }: { ds: Dataset }) {
                 <option value="">Choose…</option>{locs.filter((l) => l.type !== "supplier" && l.id !== from).map((l) => <option key={l.id} value={l.id}>{l.name || l.id}</option>)}</select></Field>
               <Field label="By"><select className="select" value={mode} onChange={(e) => setMode(e.target.value)}>
                 {MODES.map((m) => <option key={m.mode} value={m.mode}>{m.label}</option>)}</select></Field>
-              <Field label="Days in transit"><input className="input" type="number" min={0} step="0.5" value={days} onChange={(e) => setDays(e.target.value)} style={{ width: 90 }} /></Field>
+              <Field label="Days in transit"><input className="input" type="number" min={0} step="0.5" required placeholder="days" value={days} onChange={(e) => setDays(e.target.value)} style={{ width: 90 }} aria-label="Days in transit" /></Field>
               <button className="btn primary" onClick={addLane}>Add route</button>
             </div>
             {msg && <div className="banner warning" role="alert">{msg}</div>}
@@ -462,7 +464,7 @@ function placesNeeding(ds: Dataset, net: NetworkView | null, product: string, ex
   return [...out].filter((l) => stocking.has(l) || (ds.locations ?? []).find((x) => x.id === l)?.type === "customer");
 }
 
-function ProductWizard({ ds, product, place }: { ds: Dataset; product?: string; place?: string }) {
+function ProductWizard({ ds, product, place, how }: { ds: Dataset; product?: string; place?: string; how?: string }) {
   const net = useStore((s) => s.network);
   const prods = ds.products ?? [];
   const p = prods.find((x) => x.id === product);
@@ -483,6 +485,7 @@ function ProductWizard({ ds, product, place }: { ds: Dataset; product?: string; 
   const places = needed;
   const open = place && places.includes(place) ? place : places[0];
   const others = (ds.locations ?? []).filter((l) => STOCKING.includes(l.type) && !places.includes(l.id));
+  const plants = (ds.locations ?? []).filter((l) => l.type === "plant");
   return (
     <div>
       <StageHeader title={p.name || p.id} kicker={<>{PRODUCT_TYPES.find((t) => t.type === p.type)?.label}. For each place that needs it, say how it gets
@@ -492,8 +495,13 @@ function ProductWizard({ ds, product, place }: { ds: Dataset; product?: string; 
           <a className="btn" href={href("setup")}>Back to setup</a></>} />
       <div className="content stack">
         {!places.length && <div className="banner warning">{p.name || p.id} isn't needed anywhere yet: it has no demand and isn't a part of anything.
-          {p.type === "FG" ? <> <a href={href("demand")}>Add demand for it</a>, or plan it at a place below.</> : <> Use it as a part when you set up how something is made, or plan it at a place below.</>}</div>}
-        {places.map((loc) => <PlaceCard key={loc} ds={ds} net={net} product={p.id} place={loc} open={loc === open} />)}
+          {p.type === "FG" ? <> <a href={href("demand")}>Add demand for it</a>, or plan it at a place below.</> : <> Use it as a part when you set up how something is made, or plan it at a place below.</>}
+          {/* the bill of material can be entered straight away: making it at a plant is what plans it there */}
+          {p.type !== "RM" && plants.length > 0 && <div className="row wrap" style={{ marginTop: 8 }}>
+            <span className="small">Know what it is made from?</span>
+            {plants.map((l) => <button key={l.id} className="btn sm primary" onClick={() => go("setup", "product", p.id, l.id, "make")}>Make it at {l.name || l.id}</button>)}
+          </div>}</div>}
+        {places.map((loc) => <PlaceCard key={`${p.id}|${loc}`} ds={ds} net={net} product={p.id} place={loc} open={loc === open} start={loc === place && how === "make" ? "make" : undefined} />)}
         {others.length > 0 && <div className="row wrap">
           <span className="muted small">Also plan it at</span>
           <select className="select" value={extra} onChange={(e) => setExtra(e.target.value)} aria-label="Also plan it at" style={{ width: "auto" }}>
@@ -509,10 +517,13 @@ function ProductWizard({ ds, product, place }: { ds: Dataset; product?: string; 
 
 type Mode = null | "make" | "buy" | "ship";
 
-function PlaceCard({ ds, net, product, place, open }: { ds: Dataset; net: NetworkView | null; product: string; place: string; open: boolean }) {
+function PlaceCard({ ds, net, product, place, open, start }: { ds: Dataset; net: NetworkView | null; product: string; place: string; open: boolean; start?: Mode }) {
   const nm = names(ds);
-  const [mode, setMode] = useState<Mode>(null);
+  const [mode, setMode] = useState<Mode>(start ?? null);
+  const ptype = (ds.products ?? []).find((x) => x.id === product)?.type;
   const [expanded, setExpanded] = useState(open);
+  // a link to this product at this place (a part's "Set it up", the checklist) opens its card even when it was shown closed
+  useEffect(() => { if (open) setExpanded(true); }, [open]);
   const loc = (ds.locations ?? []).find((l) => l.id === place);
   const make = (ds.production_sources ?? []).map((x, i) => [x, i] as const).filter(([x]) => x.product === product && x.location === place);
   const buy = (ds.purchasing_sources ?? []).map((x, i) => [x, i] as const).filter(([x]) => x.product === product && x.location === place);
@@ -545,9 +556,10 @@ function PlaceCard({ ds, net, product, place, open }: { ds: Dataset; net: Networ
             <a className="btn sm ghost" href={href("setup", "product", product, x.origin)}>How it gets to {nm.loc(x.origin)}</a></li>)}
         </ul> : <p className="muted">{isCustomer ? `Customers are delivered to by a route from a warehouse or plant.` : `Nothing brings ${nm.prod(product)} to ${nm.loc(place)} yet.`} How does it get here?</p>}
         <div className="row wrap">
-          {loc?.type === "plant" && !make.length && <button className={`btn ${mode === "make" ? "primary" : ""}`} onClick={() => setMode("make")}>Make it here</button>}
-          {!isCustomer && <button className={`btn ${mode === "buy" ? "primary" : ""}`} onClick={() => setMode("buy")}>{buy.length ? "Add another supplier" : "Buy it"}</button>}
-          <button className={`btn ${mode === "ship" ? "primary" : ""}`} onClick={() => setMode("ship")}>{isCustomer ? "Deliver it from…" : "Ship it from another place"}</button>
+          {/* each card names its own product and place: several open cards no longer show identical buttons */}
+          {loc?.type === "plant" && !make.length && ptype !== "RM" && <button className={`btn ${mode === "make" ? "primary" : ""}`} onClick={() => setMode("make")}>Make {nm.prod(product)} at {nm.loc(place)}</button>}
+          {!isCustomer && <button className={`btn ${mode === "buy" ? "primary" : ""}`} onClick={() => setMode("buy")}>{buy.length ? `Add another supplier for ${nm.loc(place)}` : `Buy ${nm.prod(product)} for ${nm.loc(place)}`}</button>}
+          <button className={`btn ${mode === "ship" ? "primary" : ""}`} onClick={() => setMode("ship")}>{isCustomer ? `Deliver to ${nm.loc(place)} from…` : `Ship to ${nm.loc(place)} from another place`}</button>
         </div>
         {mode === "make" && <MakeForm ds={ds} product={product} place={place} existing={make[0]?.[0]} index={make[0]?.[1]} done={() => setMode(null)} />}
         {mode === "buy" && <BuyForm ds={ds} product={product} place={place} done={() => setMode(null)} />}
@@ -750,15 +762,21 @@ function BuyForm({ ds, product, place, done }: { ds: Dataset; product: string; p
 function ShipForm({ ds, product, place, done }: { ds: Dataset; product: string; place: string; done: () => void }) {
   const nm = names(ds);
   const origins = (ds.locations ?? []).filter((l) => STOCKING.includes(l.type) && l.id !== place);
-  const [from, setFrom] = useState(origins.length === 1 ? origins[0].id : "");
+  // never pre-picked, even when there is one place to pick: a card saved without reading it routed goods backwards
+  const [from, setFrom] = useState("");
   const [mode, setMode] = useState("truck_ftl");
-  const [days, setDays] = useState("2");
-  const [only, setOnly] = useState(false);
+  const [days, setDays] = useState("");
+  const [only, setOnly] = useState(true);       // a new route carries this product only, unless widened on purpose
   const [err, setErr] = useState<string | null>(null);
   const lane = (ds.lanes ?? []).findIndex((l) => l.origin === from && l.destination === place);
+  // the reverse route already carries this product: saving would make supply go round in a circle
+  const reverse = from ? (ds.lanes ?? []).find((l) => l.origin === place && l.destination === from
+    && (!l.products?.length || l.products.includes(product))) : undefined;
   const existing = lane >= 0 ? ds.lanes![lane] : null;
   const save = () => {
     if (!from) return setErr("Choose where it ships from.");
+    if (reverse) return setErr(`${nm.loc(place)} already ships ${nm.prod(product)} to ${nm.loc(from)}. A route back would go round in a circle and stop planning: set this up on the card of the place that receives it.`);
+    if (lane < 0 && days.trim() === "") return setErr("Enter the days in transit (0 for the same day).");
     if (lane < 0 && !(num(days) >= 0)) return setErr("Transit days must be 0 or more.");
     store.update((d) => {
       if (lane >= 0) {
@@ -779,7 +797,7 @@ function ShipForm({ ds, product, place, done }: { ds: Dataset; product: string; 
           <option value="">Choose…</option>{origins.map((l) => <option key={l.id} value={l.id}>{l.name || l.id}</option>)}</select></Field>
         {lane < 0 && <>
           <Field label="By"><select className="select" value={mode} onChange={(e) => setMode(e.target.value)}>{MODES.map((m) => <option key={m.mode} value={m.mode}>{m.label}</option>)}</select></Field>
-          <Field label="Days in transit"><input className="input" type="number" min={0} step="0.5" value={days} style={{ width: 80 }} onChange={(e) => setDays(e.target.value)} /></Field>
+          <Field label="Days in transit"><input className="input" type="number" min={0} step="0.5" required placeholder="days" value={days} style={{ width: 80 }} onChange={(e) => setDays(e.target.value)} aria-label="Days in transit" /></Field>
         </>}
       </div>
       {from && existing && <p className="small muted">There is already a route from {nm.loc(from)}; {nm.prod(product)} will use it
@@ -791,8 +809,10 @@ function ShipForm({ ds, product, place, done }: { ds: Dataset; product: string; 
         </div>
         <p className="small muted">This adds a route from {nm.loc(from)} to {nm.loc(place)}{only ? ` for ${nm.prod(product)} only; other products can be added to it later` : " for all products"}. Then set up how {nm.prod(product)} gets to {nm.loc(from)}.</p>
       </>}
+      {reverse && !err && <div className="banner warning" role="alert">{nm.loc(place)} already ships {nm.prod(product)} to {nm.loc(from)}: a route back
+        would go round in a circle.</div>}
       {err && <div className="banner warning" role="alert">{err}</div>}
-      <div className="row"><button className="btn primary" onClick={save}>Save</button><button className="btn ghost" onClick={done}>Cancel</button></div>
+      <div className="row"><button className="btn primary" onClick={save}>Save the route to {nm.loc(place)}</button><button className="btn ghost" onClick={done}>Cancel</button></div>
     </div>
   );
 }
@@ -807,6 +827,9 @@ function StockForm({ ds, product, place, lp }: { ds: Dataset; product: string; p
   const journal = (ds.movements ?? []).some((m) => m.location === place && m.product === product);
   const [count, setCount] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+  // a rule that needs a number (fixed batches, days of cover) is chosen first and saved once its number is typed:
+  // no silent batch of 100 or 7 days of cover (UX audit)
+  const [pending, setPending] = useState<null | "FIXED" | "days_of_supply">(null);
   type Loose = { on_hand?: number; safety_stock?: Record<string, unknown>; lot_sizing?: Record<string, unknown>; strategy?: string | null };
   const sells = ["FG", "SFG"].includes((ds.products ?? []).find((x) => x.id === product)?.type ?? "");
   const write = (patch: (x: Loose) => void) => store.update((d) => {
@@ -816,7 +839,12 @@ function StockForm({ ds, product, place, lp }: { ds: Dataset; product: string; p
     patch(x);
   });
   const setNum = (v: string, f: (x: Loose, n: number) => void) => { const n = num(v); if (n >= 0) write((x) => f(x, n)); };
-  const setLot = (v: string) => write((x) => {
+  const setLot = (v: string) => {
+    if (v === "FIXED" && lp?.lot_sizing?.policy !== "FIXED") { setPending("FIXED"); return; }
+    if (pending === "FIXED") setPending(null);
+    setLotNow(v);
+  };
+  const setLotNow = (v: string) => write((x) => {
     const keep = { ...(x.lot_sizing ?? {}) };
     x.lot_sizing = v === "" ? { ...keep, policy: null } : v.startsWith("POQ") ? { ...keep, policy: "POQ", periods: Number(v.slice(3)) }
       : v === "FIXED" ? { ...keep, policy: "FIXED", fixed_qty: keep.fixed_qty ?? 100 } : { ...keep, policy: v };
@@ -840,13 +868,19 @@ function StockForm({ ds, product, place, lp }: { ds: Dataset; product: string; p
           <button className="btn sm" disabled={count.trim() === ""} onClick={postCount}>Post the count</button></span></Field>
         : <Field label="On hand today"><SetupInput className="input" type="number" min={0} step="any" required value={lp?.on_hand ?? 0} style={{ width: 100 }}
           commit={(v) => setNum(v, (x, n) => { x.on_hand = n; })} aria-label={`On hand of ${nm.prod(product)} at ${nm.loc(place)}`} /></Field>}
-        <Field label="Safety stock"><select className="select" value={ss} onChange={(e) => write((x) => { x.safety_stock = { method: e.target.value, ...(e.target.value === "fixed" ? { qty: 0 } : e.target.value === "days_of_supply" ? { days: 7 } : {}) }; })}>
+        <Field label="Safety stock"><select className="select" value={pending === "days_of_supply" ? "days_of_supply" : ss} aria-label="Safety stock" onChange={(e) => {
+          if (e.target.value === "days_of_supply" && ss !== "days_of_supply") { setPending("days_of_supply"); return; }
+          if (pending === "days_of_supply") setPending(null);
+          write((x) => { x.safety_stock = { method: e.target.value, ...(e.target.value === "fixed" ? { qty: 0 } : {}) }; });
+        }}>
           <option value="none">None</option><option value="fixed">A fixed quantity</option><option value="days_of_supply">Days of cover</option>
           {!["none", "fixed", "days_of_supply"].includes(ss) && <option value={ss}>{ss.replace(/_/g, " ")}</option>}</select></Field>
         {ss === "fixed" && <Field label="Quantity"><SetupInput className="input" type="number" min={0} step="any" required value={lp?.safety_stock?.qty ?? 0} style={{ width: 90 }}
           commit={(v) => setNum(v, (x, n) => { x.safety_stock = { ...(x.safety_stock ?? {}), method: "fixed", qty: n }; })} /></Field>}
-        {ss === "days_of_supply" && <Field label="Days"><SetupInput className="input" type="number" min={0} step="any" required value={lp?.safety_stock?.days ?? 7} style={{ width: 80 }}
-          commit={(v) => setNum(v, (x, n) => { x.safety_stock = { ...(x.safety_stock ?? {}), method: "days_of_supply", days: n }; })} /></Field>}
+        {(ss === "days_of_supply" || pending === "days_of_supply") && <Field label="Days" hint={pending === "days_of_supply" ? "how many days of demand to keep: saved once entered" : undefined}>
+          <SetupInput className="input" type="number" min={0} step="any" required value={pending === "days_of_supply" ? "" : lp?.safety_stock?.days ?? ""} style={{ width: 80 }}
+          aria-label="Days of cover" placeholder="days"
+          commit={(v) => { const n = num(v); if (n >= 0) { setPending(null); write((x) => { x.safety_stock = { ...(x.safety_stock ?? {}), method: "days_of_supply", days: n }; }); } }} /></Field>}
         {sells && <Field label="Planned from" hint={lp?.strategy === "MTO" ? "made or bought only for orders taken; free stock is used first" : undefined}>
           <select className="select" value={lp?.strategy ?? ""} aria-label={`How ${nm.prod(product)} at ${nm.loc(place)} is planned`}
             onChange={(e) => write((x) => { x.strategy = e.target.value || null; })}>
@@ -856,14 +890,16 @@ function StockForm({ ds, product, place, lp }: { ds: Dataset; product: string; p
             <option value="MTO">orders only: made to order</option>
             <option value="ATO">parts from the forecast, assembled to order</option>
           </select></Field>}
-        <Field label="Each order covers"><select className="select" value={lot} onChange={(e) => setLot(e.target.value)} aria-label="Each order covers">
+        <Field label="Each order covers"><select className="select" value={pending === "FIXED" ? "FIXED" : lot} onChange={(e) => setLot(e.target.value)} aria-label="Each order covers">
           <option value="">The company's default ({coverLabel(ds.settings as never)})</option>
           <option value="L4L">Exactly what's needed</option><option value="POQ1">A week's need</option>
           <option value="POQ2">Two weeks' need</option><option value="POQ4">Four weeks' need</option><option value="FIXED">Fixed batches</option>
           {!["", "L4L", "POQ1", "POQ2", "POQ4", "FIXED"].includes(lot) && <option value={lot}>{lot}</option>}</select></Field>
-        {lot === "FIXED" && <Field label="Batch size"><SetupInput className="input" type="number" min={Number.MIN_VALUE} step="any" required value={lp?.lot_sizing?.fixed_qty ?? 100} style={{ width: 90 }}
-          commit={(v) => { const n = num(v); if (n > 0) write((x) => { x.lot_sizing = { ...(x.lot_sizing ?? {}), policy: "FIXED", fixed_qty: n }; }); }} /></Field>}
-        <a className="btn sm ghost" href={href("material", product, place, "mrp1")}>All planning settings (MRP 1–4)</a>
+        {(lot === "FIXED" || pending === "FIXED") && <Field label="Batch size" hint={pending === "FIXED" ? "the size of every order: saved once entered" : undefined}>
+          <SetupInput className="input" type="number" min={Number.MIN_VALUE} step="any" required value={pending === "FIXED" ? "" : lp?.lot_sizing?.fixed_qty ?? ""} style={{ width: 90 }}
+          aria-label="Batch size" placeholder="units"
+          commit={(v) => { const n = num(v); if (n > 0) { setPending(null); write((x) => { x.lot_sizing = { ...(x.lot_sizing ?? {}), policy: "FIXED", fixed_qty: n }; }); } }} /></Field>}
+        <a className="btn sm ghost" href={href("material", product, place, "mrp1")}>All planning settings for this product here</a>
       </div>
       {msg && <p className="small muted" role="status">{msg}</p>}
     </div>

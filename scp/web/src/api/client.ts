@@ -9,6 +9,7 @@ import type {
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
+import { done } from "../lib/guide";
 
 /** Thrown when the engine rejects the dataset shape (HTTP 422). Carries field-level errors. */
 export class SchemaRejected extends Error {
@@ -95,18 +96,50 @@ export const SSO_START = `${API_ORIGIN}/api/auth/sso/start`;
 /** A proof run answers only when it is done; on a small server the generated flow takes minutes. */
 export const RUN_TIMEOUT_MS = 15 * 60_000;
 
+/** Roadmap D: the browser's session lives in an HttpOnly cookie the page cannot read. The store keeps only a marker
+ *  ("cookie:…", no secret) so it knows it is signed in; a real token there is one kept before the change, which
+ *  `adopt` swaps for the cookie once. */
+export const COOKIE_SESSION = "cookie:";
+export const cookieSession = () => COOKIE_SESSION + Math.random().toString(36).slice(2) + Date.now().toString(36);
+const isBearer = (t: string | null) => !!t && !t.startsWith(COOKIE_SESSION);
+/** The double-submit token sent back on every change (header X-CSRF-Token = the scp_csrf cookie). */
+let csrf: string | null = null;
+export function setCsrf(t: string | null | undefined) { if (t) csrf = t; }
+function csrfCookie(): string | null {
+  try {
+    const m = document.cookie.match(/(?:^|;\s*)scp_csrf=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch { return null; }
+}
+async function csrfToken(): Promise<string | null> {
+  const c = csrfCookie();            // same site: the cookie itself (always the current one)
+  if (c) return (csrf = c);
+  if (csrf) return csrf;
+  try {                              // a client served from another site cannot read it: ask
+    const r = await fetch(`${API_ORIGIN}/api/auth/csrf`, { credentials: CREDENTIALS });
+    if (r.ok) csrf = ((await r.json()) as { csrf: string }).csrf;
+  } catch { /* offline: the change is refused and says so */ }
+  return csrf;
+}
+const CREDENTIALS: RequestCredentials = API_ORIGIN ? "include" : "same-origin";
+const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
 /** `timeoutMs`: give up (and say so) when the engine has not answered by then. */
 async function call<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
   const ctrl = timeoutMs ? new AbortController() : null;
   const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : undefined;
   try {
     const who = authOf();
+    const unsafe = UNSAFE.has((init?.method ?? "GET").toUpperCase());
+    const xsrf = unsafe && who.token && !isBearer(who.token) ? await csrfToken() : null;
     const res = await fetch(`${API_ORIGIN}${path}`, {
       ...init,
+      credentials: CREDENTIALS,
       signal: ctrl?.signal ?? init?.signal,
       headers: {
         "Content-Type": "application/json",
-        ...(who.token ? { Authorization: `Bearer ${who.token}` } : {}),
+        ...(isBearer(who.token) ? { Authorization: `Bearer ${who.token}` } : {}),
+        ...(xsrf ? { "X-CSRF-Token": xsrf } : {}),
         ...(who.company ? { "X-Company": who.company } : {}),
         "X-Client": CLIENT_ID,
         "X-Browser-Key": BROWSER_KEY,
@@ -221,6 +254,14 @@ export interface PostExtra {
   block?: boolean; uncounted_zero?: boolean;
 }
 
+/** Sign-in calls ask for the session in the HttpOnly cookie (roadmap D) and keep the CSRF token they answer with. */
+const COOKIE_PLEASE = { "X-SCP-Session": "cookie" };
+async function withCsrf(p: Promise<Session>): Promise<Session> {
+  const s = await p;
+  setCsrf((s as Session & { csrf?: string | null }).csrf);
+  return s;
+}
+
 export const api = {
   productionUsage: (dataset: Dataset, order: string, qty: number) =>
     withDataset<ProductionUsageInput[]>("/api/actuals/production-usage", dataset, { order, qty }),
@@ -248,10 +289,10 @@ export const api = {
   promise: (ds: Dataset) => planPost<PromiseResult>("/api/promise", ds),
   bop: (ds: Dataset) => planPost<PromiseResult>("/api/promise/bop", ds),
   promiseCheck: (dataset: Dataset, order: DemandRecord) =>
-    withDataset<PromiseResult>("/api/promise/check", dataset, { order }),
+    withDataset<PromiseResult>("/api/promise/check", dataset, { order }).then(done("check")),
   /** The lines of one order checked together, each after the ones before it (N119). */
   promiseCheckLines: (dataset: Dataset, lines: DemandRecord[]) =>
-    withDataset<PromiseResult>("/api/promise/check", dataset, { lines }),
+    withDataset<PromiseResult>("/api/promise/check", dataset, { lines }).then(done("check")),
   promiseCommit: (dataset: Dataset, mode: "entry" | "bop") =>
     write<PromiseCommitResponse>("/api/promise/commit", dataset, { mode }),
   /** Detailed schedule; `sequence` (resource → operation keys) fixes the order on those resources and puts a step
@@ -295,6 +336,9 @@ export const api = {
   /** Turn requisitions into purchase orders (`lines` = which, on which source; none = everything due now). */
   createPurchaseOrders: (dataset: Dataset, lines?: RequisitionPick[], orderDate?: string) =>
     write<CreatePoResponse>("/api/purchasing/create", dataset, { lines: lines ?? null, order_date: orderDate ?? null }),
+  /** A purchase order no requisition asked for: one line on a purchasing source (null date = as soon as it can come). */
+  oneOffPo: (dataset: Dataset, sourceId: string, qty: number, dueDate?: string | null) =>
+    write<CreatePoResponse>("/api/purchasing/one-off", dataset, { source_id: sourceId, qty, due_date: dueDate || null }),
   /** An action on a purchase order (approve, send, confirm, receive, change, cancel), a scheduling agreement, a
    * supplier invoice (enter, release, pay, cancel) or a return to the supplier. */
   poAction: (dataset: Dataset, action: PoAction, po: string, extra: PoActionInput = {}) =>
@@ -307,9 +351,9 @@ export const api = {
   // ---- sign-in and companies kept on the server (Phase I)
   authConfig: () => call<AuthConfig>("/api/auth/config"),
   signUp: (email: string, name: string, password: string) =>
-    call<Session>("/api/auth/signup", { method: "POST", body: JSON.stringify({ email, name, password }) }),
+    withCsrf(call<Session>("/api/auth/signup", { method: "POST", headers: COOKIE_PLEASE, body: JSON.stringify({ email, name, password }) })),
   signIn: (email: string, password: string) =>
-    call<Session>("/api/auth/signin", { method: "POST", body: JSON.stringify({ email, password }) }),
+    withCsrf(call<Session>("/api/auth/signin", { method: "POST", headers: COOKIE_PLEASE, body: JSON.stringify({ email, password }) })),
   signOut: () => call<{ ok: boolean }>("/api/auth/signout", { method: "POST" }),
   me: () => call<Me>("/api/auth/me"),
   changePassword: (old: string, next: string) =>
@@ -349,9 +393,9 @@ export const api = {
   changes: (id: string, q = "", list = "", before?: number) =>
     call<FieldChangeRow[]>(`/api/companies/${encodeURIComponent(id)}/changes?q=${encodeURIComponent(q)}&list=${encodeURIComponent(list)}${before ? `&before=${before}` : ""}`),
   resetRequest: (email: string) => call<{ ok: boolean; mail: boolean }>("/api/auth/reset/request", { method: "POST", body: JSON.stringify({ email }) }),
-  resetPassword: (token: string, password: string) => call<Session>("/api/auth/reset", { method: "POST", body: JSON.stringify({ token, password }) }),
-  /** Who a sign-on token belongs to (the provider's sign-in brings the browser back with one). */
-  meWith: (token: string) => call<Me>("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } }),
+  resetPassword: (token: string, password: string) => withCsrf(call<Session>("/api/auth/reset", { method: "POST", headers: COOKIE_PLEASE, body: JSON.stringify({ token, password }) })),
+  /** Once: swap a session token this browser kept in its storage (before roadmap D) for the HttpOnly cookie. */
+  adopt: (token: string) => withCsrf(call<Session>("/api/auth/adopt", { method: "POST", headers: { ...COOKIE_PLEASE, Authorization: `Bearer ${token}` } })),
   /** Join a company invited to: with the invitation's link, or by its id once the address is verified (CV-C01). */
   acceptInvite: (o: { token?: string; company?: string }) =>
     call<CompanyMeta>("/api/auth/invites/accept", { method: "POST", body: JSON.stringify({ token: o.token ?? "", company: o.company ?? "" }) }),
@@ -392,9 +436,9 @@ export const api = {
   discard: (id: string) => call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/discard`, { method: "POST" }),
   promote: (id: string, name?: string) =>
     call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/promote`, { method: "POST", body: JSON.stringify({ name: name ?? null }) }),
-  compareVersions: (a: string, b: string) => call<Comparison>(`/api/versions/${encodeURIComponent(a)}/compare/${encodeURIComponent(b)}`),
+  compareVersions: (a: string, b: string) => call<Comparison>(`/api/versions/${encodeURIComponent(a)}/compare/${encodeURIComponent(b)}`).then(done("whatif")),
   compare: (a: Dataset, b: Dataset, labelA: string, labelB: string) =>
-    call<Comparison>("/api/compare", { method: "POST", body: JSON.stringify({ a: clean(a), b: clean(b), label_a: labelA, label_b: labelB }) }),
+    call<Comparison>("/api/compare", { method: "POST", body: JSON.stringify({ a: clean(a), b: clean(b), label_a: labelA, label_b: labelB }) }).then(done("whatif")),
   finance: (ds: Dataset) => planPost<FinanceResult>("/api/finance", ds),
   tower: (ds: Dataset) => planPost<TowerResult>("/api/tower", ds),
   /** Assign (owner "" = back to the rules), acknowledge / resolve / reopen, or annotate a worklist item. */

@@ -49,7 +49,9 @@ Everything is set by environment variables. None is needed to try it; the ones m
 | `SCP_SIGNUP` | Who may make an account: `open` (anyone), `invite` (an e-mail a company owner invited, and the very first account), `closed` (the first account only). *Production:* `invite`. | `open`; in the image `invite` |
 | `SCP_PUBLIC_URL` | The address people open, e.g. `https://plan.example.com`. Every link that leaves the server (a reset, an invitation or an address check mailed, the single sign-on redirect) is made from it and never from the request's `Host` header. Without it no such mail is sent and single sign-on is off. *Production.* | none |
 | `SCP_AUTH_RATE` | Sign-ins, sign-ups and reset requests a minute per client address; more are answered 429. `0`: no limit. | `30` |
-| `SCP_ANON_RATE` | Other API calls a minute per client address from someone not signed in. `0`: no limit. | `120` |
+| `SCP_ANON_RATE` | Work a minute per client address from someone not signed in, in cost units from one token bucket: a cheap call costs 1, a plan 20, a schedule 30, a comparison 40 (`ANON_COSTS` in `scp/api/companies.py`). A refusal is 429 with `Retry-After`. A made-up token counts as no token. `0`: no limit. | `120` |
+| `SCP_PASSWORD_MIN` | The shortest password accepted when one is set (sign-up, reset, change); a password on the offline breached list, one character repeated, or containing the e-mail's name is refused too. Existing passwords keep working. | `12` |
+| `SCP_COOKIE_SECURE` | The web client's session cookie (`scp_session`, HttpOnly, SameSite=Lax) is `Secure` whenever the server is reached over HTTPS (also behind a proxy that sends `X-Forwarded-Proto: https`, or with an `https://` `SCP_PUBLIC_URL`). `1` forces it, `0` turns it off. | auto |
 | `SCP_ANON_MAX_MB` | The largest request body from someone not signed in (MB). | `64` |
 | `SCP_ANON_CONCURRENCY`, `SCP_ANON_WAIT_S` | How many calls from people not signed in run at once (the rest wait up to `SCP_ANON_WAIT_S` seconds, then get 429), so anonymous planning never takes every CPU from signed-in people. | half the CPUs, `60` |
 | `SCP_DOCS` | `1`/`0`: the interactive API pages (`/docs`, `/redoc`, `/openapi.json`). | on, off when `SCP_REQUIRE_SIGNIN=1` |
@@ -96,6 +98,13 @@ viewer with a local password and membership only in that company can use *Link t
 Single sign-on accounts recover access through their identity provider. The administrator can make a link for
 a local password account:
 `python -m scp.admin reset-link person@example.com`.
+
+The web client signs in with an HttpOnly session cookie and sends a double-submit CSRF token (header `X-CSRF-Token`
+equal to the `scp_csrf` cookie) with every change; a change with the cookie and without the token is refused (403).
+Scripts and integration keys keep using `Authorization: Bearer`, which needs no CSRF token. A browser that kept a
+session token in its storage before this change swaps it for the cookie once on its next visit
+(`POST /api/auth/adopt`), and the old token stops working. Single sign-on also lands in the cookie: the token is no
+longer put in the address.
 
 Changing a password signs out other sessions and invalidates outstanding reset links. Resetting a password
 signs out all previous sessions and signs in the person using the reset link.

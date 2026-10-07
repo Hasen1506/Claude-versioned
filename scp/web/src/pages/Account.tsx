@@ -24,6 +24,10 @@ export function useAuthConfig(): AuthConfig | null {
   return cfg;
 }
 
+/** What a new password must be (roadmap D): the server says the length; the rest is checked when it is set. */
+export const policyHint = (config: AuthConfig | null) =>
+  `at least ${config?.password_min ?? 12} characters, not a common or breached one, not your address`;
+
 /** Sign in, or make an account. */
 export function SignIn({ config, onDone }: { config: AuthConfig | null; onDone?: () => void }) {
   const canSignUp = !config || config.signup === "open" || config.first_account || config.signup === "invite";
@@ -78,8 +82,8 @@ export function SignIn({ config, onDone }: { config: AuthConfig | null; onDone?:
         <input className="input" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
       {mode === "up" && <label className="stack-field"><span>Your name</span>
         <input className="input" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="as colleagues see it in the history" /></label>}
-      {mode !== "forgot" && <label className="stack-field"><span>Password{mode === "up" && <span className="faint"> (at least 8 characters)</span>}</span>
-        <input className="input" type="password" autoComplete={mode === "in" ? "current-password" : "new-password"} required minLength={mode === "up" ? 8 : undefined}
+      {mode !== "forgot" && <label className="stack-field"><span>Password{mode === "up" && <span className="faint"> ({policyHint(config)})</span>}</span>
+        <input className="input" type="password" autoComplete={mode === "in" ? "current-password" : "new-password"} required minLength={mode === "up" ? (config?.password_min ?? 12) : undefined}
           value={password} onChange={(e) => setPassword(e.target.value)} /></label>}
       {err && <div className="banner error" role="alert" style={{ margin: 0 }}>{err}</div>}
       {sent && mode === "forgot" && <div className="banner ok" role="status" style={{ margin: 0 }}>{sent}</div>}
@@ -358,6 +362,7 @@ function Identity({ sso }: { sso: string | null | undefined }) {
 }
 
 function Password() {
+  const min = useAuthConfig()?.password_min ?? 12;
   const [old, setOld] = useState("");
   const [next, setNext] = useState("");
   const [msg, setMsg] = useState<[string, boolean] | null>(null);
@@ -368,7 +373,7 @@ function Password() {
       catch (x) { setMsg([x instanceof Error ? x.message : String(x), false]); }
     }}>
       <input className="input" type="password" autoComplete="current-password" placeholder="Current password" aria-label="Current password" required value={old} onChange={(e) => setOld(e.target.value)} />
-      <input className="input" type="password" autoComplete="new-password" placeholder="New password (8+ characters)" aria-label="New password" required minLength={8} value={next} onChange={(e) => setNext(e.target.value)} />
+      <input className="input" type="password" autoComplete="new-password" placeholder={`New password (${min}+ characters)`} aria-label="New password" required minLength={min} value={next} onChange={(e) => setNext(e.target.value)} />
       <button className="btn">Change password</button>
       {msg && <span className={`small ${msg[1] ? "" : "banner error"}`}>{msg[0]}</span>}
     </form>
@@ -377,6 +382,7 @@ function Password() {
 
 /** A link from a reset mail (or an owner): choose a new password, and be signed in. */
 function ResetPassword({ token }: { token: string }) {
+  const config = useAuthConfig();
   const [pw, setPw] = useState("");
   const [err, setErr] = useState<string | null>(null);
   return <Panel title="Choose a new password">
@@ -389,8 +395,8 @@ function ResetPassword({ token }: { token: string }) {
         go("account");
       } catch (x) { setErr(x instanceof Error ? x.message : String(x)); }
     }}>
-      <label className="stack-field"><span>New password <span className="faint">(at least 8 characters)</span></span>
-        <input className="input" type="password" autoComplete="new-password" required minLength={8} value={pw} onChange={(e) => setPw(e.target.value)} /></label>
+      <label className="stack-field"><span>New password <span className="faint">({policyHint(config)})</span></span>
+        <input className="input" type="password" autoComplete="new-password" required minLength={config?.password_min ?? 12} value={pw} onChange={(e) => setPw(e.target.value)} /></label>
       {err && <div className="banner error" role="alert" style={{ margin: 0 }}>{err}</div>}
       <div><button className="btn accent">Set it and sign in</button></div>
       <p className="faint small" style={{ margin: 0 }}>Setting it signs this account out everywhere else.</p>
@@ -398,13 +404,13 @@ function ResetPassword({ token }: { token: string }) {
   </Panel>;
 }
 
-/** Back from the company's identity provider: sign in with the token it brought. */
-function SsoDone({ token }: { token: string }) {
+/** Back from the company's identity provider, which set the session cookie (roadmap D: no token in the address). */
+function SsoDone() {
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
-    api.meWith(token).then((me) => { store.signedIn({ token, user: me.user }); go("account"); })
+    api.me().then((me) => { store.signedIn({ user: me.user }); go("account"); })
       .catch((x) => setErr(x instanceof Error ? x.message : String(x)));
-  }, [token]);
+  }, []);
   return err ? <div className="banner error">{err}</div> : <div className="faint">Signing in…</div>;
 }
 
@@ -451,7 +457,7 @@ export function Account({ route = [] }: { route?: string[] }) {
           so the company can be put back to the state just before any of them.</>} />
       <div className="content">
         {route[1] === "reset" && route[2] ? <ResetPassword token={route[2]} />
-          : route[1] === "sso" && route[2] ? <SsoDone token={route[2]} />
+          : route[1] === "sso" ? <SsoDone />
           : route[1] === "sso-failed" ? <div className="banner error" role="alert">Signing in with the company account did not work: {decodeURIComponent(route[2] ?? "")}</div>
           : route[1] === "invite" && route[2] ? <AcceptInvite token={route[2]} />
           : route[1] === "verify" && route[2] ? <VerifyEmail token={route[2]} />
