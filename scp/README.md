@@ -160,7 +160,9 @@ any time); signed in, it is kept on the server (see Phase I below).
   where the company is kept and whether the latest change is saved (*In this browser only*, *Saving…*, *Saved 10:42*,
   *Not saved*); a browser that cannot keep a browser-only company says so instead of failing silently.
 - **Colleagues and roles.** An owner adds people by e-mail as *owner*, *planner* (changes the data) or *viewer*
-  (looks, changes nothing); an e-mail without an account yet joins on signing up. A company always keeps an owner.
+  (looks, changes nothing). Adding someone makes an invitation with a one-time link (mailed when the server sends
+  mail): they join only by accepting it, signed in with that address, whether or not they had an account. A company
+  always keeps an owner.
 - **Saved as you go, never over a colleague unseen.** Every change is saved a moment later. A save made on top of an
   older revision than the latest is refused and the page says who saved and when; *Merge both* keeps both people's
   changes record by record (an order both took under the same number gets the next one), or either side can be kept.
@@ -170,8 +172,11 @@ any time); signed in, it is kept on the server (see Phase I below).
 - **Kept per company.** Plan versions and the worklist belong to the company that is open, and only its members see them.
 - **Server settings.** `SCP_DB` is the SQLite file (default `~/.scp/scp.sqlite`). `SCP_SIGNUP=open|invite|closed`
   says who may make an account (the first account can always be made). `SCP_REQUIRE_SIGNIN=1` answers nobody who is
-  not signed in, and keeps nothing outside a company. Passwords are stored as salted PBKDF2 hashes and session tokens
-  as SHA-256 hashes; sessions last 30 days from their last use.
+  not signed in, and keeps nothing outside a company; without it, a browser's own plan versions are kept under a
+  random key only that browser holds. `SCP_PUBLIC_URL` is where links in mail and the single sign-on redirect point
+  (never the request's Host header). Passwords are stored as salted PBKDF2 hashes (worked out outside the server's
+  lock, and sign-ins are limited per address) and session tokens as SHA-256 hashes; sessions last 30 days from their
+  last use and at most 90 days. See [docs/DEPLOY.md](docs/DEPLOY.md) for every setting.
 
 What real use turned up, and what was done about it, is logged in [docs/USABILITY_LOG.md](docs/USABILITY_LOG.md).
 
