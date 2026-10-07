@@ -43,5 +43,8 @@ jobs:
       - name: API types match the engine (no drift)
         run: npm run gen:api && git diff --exit-code src/api/schema.d.ts
       - run: npm run build
+      - name: Engine tests that need the built client (skipped in the engine job, which has no build)
+        working-directory: scp/engine
+        run: python -m pytest -q tests/test_prop_regressions.py -k ts05
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test --reporter=line
