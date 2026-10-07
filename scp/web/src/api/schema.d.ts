@@ -973,6 +973,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cases
+         * @description Example cases (roadmap H): fictional teaching datasets with their brief and ready-made what-if scenarios.
+         */
+        get: operations["cases_api_cases_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/examples/{name}": {
         parameters: {
             query?: never;
@@ -2040,7 +2060,17 @@ export interface components {
             yields: components["schemas"]["YieldRow"][];
         };
         /** AddShiftChip */
-        AddShiftChip: {
+        "AddShiftChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "add_shift";
+            /** Resource */
+            resource: string;
+        };
+        /** AddShiftChip */
+        "AddShiftChip-Output": {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2665,6 +2695,29 @@ export interface components {
              * @default 5
              */
             life_years: number;
+        };
+        /** CaseInfo */
+        CaseInfo: {
+            /** Example */
+            example: string;
+            /** Company Name */
+            company_name: string;
+            /** Title */
+            title: string;
+            /**
+             * Label
+             * @default Example case (fictional, not real company data)
+             */
+            label: string;
+            /** Brief */
+            brief: string;
+            /**
+             * Questions
+             * @default []
+             */
+            questions: string[];
+            /** Scenarios */
+            scenarios: components["schemas"]["ScenarioIn-Output"][];
         };
         /**
          * Changeover
@@ -3674,7 +3727,25 @@ export interface components {
             invoiced: boolean;
         };
         /** DemandChip */
-        DemandChip: {
+        "DemandChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "demand";
+            /**
+             * Pct
+             * @description Change in per cent: 20 = +20 %
+             */
+            pct: number;
+            /**
+             * Products
+             * @default []
+             */
+            products: string[];
+        };
+        /** DemandChip */
+        "DemandChip-Output": {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -4055,6 +4126,21 @@ export interface components {
             locations: number;
             /** Products */
             products: number;
+            /**
+             * Case
+             * @default false
+             */
+            case: boolean;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Brief
+             * @default
+             */
+            brief: string;
         };
         /** ExecutionSettings */
         ExecutionSettings: {
@@ -5470,7 +5556,7 @@ export interface components {
             overload: boolean;
         };
         /** LaneDelayChip */
-        LaneDelayChip: {
+        "LaneDelayChip-Input": {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -5480,6 +5566,18 @@ export interface components {
             days: number;
             /** Location */
             location?: string | null;
+        };
+        /** LaneDelayChip */
+        "LaneDelayChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "lane_delay";
+            /** Days */
+            days: number;
+            /** Location */
+            location: string | null;
         };
         /** LaneMode */
         LaneMode: {
@@ -5527,7 +5625,7 @@ export interface components {
             default: boolean;
         };
         /** LeadTimeChip */
-        LeadTimeChip: {
+        "LeadTimeChip-Input": {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -5537,6 +5635,18 @@ export interface components {
             days: number;
             /** Supplier */
             supplier?: string | null;
+        };
+        /** LeadTimeChip */
+        "LeadTimeChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "lead_time";
+            /** Days */
+            days: number;
+            /** Supplier */
+            supplier: string | null;
         };
         /** LevelMove */
         LevelMove: {
@@ -9728,15 +9838,26 @@ export interface components {
             } | null;
         };
         /** ScenarioIn */
-        ScenarioIn: {
+        "ScenarioIn-Input": {
             /** Label */
             label: string;
             /**
              * Chips
              * @default []
              */
-            chips: (components["schemas"]["DemandChip"] | components["schemas"]["SupplierOutChip"] | components["schemas"]["LeadTimeChip"] | components["schemas"]["AddShiftChip"] | components["schemas"]["LaneDelayChip"])[];
+            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"])[];
             dataset?: components["schemas"]["Dataset"] | null;
+        };
+        /** ScenarioIn */
+        "ScenarioIn-Output": {
+            /** Label */
+            label: string;
+            /**
+             * Chips
+             * @default []
+             */
+            chips: (components["schemas"]["DemandChip-Output"] | components["schemas"]["SupplierOutChip-Output"] | components["schemas"]["LeadTimeChip-Output"] | components["schemas"]["AddShiftChip-Output"] | components["schemas"]["LaneDelayChip-Output"])[];
+            dataset: components["schemas"]["Dataset"] | null;
         };
         /** ScenarioInfo */
         ScenarioInfo: {
@@ -11493,7 +11614,17 @@ export interface components {
             note: string;
         };
         /** SupplierOutChip */
-        SupplierOutChip: {
+        "SupplierOutChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "supplier_out";
+            /** Supplier */
+            supplier: string;
+        };
+        /** SupplierOutChip */
+        "SupplierOutChip-Output": {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -12146,7 +12277,7 @@ export interface components {
         WhatIfRequest: {
             base: components["schemas"]["Dataset"];
             /** Scenarios */
-            scenarios: components["schemas"]["ScenarioIn"][];
+            scenarios: components["schemas"]["ScenarioIn-Input"][];
         };
         /** WhatIfResult */
         WhatIfResult: {
@@ -14119,6 +14250,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExampleInfo"][];
+                };
+            };
+        };
+    };
+    cases_api_cases_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseInfo"][];
                 };
             };
         };

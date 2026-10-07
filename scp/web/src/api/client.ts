@@ -7,7 +7,7 @@ import type {
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
   User,
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings,
-  WhatIfChip, WhatIfResult,
+  WhatIfChip, WhatIfResult, CaseInfo,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
 import { done } from "../lib/guide";
@@ -438,6 +438,8 @@ export const api = {
   promote: (id: string, name?: string) =>
     call<VersionMeta>(`/api/versions/${encodeURIComponent(id)}/promote`, { method: "POST", body: JSON.stringify({ name: name ?? null }) }),
   compareVersions: (a: string, b: string) => call<Comparison>(`/api/versions/${encodeURIComponent(a)}/compare/${encodeURIComponent(b)}`).then(done("whatif")),
+  /** Roadmap H: example cases (fictional teaching datasets) with their brief and ready-made what-if scenarios. */
+  cases: () => call<CaseInfo[]>("/api/cases"),
   /** Roadmap E: plan 2–4 scenarios from one base (chips) and compare them side by side. */
   whatif: (base: Dataset, scenarios: { label: string; chips: WhatIfChip[] }[]) =>
     call<WhatIfResult>("/api/whatif", { method: "POST", body: JSON.stringify({ base: clean(base), scenarios }) }).then(done("whatif")),

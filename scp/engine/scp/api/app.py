@@ -55,6 +55,7 @@ from ..sop import SopRelease, SopResult, release_sop, run_sop
 from ..validate import RULES, Issue, validate
 from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, lenient_checked, plain_errors
 from ..validate.setup import SetupItem, checklist
+from ..cases import CASES, CaseInfo
 from ..whatif import WhatIfError, WhatIfRequest, WhatIfResult, compare_scenarios
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
 from ..companies import CompanyError
@@ -140,6 +141,9 @@ class ExampleInfo(Out):
     title: str
     locations: int
     products: int
+    case: bool = False                   # an example case for teaching (roadmap H): fictional, with ready scenarios
+    label: str = ""                      # "Example case (fictional, not real company data)" on a case
+    brief: str = ""
 
 
 class RuleInfo(Out):
@@ -212,9 +216,17 @@ def examples() -> list[ExampleInfo]:
     out = []
     for p in sorted(EXAMPLES.glob("*.json")):
         d = json.loads(p.read_text())
+        case = CASES.get(p.stem)
         out.append(ExampleInfo(name=p.stem, title=d["settings"].get("company_name", p.stem),
-                               locations=len(d.get("locations", [])), products=len(d.get("products", []))))
+                               locations=len(d.get("locations", [])), products=len(d.get("products", [])),
+                               case=case is not None, label=case.label if case else "", brief=case.brief if case else ""))
     return out
+
+
+@app.get("/api/cases", response_model=list[CaseInfo])
+def cases() -> list[CaseInfo]:
+    """Example cases (roadmap H): fictional teaching datasets with their brief and ready-made what-if scenarios."""
+    return list(CASES.values())
 
 
 @app.get("/api/examples/{name}", response_model=Dataset)
