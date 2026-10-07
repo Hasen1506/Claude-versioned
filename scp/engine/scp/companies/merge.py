@@ -102,6 +102,26 @@ def _renumber(base: dict, mine: dict, theirs: dict, rep: MergeReport) -> dict:
                 renames[(name, i)] = new
                 taken.add(new)
                 rep.renumbered.append(f"{i} → {new}")
+    # CV-H09: a document's lines are numbered after it ("SO-00002/10" belongs to "SO-00002"): when the header moves,
+    # every line the working copy added under it moves with it ("SO-00003/10"), never on a number of its own
+    roots = {old: new for (_, old), new in renames.items() if "/" not in old}
+    if roots:
+        for name, rows in mine.items():
+            if name in SINGLE or not isinstance(rows, list) or "id" not in _keys_of(name):
+                continue
+            ib = {r.get("id") for r in base.get(name) or [] if isinstance(r, dict)}
+            for r in rows:
+                i = r.get("id") if isinstance(r, dict) else None
+                if not isinstance(i, str) or "/" not in i or i in ib:
+                    continue
+                root, rest = i.split("/", 1)
+                if root in roots:
+                    new = f"{roots[root]}/{rest}"
+                    was = renames.get((name, i))
+                    if was is not None and f"{i} → {was}" in rep.renumbered:
+                        rep.renumbered.remove(f"{i} → {was}")
+                    renames[(name, i)] = new
+                    rep.renumbered.append(f"{i} → {new}")
     if not renames:
         return mine
     schema = _dataset_schema()
@@ -127,7 +147,7 @@ def _renumber(base: dict, mine: dict, theirs: dict, rep: MergeReport) -> dict:
         for f in REF_FIELDS:
             if not isinstance(out.get(f), str):
                 continue
-            candidates = ["demand"] if f == "order" else ["purchase_orders"] if f in ("po", "purchase_order") else ["receipts", "demand"]
+            candidates = ["demand", "sales_orders"] if f == "order" else ["purchase_orders"] if f in ("po", "purchase_order") else ["receipts", "demand"]
             for target in candidates:
                 out[f] = renames.get((target, out[f]), out[f])
         if isinstance(out.get("source"), str):
