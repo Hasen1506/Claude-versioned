@@ -282,7 +282,7 @@ function FieldFor({ schema, name, raw, required, value, onChange, errors, path }
     <div className="field">
       <label htmlFor={path}>{title}{required && <span className="req">*</span>}</label>
       <div>
-        <Widget id={path} name={name} node={node} nullable={nullable} value={value}
+        <Widget id={path} name={name} node={node} nullable={nullable} value={value} required={required}
           onChange={onChange} currency={currency} invalid={!!err} />
       </div>
       {err && <div className="err">{err}</div>}
@@ -291,9 +291,9 @@ function FieldFor({ schema, name, raw, required, value, onChange, errors, path }
   );
 }
 
-function Widget({ id, name, node, nullable, value, onChange, currency, invalid }: {
+function Widget({ id, name, node, nullable, value, onChange, currency, invalid, required = false }: {
   id: string; name: string; node: JsonSchemaNode; nullable: boolean; value: unknown;
-  onChange: (v: unknown) => void; currency: string; invalid: boolean;
+  onChange: (v: unknown) => void; currency: string; invalid: boolean; required?: boolean;
 }): ReactNode {
   const ds = useStore((s) => s.dataset);
   const cls = `input ${invalid ? "invalid" : ""}`;
@@ -351,8 +351,30 @@ function Widget({ id, name, node, nullable, value, onChange, currency, invalid }
     return <textarea id={id} className={cls} rows={3} value={(value as string) ?? ""}
       onChange={(e) => onChange(e.target.value === "" && nullable ? null : e.target.value)} />;
   }
+  if (name === "id" && required) return <IdInput id={id} cls={cls} value={(value as string) ?? ""} onChange={onChange} />;
   return <input id={id} className={cls} value={(value as string) ?? ""}
     onChange={(e) => onChange(e.target.value === "" && nullable ? null : e.target.value)} />;
+}
+
+/** A record's id: kept as typed until the field is left, and never saved empty (QA: an empty id was saved and
+ *  stopped planning). Leaving it empty puts the id back and says why. */
+function IdInput({ id, cls, value, onChange }: { id: string; cls: string; value: string; onChange: (v: unknown) => void }) {
+  const [text, setText] = useState(value);
+  const [why, setWhy] = useState<string | null>(null);
+  useEffect(() => setText(value), [value]);
+  const commit = () => {
+    const t = text.trim();
+    if (!t) { setText(value); setWhy("An id is required: it was put back."); return; }
+    setWhy(null);
+    if (t !== value) onChange(t);
+    else setText(value);
+  };
+  return <>
+    <input id={id} className={`${cls} ${why ? "invalid" : ""}`} value={text} aria-required="true" aria-invalid={!!why}
+      onChange={(e) => { setText(e.target.value); if (e.target.value.trim()) setWhy(null); }} onBlur={commit}
+      onKeyDown={(e) => { if (e.key === "Enter") commit(); }} />
+    {why && <div className="err" role="alert">{why}</div>}
+  </>;
 }
 
 /** A list of numbers typed as "7, 21, 35", kept as typed until the field is left. */
@@ -378,26 +400,38 @@ function NumberInput({ id, node, nullable, value, onChange, unit, integer, inval
   const [text, setText] = useState(shown(value));
   // re-sync when the stored value changes from outside (undo, another editor)
   useEffect(() => setText(shown(value)), [value, isPct]);
-  const commit = (t: string) => {
-    if (t.trim() === "") return onChange(nullable ? null : undefined);
-    const n = Number(t);
-    if (!Number.isFinite(n)) return;
-    const v = isPct ? n / 100 : integer ? Math.round(n) : n;
-    onChange(v);
-  };
   const lo = node.minimum ?? node.exclusiveMinimum;
   const hi = node.maximum ?? node.exclusiveMaximum;
+  // a fraction is typed and shown as a percentage, so its limits are said as percentages too (QA: "0 … 1" next to
+  // a WACC of 13 % read as if 13 were out of range)
+  const pct = (x: number) => +(x * 100).toFixed(6);
+  const allowed = lo !== undefined || hi !== undefined
+    ? `Allowed: ${lo === undefined ? "−∞" : isPct ? pct(lo) : lo} … ${hi === undefined ? "∞" : isPct ? pct(hi) : hi}${isPct ? " %" : ""}`
+    : undefined;
+  const outside = (v: number) =>
+    (node.minimum !== undefined && v < node.minimum) || (node.exclusiveMinimum !== undefined && v <= node.exclusiveMinimum)
+    || (node.maximum !== undefined && v > node.maximum) || (node.exclusiveMaximum !== undefined && v >= node.exclusiveMaximum);
+  const [why, setWhy] = useState<string | null>(null);
+  const commit = (t: string) => {
+    if (t.trim() === "") { setWhy(null); return onChange(nullable ? null : undefined); }
+    const n = Number(t);
+    if (!Number.isFinite(n)) { setText(shown(value)); return; }
+    const v = isPct ? n / 100 : integer ? Math.round(n) : n;
+    // QA: a value outside its allowed range is not saved; the field goes back to the value it had and says why
+    if (outside(v)) { setText(shown(value)); setWhy(`${t.trim()} is outside the range. ${allowed}.`); return; }
+    setWhy(null);
+    onChange(v);
+  };
   const n = Number(text);
-  const outOfRange = text !== "" && Number.isFinite(n) && (
-    (lo !== undefined && (isPct ? n / 100 : n) < lo) || (hi !== undefined && (isPct ? n / 100 : n) > hi));
+  const outOfRange = text !== "" && Number.isFinite(n) && outside(isPct ? n / 100 : n);
   return (
     <div className={`input-wrap ${unit ? "has-unit" : ""}`}>
-      <input id={id} className={`input num ${invalid || outOfRange ? "invalid" : ""}`} inputMode="decimal" value={text}
+      <input id={id} className={`input num ${invalid || outOfRange || why ? "invalid" : ""}`} inputMode="decimal" value={text}
         placeholder={nullable ? "—" : ""} onChange={(e) => setText(e.target.value)} onBlur={(e) => commit(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && commit((e.target as HTMLInputElement).value)}
-        title={lo !== undefined || hi !== undefined
-          ? `Allowed: ${lo ?? "−∞"} … ${hi ?? "∞"}${isPct ? " (as a fraction)" : ""}` : undefined} />
+        aria-invalid={!!why || outOfRange} title={allowed} />
       {unit && <span className="unit">{unit}</span>}
+      {why && <div className="err" role="alert">{why}</div>}
     </div>
   );
 }
