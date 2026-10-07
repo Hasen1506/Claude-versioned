@@ -47,6 +47,14 @@ async function onServer(page: Page, data = fixture()): Promise<string> {
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/);
+  // the server mails documents only for someone whose address is confirmed (CV-H07): confirm it by its mailed link
+  await page.request.delete(SINK);
+  await page.getByRole("button", { name: "Confirm my address" }).click();
+  await expect.poll(async () => (await taken(page)).length, { timeout: 15_000 }).toBe(1);
+  const link = (await taken(page))[0].text.match(/https?:\/\/\S+#\/account\/verify\/\S+/)![0];
+  await page.goto(link);
+  await expect(page.getByText(/is confirmed as yours/)).toBeVisible();
+  await page.request.delete(SINK);
   return email;
 }
 
