@@ -30,3 +30,13 @@ candidate for a later PR. Newest at the bottom of each group.
 - **Mail reminders follow the company time zone.** Imports run on the company's own clock since roadmap C
   (`settings.timezone`), but worklist reminder mails are still sent on the server's clock; send them at the
   company's morning.
+
+## What-if side by side
+- **Keep a scenario as a version.** A what-if that wins should become a stored scenario of the current base in one
+  click (its chips written into the data), so it can be promoted like any other version.
+- **More chips.** A machine down for N days, a price change for one customer, safety stock in days, an FX move on
+  imported parts: each is one small edit of the dataset, like the five chips there are.
+- **Sweep one chip.** Run demand −20 % … +40 % in steps and draw cost against service, so the planner sees where the
+  next point of service gets expensive instead of four single points.
+- **Stored versions in the side by side.** The API already takes a whole dataset per scenario; the page only builds
+  scenarios from chips. Let a column be a stored version as well.
