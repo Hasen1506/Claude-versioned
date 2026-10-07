@@ -47,7 +47,15 @@ Everything is set by environment variables. None is needed to try it; the ones m
 | `SCP_DB` | The database file. Keep it on a volume that is backed up. | `~/.scp/scp.sqlite`; in the image `/data/scp.sqlite` |
 | `SCP_REQUIRE_SIGNIN` | `1`: every call needs a signed-in person, and everything is kept in a company. *Production.* | off; in the image `1` |
 | `SCP_SIGNUP` | Who may make an account: `open` (anyone), `invite` (an e-mail a company owner invited, and the very first account), `closed` (the first account only). *Production:* `invite`. | `open`; in the image `invite` |
-| `SCP_PUBLIC_URL` | The address people open, e.g. `https://plan.example.com`. Used in links sent by mail and for single sign-on. *Production.* | none |
+| `SCP_PUBLIC_URL` | The address people open, e.g. `https://plan.example.com`. Every link that leaves the server (a reset, an invitation or an address check mailed, the single sign-on redirect) is made from it and never from the request's `Host` header. Without it no such mail is sent and single sign-on is off. *Production.* | none |
+| `SCP_AUTH_RATE` | Sign-ins, sign-ups and reset requests a minute per client address; more are answered 429. `0`: no limit. | `30` |
+| `SCP_ANON_RATE` | Other API calls a minute per client address from someone not signed in. `0`: no limit. | `120` |
+| `SCP_ANON_MAX_MB` | The largest request body from someone not signed in (MB). | `64` |
+| `SCP_ANON_CONCURRENCY`, `SCP_ANON_WAIT_S` | How many calls from people not signed in run at once (the rest wait up to `SCP_ANON_WAIT_S` seconds, then get 429), so anonymous planning never takes every CPU from signed-in people. | half the CPUs, `60` |
+| `SCP_DOCS` | `1`/`0`: the interactive API pages (`/docs`, `/redoc`, `/openapi.json`). | on, off when `SCP_REQUIRE_SIGNIN=1` |
+| `SCP_MAIL_OPEN_SIGNUP` | `1`: mail documents (*Send from here*) even though `SCP_SIGNUP=open`. Off, a server anyone may make an account on never mails documents for them. | off |
+| `SCP_MAIL_DAILY_PER_ACCOUNT` | Documents one person may send a day, across every company. | `100` |
+| `FORWARDED_ALLOW_IPS` | (image) The proxy addresses whose `X-Forwarded-*` headers uvicorn trusts. | `127.0.0.1` |
 | `SCP_BACKUP_DIR` | A folder for the nightly copy of the database. None: no nightly copy. *Production.* | none |
 | `SCP_BACKUP_HOUR` | When the nightly copy is taken (hour, UTC). | `2` |
 | `SCP_BACKUP_KEEP` | How many nightly copies are kept; the oldest go. | `14` |
@@ -104,9 +112,20 @@ scopes `openid email profile`. Then set:
 * **Okta, Keycloak, Auth0, Authentik**: the issuer the provider shows (it serves
   `<issuer>/.well-known/openid-configuration`).
 
-Only a verified e-mail address is accepted. A person signing in for the first time gets an account when
-`SCP_SIGNUP` lets them (with `invite`: when a company owner invited that address); an existing account with the same
-e-mail is the same person, whichever way they sign in.
+Only an address the provider says it verified is accepted: `email_verified` must be true (Entra ID: `xms_edov`); a
+provider that says nothing is refused. The ID token must carry this server's nonce, be for this application and come
+from the configured issuer. A person signing in for the first time gets an account when `SCP_SIGNUP` lets them.
+An existing password account is **never** taken over by an e-mail match: its holder signs in with the password and
+uses *Link sign-in with …* on the Account page; a link, once made, is not replaced by another sign-on account.
+
+### Invitations and e-mail addresses
+
+Nobody becomes a member of a company without accepting: an owner's *Add* makes an invitation with a one-time link
+(valid 14 days, only for that address), shown to the owner and, when the server sends mail, mailed to the address.
+The person signs in (or signs up) with that address and opens the link. An account whose address is confirmed
+(by the link in *Confirm my address*, by a reset link mailed to it, or by single sign-on) also sees its invitations
+on the Account page. An owner's *Link to set a new password* works only for members who accepted, have no company of
+their own and belong to no other company; with mail it goes to the member's own address instead of the owner.
 
 ## 3. The reverse proxy
 
