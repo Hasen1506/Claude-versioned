@@ -199,12 +199,16 @@ function NetworkBuilder({ ds }: { ds: Dataset }) {
     if (!(d >= 0)) return;
     store.update((x) => { x.lanes![i].modes[0].transit_days = d; });
   };
-  const removeLane = (i: number) => store.update((x) => { x.lanes!.splice(i, 1); });
+  const removeLane = (i: number) => {
+    if (!window.confirm(`Delete the route ${ds.lanes?.[i]?.id ?? ""}? Undo brings it back.`)) return;
+    store.update((x) => { x.lanes!.splice(i, 1); });
+  };
   const removePlace = (id: string) => {
     const used = (ds.lanes ?? []).some((l) => l.origin === id || l.destination === id)
       || (ds.production_sources ?? []).some((p) => p.location === id) || (ds.purchasing_sources ?? []).some((p) => p.supplier === id || p.location === id)
       || (ds.demand ?? []).some((d) => d.location === id) || (ds.resources ?? []).some((r) => r.location === id);
     if (used) return setMsg(`${nm.loc(id)} is still used by routes, sources, demand or resources. Remove those first, or edit the place in Master data.`);
+    if (!window.confirm(`Delete the place ${nm.loc(id)}? Undo brings it back.`)) return;
     store.update((x) => { x.locations = (x.locations ?? []).filter((l) => l.id !== id); });
   };
   const suppliers = locs.filter((l) => l.type === "supplier").length;
@@ -535,7 +539,7 @@ function PlaceCard({ ds, net, product, place, open }: { ds: Dataset; net: Networ
             <button className="btn sm ghost" onClick={() => setMode("make")}>Change</button></li>)}
           {buy.map(([x, i]) => <li key={x.id}><b>Bought</b> from {nm.loc(x.supplier)} at {x.price} {x.currency || ds.settings.currency}, {x.lead_time_days} days' lead time
             <a className="btn sm ghost" href={href("data", "purchasing_sources", x.id)}>More</a>
-            <button className="btn sm ghost danger" onClick={() => store.update((d) => { d.purchasing_sources!.splice(i, 1); })}>Remove</button></li>)}
+            <button className="btn sm ghost danger" onClick={() => { if (window.confirm("Delete this way to buy? Undo brings it back.")) store.update((d) => { d.purchasing_sources!.splice(i, 1); }); }}>Remove</button></li>)}
           {ship.map(([x]) => <li key={x.id}><b>Shipped</b> from {nm.loc(x.origin)}, {x.modes[0]?.transit_days ?? "?"} day{x.modes[0]?.transit_days === 1 ? "" : "s"} by {modeLabel(x.modes[0]?.mode ?? "")}
             {!x.products?.length && <span className="faint small"> (the route carries all products)</span>}
             <a className="btn sm ghost" href={href("setup", "product", product, x.origin)}>How it gets to {nm.loc(x.origin)}</a></li>)}
