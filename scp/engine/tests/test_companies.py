@@ -82,7 +82,7 @@ def test_an_account_signs_in_and_only_a_hash_of_the_token_is_kept():
     assert client.get("/api/auth/me", headers=h(t2)).status_code == 200            # the e-mail's case does not matter
     r = client.post("/api/auth/signin", json={"email": "asha@kaveri.in", "password": "wrong one"})
     assert r.status_code == 401 and "not right" in r.json()["detail"]
-    assert client.post("/api/auth/signup", json={"email": "asha@kaveri.in", "password": "12345678"}).status_code == 409
+    assert client.post("/api/auth/signup", json={"email": "asha@kaveri.in", "password": "kaveri-2026-river"}).status_code == 409
     assert client.post("/api/auth/signup", json={"email": "ravi@kaveri.in", "password": "short"}).status_code == 422
     client.post("/api/auth/signout", headers=h(t2))
     assert client.get("/api/auth/me", headers=h(t2)).status_code == 401
@@ -105,9 +105,9 @@ def test_a_session_expires_after_thirty_days_unused(clock):
 def test_new_accounts_by_invitation_only(monkeypatch):
     monkeypatch.setenv("SCP_SIGNUP", "invite")
     assert client.get("/api/auth/config").json() == {"signup": "invite", "require_signin": False, "first_account": True,
-                                                     "mail": False, "sso": None}
+                                                     "mail": False, "sso": None, "password_min": 12}
     owner = signup("asha@kaveri.in")                                                # the first account is always allowed
-    r = client.post("/api/auth/signup", json={"email": "stranger@x.com", "password": "12345678"})
+    r = client.post("/api/auth/signup", json={"email": "stranger@x.com", "password": "kaveri-2026-river"})
     assert r.status_code == 403 and "invitation" in r.json()["detail"]
     cid = new_company(owner)
     r = client.post(f"/api/companies/{cid}/members", headers=h(owner), json={"email": "ravi@kaveri.in", "role": "planner"})
@@ -120,7 +120,7 @@ def test_new_accounts_by_invitation_only(monkeypatch):
     (c,) = client.get("/api/auth/me", headers=h(ravi)).json()["companies"]
     assert c["id"] == cid and c["role"] == "planner"
     monkeypatch.setenv("SCP_SIGNUP", "closed")
-    assert client.post("/api/auth/signup", json={"email": "z@x.com", "password": "12345678"}).status_code == 403
+    assert client.post("/api/auth/signup", json={"email": "z@x.com", "password": "kaveri-2026-river"}).status_code == 403
 
 
 # ---- saves ----------------------------------------------------------------------------------------------------
@@ -409,9 +409,9 @@ def test_a_server_that_requires_sign_in_answers_nobody_else(monkeypatch):
 
 def test_the_store_refuses_what_the_rules_do_not_allow():
     c = get_companies()
-    s = c.signup("asha@k.in", "Asha", "12345678")
+    s = c.signup("asha@k.in", "Asha", "kaveri-2026-river")
     with pytest.raises(CompanyError, match="e-mail"):
-        c.signup("not an address", "", "12345678")
+        c.signup("not an address", "", "kaveri-2026-river")
     meta = c.create(s.user, {"settings": {"company_name": ""}})
     assert meta.name == "Unnamed company" and meta.role == "owner"
     with pytest.raises(CompanyError, match="a role is one of"):
@@ -630,11 +630,11 @@ def test_a_forgotten_password_is_reset_by_mail_or_by_a_link_an_owner_makes(monke
     assert [(to, subject) for to, subject, _ in sent] == [("ravi@k.in", "Set a new password")]
     link = next(w for w in sent[0][2].split() if w.startswith("https://plan.example.com/#/account/reset/"))
     token = link.rsplit("/", 1)[1]
-    r = client.post("/api/auth/reset", json={"token": token, "password": "a new horse"})
+    r = client.post("/api/auth/reset", json={"token": token, "password": "a new horse at last"})
     assert r.status_code == 200 and r.json()["user"]["email"] == "ravi@k.in"
     assert client.get("/api/auth/me", headers=h(ravi)).status_code == 401        # signed out everywhere else
-    assert client.post("/api/auth/signin", json={"email": "ravi@k.in", "password": "a new horse"}).status_code == 200
-    assert client.post("/api/auth/reset", json={"token": token, "password": "another one"}).status_code == 410
+    assert client.post("/api/auth/signin", json={"email": "ravi@k.in", "password": "a new horse at last"}).status_code == 200
+    assert client.post("/api/auth/reset", json={"token": token, "password": "another one to try"}).status_code == 410
     # an owner asks for a link for a planner: with mail, it goes to the planner's own address (CV-H01) …
     r = client.post(f"/api/companies/{cid}/members/ravi@k.in/reset", headers=h(asha))
     assert r.status_code == 200 and r.json()["mailed"] and r.json()["link"] == ""
@@ -645,18 +645,18 @@ def test_a_forgotten_password_is_reset_by_mail_or_by_a_link_an_owner_makes(monke
     r = client.post(f"/api/companies/{cid}/members/ravi@k.in/reset", headers=h(asha))
     assert r.status_code == 200 and r.json()["link"].startswith("https://plan.example.com/#/account/reset/")
     assert mailed.startswith("https://plan.example.com/")
-    ravi2 = client.post("/api/auth/signin", json={"email": "ravi@k.in", "password": "a new horse"}).json()["token"]
+    ravi2 = client.post("/api/auth/signin", json={"email": "ravi@k.in", "password": "a new horse at last"}).json()["token"]
     assert client.post(f"/api/companies/{cid}/members/asha@k.in/reset", headers=h(ravi2)).status_code == 403
     join(asha, cid, "ravi@k.in", "owner")
     assert client.post(f"/api/companies/{cid}/members/ravi@k.in/reset", headers=h(asha)).status_code == 403
     tok = r.json()["link"].rsplit("/", 1)[1]
-    assert client.post("/api/auth/reset", json={"token": tok, "password": "third horse"}).status_code == 200
+    assert client.post("/api/auth/reset", json={"token": tok, "password": "third horse at last"}).status_code == 200
     assert any("a link to set a new password was made for Ravi" in x["summary"]
                for x in client.get(f"/api/companies/{cid}/history", headers=h(asha)).json())
     # the link lasts a day
     t2 = client.post(f"/api/companies/{cid}/members/asha@k.in/reset", headers=h(asha)).json()["link"].rsplit("/", 1)[1]
     clock.tick(25 * 60)
-    assert client.post("/api/auth/reset", json={"token": t2, "password": "too late!"}).status_code == 410
+    assert client.post("/api/auth/reset", json={"token": t2, "password": "too late by a day!"}).status_code == 410
 
 
 def id_token(sub: str, nonce: str, iss: str = "https://id.example.com", aud: str = "scp") -> str:
@@ -706,13 +706,14 @@ def test_single_sign_on_signs_in_with_the_company_identity_provider(monkeypatch)
     assert q["redirect_uri"] == ["https://plan.example.com/api/auth/sso/callback"] and q["code_challenge_method"] == ["S256"]
     r = client.get(f"/api/auth/sso/callback?code=c-1&state={q['state'][0]}", follow_redirects=False)
     loc = r.headers["location"]
-    assert loc.startswith("https://plan.example.com/#/account/sso/"), loc
+    # roadmap D: the session is in the HttpOnly cookie, never in the address
+    assert loc == "https://plan.example.com/#/account/sso", loc
     assert seen["client_secret"] == "s3cret" and seen["code"] == "c-1" and seen["code_verifier"]
-    token = loc.rsplit("/", 1)[1]
+    token = r.cookies["scp_session"]
     me = client.get("/api/auth/me", headers=h(token)).json()["user"]
     assert (me["email"], me["name"]) == ("meera@k.in", "Meera")
     # no password on such an account; the state works once; an unverified address is refused
-    r = client.post("/api/auth/signin", json={"email": "meera@k.in", "password": "whatever1"})
+    r = client.post("/api/auth/signin", json={"email": "meera@k.in", "password": "whatever-it-was-1"})
     assert r.status_code == 401 and "single sign-on" in r.json()["detail"]
     r = client.get(f"/api/auth/sso/callback?code=c-1&state={q['state'][0]}", follow_redirects=False)
     assert "/#/account/sso-failed/" in r.headers["location"]
@@ -725,7 +726,7 @@ def test_single_sign_on_signs_in_with_the_company_identity_provider(monkeypatch)
     who.update(email_verified=True, email="meera.k@k.in")
     q3 = parse_qs(urlparse(client.get("/api/auth/sso/start", follow_redirects=False).headers["location"]).query)
     nonce["now"] = q3["nonce"][0]
-    t3 = client.get(f"/api/auth/sso/callback?code=c-3&state={q3['state'][0]}", follow_redirects=False).headers["location"].rsplit("/", 1)[1]
+    t3 = client.get(f"/api/auth/sso/callback?code=c-3&state={q3['state'][0]}", follow_redirects=False).cookies["scp_session"]
     assert client.get("/api/auth/me", headers=h(t3)).json()["user"]["id"] == me["id"]
 
 
