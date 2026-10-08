@@ -59,6 +59,33 @@ candidate for a later PR. Newest at the bottom of each group.
 - **Late-delivery penalties per customer.** `tower.late_revenue_factor` is one share for every sale; a contract's own
   penalty (or a lost-sale probability by customer segment) would price late orders more fairly.
 
+## S/4 guide backtest, part B (§6 order capture, §7 aATP, §8 MRP, §9 PP/DS)
+Found while backtesting the engine against the S/4HANA supply-chain guide (8 Oct 2026). Ranked by value; none built.
+- **Outbound handling times in delivery scheduling (fig. 6.2).** The promised date is scheduled back from the requested
+  delivery date by transit and goods-receipt time only. Add pick/pack and loading time at the shipping location (and a
+  transport-planning lead time on the lane), so the material availability date and goods-issue date the guide draws
+  are real: today every warehouse that needs a day to pick confirms a day too early.
+- **A rescheduling horizon (§8.1).** MRP pulls a firm receipt in only when a new order could not arrive sooner, so a PO
+  due a week late is duplicated by a new PR (now reported as RECEIPT_NOT_NEEDED). Within a horizon per product, propose
+  "reschedule in" first and create new supply only beyond it. Plan-changing: needs a documented differential entry.
+- **DDMRP as a planning type, not only an analysis (§8.7 pitfall).** `ddmrp_buffer` sizes zones and a net-flow
+  recommendation on the inventory page, but MRP still plans the same item by net requirements: the two competing signals
+  the guide warns about. An MRP type `ddmrp` would let the buffer (TOG − NFP when NFP ≤ TOY) drive the planned orders,
+  with buffer-status (red/yellow) items in the inbox.
+- **Configurable rescheduling tolerance.** `RESCHEDULE_OUT` uses a fixed 3-day tolerance; make it a planning setting
+  (per MRP group) as S/4 does.
+- **Firming types 2–4 (§8.5).** Only type 1 exists (new proposals move to the fence end). Add "no proposals inside the
+  fence, report the shortage" (type 2) and manual firming, for plants that must not get automatic late orders.
+- **Fences and GR time in working days.** Safety time now counts working days (S4-B2); the planning time fence and the
+  goods-receipt processing time still count calendar days, while S/4 counts all three in working days. Changing them
+  changes saved data's meaning: needs a migration note.
+- **Allocation hierarchy and sequence (§7.4).** Allocations cap one product × customer set × period. A product-family
+  cap checked before the customer cap, carry-forward of unused allocation, and a catch-all bucket are missing.
+- **Optimising lot sizes (§8.3).** Part-period balancing / least unit cost / Groff for lumpy demand, beside EOQ.
+- **Fixed pegging (§9.2).** Hard-link a firm supply to a sales order (MTO traceability) so replanning cannot reassign it.
+- **Multi-item single delivery (§7.2).** Confirm the lines of one order together (all on the date the last is
+  available) for kits, instead of line by line.
+
 ## S/4 guide backtest, part A (§1–5, §17, §20.1)
 Found while backtesting the engine against the S/4HANA supply-chain guide (8 Oct 2026). Ranked by value to a
 small or mid-sized planner. None is built.

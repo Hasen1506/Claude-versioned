@@ -235,6 +235,13 @@ def _ddmrp(ds: Dataset, g: NetworkGraph, role: dict[Node, str], stock_up: dict[N
         ship = d.date - timedelta(days=math.ceil(lt.get(node, 0.0) - 1e-9))
         for up, k in upstream_mix(ds, g, node):
             orders[up].append((ship, d.qty * k))
+    # what released orders still draw from the position (components of a production order, goods a stock transfer
+    # takes from its origin) is qualified demand too: DDMRP's net flow counts all open demand, not only sales orders,
+    # so a buffered part feeding a released order is not counted as if its stock were free
+    for r in ds.receipts:
+        for rv in r.reservations:
+            if rv.qty > 0 and role.get((rv.location, rv.product)) == "stocking":
+                orders[(rv.location, rv.product)].append((rv.date, rv.qty))
     open_supply: dict[Node, float] = defaultdict(float)
     for r in ds.receipts:
         open_supply[(r.location, r.product)] += r.expected_qty

@@ -103,6 +103,9 @@ def _combine(P: Promiser, d: DemandRecord, key: str, lines: list[ScheduleLine]) 
     return finish(r)
 
 
+_KEEPS = (ConfirmationStrategy.WIN, ConfirmationStrategy.GAIN, ConfirmationStrategy.FILL)
+
+
 def _bop(ds: Dataset, P: Promiser) -> tuple[list[OrderPromise], list[BopRow]]:
     persisted = _persisted(ds)
     orders = sales_orders(ds)
@@ -117,20 +120,31 @@ def _bop(ds: Dataset, P: Promiser) -> tuple[list[OrderPromise], list[BopRow]]:
             out[key] = finish(OrderPromise(order=key, location=d.location, product=d.product, qty=d.qty,
                                            requested=d.date, priority=d.priority, complete_delivery=d.complete_delivery,
                                            lines=lines))
+    members_of = {id(sg): sorted(((k, d) for k, d in orders if seg_of[k] is sg),
+                                 key=lambda kd: sort_key(sg, kd[1], idx[kd[0]])) for sg in segs}
+    # Win, Gain and Fill may not lose (guide §7.3): their confirmations are held BEFORE any segment is re-planned, so a
+    # Redistribute segment placed ahead of them in the sequence cannot take their supply (only as far as supply still
+    # covers them: a confirmation the supply no longer backs is lost whatever the strategy)
+    held: dict[str, list[ScheduleLine]] = {}
     for sg in segs:
-        members = sorted(((k, d) for k, d in orders if seg_of[k] is sg), key=lambda kd: sort_key(sg, kd[1], idx[kd[0]]))
-        for key, d in members:
+        if sg.strategy in _KEEPS:
+            for key, d in members_of[id(sg)]:
+                held[key] = _reclaim(P, d, key, persisted.get(key, []))
+    for sg in segs:
+        for key, d in members_of[id(sg)]:
             prev = persisted.get(key, [])
             st = sg.strategy
             if st in (ConfirmationStrategy.WIN, ConfirmationStrategy.GAIN):
                 snap = P.snapshot()
+                for x in held[key]:
+                    P.release(d, x)        # re-checked from scratch with its own supply back in the pool
                 r = P.check(d, key)
-                before = (sum(c.qty for c in prev if c.date <= max(d.date, P.origin)), sum(c.qty for c in prev))
-                if _summary(r.lines) < (round(before[0], 6), round(before[1], 6)):
+                before = _summary(held[key])
+                if _summary(r.lines) < before:
                     P.restore(snap)
-                    r = _combine(P, d, key, _reclaim(P, d, key, prev))
+                    r = _combine(P, d, key, held[key])
             elif st is ConfirmationStrategy.FILL:
-                r = _combine(P, d, key, _reclaim(P, d, key, prev))
+                r = _combine(P, d, key, held[key])
             elif st is ConfirmationStrategy.LOSE:
                 cap = sum(c.qty for c in prev)
                 r = P.check(d, key, qty=cap) if cap > EPS else finish(OrderPromise(

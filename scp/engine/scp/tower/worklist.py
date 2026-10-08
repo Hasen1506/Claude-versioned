@@ -28,7 +28,7 @@ CATEGORY = {
     "LANE_CAPACITY": "capacity", "EXCESS_STOCK": "inventory", "SHELF_LIFE_RISK": "inventory",
     "STOCK_EXPIRES": "inventory", "LOT_EXPIRES": "inventory", "OVERTIME_PLANNED": "capacity",
     "SUPPLY_SPLIT": "capacity", "FOLLOW_UP": "inventory",
-    "START_IN_PAST": "orders", "RESCHEDULE_IN": "orders", "SCHEDULE_LATE": "orders", "FENCE_SHIFT": "orders", "NO_VALID_SOURCE": "orders",
+    "START_IN_PAST": "orders", "RESCHEDULE_IN": "orders", "RESCHEDULE_OUT": "orders", "RECEIPT_NOT_NEEDED": "orders", "SCHEDULE_LATE": "orders", "FENCE_SHIFT": "orders", "NO_VALID_SOURCE": "orders",
     "RECEIPT_OVERDUE": "orders", "PO_CONFIRMED_LATE": "orders",
     "PO_CONFIRMED_SHORT": "orders", "PO_NOT_CONFIRMED": "orders", "ORDER_OVERDUE": "delivery", "PROMISE_AT_RISK": "delivery",
     "PROMISE_LATE": "delivery", "FORECAST_BIAS": "demand", "NO_DEMAND_STOCK": "inventory",

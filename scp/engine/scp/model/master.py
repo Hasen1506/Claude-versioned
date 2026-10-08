@@ -270,7 +270,8 @@ class MrpGroup(Model):
     name: str = Field("", max_length=80)
     strategy: Strategy | None = Field(None, description="Planning strategy for the group (empty: each product's own)")
     lot_sizing: LotSizing | None = Field(None, description="Lot size for the group (empty: each product's own)")
-    safety_time_days: float | None = Unit("days", default=None, description="Plan receipts this many days early")
+    safety_time_days: float | None = Unit("workdays", default=None,
+                                          description="Safety time: plan receipts this many working days early")
     planning_time_fence_days: float | None = Unit("days", default=None,
                                                   description="No new proposals inside this fence")
     consumption_backward_days: float | None = Unit(
@@ -307,7 +308,8 @@ class LocationProduct(Model):
     unit_cost: float | None = Unit("money_per_unit", default=None, description="Valuation override")
     lot_sizing: LotSizing = Field(default_factory=LotSizing)
     safety_stock: SafetyStockPolicy = Field(default_factory=SafetyStockPolicy)
-    safety_time_days: float = Unit("days", default=0.0, description="Plan receipts this many days early")
+    safety_time_days: float = Unit("workdays", default=0.0,
+                                   description="Safety time: plan receipts this many working days early")
     reorder_point: float | None = Unit("qty", default=None, description="reorder_point MRP type trigger")
     max_stock: float | None = Unit("qty", default=None, description="MIN_MAX target / excess threshold")
     planning_time_fence_days: float = Unit("days", default=0.0,
