@@ -2,9 +2,9 @@
 // first is the baseline) and compared in one table: cost, service, inventory, capacity and late units, with each
 // scenario's deltas against the baseline, the cost of one point of service, and the levers it pulled. A scenario is
 // built from chips, quick changes made in one click.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { WhatIfChip, WhatIfResult, WhatIfScenarioOut } from "../api/types";
+import type { CaseInfo, WhatIfChip, WhatIfResult, WhatIfScenarioOut } from "../api/types";
 import { Badge, Empty, Panel, Reading, StageHeader } from "../components/ui";
 import { money, pct, qty } from "../lib/format";
 import { href } from "../lib/router";
@@ -45,6 +45,16 @@ export function WhatIf() {
   const [place, setPlace] = useState("");
   const [delay, setDelay] = useState("7");
 
+  // an example case (roadmap H) brings its own scenarios: offered when its data is the one open
+  const [cases, setCases] = useState<CaseInfo[]>([]);
+  useEffect(() => { api.cases().then(setCases).catch(() => setCases([])); }, []);
+  const kase = cases.find((c) => c.company_name === ds.settings.company_name);
+  const loadCase = (c: CaseInfo) => {
+    setScen(c.scenarios.map((x) => ({ label: x.label, chips: [...(x.chips ?? [])] })));
+    setActive(Math.min(1, c.scenarios.length - 1));
+    setRes(null);
+  };
+
   const edit = (i: number, f: (s: Scenario) => Scenario) => { setScen(scen.map((s, j) => (j === i ? f(s) : s))); setRes(null); };
   const addChip = (c: WhatIfChip) => edit(active, (s) => ({ ...s, chips: [...s.chips, c] }));
   const addScenario = () => {
@@ -84,6 +94,12 @@ export function WhatIf() {
           others show their difference from it, and the cost of one point of service where cost and service move together.
           To compare stored versions instead, use <a href={href("versions")}>Versions</a>.</>} />
       <div className="content">
+        {kase && <Panel title={kase.title} actions={<Badge sev="info">Example case</Badge>}>
+          <p className="small muted" style={{ marginTop: 0 }}>{kase.label}</p>
+          <p style={{ marginTop: 0 }}>{kase.brief}</p>
+          {kase.questions.length > 0 && <ol className="small">{kase.questions.map((q) => <li key={q}>{q}</li>)}</ol>}
+          <button className="btn" onClick={() => loadCase(kase)}>Load the case's scenarios</button>
+        </Panel>}
         <Panel title="Scenarios" actions={scen.length < MAX && <button className="btn sm" onClick={addScenario}>+ Add a scenario</button>}>
           <div className="row" aria-label="Scenarios" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
             {scen.map((s, i) => (

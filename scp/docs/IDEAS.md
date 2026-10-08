@@ -40,3 +40,12 @@ candidate for a later PR. Newest at the bottom of each group.
   next point of service gets expensive instead of four single points.
 - **Stored versions in the side by side.** The API already takes a whole dataset per scenario; the page only builds
   scenarios from chips. Let a column be a stored version as well.
+
+## Example cases
+- **Port congestion as a calendar, not a flat delay.** The monsoon chip adds days to every route through the port;
+  a port that closes on given days (cyclone warnings) would be a calendar on the lane, so a shipment that just misses
+  the window waits for the next one.
+- **A teaching mode for cases.** Hide the answers, let a class change the data and compare, then reveal the
+  instructor's scenarios and a short debrief per question.
+- **Tally and Zoho imports (roadmap G, not started).** Import masters and open orders from Tally Prime and Zoho
+  Inventory exports, so an Indian SME can load its own data instead of a case. Deferred on purpose.

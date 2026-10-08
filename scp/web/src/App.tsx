@@ -364,7 +364,9 @@ function Welcome() {
                 } catch (e) { if (request === opening.current && store.currentContext(context)) setErr(String(e)); }
               }}>
                 <b>{x.title}</b>
+                {x.case && <span><Badge sev="info">Example case</Badge> <span className="small muted">{x.label}</span></span>}
                 <span className="faint small">{x.locations} locations · {x.products} products</span>
+                {x.case && x.brief && <span className="small muted" style={{ whiteSpace: "normal", textAlign: "left" }}>{x.brief}</span>}
               </button>
             ))}
           </div>
