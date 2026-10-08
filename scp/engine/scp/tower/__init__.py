@@ -95,6 +95,7 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
     k.adherence()
     if plan.ok:
         k.inventory(plan)
+        k.working_capital(plan)
         prev, label = _previous_base(ds, store, scope)
         if prev is not None:
             pplan = run_mrp(prev)
@@ -111,6 +112,7 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
     k.ageing(live)
     order_ids = ["forecast_accuracy", "forecast_bias", "confirmation_rate", "otif_confirmed", "otif_requested",
                  "perfect_order", "supplier_reliability", "schedule_adherence", "days_of_supply", "excess_obsolete",
+                 "inventory_turns", "dio", "dso", "dpo", "cash_to_cash",
                  "plan_stability", "exception_ageing", "cost_to_serve"]
     out.kpis = sorted(k.out, key=lambda x: order_ids.index(x.id) if x.id in order_ids else 99)
     return out

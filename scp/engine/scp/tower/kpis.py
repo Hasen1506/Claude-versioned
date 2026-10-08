@@ -18,6 +18,8 @@ from .result import Kpi, KpiRow, WorkItem
 
 EPS = 1e-9
 OUTBOUND = {MovementType.ISSUE, MovementType.SALE, MovementType.TRANSFER_OUT}
+# a working-capital flow (goods issued, invoices) needs at least this many days of records to give a value
+MIN_DAYS = 28
 
 
 def grade(value: float | None, target: float | None, direction: str, unit: str) -> str:
@@ -256,6 +258,167 @@ class Kpis:
                      breakdown=sorted(eo_rows, key=lambda r: -(r.value or 0))[:25],
                      note=f"Obsolete {obsolete:,.0f} · excess {excess:,.0f} · slow-moving (no issue or sale for "
                           f"{self.cfg.slow_moving_days} days) {slow:,.0f}, in {ds.settings.currency}."))
+
+    # ---- working capital (inventory turns, DIO, DSO, DPO, cash-to-cash) -----------------------------------------------
+    def working_capital(self, plan: PlanResult) -> None:
+        """Turns, DIO, DSO, DPO and the cash-to-cash cycle from what the system holds: stock at its unit value (the
+        plan's valuation), the goods issued to customers in the journal (cost of goods sold at that value), the
+        customer invoices and credit notes with their payments (receivables, sales billed) and the supplier invoices
+        and credit memos with theirs (payables, purchases billed). Each flow is measured over the KPI window, or from
+        its first record when that is later; a flow with less than MIN_DAYS of records, or none, gives no value
+        ("not enough data"), never a guessed one."""
+        ds, as_of, since = self.ds, self.as_of, self.since
+        win = (as_of - since).days
+        need = min(MIN_DAYS, win)
+        cur = ds.settings.currency
+        val = {(n.location, n.product): n.unit_value for n in plan.nodes}
+
+        def span(first: dt.date | None) -> int:
+            return 0 if first is None else (as_of - max(since, first)).days
+
+        def rate(c: str | None) -> float | None:
+            if not c or c == cur:
+                return 1.0
+            return ds.settings.fx_rates.get(c)
+
+        # stock on the planning start at unit value, stocking places (the days-of-supply valuation)
+        inv = 0.0
+        inv_by: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+        for n in plan.nodes:
+            if ds.location_type(n.location) is LocationType.CUSTOMER or n.on_hand <= EPS:
+                continue
+            inv += n.on_hand * n.unit_value
+        # cost of goods sold: goods issued to customers (sale movements, reversals netted) at unit value
+        sales = [m for m in ds.movements if m.type is MovementType.SALE and m.date < as_of]
+        first_sale = min((m.date for m in sales), default=None)
+        cogs = 0.0
+        unvalued = 0
+        for m in sales:
+            if m.date < since:
+                continue
+            v = val.get((m.location, m.product), 0.0)
+            if v <= EPS:
+                unvalued += 1
+            cogs += m.net * v
+            p = ds.product_by_id.get(m.product)
+            inv_by[p.type.value if p else "?"][1] += m.net * v
+        for n in plan.nodes:
+            if ds.location_type(n.location) is LocationType.CUSTOMER or n.on_hand <= EPS:
+                continue
+            p = ds.product_by_id.get(n.product)
+            inv_by[p.type.value if p else "?"][0] += n.on_hand * n.unit_value
+        cogs_days = span(first_sale)
+        cogs_ok = cogs_days >= need and cogs > EPS
+        # receivables and sales billed (customer invoices less credit notes, with tax, as billed)
+        ar = billed = 0.0
+        ar_by: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+        docs = [i for i in ds.invoices if not i.cancelled and i.date < as_of]
+        first_inv = min((i.date for i in docs), default=None)
+        for i in docs:
+            sign = -1.0 if i.kind == "credit_note" else 1.0
+            paid = sum(p.amount + p.discount for p in i.payments if p.date < as_of)
+            owed = sign * max(0.0, i.total - paid)
+            ar += owed
+            ar_by[i.customer][0] += owed
+            if i.date >= since:
+                billed += sign * i.total
+                ar_by[i.customer][1] += sign * i.total
+        ar = max(0.0, ar)
+        ar_days = span(first_inv)
+        ar_ok = ar_days >= need and billed > EPS
+        # payables and purchases billed (supplier invoices and debits less credit memos, with tax, in company currency)
+        ap = bought = 0.0
+        ap_by: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+        foreign = 0
+        sdocs = [s for s in ds.supplier_invoices if not s.cancelled and s.date < as_of]
+        first_sup = min((s.date for s in sdocs), default=None)
+        for s in sdocs:
+            fx = rate(s.currency)
+            if fx is None:
+                foreign += 1
+                continue
+            sign = -1.0 if s.credit else 1.0
+            paid = sum(p.amount + p.discount for p in s.payments if p.date < as_of)
+            owed = sign * max(0.0, s.total - paid) * fx
+            ap += owed
+            ap_by[s.supplier][0] += owed
+            if s.date >= since:
+                bought += sign * s.total * fx
+                ap_by[s.supplier][1] += sign * s.total * fx
+        ap = max(0.0, ap)
+        ap_days = span(first_sup)
+        ap_ok = ap_days >= need and bought > EPS
+
+        def short(what: str, days: int, total: float) -> str:
+            if days <= 0:
+                return f"Not enough data: no {what} before the planning start."
+            if total <= EPS:
+                return f"Not enough data: no {what} in the last {win} days."
+            return f"Not enough data: {what} only for {days} days; at least {need} are needed."
+
+        def rows(by: dict[str, list[float]], days: int) -> list[KpiRow]:
+            return [KpiRow(label=k, value=v[0] / v[1] * days if v[1] > EPS else None, numerator=v[0], denominator=v[1])
+                    for k, v in sorted(by.items())]
+
+        cogs_note = (f"Cost of goods sold {cogs:,.0f} {cur} over {cogs_days} days (goods issued to customers at unit "
+                     f"value); stock {inv:,.0f} {cur} on the planning start."
+                     + (f" {unvalued} goods issue(s) of products without a unit value count as 0." if unvalued else ""))
+        dio = inv / cogs * cogs_days if cogs_ok else None
+        turns = cogs / cogs_days * 365 / inv if cogs_ok and inv > EPS else None
+        self.add(Kpi(id="inventory_turns", name="Inventory turns", unit="times", direction="up",
+                     definition="Cost of goods sold per year ÷ stock value = (COGS over the period ÷ its days × 365) ÷ "
+                                "stock on the planning start, both at unit value",
+                     source="The movement journal (goods issued to customers) and on-hand at the plan's unit values",
+                     value=turns, numerator=cogs / cogs_days * 365 if cogs_ok else cogs, denominator=inv,
+                     n=len([m for m in sales if m.date >= since]),
+                     note=cogs_note if turns is not None else
+                     short("goods issued to customers", cogs_days, cogs) if not cogs_ok else
+                     "Not enough data: no stock with a unit value on the planning start."))
+        self.add(Kpi(id="dio", name="Days inventory outstanding (DIO)", unit="days", direction="down",
+                     definition="Stock value ÷ cost of goods sold × days in the period = how many days of sales the "
+                                "stock on hand would last at the recent rate",
+                     source="On-hand at unit value and the movement journal (goods issued to customers)",
+                     value=dio, numerator=inv, denominator=cogs, n=len([m for m in sales if m.date >= since]),
+                     breakdown_by="product type" if dio is not None else "",
+                     breakdown=rows(inv_by, cogs_days) if dio is not None else [],
+                     note=cogs_note if dio is not None else short("goods issued to customers", cogs_days, cogs)))
+        dso = ar / billed * ar_days if ar_ok else None
+        self.add(Kpi(id="dso", name="Days sales outstanding (DSO)", unit="days", direction="down",
+                     definition="Receivables ÷ sales billed × days in the period. Receivables: what customers still owe "
+                                "on the planning start (invoices less payments, less open credit notes); sales billed: "
+                                "invoices less credit notes in the period, with tax as billed",
+                     source="Customer invoices, credit notes and their payments (Selling → Billing)",
+                     value=dso, numerator=ar, denominator=billed, n=len([i for i in docs if i.date >= since]),
+                     breakdown_by="customer" if dso is not None else "",
+                     breakdown=rows(ar_by, ar_days) if dso is not None else [],
+                     note=(f"Receivables {ar:,.0f} {cur}; billed {billed:,.0f} {cur} over {ar_days} days."
+                           if dso is not None else short("customer invoices", ar_days, billed))))
+        dpo = ap / bought * ap_days if ap_ok else None
+        fx_note = (f" {foreign} supplier invoice(s) in a currency without an exchange rate are left out."
+                   if foreign else "")
+        self.add(Kpi(id="dpo", name="Days payables outstanding (DPO)", unit="days", direction="none",
+                     definition="Payables ÷ purchases billed × days in the period. Payables: what is still owed to "
+                                "suppliers on the planning start (invoices and debits less payments, less open credit "
+                                "memos); purchases billed: supplier invoices and debits less credit memos in the period, "
+                                "with tax, in the company currency",
+                     source="Supplier invoices, credit memos and their payments (Buying → Invoices)",
+                     value=dpo, numerator=ap, denominator=bought, n=len([s for s in sdocs if s.date >= since]),
+                     breakdown_by="supplier" if dpo is not None else "",
+                     breakdown=rows(ap_by, ap_days) if dpo is not None else [],
+                     note=(f"Payables {ap:,.0f} {cur}; billed {bought:,.0f} {cur} over {ap_days} days." + fx_note
+                           if dpo is not None else short("supplier invoices", ap_days, bought) + fx_note)))
+        parts = [("DIO", dio), ("DSO", dso), ("DPO", dpo)]
+        missing = [n for n, v in parts if v is None]
+        ccc = dio + dso - dpo if not missing else None
+        self.add(Kpi(id="cash_to_cash", name="Cash-to-cash cycle", unit="days", direction="down",
+                     definition="DIO + DSO − DPO: the days between paying suppliers and being paid by customers",
+                     source="The three measures above",
+                     value=ccc, numerator=(dio or 0) + (dso or 0), denominator=dpo or 0, n=3 - len(missing),
+                     breakdown_by="measure" if ccc is not None else "",
+                     breakdown=[KpiRow(label=n, value=v if n != "DPO" else -v, numerator=v or 0.0)
+                                for n, v in parts] if ccc is not None else [],
+                     note=(f"DIO {dio:,.1f} + DSO {dso:,.1f} − DPO {dpo:,.1f} days." if ccc is not None else
+                           f"Not enough data: {', '.join(missing)} {'has' if len(missing) == 1 else 'have'} no value yet.")))
 
     # ---- plan & process -----------------------------------------------------------------------------
     def stability(self, value: float | None, n: int, matched: int, versus: str, brk: list[KpiRow]) -> None:

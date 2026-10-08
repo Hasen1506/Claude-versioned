@@ -1,0 +1,114 @@
+"""Working-capital KPIs on the Performance page: inventory turns, DIO, DSO, DPO and the cash-to-cash cycle, each
+against a hand calculation, and each showing no value ("not enough data") rather than a guess when the data the
+system holds does not support one."""
+from __future__ import annotations
+
+import pytest
+
+from scp.tower import run_tower
+
+from .factory import base, ds, lp
+
+
+def company() -> dict:
+    """Planning start Mon 5 Jan 2026, KPI window 91 days. Stock: 10 A at 50 + 30 B at 10 + 0 C = 800."""
+    d = base()
+    d["locations"].append({"id": "K", "type": "customer"})
+    lp(d, "P", "A")["unit_cost"] = 50
+    lp(d, "P", "B")["unit_cost"] = 10
+    lp(d, "P", "C")["unit_cost"] = 5
+    # goods issued to customers: 20 + 12 A = 32 × 50 = 1,600 of COGS, the first on 4 Nov (62 days before the start)
+    d["movements"] = [
+        {"id": "g1", "date": "2025-11-04", "type": "sale", "location": "P", "product": "A", "qty": 20, "counterparty": "K"},
+        {"id": "g2", "date": "2025-12-15", "type": "sale", "location": "P", "product": "A", "qty": 12, "counterparty": "K"},
+    ]
+    inv = lambda i, day, due, q, kind="invoice", pays=(): {  # noqa: E731
+        "id": i, "kind": kind, "customer": "K", "date": day, "due_date": due,
+        "lines": [{"product": "A", "qty": q, "price": 100}], "payments": [{"date": p, "amount": a} for p, a in pays]}
+    d["invoices"] = [
+        inv("INV1", "2025-11-10", "2025-12-10", 20, pays=[("2025-12-08", 2000)]),          # 2,000, paid
+        inv("INV2", "2025-12-20", "2026-01-19", 12, pays=[("2026-01-02", 200),             # 1,200, 1,000 open
+                                                          ("2026-01-06", 100)]),           # after the start: not yet
+        inv("CN1", "2025-12-22", "2025-12-22", 1, kind="credit_note"),                     # 100 still to pay back
+        {**inv("INV0", "2025-12-01", "2025-12-31", 5), "cancelled": True},                  # cancelled: never counts
+    ]
+    sup = lambda i, day, q, pays=(), **kw: {  # noqa: E731
+        "id": i, "supplier": "S", "date": day, "due_date": day, "lines": [{"order": "PO1", "product": "B", "qty": q,
+                                                                           "price": 10}],
+        "payments": [{"date": p, "amount": a} for p, a in pays], **kw}
+    d["supplier_invoices"] = [
+        sup("SI1", "2025-11-01", 50, pays=[("2025-12-01", 500)]),        # 500, paid
+        sup("SI2", "2025-12-10", 100),                                    # 1,000 open
+        sup("SI3", "2025-12-11", 10, currency="USD"),                     # no USD rate: left out, and said so
+    ]
+    return d
+
+
+def kpis(d: dict) -> dict:
+    res = run_tower(ds(d), record=False)
+    return {k.id: k for k in res.kpis}
+
+
+def test_working_capital_against_hand_calculation():
+    k = kpis(company())
+    assert k["dio"].value == pytest.approx(800 / 1600 * 62)                     # 31 days
+    assert k["inventory_turns"].value == pytest.approx(1600 / 62 * 365 / 800)   # 11.8 a year
+    assert k["inventory_turns"].unit == "times"
+    # receivables 1,000 − 100 = 900; billed 2,000 + 1,200 − 100 = 3,100 over 56 days (first invoice 10 Nov)
+    assert k["dso"].value == pytest.approx(900 / 3100 * 56)
+    assert k["dso"].numerator == pytest.approx(900) and k["dso"].denominator == pytest.approx(3100)
+    # payables 1,000; billed 500 + 1,000 = 1,500 over 65 days (first supplier invoice 1 Nov); the USD one left out
+    assert k["dpo"].value == pytest.approx(1000 / 1500 * 65)
+    assert "1 supplier invoice(s) in a currency without an exchange rate" in k["dpo"].note
+    assert k["cash_to_cash"].value == pytest.approx(31 + 900 / 3100 * 56 - 1000 / 1500 * 65)
+    for i in ("inventory_turns", "dio", "dso", "dpo", "cash_to_cash"):
+        assert k[i].definition and k[i].source            # every formula is stated on the page
+
+
+def test_a_foreign_supplier_invoice_counts_at_the_company_rate():
+    d = company()
+    d["settings"]["fx_rates"] = {"USD": 80}
+    k = kpis(d)                                            # SI3: 100 USD × 80 = 8,000, open
+    assert k["dpo"].value == pytest.approx(9000 / 9500 * 65)
+    assert "exchange rate" not in k["dpo"].note
+
+
+def test_breakdowns_add_up():
+    k = kpis(company())
+    by = {r.label: r for r in k["dso"].breakdown}
+    assert by["K"].value == pytest.approx(k["dso"].value)
+    assert {r.label for r in k["cash_to_cash"].breakdown} == {"DIO", "DSO", "DPO"}
+
+
+def test_no_records_shows_not_enough_data_never_a_number():
+    d = company()
+    d["movements"], d["invoices"], d["supplier_invoices"] = [], [], []
+    k = kpis(d)
+    for i in ("inventory_turns", "dio", "dso", "dpo", "cash_to_cash"):
+        assert k[i].value is None, i
+        assert k[i].note.startswith("Not enough data"), (i, k[i].note)
+        assert k[i].status == "none"
+    assert "DIO, DSO, DPO have no value yet" in k["cash_to_cash"].note
+
+
+def test_too_short_a_history_shows_not_enough_data():
+    """Two weeks of invoices would make a DSO from a fraction of the period: no value until four weeks of records."""
+    d = company()
+    for i in d["invoices"]:
+        i["date"] = "2025-12-26"
+        for p in i["payments"]:
+            p["date"] = max(p["date"], "2025-12-26")
+    k = kpis(d)
+    assert k["dso"].value is None
+    assert k["dso"].note == "Not enough data: customer invoices only for 10 days; at least 28 are needed."
+    assert k["cash_to_cash"].value is None and k["dio"].value is not None and k["dpo"].value is not None
+
+
+def test_records_older_than_the_window_still_count_as_open_but_not_as_billed():
+    """An invoice billed before the window still owes money on the planning start, but sales billed are the window's."""
+    d = company()
+    d["invoices"].append({"id": "OLD", "customer": "K", "date": "2025-06-02", "due_date": "2025-07-02",
+                          "lines": [{"product": "A", "qty": 3, "price": 100}]})
+    k = kpis(d)
+    assert k["dso"].numerator == pytest.approx(1200) and k["dso"].denominator == pytest.approx(3100)
+    assert k["dso"].value == pytest.approx(1200 / 3100 * 91)               # the whole window has records now
