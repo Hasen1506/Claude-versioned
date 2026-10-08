@@ -40,6 +40,16 @@ class DemandRecord(Model):
         None, ge=1, le=366,
         description="Forecast only: the record covers [date, date + period_days) and is spread evenly over the "
                     "working days of that window (PIR splitting). Empty = the whole quantity is due on `date`.")
+    original_date: dt.date | None = Field(
+        None, description="Forecast only, set by the roll-forward when the period begins: the first day of the forecast "
+                          "as it was entered. The record's own date, period and quantity are then what is left of the "
+                          "period by time; the original is what delivered orders are counted against, so an order "
+                          "delivered early in the period reduces what is left of it (S/4 reduction at goods issue). "
+                          "Empty: the record is the forecast as entered")
+    original_period_days: int | None = Field(
+        None, ge=1, le=366, description="Forecast only: the days the forecast as entered covered (see `original_date`)")
+    original_qty: float | None = Unit(
+        "qty", default=None, description="Forecast only: the quantity of the forecast as entered (see `original_date`)")
     released: bool = Field(
         False, description="Forecast only: written by a forecast release. Releasing every series again replaces it, "
                            "so a series the new forecast no longer has does not stay in demand")

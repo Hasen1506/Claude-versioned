@@ -62,7 +62,7 @@ def independent_demand(ds: Dataset) -> dict[Node, list[tuple[IndependentReq, int
         period = {rid: (r.period_days or 1) for rid, r in rs}
         out[node] = [(r, period[r.source_ref] if r.kind == "forecast" else 1)
                      for r in effective_demand(rs, lp.strategy, lp.consumption_backward_days,
-                                               lp.consumption_forward_days)]
+                                               lp.consumption_forward_days, ds=ds, node=node)]
     return out
 
 
