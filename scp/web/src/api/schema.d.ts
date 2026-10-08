@@ -1792,6 +1792,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/whatif": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Whatif
+         * @description Roadmap E: plan 2–4 scenarios (the base with quick-change chips, or whole datasets) and compare them side by
+         *     side: cost, service, inventory, capacity, late units, their deltas against the first, and cost per service point.
+         */
+        post: operations["post_whatif_api_whatif_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/compare": {
         parameters: {
             query?: never;
@@ -2017,6 +2038,16 @@ export interface components {
              * @default []
              */
             yields: components["schemas"]["YieldRow"][];
+        };
+        /** AddShiftChip */
+        AddShiftChip: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "add_shift";
+            /** Resource */
+            resource: string;
         };
         /**
          * Allocation
@@ -3641,6 +3672,24 @@ export interface components {
              * @default false
              */
             invoiced: boolean;
+        };
+        /** DemandChip */
+        DemandChip: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "demand";
+            /**
+             * Pct
+             * @description Change in per cent: 20 = +20 %
+             */
+            pct: number;
+            /**
+             * Products
+             * @default []
+             */
+            products: string[];
         };
         /**
          * DemandEvent
@@ -5420,6 +5469,18 @@ export interface components {
             /** Overload */
             overload: boolean;
         };
+        /** LaneDelayChip */
+        LaneDelayChip: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "lane_delay";
+            /** Days */
+            days: number;
+            /** Location */
+            location?: string | null;
+        };
         /** LaneMode */
         LaneMode: {
             /** @default truck_ftl */
@@ -5464,6 +5525,18 @@ export interface components {
              * @default false
              */
             default: boolean;
+        };
+        /** LeadTimeChip */
+        LeadTimeChip: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "lead_time";
+            /** Days */
+            days: number;
+            /** Supplier */
+            supplier?: string | null;
         };
         /** LevelMove */
         LevelMove: {
@@ -5558,6 +5631,11 @@ export interface components {
             overloaded_days_after: number;
             /** Hours */
             hours: number;
+        };
+        /** Lever */
+        Lever: {
+            /** What */
+            what: string;
         };
         /** ListChange */
         ListChange: {
@@ -9649,6 +9727,17 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** ScenarioIn */
+        ScenarioIn: {
+            /** Label */
+            label: string;
+            /**
+             * Chips
+             * @default []
+             */
+            chips: (components["schemas"]["DemandChip"] | components["schemas"]["SupplierOutChip"] | components["schemas"]["LeadTimeChip"] | components["schemas"]["AddShiftChip"] | components["schemas"]["LaneDelayChip"])[];
+            dataset?: components["schemas"]["Dataset"] | null;
+        };
         /** ScenarioInfo */
         ScenarioInfo: {
             /** Id */
@@ -9673,6 +9762,78 @@ export interface components {
              * @default false
              */
             generated: boolean;
+        };
+        /** ScenarioOut */
+        ScenarioOut: {
+            /** Label */
+            label: string;
+            /** Ok */
+            ok: boolean;
+            /**
+             * Levers
+             * @default []
+             */
+            levers: components["schemas"]["Lever"][];
+            /**
+             * Total Cost
+             * @default 0
+             */
+            total_cost: number;
+            /**
+             * Service
+             * @default 0
+             */
+            service: number;
+            /**
+             * Inventory Value Avg
+             * @default 0
+             */
+            inventory_value_avg: number;
+            /**
+             * Capacity Peak
+             * @default 0
+             */
+            capacity_peak: number;
+            /**
+             * Late Units
+             * @default 0
+             */
+            late_units: number;
+            /**
+             * Late Revenue
+             * @default 0
+             */
+            late_revenue: number;
+            /**
+             * Orders
+             * @default 0
+             */
+            orders: number;
+            /**
+             * Errors
+             * @default 0
+             */
+            errors: number;
+            /** Cost Delta */
+            cost_delta: number | null;
+            /** Service Delta */
+            service_delta: number | null;
+            /** Inventory Delta */
+            inventory_delta: number | null;
+            /** Late Units Delta */
+            late_units_delta: number | null;
+            /** Cost Per Service Point */
+            cost_per_service_point: number | null;
+            /**
+             * Verdict
+             * @default
+             */
+            verdict: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /** ScenarioReport */
         ScenarioReport: {
@@ -11331,6 +11492,16 @@ export interface components {
              */
             note: string;
         };
+        /** SupplierOutChip */
+        SupplierOutChip: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "supplier_out";
+            /** Supplier */
+            supplier: string;
+        };
         /**
          * SupplierReturn
          * @description Goods sent back to the supplier (≈ return delivery): taken out of stock against the order line, so the line
@@ -11970,6 +12141,29 @@ export interface components {
             size: number;
             /** Company */
             company: string;
+        };
+        /** WhatIfRequest */
+        WhatIfRequest: {
+            base: components["schemas"]["Dataset"];
+            /** Scenarios */
+            scenarios: components["schemas"]["ScenarioIn"][];
+        };
+        /** WhatIfResult */
+        WhatIfResult: {
+            /** Currency */
+            currency: string;
+            /** Scenarios */
+            scenarios: components["schemas"]["ScenarioOut"][];
+            /**
+             * Best Service
+             * @default
+             */
+            best_service: string;
+            /**
+             * Lowest Cost
+             * @default
+             */
+            lowest_cost: string;
         };
         /**
          * WorkItem
@@ -15411,6 +15605,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Comparison"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_whatif_api_whatif_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WhatIfRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhatIfResult"];
                 };
             };
             /** @description Validation Error */

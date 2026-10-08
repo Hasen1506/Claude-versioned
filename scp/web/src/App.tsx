@@ -13,6 +13,7 @@ import { Finance } from "./pages/Finance";
 import { Home, markVisited } from "./pages/Home";
 import { Tower } from "./pages/Tower";
 import { Versions } from "./pages/Versions";
+import { WhatIf } from "./pages/WhatIf";
 import { Inventory } from "./pages/Inventory";
 import { Promising } from "./pages/Promising";
 import { Proof } from "./pages/Proof";
@@ -104,6 +105,7 @@ export function App() {
           : page === "finance" ? <Finance route={route} />
           : page === "tower" ? <Tower route={route} />
           : page === "versions" ? <Versions />
+          : page === "whatif" ? <WhatIf />
           : page === "history" ? <History />
           : page === "connections" ? <Connections route={route} />
           : <div className="content"><Home ds={ds} /></div>}
@@ -199,6 +201,7 @@ function TopBar({ navOpen, onNav }: { navOpen: boolean; onNav: () => void }) {
           <button role="menuitem" data-close onClick={() => file.current?.click()}>Import a dataset file…</button>
           <button role="menuitem" data-close onClick={exportJson}>Export this dataset</button>
           <a role="menuitem" data-close href={href("versions")}>Versions and what-ifs</a>
+          <a role="menuitem" data-close href={href("whatif")}>What if… side by side</a>
           {company && <a role="menuitem" data-close href={href("history")}>History: who changed what</a>}
           {company?.live && <a role="menuitem" data-close href={href("connections")}>Connections: ERP, imports, e-mail</a>}
           <a role="menuitem" data-close href={href("proof")}>Proof: check the numbers</a>
@@ -261,6 +264,7 @@ function Rail({ page }: { page: string }) {
       ))}
       <div className="rail-foot">
         <a className={page === "versions" ? "active" : ""} href={href("versions")}>Versions and what-ifs</a>
+        <a className={page === "whatif" ? "active" : ""} href={href("whatif")}>What if… side by side</a>
         <a className={page === "account" || page === "history" ? "active" : ""} href={href("account")}>Sign in, companies, people</a>
         {live && <a className={page === "connections" ? "active" : ""} href={href("connections")}>Connections</a>}
         <a className={page === "proof" ? "active" : ""} href={href("proof")}>Proof</a>

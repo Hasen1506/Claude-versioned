@@ -14,7 +14,7 @@ Server settings (environment):
   the single sign-on redirect) are made only from it, never from the request's Host header (CV-H10).
 * ``SCP_AUTH_RATE``: sign-ins, sign-ups and resets a minute per client address (default 30; 0: no limit, CV-H11).
 * ``SCP_ANON_RATE``: the work a minute per client address without a session, in cost units (default 120; 0: no
-  limit). A cheap call costs 1, a heavy one more (a plan 20, a schedule 30, a comparison 40: ``ANON_COSTS``), from
+  limit). A cheap call costs 1, a heavy one more (a plan 20, a schedule 30, a comparison 40, a what-if 80: ``ANON_COSTS``), from
   one token bucket per address; a refusal says when to come back (``Retry-After``). Roadmap D.
   ``SCP_ANON_MAX_MB``: the largest request body without a session (default 64), and ``SCP_ANON_CONCURRENCY``: how
   many of them run at once (default half the CPUs; the rest wait up to ``SCP_ANON_WAIT_S``, 60 s), against
@@ -76,6 +76,7 @@ ANON_COSTS: dict[str, int] = {
     "/api/forecast": 10, "/api/inventory": 10, "/api/finance": 10, "/api/capacity/level": 10, "/api/compare": 40,
     "/api/promise": 5, "/api/promise/bop": 5, "/api/promise/check": 5, "/api/tower": 10, "/api/actuals": 5,
     "/api/purchasing": 5, "/api/sales": 5, "/api/network": 2, "/api/validate": 1,
+    "/api/whatif": 80,                       # roadmap E: up to four full plans in one call
 }
 RATED_PATHS = ("/api/auth/signin", "/api/auth/signup", "/api/auth/reset", "/api/auth/reset/request",
                "/api/auth/email/verify", "/api/auth/email/request")

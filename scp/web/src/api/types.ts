@@ -144,6 +144,9 @@ export type DataQualityRow = S["DataQualityRow"];
 export type VersionMeta = S["VersionMeta"];
 export type VersionDoc = S["VersionDoc"];
 export type Comparison = S["Comparison"];
+export type WhatIfResult = S["WhatIfResult"];
+export type WhatIfScenarioOut = S["ScenarioOut"];
+export type WhatIfChip = NonNullable<S["ScenarioIn"]["chips"]>[number];
 export type DatasetDiff = S["DatasetDiff"];
 export type PlanSummary = S["PlanSummary"];
 
