@@ -19,6 +19,7 @@ const GROUPS: { title: string; ids: string[] }[] = [
   { title: "Customer service", ids: ["confirmation_rate", "otif_confirmed", "otif_requested", "perfect_order"] },
   { title: "Supply & production", ids: ["supplier_reliability", "schedule_adherence"] },
   { title: "Inventory", ids: ["days_of_supply", "excess_obsolete"] },
+  { title: "Working capital", ids: ["inventory_turns", "dio", "dso", "dpo", "cash_to_cash"] },
   { title: "Planning process & cost", ids: ["plan_stability", "exception_ageing", "cost_to_serve"] },
 ];
 
@@ -36,6 +37,7 @@ function fmtKpi(k: Pick<Kpi, "unit">, v: number | null | undefined, cur: string)
   if (v === null || v === undefined) return "—";
   if (k.unit === "ratio") return pct(v, 1);
   if (k.unit === "days") return `${qty(v)} d`;
+  if (k.unit === "times") return `${v.toFixed(1)}×`;
   if (k.unit === "money_per_unit") return unitMoney(v, cur);
   return money(v, cur);
 }
@@ -136,7 +138,8 @@ function Kpis({ res, cur, sel }: { res: TowerResult; cur: string; sel?: string }
                     {STATUS_SEV[k.status] ? <Badge sev={STATUS_SEV[k.status]}>{gradeLabel(k)}</Badge> : <span className="faint">{gradeLabel(k)}</span>}
                     <span className="faint">{targetText(k, cur)}</span>
                   </span>
-                  <span className="kpi-n faint">{k.n ? `${qty(k.n)} observations` : k.note ? "—" : ""}</span>
+                  <span className="kpi-n faint">{(k.value === null || k.value === undefined) && k.note.startsWith("Not enough data")
+                    ? "not enough data" : k.n ? `${qty(k.n)} observations` : k.note ? "—" : ""}</span>
                 </button>
               );
             })}

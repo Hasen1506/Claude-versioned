@@ -5419,7 +5419,7 @@ export interface components {
              * Unit
              * @enum {string}
              */
-            unit: "ratio" | "days" | "money_per_unit" | "money";
+            unit: "ratio" | "days" | "money_per_unit" | "money" | "times";
             /**
              * Direction
              * @enum {string}

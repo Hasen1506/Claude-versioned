@@ -175,3 +175,16 @@ small or mid-sized planner. None is built.
   person (scp run 37731060982; fixed for members and the approval switch). Other panels that load on open and then
   replace their list from a change's answer (limits, the company list, connections) follow the same pattern; a shared
   `useLatest(read, deps)` that drops an answer older than the last change shown would close the class.
+
+## Working capital on the Performance page (8 Oct 2026)
+Inventory turns, DIO, DSO, DPO and the cash-to-cash cycle are built from data the app already holds: goods issued to
+customers at unit value, on-hand, customer invoices and supplier invoices with their payments. A flow with fewer than
+28 days of records shows "not enough data". Not built yet:
+- **Average stock instead of closing stock (med, S).** DIO and turns use stock on the planning start. The journal can
+  rebuild the daily stock over the window, so an average would not swing with a single large receipt.
+- **Targets for the working-capital measures (low, S).** They are ungraded until a company sets a target. A
+  suggested target from the company's own last quarter would grade them from day one.
+- **DSO by the count-back method, and invoice-ageing buckets (med, S).** Seasonal sellers read a truer DSO from
+  count-back. The receivables table could show 0–30 / 31–60 / 60+ days overdue beside it.
+- **Cash-to-cash trend (med, M).** Keep each week's value from the base versions, as plan stability does, and chart
+  it.

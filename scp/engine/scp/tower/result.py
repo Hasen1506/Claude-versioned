@@ -23,7 +23,7 @@ class Kpi(Out):
     name: str
     definition: str
     source: str
-    unit: Literal["ratio", "days", "money_per_unit", "money"]
+    unit: Literal["ratio", "days", "money_per_unit", "money", "times"]  # times: a rate per year (inventory turns)
     direction: Literal["up", "down", "zero", "none"]   # which way is better
     value: float | None = None                          # None: no data yet
     target: float | None = None
