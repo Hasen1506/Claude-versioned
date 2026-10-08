@@ -55,6 +55,8 @@ from ..sop import SopRelease, SopResult, release_sop, run_sop
 from ..validate import RULES, Issue, validate
 from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, lenient_checked, plain_errors
 from ..validate.setup import SetupItem, checklist
+from ..cases import CASES, CaseInfo
+from ..whatif import WhatIfError, WhatIfRequest, WhatIfResult, compare_scenarios
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
 from ..companies import CompanyError
 from .connect import router as connect_router
@@ -139,6 +141,9 @@ class ExampleInfo(Out):
     title: str
     locations: int
     products: int
+    case: bool = False                   # an example case for teaching (roadmap H): fictional, with ready scenarios
+    label: str = ""                      # "Example case (fictional, not real company data)" on a case
+    brief: str = ""
 
 
 class RuleInfo(Out):
@@ -211,9 +216,17 @@ def examples() -> list[ExampleInfo]:
     out = []
     for p in sorted(EXAMPLES.glob("*.json")):
         d = json.loads(p.read_text())
+        case = CASES.get(p.stem)
         out.append(ExampleInfo(name=p.stem, title=d["settings"].get("company_name", p.stem),
-                               locations=len(d.get("locations", [])), products=len(d.get("products", []))))
+                               locations=len(d.get("locations", [])), products=len(d.get("products", [])),
+                               case=case is not None, label=case.label if case else "", brief=case.brief if case else ""))
     return out
+
+
+@app.get("/api/cases", response_model=list[CaseInfo])
+def cases() -> list[CaseInfo]:
+    """Example cases (roadmap H): fictional teaching datasets with their brief and ready-made what-if scenarios."""
+    return list(CASES.values())
 
 
 @app.get("/api/examples/{name}", response_model=Dataset)
@@ -1001,6 +1014,16 @@ def promote_version(vid: str, req: PromoteRequest, sc: StoredEditScope) -> Versi
 def compare_versions(a: str, b: str, sc: StoredScope) -> Comparison:
     st = get_store()
     return compare(st.dataset(a, sc), st.dataset(b, sc), a, b)
+
+
+@app.post("/api/whatif", response_model=WhatIfResult)
+def post_whatif(req: WhatIfRequest) -> WhatIfResult:
+    """Roadmap E: plan 2–4 scenarios (the base with quick-change chips, or whole datasets) and compare them side by
+    side: cost, service, inventory, capacity, late units, their deltas against the first, and cost per service point."""
+    try:
+        return compare_scenarios(req)
+    except WhatIfError as e:
+        raise HTTPException(422, str(e)) from None
 
 
 @app.post("/api/compare", response_model=Comparison)
