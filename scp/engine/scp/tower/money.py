@@ -11,7 +11,8 @@ costs. The rules, by kind of exception:
 * **Below safety stock**: the shortfall × unit cost × the carrying rate (the buffer's yearly cost not earned back).
 * **Capacity** (CAPACITY_OVERLOAD, CAPACITY_OVERTIME, SUPPLIER_CAPACITY): the excess hours × the machine's overtime
   rate (else its hourly cost): what covering it costs.
-* **Excess stock** (EXCESS_STOCK, NO_DEMAND_STOCK): the excess × unit cost × carrying rate (a year of holding it).
+* **Excess stock** (EXCESS_STOCK, NO_DEMAND_STOCK, and a firm receipt early or not needed: RESCHEDULE_OUT,
+  RECEIPT_NOT_NEEDED): the excess × unit cost × carrying rate (a year of holding it).
 * **Expiry** (SHELF_LIFE_RISK, STOCK_EXPIRES, LOT_EXPIRES): the quantity × unit cost (written off).
 * **Open supply late or short** (RECEIPT_OVERDUE, PO_*, RESCHEDULE_IN, START_IN_PAST, SCHEDULE_LATE…): the quantity ×
   selling price when the product is sold, else × unit cost: the value held up.
@@ -23,13 +24,15 @@ Nothing is invented: an amount that cannot be worked out from the data is 0 with
 """
 from __future__ import annotations
 
+import re
+
 from ..model import Dataset
 from ..plan import PlanResult
 from .result import InboxAction, WorkItem
 
 LATE_DEMAND = {"DEMAND_AT_RISK", "STOCKOUT", "PROMISE_LATE", "PROMISE_AT_RISK", "ORDER_OVERDUE"}
 CAPACITY = {"CAPACITY_OVERLOAD", "CAPACITY_OVERTIME", "CAPACITY_DAY_OVERLOAD", "SUPPLIER_CAPACITY", "LANE_CAPACITY"}
-EXCESS = {"EXCESS_STOCK", "NO_DEMAND_STOCK"}
+EXCESS = {"EXCESS_STOCK", "NO_DEMAND_STOCK", "RESCHEDULE_OUT", "RECEIPT_NOT_NEEDED"}
 EXPIRY = {"SHELF_LIFE_RISK", "STOCK_EXPIRES", "LOT_EXPIRES"}
 OWED = {"INVOICE_BLOCKED", "PAYABLE_OVERDUE", "RECEIVABLE_OVERDUE"}
 
@@ -155,7 +158,13 @@ def price_items(ds: Dataset, plan: PlanResult | None, items: list[WorkItem]) -> 
                 action = InboxAction(kind="overtime", label="Add overtime or move load", protects=0.0, href="#/capacity")
         elif code in EXCESS:
             c = pr.unit_cost(w.location, w.product)
-            if c is not None and qty:
+            early = re.search(r"push it out by (\d+) d", w.message) if code == "RESCHEDULE_OUT" else None
+            if c is not None and qty and early:      # held only for the days it comes early, not a year
+                days = int(early.group(1))
+                amount = qty * c * rate * days / 365.0
+                basis = f"{qty:,.0f} early × {c:,.2f} {cur} × {rate:.0%} a year × {days} d"
+                action = InboxAction(kind="push_out", label="Push out the receipt", protects=amount, href="#/buying")
+            elif c is not None and qty:
                 amount = qty * c * rate
                 basis = f"{qty:,.0f} excess × {c:,.2f} {cur} × {rate:.0%} a year to hold"
                 action = InboxAction(kind="push_out", label="Push out or cancel open receipts", protects=amount,

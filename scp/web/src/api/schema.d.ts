@@ -5884,7 +5884,7 @@ export interface components {
             safety_stock?: components["schemas"]["SafetyStockPolicy"];
             /**
              * Safety Time Days
-             * @description Plan receipts this many days early
+             * @description Safety time: plan receipts this many working days early
              * @default 0
              */
             safety_time_days: number;
@@ -6374,7 +6374,7 @@ export interface components {
             lot_sizing?: components["schemas"]["LotSizing"] | null;
             /**
              * Safety Time Days
-             * @description Plan receipts this many days early
+             * @description Safety time: plan receipts this many working days early
              */
             safety_time_days?: number | null;
             /**
