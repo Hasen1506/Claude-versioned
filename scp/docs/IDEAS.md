@@ -58,3 +58,37 @@ candidate for a later PR. Newest at the bottom of each group.
   whether the exposure is falling.
 - **Late-delivery penalties per customer.** `tower.late_revenue_factor` is one share for every sale; a contract's own
   penalty (or a lost-sale probability by customer segment) would price late orders more fairly.
+
+## S/4 guide backtest, part C (§10–16, §18.2)
+Found while backtesting the engine against the S/4HANA supply-chain guide, sections 10–16 and 18.2 (findings matrix
+kept with the audit, outside the repository). The first three were small and are built in the same PR; the rest are
+recorded only.
+- **Inspection stock is not promisable (built).** §10.3: stock in quality inspection is invisible to ATP unless the
+  scope of check includes it. Planning may count it (`execution.quality_in_planning`, as SAP's MRP does), but the
+  promise used the same on-hand and confirmed orders from stock that cannot ship. New `promising.quality_in_promise`
+  (off by default, like checking rule A); the goods-issue message names stock waiting in inspection or blocked.
+- **Purchasing processing time (built).** §11 TIP / §17.1: requisition → PO is the buyers' time, separate from the
+  supplier's planned delivery time. New `purchasing.processing_workdays`: planning releases requisitions that many
+  working days before the PO date; a PO placed today does not wait for it again.
+- **Schedule adherence counts orders still open past their week (built).** §18.2: finished in the planned period ÷
+  orders *planned*; the KPI divided by closed orders only, so a plant whose orders run late showed only those that made it.
+- **Sales-order stock for make to order (segment E).** §16.2: supply made for one MTO order is reserved to it and
+  cannot be consumed by another. Planning nets MTO anonymously (free stock first, any order's receipt); give firm
+  receipts an optional sales-order assignment and peg/issue only to it. High value for job shops; large.
+- **Moving-average valuation and actual GR prices.** §12.4: stock is valued at one planned price per place (≈ price
+  control S). A moving-average option fed by goods-receipt and invoice prices would make inventory value and margin
+  follow what was paid (price differences on invoices currently go nowhere).
+- **Inventory turns and cash-to-cash.** Not in §18.2's list, but the money view the guide closes with (§15): DIO from
+  stock value ÷ COGS per day, DSO from open receivables, DPO from open payables (both already in Selling/Buying),
+  cash-to-cash = DIO + DSO − DPO, on the KPI page with numerator and denominator like the others.
+- **Availability re-check at delivery creation.** §13: the delivery re-checks availability (rule A) before picking.
+  Today a delivery is created whatever the stock, and the shortfall only shows at goods issue.
+- **OTIF blind spot for orders not shipped yet.** §18.2 OTIF is delivery-based, as the app's; add the count (and
+  value) of open lines already past their requested/confirmed date to the KPI note so a late backlog is not invisible.
+- **Re-pricing of lines without an agreed price.** §15 PITFALL (pricing type B vs G): a line taken through Selling
+  carries its price forward, but an imported line with no price is billed at today's list price (without its quantity
+  scale). Freeze the price on such a line at goods issue.
+- **Third-party (drop-ship) orders.** §16.3 TAS: a sales line bought from a supplier who ships straight to the
+  customer: a requisition from the sales line, no stock, billing on the supplier-invoiced quantity.
+- **Cycle counting by ABC.** §12.4: propose count documents by ABC class (A monthly, B quarterly, C yearly) from the
+  demand ABC the forecast already computes, and a low-stock count when a pick empties a place.
