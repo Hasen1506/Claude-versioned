@@ -23,7 +23,7 @@ class Kpi(Out):
     name: str
     definition: str
     source: str
-    unit: Literal["ratio", "days", "money_per_unit", "money"]
+    unit: Literal["ratio", "days", "money_per_unit", "money", "times"]  # times: a rate per year (inventory turns)
     direction: Literal["up", "down", "zero", "none"]   # which way is better
     value: float | None = None                          # None: no data yet
     target: float | None = None
@@ -34,6 +34,16 @@ class Kpi(Out):
     note: str = ""
     breakdown_by: str = ""
     breakdown: list[KpiRow] = []
+
+
+class InboxAction(Out):
+    """The one thing the exception inbox suggests doing about an item (roadmap F)."""
+    kind: Literal["expedite", "switch_supplier", "overtime", "split_delivery", "push_out", "sell_first", "chase", "pay",
+                  "release", "review"]
+    label: str
+    protects: float = 0.0             # money at risk the action takes away, if it works (company currency)
+    costs: float | None = None        # what doing it costs, when the data says (overtime hours, a dearer supplier)
+    href: str = ""                    # where in the application it is done
 
 
 class WorkItem(Out):
@@ -61,6 +71,10 @@ class WorkItem(Out):
     breached: bool = False
     reopened: int = 0
     note: str = ""
+    money_at_risk: float = 0.0        # roadmap F: what leaving it costs, in the company currency (tower/money.py)
+    money_basis: str = ""             # how that amount was worked out, in words
+    customer: str | None = None       # the customer it concerns, for grouping the inbox
+    action: InboxAction | None = None
 
 
 class DataQualityRow(Out):
@@ -78,6 +92,8 @@ class TowerResult(Out):
     kpis: list[Kpi] = []
     worklist: list[WorkItem] = []           # open, acknowledged and resolved-but-still-listed items
     cleared: list[WorkItem] = []            # cleared by this run (no longer detected)
+    inbox: list[str] = []                   # roadmap F: open/acknowledged item ids, most money at risk first
+    money_at_risk: float = 0.0              # their total
     data_quality: list[DataQualityRow] = []
     notes: list[str] = []
     issues: list[Issue] = []

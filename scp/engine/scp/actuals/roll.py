@@ -7,7 +7,8 @@ What happened before ``as_of`` becomes the new starting position:
 * firm receipts are reduced by their goods receipts and closed when complete (or marked final); their
   reservations by the component issues / transfer goods issues posted against them;
 * sales orders are reduced by their deliveries and closed when complete, their confirmations trimmed;
-* elapsed forecast is dropped (period records straddling ``as_of`` keep their remaining share);
+* elapsed forecast is dropped (period records straddling ``as_of`` keep their remaining share, and the forecast as
+  entered, against which every plan counts the orders already delivered: plan/consumption.py);
 * the elapsed weeks are logged as forecast-vs-actual records, and actual sales are appended to history;
 * closed orders are logged with due and delivery dates — the source of OTIF and supplier reliability.
 
@@ -132,13 +133,25 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
             if end <= as_of:
                 rep.forecast_dropped += d.qty
             elif d.date < as_of:
-                days = forecast_days(ds, d)
                 left = (end - as_of).days
-                remaining = d.qty * sum(day >= as_of for day in days) / len(days)
+                # the forecast as entered stays on the record (written once, when its period begins): every plan
+                # counts the orders delivered against it again, so what they took comes off what is left (S/4
+                # reduction at goods issue) and two rolls in a row equal one (see plan/consumption.py). What is left
+                # by time is taken from the forecast as entered, so a week and then another is exactly two weeks
+                # (to the last digit); a quantity changed by hand since the period began keeps its proportion
+                first = {} if d.original_date is not None else {
+                    "original_date": d.date, "original_period_days": d.period_days, "original_qty": d.qty}
+                o = d if d.original_date is None else d.model_copy(update={
+                    "date": d.original_date, "period_days": d.original_period_days, "qty": d.original_qty})
+                days = forecast_days(ds, o)
+                remaining = o.qty * sum(day >= as_of for day in days) / len(days)
+                expected = o.qty * sum(day >= d.date for day in days) / len(days)
+                if d.qty != expected:
+                    remaining = d.qty * remaining / expected if expected > EPS else 0.0
                 rep.forecast_dropped += d.qty - remaining
                 rep.forecast_prorated += 1
                 if remaining > EPS:
-                    demand.append(d.model_copy(update={"date": as_of, "qty": remaining, "period_days": left}))
+                    demand.append(d.model_copy(update={"date": as_of, "qty": remaining, "period_days": left, **first}))
             else:
                 demand.append(d)
             continue

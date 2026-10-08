@@ -173,7 +173,22 @@ test('an edit during a version open survives the delayed version response',async
 });
 
 test('a working-copy comparison reports edits made during its calculation instead of displaying stale results',async({page})=>{
-  await open(page); const base=await saveBase(page); await stock(page,40); await page.goto('/#/versions');
+  await open(page); const base=await saveBase(page); await stock(page,40);
+  // Undo acts only on the screen a change was made on, and the stock edit was made in Master data. A step kept from
+  // before screens were recorded counts as any screen's: drop the record and reload, so this step can be undone on
+  // Versions while the comparison runs there (the only way left to edit the working copy without leaving the page).
+  // the undo steps are kept a moment after an edit: wait until they are (an outcome, not a time), then drop the screens
+  // record on the page reloaded (opening Versions writes it again, so it is dropped after that)
+  await expect.poll(()=>page.evaluate(()=>new Promise<number>((done)=>{
+    const r=indexedDB.open('scp'); r.onupgradeneeded=()=>r.transaction?.abort(); r.onerror=()=>done(0);
+    r.onsuccess=()=>{ const db=r.result; if(!db.objectStoreNames.contains('undo')){db.close(); done(0); return;}
+      const g=db.transaction('undo').objectStore('undo').get('steps');
+      g.onsuccess=()=>{db.close(); done((g.result as {past?:unknown[]}|undefined)?.past?.length??0);}; g.onerror=()=>{db.close(); done(0);}; };
+  })),{timeout:15_000}).toBeGreaterThan(0);
+  await page.goto('/#/versions');
+  await page.evaluate(()=>localStorage.removeItem('scp.undo.where'));
+  await page.reload();
+  await expect(page.getByRole('button',{name:'Undo',exact:true})).toBeEnabled();
   const delayed=await hold(page,'**/api/compare');
   await page.getByRole('button',{name:`Compare ${base} as A`,exact:true}).click();
   await page.getByRole('button',{name:'Compare __working__ as B',exact:true}).click();

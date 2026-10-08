@@ -44,6 +44,13 @@ SERVICE_LEVEL = {  # suggested cycle service level per ABC-XYZ cell
 HISTORY_PROMO = "history-promo"
 
 
+def service_level(fs, abc: str, xyz: str) -> float:
+    """The suggested cycle service level of an ABC-XYZ cell: the company's own table where it sets one, else the
+    default above (UX audit: the table was hardcoded and could not be edited)."""
+    own = (getattr(fs, "service_levels", None) or {}).get(f"{abc}{xyz}")
+    return own if own is not None else SERVICE_LEVEL[(abc, xyz)]
+
+
 def key_of(location: str, product: str) -> str:
     return f"{location}|{product}"
 
@@ -353,7 +360,7 @@ def _job_key(job: tuple) -> str | None:
     y, n, m, cands, origins, horizon, metric, fb = job
     if fb is not None:
         return None
-    return hashlib.sha1(repr((tuple(y), n, m, tuple(str(c) for c in cands), origins, horizon, str(metric))).encode()).hexdigest()
+    return hashlib.sha1(repr((tuple(y), n, m, tuple(str(c) for c in cands), origins, horizon, str(metric))).encode(), usedforsecurity=False).hexdigest()
 
 
 def _compete_all(jobs: dict[tuple[str, str], tuple]) -> dict[tuple[str, str], Outcome]:
@@ -445,7 +452,7 @@ def _series_from_history(ctx: _Ctx, h: _Hist, abc: tuple[str, float], pooled: di
     factors, ev_ids = _event_factors(ctx, h.location, h.product, h.lifts, pooled, notes)
     segment = Segment(abc=abc[0], xyz=xyz, pattern=h.pattern, lifecycle=lifecycle, revenue=h.revenue,
                       revenue_share=abc[1], adi=h.adi, cv2=h.cv2, error_cv=error_cv,
-                      suggested_service_level=SERVICE_LEVEL[(abc[0], xyz)])
+                      suggested_service_level=service_level(fs, abc[0], xyz))
     history = [HistoryPoint(start=s, label=label(s, ctx.period), raw=float(h.raw[i]), cleaned=float(y[i]),
                             flag=h.flags[i], events=h.events[i]) for i, s in enumerate(h.starts)]
     return Series(key=key_of(h.location, h.product), location=h.location, product=h.product, segment=segment,
@@ -501,7 +508,7 @@ def _npi_series(ctx: _Ctx, rule: NpiRule, series: dict[tuple[str, str], Series],
     factors, ev_ids = _event_factors(ctx, rule.location, rule.product, lifts, pooled, notes)
     y = hist.cleaned if hist else np.zeros(0)
     seg = Segment(abc="C", xyz="Z", pattern="none", lifecycle="npi", revenue=hist.revenue if hist else 0.0,
-                  revenue_share=0.0, suggested_service_level=SERVICE_LEVEL[("C", "Z")])
+                  revenue_share=0.0, suggested_service_level=service_level(ctx.ds.forecasting, "C", "Z"))
     history = [HistoryPoint(start=s, label=label(s, ctx.period), raw=float(hist.raw[i]), cleaned=float(y[i]),
                             flag=hist.flags[i], events=hist.events[i]) for i, s in enumerate(hist.starts)] if hist else []
     return Series(key=key_of(rule.location, rule.product), location=rule.location, product=rule.product, segment=seg,

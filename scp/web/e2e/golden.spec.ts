@@ -24,6 +24,15 @@ async function openExample(page: Page, name: string) {
 
 /** A page's freshness, as the rail (or its section's tabs) shows it. */
 const freshness = (page: Page, id: string) => page.locator(`.rail a[href="#/${id}"], .section-tabs a[href="#/${id}"]`).first();
+/** Accept an invitation by its link, signed in as the invited address (CV-C01), then come back to the account page. */
+const acceptInvite = async (p: Page, link: string) => {
+  await expect(p.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await p.goto(link.replace(/^https?:\/\/[^/]+/, ""));
+  await p.getByRole("button", { name: "Accept the invitation" }).click();
+  await expect(p.getByText(/You joined /)).toBeVisible();
+  await p.goto("/#/account");
+  await p.reload();
+};
 
 test("golden path: example opens planned → home → network → data check → plan → drill-down → edit → out of date → re-plan", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
@@ -108,7 +117,14 @@ test("demand planning: forecast → workbench → consensus override → release
   await page.getByLabel("Search").fill("KT-15");
   const released = page.locator("td", { hasText: /^777$/ });
   await expect(released).toHaveCount(1);
-  await page.getByRole("button", { name: "Undo" }).click();
+  // the release was made on Demand: Undo acts there, never from another screen (QA: a global stack resurrected deletions)
+  const undo = page.getByRole("button", { name: "Undo" });
+  await expect(undo).toBeDisabled();
+  await expect(undo).toHaveAttribute("title", /made on Demand/);
+  await page.goto("/#/demand/consensus");
+  await undo.click();
+  await page.goto("/#/data/demand");
+  await page.getByLabel("Search").fill("KT-15");
   await expect(released).toHaveCount(0);
 });
 
@@ -117,15 +133,18 @@ test("typed inputs: a percent typed as a fraction is rejected with the field nam
   await page.goto("/#/settings");
   const wacc = page.locator('input[id="wacc"]');
   await expect(wacc).toHaveValue("12"); // shown as percent, stored as 0.12
+  // its limits are said in the unit it is typed in (QA: "0 … 1" beside a WACC of 12 %)
+  await expect(wacc).toHaveAttribute("title", "Allowed: 0 … 100 %");
+  // a value outside them is not saved (QA: out-of-range values were accepted): the field goes back and says why
   await wacc.fill("1200");
   await wacc.press("Enter");
-  await expect(page.getByText("Invalid values", { exact: true })).toBeVisible();
-  await page.goto("/#/readiness");
-  await expect(page.getByText("WACC must be 100% or less")).toBeVisible();
-  await page.goto("/#/settings");
-  await page.locator('input[id="wacc"]').fill("12");
-  await page.locator('input[id="wacc"]').press("Enter");
+  await expect(page.getByRole("alert").filter({ hasText: "1200 is outside the range. Allowed: 0 … 100 %." })).toBeVisible();
+  await expect(wacc).toHaveValue("12");
   await expect(page.getByText("Invalid values", { exact: true })).toHaveCount(0);
+  await wacc.fill("13");
+  await wacc.press("Enter");
+  await expect(page.locator(".input-wrap .err")).toHaveCount(0);
+  await expect(wacc).toHaveValue("13");
 });
 
 test("blank network: the checklist and guided setup take a planner from nothing to a plan", async ({ page }) => {
@@ -153,6 +172,7 @@ test("blank network: the checklist and guided setup take a planner from nothing 
   // connect two places on the map
   await page.getByRole("button", { name: "Pune plant (Plant)" }).click();
   await page.getByRole("button", { name: "Mumbai DC (Distribution centre)" }).click();
+  await page.getByLabel("Days in transit", { exact: true }).fill("2");   // no silent default any more (roadmap C)
   await page.getByRole("button", { name: "Add route" }).click();
   await expect(page.getByLabel("Days from Pune plant to Mumbai DC")).toHaveValue("2");
 
@@ -161,7 +181,7 @@ test("blank network: the checklist and guided setup take a planner from nothing 
   await page.getByPlaceholder("e.g. Oil filter").fill("Oil filter");
   await page.getByRole("button", { name: "Add product" }).click();
   await page.goto("/#/setup/product/OIL-FILTER/PUNE-PLANT");
-  await page.getByRole("button", { name: "Make it here" }).click();
+  await page.getByRole("button", { name: "Make Oil filter at Pune plant" }).click();
   await page.getByRole("button", { name: "+ Add a part" }).click();
   const make = page.locator(".wz-card.attn .wz-form").first();
   await make.locator("label.qf", { hasText: "Part" }).first().locator("select").selectOption("+new");
@@ -175,7 +195,7 @@ test("blank network: the checklist and guided setup take a planner from nothing 
   await make.getByLabel("Hours per batch").fill("2");
   await make.getByRole("button", { name: "Save" }).click();
   await page.getByRole("link", { name: "Set it up" }).click();
-  await page.getByRole("button", { name: "Buy it" }).click();
+  await page.getByRole("button", { name: "Buy Filter media for Pune plant" }).click();
   // the supplier invoices in dollars: the price stays in USD with the rate kept once (Q16)
   const buy = page.locator(".wz-card.attn .wz-form").first();
   await buy.locator("label.qf", { hasText: "Price per unit" }).locator("input").fill("0.5");
@@ -277,14 +297,22 @@ test("S&OP: solve → pin → cut capacity → shadow prices → release to MRP 
   await page.goto("/#/data/demand");
   await page.getByLabel("Search").fill("SOP-");
   await expect(page.locator("td", { hasText: /^SOP-/ }).first()).toBeVisible();
+  await page.goto("/#/sop");                                              // undone where it was made
   await page.getByRole("button", { name: "Undo" }).click();
+  await page.goto("/#/data/demand");
+  await page.getByLabel("Search").fill("SOP-");
   await expect(page.locator("td", { hasText: /^SOP-/ })).toHaveCount(0);
 });
 
 test("scheduling: schedule → select order → resequence → reset → edit setup matrix → stale", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/schedule");
+  // the example opens already scheduled, so "Orders scheduled" and "fresh" hold before this recalculation is back;
+  // wait for its answer itself (regression: CI moved a step while it was in flight, see the test below)
+  const recalculated = page.waitForResponse((r) => r.url().endsWith("/api/schedule") && r.request().method() === "POST");
   await page.getByRole("button", { name: "Recalculate", exact: true }).click();
+  await recalculated;
+  await expect(page.getByRole("button", { name: "Recalculate", exact: true })).toBeEnabled();
   await expect(page.getByText("Orders scheduled")).toBeVisible();
   await expect(freshness(page, "schedule")).toHaveAttribute("data-fresh", "fresh");
   await expect(page.locator(".gantt svg g[data-order]").first()).toBeVisible();
@@ -293,9 +321,11 @@ test("scheduling: schedule → select order → resequence → reset → edit se
   await page.locator('.gantt svg g[data-order="MO-00024"]').first().dispatchEvent("click");
   await expect(page.getByText("MO-00024 · Mixer grinder 500 W")).toBeVisible();
   await page.getByRole("button", { name: "later ▶" }).first().click();
-  await expect(page.getByText("Your sequence")).toBeVisible();
+  // exact: the banner's fallback line ("…re-timed with your sequence") can show for a render before the move's own
+  // sentence replaces it, and a substring match then finds two elements
+  await expect(page.getByText("Your sequence", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Undo my changes to the order" }).click();
-  await expect(page.getByText("Your sequence")).toHaveCount(0);
+  await expect(page.getByText("Your sequence", { exact: true })).toHaveCount(0);
 
   await page.goto("/#/schedule/orders");
   await expect(page.locator("td", { hasText: "MO-100455" })).toBeVisible();
@@ -309,6 +339,43 @@ test("scheduling: schedule → select order → resequence → reset → edit se
   await expect(freshness(page, "schedule")).toHaveAttribute("data-fresh", "stale");
   await page.goto("/#/data/changeovers");
   await expect(page.locator("td", { hasText: /^3$/ }).first()).toBeVisible();
+});
+
+// Regression (PR #28 CI, golden.spec.ts:307 "Your sequence" never appeared): "later ▶" clicked while the page's own
+// "Recalculate" was still in flight. The hand-moved schedule arrived first and the older, profile-made schedule then
+// overwrote it, so the banner never showed. store.put now supersedes a run of the same key still in flight. The
+// recalculation's answer is held back here until the move's has landed, so the old order is forced every time.
+test("scheduling: a step moved while a recalculation is in flight is not overwritten when that recalculation lands", async ({ page }) => {
+  await openExample(page, "Kaveri Kitchenware");
+  await page.goto("/#/schedule");
+  let hold = true;
+  let held: import("@playwright/test").Request | null = null;
+  let release!: () => void;
+  const released = new Promise<void>((r) => { release = r; });
+  await page.route("**/api/schedule", async (route) => {
+    if (!hold) return route.continue();
+    hold = false;
+    held = route.request();
+    const answer = await route.fetch();
+    await released;
+    await route.fulfill({ response: answer });
+  });
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Calculating…" })).toBeVisible();
+
+  await page.locator('.gantt svg g[data-order="MO-00024"]').first().dispatchEvent("click");
+  await expect(page.getByText("MO-00024 · Mixer grinder 500 W")).toBeVisible();
+  const moved = page.waitForResponse((r) => r.url().endsWith("/api/schedule") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "later ▶" }).first().click();
+  await moved;
+  await expect(page.getByText("Your sequence", { exact: true })).toBeVisible();
+
+  const landed = page.waitForEvent("requestfinished", (r) => r === held);
+  release();                                                        // now the older recalculation lands
+  await landed;
+  await page.waitForTimeout(300);   // a negative check: give its handler the moment it needs to (wrongly) replace the result
+  await expect(page.getByText("Your sequence", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Undo my changes to the order" })).toBeVisible();
 });
 
 test("shop floor methods: compare every method → pick a profile → drag a step on the board → undo", async ({ page }) => {
@@ -415,7 +482,12 @@ test("customer orders: check a new order → take it → change it → deliver p
   await expect(saved).toContainText("SO-88222 cancelled: 20 delivered, 30 no longer wanted");
   await page.goto("/#/data/closed_orders");
   await expect(page.locator("tr", { hasText: "SO-88222" })).toBeVisible();
-  await page.getByRole("button", { name: "Undo" }).first().click();
+  // Undo acts on the screen the change was made on (the cancel was made on Orders), never from another one
+  const undo = page.getByRole("button", { name: "Undo" }).first();
+  await expect(undo).toBeDisabled();
+  await expect(undo).toHaveAttribute("title", /open it to undo it/);
+  await page.goto("/#/promise/orders");
+  await undo.click();
   await page.goto("/#/data/demand");
   await expect(page.locator("tr", { hasText: "SO-88222" })).toBeVisible();                          // undo brings it back
 });
@@ -619,7 +691,9 @@ test("buying: requisitions → purchase order → approve → send → confirm l
   await expect(freshness(page, "buying")).toHaveAttribute("data-fresh", "stale");
   await page.goto("/#/readiness");
   await expect(page.getByText(/only purchasing sources are blocked \(PIR-CU\)/)).toBeVisible();
+  await page.goto("/#/buying");                                           // undone where it was made
   await page.getByRole("button", { name: "Undo" }).first().click();
+  await page.goto("/#/readiness");
   await expect(page.getByText(/only purchasing sources are blocked/)).toHaveCount(0);
 });
 
@@ -685,7 +759,15 @@ test("control tower: KPIs graded → drill into OTIF → worklist → assign & a
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/tower");
   await page.getByRole("button", { name: "Recalculate", exact: true }).click();
-  await expect(page.locator(".kpi-card")).toHaveCount(13);
+  await expect(page.locator(".kpi-card")).toHaveCount(18);
+  // working capital: the example has no goods issues or invoices yet, so no number is shown, and the formula is stated
+  const dso = page.getByRole("button", { name: /^Days sales outstanding \(DSO\):/ });
+  await expect(dso.locator(".kpi-value")).toHaveText("—");
+  await expect(dso.locator(".kpi-n")).toHaveText("not enough data");
+  await dso.click();
+  await page.locator(".reading summary", { hasText: "How this is calculated" }).click();
+  await expect(page.getByText(/Receivables ÷ sales billed × days in the period/)).toBeVisible();
+  await expect(page.getByText(/Not enough data: no customer invoices before the planning start/)).toBeVisible();
   await page.getByRole("button", { name: /^OTIF to requested date:/ }).click();
   await expect(page.locator(".section-band h2", { hasText: "OTIF to requested date" })).toBeVisible();
   await expect(page.locator("td", { hasText: "E-commerce marketplaces" }).first()).toBeVisible();
@@ -712,7 +794,7 @@ test("phone: the menu opens the pages, each page answers first, nothing scrolls 
   await expect(page.locator(".stage-head .answer")).toContainText("customer orders can ship in full");
   for (const hash of ["#/", "#/plan", "#/promise", "#/finance", "#/tower", "#/data", "#/capacity", "#/schedule/orders", "#/schedule/methods", "#/buying", "#/buying/orders", "#/buying/suppliers", "#/execution/count", "#/execution/orders"]) {
     await page.goto(`/${hash}`);
-    await page.waitForTimeout(300);
+    await expect(page.locator("main :is(h1, h2)").first()).toBeVisible();   // the page drawn, not a wait on time
     expect(await page.evaluate(() => document.documentElement.scrollWidth), hash).toBeLessThanOrEqual(390);
   }
 });
@@ -762,9 +844,9 @@ test("products at places: MRP views, the structure explorer and the stock/requir
   await expect(page.getByRole("heading", { name: /Receipts and requirements/ })).toBeVisible();
   await expect(page.getByRole("cell", { name: "On hand today" })).toBeVisible();
   // MRP 1: give it an owner, then filter the index by that owner
-  await page.getByRole("tab", { name: /MRP 1/ }).click();
+  await page.getByRole("tab", { name: "Ordering", exact: true }).click();
   await page.getByLabel(/MRP controller/).fill("Asha");
-  await page.getByRole("tab", { name: /MRP 4/ }).click();
+  await page.getByRole("tab", { name: "What it is made from" }).click();
   await expect(page.getByRole("heading", { name: /What one Mixer grinder 500 W is made from/ })).toBeVisible();
   await expect(page.getByRole("cell", { name: /Enamelled copper wire/ })).toBeVisible();   // second level, through the motor
   await page.goto("/#/material");
@@ -813,8 +895,11 @@ test("shop floor: steps wait for parts, and the schedule's dates go back into th
   // the plan now shows the late ones as late, not as new orders
   await page.goto("/#/plan");
   await expect(page.getByText(/production orders? the shop floor schedule finishes late/)).toBeVisible();
-  // undo puts the planned orders back
+  // undo puts the planned orders back, from the shop floor where the dates were taken over
+  await expect(page.getByRole("button", { name: "Undo" })).toBeDisabled();
+  await page.goto("/#/schedule/orders");
   await page.getByRole("button", { name: "Undo" }).click();
+  await page.goto("/#/plan");
   await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "stale");
 });
 
@@ -829,17 +914,21 @@ test("company on the server: sign up → keep it there → saves itself → a co
   await page.getByRole("tab", { name: "Make an account" }).click();
   await page.getByLabel("E-mail").fill("asha@kaveri.in");
   await page.getByLabel("Your name").fill("Asha Rao");
-  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByLabel(/^Password/).fill("kaveri-2026-pumps");
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await expect(chip).toHaveText("Saved");
+  // nobody joins unasked (CV-C01): adding someone makes an invitation whose link they accept
+  const invites: Record<string, string> = {};
   await page.getByLabel("Colleague's e-mail").fill("ravi@kaveri.in");
-  await page.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.locator("tr", { hasText: "ravi@kaveri.in" })).toContainText("invited");
+  invites["ravi@kaveri.in"] = await page.getByLabel("Invitation link").inputValue();
   await page.getByLabel("Colleague's e-mail").fill("meera@kaveri.in");
   await page.getByLabel("Their role").selectOption("viewer");
-  await page.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.locator("tr", { hasText: "meera@kaveri.in" })).toContainText("viewer");
+  invites["meera@kaveri.in"] = await page.getByLabel("Invitation link").inputValue();
 
   const take = async (p: Page, q: number, ref: string) => {
     await p.goto("/#/promise/simulate");
@@ -854,8 +943,9 @@ test("company on the server: sign up → keep it there → saves itself → a co
     await p.getByRole("tab", { name: "Make an account" }).click();
     await p.getByLabel("E-mail").fill(email);
     await p.getByLabel("Your name").fill(name);
-    await p.getByLabel(/^Password/).fill("colleague-1");
+    await p.getByLabel(/^Password/).fill("colleague-pw-0001");
     await p.getByRole("button", { name: "Make the account" }).click();
+    await acceptInvite(p, invites[email]);
     await p.getByRole("button", { name: /Open Kaveri Kitchenware/ }).click();
     await expect(p.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
     return p;
@@ -943,19 +1033,21 @@ test("rights and four eyes: a planner limited to a place is refused elsewhere; m
   await page.getByRole("tab", { name: "Make an account" }).click();
   await page.getByLabel("E-mail").fill("owner@kaveri.in");
   await page.getByLabel("Your name").fill("Nisha Owner");
-  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByLabel(/^Password/).fill("kaveri-2026-pumps");
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await page.getByLabel("Colleague's e-mail").fill("plan@kaveri.in");
-  await page.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  const invitation = await page.getByLabel("Invitation link").inputValue();
   const p = await (await browser.newContext()).newPage();
   p.on("dialog", (d) => d.accept());
   await p.goto("/#/account");
   await p.getByRole("tab", { name: "Make an account" }).click();
   await p.getByLabel("E-mail").fill("plan@kaveri.in");
   await p.getByLabel("Your name").fill("Om Planner");
-  await p.getByLabel(/^Password/).fill("colleague-1");
+  await p.getByLabel(/^Password/).fill("colleague-pw-0001");
   await p.getByRole("button", { name: "Make the account" }).click();
+  await acceptInvite(p, invitation);
   await p.getByRole("button", { name: /Open Kaveri Kitchenware/ }).click();
 
   // limited to the Delhi warehouse, he may not change the company's settings
@@ -999,14 +1091,15 @@ test("opening another company while one is planning: the first one's results are
   await page.getByRole("tab", { name: "Make an account" }).click();
   await page.getByLabel("E-mail").fill("switch@kaveri.in");
   await page.getByLabel("Your name").fill("Sam Switch");
-  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByLabel(/^Password/).fill("kaveri-2026-pumps");
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await expect(page.locator(".save-chip .save-long")).toHaveText("Saved");
   // a second company, the bottler, made on the server by the same person
-  const token = await page.evaluate(() => JSON.parse(localStorage.getItem("scp.session.v1") ?? "{}").token as string);
+  // roadmap D: the session cookie signs page.request in; a change carries the double-submit token
+  const csrf = (await page.context().cookies()).find((c) => c.name === "scp_csrf")?.value ?? "";
   const bottler = await (await page.request.get("/api/examples/single_product_plant")).json();
-  expect((await page.request.post("/api/companies", { headers: { Authorization: `Bearer ${token}` },
+  expect((await page.request.post("/api/companies", { headers: { "X-CSRF-Token": csrf },
     data: { dataset: bottler, note: "second company" } })).ok()).toBe(true);
   await page.goto("/#/account");
   await page.reload();
@@ -1043,7 +1136,7 @@ test("a company on the server is planned from the server's copy: calls name the 
   await page.getByRole("tab", { name: "Make an account" }).click();
   await page.getByLabel("E-mail").fill("ref@kaveri.in");
   await page.getByLabel("Your name").fill("Rhea Ref");
-  await page.getByLabel(/^Password/).fill("kaveri-2026");
+  await page.getByLabel(/^Password/).fill("kaveri-2026-pumps");
   await page.getByRole("button", { name: "Make the account" }).click();
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await expect(page.locator(".save-chip .save-long")).toHaveText("Saved");

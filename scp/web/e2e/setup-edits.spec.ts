@@ -86,6 +86,7 @@ test("guided route and stock quantities follow undo, redo and validation", async
   }
   await page.getByLabel("Route from").selectOption("PLANT-A");
   await page.getByLabel("Route to").selectOption("PLANT-B");
+  await page.getByLabel("Days in transit", { exact: true }).fill("2");   // no silent default any more (roadmap C)
   await page.getByRole("button", { name: "Add route", exact: true }).click();
   const days = page.getByLabel("Days from Plant A to Plant B");
   await days.fill("4");

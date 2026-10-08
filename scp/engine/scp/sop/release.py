@@ -36,7 +36,10 @@ def release_sop(ds: Dataset, res: SopResult) -> tuple[Dataset, SopRelease]:
                 one = ds.model_copy(update={"demand": [d]})
                 qty = forecast_in(one, lo, hi).get((d.location, d.product), 0.0)
                 if qty > 1e-6:
+                    # a piece is a forecast of its own: the S&OP plan replaced the rest of the one entered
                     keep.append(d.model_copy(update={"date": lo, "period_days": (hi - lo).days, "qty": qty,
+                                                    "original_date": None, "original_period_days": None,
+                                                    "original_qty": None,
                                                     "id": f"{d.id[:58]}-{suffix}" if d.id else None}))
             continue
         keep.append(d)

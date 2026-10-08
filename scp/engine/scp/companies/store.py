@@ -24,6 +24,7 @@ import datetime as dt
 import hashlib
 import hmac
 import json
+import os
 import re
 import secrets
 import threading
@@ -34,6 +35,7 @@ from collections.abc import Callable
 from ..model.common import Out
 from ..versions.diff import diff_raw
 from ..versions.store import Store, get_store, sha
+from .guards import ReleaseRefused, check_releases, record_credit_releases
 from .merge import MergeReport, merge
 from .patch import PatchError, apply_patch, make_patch
 from .rights import MAX_CHANGE_ROWS, Stale, apply_held, field_changes, out_of_scope, split_master
@@ -95,34 +97,50 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 CREATE TABLE IF NOT EXISTS erp_withdrawn (
   company_id TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, erp_ref TEXT NOT NULL, location TEXT NOT NULL,
-  at TEXT NOT NULL, user_id TEXT NOT NULL, taken_at TEXT, restored_at TEXT, PRIMARY KEY (company_id, kind, id)
+  at TEXT NOT NULL, user_id TEXT NOT NULL, taken_at TEXT, generation TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (company_id, kind, id)
 );
 CREATE TABLE IF NOT EXISTS sign_in_states (
   state TEXT PRIMARY KEY, verifier TEXT NOT NULL, nonce TEXT NOT NULL, at TEXT NOT NULL, next TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS email_checks (
+  token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, email TEXT NOT NULL COLLATE NOCASE, expires_at TEXT NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0
 );
 """
 
 ROLES = ("owner", "planner", "viewer")
 CAN_EDIT = ("owner", "planner")
 SESSION_DAYS = 30
+SESSION_MAX_DAYS = 90         # a session ends this long after sign-in however often it is used
+INVITE_DAYS = 14              # an invitation link is valid this long
+FAILURE_KEYS = 10_000         # most addresses the sign-in failure counter remembers (oldest dropped first)
 FULL_EVERY = 25               # a whole copy at least every this many revisions; deltas in between
 PBKDF2_ROUNDS = 200_000
 LOG_ITEMS = 12                # records named per list in a save's detail
 KEY_PREFIX = "scpk_"           # an integration key, not a session (Phase Q)
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# PBKDF2 is CPU-bound: run at most this many at once, and never under the store's lock (CV-H11)
+_HASHING = threading.BoundedSemaphore(max(1, (os.cpu_count() or 2) // 2))
 
-def erp_orders(doc: dict) -> dict[tuple[str, str], tuple[str, str]]:
-    """The orders of a company's data the ERP has numbered: (kind, id) → (the ERP's number, the place)."""
-    out: dict[tuple[str, str], tuple[str, str]] = {}
+def erp_records(doc: dict) -> dict[tuple[str, str], dict]:
+    """Order records by integration identity, including ones the ERP has not numbered yet."""
+    out: dict[tuple[str, str], dict] = {}
     # a cancelled order's header is kept in cancelled_purchase_orders and goes to the ERP as cancelled from there:
     # it is not withdrawn
     for p in [*(doc.get("purchase_orders") or []), *(doc.get("cancelled_purchase_orders") or [])]:
-        if isinstance(p, dict) and p.get("erp_ref") and p.get("id"):
-            out[("purchase_order", p["id"])] = (p["erp_ref"], str(p.get("location") or ""))
+        if isinstance(p, dict) and isinstance(p.get("id"), str) and p["id"]:
+            out[("purchase_order", p["id"])] = p
     for r in doc.get("receipts") or []:
-        if isinstance(r, dict) and r.get("erp_ref") and r.get("id") and r.get("kind") in ("production", "transfer"):
-            out[(f"{r['kind']}_order", r["id"])] = (r["erp_ref"], str(r.get("location") or ""))
+        if (isinstance(r, dict) and isinstance(r.get("id"), str) and r["id"]
+                and r.get("kind") in ("production", "transfer")):
+            out[(f"{r['kind']}_order", r["id"])] = r
     return out
+
+
+def erp_orders(doc: dict) -> dict[tuple[str, str], tuple[str, str]]:
+    """The orders of a company's data the ERP has numbered: (kind, id) → (the ERP's number, the place)."""
+    return {key: (r["erp_ref"], str(r.get("location") or "")) for key, r in erp_records(doc).items() if r.get("erp_ref")}
 
 
 # plain names of the dataset's lists, for the audit trail
@@ -161,12 +179,23 @@ class User(Out):
     id: str
     email: str
     name: str
+    verified: bool = False        # the account has shown it receives mail at this address (a link, or the sign-on)
+
+
+class PendingInvite(Out):
+    """An invitation to a company waiting for the account to accept it (nobody joins a company unasked)."""
+    company: str
+    name: str                     # the company's name
+    role: str
+    invited_by: str               # a name
+    at: str
 
 
 class Session(Out):
     token: str
     user: User
     expires_at: str
+    csrf: str | None = None       # a browser's double-submit token (also in the scp_csrf cookie), roadmap D
 
 
 class CompanyMeta(Out):
@@ -242,6 +271,7 @@ class Member(Out):
     since: str
     places: list[str] = []        # may change only records at these places (empty: every place)
     families: list[str] = []      # … of these product groups (empty: every group)
+    invite_link: str | None = None  # only in the answer that made the invitation: the link to hand over (once)
 
 
 class ListChange(Out):
@@ -289,7 +319,8 @@ def _canonical(doc: dict) -> str:
 
 
 def _hash_pw(password: str, salt: str) -> str:
-    return hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), PBKDF2_ROUNDS).hex()
+    with _HASHING:
+        return hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), PBKDF2_ROUNDS).hex()
 
 
 def _token_hash(token: str) -> str:
@@ -348,16 +379,46 @@ class Companies:
             self.db.execute("ALTER TABLE users ADD COLUMN sso_subject TEXT")
         if "kind" not in ucols:      # Phase Q: an account behind an integration key is not a person
             self.db.execute("ALTER TABLE users ADD COLUMN kind TEXT NOT NULL DEFAULT 'person'")
-        if "restored_at" not in {r[1] for r in self.db.execute("PRAGMA table_info(erp_withdrawn)")}:
-            self.db.execute("ALTER TABLE erp_withdrawn ADD COLUMN restored_at TEXT")
+        if "verified_at" not in ucols:   # CV-C01: the address is shown to be the account holder's
+            self.db.execute("ALTER TABLE users ADD COLUMN verified_at TEXT")
+        icols = {r[1] for r in self.db.execute("PRAGMA table_info(invites)")}
+        if "token_hash" not in icols:    # CV-C01: an invitation is accepted with its link, never by e-mail match
+            self.db.execute("ALTER TABLE invites ADD COLUMN token_hash TEXT")
+        if "expires_at" not in icols:
+            self.db.execute("ALTER TABLE invites ADD COLUMN expires_at TEXT")
+        if "generation" not in {r[1] for r in self.db.execute("PRAGMA table_info(erp_withdrawn)")}:
+            self.db.execute("ALTER TABLE erp_withdrawn ADD COLUMN generation TEXT NOT NULL DEFAULT ''")
         self.failures: dict[str, list[dt.datetime]] = {}
 
     # ---- accounts ------------------------------------------------------------------------------------------
     def _user(self, uid: str) -> User:
-        r = self.db.execute("SELECT id, email, name FROM users WHERE id = ?", (uid,)).fetchone()
+        r = self.db.execute("SELECT id, email, name, verified_at FROM users WHERE id = ?", (uid,)).fetchone()
         if r is None:
             raise CompanyError("that account no longer exists", 401)
-        return User(id=r["id"], email=r["email"], name=r["name"])
+        return User(id=r["id"], email=r["email"], name=r["name"], verified=bool(r["verified_at"]))
+
+    def _fail(self, key: str, recent: list[dt.datetime]) -> None:
+        """Remember failures (only real ones) for ``key``, keeping the map bounded (CV-M05; the lock is held)."""
+        if recent:
+            self.failures.pop(key, None)
+            self.failures[key] = recent
+            while len(self.failures) > FAILURE_KEYS:
+                self.failures.pop(next(iter(self.failures)))
+        else:
+            self.failures.pop(key, None)
+
+    def auth_rate(self, key: str, per_minute: int) -> bool:
+        """Whether one more sign-in, sign-up or reset from ``key`` (a client address) fits ``per_minute`` (CV-H11)."""
+        if per_minute <= 0:
+            return True
+        now = _now()
+        with self.lock:
+            recent = [t for t in self.failures.get("rate:" + key, []) if now - t < dt.timedelta(minutes=1)]
+            if len(recent) >= per_minute:
+                self._fail("rate:" + key, recent)
+                return False
+            self._fail("rate:" + key, [*recent, now])
+            return True
 
     def _name(self, uid: str) -> str:
         r = self.db.execute("SELECT name, email FROM users WHERE id = ?", (uid,)).fetchone()
@@ -371,22 +432,32 @@ class Companies:
         email = email.strip()
         if not EMAIL.match(email):
             raise CompanyError("that does not look like an e-mail address", 422)
-        if len(password) < 8:
-            raise CompanyError("a password needs at least 8 characters", 422)
+        from . import passwords
+        passwords.check(password, email)         # roadmap D: length, breached list, not the e-mail (CV-L07)
         with self.lock:
-            if self.db.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
-                raise CompanyError("there is already an account for that e-mail; sign in instead")
-            salt = secrets.token_hex(16)
-            return self._session(self._new_user(email, name, salt, _hash_pw(password, salt), policy))
+            self._may_sign_up(email, policy)
+        salt = secrets.token_hex(16)
+        pw_hash = _hash_pw(password, salt)       # outside the lock: nobody else waits for it (CV-H11)
+        with self.lock:
+            self._may_sign_up(email, policy)
+            return self._session(self._new_user(email, name, salt, pw_hash, policy))
 
-    def _new_user(self, email: str, name: str, salt: str, pw_hash: str, policy: str, subject: str | None = None) -> str:
-        """Make an account the sign-up policy allows (the lock is held)."""
+    def _may_sign_up(self, email: str, policy: str) -> None:
+        if self.db.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
+            raise CompanyError("there is already an account for that e-mail; sign in instead")
+        self._policy(email, policy)
+
+    def _policy(self, email: str, policy: str) -> None:
         if policy == "closed" and self.users():
             raise CompanyError("new accounts are switched off on this server; ask its administrator", 403)
         if policy == "invite" and self.users() and not self.db.execute(
                 "SELECT 1 FROM invites WHERE email = ?", (email,)).fetchone():
             raise CompanyError("this server takes new accounts by invitation only: ask a company owner to invite "
                                "your e-mail", 403)
+
+    def _new_user(self, email: str, name: str, salt: str, pw_hash: str, policy: str, subject: str | None = None) -> str:
+        """Make an account the sign-up policy allows (the lock is held)."""
+        self._policy(email, policy)
         n = self.db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         uid = f"U{n + 1:04d}"
         while self.db.execute("SELECT 1 FROM users WHERE id = ?", (uid,)).fetchone():
@@ -402,14 +473,21 @@ class Companies:
         now = _now()
         with self.lock:
             recent = [t for t in self.failures.get(email, []) if now - t < dt.timedelta(minutes=15)]
-            self.failures[email] = recent
+            self._fail(email, recent)
             if len(recent) >= 10:
                 raise CompanyError("too many wrong passwords for that e-mail; try again in 15 minutes", 429)
             r = self.db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
             if r is not None and not r["pw_hash"]:
                 raise CompanyError("this account signs in with the company's single sign-on, not a password", 401)
-            if r is None or not hmac.compare_digest(_hash_pw(password, r["pw_salt"]), r["pw_hash"]):
-                recent.append(now)
+        # the hash is worked out outside the lock (CV-H11)
+        good = r is not None and hmac.compare_digest(_hash_pw(password, r["pw_salt"]), r["pw_hash"])
+        with self.lock:
+            if not good:
+                recent = [t for t in self.failures.get(email, []) if now - t < dt.timedelta(minutes=15)]
+                self._fail(email, [*recent, now])
+                raise CompanyError("the e-mail or the password is not right", 401)
+            cur = self.db.execute("SELECT pw_hash FROM users WHERE id = ?", (r["id"],)).fetchone()
+            if cur is None or cur["pw_hash"] != r["pw_hash"]:      # the password changed meanwhile
                 raise CompanyError("the e-mail or the password is not right", 401)
             self.failures.pop(email, None)
             return self._session(r["id"])
@@ -420,17 +498,74 @@ class Companies:
         exp = now + dt.timedelta(days=SESSION_DAYS)
         self.db.execute("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
                         (_token_hash(token), uid, _iso(now), _iso(exp)))
-        self._accept_invites(uid)
+        # CV-C01: invitations are no longer taken on by e-mail match when a session starts; the account accepts
+        # each one (pending_invites / accept_invite)
         return Session(token=token, user=self._user(uid), expires_at=_iso(exp))
 
-    def _accept_invites(self, uid: str) -> None:
-        email = self._user(uid).email
-        for r in self.db.execute("SELECT * FROM invites WHERE email = ?", (email,)).fetchall():
-            self.db.execute("INSERT OR IGNORE INTO members (company_id, user_id, role, added_at, added_by, places, families) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?)", (r["company_id"], uid, r["role"], _iso(_now()), r["invited_by"],
-                                                            r["places"], r["families"]))
-            self.db.execute("DELETE FROM invites WHERE company_id = ? AND email = ?", (r["company_id"], email))
-            self._log(r["company_id"], None, uid, "member", f"{self._name(uid)} joined as {r['role']}")
+    # ---- invitations and e-mail ownership (CV-C01) -------------------------------------------------------------
+    def _join(self, uid: str, r: Any) -> None:
+        """Make the accepted invitation ``r`` a membership (the lock is held)."""
+        self.db.execute("INSERT OR IGNORE INTO members (company_id, user_id, role, added_at, added_by, places, families) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)", (r["company_id"], uid, r["role"], _iso(_now()), r["invited_by"],
+                                                        r["places"], r["families"]))
+        self.db.execute("DELETE FROM invites WHERE company_id = ? AND email = ?", (r["company_id"], r["email"]))
+        self._log(r["company_id"], None, uid, "member", f"{self._name(uid)} accepted the invitation and joined as "
+                                                        f"{r['role']}")
+
+    def pending_invites(self, user: User) -> list[PendingInvite]:
+        """Invitations to the account's address it may accept without a link: only once the address is verified."""
+        with self.lock:
+            if not self._user(user.id).verified:
+                return []
+            return [PendingInvite(company=r["company_id"], name=r["name"], role=r["role"],
+                                  invited_by=self._name(r["invited_by"]), at=r["at"])
+                    for r in self.db.execute("SELECT i.*, c.name FROM invites i JOIN companies c ON c.id = i.company_id "
+                                             "WHERE i.email = ? AND c.deleted = 0 ORDER BY i.at", (user.email,))]
+
+    def accept_invite(self, user: User, token: str = "", cid: str = "") -> CompanyMeta:
+        """Join a company the account was invited to: with the invitation's link (``token``), or, when the account's
+        address is verified, by the company's id. The invitation must be for this account's address."""
+        if self.is_key(user):
+            raise CompanyError("a key cannot accept invitations", 403)
+        with self.lock:
+            if token:
+                r = self.db.execute("SELECT * FROM invites WHERE token_hash = ?", (_token_hash(token),)).fetchone()
+            elif cid:
+                if not self._user(user.id).verified:
+                    raise CompanyError("confirm your e-mail address first, or open the invitation's link", 403)
+                r = self.db.execute("SELECT * FROM invites WHERE company_id = ? AND email = ?", (cid, user.email)).fetchone()
+            else:
+                raise CompanyError("say which invitation to accept", 422)
+            if r is None or (r["expires_at"] and dt.datetime.fromisoformat(r["expires_at"]) <= _now()):
+                raise CompanyError("this invitation has expired or was withdrawn: ask the company's owner for a new one",
+                                   410)
+            if r["email"].lower() != user.email.lower():
+                raise CompanyError(f"this invitation is for {r['email']}: sign in with that address to accept it", 403)
+            c = self.db.execute("SELECT deleted FROM companies WHERE id = ?", (r["company_id"],)).fetchone()
+            if c is None or c["deleted"]:
+                raise CompanyError("that company no longer exists", 410)
+            self._join(user.id, r)
+            return self._meta(r["company_id"], r["role"], user.id)
+
+    def email_token(self, user: User, hours: float = 24) -> str:
+        """A one-time token that proves the account receives mail at its address, to send there."""
+        token = secrets.token_urlsafe(24)
+        with self.lock:
+            self.db.execute("INSERT INTO email_checks (token_hash, user_id, email, expires_at) VALUES (?, ?, ?, ?)",
+                            (_token_hash(token), user.id, user.email, _iso(_now() + dt.timedelta(hours=hours))))
+        return token
+
+    def verify_email(self, token: str) -> User:
+        with self.lock:
+            r = self.db.execute("SELECT * FROM email_checks WHERE token_hash = ?", (_token_hash(token),)).fetchone()
+            if r is None or r["used"] or dt.datetime.fromisoformat(r["expires_at"]) <= _now():
+                raise CompanyError("this link has expired or was used already: ask for a new one", 410)
+            u = self.db.execute("SELECT email FROM users WHERE id = ?", (r["user_id"],)).fetchone()
+            if u is None or u["email"].lower() != r["email"].lower():
+                raise CompanyError("this link was for another address", 410)
+            self.db.execute("UPDATE email_checks SET used = 1 WHERE token_hash = ?", (r["token_hash"],))
+            self.db.execute("UPDATE users SET verified_at = ? WHERE id = ?", (_iso(_now()), r["user_id"]))
+            return self._user(r["user_id"])
 
     def whoami(self, token: str | None) -> User:
         """The account a session token belongs to; the session is extended on use."""
@@ -441,12 +576,28 @@ class Companies:
         with self.lock:
             r = self.db.execute("SELECT * FROM sessions WHERE token_hash = ?", (_token_hash(token),)).fetchone()
             now = _now()
-            if r is None or dt.datetime.fromisoformat(r["expires_at"]) < now:
+            if r is None or dt.datetime.fromisoformat(r["expires_at"]) <= now:
+                raise CompanyError("your sign-in has expired; sign in again", 401)
+            ends = dt.datetime.fromisoformat(r["created_at"]) + dt.timedelta(days=SESSION_MAX_DAYS)
+            if ends <= now:                                         # CV-L06: an absolute lifetime
+                self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (r["token_hash"],))
                 raise CompanyError("your sign-in has expired; sign in again", 401)
             self.db.execute("UPDATE sessions SET expires_at = ? WHERE token_hash = ?",
-                            (_iso(now + dt.timedelta(days=SESSION_DAYS)), r["token_hash"]))
+                            (_iso(min(now + dt.timedelta(days=SESSION_DAYS), ends)), r["token_hash"]))
             self.db.execute("UPDATE users SET last_seen = ? WHERE id = ?", (_iso(now), r["user_id"]))
             return self._user(r["user_id"])
+
+    def signed_in(self, token: str | None) -> bool:
+        """Whether ``token`` is a live session or key, read only (nothing is extended): for the anonymous limits."""
+        if not token:
+            return False
+        with self.lock:
+            if token.startswith(KEY_PREFIX):
+                r = self.db.execute("SELECT 1 FROM api_keys WHERE token_hash = ? AND revoked_at IS NULL",
+                                    (_token_hash(token),)).fetchone()
+                return r is not None
+            r = self.db.execute("SELECT expires_at FROM sessions WHERE token_hash = ?", (_token_hash(token),)).fetchone()
+            return r is not None and dt.datetime.fromisoformat(r["expires_at"]) > _now()
 
     # ---- integration keys (Phase Q) --------------------------------------------------------------------------
     def _key_user(self, token: str) -> User:
@@ -535,26 +686,62 @@ class Companies:
             self._log(cid, None, user.id, "member", f"key {kid} \u201c{r['name']}\u201d withdrawn")
         return self.keys(user, cid)
 
+    def adopt(self, token: str) -> Session:
+        """Swap a session token a browser kept in its own storage (before roadmap D) for a new session, once: the old
+        token stops working, so a copy of it left in the browser's storage is worth nothing afterwards."""
+        if not token or token.startswith(KEY_PREFIX):
+            raise CompanyError("only a browser's sign-in can be moved to a cookie", 400)
+        user = self.whoami(token)
+        with self.lock:
+            old = self.db.execute("SELECT created_at FROM sessions WHERE token_hash = ?", (_token_hash(token),)).fetchone()
+            if old is None:                       # adopted (or signed out) meanwhile: once only
+                raise CompanyError("your sign-in has expired; sign in again", 401)
+            self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
+            s = self._session(user.id)
+            # the absolute lifetime (CV-L06) still counts from the original sign-in
+            self.db.execute("UPDATE sessions SET created_at = ? WHERE token_hash = ?", (old["created_at"], _token_hash(s.token)))
+            return s
+
     def signout(self, token: str) -> None:
         with self.lock:
             self.db.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
 
-    def change_password(self, user: User, old: str, new: str) -> None:
-        if len(new) < 8:
-            raise CompanyError("a password needs at least 8 characters", 422)
+    def _set_password(self, uid: str, new: str, keep_token: str | None = None, salt: str = "",
+                      pw_hash: str = "") -> None:
+        """Change credentials and revoke recovery links and other sessions atomically (the lock is held; pass the
+        salt and hash worked out beforehand, outside it)."""
+        if not salt:
+            salt = secrets.token_hex(16)
+            pw_hash = _hash_pw(new, salt)
+        self.db.execute("BEGIN")
+        try:
+            self.db.execute("UPDATE users SET pw_salt = ?, pw_hash = ? WHERE id = ?", (salt, pw_hash, uid))
+            self.db.execute("UPDATE password_resets SET used = 1 WHERE user_id = ?", (uid,))
+            self.db.execute("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",
+                            (uid, _token_hash(keep_token) if keep_token else ""))
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
+
+    def change_password(self, user: User, old: str, new: str, keep_token: str | None = None) -> None:
+        from . import passwords
+        passwords.check(new, user.email)
         with self.lock:
             r = self.db.execute("SELECT * FROM users WHERE id = ?", (user.id,)).fetchone()
-            if not hmac.compare_digest(_hash_pw(old, r["pw_salt"]), r["pw_hash"]):
-                raise CompanyError("the current password is not right", 403)
-            salt = secrets.token_hex(16)
-            self.db.execute("UPDATE users SET pw_salt = ?, pw_hash = ? WHERE id = ?", (salt, _hash_pw(new, salt), user.id))
+        if not hmac.compare_digest(_hash_pw(old, r["pw_salt"]), r["pw_hash"]):
+            raise CompanyError("the current password is not right", 403)
+        salt = secrets.token_hex(16)
+        pw_hash = _hash_pw(new, salt)
+        with self.lock:
+            self._set_password(user.id, new, keep_token, salt=salt, pw_hash=pw_hash)
 
     # ---- a forgotten password and single sign-on (Phase L) ---------------------------------------------------
     def reset_token(self, email: str, made_by: str | None = None, hours: float = 1) -> str | None:
         """A one-time token to set a new password for the account with this e-mail (None: no such account)."""
         with self.lock:
-            r = self.db.execute("SELECT id FROM users WHERE email = ?", (email.strip(),)).fetchone()
-            if r is None:
+            r = self.db.execute("SELECT id, pw_hash, kind FROM users WHERE email = ?", (email.strip(),)).fetchone()
+            if r is None or not r["pw_hash"] or r["kind"] != "person":
                 return None
             token = secrets.token_urlsafe(24)
             self.db.execute("INSERT INTO password_resets (token_hash, user_id, expires_at, made_by) VALUES (?, ?, ?, ?)",
@@ -567,7 +754,7 @@ class Companies:
         now = _now()
         with self.lock:
             recent = [t for t in self.failures.get(key, []) if now - t < dt.timedelta(hours=1)]
-            self.failures[key] = recent + [now]
+            self._fail(key, recent + [now])
             if len(recent) >= 5:
                 return
         token = self.reset_token(email)
@@ -582,46 +769,82 @@ class Companies:
         no mail). Returns the token and when it expires."""
         with self.lock:
             self._need(user, cid, "owner")
-            r = self.db.execute("SELECT m.role, u.id FROM members m JOIN users u ON u.id = m.user_id "
-                                "WHERE m.company_id = ? AND u.email = ?", (cid, email.strip())).fetchone()
+            r = self.db.execute("SELECT m.role, m.added_by, u.id, u.created_at FROM members m JOIN users u ON "
+                                "u.id = m.user_id WHERE m.company_id = ? AND u.email = ?", (cid, email.strip())).fetchone()
             if r is None:
                 raise CompanyError(f"{email} has no account in this company", 404)
+            # CV-H01: only a member who accepted this company's invitation (a membership is never made without the
+            # account's consent any more), and whose account holds nothing elsewhere: not a member of any other
+            # company (deleted ones included), no other company's invitation accepted, no company of its own
+            if r["id"] != user.id and self.db.execute(
+                    "SELECT 1 FROM companies WHERE created_by = ? AND id != ?", (r["id"], cid)).fetchone():
+                raise CompanyError("this account has companies of its own: its password must be reset by the account "
+                                   "holder (Forgot your password) or the server administrator", 403)
             if r["role"] == "owner" and r["id"] != user.id:
                 raise CompanyError("an owner's password is reset by the owner (Forgot your password) or the server's "
                                    "administrator", 403)
+            if r["id"] != user.id and self.db.execute(
+                    "SELECT 1 FROM members WHERE user_id = ? AND company_id != ?", (r["id"], cid)).fetchone():
+                raise CompanyError("this account also belongs to another company: its password must be reset by "
+                                   "the account holder (Forgot your password) or the server administrator", 403)
             token = self.reset_token(email, made_by=user.id, hours=hours)
+            if token is None:
+                raise CompanyError("this account signs in through single sign-on or an integration key; "
+                                   "its credentials are managed there", 403)
             self._log(cid, None, user.id, "member", f"a link to set a new password was made for {self._name(r['id'])}")
             return token or "", _iso(_now() + dt.timedelta(hours=hours))
 
     def reset_password(self, token: str, new: str) -> Session:
-        if len(new) < 8:
-            raise CompanyError("a password needs at least 8 characters", 422)
+        from . import passwords
+        with self.lock:
+            r = self.db.execute("SELECT u.email FROM password_resets p JOIN users u ON u.id = p.user_id "
+                                "WHERE p.token_hash = ?", (_token_hash(token),)).fetchone()
+        passwords.check(new, r["email"] if r else None)
+        salt = secrets.token_hex(16)
+        pw_hash = _hash_pw(new, salt)            # outside the lock (CV-H11)
         with self.lock:
             r = self.db.execute("SELECT * FROM password_resets WHERE token_hash = ?", (_token_hash(token),)).fetchone()
-            if r is None or r["used"] or dt.datetime.fromisoformat(r["expires_at"]) < _now():
+            if r is None or r["used"] or dt.datetime.fromisoformat(r["expires_at"]) <= _now():
                 raise CompanyError("this link has expired or was used already: ask for a new one", 410)
-            salt = secrets.token_hex(16)
-            self.db.execute("UPDATE users SET pw_salt = ?, pw_hash = ? WHERE id = ?", (salt, _hash_pw(new, salt), r["user_id"]))
-            self.db.execute("UPDATE password_resets SET used = 1 WHERE user_id = ?", (r["user_id"],))
-            self.db.execute("DELETE FROM sessions WHERE user_id = ?", (r["user_id"],))   # signed out everywhere
+            account = self.db.execute("SELECT pw_hash, kind FROM users WHERE id = ?", (r["user_id"],)).fetchone()
+            if account is None or not account["pw_hash"] or account["kind"] != "person":
+                raise CompanyError("this account's credentials are managed by its sign-on service", 410)
+            self._set_password(r["user_id"], new, salt=salt, pw_hash=pw_hash)
+            if not r["made_by"]:     # a link the server mailed to the address: whoever opened it receives its mail
+                self.db.execute("UPDATE users SET verified_at = COALESCE(verified_at, ?) WHERE id = ?",
+                                (_iso(_now()), r["user_id"]))
             email = self._user(r["user_id"]).email
             self.failures.pop(email.lower(), None)
             return self._session(r["user_id"])
 
-    def sso_session(self, subject: str, email: str, name: str, policy: str) -> Session:
-        """Sign in someone the company's identity provider vouched for: their account (by the provider's subject,
-        else by e-mail), or a new one the sign-up policy allows."""
+    def sso_session(self, subject: str, email: str, name: str, policy: str, link_to: str = "") -> Session:
+        """Sign in someone the company's identity provider vouched for (with a verified address): the account bound
+        to the provider's subject, else a new one the sign-up policy allows. An existing account is never taken over
+        by an e-mail match (CV-H02): it is bound to the sign-on only by its holder, signed in (``link_to``: their
+        account id), and a binding is never overwritten."""
         email = email.strip()
         if not EMAIL.match(email):
             raise CompanyError("the sign-on service gave no e-mail address", 403)
         with self.lock:
-            r = self.db.execute("SELECT id FROM users WHERE sso_subject = ?", (subject,)).fetchone() or \
-                self.db.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
-            if r is None:
-                uid = self._new_user(email, name, "", "", policy, subject)
-            else:
-                uid = r["id"]
-                self.db.execute("UPDATE users SET sso_subject = ? WHERE id = ?", (subject, uid))
+            r = self.db.execute("SELECT id FROM users WHERE sso_subject = ?", (subject,)).fetchone()
+            if link_to:
+                u = self.db.execute("SELECT id, sso_subject FROM users WHERE id = ?", (link_to,)).fetchone()
+                if u is None:
+                    raise CompanyError("that account no longer exists", 401)
+                if r is not None and r["id"] != link_to:
+                    raise CompanyError("this sign-on account is already linked to another account", 409)
+                if u["sso_subject"] and u["sso_subject"] != subject:
+                    raise CompanyError("your account is already linked to another sign-on account", 409)
+                self.db.execute("UPDATE users SET sso_subject = ? WHERE id = ?", (subject, link_to))
+                return self._session(link_to)
+            if r is not None:
+                return self._session(r["id"])
+            other = self.db.execute("SELECT id, sso_subject FROM users WHERE email = ?", (email,)).fetchone()
+            if other is not None:
+                raise CompanyError(f"there is already an account for {email}: sign in with its password, then link "
+                                   "single sign-on from your account page", 409)
+            uid = self._new_user(email, name, "", "", policy, subject)
+            self.db.execute("UPDATE users SET verified_at = ? WHERE id = ?", (_iso(_now()), uid))
             return self._session(uid)
 
     def keep_state(self, state: str, verifier: str, nonce: str, next_: str) -> None:
@@ -766,17 +989,30 @@ class Companies:
                          "updated_at": r["updated_at"], "self": r["updated_by"] == user.id})
                 own = True
             doc = self._working_copy(cid, doc, patch, base_revision, current, r["revision"])
+            working = doc
             self._within_rights(user, cid, current, doc)
+            guarded = doc
+            if action != "restored":     # a revision put back carries the releases it was saved with
+                try:
+                    check_releases(current, doc, user.email)
+                except ReleaseRefused as e:
+                    raise CompanyError(str(e), 403) from None
+                guarded = record_credit_releases(current, doc, user.email)
+            doc = guarded
             held: dict | None = None
             if r["approval"] and action != "approved":
                 doc, held = split_master(current, doc)
                 if not held["before"] and not held["after"]:
                     held = None
+            revived = self._revive_erp(cid, current, doc)
+            erp_changed = revived is not doc or guarded is not working
+            doc = revived
             text = _canonical(doc)
             now = _iso(_now())
             if text == r["dataset"]:
                 if held is None:
-                    return SaveReport(meta=self._meta(cid, role, user.id), saved=False, summary="nothing changed", own=own)
+                    return SaveReport(meta=self._meta(cid, role, user.id), saved=False, summary="nothing changed", own=own,
+                                      dataset=doc if erp_changed else None)
                 self.db.execute("BEGIN")
                 try:
                     request = self._hold(cid, r["revision"], user, held, now)
@@ -803,7 +1039,7 @@ class Companies:
                 self.db.execute("ROLLBACK")
                 raise
             return SaveReport(meta=self._meta(cid, role, user.id), saved=True, own=own, held=request,
-                              dataset=doc if request else None,
+                              dataset=doc if request or erp_changed else None,
                               summary=summary + (f"; waiting for approval: {request.summary}" if request else ""))
 
     def merge_save(self, user: User, cid: str, base: dict | None, mine: dict | None, base_revision: int,
@@ -957,23 +1193,51 @@ class Companies:
                           summary=r["summary"], status=r["status"], decided_by=self._name(r["decided_by"]) if r["decided_by"] else "",
                           decided_at=r["decided_at"] or "", note=r["note"], changes=rows)
 
+    def _revive_erp(self, cid: str, before: dict, after: dict) -> dict:
+        """A restored order whose ERP copy was closed needs a new export and a distinct lifecycle. Preserve that
+        lifecycle across subsequent saves and restores, so acknowledgements from its old copy cannot take it."""
+        closed = {(r["kind"], r["id"]) for r in self.db.execute(
+            "SELECT kind, id FROM erp_withdrawn WHERE company_id = ? AND taken_at IS NOT NULL", (cid,))}
+        previous = erp_records(before)
+        out = after
+        for collection in ("purchase_orders", "cancelled_purchase_orders", "receipts"):
+            rows = after.get(collection)
+            if not isinstance(rows, list):
+                continue
+            new = []
+            for r in rows:
+                if not isinstance(r, dict) or not isinstance(r.get("id"), str) or not r["id"]:
+                    new.append(r)
+                    continue
+                if collection == "receipts" and r.get("kind") not in ("production", "transfer"):
+                    new.append(r)
+                    continue
+                key = ("purchase_order" if collection != "receipts" else f"{r.get('kind')}_order", r.get("id"))
+                prev = previous.get(key)
+                if prev is None and key in closed:
+                    r = {**r, "erp_sent": "", "erp_generation": secrets.token_hex(16)}
+                elif prev and prev.get("erp_generation") and r.get("erp_generation") != prev["erp_generation"]:
+                    r = {**r, "erp_sent": "", "erp_generation": prev["erp_generation"]}
+                new.append(r)
+            if new != rows:
+                out = {**out, collection: new}
+        return out
+
     def _withdraw(self, cid: str, uid: str, now: str, before: dict, after: dict) -> None:
         """An order the ERP numbered that this save removed (deleted, not completed) is kept to tell the ERP it is
-        withdrawn (N137); one that comes back (a save put back) is no longer withdrawn. If the ERP had already closed
-        its copy, the order that came back is marked restored, so it goes to the ERP again as a new order."""
+        withdrawn (N137); one that comes back (a save put back) is no longer withdrawn."""
         old, new = erp_orders(before), erp_orders(after)
         closed = {(f"{c.get('kind')}_order", c.get("id")) for c in after.get("closed_orders") or [] if isinstance(c, dict)}
         for (kind, oid), (ref, place) in old.items():
             if (kind, oid) not in new and (kind, oid) not in closed:
-                self.db.execute("INSERT INTO erp_withdrawn (company_id, kind, id, erp_ref, location, at, user_id) "
-                                "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (company_id, kind, id) DO UPDATE SET erp_ref = "
+                self.db.execute("INSERT INTO erp_withdrawn (company_id, kind, id, erp_ref, location, at, user_id, generation) "
+                                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (company_id, kind, id) DO UPDATE SET erp_ref = "
                                 "excluded.erp_ref, location = excluded.location, at = excluded.at, user_id = "
-                                "excluded.user_id, taken_at = NULL, restored_at = NULL", (cid, kind, oid, ref, place, now, uid))
-        for kind, oid in set(new) - set(old):
-            self.db.execute("DELETE FROM erp_withdrawn WHERE company_id = ? AND kind = ? AND id = ? AND taken_at IS NULL",
+                                "excluded.user_id, taken_at = NULL, generation = excluded.generation",
+                                (cid, kind, oid, ref, place, now, uid, secrets.token_hex(16)))
+        for kind, oid in set(erp_records(after)) - set(erp_records(before)):
+            self.db.execute("DELETE FROM erp_withdrawn WHERE company_id = ? AND kind = ? AND id = ?",
                             (cid, kind, oid))
-            self.db.execute("UPDATE erp_withdrawn SET restored_at = ? WHERE company_id = ? AND kind = ? AND id = ? AND "
-                            "taken_at IS NOT NULL", (now, cid, kind, oid))
 
     def _document(self, cid: str, rev: int, uid: str, now: str, before: dict, after: dict) -> None:
         """Keep every field this save changed, with its old and new value (change documents)."""
@@ -1119,12 +1383,27 @@ class Companies:
             self._need(user, cid, "owner")
             now = _iso(_now())
             u = self.db.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
-            if u is None:
-                self.db.execute("INSERT INTO invites (company_id, email, role, invited_by, at, places, families) "
-                                "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (company_id, email) DO UPDATE SET role = "
-                                "excluded.role, places = excluded.places, families = excluded.families",
-                                (cid, email, role, user.id, now, json.dumps(places or []), json.dumps(families or [])))
-                self._log(cid, None, user.id, "member", f"{email} invited as {role}")
+            member = u is not None and self.db.execute("SELECT 1 FROM members WHERE company_id = ? AND user_id = ?",
+                                                       (cid, u["id"])).fetchone() is not None
+            if not member:
+                # CV-C01: nobody becomes a member without accepting: an invitation with a one-time link, for an
+                # address with an account as much as for one without
+                token = secrets.token_urlsafe(24)
+                self.db.execute("INSERT INTO invites (company_id, email, role, invited_by, at, places, families, "
+                                "token_hash, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (company_id, "
+                                "email) DO UPDATE SET role = excluded.role, places = excluded.places, families = "
+                                "excluded.families, token_hash = excluded.token_hash, expires_at = excluded.expires_at, "
+                                "invited_by = excluded.invited_by",
+                                (cid, email, role, user.id, now, json.dumps(places or []), json.dumps(families or []),
+                                 _token_hash(token), _iso(_now() + dt.timedelta(days=INVITE_DAYS))))
+                lim = " and ".join(x for x in (f"places {', '.join(places)}" if places else "",
+                                               f"product groups {', '.join(families)}" if families else "") if x)
+                self._log(cid, None, user.id, "member", f"{email} invited as {role}" + (f", limited to {lim}" if lim else ""))
+                out = self.members(user, cid)
+                for m in out:
+                    if m.user_id is None and m.email.lower() == email.lower():
+                        m.invite_link = token
+                return out
             else:
                 cur = self.db.execute("SELECT role FROM members WHERE company_id = ? AND user_id = ?",
                                       (cid, u["id"])).fetchone()

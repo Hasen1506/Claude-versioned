@@ -93,7 +93,7 @@ class Dataset(Model):
                  "npi": [n.model_dump(mode="json") for n in self.npi],
                  "overrides": [o.model_dump(mode="json") for o in self.overrides],
                  "settings": self.forecasting.model_dump(mode="json", exclude={"released_inputs"})}
-        return hashlib.sha1(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]
+        return hashlib.sha1(json.dumps(parts, sort_keys=True).encode(), usedforsecurity=False).hexdigest()[:16]
 
     def model_copy(self, *, update: dict | None = None, deep: bool = False) -> Dataset:
         """A copy without the lookup indices below: pydantic copies the instance dict, cached indices included, so
@@ -247,8 +247,9 @@ class Dataset(Model):
                 for ln in self.lanes:
                     if ln.destination != dest or ln.origin in seen or (ln.products and node[1] not in ln.products):
                         continue
-                    up = self.location_product_by_key.get((ln.origin, node[1]))
-                    if up is not None:
+                    if (ln.origin, node[1]) in self.location_product_by_key:
+                        # the upstream policy as planning uses it: an MRP group's strategy and windows apply here too
+                        up = self.planning_lp((ln.origin, node[1]))
                         return lp.model_copy(update={"strategy": up.strategy,
                                                      "consumption_backward_days": up.consumption_backward_days,
                                                      "consumption_forward_days": up.consumption_forward_days})

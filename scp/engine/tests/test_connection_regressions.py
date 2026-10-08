@@ -220,4 +220,5 @@ def test_a_viewer_key_cannot_write_unscoped_plan_versions_and_a_planner_uses_its
     assert r.status_code == 200, r.text
     versions = client.get("/api/versions", headers={**h(owner), "X-Company": cid}).json()
     assert versions[0]["id"] == r.json()["id"]
-    assert client.get("/api/versions").json() == []
+    assert client.get("/api/versions").json() == []                      # this browser's own space: empty
+    assert client.get("/api/versions", headers={"X-Browser-Key": ""}).status_code == 400   # no key: no shared pool

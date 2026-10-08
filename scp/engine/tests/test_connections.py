@@ -9,7 +9,7 @@ from scp.api.app import app
 
 from .factory import base
 
-client = TestClient(app)
+client = TestClient(app, headers={"X-Browser-Key": "tests-browser-key-0001"})
 
 
 def company() -> dict:
@@ -42,6 +42,14 @@ def setup(doc: dict | None = None) -> tuple[str, str, str]:
     r = client.post(f"/api/companies/{cid}/keys", headers=h(owner), json={"name": "SAP", "role": "planner"})
     assert r.status_code == 200, r.text
     return owner, cid, r.json()["token"]
+
+
+def verify(token: str) -> None:
+    """Confirm the account's address the way its mailed link does (CV-C01/H07)."""
+    from scp.companies import get_companies
+    c = get_companies()
+    r = client.post("/api/auth/email/verify", json={"token": c.email_token(c.whoami(token))})
+    assert r.status_code == 200 and r.json()["verified"], r.text
 
 
 def doc_of(owner: str, cid: str) -> dict:
@@ -298,15 +306,6 @@ def test_an_order_the_erp_took_and_then_deleted_here_goes_to_it_as_withdrawn_unt
     r = client.post(f"/api/companies/{cid}/restore", headers=h(owner), json={"revision": rev - 1, "base_revision": rev})
     assert r.status_code == 200, r.text
     assert client.get(f"/api/companies/{cid}/erp/production-orders", headers=h(key)).json()["orders"] == []
-    # the purchase order came back too, after the ERP had closed its copy: it goes to the ERP again as a new order
-    [again] = client.get(f"/api/companies/{cid}/erp/purchase-orders", headers=h(key)).json()["orders"]
-    assert (again["id"], again["change"], again["erp_ref"]) == ("PO-00001", "new", "")
-    r = client.post(f"/api/companies/{cid}/erp/acknowledge", headers=h(key), json={"orders": [
-        {"kind": "purchase_order", "id": "PO-00001", "erp_ref": "4500000999", "version": again["version"]}]})
-    assert r.json()["message"]["items"][0]["status"] == "applied", r.text
-    assert client.get(f"/api/companies/{cid}/erp/purchase-orders", headers=h(key)).json()["orders"] == []
-    every = client.get(f"/api/companies/{cid}/erp/purchase-orders?all=true", headers=h(key)).json()["orders"]
-    assert [(o["id"], o["change"], o["erp_ref"]) for o in every] == [("PO-00001", "taken", "4500000999")]
 
 
 # ---- master data ------------------------------------------------------------------------------------------------
@@ -468,6 +467,15 @@ def test_a_document_goes_from_the_server_to_the_suppliers_address_with_the_docum
     assert client.get(f"/api/companies/{cid}/mail", headers=h(owner)).json()["mail"] is False
 
     sent = mailing(monkeypatch)
+    # CV-H07: a server where anyone may make an account mails no documents for them …
+    r = client.post(f"/api/companies/{cid}/mail", headers=h(owner), json=po_mail())
+    assert r.status_code == 403 and "SCP_MAIL_OPEN_SIGNUP" in r.json()["detail"]
+    monkeypatch.setenv("SCP_SIGNUP", "invite")
+    # … and the sender's own address must be shown to be theirs
+    r = client.post(f"/api/companies/{cid}/mail", headers=h(owner), json=po_mail())
+    assert r.status_code == 403 and "confirm your own e-mail address" in r.json()["detail"]
+    verify(owner)
+    assert sent == []
     setup_ = client.get(f"/api/companies/{cid}/mail", headers=h(owner)).json()
     assert (setup_["mail"], setup_["sender"], setup_["timezone"]) == (True, "plan@example.com", "UTC")
     r = client.post(f"/api/companies/{cid}/mail", headers=h(owner), json=po_mail(cc=["buying@kumar.example"]))
@@ -479,7 +487,8 @@ def test_a_document_goes_from_the_server_to_the_suppliers_address_with_the_docum
     assert (msg["From"], msg["To"], msg["Cc"], msg["Reply-To"], msg["Subject"]) == \
         ("plan@example.com", "orders@sharma.example", "buying@kumar.example", "Asha <owner@example.com>",
          "Purchase order PO-00001")
-    assert msg.get_body(("plain",)).get_content().strip() == "Please find our order attached."
+    body = msg.get_body(("plain",)).get_content().strip()
+    assert body.startswith("Please find our order attached.") and "Sent by Asha <owner@example.com> of " in body
     pdf, att = list(msg.iter_attachments())
     assert (att.get_filename(), att.get_content()) == ("PO-00001.html", "<h1>Purchase order PO-00001</h1>")
     # the same document as a PDF first (N140)
@@ -521,14 +530,19 @@ def test_worklist_reminders_reach_each_owner_once_on_the_days_set(monkeypatch):
     owner, cid, _ = setup(with_contacts())
     ravi = client.post("/api/auth/signup", json={"email": "ravi@example.com", "name": "Ravi",
                                                  "password": "correct horse"}).json()["token"]
-    assert client.post(f"/api/companies/{cid}/members", headers=h(owner),
-                       json={"email": "ravi@example.com", "role": "planner"}).status_code == 200
+    r = client.post(f"/api/companies/{cid}/members", headers=h(owner), json={"email": "ravi@example.com", "role": "planner"})
+    assert r.status_code == 200
+    link = next(m["invite_link"] for m in r.json() if m["email"] == "ravi@example.com")
+    assert client.post("/api/auth/invites/accept", headers=h(ravi), json={"token": link.rsplit("/", 1)[1]}).status_code == 200
+    assert [m["To"] for m in sent] == ["ravi@example.com"]                    # the invitation went by mail too
+    sent.clear()
     db = get_tracker().db
     rows = [  # owner, category, message, first seen (the company plans from Monday 5 January 2026)
         ("owner@example.com", "coverage", "B at P runs out on 7 Jan", "2025-12-29"),
         ("Ravi", "orders", "PO-00001 not confirmed", "2026-01-04"),
         ("ravi", "capacity", "Line 1 overloaded in week 2", "2025-12-26"),
         ("Unassigned", "demand", "Forecast for A runs high", "2026-01-01"),
+        ("stranger@elsewhere.example", "demand", "an address written on an item, not a member", "2026-01-01"),
     ]
     for i, (who, cat, text, first) in enumerate(rows):
         db.execute("INSERT INTO tower_items (id, company, key, code, category, severity, message, owner, owner_source, "

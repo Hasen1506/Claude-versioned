@@ -9,6 +9,7 @@ import { addDays, dayName, money, pct, plural, qty, unitMoney } from "../lib/for
 import { href } from "../lib/router";
 import { earliestArrival } from "../lib/situations";
 import { earnings } from "../lib/earnings";
+import { guideDone } from "../lib/guide";
 import { Checklist, setupTodo } from "../components/Checklist";
 import { freshness, PLAN_STEPS, planFreshness, store, useStore, type RunKey } from "../state/store";
 
@@ -46,11 +47,12 @@ function Guide({ planned }: { planned: boolean }) {
   });
   if (hidden) return null;
   const seen = readSet(VISITED_KEY);
+  const did = guideDone();
   const steps: { done: boolean; title: string; body: ReactNode; to?: string }[] = [
     { done: planned, title: "Plan everything", body: <>Calculates every result from your data. It never changes the data itself.</> },
     { done: seen.has("plan"), title: "See what will be late, and why", body: <>The supply plan: what to make, buy and move.</>, to: href("plan") },
-    { done: seen.has("promise"), title: "Check a new customer order", body: <>When could you deliver it, and from where?</>, to: href("promise", "simulate") },
-    { done: seen.has("versions"), title: "Try a what-if", body: <>Save a version, change something, compare the two.</>, to: href("versions") },
+    { done: did.has("check"), title: "Check a new customer order", body: <>When could you deliver it, and from where?</>, to: href("promise", "simulate") },
+    { done: did.has("whatif"), title: "Try a what-if", body: <>Save a version, change something, compare the two.</>, to: href("versions") },
   ];
   const next = steps.findIndex((s) => !s.done);
   const close = () => {

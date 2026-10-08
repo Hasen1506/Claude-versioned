@@ -100,6 +100,8 @@ class PurchaseOrder(Model):
     erp_ref: str = Field("", max_length=64, description="The order's number in the ERP, once the ERP has taken it")
     erp_sent: str = Field("", max_length=32, description="The version of the order the ERP took last (empty: never); "
                                                         "a changed order goes to the ERP again")
+    erp_generation: str = Field("", max_length=32, description="Integration lifecycle identifier, assigned when an "
+                                                               "order closed by the ERP is restored")
     cancelled_lines: list[ScheduledReceipt] = Field(default_factory=list, description="Cancelled line snapshots, "
                                                     "retained so the ERP also receives their cancellation")
 
@@ -251,6 +253,11 @@ class PurchasingSettings(Model):
     release_levels: list[ReleaseLevel] = Field(
         default_factory=list, max_length=10,
         description="Release strategy: levels by order value (empty: the approval limit is the one level)")
+    processing_workdays: float = Unit(
+        "workdays", le=60, default=0.0,
+        description="Purchasing processing time: working days the buyers take to turn a requisition into an order "
+                    "(S/4 plant parameter). Planning releases requisitions this much before the supplier's lead "
+                    "time starts, so the supplier's own lead time stays what they promise")
     price_tolerance: float = Unit("fraction", le=1, default=0.02,
                                   description="An invoiced price this much over the order's price blocks the invoice")
     amount_tolerance: float = Unit("money", default=1.0,

@@ -109,8 +109,7 @@ test('the latest company selection wins when two open responses arrive in revers
   await signUp(page); await keep(page); await imported(page,'Account company B'); await keep(page);
   await page.goto('/#/account');
   const companies=await page.evaluate(async()=>{
-    const token=JSON.parse(localStorage.getItem('scp.session.v1')||'null')?.token;
-    return await (await fetch('/api/companies',{headers:{Authorization:`Bearer ${token}`}})).json();
+    return await (await fetch('/api/companies',{headers:{}})).json();
   });
   const a=companies.find((c:{name:string})=>c.name==='Account company A');
   expect(a).toBeTruthy(); const delayed=await hold(page,`**/api/companies/${a.id}`,'GET');
@@ -159,8 +158,7 @@ test('an earlier open completion waits for the newer selection instead of openin
   await signUp(page); await keep(page); await imported(page,'Account company B'); await keep(page);
   await imported(page,'Account company C'); await page.goto('/#/account');
   const companies=await page.evaluate(async()=>{
-    const token=JSON.parse(localStorage.getItem('scp.session.v1')||'null')?.token;
-    return await (await fetch('/api/companies',{headers:{Authorization:`Bearer ${token}`}})).json();
+    return await (await fetch('/api/companies',{headers:{}})).json();
   });
   const a=companies.find((c:{name:string})=>c.name==='Account company A');
   const b=companies.find((c:{name:string})=>c.name==='Account company B');

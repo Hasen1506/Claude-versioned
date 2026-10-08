@@ -81,6 +81,7 @@ class Promiser:
         self.alloc_used: dict[str, float] = defaultdict(float)
         self.orders_by_id = {o.id: o for o in plan.orders}
         self._rlt: dict[Node, float] = {}
+        self._quality: dict[Node, float] | None = None
         # free finite capacity per resource and day over the plan horizon (productive hours less the plan's load
         # that day), for CTP: a machine free that week but not on the days an order needs it does not confirm it
         end = max((b.end for b in plan.buckets), default=self.origin)
@@ -121,6 +122,23 @@ class Promiser:
         self._rlt[node] = lt
         return lt
 
+    def on_hand(self, node: Node) -> float:
+        """Stock the promise may count on at the start (S/4 guide §10.3: stock in quality inspection is invisible to
+        ATP unless the scope of check includes it). Planning's on-hand has inspection stock in it when the company
+        counts it in planning; the scope of check here decides separately, so an order is never confirmed from stock
+        that cannot be shipped until someone releases it."""
+        lp = self.ds.location_product_by_key.get(node)
+        q = lp.on_hand if lp else 0.0
+        in_plan, in_promise = self.ds.execution.quality_in_planning, self.cfg.quality_in_promise
+        if in_plan != in_promise:
+            if self._quality is None:
+                from ..actuals.lots import quality_stock
+                from ..actuals.stock import before
+                self._quality = quality_stock(self.ds, before(self.ds, self.origin), self.origin)
+            qi = self._quality.get(node, 0.0)
+            q = q - qi if in_plan else q + qi
+        return max(0.0, q)
+
     def series_for(self, node: Node) -> AtpSeries:
         if node in self.series:
             return self.series[node]
@@ -128,7 +146,7 @@ class Promiser:
         rlt_day = math.ceil(self.rlt(node) - 1e-9) if self.cfg.confirm_beyond_rlt else None
         s = AtpSeries(self.days, rlt_day)
         lp = ds.location_product_by_key.get(node)
-        s.add_in(0, lp.on_hand if lp else 0.0)
+        s.add_in(0, self.on_hand(node))
         for r in ds.receipts:
             if (r.location, r.product) == node:
                 for d, q in r.expected_parts():
@@ -136,7 +154,7 @@ class Promiser:
         if self.cfg.include_planned_orders:
             for o in self.plan.orders:
                 if (o.location, o.product) == node:
-                    s.add_in(self.day(o.available_date), o.qty)
+                    self._add_planned(s, o)
         other = [0.0] * self.days
         for rq in self.plan.requirements:
             if (rq.location, rq.product) != node or rq.kind not in ("dependent", "transfer"):
@@ -153,6 +171,23 @@ class Promiser:
         self.series[node] = s
         self.other[node] = other
         return s
+
+    def _add_planned(self, s: AtpSeries, o) -> None:
+        """A planned receipt counts on the date the plan projects it, not the date MRP wanted it: an order whose
+        components arrive late (a 21-day motor with no stock) is available only when they do, so it cannot confirm an
+        order on time while the plan itself says the order is late. An order with an uncovered input (delay −1) has no
+        projected date at all and confirms nothing; capable-to-promise or the replenishment lead time quote it."""
+        if o.delay_days < 0:
+            return
+        late = o.projected_available_date
+        if late is None or late <= o.available_date or o.delay_days <= 0:
+            s.add_in(self.day(o.available_date), o.qty)
+            return
+        on_time = min(max(o.projected_on_time_qty or 0.0, 0.0), o.qty)
+        if on_time > EPS:
+            s.add_in(self.day(o.available_date), on_time)
+        if o.qty - on_time > EPS:
+            s.add_in(self.day(late), o.qty - on_time)
 
     def ships(self, d: DemandRecord) -> list[Ship]:
         node = (d.location, d.product)
@@ -201,6 +236,17 @@ class Promiser:
         deliv = max(self.delivery(sh, d.product, ship_day), requested)
         return ScheduleLine(ship_from=sh.node[0], ship_date=self.date(ship_day), date=deliv, qty=qty, method=method,
                             on_time=deliv <= max(requested, self.origin))
+
+    def release(self, d: DemandRecord, line: ScheduleLine) -> None:
+        """Give a committed schedule line's supply (and allocation) back: the inverse of :meth:`commit_line`."""
+        node = (line.ship_from, d.product)
+        day = self.day(line.ship_date)
+        self.series_for(node).add_out(day, -line.qty)
+        self.promised[node][min(max(day, 0), self.days - 1)] -= line.qty
+        allocs = self.allocations(d)
+        a = self.alloc_period(allocs, day) if allocs else None
+        if a:
+            self.alloc_used[a.id] -= line.qty
 
     def register(self, d: DemandRecord, c: Confirmation) -> ScheduleLine:
         """A persisted schedule line claims its supply as an outflow."""
@@ -260,7 +306,7 @@ class Promiser:
                 res.lines.append(self.commit_line(d, sh, i, take, "atp", allocs, d.date))
                 remaining -= take
             if remaining <= EPS:
-                return finish(res)
+                return self._lead_time_reason(d, finish(res))
         # 2) the rest from the first location: later ATP dates / beyond RLT, or CTP if that is sooner
         sh = ships[0]
         s = self.series_for(sh.node)
@@ -285,11 +331,29 @@ class Promiser:
             late = self._late(d, sh, i0, remaining, allocs)
         res.lines.extend(late)
         finish(res)
+        self._lead_time_reason(d, res)
         if res.unconfirmed > EPS:
             res.reason = (f"{res.unconfirmed:g} not available from {sh.node[0]} within the horizon"
                           + ("; no capable-to-promise route either" if self.cfg.ctp else "")
                           + ". ATP promises stock and receipts to orders, never the forecast: firm or plan more "
                             "supply to confirm more")
+        return res
+
+    def _lead_time_reason(self, d: DemandRecord, res: OrderPromise) -> OrderPromise:
+        """Say why a confirmed date is late when the cause is the calendar, not the stock (guide §6.2): the requested
+        delivery date is closer than the outbound lead time, so even goods shipped today arrive later. Everything
+        confirmed ships on the first possible day; the fix is a later request or a faster lane, not more supply."""
+        if res.reason or not res.lines or res.status != "late" or not (ships := self.ships(d)):
+            return res
+        sh = ships[0]
+        raw = (d.date if sh.lane is None
+               else schedule_transfer(self.ds, sh.lane, d.product, available=d.date).start_date)
+        first = self.date(self.ship_day(sh, d.product, d.date))
+        if raw < self.origin and all(x.ship_date <= first for x in res.lines):
+            earliest = max(x.date for x in res.lines)
+            res.reason = (f"Not a stock shortage: the requested delivery {d.date.isoformat()} is closer than the "
+                          f"time to ship it, so goods shipped from {sh.node[0]} today arrive {earliest.isoformat()} "
+                          "at the earliest. Ask for a later date or use a faster lane")
         return res
 
     def _late(self, d: DemandRecord, sh: Ship, i0: int, qty: float, allocs: list[Allocation]) -> list[ScheduleLine]:
@@ -445,14 +509,13 @@ class Promiser:
     # ---- views ----------------------------------------------------------------------------------
     def node_view(self, node: Node, span: int) -> AtpNode:
         s = self.series_for(node)
-        lp = self.ds.location_product_by_key.get(node)
         span = min(span, self.days)
         cum = s.cum()
         atp = s.atp()
         short = s.shortage()
         other = self.other.get(node, [0.0] * self.days)
         return AtpNode(
-            location=node[0], product=node[1], rlt_days=s.rlt_day, on_hand=lp.on_hand if lp else 0.0,
+            location=node[0], product=node[1], rlt_days=s.rlt_day, on_hand=self.on_hand(node),
             dates=[self.date(i) for i in range(span)], receipts=s.inflow[:span], other_demand=other[:span],
             promised=self.promised[node][:span], cumulative=cum[:span],
             available=[None if math.isinf(atp[i]) else max(0.0, atp[i]) for i in range(span)],

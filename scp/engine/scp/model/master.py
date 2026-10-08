@@ -41,6 +41,9 @@ class Settings(Model):
     holding_spread: float = Unit("fraction", le=1, default=0.08,
                                  description="Storage + insurance + obsolescence on top of WACC, per year")
     default_service_level: float = Unit("fraction", gt=0, lt=1, default=0.95)
+    timezone: str | None = Field(
+        None, max_length=64, description="The company's time zone (IANA, e.g. Asia/Kolkata): the times of day of its "
+                                         "scheduled imports; empty = the server's (SCP_TIMEZONE, else UTC)")
     default_calendar: str | None = Ref("calendar", default=None)
     capacity_constrained: bool = Field(
         False, description="Plan make orders within the capacity of finite machines and labour: an order that does "
@@ -71,6 +74,18 @@ class Settings(Model):
     @classmethod
     def _upper(cls, v: str) -> str:
         return v.upper()
+
+    @field_validator("timezone")
+    @classmethod
+    def _zone(cls, v: str | None) -> str | None:
+        v = (v or "").strip() or None
+        if v is not None:
+            from zoneinfo import ZoneInfo
+            try:
+                ZoneInfo(v)
+            except Exception:
+                raise ValueError(f"{v} is not a time zone name such as Asia/Kolkata or Europe/London") from None
+        return v
 
     @field_validator("default_lot_policy")
     @classmethod
@@ -255,11 +270,16 @@ class MrpGroup(Model):
     name: str = Field("", max_length=80)
     strategy: Strategy | None = Field(None, description="Planning strategy for the group (empty: each product's own)")
     lot_sizing: LotSizing | None = Field(None, description="Lot size for the group (empty: each product's own)")
-    safety_time_days: float | None = Unit("days", default=None, description="Plan receipts this many days early")
+    safety_time_days: float | None = Unit("workdays", default=None,
+                                          description="Safety time: plan receipts this many working days early")
     planning_time_fence_days: float | None = Unit("days", default=None,
                                                   description="No new proposals inside this fence")
-    consumption_backward_days: float | None = Unit("days", default=None)
-    consumption_forward_days: float | None = Unit("days", default=None)
+    consumption_backward_days: float | None = Unit(
+        "days", default=None, description="Calendar days a sales order may reach back to consume forecast (empty: "
+                                          "each product's own)")
+    consumption_forward_days: float | None = Unit(
+        "days", default=None, description="Calendar days a sales order may reach forward to consume forecast "
+                                          "(empty: each product's own)")
     mrp_controller: str | None = Field(None, max_length=40, description="Who plans the group's products")
 
     def overrides(self) -> dict:
@@ -288,14 +308,23 @@ class LocationProduct(Model):
     unit_cost: float | None = Unit("money_per_unit", default=None, description="Valuation override")
     lot_sizing: LotSizing = Field(default_factory=LotSizing)
     safety_stock: SafetyStockPolicy = Field(default_factory=SafetyStockPolicy)
-    safety_time_days: float = Unit("days", default=0.0, description="Plan receipts this many days early")
+    safety_time_days: float = Unit("workdays", default=0.0,
+                                   description="Safety time: plan receipts this many working days early")
     reorder_point: float | None = Unit("qty", default=None, description="reorder_point MRP type trigger")
     max_stock: float | None = Unit("qty", default=None, description="MIN_MAX target / excess threshold")
     planning_time_fence_days: float = Unit("days", default=0.0,
                                            description="No new proposals inside this fence (firming type 1)")
     gr_processing_days: float = Unit("days", default=0.0, description="Goods-receipt / putaway time")
-    consumption_backward_days: float = Unit("days", default=7.0)
-    consumption_forward_days: float = Unit("days", default=7.0)
+    consumption_backward_days: float = Unit(
+        "days", default=7.0,
+        description="Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days before its "
+                    "date a sales order may reach back to eat forecast; a forecast for a period counts on every day of "
+                    "it. An order consumes backward first, then forward")
+    consumption_forward_days: float = Unit(
+        "days", default=7.0,
+        description="Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days after its "
+                    "date a sales order may reach forward to eat forecast, once nothing is left backward. What no "
+                    "forecast in reach covers is planned on top of the forecast")
     holding_rate: float | None = Unit("fraction", le=2, default=None,
                                       description="Annual carrying rate override (default: WACC + spread)")
     ddmrp_buffer: bool = Field(False, description="Strategic decoupling point: DDMRP buffer positioned here")

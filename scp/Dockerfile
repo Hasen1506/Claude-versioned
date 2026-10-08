@@ -25,12 +25,15 @@ COPY engine/ engine/
 COPY examples/ examples/
 RUN pip install --no-cache-dir --no-deps -e ./engine
 COPY --from=web /app/web/dist web/dist
-RUN useradd --system --uid 10001 --home /data scp && mkdir -p /data && chown scp /data
+# Build contexts can have restrictive directory modes; the runtime user must be able to read the application.
+RUN chmod -R a+rX /app && useradd --system --uid 10001 --home /data scp && mkdir -p /data && chown scp /data
 USER scp
 VOLUME ["/data"]
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"
 # one worker: saves are checked against the company's latest revision under a lock inside the process
-CMD ["uvicorn", "scp.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", \
-     "--proxy-headers", "--forwarded-allow-ips", "*", "--timeout-keep-alive", "75"]
+# X-Forwarded-* headers are trusted only from the proxy (FORWARDED_ALLOW_IPS, default the machine itself; CV-H10).
+# Links that leave the server are made from SCP_PUBLIC_URL alone, whatever the headers say.
+ENV FORWARDED_ALLOW_IPS=127.0.0.1
+CMD ["sh", "-c", "exec uvicorn scp.api.app:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips \"$FORWARDED_ALLOW_IPS\" --timeout-keep-alive 75"]

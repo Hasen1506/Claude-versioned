@@ -242,29 +242,50 @@ def _arriving(ds: Dataset, journal: list[GoodsMovement], rc: ScheduledReceipt, q
     return out
 
 
+def _lowest(xs: list[GoodsMovement], start: date) -> float:
+    """The lowest running balance of ``xs`` on any day from ``start`` on (a back-dated posting must not take a
+    later day of the journal below zero either)."""
+    days = sorted({x.date for x in xs if x.date >= start} | {start})
+    return min(sum(x.signed for x in xs if x.date <= d) for d in days)
+
+
 def _negative(ds: Dataset, journal: list[GoodsMovement], moves: list[GoodsMovement], on: date) -> list[str]:
-    """Places the posting takes below zero in unrestricted stock: refused, or noted, by the company's rule."""
+    """Places the posting takes below zero in unrestricted stock: refused, or noted, by the company's rule. A
+    back-dated posting is checked against every later day of the journal too: taking stock out on the 1st that a
+    posting of the 2nd already took leaves the 2nd below zero."""
     touched = {(m.location, m.product) for m in moves if m.signed < 0 and m.stock_type is StockType.UNRESTRICTED}
     short = []
     for k in sorted(touched):
-        day_end = max([on, *(m.date for m in moves if (m.location, m.product) == k)])
-        bal = sum(x.signed for x in [*journal, *moves] if (x.location, x.product) == k and x.date <= day_end
-                  and x.stock_type is StockType.UNRESTRICTED)
+        first = min([on, *(m.date for m in moves if (m.location, m.product) == k)])
+        bal = _lowest([x for x in [*journal, *moves] if (x.location, x.product) == k
+                       and x.stock_type is StockType.UNRESTRICTED], first)
         if bal < -EPS:
             short.append((k, bal))
+
+    def held(lo: str, p: str) -> str:
+        """Stock there that is not unrestricted (S/4 guide §10.3: inspection stock blocks delivery until the usage
+        decision): say so, so the fix is a release, not a receipt that was never missing."""
+        by: dict[StockType, float] = defaultdict(float)
+        for x in [*journal, *moves]:
+            if (x.location, x.product) == (lo, p) and x.stock_type is not StockType.UNRESTRICTED and x.date <= on:
+                by[x.stock_type] += x.signed
+        parts = [f"{_n(q)} {WORDS[t]}" for t, q in sorted(by.items(), key=lambda kv: kv[0].value) if q > EPS]
+        return f" ({' and '.join(parts)}: release it first)" if parts else ""
+
     if NegativeStock(ds.execution.negative_stock) is NegativeStock.REFUSE:
         for m in moves:
             if m.signed >= 0:
                 continue
-            qty = sum(x.signed for x in [*journal, *moves] if x.location == m.location and x.product == m.product
-                      and x.batch == m.batch and x.stock_type == m.stock_type and x.date <= m.date)
+            qty = _lowest([x for x in [*journal, *moves] if x.location == m.location and x.product == m.product
+                           and x.batch == m.batch and x.stock_type == m.stock_type], m.date)
             if qty < -EPS:
-                raise StockError(f"not enough in stock in batch {m.batch or '(unbatched)'} of {m.product} at {m.location}: "
-                                 "the company does not allow stock below zero")
+                raise StockError(f"not enough in stock in batch {m.batch or '(unbatched)'} of {m.product} at {m.location}"
+                                 f"{held(m.location, m.product)}: the company does not allow stock below zero")
     if not short:
         return []
     rule = NegativeStock(ds.execution.negative_stock)
-    words = ", ".join(f"{_name(ds, p)} at {_at(ds, lo)} would go to {_n(q)}" for (lo, p), q in short[:3])
+
+    words = ", ".join(f"{_name(ds, p)} at {_at(ds, lo)} would go to {_n(q)}{held(lo, p)}" for (lo, p), q in short[:3])
     if rule is NegativeStock.REFUSE:
         raise StockError(f"not enough in stock: {words}. Post the missing receipt or a count first (the company does "
                          "not allow stock below zero)")

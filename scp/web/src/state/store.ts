@@ -5,8 +5,9 @@
 // cascade, done by construction: every result reads the whole dataset except the parts only the shop floor
 // schedule reads (its settings and the changeover matrix), which leave the other results fresh.
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { api, ApiError, SchemaRejected, setAuth, setDataRef, setPlanningView, setWriteGuard, type DataRef } from "../api/client";
+import { api, ApiError, COOKIE_SESSION, cookieSession, SchemaRejected, setAuth, setDataRef, setPlanningView, setWriteGuard, type DataRef } from "../api/client";
 import { makePatch, patchIsSmall, type Patch } from "../lib/patch";
+import { leavingScreen } from "../lib/router";
 import { keepSteps, stepsFor } from "./undoStore";
 import type { CompanyDoc, CompanyMeta, PlanTrace, User, ActualsView, PurchasingView, SalesView, Dataset, FinanceResult, TowerResult, ForecastResult, InventoryResult, NetworkView, PlanResult, PromiseResult, ScheduleResult, SopResult, SchemaError, ValidationResult } from "../api/types";
 
@@ -56,7 +57,8 @@ export interface WorkingSnapshot extends WorkingContext {
   dataset: Dataset;
 }
 
-/** Signed in to the server (Phase I). */
+/** Signed in to the server (Phase I). Roadmap D: `token` is a marker ("cookie:…", no secret: the session itself is
+ *  in an HttpOnly cookie); a real token here was kept before the change and is swapped for the cookie once. */
 export interface Session { token: string; user: User }
 
 /** The company kept on the server that the working copy belongs to. `live`: the working copy is the company's
@@ -110,6 +112,9 @@ export interface State {
   engineError: string | null;
   canUndo: boolean;
   canRedo: boolean;
+  /** The screen the next undo (redo) would change, when it is another screen than this one (it is then disabled). */
+  undoElsewhere: string | null;
+  redoElsewhere: string | null;
   /** "Plan everything" in progress: which step of how many, and what it is doing now. */
   planning: { done: number; of: number; label: string; since: number } | null;   // since: when this step began (ms)
 }
@@ -168,11 +173,31 @@ const localSave = (): SaveState => ({ status: "local", at: null, error: null, co
 let state: State = {
   session: null, company: null, save: localSave(),
   dataset: null, version: null, revision: 0, touched: {}, validation: null, schemaErrors: [], network: null, runs: emptyRuns(),
-  checking: false, engineError: null, canUndo: false, canRedo: false, planning: null,
+  checking: false, engineError: null, canUndo: false, canRedo: false, undoElsewhere: null, redoElsewhere: null, planning: null,
 };
 const listeners = new Set<() => void>();
 const past: Dataset[] = [];
 const future: Dataset[] = [];
+// QA (Undo/Redo spans screens): each step remembers the screen it was made on, and Undo/Redo act only on a step of the
+// screen in view, so a press on one screen never silently brings back a deletion made on another
+const pastWhere: string[] = [];
+const futureWhere: string[] = [];
+const WHERE_KEY = "scp.undo.where";
+
+/** The screen in view: the first part of the route ("data", "tower", "demand"); "" before any. */
+export function screen(): string {
+  const left = leavingScreen();          // a field blurred by Back/Forward/a link: its edit is the screen it was on
+  if (left !== null) return left;
+  return (typeof window === "undefined" ? "" : window.location.hash.replace(/^#\/?/, "").split("/")[0]) || "home";
+}
+
+function keepWhere() {
+  try { localStorage.setItem(WHERE_KEY, JSON.stringify({ past: pastWhere, future: futureWhere })); } catch { /* full */ }
+}
+
+function sameScreen(where: string | undefined): boolean {
+  return !where || where === screen();          // "" (a step kept before this) is any screen's
+}
 let timer: ReturnType<typeof setTimeout> | undefined;
 /** Revision the last data check answered for (validation and set-aside records are current at it). */
 let checkedRevision = -1;
@@ -216,12 +241,43 @@ setPlanningView((ds) => {
 /** True while the undo steps kept for the reloaded working copy are read back (nothing is kept over them meanwhile). */
 let restoringSteps = false;
 
+// REFRESH-01/02: results a reload must not lose. The forecast (the workbench and consensus tabs exist only with it) and
+// the performance measures (the rail's count of measures off target) are calculated again after a reload when they had
+// been calculated before it; the other results recalculate when their page opens (useFreshResult) or with Plan everything.
+const CALCULATED_KEY = "scp.calculated.v1";
+const AFTER_RELOAD: readonly RunKey[] = ["forecast", "tower"];
+let pendingCalc = new Set<RunKey>();   // asked for again after the reload, not back yet
+let pendingEpoch = -1;
+let calculatedKept: string | null = null;
+function keepCalculated() {
+  if (pendingEpoch !== loadEpoch) pendingCalc = new Set();   // another company was opened since: its results are its own
+  const had = AFTER_RELOAD.filter((k) => state.runs[k].data !== null || state.runs[k].running || pendingCalc.has(k));
+  const v = JSON.stringify(had);
+  if (v === calculatedKept) return;
+  calculatedKept = v;
+  try { if (had.length) localStorage.setItem(CALCULATED_KEY, v); else localStorage.removeItem(CALCULATED_KEY); } catch { /* full */ }
+}
+
 function set(patch: Partial<State>) {
-  state = { ...state, ...patch, canUndo: past.length > 0, canRedo: future.length > 0 };
+  while (pastWhere.length < past.length) pastWhere.unshift("");
+  while (pastWhere.length > past.length) pastWhere.shift();
+  while (futureWhere.length < future.length) futureWhere.unshift("");
+  while (futureWhere.length > future.length) futureWhere.shift();
+  const u = pastWhere[pastWhere.length - 1], r = futureWhere[futureWhere.length - 1];
+  state = { ...state, ...patch,
+    canUndo: past.length > 0 && sameScreen(u), canRedo: future.length > 0 && sameScreen(r),
+    undoElsewhere: past.length > 0 && !sameScreen(u) ? u : null,
+    redoElsewhere: future.length > 0 && !sameScreen(r) ? r : null };
+  // not while a reload reads its undo steps back: the screens kept for them would be overwritten by the empty lists
+  // of the moment before they are back (UNDO-04: after a reload every step counted as every screen's)
+  if (!restoringSteps) keepWhere();
+  if ("runs" in patch) keepCalculated();
   // undo survives a reload (R19); not for a company too large to keep here (thirty steps of it would be gigabytes)
   if ("dataset" in patch && !restoringSteps) keepSteps(() => state.dataset && rowsOf(state.dataset) > LOCAL_ROWS ? [null, [], []] : [state.dataset, past, future]);
   listeners.forEach((l) => l());
 }
+
+if (typeof window !== "undefined") window.addEventListener("hashchange", () => set({}));
 
 function setRun<K extends RunKey>(key: K, patch: Partial<Run<RunResults[K]>>) {
   set({ runs: { ...state.runs, [key]: { ...state.runs[key], ...patch } } });
@@ -260,7 +316,8 @@ function persistCompany() {
 
 function persistSession() {
   try {
-    if (state.session) localStorage.setItem(SESSION_KEY, JSON.stringify(state.session));
+    // only the marker is kept: never a token that signs in (roadmap D)
+    if (state.session?.token.startsWith(COOKIE_SESSION)) localStorage.setItem(SESSION_KEY, JSON.stringify(state.session));
     else localStorage.removeItem(SESSION_KEY);
   } catch {
     /* ignore */
@@ -568,8 +625,10 @@ function refused(): boolean {
 function commit(next: Dataset) {
   if (refused()) return;
   past.push(state.dataset!);
-  if (past.length > HISTORY) past.shift();
+  pastWhere.push(screen());
+  if (past.length > HISTORY) { past.shift(); pastWhere.shift(); }
   future.length = 0;
+  futureWhere.length = 0;
   persist(next);
   if (state.version) persistVersion(state.version, true);
   advance(next);
@@ -587,7 +646,7 @@ export const store = {
 
   captureContext(): WorkingContext {
     return { epoch: loadEpoch, revision: state.revision, version: state.version,
-      company: state.company?.id ?? null, session: state.session?.token ?? null };
+      company: state.company?.id ?? null, session: state.session?.user.id ?? null };
   },
 
   captureWorking(): WorkingSnapshot {
@@ -597,7 +656,7 @@ export const store = {
 
   currentContext(before: WorkingContext, unchanged = false) {
     return before.epoch === loadEpoch && before.version === state.version && before.company === (state.company?.id ?? null)
-      && before.session === (state.session?.token ?? null) && (!unchanged || before.revision === state.revision);
+      && before.session === (state.session?.user.id ?? null) && (!unchanged || before.revision === state.revision);
   },
 
   /** A completed action must still belong to this working copy; opening a version also requires no new edits. */
@@ -638,8 +697,9 @@ export const store = {
   },
 
   // ---- sign-in and the company on the server (Phase I) --------------------------------------------------------
-  signedIn(session: Session) {
-    set({ session });
+  signedIn(session: { user: User; token?: string }) {
+    // the session itself is in the HttpOnly cookie the sign-in set; the store keeps a marker (roadmap D)
+    set({ session: { token: cookieSession(), user: session.user } });
     persistSession();
     if (state.company?.live && unsaved(state)) scheduleSave(100);
   },
@@ -818,8 +878,9 @@ export const store = {
   },
 
   undo() {
-    if (!state.dataset || !past.length || refused()) return;
+    if (!state.dataset || !past.length || !sameScreen(pastWhere[pastWhere.length - 1]) || refused()) return;
     const prev = past.pop()!;
+    futureWhere.push(pastWhere.pop() ?? "");
     future.push(state.dataset);
     persist(prev);
     advance(prev);
@@ -829,8 +890,9 @@ export const store = {
   },
 
   redo() {
-    if (!state.dataset || !future.length || refused()) return;
+    if (!state.dataset || !future.length || !sameScreen(futureWhere[futureWhere.length - 1]) || refused()) return;
     const next = future.pop()!;
+    pastWhere.push(futureWhere.pop() ?? "");
     past.push(state.dataset);
     persist(next);
     advance(next);
@@ -853,9 +915,11 @@ export const store = {
     try {
       const data = await RUNNERS[key](ds);
       if (epoch !== loadEpoch || runRequests[key] !== request) return;
+      pendingCalc.delete(key);
       setRun(key, { data, revision: rev, on: ds, running: false, at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
     } catch (e) {
       if (epoch !== loadEpoch || runRequests[key] !== request) return;
+      pendingCalc.delete(key);
       if (e instanceof SchemaRejected) {
         set({ schemaErrors: e.errors });
         setRun(key, { running: false, error: "The dataset has invalid values." });
@@ -894,8 +958,12 @@ export const store = {
     done();
   },
 
-  /** Store a result computed outside `run` (e.g. a schedule with a hand-edited sequence). */
+  /** Store a result computed outside `run` (e.g. a schedule with a hand-edited sequence). It supersedes a `run` of
+   *  the same key still in flight: that answer was asked for before this one and is dropped when it arrives, so a
+   *  hand move made while "Recalculate" is still running is not overwritten by the older, profile-made schedule. */
   put<K extends RunKey>(key: K, data: RunResults[K], rev: number) {
+    runRequests[key] = (runRequests[key] ?? 0) + 1;
+    pendingCalc.delete(key);
     setRun(key, { data, revision: rev, on: rev === state.revision ? state.dataset : null, running: false, error: null,
       at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
   },
@@ -903,7 +971,19 @@ export const store = {
   restore() {
     try {
       const sr = localStorage.getItem(SESSION_KEY);
-      if (sr) set({ session: JSON.parse(sr) as Session });
+      if (sr) {
+        const kept = JSON.parse(sr) as Session;
+        set({ session: kept });
+        if (kept.token && !kept.token.startsWith(COOKIE_SESSION)) {
+          // kept before roadmap D: swap it for the HttpOnly cookie, once; the token in storage then stops working
+          void api.adopt(kept.token).then((s) => {
+            if (state.session?.token === kept.token) { set({ session: { token: cookieSession(), user: s.user } }); persistSession(); }
+          }, (e) => {
+            if (state.session?.token === kept.token && e instanceof ApiError && e.status === 401) { set({ session: null }); persistSession(); }
+          });
+          try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+        }
+      }
     } catch {
       /* ignore */
     }
@@ -934,6 +1014,12 @@ export const store = {
           if (!st || state.dataset !== ds || past.length || future.length) return;
           past.push(...(st.past as Dataset[]));
           future.push(...(st.future as Dataset[]));
+          try {
+            const w = JSON.parse(localStorage.getItem(WHERE_KEY) ?? "{}") as { past?: string[]; future?: string[] };
+            // the steps kept across a reload are the latest few: their screens are the latest as many
+            if (w.past && w.past.length >= past.length) pastWhere.splice(0, pastWhere.length, ...w.past.slice(w.past.length - past.length));
+            if (w.future && w.future.length >= future.length) futureWhere.splice(0, futureWhere.length, ...w.future.slice(w.future.length - future.length));
+          } catch { /* unreadable: the steps count as any screen's */ }
           set({});
         });
         const cr = localStorage.getItem(COMPANY_KEY);
@@ -950,6 +1036,13 @@ export const store = {
           void store.refreshCompany();
         }
         scheduleCheck();
+        // what had been calculated before the reload is calculated again (REFRESH-01/02)
+        let again: RunKey[] = [];
+        try { again = (JSON.parse(localStorage.getItem(CALCULATED_KEY) ?? "[]") as RunKey[]).filter((k) => AFTER_RELOAD.includes(k)); }
+        catch { again = []; }
+        pendingCalc = new Set(again);
+        pendingEpoch = loadEpoch;
+        for (const k of again) void store.run(k);
       }
     } catch {
       /* ignore unreadable storage */

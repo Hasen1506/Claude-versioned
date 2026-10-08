@@ -4,7 +4,7 @@ import type { Dataset, ExampleInfo } from "./api/types";
 import { Badge, Empty, ThemeSwitch } from "./components/ui";
 import { setPlanYear } from "./lib/format";
 import { href, go, useRoute } from "./lib/router";
-import { NAV, navItemFor, type NavItem } from "./lib/nav";
+import { NAV, PAGES, navItemFor, type NavItem } from "./lib/nav";
 import { Demand } from "./pages/Demand";
 import { Buying } from "./pages/Buying";
 import { Selling } from "./pages/Selling";
@@ -13,6 +13,7 @@ import { Finance } from "./pages/Finance";
 import { Home, markVisited } from "./pages/Home";
 import { Tower } from "./pages/Tower";
 import { Versions } from "./pages/Versions";
+import { WhatIf } from "./pages/WhatIf";
 import { Inventory } from "./pages/Inventory";
 import { Promising } from "./pages/Promising";
 import { Proof } from "./pages/Proof";
@@ -104,6 +105,7 @@ export function App() {
           : page === "finance" ? <Finance route={route} />
           : page === "tower" ? <Tower route={route} />
           : page === "versions" ? <Versions />
+          : page === "whatif" ? <WhatIf />
           : page === "history" ? <History />
           : page === "connections" ? <Connections route={route} />
           : <div className="content"><Home ds={ds} /></div>}
@@ -154,6 +156,9 @@ function TopBar({ navOpen, onNav }: { navOpen: boolean; onNav: () => void }) {
   const ds = useStore((s) => s.dataset);
   const canUndo = useStore((s) => s.canUndo);
   const canRedo = useStore((s) => s.canRedo);
+  const undoElsewhere = useStore((s) => s.undoElsewhere);
+  const redoElsewhere = useStore((s) => s.redoElsewhere);
+  const where = (id: string) => PAGES.find((p) => p.id === id)?.label ?? (id === "data" ? "Master data" : id);
   const engineError = useStore((s) => s.engineError);
   const schemaBad = useStore((s) => s.schemaErrors.length > 0);
   const file = useRef<HTMLInputElement>(null);
@@ -185,8 +190,10 @@ function TopBar({ navOpen, onNav }: { navOpen: boolean; onNav: () => void }) {
       <span className="spacer" />
       {ds && <>
         <PlanButton />
-        <button className="btn ghost icon-btn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!canUndo} onClick={() => store.undo()}>↶</button>
-        <button className="btn ghost icon-btn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled={!canRedo} onClick={() => store.redo()}>↷</button>
+        <button className="btn ghost icon-btn" aria-label="Undo" disabled={!canUndo} onClick={() => store.undo()}
+          title={undoElsewhere ? `The last change was made on ${where(undoElsewhere)}: open it to undo it` : "Undo the last change on this screen (Ctrl+Z)"}>↶</button>
+        <button className="btn ghost icon-btn" aria-label="Redo" disabled={!canRedo} onClick={() => store.redo()}
+          title={redoElsewhere ? `The change to redo was made on ${where(redoElsewhere)}: open it to redo it` : "Redo on this screen (Ctrl+Shift+Z)"}>↷</button>
       </>}
       {!ds && <button className="btn" onClick={() => file.current?.click()}>Import a file</button>}
       <Menu label="More">
@@ -194,6 +201,7 @@ function TopBar({ navOpen, onNav }: { navOpen: boolean; onNav: () => void }) {
           <button role="menuitem" data-close onClick={() => file.current?.click()}>Import a dataset file…</button>
           <button role="menuitem" data-close onClick={exportJson}>Export this dataset</button>
           <a role="menuitem" data-close href={href("versions")}>Versions and what-ifs</a>
+          <a role="menuitem" data-close href={href("whatif")}>What if… side by side</a>
           {company && <a role="menuitem" data-close href={href("history")}>History: who changed what</a>}
           {company?.live && <a role="menuitem" data-close href={href("connections")}>Connections: ERP, imports, e-mail</a>}
           <a role="menuitem" data-close href={href("proof")}>Proof: check the numbers</a>
@@ -256,6 +264,7 @@ function Rail({ page }: { page: string }) {
       ))}
       <div className="rail-foot">
         <a className={page === "versions" ? "active" : ""} href={href("versions")}>Versions and what-ifs</a>
+        <a className={page === "whatif" ? "active" : ""} href={href("whatif")}>What if… side by side</a>
         <a className={page === "account" || page === "history" ? "active" : ""} href={href("account")}>Sign in, companies, people</a>
         {live && <a className={page === "connections" ? "active" : ""} href={href("connections")}>Connections</a>}
         <a className={page === "proof" ? "active" : ""} href={href("proof")}>Proof</a>
@@ -355,7 +364,9 @@ function Welcome() {
                 } catch (e) { if (request === opening.current && store.currentContext(context)) setErr(String(e)); }
               }}>
                 <b>{x.title}</b>
+                {x.case && <span><Badge sev="info">Example case</Badge> <span className="small muted">{x.label}</span></span>}
                 <span className="faint small">{x.locations} locations · {x.products} products</span>
+                {x.case && x.brief && <span className="small muted" style={{ whiteSpace: "normal", textAlign: "left" }}>{x.brief}</span>}
               </button>
             ))}
           </div>

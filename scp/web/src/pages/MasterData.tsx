@@ -215,7 +215,9 @@ function Editor({ ds, ckey, index, obj, errors, issues }: {
     if (nk !== k) go("data", ckey, nk);
   };
   const remove = () => {
-    if (used.length && !window.confirm(`${String(obj.id)} is used by ${used.length} object(s):\n${used.join("\n")}\n\nDelete anyway?`)) return;
+    // QA: a delete is always confirmed, not only when something points at the record
+    if (!window.confirm(used.length ? `${String(obj.id)} is used by ${used.length} object(s):\n${used.join("\n")}\n\nDelete anyway?`
+      : `Delete ${def.singular} ${k}? Undo brings it back.`)) return;
     store.update((d) => { items(d, ckey).splice(index, 1); });
     go("data", ckey);
   };
@@ -236,7 +238,7 @@ function Editor({ ds, ckey, index, obj, errors, issues }: {
       {typeof obj.name === "string" && obj.name && obj.name !== k && <span className="faint small">{k}</span>}</div>}
       actions={<>
         {ckey === "resources" && <a className="btn sm" href={href("machines", String(obj.id))}>Shifts and capacity</a>}
-        {ckey === "location_products" && <a className="btn sm" href={href("material", String(obj.product), String(obj.location))}>Open as MRP 1–4</a>}
+        {ckey === "location_products" && <a className="btn sm" href={href("material", String(obj.product), String(obj.location))}>Open its planning settings</a>}
         {ckey === "production_sources" && <a className="btn sm" href={href("material", String(obj.product), String(obj.location), "mrp4")}>See the structure</a>}
         <Edits><button className="btn sm" onClick={duplicate}>Duplicate</button>
         <button className="btn sm danger" onClick={remove}>Delete</button></Edits>

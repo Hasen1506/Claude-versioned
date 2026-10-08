@@ -10,10 +10,40 @@ Server settings (environment):
   invited, and the very first account) or ``closed`` (only the very first account).
 * ``SCP_REQUIRE_SIGNIN=1``: every API call except health and signing in needs a session, and plan versions and the
   worklist need an open company (nothing is kept outside a company).
+* ``SCP_PUBLIC_URL``: where people open the application. Links that leave the server (a reset or invitation mailed,
+  the single sign-on redirect) are made only from it, never from the request's Host header (CV-H10).
+* ``SCP_AUTH_RATE``: sign-ins, sign-ups and resets a minute per client address (default 30; 0: no limit, CV-H11).
+* ``SCP_ANON_RATE``: the work a minute per client address without a session, in cost units (default 120; 0: no
+  limit). A cheap call costs 1, a heavy one more (a plan 20, a schedule 30, a comparison 40, a what-if 80: ``ANON_COSTS``), from
+  one token bucket per address; a refusal says when to come back (``Retry-After``). Roadmap D.
+  ``SCP_ANON_MAX_MB``: the largest request body without a session (default 64), and ``SCP_ANON_CONCURRENCY``: how
+  many of them run at once (default half the CPUs; the rest wait up to ``SCP_ANON_WAIT_S``, 60 s), against
+  CPU-heavy anonymous use (CV-M04). A public server should still set ``SCP_REQUIRE_SIGNIN=1``.
+
+**Browser sessions (roadmap D).** The web client asks for its session in a cookie (``X-SCP-Session: cookie`` on the
+sign-in, sign-up, reset and adopt calls; the single sign-on callback always does): ``scp_session`` is HttpOnly,
+``SameSite=Lax`` (``None`` for the cross-site Pages client) and ``Secure`` whenever the server is reached over HTTPS
+(``SCP_COOKIE_SECURE=1``/``0`` forces it). A request that signs in with that cookie and changes something must carry
+the double-submit token: header ``X-CSRF-Token`` equal to the ``scp_csrf`` cookie (also handed out in the sign-in
+answer and by ``GET /api/auth/csrf``). ``Authorization: Bearer`` still works for integration keys and scripts and
+needs no CSRF token (a browser never adds it by itself). A token a browser kept in its storage before this change is
+swapped for a cookie once (``POST /api/auth/adopt``), and stops working.
+
+Without a company, the "browser's own" plan versions and worklist belong to the browser that made them: the client
+sends a random key it keeps (``X-Browser-Key``), and they are kept under a hash of it (CV-H06); a signed-in person
+without an open company works in their own space.
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import hmac
+import math
 import os
+import secrets
+import time
+from collections import OrderedDict
+from threading import BoundedSemaphore, Lock
 from typing import Annotated, Any, Literal
 
 from urllib.parse import quote
@@ -25,6 +55,7 @@ from ..companies import (
     CAN_EDIT, CompanyDoc, CompanyError, CompanyMeta, FieldChangeRow, HeldChange, LogRow, Member, MergeResult,
     SaveReport, Session, User, get_companies,
 )
+from ..companies.store import PendingInvite
 from ..companies import mail, sso
 from ..companies.store import KEY_PREFIX
 from ..model.common import Out
@@ -33,21 +64,145 @@ from .working import asker, send_raw, takes_gzip, takes_rows
 router = APIRouter(prefix="/api", tags=["companies"])
 
 OPEN_PATHS = ("/api/health", "/api/auth/config", "/api/auth/signin", "/api/auth/signup", "/api/auth/reset",
-              "/api/auth/reset/request", "/api/auth/sso/start", "/api/auth/sso/callback")
+              "/api/auth/reset/request", "/api/auth/sso/start", "/api/auth/sso/callback", "/api/auth/email/verify",
+              "/api/auth/csrf", "/api/auth/adopt")
+# calls that never act on the session cookie, so they need no CSRF token (sign-in itself, and swapping a token)
+NO_CSRF = ("/api/auth/signin", "/api/auth/signup", "/api/auth/reset", "/api/auth/reset/request", "/api/auth/adopt",
+           "/api/auth/email/verify")
+SESSION_COOKIE, CSRF_COOKIE, CSRF_HEADER = "scp_session", "scp_csrf", "x-csrf-token"
+# the cost in units of one anonymous call (roadmap D): what is not listed costs 1
+ANON_COSTS: dict[str, int] = {
+    "/api/plan": 20, "/api/plan/trace": 10, "/api/schedule": 30, "/api/schedule/compare": 40, "/api/sop": 20,
+    "/api/forecast": 10, "/api/inventory": 10, "/api/finance": 10, "/api/capacity/level": 10, "/api/compare": 40,
+    "/api/promise": 5, "/api/promise/bop": 5, "/api/promise/check": 5, "/api/tower": 10, "/api/actuals": 5,
+    "/api/purchasing": 5, "/api/sales": 5, "/api/network": 2, "/api/validate": 1,
+    "/api/whatif": 80,                       # roadmap E: up to four full plans in one call
+}
+RATED_PATHS = ("/api/auth/signin", "/api/auth/signup", "/api/auth/reset", "/api/auth/reset/request",
+               "/api/auth/email/verify", "/api/auth/email/request")
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        return default
+
+
+# planning calls without a session that may run at once (CV-M04)
+_ANON_SLOTS = BoundedSemaphore(max(1, _int_env("SCP_ANON_CONCURRENCY", max(1, (os.cpu_count() or 2) // 2))))
+
+
+def client_ip(request: Request) -> str:
+    return request.client.host if request.client else "?"
 
 
 def signup_policy() -> str:
     p = os.environ.get("SCP_SIGNUP", "open").strip().lower()
-    return p if p in ("open", "invite", "closed") else "open"
+    if p not in ("open", "invite", "closed"):
+        raise CompanyError("SCP_SIGNUP must be open, invite, or closed", 503)
+    return p
 
 
 def require_signin() -> bool:
-    return os.environ.get("SCP_REQUIRE_SIGNIN", "").strip().lower() in ("1", "true", "yes", "on")
+    value = os.environ.get("SCP_REQUIRE_SIGNIN", "").strip().lower()
+    if value not in ("", "0", "false", "no", "off", "1", "true", "yes", "on"):
+        raise CompanyError("SCP_REQUIRE_SIGNIN must be a boolean (1/0, true/false, yes/no, on/off)", 503)
+    return value in ("1", "true", "yes", "on")
+
+
+def bearer_of(request: Request) -> str | None:
+    h = request.headers.get("authorization", "")
+    return h[7:].strip() or None if h.lower().startswith("bearer ") else None
 
 
 def token_of(request: Request) -> str | None:
-    h = request.headers.get("authorization", "")
-    return h[7:].strip() or None if h.lower().startswith("bearer ") else None
+    """The session or key this request signs in with: ``Authorization: Bearer``, else the browser's session cookie."""
+    return bearer_of(request) or request.cookies.get(SESSION_COOKIE) or None
+
+
+def via_cookie(request: Request) -> bool:
+    return not bearer_of(request) and bool(request.cookies.get(SESSION_COOKIE))
+
+
+def wants_cookie(request: Request) -> bool:
+    return request.headers.get("x-scp-session", "").strip().lower() == "cookie"
+
+
+def _cross_site(request: Request) -> bool:
+    """A call from the client served elsewhere (the GitHub Pages build talking to this server)."""
+    origin = request.headers.get("origin", "")
+    return bool(origin) and origin.rstrip("/") != str(request.base_url).rstrip("/") and origin in CORS_ORIGINS
+
+
+CORS_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173", "https://hasen1506.github.io")
+
+
+def cookie_secure(request: Request) -> bool:
+    forced = os.environ.get("SCP_COOKIE_SECURE", "").strip().lower()
+    if forced:
+        return forced not in ("0", "false", "no", "off")
+    return (request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").lower() == "https"
+            or mail.public_url().startswith("https://"))
+
+
+def set_session_cookies(response: Response, request: Request, token: str, csrf: str | None = None) -> str:
+    """Put a session in the browser's HttpOnly cookie, with its double-submit token; returns the token."""
+    from ..companies.store import SESSION_MAX_DAYS
+    csrf = csrf or request.cookies.get(CSRF_COOKIE) or secrets.token_urlsafe(24)
+    cross = _cross_site(request)
+    secure = cookie_secure(request) or cross            # SameSite=None needs Secure
+    same = "none" if cross else "lax"
+    age = SESSION_MAX_DAYS * 86400
+    response.set_cookie(SESSION_COOKIE, token, max_age=age, path="/", httponly=True, secure=secure, samesite=same)
+    response.set_cookie(CSRF_COOKIE, csrf, max_age=age, path="/", httponly=False, secure=secure, samesite=same)
+    return csrf
+
+
+def clear_session_cookies(response: Response, request: Request) -> None:
+    secure = cookie_secure(request) or _cross_site(request)
+    same = "none" if _cross_site(request) else "lax"
+    for name in (SESSION_COOKIE, CSRF_COOKIE):
+        response.delete_cookie(name, path="/", secure=secure, httponly=name == SESSION_COOKIE, samesite=same)
+
+
+def csrf_ok(request: Request) -> bool:
+    cookie, header = request.cookies.get(CSRF_COOKIE, ""), request.headers.get(CSRF_HEADER, "")
+    return bool(cookie) and bool(header) and hmac.compare_digest(cookie.encode(), header.encode())
+
+
+# ---- the cost-weighted limit on anonymous work (roadmap D) -----------------------------------------------------
+_BUCKETS: OrderedDict[str, tuple[float, float]] = OrderedDict()
+_BUCKETS_LOCK = Lock()
+BUCKET_KEYS = 10_000
+
+
+def anon_cost(path: str) -> int:
+    if path.startswith("/api/scenarios/") and path.endswith("/run"):
+        return 30
+    return ANON_COSTS.get(path.rstrip("/"), 1)
+
+
+def anon_take(key: str, cost: int, per_minute: int, now: float | None = None) -> float:
+    """Take ``cost`` units from the address's bucket (``per_minute`` units, refilled evenly). 0 when it fits, else
+    the seconds until it would. ``per_minute`` 0: no limit."""
+    if per_minute <= 0:
+        return 0.0
+    now = time.monotonic() if now is None else now
+    cost = min(cost, per_minute)            # one call never costs more than a full bucket
+    rate = per_minute / 60.0
+    with _BUCKETS_LOCK:
+        tokens, at = _BUCKETS.pop(key, (float(per_minute), now))
+        tokens = min(float(per_minute), tokens + (now - at) * rate)
+        if tokens >= cost:
+            _BUCKETS[key] = (tokens - cost, now)
+            wait = 0.0
+        else:
+            _BUCKETS[key] = (tokens, now)
+            wait = (cost - tokens) / rate
+        while len(_BUCKETS) > BUCKET_KEYS:
+            _BUCKETS.popitem(last=False)
+    return wait
 
 
 def client_of(request: Request) -> str:
@@ -65,11 +220,52 @@ async def gate(request: Request, call_next):
     asker.set((token_of(request), request.headers.get("x-company", "").strip()))
     takes_gzip.set("gzip" in request.headers.get("accept-encoding", ""))
     takes_rows.set(request.headers.get("x-pack", "") == "rows")
-    if require_signin() and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS":
+    try:
+        signin_required = require_signin()
+    except CompanyError as e:
+        return company_error(request, e)
+    if path in RATED_PATHS and request.method == "POST" and \
+            not get_companies().auth_rate(client_ip(request), _int_env("SCP_AUTH_RATE", 30)):
+        return JSONResponse(status_code=429, content={"detail": "too many sign-in attempts from your address; try again "
+                                                                "in a minute"})
+    if (request.method in ("POST", "PUT", "PATCH", "DELETE") and path.startswith("/api/") and via_cookie(request)
+            and path not in NO_CSRF and not csrf_ok(request)):
+        # roadmap D: a change made with the session cookie must prove it comes from this application's own page
+        return JSONResponse(status_code=403, content={"detail": "this request is missing its security token "
+                                                                "(X-CSRF-Token); reload the page and try again"})
+    if signin_required and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS":
         try:
             get_companies().whoami(token_of(request))
         except CompanyError as e:
             return company_error(request, e)
+    elif (path.startswith("/api/") and request.method == "POST" and path not in OPEN_PATHS
+          and path not in RATED_PATHS and not get_companies().signed_in(token_of(request))):
+        # a made-up Bearer token or cookie is no session: it is limited like no token at all (roadmap D)
+        # CV-M04: CPU-heavy planning calls without a session are limited per address and in size
+        cap = _int_env("SCP_ANON_MAX_MB", 64) * 1024 * 1024
+        try:
+            size = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            size = 0
+        if cap > 0 and size > cap:
+            return JSONResponse(status_code=413, content={"detail": "the request is too large without signing in"})
+        wait = anon_take("anon:" + client_ip(request), anon_cost(path), _int_env("SCP_ANON_RATE", 120))
+        if wait > 0:
+            return JSONResponse(status_code=429, headers={"Retry-After": str(max(1, math.ceil(wait)))},
+                                content={"detail": "too much work from your address without signing in; sign in or "
+                                                   f"try again in {max(1, math.ceil(wait))} seconds"})
+        # and only a few run at once, so anonymous work never takes every CPU from signed-in people
+        waited = 0.0
+        while not _ANON_SLOTS.acquire(blocking=False):
+            if waited >= _int_env("SCP_ANON_WAIT_S", 60):
+                return JSONResponse(status_code=429, content={"detail": "the server is busy with work from people who "
+                                                                        "are not signed in; sign in or try again"})
+            await asyncio.sleep(0.05)
+            waited += 0.05
+        try:
+            return await call_next(request)
+        finally:
+            _ANON_SLOTS.release()
     return await call_next(request)
 
 
@@ -99,12 +295,29 @@ def _scope(request: Request, roles: tuple[str, ...]) -> str:
         if require_signin():
             raise CompanyError("open a company first: on this server plan versions and the worklist belong to a "
                                "company", 403)
-        return ""
+        return browser_scope(request)
     user = user or c.whoami(token)
     role = c.role(user, cid)
     if roles and role not in roles:
         raise CompanyError(f"as a {role} of this company you cannot change it; ask an owner", 403)
     return cid
+
+
+def browser_scope(request: Request) -> str:
+    """The space of a browser without an open company (CV-H06): a signed-in person's own, else the browser's own
+    under a hash of the random key it keeps; never one space shared by every anonymous caller."""
+    token = token_of(request)
+    if token:
+        return "user:" + get_companies().whoami(token).id
+    key = request.headers.get("x-browser-key", "").strip()
+    if len(key) < 16 or len(key) > 200:
+        return ""                 # nowhere to keep anything: stored things refuse (stored_scope), the rest is stateless
+    return "anon:" + hashlib.sha256(key.encode()).hexdigest()[:32]
+
+
+def is_company(scope: str) -> bool:
+    """A scope of a server company (as against a browser's or a person's own space)."""
+    return bool(scope) and not scope.startswith(("anon:", "user:"))
 
 
 def scope(request: Request) -> str:
@@ -118,9 +331,27 @@ def edit_scope(request: Request) -> str:
     return _scope(request, CAN_EDIT)
 
 
+def _kept(sc: str) -> str:
+    if not sc:
+        raise CompanyError("sign in, open a company, or send this browser's own key (X-Browser-Key): plan versions "
+                           "and the worklist are never kept in one space shared by everyone", 400)
+    return sc
+
+
+def stored_scope(request: Request) -> str:
+    """As :func:`scope`, for something kept on the server: never the space shared by every anonymous caller."""
+    return _kept(scope(request))
+
+
+def stored_edit_scope(request: Request) -> str:
+    return _kept(edit_scope(request))
+
+
 Signed = Annotated[User, Depends(signed_in)]
 Scope = Annotated[str, Depends(scope)]
 EditScope = Annotated[str, Depends(edit_scope)]
+StoredScope = Annotated[str, Depends(stored_scope)]
+StoredEditScope = Annotated[str, Depends(stored_edit_scope)]
 
 
 # ---- accounts ------------------------------------------------------------------------------------------------
@@ -128,8 +359,10 @@ class AuthConfig(Out):
     signup: Literal["open", "invite", "closed"]
     require_signin: bool
     first_account: bool           # nobody has an account yet: the first one can always be made
-    mail: bool = False            # the server sends mail: a forgotten password is reset by a link sent to the address
+    mail: bool = False            # the server sends mail (and knows its public address, SCP_PUBLIC_URL): a forgotten
+    #                               password is reset by a link sent to the address
     sso: str | None = None        # single sign-on is set up: "Sign in with <sso>"
+    password_min: int = 12        # the shortest password a new account, a reset or a change accepts (roadmap D)
 
 
 class ResetRequest(Out):
@@ -142,8 +375,9 @@ class ResetPassword(Out):
 
 
 class ResetLink(Out):
-    link: str                     # to hand to the colleague: opening it lets them choose a new password
+    link: str                     # to hand to the colleague: opening it lets them choose a new password ("" when mailed)
     expires_at: str
+    mailed: bool = False          # the link went to the colleague's own address instead (the server sends mail)
 
 
 class SignUp(Out):
@@ -160,6 +394,25 @@ class SignIn(Out):
 class Me(Out):
     user: User
     companies: list[CompanyMeta]
+    invites: list[PendingInvite] = []   # invitations waiting for this account (its address verified)
+
+
+class InviteAccept(Out):
+    token: str = ""               # the invitation's link; or
+    company: str = ""             # the company invited to (the account's address must be verified)
+
+
+class EmailVerify(Out):
+    token: str
+
+
+class Sent(Out):
+    ok: bool = True
+    mail: bool                    # a link was mailed
+
+
+class SsoLink(Out):
+    url: str                      # open this to link the sign-on account to the signed-in account
 
 
 class PasswordChange(Out):
@@ -167,38 +420,104 @@ class PasswordChange(Out):
     new: str
 
 
+class Csrf(Out):
+    csrf: str                     # send it back as X-CSRF-Token on every change made with the session cookie
+
+
 @router.get("/auth/config", response_model=AuthConfig)
 def auth_config() -> AuthConfig:
+    from ..companies import passwords
     return AuthConfig(signup=signup_policy(), require_signin=require_signin(),  # type: ignore[arg-type]
-                      first_account=get_companies().users() == 0, mail=mail.mail_on(), sso=sso.button())
+                      first_account=get_companies().users() == 0, mail=links_by_mail(),
+                      sso=sso.button() if mail.public_url() else None, password_min=passwords.min_length())
+
+
+def browser_session(s: Session, request: Request, response: Response) -> Session:
+    """A browser that asked for it (``X-SCP-Session: cookie``) gets the session in its HttpOnly cookie, and the
+    double-submit token in the answer; other callers get the answer as before."""
+    if wants_cookie(request):
+        s.csrf = set_session_cookies(response, request, s.token)
+    return s
 
 
 @router.post("/auth/signup", response_model=Session)
-def auth_signup(body: SignUp) -> Session:
-    return get_companies().signup(body.email, body.name, body.password, signup_policy())
+def auth_signup(body: SignUp, request: Request, response: Response) -> Session:
+    return browser_session(get_companies().signup(body.email, body.name, body.password, signup_policy()),
+                           request, response)
 
 
 @router.post("/auth/signin", response_model=Session)
-def auth_signin(body: SignIn) -> Session:
-    return get_companies().signin(body.email, body.password)
+def auth_signin(body: SignIn, request: Request, response: Response) -> Session:
+    return browser_session(get_companies().signin(body.email, body.password), request, response)
+
+
+@router.post("/auth/adopt", response_model=Session)
+def auth_adopt(request: Request, response: Response) -> Session:
+    """Once, for a browser that kept its session token in its own storage before roadmap D: the token (as
+    ``Authorization: Bearer``) is swapped for a new session in the HttpOnly cookie, and stops working."""
+    token = bearer_of(request)
+    if not token:
+        raise CompanyError("send the token kept in this browser to move it to a cookie", 400)
+    s = get_companies().adopt(token)
+    s.csrf = set_session_cookies(response, request, s.token)
+    s.token = ""                  # the new session lives in the cookie only
+    return s
+
+
+@router.get("/auth/csrf", response_model=Csrf)
+def auth_csrf(request: Request, response: Response) -> Csrf:
+    """The double-submit token of this browser (a client served from another site cannot read the cookie)."""
+    token = request.cookies.get(CSRF_COOKIE)
+    if not token:
+        token = secrets.token_urlsafe(24)
+        secure = cookie_secure(request) or _cross_site(request)
+        response.set_cookie(CSRF_COOKIE, token, path="/", httponly=False, secure=secure,
+                            samesite="none" if _cross_site(request) else "lax")
+    return Csrf(csrf=token)
 
 
 @router.post("/auth/signout")
-def auth_signout(request: Request) -> dict:
+def auth_signout(request: Request, response: Response) -> dict:
     t = token_of(request)
     if t:
         get_companies().signout(t)
+    clear_session_cookies(response, request)
     return {"ok": True}
 
 
 @router.get("/auth/me", response_model=Me)
 def auth_me(user: Signed) -> Me:
-    return Me(user=user, companies=get_companies().list(user))
+    c = get_companies()
+    return Me(user=user, companies=c.list(user), invites=c.pending_invites(user))
+
+
+@router.post("/auth/invites/accept", response_model=CompanyMeta)
+def auth_accept_invite(body: InviteAccept, user: Signed) -> CompanyMeta:
+    """Join a company you were invited to: with the invitation's link, or by its id once your address is verified
+    (CV-C01: an invitation is never taken by registering its address)."""
+    return get_companies().accept_invite(user, token=body.token.strip(), cid=body.company.strip())
+
+
+@router.post("/auth/email/request", response_model=Sent)
+def auth_email_request(user: Signed) -> Sent:
+    """Mail a link that confirms the account's address (needs the server's mail and SCP_PUBLIC_URL)."""
+    if not links_by_mail():
+        return Sent(mail=False)
+    token = get_companies().email_token(user)
+    mail.send(user.email, "Confirm your e-mail address",
+              f"Open this link within a day to confirm that {user.email} is yours:\n"
+              f"{mail.public_url()}/#/account/verify/{token}\n\nIf you did not ask, ignore this mail.")
+    return Sent(mail=True)
+
+
+@router.post("/auth/email/verify", response_model=User)
+def auth_email_verify(body: EmailVerify) -> User:
+    return get_companies().verify_email(body.token.strip())
 
 
 @router.post("/auth/password")
-def auth_password(body: PasswordChange, user: Signed) -> dict:
-    get_companies().change_password(user, body.old, body.new)
+def auth_password(body: PasswordChange, user: Signed, request: Request) -> dict:
+    get_companies().change_password(user, body.old, body.new, keep_token=token_of(request))
     return {"ok": True}
 
 
@@ -308,9 +627,25 @@ def company_members(cid: str, user: Signed) -> list[Member]:
 
 
 @router.post("/companies/{cid}/members", response_model=list[Member])
-def set_company_member(cid: str, body: MemberChange, user: Signed) -> list[Member]:
-    """Add a member or change their role; an e-mail without an account is invited."""
-    return get_companies().set_member(user, cid, body.email, body.role, body.places, body.families)
+def set_company_member(cid: str, body: MemberChange, user: Signed, request: Request) -> list[Member]:
+    """Change a member's role, or invite an address (with or without an account): the answer carries the
+    invitation's link once (``invite_link``), and it is mailed to the address when the server sends mail. Nobody
+    joins until they accept it (CV-C01)."""
+    out = get_companies().set_member(user, cid, body.email, body.role, body.places, body.families)
+    for m in out:
+        if m.invite_link:
+            link = f"{base_url(request)}/#/account/invite/{m.invite_link}"
+            m.invite_link = link
+            if links_by_mail():
+                mailed = f"{mail.public_url()}/#/account/invite/{link.rsplit('/', 1)[1]}"
+                try:
+                    mail.send(m.email, "You are invited to a company",
+                              f"{user.name or user.email} invited you to work in their company as a {m.role}.\n\n"
+                              f"Open this link within {14} days to accept (sign up or sign in with {m.email}):\n"
+                              f"{mailed}\n\nIf you do not know them, ignore this mail.")
+                except Exception:  # noqa: BLE001 - the owner still has the link to hand over
+                    pass
+    return out
 
 
 @router.delete("/companies/{cid}/members/{email}", response_model=list[Member])
@@ -347,8 +682,23 @@ def company_changes(cid: str, user: Signed, q: str = "", list: str = "", limit: 
 
 # ---- a forgotten password (Phase L) ---------------------------------------------------------------------------
 def base_url(request: Request) -> str:
-    """Where people open the application: SCP_PUBLIC_URL, else the address this request came to."""
+    """Where people open the application: SCP_PUBLIC_URL, else the address this request came to. Only for a link
+    shown to the signed-in person who asked; anything mailed or sent to an identity provider uses SCP_PUBLIC_URL
+    alone (CV-H10)."""
     return mail.public_url() or str(request.base_url).rstrip("/")
+
+
+def links_by_mail() -> bool:
+    """The server mails links: it has a mail server and knows its own public address (never the Host header)."""
+    return mail.mail_on() and bool(mail.public_url())
+
+
+def public_base() -> str:
+    url = mail.public_url()
+    if not url:
+        raise CompanyError("the server's administrator must set SCP_PUBLIC_URL (where people open the application) "
+                           "for this", 503)
+    return url
 
 
 def reset_link(request: Request, token: str) -> str:
@@ -359,27 +709,34 @@ def reset_link(request: Request, token: str) -> str:
 def auth_reset_request(body: ResetRequest, request: Request) -> dict:
     """Mail a link to set a new password, if the address has an account and the server sends mail. The answer is
     the same either way, so nobody learns which addresses have accounts."""
-    if mail.mail_on():
-        get_companies().request_reset(body.email, lambda t: reset_link(request, t), lambda *a: mail.send(*a))
-    return {"ok": True, "mail": mail.mail_on()}
+    if links_by_mail():
+        get_companies().request_reset(body.email, lambda t: f"{public_base()}/#/account/reset/{t}",
+                                      lambda *a: mail.send(*a))
+    return {"ok": True, "mail": links_by_mail()}
 
 
 @router.post("/auth/reset", response_model=Session)
-def auth_reset(body: ResetPassword) -> Session:
+def auth_reset(body: ResetPassword, request: Request, response: Response) -> Session:
     """Set a new password with a reset link's token; signs out every other session of the account."""
-    return get_companies().reset_password(body.token, body.password)
+    return browser_session(get_companies().reset_password(body.token, body.password), request, response)
 
 
 @router.post("/companies/{cid}/members/{email}/reset", response_model=ResetLink)
 def member_reset_link(cid: str, email: str, user: Signed, request: Request) -> ResetLink:
     """An owner makes a link for a planner or viewer to set a new password (valid 24 hours), to hand over."""
     token, expires = get_companies().member_reset(user, cid, email)
+    if links_by_mail():   # CV-H01: to the account's own address, never shown to the owner
+        mail.send(email.strip(), "Set a new password",
+                  f"{user.name or user.email}, an owner of your company, asked for a link for you to set a new password "
+                  f"for {email.strip()}.\n\nOpen it within a day:\n{public_base()}/#/account/reset/{token}\n\n"
+                  "If you did not expect this, tell your company's owner; your password stays as it is.")
+        return ResetLink(link="", expires_at=expires, mailed=True)
     return ResetLink(link=reset_link(request, token), expires_at=expires)
 
 
 # ---- single sign-on (Phase L) ---------------------------------------------------------------------------------
-def _callback(request: Request) -> str:
-    return f"{base_url(request)}/api/auth/sso/callback"
+def _callback(_request: Request | None = None) -> str:
+    return f"{public_base()}/api/auth/sso/callback"
 
 
 @router.get("/auth/sso/start")
@@ -388,21 +745,36 @@ def auth_sso_start(request: Request, next: str = "") -> RedirectResponse:  # noq
     if not sso.configured():
         raise CompanyError("single sign-on is not set up on this server", 404)
     url, state, verifier, nonce = sso.begin(_callback(request))
-    get_companies().keep_state(state, verifier, nonce, next[:200])
+    back = "" if next.startswith("link:") else next[:200]      # a link is begun only signed in (auth_sso_link)
+    get_companies().keep_state(state, verifier, nonce, back)
     return RedirectResponse(url, status_code=302)
+
+
+@router.post("/auth/sso/link", response_model=SsoLink)
+def auth_sso_link(user: Signed) -> SsoLink:
+    """Begin binding the company's sign-on to the signed-in account (the only way an existing account gets it)."""
+    if not sso.configured():
+        raise CompanyError("single sign-on is not set up on this server", 404)
+    url, state, verifier, nonce = sso.begin(_callback())
+    get_companies().keep_state(state, verifier, nonce, f"link:{user.id}")
+    return SsoLink(url=url)
 
 
 @router.get("/auth/sso/callback")
 def auth_sso_callback(request: Request, code: str = "", state: str = "", error: str = "",
                       error_description: str = "") -> RedirectResponse:
     """The identity provider sends the browser back here: sign in, and open the application signed in."""
-    home = base_url(request)
+    home = public_base()
     try:
         if error:
             raise CompanyError(error_description or error, 401)
-        verifier, _nonce, _next = get_companies().take_state(state)
-        subject, email, name = sso.finish(code, verifier, _callback(request))
-        s = get_companies().sso_session(subject, email, name, signup_policy())
+        verifier, nonce, next_ = get_companies().take_state(state)
+        subject, email, name = sso.finish(code, verifier, _callback(request), nonce=nonce)
+        s = get_companies().sso_session(subject, email, name, signup_policy(),
+                                        link_to=next_.removeprefix("link:") if next_.startswith("link:") else "")
     except CompanyError as e:
         return RedirectResponse(f"{home}/#/account/sso-failed/{quote(str(e), safe='')}", status_code=302)
-    return RedirectResponse(f"{home}/#/account/sso/{s.token}", status_code=302)
+    # roadmap D: the session goes into the HttpOnly cookie, never into the address (history, logs, referrers)
+    out = RedirectResponse(f"{home}/#/account/sso", status_code=302)
+    set_session_cookies(out, request, s.token)
+    return out

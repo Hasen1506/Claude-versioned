@@ -26,12 +26,25 @@ def backup(db: sqlite3.Connection, folder: str | os.PathLike, keep: int = 14, no
     out = Path(folder)
     out.mkdir(parents=True, exist_ok=True)
     stamp = (now or dt.datetime.now(dt.UTC)).strftime("%Y%m%d-%H%M%S")
-    path = out / f"{PREFIX}{stamp}.sqlite"
-    dst = sqlite3.connect(path)
+    fd, name = tempfile.mkstemp(prefix=".scp-backup-", suffix=".tmp", dir=out)
+    os.close(fd)
+    pending = Path(name)
     try:
-        db.backup(dst)
+        dst = sqlite3.connect(pending)
+        try:
+            db.backup(dst)
+        finally:
+            dst.close()
+        suffix = 0
+        while True:
+            path = out / f"{PREFIX}{stamp}{f'~{suffix:06d}' if suffix else ''}.sqlite"
+            try:
+                os.link(pending, path)  # publish a complete copy without overwriting another same-second backup
+                break
+            except FileExistsError:
+                suffix += 1
     finally:
-        dst.close()
+        pending.unlink(missing_ok=True)
     for old in sorted(out.glob(f"{PREFIX}*.sqlite"))[:-keep] if keep > 0 else []:
         old.unlink(missing_ok=True)
     return path
@@ -102,6 +115,10 @@ def restore(backup_file: str | os.PathLike, db_path: str | os.PathLike) -> Path:
 
 def start_nightly(db: sqlite3.Connection, lock: threading.RLock) -> threading.Thread | None:
     """With SCP_BACKUP_DIR set, a thread that backs the database up once a day at SCP_BACKUP_HOUR (UTC)."""
+    if getattr(db, "backend", "sqlite") == "postgresql":
+        if os.environ.get("SCP_BACKUP_DIR"):
+            raise ValueError("SCP_BACKUP_DIR is SQLite-only; use PostgreSQL backups and Neon restore history")
+        return None
     folder = os.environ.get("SCP_BACKUP_DIR", "").strip()
     if not folder:
         return None

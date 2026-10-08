@@ -18,9 +18,15 @@ const kb = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(
 
 export function useAuthConfig(): AuthConfig | null {
   const [cfg, setCfg] = useState<AuthConfig | null>(null);
-  useEffect(() => { api.authConfig().then(setCfg).catch(() => setCfg(null)); }, []);
+  // read again on signing in or out: "first account" stops being true once one is made (AUTH-01)
+  const token = useStore((s) => s.session?.token);
+  useEffect(() => { api.authConfig().then(setCfg).catch(() => setCfg(null)); }, [token]);
   return cfg;
 }
+
+/** What a new password must be (roadmap D): the server says the length; the rest is checked when it is set. */
+export const policyHint = (config: AuthConfig | null) =>
+  `at least ${config?.password_min ?? 12} characters, not a common or breached one, not your address`;
 
 /** Sign in, or make an account. */
 export function SignIn({ config, onDone }: { config: AuthConfig | null; onDone?: () => void }) {
@@ -32,7 +38,12 @@ export function SignIn({ config, onDone }: { config: AuthConfig | null; onDone?:
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (config?.first_account) setMode("up"); }, [config?.first_account]);
+  const wasFirst = useRef(config?.first_account);
+  useEffect(() => {
+    if (config?.first_account) setMode("up");
+    else if (wasFirst.current && config) setMode((m) => m === "up" ? "in" : m);   // the first account exists now
+    wasFirst.current = config?.first_account;
+  }, [config?.first_account]);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
@@ -71,8 +82,8 @@ export function SignIn({ config, onDone }: { config: AuthConfig | null; onDone?:
         <input className="input" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
       {mode === "up" && <label className="stack-field"><span>Your name</span>
         <input className="input" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="as colleagues see it in the history" /></label>}
-      {mode !== "forgot" && <label className="stack-field"><span>Password{mode === "up" && <span className="faint"> (at least 8 characters)</span>}</span>
-        <input className="input" type="password" autoComplete={mode === "in" ? "current-password" : "new-password"} required minLength={mode === "up" ? 8 : undefined}
+      {mode !== "forgot" && <label className="stack-field"><span>Password{mode === "up" && <span className="faint"> ({policyHint(config)})</span>}</span>
+        <input className="input" type="password" autoComplete={mode === "in" ? "current-password" : "new-password"} required minLength={mode === "up" ? (config?.password_min ?? 12) : undefined}
           value={password} onChange={(e) => setPassword(e.target.value)} /></label>}
       {err && <div className="banner error" role="alert" style={{ margin: 0 }}>{err}</div>}
       {sent && mode === "forgot" && <div className="banner ok" role="status" style={{ margin: 0 }}>{sent}</div>}
@@ -183,9 +194,13 @@ function ResetLinkButton({ id, m }: { id: string; m: Member }) {
   const [err, setErr] = useState<string | null>(null);
   if (!m.user_id || m.role === "owner") return null;
   return <div className="small" style={{ marginTop: 4 }}>
-    {!link ? <button className="linkish" onClick={async () => {
-      try { setLink((await api.memberResetLink(id, m.email)).link); } catch (x) { setErr(x instanceof Error ? x.message : String(x)); }
+    {link === null ? <button className="linkish" onClick={async () => {
+      try {
+        const r = await api.memberResetLink(id, m.email);
+        setLink(r.mailed ? "" : r.link);
+      } catch (x) { setErr(x instanceof Error ? x.message : String(x)); }
     }}>Link to set a new password</button>
+      : link === "" ? <span>A link to set a new password went to {m.email} (it works once, for a day).</span>
       : <span>Give {m.name || m.email} this link (works once, for a day): <input className="input" readOnly value={link} aria-label="Link to set a new password"
           onFocus={(e) => e.target.select()} style={{ width: "100%", maxWidth: 420 }} /></span>}
     {err && <span className="banner error">{err}</span>}
@@ -196,12 +211,21 @@ function ResetLinkButton({ id, m }: { id: string; m: Member }) {
 function Approval({ id, owner }: { id: string; owner: boolean }) {
   const [on, setOn] = useState<boolean | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { api.companies().then((l) => setOn(!!l.find((c) => c.id === id)?.approval)).catch(() => setOn(null)); }, [id]);
+  // a first read that answers after the owner already changed the setting must not put the old value back
+  const changed = useRef(0);
+  useEffect(() => {
+    const asked = changed.current;
+    let live = true;
+    api.companies().then((l) => { if (live && changed.current === asked) setOn(!!l.find((c) => c.id === id)?.approval); })
+      .catch(() => { if (live && changed.current === asked) setOn(null); });
+    return () => { live = false; };
+  }, [id]);
   if (on === null) return null;
   return <div className="stack" style={{ gap: 4 }}>
     <label className="row small" style={{ gap: 8 }}>
       <input type="checkbox" checked={on} disabled={!owner} onChange={async (e) => {
         const want = e.target.checked;
+        changed.current += 1;
         setErr(null);
         setOn(want);
         try { setOn((await api.setApproval(id, want)).approval ?? false); } catch (x) { setOn(!want); setErr(x instanceof Error ? x.message : String(x)); }
@@ -222,12 +246,32 @@ function Members({ id, role }: { id: string; role: string }) {
   const [newRole, setNewRole] = useState("planner");
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  useEffect(() => { api.members(id).then(setList).catch((e) => setErr(String(e))); }, [id]);
+  // Every list the server answers with is numbered when it is shown. The first read of the members is shown only if no
+  // change (an invitation, a new role, a removal, new limits) answered since it was asked: the answer of a change is the
+  // newer list, and a read that arrives after it (the server answered it first, the browser delivered it late) must not
+  // put back a list without the person just invited (scp run 37731060982: the invited row vanished).
+  const shown = useRef(0);
+  const show = (l: Member[]) => { shown.current += 1; setList(l); };
+  useEffect(() => {
+    const asked = shown.current;
+    let live = true;
+    api.members(id).then((l) => { if (live && shown.current === asked) show(l); })
+      .catch((e) => { if (live) setErr(String(e)); });
+    return () => { live = false; };
+  }, [id]);
   const owner = role === "owner";
+  const [invite, setInvite] = useState<{ email: string; link: string } | null>(null);
   const act = async (f: () => Promise<Member[]>, done: string) => {
     setErr(null);
     setMsg(null);
-    try { setList(await f()); setMsg(done); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    setInvite(null);
+    try {
+      const l = await f();
+      show(l);
+      setMsg(done);
+      const made = l.find((m) => m.invite_link);
+      if (made?.invite_link) setInvite({ email: made.email, link: made.invite_link });
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   };
   return (
     <div className="stack" style={{ gap: 10 }}>
@@ -239,14 +283,14 @@ function Members({ id, role }: { id: string; role: string }) {
               {list.map((m) => (
                 <tr key={m.email}>
                   <td><b>{m.name || m.email}</b>{m.name && <div className="faint small">{m.email}</div>}
-                    {!m.user_id && <div><Badge sev="info">invited</Badge> <span className="faint small">joins on signing up with this e-mail</span></div>}</td>
+                    {!m.user_id && <div><Badge sev="info">invited</Badge> <span className="faint small">joins when they open the invitation and sign in with this e-mail</span></div>}</td>
                   <td>{owner && m.email !== me?.email ? (
                     <select className="select" aria-label={`Role of ${m.email}`} value={m.role}
                       onChange={(e) => act(() => api.setMember(id, m.email, e.target.value), `${m.name || m.email} is now ${e.target.value === "owner" ? "an" : "a"} ${e.target.value}.`)}>
                       <option value="owner">owner</option><option value="planner">planner</option><option value="viewer">viewer</option>
                     </select>) : <>{m.role}{m.email === me?.email && <span className="faint"> (you)</span>}</>}
                     <div className="faint small">{ROLE_TEXT[m.role]}</div>
-                    <Limits key={`${m.email}-${m.places.join()}-${m.families.join()}`} m={m} id={id} owner={owner} onSaved={(l, done) => { setList(l); setMsg(done); }} />
+                    <Limits key={`${m.email}-${m.places.join()}-${m.families.join()}`} m={m} id={id} owner={owner} onSaved={(l, done) => { show(l); setMsg(done); }} />
                     {owner && m.email !== me?.email && <ResetLinkButton id={id} m={m} />}</td>
                   <td className="small">{when(m.since)}</td>
                   {owner && <td>{m.email !== me?.email && <button className="btn sm ghost" aria-label={`Remove ${m.email}`}
@@ -260,7 +304,7 @@ function Members({ id, role }: { id: string; role: string }) {
       {owner && <form className="row wrap inline-form" style={{ gap: 8 }} onSubmit={(e) => {
         e.preventDefault();
         const who = email.trim();
-        void act(() => api.setMember(id, who, newRole), `${who} added as ${newRole}; if they have no account yet, they join on signing up with that e-mail.`).then(() => setEmail(""));
+        void act(() => api.setMember(id, who, newRole), `${who} is invited as ${newRole}: they join when they accept the invitation, signed in with that e-mail.`).then(() => setEmail(""));
       }}>
         <input className="input" type="email" required placeholder="colleague@company.com" aria-label="Colleague's e-mail" value={email}
           onChange={(e) => setEmail(e.target.value)} />
@@ -271,12 +315,75 @@ function Members({ id, role }: { id: string; role: string }) {
       </form>}
       {!owner && <p className="small muted" style={{ margin: 0 }}>Only an owner adds people or changes their role.</p>}
       {msg && <div className="banner ok" style={{ margin: 0 }}>{msg}</div>}
+      {invite && <div className="small">Send {invite.email} this invitation (it works for 14 days, only for that address; a server that
+        sends mail has mailed it too): <input className="input" readOnly value={invite.link} aria-label="Invitation link"
+          onFocus={(e) => e.target.select()} style={{ width: "100%", maxWidth: 480 }} /></div>}
       {err && <div className="banner error" style={{ margin: 0 }}>{err}</div>}
     </div>
   );
 }
 
+/** An invitation's link: accept it, signed in with the invited address (CV-C01: nobody joins a company unasked). */
+function AcceptInvite({ token }: { token: string }) {
+  const session = useStore((s) => s.session);
+  const [state, setState] = useState<"ready" | "busy" | "done">("ready");
+  const [err, setErr] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  if (!session) return <div className="banner info" role="status">You are invited to a company. Sign in, or make an account, with
+    the address the invitation was sent to; this page then lets you accept it.</div>;
+  if (state === "done") return <div className="banner ok" role="status">You joined {name}. Open it from your companies below.</div>;
+  return <div className="banner info row wrap" style={{ gap: 10 }} role="status">
+    <span>You are invited to a company, as {session.user.email}.</span>
+    <button className="btn accent" disabled={state === "busy"} onClick={async () => {
+      setState("busy"); setErr(null);
+      try { const m = await api.acceptInvite({ token }); setName(m.name); setState("done"); }
+      catch (x) { setErr(x instanceof Error ? x.message : String(x)); setState("ready"); }
+    }}>Accept the invitation</button>
+    {err && <span className="banner error">{err}</span>}
+  </div>;
+}
+
+/** A link from the mail that confirms the account's address. */
+function VerifyEmail({ token }: { token: string }) {
+  const [msg, setMsg] = useState<[string, boolean] | null>(null);
+  useEffect(() => {
+    api.verifyEmail(token).then((u) => setMsg([`${u.email} is confirmed as yours.`, true]))
+      .catch((x) => setMsg([x instanceof Error ? x.message : String(x), false]));
+  }, [token]);
+  return msg ? <div className={`banner ${msg[1] ? "ok" : "error"}`} role="status">{msg[0]}</div> : <div className="faint">Confirming…</div>;
+}
+
+/** The account's address (confirmed or not), the invitations waiting for it, and linking the company's sign-on. */
+function Identity({ sso }: { sso: string | null | undefined }) {
+  const [me, setMe] = useState<Awaited<ReturnType<typeof api.me>> | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const load = () => { api.me().then(setMe).catch(() => setMe(null)); };
+  useEffect(load, []);
+  if (!me) return null;
+  return <div className="stack small" style={{ gap: 6 }}>
+    <div className="row wrap" style={{ gap: 8 }}>
+      {me.user.verified ? <Badge sev="ok">address confirmed</Badge> : <>
+        <Badge sev="warning">address not confirmed</Badge>
+        <button className="btn sm" onClick={async () => {
+          try { const r = await api.requestEmailCheck(); setMsg(r.mail ? `A link is on its way to ${me.user.email}.` : "This server sends no mail: an invitation's link joins you to a company instead."); }
+          catch (x) { setMsg(x instanceof Error ? x.message : String(x)); }
+        }}>Confirm my address</button></>}
+      {sso && <button className="btn sm ghost" onClick={async () => {
+        try { window.location.href = (await api.ssoLink()).url; } catch (x) { setMsg(x instanceof Error ? x.message : String(x)); }
+      }}>Link sign-in with {sso}</button>}
+    </div>
+    {me.invites.map((i) => <div key={i.company} className="row wrap" style={{ gap: 8 }}>
+      <span>{i.invited_by} invited you to <b>{i.name}</b> as {i.role}.</span>
+      <button className="btn sm accent" onClick={async () => {
+        try { await api.acceptInvite({ company: i.company }); setMsg(`You joined ${i.name}.`); load(); }
+        catch (x) { setMsg(x instanceof Error ? x.message : String(x)); }
+      }}>Accept</button></div>)}
+    {msg && <span className="faint">{msg}</span>}
+  </div>;
+}
+
 function Password() {
+  const min = useAuthConfig()?.password_min ?? 12;
   const [old, setOld] = useState("");
   const [next, setNext] = useState("");
   const [msg, setMsg] = useState<[string, boolean] | null>(null);
@@ -287,7 +394,7 @@ function Password() {
       catch (x) { setMsg([x instanceof Error ? x.message : String(x), false]); }
     }}>
       <input className="input" type="password" autoComplete="current-password" placeholder="Current password" aria-label="Current password" required value={old} onChange={(e) => setOld(e.target.value)} />
-      <input className="input" type="password" autoComplete="new-password" placeholder="New password (8+ characters)" aria-label="New password" required minLength={8} value={next} onChange={(e) => setNext(e.target.value)} />
+      <input className="input" type="password" autoComplete="new-password" placeholder={`New password (${min}+ characters)`} aria-label="New password" required minLength={min} value={next} onChange={(e) => setNext(e.target.value)} />
       <button className="btn">Change password</button>
       {msg && <span className={`small ${msg[1] ? "" : "banner error"}`}>{msg[0]}</span>}
     </form>
@@ -296,6 +403,7 @@ function Password() {
 
 /** A link from a reset mail (or an owner): choose a new password, and be signed in. */
 function ResetPassword({ token }: { token: string }) {
+  const config = useAuthConfig();
   const [pw, setPw] = useState("");
   const [err, setErr] = useState<string | null>(null);
   return <Panel title="Choose a new password">
@@ -308,8 +416,8 @@ function ResetPassword({ token }: { token: string }) {
         go("account");
       } catch (x) { setErr(x instanceof Error ? x.message : String(x)); }
     }}>
-      <label className="stack-field"><span>New password <span className="faint">(at least 8 characters)</span></span>
-        <input className="input" type="password" autoComplete="new-password" required minLength={8} value={pw} onChange={(e) => setPw(e.target.value)} /></label>
+      <label className="stack-field"><span>New password <span className="faint">({policyHint(config)})</span></span>
+        <input className="input" type="password" autoComplete="new-password" required minLength={config?.password_min ?? 12} value={pw} onChange={(e) => setPw(e.target.value)} /></label>
       {err && <div className="banner error" role="alert" style={{ margin: 0 }}>{err}</div>}
       <div><button className="btn accent">Set it and sign in</button></div>
       <p className="faint small" style={{ margin: 0 }}>Setting it signs this account out everywhere else.</p>
@@ -317,13 +425,13 @@ function ResetPassword({ token }: { token: string }) {
   </Panel>;
 }
 
-/** Back from the company's identity provider: sign in with the token it brought. */
-function SsoDone({ token }: { token: string }) {
+/** Back from the company's identity provider, which set the session cookie (roadmap D: no token in the address). */
+function SsoDone() {
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
-    api.meWith(token).then((me) => { store.signedIn({ token, user: me.user }); go("account"); })
+    api.me().then((me) => { store.signedIn({ user: me.user }); go("account"); })
       .catch((x) => setErr(x instanceof Error ? x.message : String(x)));
-  }, [token]);
+  }, []);
   return err ? <div className="banner error">{err}</div> : <div className="faint">Signing in…</div>;
 }
 
@@ -370,8 +478,10 @@ export function Account({ route = [] }: { route?: string[] }) {
           so the company can be put back to the state just before any of them.</>} />
       <div className="content">
         {route[1] === "reset" && route[2] ? <ResetPassword token={route[2]} />
-          : route[1] === "sso" && route[2] ? <SsoDone token={route[2]} />
+          : route[1] === "sso" ? <SsoDone />
           : route[1] === "sso-failed" ? <div className="banner error" role="alert">Signing in with the company account did not work: {decodeURIComponent(route[2] ?? "")}</div>
+          : route[1] === "invite" && route[2] ? <AcceptInvite token={route[2]} />
+          : route[1] === "verify" && route[2] ? <VerifyEmail token={route[2]} />
           : null}
         {route[1] === "reset" || route[1] === "sso" ? null : !session ? (
           <div className="welcome-grid">
@@ -394,6 +504,7 @@ export function Account({ route = [] }: { route?: string[] }) {
           <>
             <Panel title={`Signed in as ${session.user.name}`} actions={<button className="btn sm" onClick={signOut}>Sign out</button>}>
               <p className="small muted" style={{ marginTop: 0 }}>{session.user.email}{company && <> · signing out closes {company.name} on this browser; it stays on the server</>}</p>
+              <Identity sso={config?.sso} />
               <Password />
             </Panel>
             {ds && !company && (

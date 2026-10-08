@@ -13,6 +13,7 @@ from ..promise import run_promise
 from ..validate import RULES, validate
 from ..versions.store import Store, canonical, get_store, sha
 from .kpis import Kpis
+from .money import inbox_order, price_items
 from .result import DataQualityRow, Kpi, KpiRow, TowerResult, WorkItem
 from .worklist import Tracker, collect, get_tracker
 
@@ -57,8 +58,9 @@ def _previous_base(ds: Dataset, store: Store | None = None, scope: str | None = 
 
 
 def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult | None = None,
-              store: Store | None = None, scope: str | None = None) -> TowerResult:
-    """``scope``: the server company the worklist and the previous plan belong to (none: the browser's own)."""
+              store: Store | None = None, scope: str | None = None, record: bool = True) -> TowerResult:
+    """``scope``: the server company the worklist and the previous plan belong to (none: the browser's own).
+    ``record``: write this run into the worklist (open, refresh, clear); False shows it without changing it."""
     tracker = tracker or (Tracker(store) if store is not None else get_tracker())
     issues = validate(ds)
     out = TowerResult(ok=True, company=ds.settings.company_name, as_of=ds.settings.planning_start, issues=issues)
@@ -74,11 +76,16 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
     promise = run_promise(ds) if plan.ok else None
     window = ds.settings.planning_start - dt.timedelta(days=ds.tower.kpi_window_days)
     acc = accuracy_report([r for r in ds.accuracy if r.end > window and r.start < ds.settings.planning_start])
-    live, cleared = tracker.sync(ds, collect(ds, plan if plan.ok else None, promise, acc), scope)
+    raws = collect(ds, plan if plan.ok else None, promise, acc)
+    live, cleared = tracker.sync(ds, raws, scope) if record else tracker.peek(ds, raws, scope)
     order = {"open": 0, "acknowledged": 1, "resolved": 2}
     out.worklist = sorted(live, key=lambda w: (order.get(w.status, 3), not w.breached, SEV[w.severity], -w.age_days,
                                                w.category, w.key))
     out.cleared = cleared
+    price_items(ds, plan if plan.ok else None, out.worklist)          # roadmap F: money at risk and one action each
+    out.inbox = inbox_order(out.worklist)
+    by_id = {w.id: w for w in out.worklist}
+    out.money_at_risk = round(sum(by_id[i].money_at_risk for i in out.inbox), 2)
 
     k = Kpis(ds)
     k.forecast()
@@ -88,6 +95,7 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
     k.adherence()
     if plan.ok:
         k.inventory(plan)
+        k.working_capital(plan)
         prev, label = _previous_base(ds, store, scope)
         if prev is not None:
             pplan = run_mrp(prev)
@@ -104,6 +112,7 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
     k.ageing(live)
     order_ids = ["forecast_accuracy", "forecast_bias", "confirmation_rate", "otif_confirmed", "otif_requested",
                  "perfect_order", "supplier_reliability", "schedule_adherence", "days_of_supply", "excess_obsolete",
+                 "inventory_turns", "dio", "dso", "dpo", "cash_to_cash",
                  "plan_stability", "exception_ageing", "cost_to_serve"]
     out.kpis = sorted(k.out, key=lambda x: order_ids.index(x.id) if x.id in order_ids else 99)
     return out

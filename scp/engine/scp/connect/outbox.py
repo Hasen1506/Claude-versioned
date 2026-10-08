@@ -3,11 +3,19 @@
 * **Documents.** A purchase order or delivery schedule to the supplier, an order confirmation, invoice or credit note
   to the customer: the browser builds the document (the same page it prints) and its text; the server sends it from
   the server's address with the document attached, replies going to whoever sent it. It goes only to addresses the
-  company knows (a supplier's or customer's e-mail in their purchasing or sales data, or a member), so the server
-  never becomes anyone's way to mail strangers, and no more than :data:`DAILY` a day per company.
+  company knows (a supplier's or customer's e-mail in their purchasing or sales data, or a member), and no more than
+  :data:`DAILY` a day per company. Because a company's data is its members' to write, that alone would not keep the
+  server from mailing strangers (CV-H07): the sender's own address must be verified, no account sends more than
+  ``SCP_MAIL_DAILY_PER_ACCOUNT`` (default 100) a day across every company, and on a server where anyone may make an
+  account (``SCP_SIGNUP=open``) documents are mailed only when its administrator allows it
+  (``SCP_MAIL_OPEN_SIGNUP=1``). Each mail says which company and person sent it.
 * **Worklist reminders.** On the days and at the time an owner sets, each person who owns open exceptions gets one
   e-mail with them: how many, which are past their time, the oldest first, and a link to the worklist. An owner is
-  found by e-mail address or by a member's name.
+  found by a member's e-mail address or name: reminders go to members only, never to an address merely written on
+  an item (CV-H07).
+
+Mail is delivered, and a document's PDF made, outside the store's lock: a slow mail server holds up nobody else
+(CV-M03).
 
 Nothing is sent when the server has no mail set up (``SCP_SMTP_HOST``): the browser's own *E-mail* button opens the
 planner's mail program instead.
@@ -16,6 +24,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import re
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
@@ -123,8 +132,32 @@ def _row(c: Companies, r: Any) -> MailRow:
                    subject=r["subject"], status=r["status"], error=r["error"], attachment=r["attachment"])
 
 
-def _send(c: Companies, cid: str, uid: str, kind: str, ref: str, to: list[str], cc: list[str], subject: str, text: str,
-          reply_to: str = "", html: str = "", filename: str = "") -> MailRow:
+def _record(c: Companies, cid: str, uid: str, kind: str, ref: str, to: list[str], cc: list[str], subject: str,
+            text: str) -> int:
+    """Put a mail in the outbox as being sent (the lock is held)."""
+    cur = c.db.execute("INSERT INTO mail_outbox (company_id, at, user_id, kind, ref, recipients, cc, subject, body, "
+                       "attachment, status, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'sending', '')",
+                       (cid, _iso(_now()), uid, kind, ref, json.dumps(to), json.dumps(cc), subject, text))
+    return int(cur.lastrowid or 0)
+
+
+def _deliver(c: Companies, seq: int, to: list[str], cc: list[str], subject: str, text: str, reply_to: str = "",
+             html: str = "", filename: str = "") -> MailRow:
+    """Make and deliver a mail kept in the outbox as ``seq`` (the lock is not held), then say how it went."""
+    msg, names = _message(to, cc, subject, text, reply_to, html, filename)
+    status, error = "sent", ""
+    try:
+        mail.deliver(msg)
+    except Exception as e:  # noqa: BLE001 - the outbox says why
+        status, error = "failed", (str(e) or type(e).__name__)[:300]
+    with c.lock:
+        c.db.execute("UPDATE mail_outbox SET status = ?, error = ?, attachment = ? WHERE seq = ?",
+                     (status, error, ", ".join(names), seq))
+        return _row(c, c.db.execute("SELECT * FROM mail_outbox WHERE seq = ?", (seq,)).fetchone())
+
+
+def _message(to: list[str], cc: list[str], subject: str, text: str, reply_to: str = "", html: str = "",
+             filename: str = "") -> tuple[EmailMessage, list[str]]:
     msg = EmailMessage()
     msg["From"] = mail.from_address()
     msg["To"] = ", ".join(to)
@@ -148,16 +181,18 @@ def _send(c: Companies, cid: str, uid: str, kind: str, ref: str, to: list[str], 
             names.append(pdf)
         msg.add_attachment(html.encode("utf-8"), maintype="text", subtype="html", filename=filename)
         names.append(filename)
-    status, error = "sent", ""
+    return msg, names
+
+
+def _per_account() -> int:
     try:
-        mail.deliver(msg)
-    except Exception as e:  # noqa: BLE001 - the outbox says why
-        status, error = "failed", (str(e) or type(e).__name__)[:300]
-    cur = c.db.execute("INSERT INTO mail_outbox (company_id, at, user_id, kind, ref, recipients, cc, subject, body, "
-                       "attachment, status, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                       (cid, _iso(_now()), uid, kind, ref, json.dumps(to), json.dumps(cc), subject, text,
-                        ", ".join(names), status, error))
-    return _row(c, c.db.execute("SELECT * FROM mail_outbox WHERE seq = ?", (cur.lastrowid,)).fetchone())
+        return int(os.environ.get("SCP_MAIL_DAILY_PER_ACCOUNT", "").strip() or 100)
+    except ValueError:
+        return 100
+
+
+def _open_signup() -> bool:
+    return os.environ.get("SCP_SIGNUP", "open").strip().lower() == "open"
 
 
 def send_document(c: Companies, user: User, cid: str, body: MailInput) -> MailRow:
@@ -165,11 +200,18 @@ def send_document(c: Companies, user: User, cid: str, body: MailInput) -> MailRo
     if not mail.mail_on():
         raise CompanyError("this server sends no mail (it has no mail server set up): use E-mail to open your own "
                            "mail program", 409)
+    if _open_signup() and os.environ.get("SCP_MAIL_OPEN_SIGNUP", "").strip().lower() not in ("1", "true", "yes", "on"):
+        raise CompanyError("this server takes new accounts from anyone, so it does not mail documents for them (its "
+                           "administrator can allow it with SCP_MAIL_OPEN_SIGNUP=1): use E-mail to open your own mail "
+                           "program", 403)
     with c.lock:
         _ensure(c)
         c._need(user, cid, "owner", "planner")
         if c.is_key(user):
             raise CompanyError("a key sends data, not e-mail: send documents from the application", 403)
+        if not c._user(user.id).verified:
+            raise CompanyError("confirm your own e-mail address first (Account → Confirm my address): the server mails "
+                               "documents only for people whose address it knows is theirs", 403)
         ok = known(c, cid)
         bad = [a for a in [*body.to, *body.cc] if not EMAIL.match(a.strip()) or a.strip().lower() not in ok]
         if bad:
@@ -180,10 +222,18 @@ def send_document(c: Companies, user: User, cid: str, body: MailInput) -> MailRo
         n = c.db.execute("SELECT COUNT(*) FROM mail_outbox WHERE company_id = ? AND at >= ?", (cid, day)).fetchone()[0]
         if n >= DAILY:
             raise CompanyError(f"this company has sent {n} e-mails today, the most a day; send the rest tomorrow", 429)
+        mine = c.db.execute("SELECT COUNT(*) FROM mail_outbox WHERE user_id = ? AND at >= ?", (user.id, day)).fetchone()[0]
+        if mine >= _per_account():
+            raise CompanyError(f"you have sent {mine} e-mails today from this server, the most a day for one person; "
+                               "send the rest tomorrow", 429)
         name = re.sub(r"[^A-Za-z0-9._-]+", "-", body.ref) + ".html"
-        return _send(c, cid, user.id, body.kind, body.ref, [a.strip() for a in body.to], [a.strip() for a in body.cc],
-                     body.subject, body.text, reply_to=formataddr((user.name, user.email)), html=body.html,
-                     filename=name)
+        company = (c.db.execute("SELECT name FROM companies WHERE id = ?", (cid,)).fetchone() or {"name": cid})["name"]
+        text = (f"{body.text}\n\n--\nSent by {user.name or user.email} <{user.email}> of {company} through its supply "
+                "chain planning application. Reply to reach them.")
+        to, cc = [a.strip() for a in body.to], [a.strip() for a in body.cc]
+        seq = _record(c, cid, user.id, body.kind, body.ref, to, cc, body.subject, text)
+    return _deliver(c, seq, to, cc, body.subject, text, reply_to=formataddr((user.name, user.email)), html=body.html,
+                    filename=name)
 
 
 def outbox(c: Companies, user: User, cid: str, limit: int = 100, ref: str = "", before: int | None = None) -> list[MailRow]:
@@ -282,18 +332,17 @@ def _items(c: Companies, cid: str) -> tuple[list[dict], str, dict[str, int]]:
 def remind(c: Companies, cid: str, now: dt.datetime | None = None) -> list[MailRow]:
     """Send each owner of open exceptions one e-mail with them; returns what was sent (or failed)."""
     now = now or _now()
+    sending: list[tuple[int, str, str, str]] = []
     with c.lock:
         _ensure(c)
         items, company, _ = _items(c, cid)
         who = _owners(c, cid)
         by: dict[str, list[dict]] = {}
         for it in items:
-            o = it["owner"].strip()
-            to = o if EMAIL.match(o) else who.get(o.lower())
+            to = who.get(it["owner"].strip().lower())     # a member, by address or name; nobody else (CV-H07)
             if to:
                 by.setdefault(to, []).append(it)
         link = mail.public_url()
-        out = []
         for to, mine in sorted(by.items()):
             mine.sort(key=lambda x: (-x["over"], -x["age"], CATEGORIES.index(x["category"])
                                      if x["category"] in CATEGORIES else 99))
@@ -311,13 +360,13 @@ def remind(c: Companies, cid: str, now: dt.datetime | None = None) -> list[MailR
                 "You get this because your company's owner switched worklist reminders on.",
             ])
             subject = f"Worklist: {len(mine)} open" + (f", {late} past their time" if late else "") + f" · {company}"
-            out.append(_send(c, cid, "", "reminder", "", [to], [], subject, text))
+            sending.append((_record(c, cid, "", "reminder", "", [to], [], subject, text), to, subject, text))
         r = c.db.execute("SELECT * FROM mail_settings WHERE company_id = ?", (cid,)).fetchone()
         if r is not None:
             rs = ReminderSettings(on=bool(r["reminders"]), at=r["at"], weekdays=json.loads(r["weekdays"]))
             c.db.execute("UPDATE mail_settings SET last_run = ?, next_run = ? WHERE company_id = ?",
                          (_iso(now), _next(rs, now), cid))
-        return out
+    return [_deliver(c, seq, [to], [], subject, text) for seq, to, subject, text in sending]
 
 
 def remind_now(c: Companies, user: User, cid: str) -> list[MailRow]:

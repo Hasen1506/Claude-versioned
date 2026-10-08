@@ -124,6 +124,21 @@ def planning_stock(ds: Dataset, movs: list[GoodsMovement], on: date) -> dict[Nod
     return dict(out)
 
 
+def quality_stock(ds: Dataset, movs: list[GoodsMovement], on: date) -> dict[Node, float]:
+    """Stock in quality inspection on ``on``, per place: unexpired inspection lots (≈ MARD-INSME). Planning counts it
+    when the company says so; promising and goods issue never take it until it is released."""
+    bi = batch_index(ds)
+    out: dict[Node, float] = defaultdict(float)
+    for node, by in lots(movs).items():
+        for (b, t), q in by.items():
+            if t is not StockType.QUALITY or q <= EPS:
+                continue
+            exp = bi[(node[1], b)].expires_on if b and (node[1], b) in bi else None
+            if not Lot(b, t, q, exp).expired(on):
+                out[node] += q
+    return dict(out)
+
+
 def expiring(ds: Dataset, horizon_end: date) -> dict[Node, list[tuple[date, float, str]]]:
     """Usable batch stock at the planning start that expires before ``horizon_end``, per place: (last day, quantity,
     batch), soonest first. Planning counts what the requirements before that day do not use as gone the day after."""

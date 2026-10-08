@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 
@@ -37,7 +38,7 @@ from ..plan import PlanResult, run_mrp
 from ..plan.mrp import with_kept_plan
 from ..plan.trace import PlanTrace, index as trace_index, trace
 from ..plan.level import LevelPreview, level_preview
-from ..purchasing import PurchasingError, act as purchasing_act, create_purchase_orders, purchasing_view
+from ..purchasing import PurchasingError, act as purchasing_act, create_one_off_po, create_purchase_orders, purchasing_view
 from ..purchasing.result import ActionReport, CreateReport, PurchasingView
 from ..sales import SalesError, act as sales_act, sales_view
 from ..sales.result import SalesReport, SalesView
@@ -54,10 +55,16 @@ from ..sop import SopRelease, SopResult, release_sop, run_sop
 from ..validate import RULES, Issue, validate
 from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, lenient_checked, plain_errors
 from ..validate.setup import SetupItem, checklist
+from ..cases import CASES, CaseInfo
+from ..whatif import WhatIfError, WhatIfRequest, WhatIfResult, compare_scenarios
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
 from ..companies import CompanyError
 from .connect import router as connect_router
-from .companies import EditScope, Scope, company_error, gate, router as companies_router, who_asks
+from .companies import (
+    CORS_ORIGINS,
+    Scope, StoredEditScope, StoredScope, company_error, edit_scope, gate, is_company, require_signin,
+    router as companies_router, signup_policy, who_asks,
+)
 from .working import PlanData, answer, is_ref, read as read_ref, respond, send
 
 ROOT = Path(__file__).resolve().parents[3]          # scp/
@@ -75,15 +82,29 @@ async def lifespan(_app: FastAPI):
 
     from ..connect.scheduler import start as start_clock
 
+    signup_policy()
+    require_signin()
     store = get_store()
     start_nightly(store.db, store.lock)
     start_clock()       # scheduled imports and worklist reminders (Phase Q)
     yield
 
 
+def _docs_on() -> bool:
+    """The interactive API pages (/docs, /redoc, /openapi.json): on unless SCP_DOCS is off, and off by default on a
+    server that requires sign-in (CV-L03)."""
+    v = os.environ.get("SCP_DOCS", "").strip().lower()
+    if v:
+        return v not in ("0", "false", "no", "off")
+    return os.environ.get("SCP_REQUIRE_SIGNIN", "").strip().lower() not in ("1", "true", "yes", "on")
+
+
+_DOCS = _docs_on()
 app = FastAPI(title="SCP — Supply Chain Planning", version=__version__, lifespan=lifespan,
-              description="Typed network master data, readiness gate, demand planning, network MRP/DRP.")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "https://hasen1506.github.io"],
+              description="Typed network master data, readiness gate, demand planning, network MRP/DRP.",
+              docs_url="/docs" if _DOCS else None, redoc_url="/redoc" if _DOCS else None,
+              openapi_url="/openapi.json" if _DOCS else None)
+app.add_middleware(CORSMiddleware, allow_origins=list(CORS_ORIGINS), allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"], expose_headers=["X-Rows"])
 
 
@@ -120,6 +141,9 @@ class ExampleInfo(Out):
     title: str
     locations: int
     products: int
+    case: bool = False                   # an example case for teaching (roadmap H): fictional, with ready scenarios
+    label: str = ""                      # "Example case (fictional, not real company data)" on a case
+    brief: str = ""
 
 
 class RuleInfo(Out):
@@ -192,16 +216,26 @@ def examples() -> list[ExampleInfo]:
     out = []
     for p in sorted(EXAMPLES.glob("*.json")):
         d = json.loads(p.read_text())
+        case = CASES.get(p.stem)
         out.append(ExampleInfo(name=p.stem, title=d["settings"].get("company_name", p.stem),
-                               locations=len(d.get("locations", [])), products=len(d.get("products", []))))
+                               locations=len(d.get("locations", [])), products=len(d.get("products", [])),
+                               case=case is not None, label=case.label if case else "", brief=case.brief if case else ""))
     return out
+
+
+@app.get("/api/cases", response_model=list[CaseInfo])
+def cases() -> list[CaseInfo]:
+    """Example cases (roadmap H): fictional teaching datasets with their brief and ready-made what-if scenarios."""
+    return list(CASES.values())
 
 
 @app.get("/api/examples/{name}", response_model=Dataset)
 def example(name: str) -> Dataset:
-    p = EXAMPLES / f"{name}.json"
-    if not p.is_file() or p.parent != EXAMPLES:
-        raise HTTPException(404, f"no example '{name}'")
+    # looked up among the examples there are, never opened by a name the caller made up: a name too long for the
+    # file system (or naming another folder) is simply not an example, not a server error
+    p = next((x for x in EXAMPLES.glob("*.json") if x.stem == name), None)
+    if p is None:
+        raise HTTPException(404, f"no example '{name[:80]}'")
     return Dataset.model_validate_json(p.read_text())
 
 
@@ -636,12 +670,31 @@ def post_create_pos(req: CreatePoRequest) -> CreatePoResponse:
     return CreatePoResponse(**answer(req.dataset, new), report=rep)
 
 
+class OneOffPoRequest(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
+    dataset: PlanData
+    source_id: str = Field(min_length=1)
+    qty: float = Field(gt=0)
+    due_date: dt.date | None = None       # None = as soon as the supplier can deliver
+    order_date: dt.date | None = None
+
+
+@app.post("/api/purchasing/one-off", response_model=CreatePoResponse)
+def post_one_off_po(req: OneOffPoRequest) -> CreatePoResponse:
+    """A purchase order no requisition asked for: one line on a purchasing source."""
+    new, rep = create_one_off_po(req.dataset, req.source_id, req.qty, req.due_date, req.order_date)
+    if not rep.ok:
+        raise HTTPException(409, "; ".join(rep.skipped.values()) or "the order could not be made")
+    return CreatePoResponse(**answer(req.dataset, new), report=rep)
+
+
 class ConfirmPart(Out):
     date: dt.date
     qty: float
 
 
 class PoLineInput(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
     id: str = ""                                    # the order line (an invoice line: the line invoiced)
     order: str | None = None                        # enter_invoice: the order line invoiced (same as id)
     qty: float | None = None
@@ -656,6 +709,7 @@ class PoLineInput(Out):
 
 
 class PoActionRequest(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
     dataset: PlanData
     action: Literal["approve", "send", "send_all", "confirm", "receive", "change", "cancel", "create_agreement",
                     "enter_invoice", "release_invoice", "pay_invoice", "cancel_invoice", "return_goods"]
@@ -711,6 +765,7 @@ def post_sales(ds: PlanData, as_of: dt.date | None = None) -> Response:
 
 
 class SalesLineInput(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
     order: str | None = None                        # deliveries, picking, proof: the order line
     product: str | None = None                      # orders and quotations: the product
     qty: float | None = None
@@ -725,6 +780,7 @@ class SalesLineInput(Out):
 
 
 class SalesActionRequest(Out):
+    model_config = ConfigDict(allow_inf_nan=False)
     dataset: PlanData
     action: Literal["create_order", "add_lines", "release_credit", "send_confirmation", "cancel_order",
                     "create_quotation", "win_quotation", "lose_quotation", "create_deliveries", "pick", "pack",
@@ -880,34 +936,44 @@ class CompareRequest(Out):
 
 
 @app.get("/api/versions", response_model=list[VersionMeta])
-def list_versions(sc: Scope) -> list[VersionMeta]:
+def list_versions(sc: StoredScope) -> list[VersionMeta]:
     return get_store().list(sc)
 
 
 @app.post("/api/versions", response_model=VersionMeta)
-def save_base(req: SaveBaseRequest, sc: EditScope) -> VersionMeta:
+def save_base(req: SaveBaseRequest, sc: StoredEditScope) -> VersionMeta:
     return get_store().save_base(req.dataset, req.name, req.note, sc)
 
 
 @app.get("/api/versions/{vid}", response_model=VersionDoc)
-def get_version(vid: str, sc: Scope) -> VersionDoc:
+def get_version(vid: str, sc: StoredScope) -> VersionDoc:
     return get_store().get(vid, sc)
 
 
 @app.put("/api/versions/{vid}", response_model=VersionMeta)
-def update_version(vid: str, ds: Dataset, sc: EditScope) -> VersionMeta:
+def update_version(vid: str, ds: Dataset, sc: StoredEditScope) -> VersionMeta:
     return get_store().update(vid, ds, sc)
 
 
 @app.post("/api/versions/{vid}/branch", response_model=VersionMeta)
-def branch_version(vid: str, req: BranchRequest, sc: EditScope) -> VersionMeta:
+def branch_version(vid: str, req: BranchRequest, sc: StoredEditScope) -> VersionMeta:
     return get_store().branch(vid, req.name, req.note, sc)
 
 
 @app.post("/api/tower", response_model=TowerResult)
-def post_tower(ds: PlanData, sc: Scope) -> Response:
-    """KPIs, the exception worklist (recorded in the version store: first seen, owner, status) and data quality."""
-    return send(run_tower(ds, scope=sc or None))   # records the worklist: made anew each time
+def post_tower(ds: PlanData, sc: Scope, request: Request) -> Response:
+    """KPIs, the exception worklist (recorded in the version store: first seen, owner, status) and data quality.
+    Only a member who may change the company records the run in its worklist; a viewer sees it as it stands
+    (CV-H05)."""
+    record = True
+    if not sc:                    # nowhere to keep it (CV-H06): shown as it would open, recorded nowhere
+        sc, record = "anon:-", False
+    elif is_company(sc):
+        try:
+            edit_scope(request)
+        except CompanyError:
+            record = False
+    return send(run_tower(ds, scope=sc or None, record=record))
 
 
 class WorkItemUpdate(Out):
@@ -924,30 +990,40 @@ class WorkItemEntry(Out):
 
 
 @app.post("/api/tower/items/{iid}", response_model=WorkItem)
-def update_work_item(iid: str, body: WorkItemUpdate, sc: EditScope) -> WorkItem:
+def update_work_item(iid: str, body: WorkItemUpdate, sc: StoredEditScope) -> WorkItem:
     return get_tracker().update(iid, owner=body.owner, status=body.status, note=body.note, sla=body.sla_days,
                                 scope=sc or None)
 
 
 @app.get("/api/tower/items/{iid}/history", response_model=list[WorkItemEntry])
-def work_item_history(iid: str, sc: Scope) -> list[WorkItemEntry]:
+def work_item_history(iid: str, sc: StoredScope) -> list[WorkItemEntry]:
     return [WorkItemEntry(at=a, action=b, detail=c) for a, b, c in get_tracker().history(iid, sc or None)]
 
 
 @app.post("/api/versions/{vid}/discard", response_model=VersionMeta)
-def discard_version(vid: str, sc: EditScope) -> VersionMeta:
+def discard_version(vid: str, sc: StoredEditScope) -> VersionMeta:
     return get_store().discard(vid, sc)
 
 
 @app.post("/api/versions/{vid}/promote", response_model=VersionMeta)
-def promote_version(vid: str, req: PromoteRequest, sc: EditScope) -> VersionMeta:
+def promote_version(vid: str, req: PromoteRequest, sc: StoredEditScope) -> VersionMeta:
     return get_store().promote(vid, req.name, req.note, sc)
 
 
 @app.get("/api/versions/{a}/compare/{b}", response_model=Comparison)
-def compare_versions(a: str, b: str, sc: Scope) -> Comparison:
+def compare_versions(a: str, b: str, sc: StoredScope) -> Comparison:
     st = get_store()
     return compare(st.dataset(a, sc), st.dataset(b, sc), a, b)
+
+
+@app.post("/api/whatif", response_model=WhatIfResult)
+def post_whatif(req: WhatIfRequest) -> WhatIfResult:
+    """Roadmap E: plan 2–4 scenarios (the base with quick-change chips, or whole datasets) and compare them side by
+    side: cost, service, inventory, capacity, late units, their deltas against the first, and cost per service point."""
+    try:
+        return compare_scenarios(req)
+    except WhatIfError as e:
+        raise HTTPException(422, str(e)) from None
 
 
 @app.post("/api/compare", response_model=Comparison)
@@ -989,7 +1065,10 @@ if WEB_DIST.is_dir():
     def spa(path: str) -> FileResponse:
         if path == "api" or path.startswith("api/"):
             raise HTTPException(404, "unknown API route")
-        f = (WEB_DIST / path).resolve()
-        if path and f.is_file() and WEB_DIST in f.parents:
-            return FileResponse(f)
+        try:   # a name too long for the file system, or with a NUL in it, is no file of ours: the app's page
+            f = (WEB_DIST / path).resolve()
+            if path and f.is_file() and WEB_DIST in f.parents:
+                return FileResponse(f)
+        except (OSError, ValueError):
+            pass
         return FileResponse(WEB_DIST / "index.html")

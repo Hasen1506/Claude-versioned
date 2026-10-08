@@ -28,7 +28,7 @@ CATEGORY = {
     "LANE_CAPACITY": "capacity", "EXCESS_STOCK": "inventory", "SHELF_LIFE_RISK": "inventory",
     "STOCK_EXPIRES": "inventory", "LOT_EXPIRES": "inventory", "OVERTIME_PLANNED": "capacity",
     "SUPPLY_SPLIT": "capacity", "FOLLOW_UP": "inventory",
-    "START_IN_PAST": "orders", "RESCHEDULE_IN": "orders", "SCHEDULE_LATE": "orders", "FENCE_SHIFT": "orders", "NO_VALID_SOURCE": "orders",
+    "START_IN_PAST": "orders", "RESCHEDULE_IN": "orders", "RESCHEDULE_OUT": "orders", "RECEIPT_NOT_NEEDED": "orders", "SCHEDULE_LATE": "orders", "FENCE_SHIFT": "orders", "NO_VALID_SOURCE": "orders",
     "RECEIPT_OVERDUE": "orders", "PO_CONFIRMED_LATE": "orders",
     "PO_CONFIRMED_SHORT": "orders", "PO_NOT_CONFIRMED": "orders", "ORDER_OVERDUE": "delivery", "PROMISE_AT_RISK": "delivery",
     "PROMISE_LATE": "delivery", "FORECAST_BIAS": "demand", "NO_DEMAND_STOCK": "inventory",
@@ -176,7 +176,7 @@ def owner_key(ds: Dataset, scope: str | None) -> str:
 
 
 def item_id(company: str, key: str) -> str:
-    return hashlib.sha1(f"{company}\x1f{key}".encode()).hexdigest()[:12]
+    return hashlib.sha1(f"{company}\x1f{key}".encode(), usedforsecurity=False).hexdigest()[:12]
 
 
 class Tracker:
@@ -257,6 +257,31 @@ class Tracker:
                 tuple(cleared_ids))] if cleared_ids else []
         return live, cleared
 
+    def peek(self, ds: Dataset, raws: list[Raw], scope: str | None = None) -> tuple[list[WorkItem], list[WorkItem]]:
+        """This run's exceptions as the worklist has them, recording nothing: for a member who may only read
+        (CV-H05). An exception not on the worklist yet is shown as it would open; nothing is cleared."""
+        company = owner_key(ds, scope)
+        as_of = ds.settings.planning_start
+        day = as_of.isoformat()
+        sla = ds.tower.sla_days
+        with self.store.lock:
+            rows = {r["id"]: r for r in self.db.execute("SELECT * FROM tower_items WHERE company = ?", (company,))}
+        out = []
+        for x in raws:
+            iid = item_id(company, x.key)
+            old = rows.get(iid)
+            if old is not None:
+                out.append(self._item(old, as_of, sla))
+                continue
+            owner, src = owner_for(ds, x)
+            row = {"id": iid, "key": x.key, "code": x.code, "category": x.category, "severity": x.severity,
+                   "message": x.message, "location": x.location, "product": x.product, "resource": x.resource,
+                   "order_id": x.order_id, "date": x.date.isoformat() if x.date else None, "qty": x.qty, "owner": owner,
+                   "owner_source": src, "status": "open", "first_seen": day, "last_seen": day, "resolved_on": None,
+                   "reopened": 0, "note": ""}
+            out.append(self._item(row, as_of, sla))  # type: ignore[arg-type]
+        return out, []
+
     def _get(self, iid: str, scope: str | None) -> sqlite3.Row:
         """An item, only if it is on the worklist of ``scope`` (a server company) or, without one, the browser's."""
         r = self.db.execute("SELECT * FROM tower_items WHERE id = ?", (iid,)).fetchone()
@@ -291,10 +316,10 @@ class Tracker:
             return self._item(r, dt.date.fromisoformat(r["last_seen"]), sla or {})
 
     def history(self, iid: str, scope: str | None = None) -> list[tuple[str, str, str]]:
-        with self.store.lock:
+        with self.store.lock:      # the shared connection is read under the lock too (CV-L08)
             self._get(iid, scope)
-        return [(r["at"], r["action"], r["detail"]) for r in
-                self.db.execute("SELECT at, action, detail FROM tower_log WHERE item_id = ? ORDER BY seq", (iid,))]
+            return [(r["at"], r["action"], r["detail"]) for r in
+                    self.db.execute("SELECT at, action, detail FROM tower_log WHERE item_id = ? ORDER BY seq", (iid,))]
 
 
 _tracker: Tracker | None = None

@@ -26,7 +26,8 @@ def base_lot(ls: LotSizing, shortage: float, *, window_requirements: float = 0.0
     if p is LotSizePolicy.L4L:
         return shortage
     if p is LotSizePolicy.FIXED:
-        assert ls.fixed_qty
+        if not ls.fixed_qty:     # CV-L01: an explicit error, not an assert that python -O removes
+            raise ValueError("a fixed lot size needs its fixed quantity")
         return math.ceil(shortage / ls.fixed_qty - 1e-9) * ls.fixed_qty
     if p is LotSizePolicy.EOQ:
         return max(shortage, eoq_qty) if eoq_qty else shortage
@@ -39,8 +40,13 @@ def base_lot(ls: LotSizing, shortage: float, *, window_requirements: float = 0.0
 
 def apply_modifiers(qty: float, *, mins: list[float], roundings: list[float | None],
                     maxes: list[float | None]) -> list[float]:
-    """Raise to the largest minimum, round up to each rounding value, then split by the smallest
-    maximum. Returns one or more lot quantities (max-lot splitting creates several orders)."""
+    """Raise to the largest minimum, round up to each rounding value, then split by the smallest maximum. Returns
+    one or more lot quantities (max-lot splitting creates several orders).
+
+    Every lot of a split stays within the maximum (CV-M02): the maximum is first brought down to a rounding multiple
+    (a full lot is then a multiple too), and the last lot is rounded up and raised to the minimum only as far as the
+    maximum allows. A minimum above the maximum cannot both hold: the maximum wins and the readiness check reports
+    the conflict."""
     q = max([qty, *mins])
     for r in roundings:
         if r:
@@ -48,13 +54,21 @@ def apply_modifiers(qty: float, *, mins: list[float], roundings: list[float | No
     cap = min([m for m in maxes if m], default=None)
     if cap is None or q <= cap + 1e-9:
         return [q]
-    # split into full lots of `cap` (each already a rounding multiple if cap is) plus a remainder
-    n_full = int(q // cap)
-    rest = q - n_full * cap
-    lots = [cap] * n_full
+    full = cap
+    for r in roundings:
+        if r:
+            full = math.floor(full / r + 1e-9) * r
+    if full <= 1e-9:          # a rounding value above the maximum: lots of one rounding value each
+        full = max((r for r in roundings if r), default=cap)
+    n_full = int(q // full + 1e-9)
+    rest = q - n_full * full
+    lots = [full] * n_full
     if rest > 1e-9:
+        least = max(mins, default=0.0)
+        if least <= full + 1e-9:
+            rest = max(rest, least)
         for r in roundings:
             if r:
                 rest = math.ceil(rest / r - 1e-9) * r
-        lots.append(max(rest, *mins) if mins else rest)
+        lots.append(min(rest, full))
     return lots

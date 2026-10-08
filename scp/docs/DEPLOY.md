@@ -47,7 +47,17 @@ Everything is set by environment variables. None is needed to try it; the ones m
 | `SCP_DB` | The database file. Keep it on a volume that is backed up. | `~/.scp/scp.sqlite`; in the image `/data/scp.sqlite` |
 | `SCP_REQUIRE_SIGNIN` | `1`: every call needs a signed-in person, and everything is kept in a company. *Production.* | off; in the image `1` |
 | `SCP_SIGNUP` | Who may make an account: `open` (anyone), `invite` (an e-mail a company owner invited, and the very first account), `closed` (the first account only). *Production:* `invite`. | `open`; in the image `invite` |
-| `SCP_PUBLIC_URL` | The address people open, e.g. `https://plan.example.com`. Used in links sent by mail and for single sign-on. *Production.* | none |
+| `SCP_PUBLIC_URL` | The address people open, e.g. `https://plan.example.com`. Every link that leaves the server (a reset, an invitation or an address check mailed, the single sign-on redirect) is made from it and never from the request's `Host` header. Without it no such mail is sent and single sign-on is off. *Production.* | none |
+| `SCP_AUTH_RATE` | Sign-ins, sign-ups and reset requests a minute per client address; more are answered 429. `0`: no limit. | `30` |
+| `SCP_ANON_RATE` | Work a minute per client address from someone not signed in, in cost units from one token bucket: a cheap call costs 1, a plan 20, a schedule 30, a comparison 40, a what-if side by side 80 (`ANON_COSTS` in `scp/api/companies.py`). A refusal is 429 with `Retry-After`. A made-up token counts as no token. `0`: no limit. | `120` |
+| `SCP_PASSWORD_MIN` | The shortest password accepted when one is set (sign-up, reset, change); a password on the offline breached list, one character repeated, or containing the e-mail's name is refused too. Existing passwords keep working. | `12` |
+| `SCP_COOKIE_SECURE` | The web client's session cookie (`scp_session`, HttpOnly, SameSite=Lax) is `Secure` whenever the server is reached over HTTPS (also behind a proxy that sends `X-Forwarded-Proto: https`, or with an `https://` `SCP_PUBLIC_URL`). `1` forces it, `0` turns it off. | auto |
+| `SCP_ANON_MAX_MB` | The largest request body from someone not signed in (MB). | `64` |
+| `SCP_ANON_CONCURRENCY`, `SCP_ANON_WAIT_S` | How many calls from people not signed in run at once (the rest wait up to `SCP_ANON_WAIT_S` seconds, then get 429), so anonymous planning never takes every CPU from signed-in people. | half the CPUs, `60` |
+| `SCP_DOCS` | `1`/`0`: the interactive API pages (`/docs`, `/redoc`, `/openapi.json`). | on, off when `SCP_REQUIRE_SIGNIN=1` |
+| `SCP_MAIL_OPEN_SIGNUP` | `1`: mail documents (*Send from here*) even though `SCP_SIGNUP=open`. Off, a server anyone may make an account on never mails documents for them. | off |
+| `SCP_MAIL_DAILY_PER_ACCOUNT` | Documents one person may send a day, across every company. | `100` |
+| `FORWARDED_ALLOW_IPS` | (image) The proxy addresses whose `X-Forwarded-*` headers uvicorn trusts. | `127.0.0.1` |
 | `SCP_BACKUP_DIR` | A folder for the nightly copy of the database. None: no nightly copy. *Production.* | none |
 | `SCP_BACKUP_HOUR` | When the nightly copy is taken (hour, UTC). | `2` |
 | `SCP_BACKUP_KEEP` | How many nightly copies are kept; the oldest go. | `14` |
@@ -69,6 +79,9 @@ Everything is set by environment variables. None is needed to try it; the ones m
 Keep the secrets (`SCP_SMTP_PASSWORD`, `SCP_OIDC_CLIENT_SECRET`) out of the image: pass them with `--env-file`
 or your platform's secrets.
 
+Invalid `SCP_SIGNUP` or `SCP_REQUIRE_SIGNIN` values stop startup. For sign-in, use `1`/`0`,
+`true`/`false`, `yes`/`no` or `on`/`off`.
+
 ### Mail
 
 Any SMTP server works: your company's, or a sending service (Amazon SES, Postmark, SendGrid, Mailgun). For Microsoft
@@ -80,8 +93,21 @@ The same mail server sends documents (*Send from here* on Buying and Selling, on
 at most 500 a company a day) and worklist reminders; see [INTEGRATION.md](INTEGRATION.md).
 
 Without mail, "Forgot your password?" tells the person to ask their company's owner: on *Account*, each planner and
-viewer has *Link to set a new password* (valid a day), and the administrator can make one for anyone:
+viewer with a local password and membership only in that company can use *Link to set a new password*
+(valid a day). Accounts shared across companies must use the mail recovery flow or ask the server administrator.
+Single sign-on accounts recover access through their identity provider. The administrator can make a link for
+a local password account:
 `python -m scp.admin reset-link person@example.com`.
+
+The web client signs in with an HttpOnly session cookie and sends a double-submit CSRF token (header `X-CSRF-Token`
+equal to the `scp_csrf` cookie) with every change; a change with the cookie and without the token is refused (403).
+Scripts and integration keys keep using `Authorization: Bearer`, which needs no CSRF token. A browser that kept a
+session token in its storage before this change swaps it for the cookie once on its next visit
+(`POST /api/auth/adopt`), and the old token stops working. Single sign-on also lands in the cookie: the token is no
+longer put in the address.
+
+Changing a password signs out other sessions and invalidates outstanding reset links. Resetting a password
+signs out all previous sessions and signs in the person using the reset link.
 
 ### Single sign-on
 
@@ -95,9 +121,20 @@ scopes `openid email profile`. Then set:
 * **Okta, Keycloak, Auth0, Authentik**: the issuer the provider shows (it serves
   `<issuer>/.well-known/openid-configuration`).
 
-Only a verified e-mail address is accepted. A person signing in for the first time gets an account when
-`SCP_SIGNUP` lets them (with `invite`: when a company owner invited that address); an existing account with the same
-e-mail is the same person, whichever way they sign in.
+Only an address the provider says it verified is accepted: `email_verified` must be true (Entra ID: `xms_edov`); a
+provider that says nothing is refused. The ID token must carry this server's nonce, be for this application and come
+from the configured issuer. A person signing in for the first time gets an account when `SCP_SIGNUP` lets them.
+An existing password account is **never** taken over by an e-mail match: its holder signs in with the password and
+uses *Link sign-in with …* on the Account page; a link, once made, is not replaced by another sign-on account.
+
+### Invitations and e-mail addresses
+
+Nobody becomes a member of a company without accepting: an owner's *Add* makes an invitation with a one-time link
+(valid 14 days, only for that address), shown to the owner and, when the server sends mail, mailed to the address.
+The person signs in (or signs up) with that address and opens the link. An account whose address is confirmed
+(by the link in *Confirm my address*, by a reset link mailed to it, or by single sign-on) also sees its invitations
+on the Account page. An owner's *Link to set a new password* works only for members who accepted, have no company of
+their own and belong to no other company; with mail it goes to the member's own address instead of the owner.
 
 ## 3. The reverse proxy
 
@@ -148,8 +185,9 @@ nginx's defaults (1 MB bodies, 60 s answers) refuse a medium-sized company's sav
 ## 4. Backups and putting one back
 
 With `SCP_BACKUP_DIR` set, the server copies the database there every night (`scp-YYYYMMDD-HHMMSS.sqlite`, a
-consistent copy taken while people work) and keeps the newest `SCP_BACKUP_KEEP`. Copy that folder off the machine
-as well (your backup tool, `rclone`, a storage bucket): a backup on the same disk does not survive the disk.
+consistent copy taken while people work) and keeps the newest `SCP_BACKUP_KEEP`. Copies taken in the same second
+receive a numbered suffix; a completed backup is published atomically without overwriting an existing copy.
+Copy that folder off the machine as well (your backup tool, `rclone`, a storage bucket): a backup on the same disk does not survive the disk.
 
 By hand, next to the running server (same `SCP_DB`):
 

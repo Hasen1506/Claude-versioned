@@ -11,7 +11,7 @@ import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
 
-type View = "kpis" | "worklist" | "quality" | "settings";
+type View = "kpis" | "inbox" | "worklist" | "quality" | "settings";
 
 // The §18.2 set, grouped the way a weekly review reads it.
 const GROUPS: { title: string; ids: string[] }[] = [
@@ -19,6 +19,7 @@ const GROUPS: { title: string; ids: string[] }[] = [
   { title: "Customer service", ids: ["confirmation_rate", "otif_confirmed", "otif_requested", "perfect_order"] },
   { title: "Supply & production", ids: ["supplier_reliability", "schedule_adherence"] },
   { title: "Inventory", ids: ["days_of_supply", "excess_obsolete"] },
+  { title: "Working capital", ids: ["inventory_turns", "dio", "dso", "dpo", "cash_to_cash"] },
   { title: "Planning process & cost", ids: ["plan_stability", "exception_ageing", "cost_to_serve"] },
 ];
 
@@ -36,6 +37,7 @@ function fmtKpi(k: Pick<Kpi, "unit">, v: number | null | undefined, cur: string)
   if (v === null || v === undefined) return "—";
   if (k.unit === "ratio") return pct(v, 1);
   if (k.unit === "days") return `${qty(v)} d`;
+  if (k.unit === "times") return `${v.toFixed(1)}×`;
   if (k.unit === "money_per_unit") return unitMoney(v, cur);
   return money(v, cur);
 }
@@ -79,6 +81,7 @@ export function Tower({ route }: { route: string[] }) {
   const nav = (
     <Tabs<View> value={view} onChange={(v) => go("tower", v)} tabs={[
       { id: "kpis", label: "KPIs", count: res?.kpis.length },
+      { id: "inbox", label: "Exception inbox", count: res ? res.inbox.length : undefined },
       { id: "worklist", label: "Exception worklist", count: res ? live.length : undefined },
       { id: "quality", label: "Data quality", count: res?.data_quality.reduce((a, r) => a + r.count, 0) },
       { id: "settings", label: "Owners, SLA & targets" },
@@ -100,6 +103,7 @@ export function Tower({ route }: { route: string[] }) {
     {stale && <StaleMark what="tower" onRerun={() => store.run("tower")} busy={run.running} />}
     {nav}
     {view === "kpis" && <Kpis res={res} cur={cur} sel={route[2]} />}
+    {view === "inbox" && <Inbox res={res} ds={ds} cur={cur} />}
     {view === "worklist" && <Worklist res={res} ds={ds} rev={run.revision ?? 0} />}
     {view === "quality" && <Quality res={res} />}
   </>);
@@ -134,7 +138,8 @@ function Kpis({ res, cur, sel }: { res: TowerResult; cur: string; sel?: string }
                     {STATUS_SEV[k.status] ? <Badge sev={STATUS_SEV[k.status]}>{gradeLabel(k)}</Badge> : <span className="faint">{gradeLabel(k)}</span>}
                     <span className="faint">{targetText(k, cur)}</span>
                   </span>
-                  <span className="kpi-n faint">{k.n ? `${qty(k.n)} observations` : k.note ? "—" : ""}</span>
+                  <span className="kpi-n faint">{(k.value === null || k.value === undefined) && k.note.startsWith("Not enough data")
+                    ? "not enough data" : k.n ? `${qty(k.n)} observations` : k.note ? "—" : ""}</span>
                 </button>
               );
             })}
@@ -200,6 +205,71 @@ const AGE_BINS: { label: string; lo: number; hi: number }[] = [
   { label: "0–1 d", lo: 0, hi: 1 }, { label: "2–3 d", lo: 2, hi: 3 }, { label: "4–7 d", lo: 4, hi: 7 },
   { label: "8–14 d", lo: 8, hi: 14 }, { label: "15+ d", lo: 15, hi: Infinity },
 ];
+
+/** Roadmap F: the exceptions still to handle, ranked by the money at risk if they are left (engine: tower/money.py),
+ *  optionally grouped by product or customer, each with one suggested action and what it protects and costs. */
+type Group = "none" | "product" | "customer";
+function Inbox({ res, ds, cur }: { res: TowerResult; ds: Dataset; cur: string }) {
+  const [group, setGroup] = useState<Group>("none");
+  const nm = namesOf(ds);
+  const ranked = useMemo(() => {
+    const byId = new Map(res.worklist.map((w) => [w.id, w]));
+    return res.inbox.map((id) => byId.get(id)).filter((w): w is WorkItem => !!w);
+  }, [res]);
+  const groups = useMemo(() => {
+    const keyOf = (w: WorkItem) => group === "product" ? (w.product ?? "") : group === "customer" ? (w.customer ?? "") : "";
+    const m = new Map<string, WorkItem[]>();
+    for (const w of ranked) { const k = keyOf(w); m.set(k, [...(m.get(k) ?? []), w]); }
+    return [...m.entries()].map(([k, ws]) => ({ k, ws, total: ws.reduce((a, w) => a + w.money_at_risk, 0) }))
+      .sort((a, b) => b.total - a.total || a.k.localeCompare(b.k));
+  }, [ranked, group]);
+  const label = (k: string) => k ? (group === "product" ? nm.prod(k) : nm.loc(k)) : group === "product" ? "No product" : "No customer";
+  if (!ranked.length) return <Panel><Empty title="Nothing to handle">No exception is open or being worked.</Empty></Panel>;
+  const top3 = ranked.slice(0, 3).reduce((a, w) => a + w.money_at_risk, 0);
+  let rank = 0;
+  return (
+    <div className="stack">
+      <div className="grid-auto">
+        <StatTile label="Money at risk" value={money(res.money_at_risk, cur)} sub={`across ${plural(ranked.length, "open exception")}`} tone="hl" />
+        <StatTile label="Top 3" value={money(top3, cur)} sub={`${pct(res.money_at_risk ? top3 / res.money_at_risk : 0, 0)} of it`} />
+      </div>
+      <div className="row wrap" style={{ gap: 8 }}>
+        <label className="row" style={{ gap: 6 }}><span className="small muted">Group by</span>
+          <select className="input" aria-label="Group by" value={group} onChange={(e) => setGroup(e.target.value as Group)}>
+            <option value="none">Nothing (one ranked list)</option>
+            <option value="product">Product</option>
+            <option value="customer">Customer</option>
+          </select></label>
+        <span className="small faint">Ranked by what leaving it costs; how each amount is worked out is under it.</span>
+      </div>
+      {groups.map((g) => (
+        <Panel key={g.k || "-"} title={group === "none" ? undefined : `${label(g.k)} · ${money(g.total, cur)} at risk`}>
+          <table className="tbl" data-total={g.total} aria-label={group === "none" ? "Exception inbox" : `Exceptions for ${label(g.k)}`}>
+            <thead><tr><th>#</th><th className="num">At risk</th><th>Exception</th><th>Where</th><th>Do this</th></tr></thead>
+            <tbody>
+              {g.ws.map((w) => {
+                rank += 1;
+                const a = w.action;
+                return <tr key={w.id} data-testid="inbox-row">
+                  <td className="faint">{rank}</td>
+                  <td className="num mono" data-amount={w.money_at_risk}><b>{money(w.money_at_risk, cur)}</b></td>
+                  <td><div><Badge sev={ITEM_SEV[w.severity]}>{codeLabel(w.code)}</Badge> <Msg text={w.message} /></div>
+                    <div className="small faint">{w.money_basis}</div></td>
+                  <td className="small">{[w.product && nm.prod(w.product), w.location && nm.loc(w.location), w.resource && nm.res(w.resource),
+                    w.customer && w.customer !== w.location ? nm.loc(w.customer) : null].filter(Boolean).join(" · ")}</td>
+                  <td>{a ? <div className="stack" style={{ gap: 2 }}>
+                    <a className="btn sm" href={a.href || "#/tower/worklist"}>{a.label}</a>
+                    <span className="small faint">protects {money(a.protects ?? 0, cur)}{a.costs !== null && a.costs !== undefined ? ` · costs ${money(a.costs, cur)}` : ""}</span>
+                  </div> : <span className="faint small">—</span>}</td>
+                </tr>;
+              })}
+            </tbody>
+          </table>
+        </Panel>
+      ))}
+    </div>
+  );
+}
 
 function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number }) {
   const [cat, setCat] = useState<string>("all");
@@ -289,7 +359,11 @@ function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number
           <option value="live">Open + acknowledged</option><option value="open">Open</option><option value="acknowledged">Acknowledged</option>
           <option value="resolved">Resolved</option><option value="all">All</option></select></label>
         <label className="small row" style={{ gap: 6 }}><input type="checkbox" checked={lateOnly} onChange={(e) => setLateOnly(e.target.checked)} />Past SLA only</label>
-        <span className="spacer" /><span className="faint small">{shown.length} of {items.length}</span>
+        <span className="spacer" /><span className="faint small" title="Resolved exceptions stay on the worklist; the Status filter hides them unless it is All">
+          {/* QA: "18 of 19" beside counters that total 18 read as a missing exception; the rest are hidden by the filters */}
+          {shown.length} shown{items.length - shown.length > 0
+            ? ` · ${items.length - shown.length} hidden by the filters (${items.filter((w) => w.status === "resolved").length} resolved)`
+            : ""}</span>
       </div>
       <datalist id="tower-owners">{owners.map((o) => <option key={o} value={o} />)}</datalist>
       <Panel flush>

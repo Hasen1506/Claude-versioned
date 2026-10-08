@@ -112,7 +112,7 @@ test('publishing a version cannot use another company opened during its revision
   const serverStock=await page.evaluate(async()=>{
     const company=JSON.parse(localStorage.getItem('scp.company.v1')!);
     const session=JSON.parse(localStorage.getItem('scp.session.v1')!);
-    const doc=await (await fetch(`/api/companies/${company.id}`,{headers:{Authorization:`Bearer ${session.token}`}})).json();
+    const doc=await (await fetch(`/api/companies/${company.id}`,{headers:{'X-CSRF-Token':(document.cookie.match(/scp_csrf=([^;]+)/)||[])[1]||''}})).json();
     return doc.dataset.location_products[0].on_hand;
   });
   expect(serverStock).toBe(10);
@@ -136,7 +136,7 @@ test('a reload refresh cannot reopen live data over a version of the same compan
   await expect(page.locator('.save-chip .save-long')).toHaveText(/^Saved/);
   // Save stock25 remotely while this browser still holds stock10; hold the reload's new document.
   await page.evaluate(async({company,session})=>{
-    const headers={'Content-Type':'application/json',Authorization:`Bearer ${session.token}`};
+    const headers={'Content-Type':'application/json','X-CSRF-Token':(document.cookie.match(/scp_csrf=([^;]+)/)||[])[1]||''};
     const doc=await (await fetch(`/api/companies/${company.id}`,{headers})).json();
     doc.dataset.location_products[0].on_hand=25;
     const response=await fetch(`/api/companies/${company.id}`,{method:'PUT',headers,body:JSON.stringify({dataset:doc.dataset,base_revision:doc.meta.revision})});
@@ -249,16 +249,19 @@ async function peerChange(page:Page,field:'stock'|'demand') {
   await page.evaluate(async field=>{
     const company=JSON.parse(localStorage.getItem('scp.company.v1')!);
     const owner=JSON.parse(localStorage.getItem('scp.session.v1')!);
-    const ownerHeaders={'Content-Type':'application/json',Authorization:`Bearer ${owner.token}`};
+    const ownerHeaders={'Content-Type':'application/json','X-CSRF-Token':(document.cookie.match(/scp_csrf=([^;]+)/)||[])[1]||''};
     const email=`peer-${Date.now()}@example.invalid`;
     const json=async(url:string,init:RequestInit)=>{
       const response=await fetch(url,init);
       if(!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
       return await response.json();
     };
-    await json(`/api/companies/${company.id}/members`,{method:'POST',headers:ownerHeaders,body:JSON.stringify({email,role:'planner'})});
-    const peer=await json('/api/auth/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,name:'Audit peer',password:'live-audit-peer-20261001'})});
+    const members=await json(`/api/companies/${company.id}/members`,{method:'POST',headers:ownerHeaders,body:JSON.stringify({email,role:'planner'})});
+    const peer=await json('/api/auth/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,name:'Audit peer',password:`peer-${crypto.randomUUID()}`})});
     const headers={'Content-Type':'application/json',Authorization:`Bearer ${peer.token}`};
+    // nobody joins unasked: the peer accepts the invitation's link
+    const link=members.find((m:{email:string;invite_link?:string|null})=>m.email===email).invite_link as string;
+    await json('/api/auth/invites/accept',{method:'POST',headers,body:JSON.stringify({token:link.split('/').pop()})});
     const doc=await json(`/api/companies/${company.id}`,{headers});
     if(field==='stock') doc.dataset.location_products[0].on_hand=25;
     else doc.dataset.demand[0].qty=110;
@@ -291,7 +294,7 @@ test('an automatic merge finishing after opening a version cannot resave that ve
   const server=await page.evaluate(async()=>{
     const company=JSON.parse(localStorage.getItem('scp.company.v1')!);
     const session=JSON.parse(localStorage.getItem('scp.session.v1')!);
-    return await (await fetch(`/api/companies/${company.id}`,{headers:{Authorization:`Bearer ${session.token}`}})).json();
+    return await (await fetch(`/api/companies/${company.id}`,{headers:{'X-CSRF-Token':(document.cookie.match(/scp_csrf=([^;]+)/)||[])[1]||''}})).json();
   });
   await test.info().attach('live-server-after-merge',{body:JSON.stringify({extraMerges,stock:server.dataset.location_products[0].on_hand,demand:server.dataset.demand[0].qty}),contentType:'application/json'});
   expect(server.dataset.location_products[0].on_hand).toBe(35);

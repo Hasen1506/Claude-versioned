@@ -14,7 +14,8 @@ factor) and VF the variability factor. Replenishment is signalled by the net flo
     NFP = on hand + open supply − qualified demand   (due today + spikes inside the DLT)
 
 Qualified demand counts the position's own sales orders and those of the customers it ships to, dated
-when they must leave (due date − transit).
+when they must leave (due date − transit), and what released orders still reserve from it (components of a
+production order, the goods of an outbound stock transfer).
 
 and an order of TOG − NFP is recommended whenever NFP ≤ TOY.
 """

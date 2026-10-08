@@ -172,7 +172,7 @@ def agreement_for(ds: Dataset, supplier: str, location: str, product: str, on: d
 
 def _choice(ds: Dataset, pu, qty: float, order_date: date, need_by: date, assigned: bool) -> SourceChoice:
     q = qty if assigned else _lot(pu, qty)
-    sch = schedule_buy(ds, pu.id, start=order_date)
+    sch = schedule_buy(ds, pu.id, start=order_date, requisition=False)
     price, contract = price_on(ds, pu, q, order_date, pu.location)
     return SourceChoice(source_id=pu.id, supplier=pu.supplier, price=price, currency=_currency(ds, ds.price_currency(pu)),
                         value=q * price * fx(ds, ds.price_currency(pu)) * (1.0 + pu.duty_rate), qty=q,
@@ -256,7 +256,7 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
             qty = q2
         due = o.due_date
         if sid != o.source_id or today > o.start_date:
-            earliest = schedule_buy(ds, pu.id, start=max(today, ds.settings.planning_start)).due_date
+            earliest = schedule_buy(ds, pu.id, start=max(today, ds.settings.planning_start), requisition=False).due_date
             if earliest > due:
                 notes.append(f"{o.product}: {pu.supplier} can deliver {earliest.isoformat()}, "
                              f"{(earliest - due).days} d after it is needed there")
@@ -327,6 +327,57 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
         rep.created.append(created)
     rep.ok = True
     return ds.model_copy(update={"receipts": receipts, "purchase_orders": headers}), rep
+
+
+def create_one_off_po(ds: Dataset, source_id: str, qty: float, due_date: date | None = None,
+                      order_date: date | None = None) -> tuple[Dataset, CreateReport]:
+    """A purchase order that no requisition asked for (a sample, a spare, a buy ahead of a price rise): one line on a
+    purchasing source, at its price on the order date. The supplier's minimum and pack size round the quantity up; a
+    wanted date sooner than the supplier can deliver becomes the earliest date it can, with a note (UX audit: purchase
+    orders could only be made from requisitions)."""
+    rep = CreateReport(ok=False, created=[], lines={}, skipped={})
+    pu = ds.purchasing_source_by_id.get(source_id)
+    if pu is None or not pu.location:
+        rep.skipped[source_id] = "no purchasing source with this id delivers to a place"
+        return ds, rep
+    if not (qty > EPS):
+        rep.skipped[source_id] = "the quantity must be more than zero"
+        return ds, rep
+    why = _blocked_reason(ds, pu)
+    if why:
+        rep.skipped[source_id] = why
+        return ds, rep
+    today = order_date or ds.settings.planning_start
+    notes: list[str] = []
+    q = _lot(pu, qty)
+    if q > qty + EPS:
+        notes.append(f"{pu.product}: {q:,.0f} instead of {qty:,.0f} ({pu.supplier}'s minimum or pack size)")
+    earliest = schedule_buy(ds, pu.id, start=max(today, ds.settings.planning_start), requisition=False).due_date
+    due = due_date or earliest
+    if due < earliest:
+        notes.append(f"{pu.product}: {pu.supplier} can deliver {earliest.isoformat()}, not {due.isoformat()}")
+        due = earliest
+    if not _valid(pu, due):
+        rep.skipped[source_id] = f"source {pu.id} is not valid on {due.isoformat()}"
+        return ds, rep
+    num = next_numbers(ds)
+    num["PO"] += 1
+    pid = f"PO-{num['PO']:05d}"
+    cur = _currency(ds, ds.price_currency(pu))
+    price, contract = price_on(ds, pu, q, today, pu.location)
+    line = ScheduledReceipt(id=f"{pid}-10", kind=ReceiptKind.PURCHASE, location=pu.location, product=pu.product, qty=q,
+                            due_date=due, start_date=today, source=pu.id, po=pid, price=price, contract=contract)
+    created = CreatedPo(id=pid, supplier=pu.supplier, location=pu.location, currency=cur, value=q * price,
+                        lines=[line.id], approved=True, notes=notes)
+    if (why := _release_note(ds, created.value * fx(ds, cur if cur != ds.settings.currency else None))) is not None:
+        created.approved = False
+        created.notes.append(why)
+    header = PurchaseOrder(id=pid, supplier=pu.supplier, location=pu.location, order_date=today,
+                           currency=None if cur == ds.settings.currency else cur, approved=created.approved)
+    rep.created.append(created)
+    rep.lines[source_id] = line.id
+    rep.ok = True
+    return ds.model_copy(update={"receipts": [*ds.receipts, line], "purchase_orders": [*ds.purchase_orders, header]}), rep
 
 
 # ---- actions ---------------------------------------------------------------------------------------

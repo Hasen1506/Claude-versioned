@@ -4,7 +4,7 @@ from scp.api.app import app
 
 from .factory import example_dict
 
-client = TestClient(app)
+client = TestClient(app, headers={"X-Browser-Key": "tests-browser-key-0001"})
 
 
 def test_health_and_examples():

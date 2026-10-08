@@ -2,7 +2,7 @@
 
     python scp/examples/build_examples.py
 
-Both datasets are fictional. They exist to exercise every engine feature and as starting points
+Every dataset is fictional. They exist to exercise every engine feature and as starting points
 in the UI ("Load example"), and they are validated in the engine test suite.
 """
 from __future__ import annotations
@@ -595,9 +595,135 @@ def scale_company(products: int = 5000, places: int = 20, weeks: int = 104, fg_s
     }
 
 
+# An example case for teaching (IIT Madras online MBA, Digital Maritime & Supply Chain). Everything in it is invented:
+# the company, its numbers, suppliers and customers are not real company data. The what-if presets that go with it
+# (the north-east monsoon holding up Chennai port) live in scp/engine/scp/cases.py.
+CASE_COMPANY = "Example case: Coromandel Pumps, Chennai (fictional)"
+
+
+def chennai_port_pumps() -> dict:
+    """A pump assembler near Chennai: farm pumps sold in Tamil Nadu by truck, export pumps shipped through Chennai
+    port to Jebel Ali and Singapore, mechanical seals imported through the same port. Built for the monsoon what-if."""
+    rng = random.Random(11)
+    weeks = 26
+    # farm pumps sell slowly while the north-east monsoon (Oct–Dec) waters the fields, and pick up from January
+    farm_season = {10: 0.75, 11: 0.7, 12: 0.8, 1: 1.0, 2: 1.2, 3: 1.35}          # by month
+    export_season = {11: 1.15, 12: 1.15}                                          # Gulf project season
+    sea = {"mode": "sea", "cost_per_kg": 6.5, "cost_per_shipment": 42000, "vehicle_capacity_kg": 24000}
+    truck = {"mode": "truck_ftl", "cost_per_kg": 1.8, "cost_per_shipment": 6000, "vehicle_capacity_kg": 9000}
+    return {
+        "schema_version": "1",
+        "settings": {"company_name": CASE_COMPANY, "currency": "INR",
+                     "company_address": "Example case for teaching only\nSriperumbudur, Tamil Nadu",
+                     "planning_start": START.isoformat(), "horizon_days": weeks * 7, "bucket": "week",
+                     "fx_rates": {"USD": 84.2}, "wacc": 0.12, "holding_spread": 0.07,
+                     "default_service_level": 0.95, "default_calendar": "CAL-TN-6D"},
+        "calendars": [{"id": "CAL-TN-6D", "name": "Mon–Sat", "workdays": [0, 1, 2, 3, 4, 5],
+                       "holidays": ["2026-10-02", "2026-10-20", "2026-11-08", "2027-01-15", "2027-01-26"]}],
+        "locations": [
+            {"id": "PLT-SPB", "name": "Sriperumbudur pump assembly", "type": "plant", "lat": 12.97, "lon": 79.94},
+            {"id": "PORT-MAA", "name": "Chennai port export yard", "type": "warehouse", "lat": 13.10, "lon": 80.29},
+            {"id": "SUP-CBE-CAST", "name": "Coimbatore foundry (castings, impellers)", "type": "supplier",
+             "lat": 11.02, "lon": 76.96},
+            {"id": "SUP-HOSUR-MOTOR", "name": "Hosur motor works", "type": "supplier", "lat": 12.74, "lon": 77.83},
+            {"id": "SUP-SEAL-IMPORT", "name": "Overseas seal maker (via Chennai port)", "type": "supplier",
+             "lat": 13.10, "lon": 80.29},
+            {"id": "SUP-AMB-SHAFT", "name": "Ambattur shafts and fasteners", "type": "supplier",
+             "lat": 13.11, "lon": 80.16},
+            {"id": "CUS-TN-FARM", "name": "Tamil Nadu farm-pump dealers", "type": "customer", "region": "South",
+             "lat": 11.66, "lon": 78.15},
+            {"id": "CUS-JEBEL-ALI", "name": "Gulf distributor, Jebel Ali", "type": "customer", "region": "Export",
+             "lat": 25.01, "lon": 55.06},
+            {"id": "CUS-SINGAPORE", "name": "Singapore project buyer", "type": "customer", "region": "Export",
+             "lat": 1.26, "lon": 103.84}],
+        "products": [
+            {"id": "PUMP-5HP", "name": "Farm monoblock pump 5 HP", "type": "FG", "family": "Farm pumps",
+             "weight_kg": 38, "volume_m3": 0.09, "price": 18500},
+            {"id": "PUMP-10HP-EXP", "name": "Export end-suction pump 10 HP", "type": "FG", "family": "Export pumps",
+             "weight_kg": 95, "volume_m3": 0.22, "price": 52000},
+            {"id": "MOTOR-5HP", "name": "Motor 5 HP", "type": "RM", "weight_kg": 22},
+            {"id": "MOTOR-10HP", "name": "Motor 10 HP", "type": "RM", "weight_kg": 55},
+            {"id": "CASING", "name": "Pump casing (cast iron)", "type": "RM", "weight_kg": 9},
+            {"id": "IMPELLER", "name": "Impeller (bronze)", "type": "RM", "weight_kg": 2.5},
+            {"id": "SEAL-MECH", "name": "Mechanical seal (imported)", "type": "RM", "weight_kg": 0.4},
+            {"id": "SHAFT-KIT", "name": "Shaft, sleeve and fasteners", "type": "RM", "weight_kg": 3}],
+        "location_products": [
+            {"location": "PLT-SPB", "product": "PUMP-5HP", "on_hand": 220,
+             "safety_stock": {"method": "service_level", "service_level": 0.95, "demand_cv": 0.25},
+             "lot_sizing": {"policy": "POQ", "periods": 1}},
+            {"location": "PLT-SPB", "product": "PUMP-10HP-EXP", "on_hand": 40,
+             "lot_sizing": {"policy": "POQ", "periods": 2}},
+            {"location": "PORT-MAA", "product": "PUMP-10HP-EXP", "on_hand": 24,
+             "safety_stock": {"method": "fixed", "qty": 20}, "lot_sizing": {"policy": "L4L"}},
+            {"location": "PLT-SPB", "product": "MOTOR-5HP", "on_hand": 260, "lot_sizing": {"policy": "POQ", "periods": 2}},
+            {"location": "PLT-SPB", "product": "MOTOR-10HP", "on_hand": 60, "lot_sizing": {"policy": "POQ", "periods": 2}},
+            {"location": "PLT-SPB", "product": "CASING", "on_hand": 400, "lot_sizing": {"policy": "FIXED", "fixed_qty": 300}},
+            {"location": "PLT-SPB", "product": "IMPELLER", "on_hand": 380, "lot_sizing": {"policy": "FIXED", "fixed_qty": 300}},
+            {"location": "PLT-SPB", "product": "SEAL-MECH", "on_hand": 900,
+             "safety_stock": {"method": "days_of_supply", "days": 14},
+             "lot_sizing": {"policy": "FIXED", "fixed_qty": 1500}},
+            {"location": "PLT-SPB", "product": "SHAFT-KIT", "on_hand": 300, "lot_sizing": {"policy": "L4L"}}],
+        "resources": [
+            {"id": "ASM-LINE", "name": "Pump assembly line", "location": "PLT-SPB", "kind": "line",
+             "shifts_per_day": 2, "hours_per_shift": 8, "efficiency": 0.85, "cost_per_hour": 1800,
+             "overtime_hours_per_day": 2, "overtime_cost_per_hour": 2700},
+            {"id": "TEST-BAY", "name": "Hydraulic test bay", "location": "PLT-SPB", "kind": "machine",
+             "shifts_per_day": 1, "hours_per_shift": 8, "efficiency": 0.9, "cost_per_hour": 1200}],
+        "production_sources": [
+            {"id": "PV-PUMP-5HP", "location": "PLT-SPB", "product": "PUMP-5HP", "fixed_lead_time_workdays": 1,
+             "components": [{"product": "MOTOR-5HP", "qty": 1}, {"product": "CASING", "qty": 1},
+                            {"product": "IMPELLER", "qty": 1}, {"product": "SEAL-MECH", "qty": 1},
+                            {"product": "SHAFT-KIT", "qty": 1}],
+             "operations": [{"seq": 10, "name": "Assemble", "resource": "ASM-LINE", "setup_hours": 0.5,
+                             "run_hours_per_unit": 0.35},
+                            {"seq": 20, "name": "Hydraulic test", "resource": "TEST-BAY", "setup_hours": 0.25,
+                             "run_hours_per_unit": 0.08}],
+             "conversion_cost_per_unit": 650},
+            {"id": "PV-PUMP-10HP", "location": "PLT-SPB", "product": "PUMP-10HP-EXP", "fixed_lead_time_workdays": 2,
+             "components": [{"product": "MOTOR-10HP", "qty": 1}, {"product": "CASING", "qty": 1},
+                            {"product": "IMPELLER", "qty": 1}, {"product": "SEAL-MECH", "qty": 2},
+                            {"product": "SHAFT-KIT", "qty": 1}],
+             "operations": [{"seq": 10, "name": "Assemble", "resource": "ASM-LINE", "setup_hours": 1,
+                             "run_hours_per_unit": 0.9},
+                            {"seq": 20, "name": "Hydraulic test", "resource": "TEST-BAY", "setup_hours": 0.5,
+                             "run_hours_per_unit": 0.25}],
+             "conversion_cost_per_unit": 1900}],
+        "purchasing_sources": [
+            {"id": "PIR-M5", "supplier": "SUP-HOSUR-MOTOR", "product": "MOTOR-5HP", "location": "PLT-SPB",
+             "price": 7400, "lead_time_days": 7, "lead_time_std_days": 1.5},
+            {"id": "PIR-M10", "supplier": "SUP-HOSUR-MOTOR", "product": "MOTOR-10HP", "location": "PLT-SPB",
+             "price": 21500, "lead_time_days": 10, "lead_time_std_days": 2},
+            {"id": "PIR-CASING", "supplier": "SUP-CBE-CAST", "product": "CASING", "location": "PLT-SPB",
+             "price": 1900, "moq": 200, "lead_time_days": 6},
+            {"id": "PIR-IMPELLER", "supplier": "SUP-CBE-CAST", "product": "IMPELLER", "location": "PLT-SPB",
+             "price": 1150, "moq": 200, "lead_time_days": 6},
+            {"id": "PIR-SEAL", "supplier": "SUP-SEAL-IMPORT", "product": "SEAL-MECH", "location": "PLT-SPB",
+             "price": 1350, "moq": 1000, "lead_time_days": 35, "lead_time_std_days": 6},
+            {"id": "PIR-SHAFT", "supplier": "SUP-AMB-SHAFT", "product": "SHAFT-KIT", "location": "PLT-SPB",
+             "price": 820, "lead_time_days": 3}],
+        "lanes": [
+            {"id": "LN-SPB-PORT", "origin": "PLT-SPB", "destination": "PORT-MAA", "products": ["PUMP-10HP-EXP"],
+             "modes": [{**truck, "transit_days": 1, "default": True}]},
+            {"id": "LN-PORT-JEA", "origin": "PORT-MAA", "destination": "CUS-JEBEL-ALI", "products": ["PUMP-10HP-EXP"],
+             "modes": [{**sea, "transit_days": 12, "transit_std_days": 2, "default": True}]},
+            {"id": "LN-PORT-SIN", "origin": "PORT-MAA", "destination": "CUS-SINGAPORE", "products": ["PUMP-10HP-EXP"],
+             "modes": [{**sea, "transit_days": 7, "transit_std_days": 1.5, "default": True}]},
+            {"id": "LN-SPB-FARM", "origin": "PLT-SPB", "destination": "CUS-TN-FARM", "products": ["PUMP-5HP"],
+             "modes": [{**truck, "transit_days": 2, "default": True}]}],
+        "demand": [
+            *weekly_forecast("CUS-TN-FARM", "PUMP-5HP", 115, weeks, farm_season, rng),
+            *weekly_forecast("CUS-JEBEL-ALI", "PUMP-10HP-EXP", 22, weeks, export_season, rng),
+            *weekly_forecast("CUS-SINGAPORE", "PUMP-10HP-EXP", 10, weeks, export_season, rng),
+            {"id": "SO-JEA-1107", "location": "CUS-JEBEL-ALI", "product": "PUMP-10HP-EXP",
+             "date": (START + timedelta(weeks=6)).isoformat(), "qty": 60, "kind": "sales_order"}],
+        "receipts": [], "history": [],
+    }
+
+
 def main() -> None:
     for name, build in (("kitchenware_network", lambda: with_history(with_journal(released(kitchenware())))),
-                        ("single_product_plant", single_product)):
+                        ("single_product_plant", single_product),
+                        ("chennai_port_pumps", chennai_port_pumps)):
         data = build()
         Dataset.model_validate(data)  # fail loudly if an example drifts from the schema
         (HERE / f"{name}.json").write_text(json.dumps(data, indent=1) + "\n")

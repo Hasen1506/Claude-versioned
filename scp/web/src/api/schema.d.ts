@@ -55,6 +55,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/adopt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Adopt
+         * @description Once, for a browser that kept its session token in its own storage before roadmap D: the token (as
+         *     ``Authorization: Bearer``) is swapped for a new session in the HttpOnly cookie, and stops working.
+         */
+        post: operations["auth_adopt_api_auth_adopt_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/csrf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auth Csrf
+         * @description The double-submit token of this browser (a client served from another site cannot read the cookie).
+         */
+        get: operations["auth_csrf_api_auth_csrf_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/signout": {
         parameters: {
             query?: never;
@@ -83,6 +124,64 @@ export interface paths {
         get: operations["auth_me_api_auth_me_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/invites/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Accept Invite
+         * @description Join a company you were invited to: with the invitation's link, or by its id once your address is verified
+         *     (CV-C01: an invitation is never taken by registering its address).
+         */
+        post: operations["auth_accept_invite_api_auth_invites_accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/email/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Email Request
+         * @description Mail a link that confirms the account's address (needs the server's mail and SCP_PUBLIC_URL).
+         */
+        post: operations["auth_email_request_api_auth_email_request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/email/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Auth Email Verify */
+        post: operations["auth_email_verify_api_auth_email_verify_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -235,7 +334,9 @@ export interface paths {
         put?: never;
         /**
          * Set Company Member
-         * @description Add a member or change their role; an e-mail without an account is invited.
+         * @description Change a member's role, or invite an address (with or without an account): the answer carries the
+         *     invitation's link once (``invite_link``), and it is mailed to the address when the server sends mail. Nobody
+         *     joins until they accept it (CV-C01).
          */
         post: operations["set_company_member_api_companies__cid__members_post"];
         delete?: never;
@@ -417,6 +518,26 @@ export interface paths {
         get: operations["auth_sso_start_api_auth_sso_start_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/sso/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Sso Link
+         * @description Begin binding the company's sign-on to the signed-in account (the only way an existing account gets it).
+         */
+        post: operations["auth_sso_link_api_auth_sso_link_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -844,6 +965,26 @@ export interface paths {
         };
         /** Examples */
         get: operations["examples_api_examples_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cases
+         * @description Example cases (roadmap H): fictional teaching datasets with their brief and ready-made what-if scenarios.
+         */
+        get: operations["cases_api_cases_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1393,6 +1534,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/purchasing/one-off": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post One Off Po
+         * @description A purchase order no requisition asked for: one line on a purchasing source.
+         */
+        post: operations["post_one_off_po_api_purchasing_one_off_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/purchasing/act": {
         parameters: {
             query?: never;
@@ -1556,6 +1717,8 @@ export interface paths {
         /**
          * Post Tower
          * @description KPIs, the exception worklist (recorded in the version store: first seen, owner, status) and data quality.
+         *     Only a member who may change the company records the run in its worklist; a viewer sees it as it stands
+         *     (CV-H05).
          */
         post: operations["post_tower_api_tower_post"];
         delete?: never;
@@ -1643,6 +1806,27 @@ export interface paths {
         get: operations["compare_versions_api_versions__a__compare__b__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/whatif": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Whatif
+         * @description Roadmap E: plan 2–4 scenarios (the base with quick-change chips, or whole datasets) and compare them side by
+         *     side: cost, service, inventory, capacity, late units, their deltas against the first, and cost per service point.
+         */
+        post: operations["post_whatif_api_whatif_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1875,6 +2059,26 @@ export interface components {
              */
             yields: components["schemas"]["YieldRow"][];
         };
+        /** AddShiftChip */
+        "AddShiftChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "add_shift";
+            /** Resource */
+            resource: string;
+        };
+        /** AddShiftChip */
+        "AddShiftChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "add_shift";
+            /** Resource */
+            resource: string;
+        };
         /**
          * Allocation
          * @description Product allocation (PAL): caps what can be confirmed for a product (and optionally a set of
@@ -2082,6 +2286,11 @@ export interface components {
             mail: boolean;
             /** Sso */
             sso: string | null;
+            /**
+             * Password Min
+             * @default 12
+             */
+            password_min: number;
         };
         /** BacktestPoint */
         BacktestPoint: {
@@ -2486,6 +2695,29 @@ export interface components {
              * @default 5
              */
             life_years: number;
+        };
+        /** CaseInfo */
+        CaseInfo: {
+            /** Example */
+            example: string;
+            /** Company Name */
+            company_name: string;
+            /** Title */
+            title: string;
+            /**
+             * Label
+             * @default Example case (fictional, not real company data)
+             */
+            label: string;
+            /** Brief */
+            brief: string;
+            /**
+             * Questions
+             * @default []
+             */
+            questions: string[];
+            /** Scenarios */
+            scenarios: components["schemas"]["ScenarioIn-Output"][];
         };
         /**
          * Changeover
@@ -2983,6 +3215,11 @@ export interface components {
             approved: boolean;
             /** Notes */
             notes: string[];
+        };
+        /** Csrf */
+        Csrf: {
+            /** Csrf */
+            csrf: string;
         };
         /** CtpStep */
         CtpStep: {
@@ -3489,6 +3726,42 @@ export interface components {
              */
             invoiced: boolean;
         };
+        /** DemandChip */
+        "DemandChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "demand";
+            /**
+             * Pct
+             * @description Change in per cent: 20 = +20 %
+             */
+            pct: number;
+            /**
+             * Products
+             * @default []
+             */
+            products: string[];
+        };
+        /** DemandChip */
+        "DemandChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "demand";
+            /**
+             * Pct
+             * @description Change in per cent: 20 = +20 %
+             */
+            pct: number;
+            /**
+             * Products
+             * @default []
+             */
+            products: string[];
+        };
         /**
          * DemandEvent
          * @description Something that moves demand for a period: a promotion, a price change, a competitor launch…
@@ -3634,6 +3907,21 @@ export interface components {
              */
             period_days?: number | null;
             /**
+             * Original Date
+             * @description Forecast only, set by the roll-forward when the period begins: the first day of the forecast as it was entered. The record's own date, period and quantity are then what is left of the period by time; the original is what delivered orders are counted against, so an order delivered early in the period reduces what is left of it (S/4 reduction at goods issue). Empty: the record is the forecast as entered
+             */
+            original_date?: string | null;
+            /**
+             * Original Period Days
+             * @description Forecast only: the days the forecast as entered covered (see `original_date`)
+             */
+            original_period_days?: number | null;
+            /**
+             * Original Qty
+             * @description Forecast only: the quantity of the forecast as entered (see `original_date`)
+             */
+            original_qty?: number | null;
+            /**
              * Released
              * @description Forecast only: written by a forecast release. Releasing every series again replaces it, so a series the new forecast no longer has does not stay in demand
              * @default false
@@ -3681,6 +3969,11 @@ export interface components {
              * @default []
              */
             unpriced: string[];
+        };
+        /** EmailVerify */
+        EmailVerify: {
+            /** Token */
+            token: string;
         };
         /** ErpAck */
         ErpAck: {
@@ -3848,6 +4141,21 @@ export interface components {
             locations: number;
             /** Products */
             products: number;
+            /**
+             * Case
+             * @default false
+             */
+            case: boolean;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Brief
+             * @default
+             */
+            brief: string;
         };
         /** ExecutionSettings */
         ExecutionSettings: {
@@ -4277,6 +4585,13 @@ export interface components {
              */
             interval: number;
             /**
+             * Service Levels
+             * @description Suggested cycle service level per ABC-XYZ cell, keyed AX … CZ (fractions); a cell left out keeps the default table (A·X 98 % … C·Z 90 %)
+             */
+            service_levels?: {
+                [key: string]: number;
+            } | null;
+            /**
              * Released Inputs
              * @description Written by a forecast release: a fingerprint of the events, new-product rules, overrides and these settings it was made with, so a later change to them is noticed
              */
@@ -4500,6 +4815,31 @@ export interface components {
             timezone: string;
             /** Kinds */
             kinds: string[];
+        };
+        /**
+         * InboxAction
+         * @description The one thing the exception inbox suggests doing about an item (roadmap F).
+         */
+        InboxAction: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "expedite" | "switch_supplier" | "overtime" | "split_delivery" | "push_out" | "sell_first" | "chase" | "pay" | "release" | "review";
+            /** Label */
+            label: string;
+            /**
+             * Protects
+             * @default 0
+             */
+            protects: number;
+            /** Costs */
+            costs: number | null;
+            /**
+             * Href
+             * @default
+             */
+            href: string;
         };
         /** InfoRecord */
         InfoRecord: {
@@ -4743,6 +5083,19 @@ export interface components {
              * @default []
              */
             types: string[];
+        };
+        /** InviteAccept */
+        InviteAccept: {
+            /**
+             * Token
+             * @default
+             */
+            token: string;
+            /**
+             * Company
+             * @default
+             */
+            company: string;
         };
         /**
          * Invoice
@@ -5066,7 +5419,7 @@ export interface components {
              * Unit
              * @enum {string}
              */
-            unit: "ratio" | "days" | "money_per_unit" | "money";
+            unit: "ratio" | "days" | "money_per_unit" | "money" | "times";
             /**
              * Direction
              * @enum {string}
@@ -5242,6 +5595,30 @@ export interface components {
             /** Overload */
             overload: boolean;
         };
+        /** LaneDelayChip */
+        "LaneDelayChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "lane_delay";
+            /** Days */
+            days: number;
+            /** Location */
+            location?: string | null;
+        };
+        /** LaneDelayChip */
+        "LaneDelayChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "lane_delay";
+            /** Days */
+            days: number;
+            /** Location */
+            location: string | null;
+        };
         /** LaneMode */
         LaneMode: {
             /** @default truck_ftl */
@@ -5286,6 +5663,30 @@ export interface components {
              * @default false
              */
             default: boolean;
+        };
+        /** LeadTimeChip */
+        "LeadTimeChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "lead_time";
+            /** Days */
+            days: number;
+            /** Supplier */
+            supplier?: string | null;
+        };
+        /** LeadTimeChip */
+        "LeadTimeChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "lead_time";
+            /** Days */
+            days: number;
+            /** Supplier */
+            supplier: string | null;
         };
         /** LevelMove */
         LevelMove: {
@@ -5380,6 +5781,11 @@ export interface components {
             overloaded_days_after: number;
             /** Hours */
             hours: number;
+        };
+        /** Lever */
+        Lever: {
+            /** What */
+            what: string;
         };
         /** ListChange */
         ListChange: {
@@ -5493,7 +5899,7 @@ export interface components {
             safety_stock?: components["schemas"]["SafetyStockPolicy"];
             /**
              * Safety Time Days
-             * @description Plan receipts this many days early
+             * @description Safety time: plan receipts this many working days early
              * @default 0
              */
             safety_time_days: number;
@@ -5521,11 +5927,13 @@ export interface components {
             gr_processing_days: number;
             /**
              * Consumption Backward Days
+             * @description Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days before its date a sales order may reach back to eat forecast; a forecast for a period counts on every day of it. An order consumes backward first, then forward
              * @default 7
              */
             consumption_backward_days: number;
             /**
              * Consumption Forward Days
+             * @description Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days after its date a sales order may reach forward to eat forecast, once nothing is left backward. What no forecast in reach covers is planned on top of the forecast
              * @default 7
              */
             consumption_forward_days: number;
@@ -5757,6 +6165,11 @@ export interface components {
             user: components["schemas"]["User"];
             /** Companies */
             companies: components["schemas"]["CompanyMeta"][];
+            /**
+             * Invites
+             * @default []
+             */
+            invites: components["schemas"]["PendingInvite"][];
         };
         /** Member */
         Member: {
@@ -5780,6 +6193,8 @@ export interface components {
              * @default []
              */
             families: string[];
+            /** Invite Link */
+            invite_link: string | null;
         };
         /** MemberChange */
         MemberChange: {
@@ -5976,7 +6391,7 @@ export interface components {
             lot_sizing?: components["schemas"]["LotSizing"] | null;
             /**
              * Safety Time Days
-             * @description Plan receipts this many days early
+             * @description Safety time: plan receipts this many working days early
              */
             safety_time_days?: number | null;
             /**
@@ -5984,9 +6399,15 @@ export interface components {
              * @description No new proposals inside this fence
              */
             planning_time_fence_days?: number | null;
-            /** Consumption Backward Days */
+            /**
+             * Consumption Backward Days
+             * @description Calendar days a sales order may reach back to consume forecast (empty: each product's own)
+             */
             consumption_backward_days?: number | null;
-            /** Consumption Forward Days */
+            /**
+             * Consumption Forward Days
+             * @description Calendar days a sales order may reach forward to consume forecast (empty: each product's own)
+             */
             consumption_forward_days?: number | null;
             /**
              * Mrp Controller
@@ -6338,6 +6759,18 @@ export interface components {
              * @default 0
              */
             cannibalisation: number;
+        };
+        /** OneOffPoRequest */
+        OneOffPoRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Source Id */
+            source_id: string;
+            /** Qty */
+            qty: number;
+            /** Due Date */
+            due_date?: string | null;
+            /** Order Date */
+            order_date?: string | null;
         };
         /** OpenOrderRow */
         OpenOrderRow: {
@@ -6995,6 +7428,22 @@ export interface components {
             requirement_id: string;
             /** Qty */
             qty: number;
+        };
+        /**
+         * PendingInvite
+         * @description An invitation to a company waiting for the account to accept it (nobody joins a company unasked).
+         */
+        PendingInvite: {
+            /** Company */
+            company: string;
+            /** Name */
+            name: string;
+            /** Role */
+            role: string;
+            /** Invited By */
+            invited_by: string;
+            /** At */
+            at: string;
         };
         /** PlacementApplied */
         PlacementApplied: {
@@ -7898,6 +8347,12 @@ export interface components {
              */
             include_planned_orders: boolean;
             /**
+             * Quality In Promise
+             * @description Scope of check: stock in quality inspection can be promised (off, as SAP's checking rule A: only unrestricted stock is promised, since inspection stock cannot be shipped until it is released)
+             * @default false
+             */
+            quality_in_promise: boolean;
+            /**
              * Confirm Beyond Rlt
              * @description Confirm unconditionally beyond the replenishment lead time (else backorder)
              * @default true
@@ -8065,6 +8520,12 @@ export interface components {
              */
             erp_sent: string;
             /**
+             * Erp Generation
+             * @description Integration lifecycle identifier, assigned when an order closed by the ERP is restored
+             * @default
+             */
+            erp_generation: string;
+            /**
              * Cancelled Lines
              * @description Cancelled line snapshots, retained so the ERP also receives their cancellation
              */
@@ -8088,6 +8549,12 @@ export interface components {
              * @description Release strategy: levels by order value (empty: the approval limit is the one level)
              */
             release_levels?: components["schemas"]["ReleaseLevel"][];
+            /**
+             * Processing Workdays
+             * @description Purchasing processing time: working days the buyers take to turn a requisition into an order (S/4 plant parameter). Planning releases requisitions this much before the supplier's lead time starts, so the supplier's own lead time stays what they promise
+             * @default 0
+             */
+            processing_workdays: number;
             /**
              * Price Tolerance
              * @description An invoiced price this much over the order's price blocks the invoice
@@ -8630,6 +9097,11 @@ export interface components {
             link: string;
             /** Expires At */
             expires_at: string;
+            /**
+             * Mailed
+             * @default false
+             */
+            mailed: boolean;
         };
         /** ResetPassword */
         ResetPassword: {
@@ -9425,6 +9897,28 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** ScenarioIn */
+        "ScenarioIn-Input": {
+            /** Label */
+            label: string;
+            /**
+             * Chips
+             * @default []
+             */
+            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"])[];
+            dataset?: components["schemas"]["Dataset"] | null;
+        };
+        /** ScenarioIn */
+        "ScenarioIn-Output": {
+            /** Label */
+            label: string;
+            /**
+             * Chips
+             * @default []
+             */
+            chips: (components["schemas"]["DemandChip-Output"] | components["schemas"]["SupplierOutChip-Output"] | components["schemas"]["LeadTimeChip-Output"] | components["schemas"]["AddShiftChip-Output"] | components["schemas"]["LaneDelayChip-Output"])[];
+            dataset: components["schemas"]["Dataset"] | null;
+        };
         /** ScenarioInfo */
         ScenarioInfo: {
             /** Id */
@@ -9449,6 +9943,78 @@ export interface components {
              * @default false
              */
             generated: boolean;
+        };
+        /** ScenarioOut */
+        ScenarioOut: {
+            /** Label */
+            label: string;
+            /** Ok */
+            ok: boolean;
+            /**
+             * Levers
+             * @default []
+             */
+            levers: components["schemas"]["Lever"][];
+            /**
+             * Total Cost
+             * @default 0
+             */
+            total_cost: number;
+            /**
+             * Service
+             * @default 0
+             */
+            service: number;
+            /**
+             * Inventory Value Avg
+             * @default 0
+             */
+            inventory_value_avg: number;
+            /**
+             * Capacity Peak
+             * @default 0
+             */
+            capacity_peak: number;
+            /**
+             * Late Units
+             * @default 0
+             */
+            late_units: number;
+            /**
+             * Late Revenue
+             * @default 0
+             */
+            late_revenue: number;
+            /**
+             * Orders
+             * @default 0
+             */
+            orders: number;
+            /**
+             * Errors
+             * @default 0
+             */
+            errors: number;
+            /** Cost Delta */
+            cost_delta: number | null;
+            /** Service Delta */
+            service_delta: number | null;
+            /** Inventory Delta */
+            inventory_delta: number | null;
+            /** Late Units Delta */
+            late_units_delta: number | null;
+            /** Cost Per Service Point */
+            cost_per_service_point: number | null;
+            /**
+             * Verdict
+             * @default
+             */
+            verdict: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /** ScenarioReport */
         ScenarioReport: {
@@ -10008,6 +10574,12 @@ export interface components {
              * @default
              */
             erp_sent: string;
+            /**
+             * Erp Generation
+             * @description Integration lifecycle identifier, assigned when an order closed by the ERP is restored
+             * @default
+             */
+            erp_generation: string;
         };
         /** ScheduledReceiptOut */
         ScheduledReceiptOut: {
@@ -10109,6 +10681,16 @@ export interface components {
          * @enum {string}
          */
         SelectionMetric: "mase" | "wape" | "rmse";
+        /** Sent */
+        Sent: {
+            /**
+             * Ok
+             * @default true
+             */
+            ok: boolean;
+            /** Mail */
+            mail: boolean;
+        };
         /** Series */
         Series: {
             /** Key */
@@ -10209,6 +10791,8 @@ export interface components {
             user: components["schemas"]["User"];
             /** Expires At */
             expires_at: string;
+            /** Csrf */
+            csrf: string | null;
         };
         /**
          * SetAside
@@ -10308,6 +10892,11 @@ export interface components {
              * @default 0.95
              */
             default_service_level: number;
+            /**
+             * Timezone
+             * @description The company's time zone (IANA, e.g. Asia/Kolkata): the times of day of its scheduled imports; empty = the server's (SCP_TIMEZONE, else UTC)
+             */
+            timezone?: string | null;
             /** Default Calendar */
             default_calendar?: string | null;
             /**
@@ -10688,6 +11277,11 @@ export interface components {
             blocked: string;
             /** Contract */
             contract: string | null;
+        };
+        /** SsoLink */
+        SsoLink: {
+            /** Url */
+            url: string;
         };
         /** StepReport */
         StepReport: {
@@ -11079,6 +11673,26 @@ export interface components {
              */
             note: string;
         };
+        /** SupplierOutChip */
+        "SupplierOutChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "supplier_out";
+            /** Supplier */
+            supplier: string;
+        };
+        /** SupplierOutChip */
+        "SupplierOutChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "supplier_out";
+            /** Supplier */
+            supplier: string;
+        };
         /**
          * SupplierReturn
          * @description Goods sent back to the supplier (≈ return delivery): taken out of stock against the order line, so the line
@@ -11342,6 +11956,16 @@ export interface components {
              */
             cleared: components["schemas"]["WorkItem"][];
             /**
+             * Inbox
+             * @default []
+             */
+            inbox: string[];
+            /**
+             * Money At Risk
+             * @default 0
+             */
+            money_at_risk: number;
+            /**
              * Data Quality
              * @default []
              */
@@ -11404,6 +12028,12 @@ export interface components {
              * @default 0.2
              */
             bias_alert: number;
+            /**
+             * Late Revenue Factor
+             * @description Exception inbox: the share of a late sale's revenue counted as at risk (1 = all of it, 0.2 = a fifth, e.g. a late-delivery penalty)
+             * @default 1
+             */
+            late_revenue_factor: number;
         };
         /** TraceRequest */
         TraceRequest: {
@@ -11489,6 +12119,11 @@ export interface components {
             email: string;
             /** Name */
             name: string;
+            /**
+             * Verified
+             * @default false
+             */
+            verified: boolean;
         };
         /** ValidationError */
         ValidationError: {
@@ -11714,6 +12349,29 @@ export interface components {
             /** Company */
             company: string;
         };
+        /** WhatIfRequest */
+        WhatIfRequest: {
+            base: components["schemas"]["Dataset"];
+            /** Scenarios */
+            scenarios: components["schemas"]["ScenarioIn-Input"][];
+        };
+        /** WhatIfResult */
+        WhatIfResult: {
+            /** Currency */
+            currency: string;
+            /** Scenarios */
+            scenarios: components["schemas"]["ScenarioOut"][];
+            /**
+             * Best Service
+             * @default
+             */
+            best_service: string;
+            /**
+             * Lowest Cost
+             * @default
+             */
+            lowest_cost: string;
+        };
         /**
          * WorkItem
          * @description An exception on the worklist, with its lifecycle kept across runs in the version store.
@@ -11792,6 +12450,19 @@ export interface components {
              * @default
              */
             note: string;
+            /**
+             * Money At Risk
+             * @default 0
+             */
+            money_at_risk: number;
+            /**
+             * Money Basis
+             * @default
+             */
+            money_basis: string;
+            /** Customer */
+            customer: string | null;
+            action: components["schemas"]["InboxAction"] | null;
         };
         /** WorkItemEntry */
         WorkItemEntry: {
@@ -11942,6 +12613,46 @@ export interface operations {
             };
         };
     };
+    auth_adopt_api_auth_adopt_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+        };
+    };
+    auth_csrf_api_auth_csrf_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Csrf"];
+                };
+            };
+        };
+    };
     auth_signout_api_auth_signout_post: {
         parameters: {
             query?: never;
@@ -11980,6 +12691,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Me"];
+                };
+            };
+        };
+    };
+    auth_accept_invite_api_auth_invites_accept_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteAccept"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_email_request_api_auth_email_request_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Sent"];
+                };
+            };
+        };
+    };
+    auth_email_verify_api_auth_email_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailVerify"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12675,6 +13472,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_sso_link_api_auth_sso_link_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SsoLink"];
                 };
             };
         };
@@ -13522,6 +14339,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExampleInfo"][];
+                };
+            };
+        };
+    };
+    cases_api_cases_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseInfo"][];
                 };
             };
         };
@@ -14470,6 +15307,39 @@ export interface operations {
             };
         };
     };
+    post_one_off_po_api_purchasing_one_off_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OneOffPoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatePoResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_po_action_api_purchasing_act_post: {
         parameters: {
             query?: never;
@@ -14975,6 +15845,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Comparison"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_whatif_api_whatif_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WhatIfRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhatIfResult"];
                 };
             };
             /** @description Validation Error */

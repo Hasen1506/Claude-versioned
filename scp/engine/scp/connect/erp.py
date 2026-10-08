@@ -464,7 +464,9 @@ class OutOrder(Out):
     lines: list[OutLine] = []
 
 
-def _version(x: Any) -> str:
+def _version(x: Any, generation: str = "") -> str:
+    if generation:
+        x = {"generation": generation, "order": x}
     return hashlib.sha256(json.dumps(x, sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()[:16]
 
 
@@ -500,7 +502,8 @@ def outbound(ds: Dataset, kind: OutKind, everything: bool = False) -> list[OutOr
             if not lines:
                 continue
             ver = _version({"s": h.supplier, "l": h.location, "c": v.currency, "k": h.kind, "to": h.valid_to,
-                            "lines": [(x.id, x.product, x.qty, x.date, x.price, x.cancelled) for x in lines]})
+                            "lines": [(x.id, x.product, x.qty, x.date, x.price, x.cancelled) for x in lines]},
+                           h.erp_generation)
             ch = _change(h.erp_ref, h.erp_sent, ver)
             if everything or ch != "taken":
                 out.append(OutOrder(kind=kind, id=h.id, version=ver, change=ch, erp_ref=h.erp_ref, location=h.location,
@@ -517,7 +520,8 @@ def outbound(ds: Dataset, kind: OutKind, everything: bool = False) -> list[OutOr
             continue
         qty = r.ordered_qty if r.ordered_qty is not None else r.qty
         origin = lanes[r.source].origin if want is ReceiptKind.TRANSFER and r.source in lanes else None
-        ver = _version({"p": r.product, "l": r.location, "q": qty, "s": r.start_date, "d": r.due_date, "src": r.source})
+        ver = _version({"p": r.product, "l": r.location, "q": qty, "s": r.start_date, "d": r.due_date, "src": r.source},
+                       r.erp_generation)
         ch = _change(r.erp_ref, r.erp_sent, ver)
         if everything or ch != "taken":
             out.append(OutOrder(kind=kind, id=r.id, version=ver, change=ch, erp_ref=r.erp_ref, location=r.location,
@@ -527,45 +531,35 @@ def outbound(ds: Dataset, kind: OutKind, everything: bool = False) -> list[OutOr
     return out
 
 
-def forget_erp(ds: Dataset, kind: str, oid: str) -> Dataset:
-    """The order as if the ERP had never taken it: no number, no version taken."""
-    clear = {"erp_ref": "", "erp_sent": ""}
-    if kind == "purchase_order":
-        return ds.model_copy(update={f: [p.model_copy(update=clear) if p.id == oid else p for p in getattr(ds, f)]
-                                     for f in ("purchase_orders", "cancelled_purchase_orders")})
-    return ds.model_copy(update={"receipts": [r.model_copy(update=clear) if r.id == oid else r for r in ds.receipts]})
-
-
-def withdrawn_version(kind: str, oid: str, erp_ref: str) -> str:
-    return _version({"withdrawn": [kind, oid, erp_ref]})
+def withdrawn_version(kind: str, oid: str, erp_ref: str, generation: str = "") -> str:
+    return _version({"withdrawn": [kind, oid, erp_ref]}, generation)
 
 
 def withdrawn(kind: OutKind, rows: list[dict]) -> list[OutOrder]:
     """Orders the ERP numbered that were deleted here (N137): ``rows`` as kept by the company store (kind, id,
     erp_ref, location, taken_at)."""
-    return [OutOrder(kind=kind, id=r["id"], version=withdrawn_version(kind, r["id"], r["erp_ref"]),
+    return [OutOrder(kind=kind, id=r["id"], version=withdrawn_version(kind, r["id"], r["erp_ref"], r.get("generation", "")),
                      change="taken" if r.get("taken_at") else "withdrawn", erp_ref=r["erp_ref"],
                      location=r.get("location") or "")
-            for r in rows if r["kind"] == kind and not r.get("restored_at")]
+            for r in rows if r["kind"] == kind]
 
 
-def acknowledge(ds: Dataset, acks: list[ErpAck], gone: dict[tuple[str, str], str] | None = None,
-                restored: set[tuple[str, str]] | None = None) -> tuple[Dataset, list[ItemResult]]:
+def acknowledge(ds: Dataset, acks: list[ErpAck], gone: dict[tuple[str, str], OutOrder] | None = None
+                ) -> tuple[Dataset, list[ItemResult]]:
     """The ERP took these orders: keep the number it gave each and the version it took. ``gone``: orders deleted
-    here, (kind, id) → the ERP's number; an acknowledgement of one says the ERP closed its copy. ``restored``: orders
-    that came back after the ERP closed its copy; the ERP made them anew, so the number it gives now replaces the old."""
-    for a in acks:
-        if (a.kind, a.id) in (restored or set()):
-            ds = forget_erp(ds, a.kind, a.id)
+    here, (kind, id) → the withdrawal sent; an acknowledgement of its version says the ERP closed its copy."""
     current = {(k, o.id): o for k in ("purchase_order", "production_order", "transfer_order")
                for o in outbound(ds, k, everything=True)} if acks else {}
     return _each(ds, acks, lambda a: a.id, lambda d, a: _ack(d, a, current, gone or {}))
 
 
-def _ack(ds: Dataset, a: ErpAck, current: dict, gone: dict[tuple[str, str], str]) -> tuple[Dataset, ItemResult]:
+def _ack(ds: Dataset, a: ErpAck, current: dict, gone: dict[tuple[str, str], OutOrder]) -> tuple[Dataset, ItemResult]:
     if (a.kind, a.id) in gone and (a.kind, a.id) not in current:
-        if gone[(a.kind, a.id)] != a.erp_ref:
-            raise ValueError(f"{a.id} was {gone[(a.kind, a.id)]} in the ERP, not {a.erp_ref}")
+        withdrawal = gone[(a.kind, a.id)]
+        if withdrawal.erp_ref != a.erp_ref:
+            raise ValueError(f"{a.id} was {withdrawal.erp_ref} in the ERP, not {a.erp_ref}")
+        if withdrawal.version != a.version:
+            raise ValueError(f"{a.id}: acknowledge the withdrawn version {withdrawal.version}, not {a.version}")
         return ds, ItemResult(ref=a.id, status="applied", id=a.id,
                               message=f"{a.id} ({a.erp_ref}) was deleted here: the ERP closed its copy")
     now = current.get((a.kind, a.id))

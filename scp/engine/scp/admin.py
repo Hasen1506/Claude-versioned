@@ -36,6 +36,12 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "check":
         print("\n".join(check(a.file)))
         return 0
+    if a.cmd in ("backup", "restore") and os.environ.get("DATABASE_URL", "").strip():
+        # CV-M06: these copy the SQLite file; a PostgreSQL server (Neon) is backed up and put back with its own tools
+        print(f"{a.cmd} works on the SQLite database file, but this server keeps its data in PostgreSQL "
+              "(DATABASE_URL): use pg_dump / pg_restore, or a Neon branch or point-in-time restore (docs/NEON.md)",
+              file=sys.stderr)
+        return 2
     if a.cmd == "restore":
         db = os.environ.get("SCP_DB") or str(Path.home() / ".scp" / "scp.sqlite")
         kept = restore(a.file, db)

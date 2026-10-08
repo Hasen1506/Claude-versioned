@@ -71,7 +71,9 @@ export function Demand({ route }: { route: string[] }) {
   const tabs = <Tabs<View> value={view} onChange={(v) => go("demand", v)} tabs={[
     { id: "plan", label: "Demand plan" },
     { id: "overview", label: "Forecast" },
-    ...(fc?.ok && fc.series.length ? [{ id: "series" as View, label: "Series workbench", count: fc.series.length }, { id: "consensus" as View, label: "Consensus grid" }] : []),
+    // REFRESH-01: the tabs stay while the forecast is being calculated (after a reload it is calculated again)
+    ...(fc?.ok && fc.series.length ? [{ id: "series" as View, label: "Series workbench", count: fc.series.length }, { id: "consensus" as View, label: "Consensus grid" }]
+      : run.running && (view === "series" || view === "consensus") ? [{ id: "series" as View, label: "Series workbench" }, { id: "consensus" as View, label: "Consensus grid" }] : []),
     { id: "settings", label: "Forecast settings" },
   ]} />;
   const notYet = outdated && !released && <div className="banner warning" role="status">
@@ -83,6 +85,7 @@ export function Demand({ route }: { route: string[] }) {
   if (view === "plan") return body(<>{released && <ReleaseBanner info={released} ds={ds} onClose={() => setReleased(null)} />}<DemandPlan ds={ds} /></>);
 
   if (run.error) return body(<div className="banner error"><Badge sev="error">Forecast failed</Badge>{run.error}</div>);
+  if (!fc && run.running) return body(<div className="banner info" role="status">Calculating the forecast…</div>);
   if (!fc || (fc.ok && fc.series.length === 0)) {
     return body(<div className="stack">
       <SolverIO answers="How much each customer or location will want, per week or month, with a range and a reason for every number."

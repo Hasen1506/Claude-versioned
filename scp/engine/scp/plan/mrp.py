@@ -54,6 +54,7 @@ from .result import (
 )
 
 EPS = 1e-9
+RESCHEDULE_OUT_TOLERANCE_DAYS = 3   # a firm receipt up to this many days early is left alone (S/4 rescheduling tolerance)
 _PREFIX = {"make": "MO", "buy": "PR", "transfer": "TO"}
 
 
@@ -172,7 +173,8 @@ class _Planner:
                 continue
             lp = self.ds.demand_lp(node)
             period = {rid: rec.period_days for rid, rec in recs}
-            for r in effective_demand(recs, lp.strategy, lp.consumption_backward_days, lp.consumption_forward_days):
+            for r in effective_demand(recs, lp.strategy, lp.consumption_backward_days, lp.consumption_forward_days,
+                                          ds=self.ds, node=node):
                 for i, (d, q) in enumerate(self._split(node, r.date, r.qty, period.get(r.source_ref)
                                                         if r.kind == "forecast" else None)):
                     if d >= self.b.end:
@@ -337,6 +339,7 @@ class _Planner:
                           node=node)
         shelf = self.shelf(node)
         fresh = _Fresh(onhand) if shelf else None
+        thresholds: dict[date, float] = {}
         for d in dates:
             if fresh is not None:
                 for last, q, what in fresh.expire(d):
@@ -352,6 +355,7 @@ class _Planner:
             threshold = max(ss, 0.0 if mto else target_at(st.targets, d))
             if lp.mrp_type is MrpType.REORDER_POINT and lp.reorder_point is not None:
                 threshold = max(threshold, lp.reorder_point)
+            thresholds[d] = threshold
             if disc is not None and d >= disc:
                 threshold = 0.0           # discontinued: no buffer, no new supply; the follow-up takes over
                 if avail < -EPS:
@@ -374,7 +378,10 @@ class _Planner:
                 continue
             shortage = threshold - avail
             qty, gap = self._lot(lp, mto, shortage, d, avail, req_on, rec_on, eoq_qty, shelf)
-            need = max(self.start, d - timedelta(days=lp.safety_time_days)) if lp.safety_time_days else d
+            # safety time (S/4 §8.1): the receipt is planned this many WORKING days early on the location's calendar,
+            # so a Monday requirement with two days of safety time is due on Thursday, never on a closed Saturday
+            need = (max(self.start, location_calendar(self.ds, node[0]).add_workdays(d, -lp.safety_time_days))
+                    if lp.safety_time_days else d)
             ceiling = gap if lp.lot_sizing.policy is LotSizePolicy.MIN_MAX and not mto else None
             # what the order is for: requirements below zero first, then the buffer up to the threshold
             first = len(self.orders)
@@ -384,7 +391,44 @@ class _Planner:
             if fresh is not None:
                 for o in self.orders[first:]:   # a batch keeps from the day it is there
                     fresh.add(max(d, o.available_date) + timedelta(days=shelf), o.qty, o.id)
+        if disc is None:
+            self._reschedule_out(node, st, thresholds)
         self._peg(node, st)
+
+    def _reschedule_out(self, node: Node, st: _NodeState, thresholds: dict[date, float]) -> None:
+        """The rescheduling check the other way (S/4 exceptions 15 and 20): a firm receipt the plan does not need on its
+        date. Receipts are taken in date order; each is needed on the first checked date where the stock without it
+        (and without the firm receipts after it) would fall below the safety stock, target or reorder point. Needed
+        nowhere in the horizon: RECEIPT_NOT_NEEDED (cancel it, or pull it in instead of a new order); needed more than
+        RESCHEDULE_OUT_TOLERANCE_DAYS later: RESCHEDULE_OUT to that date. Advice only: the receipt keeps its date."""
+        firm = sorted((s for s in st.supplies if s.kind == "receipt"), key=lambda s: (s.date, s.id))
+        if not firm or not thresholds:
+            return
+        others = [s for s in st.supplies if s.kind != "receipt"]
+        out_req: dict[date, float] = defaultdict(float)
+        for r in st.reqs:
+            out_req[r.date] += r.qty
+        checks = sorted(thresholds)
+        for k, rc in enumerate(firm):
+            inflow: dict[date, float] = defaultdict(float)
+            for s in [*others, *firm[:k]]:
+                inflow[s.date] += s.qty
+            avail = 0.0
+            needed: date | None = None
+            for d in sorted(set(checks) | set(inflow) | set(out_req)):
+                avail += inflow.get(d, 0.0) - out_req.get(d, 0.0)
+                if d in thresholds and avail < thresholds[d] - EPS:
+                    needed = d
+                    break
+            if needed is None:
+                self._exc("RECEIPT_NOT_NEEDED", "warning",
+                          f"{rc.id}: {rc.qty:,.1f} arrive {rc.date.isoformat()} but nothing needs them before the "
+                          f"horizon ends: cancel or push it out (or pull it in in place of a new order)",
+                          node=node, order=rc.id, when=rc.date, qty=rc.qty)
+            elif (needed - rc.date).days > RESCHEDULE_OUT_TOLERANCE_DAYS:
+                self._exc("RESCHEDULE_OUT", "warning",
+                          f"{rc.id}: arrives {rc.date.isoformat()} but is first needed {needed.isoformat()}; push it "
+                          f"out by {(needed - rc.date).days} d", node=node, order=rc.id, when=needed, qty=rc.qty)
 
     def _expiry(self, node: Node, st: _NodeState, onhand: float) -> None:
         """Batch stock the requirements will not use before it expires is gone the day after (R15): a requirement
@@ -551,6 +595,13 @@ class _Planner:
         rounds += batch + whole   # a product counted in each is never planned as 25.9 tins
         if st.lp.strategy is Strategy.MTO:
             lots = apply_modifiers(qty, mins=[], roundings=batch + whole, maxes=maxes)
+        elif ls.policy is LotSizePolicy.FIXED and ls.fixed_qty:
+            # fixed lot size (S/4 FX): the fixed lot is repeated until the shortage is covered, one order per lot (a
+            # shortage of 120 in lots of 50 is three orders of 50, not one of 150: each lot is a batch, a setup and
+            # an order cost). The minimums and rounding apply to the lot itself
+            one = apply_modifiers(ls.fixed_qty, mins=mins, roundings=rounds, maxes=maxes)
+            n = max(1, math.ceil(qty / sum(one) - 1e-9))
+            lots = one * n
         else:
             lots = apply_modifiers(qty, mins=mins, roundings=rounds, maxes=maxes)
             step = max((r for r in rounds if r), default=None)
@@ -558,7 +609,8 @@ class _Planner:
                 # replenish-to-max: round DOWN when that still covers the shortage and the minimums
                 down = math.floor(ceiling / step + 1e-9) * step
                 if down >= max([shortage or 0.0, *mins]) - EPS:
-                    lots = apply_modifiers(down, mins=[], roundings=[], maxes=maxes)
+                    # split by the maximum in whole rounding steps: a lot of 35 when lots come in tens is no lot
+                    lots = apply_modifiers(down, mins=[], roundings=[step], maxes=maxes)
         total = 0.0
         req_left = qty if below_zero is None else below_zero
         buf_left = 0.0 if shortage is None else max(0.0, shortage - req_left)

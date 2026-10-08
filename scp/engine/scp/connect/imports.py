@@ -30,8 +30,10 @@ import ipaddress
 import json
 import os
 import re
+import http.client
 import shutil
 import socket
+import ssl
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
@@ -133,9 +135,26 @@ def _iso(t: dt.datetime) -> str:
     return t.astimezone(dt.UTC).replace(microsecond=0).isoformat()
 
 
-def next_run(every: str, at: str, weekday: int, after: dt.datetime) -> dt.datetime:
-    """The first time after ``after`` the schedule falls on (times of day in the server's time zone)."""
-    z = _zone()
+def company_timezone(c: Companies, cid: str) -> str:
+    """The company's own time zone (its settings), else the server's: a 06:00 import of a company in Chennai runs at
+    06:00 in Chennai, not 06:00 UTC (UX audit: the scheduler's zone was a server setting only)."""
+    try:
+        r = c.db.execute("SELECT dataset FROM companies WHERE id = ?", (cid,)).fetchone()
+        tz = (json.loads(r["dataset"]).get("settings") or {}).get("timezone") if r and r["dataset"] else None
+        if tz:
+            ZoneInfo(tz)
+            return tz
+    except Exception:  # noqa: BLE001 - an unreadable or unknown zone: the server's, rather than no imports at all
+        pass
+    return timezone()
+
+
+def next_run(every: str, at: str, weekday: int, after: dt.datetime, zone: str | None = None) -> dt.datetime:
+    """The first time after ``after`` the schedule falls on (times of day in ``zone``, else the server's time zone)."""
+    try:
+        z = ZoneInfo(zone) if zone else _zone()
+    except Exception:  # noqa: BLE001
+        z = _zone()
     local = after.astimezone(z)
     h, m = (int(x) for x in at.split(":"))
     if every == "hour":
@@ -189,7 +208,7 @@ def jobs(c: Companies, user: User, cid: str) -> ImportJobs:
         c._need(user, cid)
         rows = c.db.execute("SELECT * FROM import_jobs WHERE company_id = ? AND deleted = 0 ORDER BY id", (cid,)).fetchall()
         f = folder_of(cid)
-        return ImportJobs(jobs=[_job(c, r) for r in rows], folder=str(f) if f else None, timezone=timezone(),
+        return ImportJobs(jobs=[_job(c, r) for r in rows], folder=str(f) if f else None, timezone=company_timezone(c, cid),
                           kinds=kinds())
 
 
@@ -201,7 +220,7 @@ def save_job(c: Companies, user: User, cid: str, body: JobInput, jid: str | None
     with c.lock:
         _ensure(c)
         c._need(user, cid, "owner")
-        nxt = _iso(next_run(body.every, body.at, body.weekday, now)) if body.enabled else None
+        nxt = _iso(next_run(body.every, body.at, body.weekday, now, company_timezone(c, cid))) if body.enabled else None
         if jid is None:
             n = c.db.execute("SELECT COUNT(*) FROM import_jobs").fetchone()[0] + 1
             jid = f"J{n:04d}"
@@ -293,7 +312,10 @@ def read_grid(text: str) -> list[list[str]]:
     text = text.lstrip("﻿")
     first = text.splitlines()[0] if text else ""
     delim = max((",", ";", "\t", "|"), key=first.count)
-    return [row for row in csv.reader(io.StringIO(text), delimiter=delim) if any(c.strip() for c in row)]
+    try:   # newline="": a lone carriage return inside a cell is the file's business, not a crash
+        return [row for row in csv.reader(io.StringIO(text, newline=""), delimiter=delim) if any(c.strip() for c in row)]
+    except csv.Error as e:   # a file that is not CSV at all is refused like any unreadable file, never a crash
+        raise ValueError(f"the file cannot be read as CSV: {e}") from e
 
 
 def parse_date(v: str, day_first: bool) -> str | None:
@@ -416,7 +438,12 @@ def parse(kind: str, fmt: str, raw: bytes, day_first: bool = True) -> list[Any]:
     if fmt == "json":
         data = json.loads(text)
         key = {"orders": "orders", "stock": "stock", "postings": "postings"}.get(kind, "records")
-        return data.get(key, []) if isinstance(data, dict) else data
+        items = data.get(key, []) if isinstance(data, dict) else data
+        # CV-M01: a file of another shape (a string, a number, a list of strings) is refused, not crashed on
+        if not isinstance(items, list) or not all(isinstance(x, dict) for x in items):
+            raise ValueError(f"the file is not a list of records (expected a JSON list of objects, or an object "
+                             f"with \"{key}\": [...])")
+        return items
     grid = read_grid(text)
     if kind.startswith("records:"):
         return _records(grid, day_first)
@@ -484,17 +511,82 @@ def _hosts() -> list[str]:
     return [x.strip().lower() for x in os.environ.get("SCP_IMPORT_HOSTS", "").split(",") if x.strip()]
 
 
+def _public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """An address on the public internet: global (so not private, loopback, link-local, carrier-grade NAT
+    100.64.0.0/10, reserved, …) and not multicast; an IPv4 address inside IPv6 is judged as itself (CV-H08)."""
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_global and not ip.is_multicast
+
+
+def _resolve(host: str, port: int) -> list[tuple[int, str]]:
+    """The addresses a host name resolves to: (family, address)."""
+    out = []
+    for fam, _type, _proto, _name, addr in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
+        out.append((fam, str(addr[0]).split("%")[0]))
+    return out
+
+
 def _inside(host: str) -> bool:
-    """Whether a host name resolves to an address in the server's own network (or the machine itself)."""
+    """Whether a host name resolves to any address that is not on the public internet (the server's own network,
+    the machine itself, a cloud's metadata address)."""
     try:
-        infos = socket.getaddrinfo(host, None)
+        infos = _resolve(host, 0)
     except OSError:
         return False                    # no such name: reading it fails on its own
-    for info in infos:
-        ip = ipaddress.ip_address(str(info[4][0]).split("%")[0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
-            return True
-    return False
+    return any(not _public(ipaddress.ip_address(a)) for _f, a in infos)
+
+
+def _vetted(host: str, port: int) -> list[tuple[int, str]]:
+    """The addresses to connect to for ``host``: resolved once, each one public unless the administrator allows the
+    host by name (SCP_IMPORT_HOSTS). The connection is made to these very addresses, so a second lookup cannot
+    point it elsewhere (DNS rebinding, CV-H08)."""
+    infos = _resolve(host, port)
+    if not infos:
+        raise ValueError(f"{host} does not resolve")
+    if host.lower() not in _hosts():
+        bad = [a for _f, a in infos if not _public(ipaddress.ip_address(a))]
+        if bad:
+            raise ValueError(f"{host} is inside the server's own network ({bad[0]}): the server's administrator can "
+                             "allow it with SCP_IMPORT_HOSTS")
+    return infos
+
+
+def _connect(host: str, port: int, timeout: float | None) -> socket.socket:
+    err: Exception | None = None
+    for fam, addr in _vetted(host, port):
+        sock = socket.socket(fam, socket.SOCK_STREAM)
+        if timeout is not None:
+            sock.settimeout(timeout)
+        try:
+            sock.connect((addr, port))
+            return sock
+        except OSError as e:
+            sock.close()
+            err = e
+    raise err or OSError(f"cannot connect to {host}")
+
+
+class _PinnedHTTP(http.client.HTTPConnection):
+    def connect(self) -> None:
+        self.sock = _connect(self.host, self.port, self.timeout)
+
+
+class _PinnedHTTPS(http.client.HTTPSConnection):
+    def connect(self) -> None:
+        sock = _connect(self.host, self.port, self.timeout)
+        ctx = getattr(self, "_context", None) or ssl.create_default_context()
+        self.sock = ctx.wrap_socket(sock, server_hostname=self.host)   # the certificate is checked for the name
+
+
+class _PinnedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):  # type: ignore[no-untyped-def]
+        return self.do_open(_PinnedHTTP, req)
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):  # type: ignore[no-untyped-def]
+        return self.do_open(_PinnedHTTPS, req, context=ssl.create_default_context())
 
 
 def reachable(url: str) -> None:
@@ -526,7 +618,10 @@ def _fetch(url: str, headers: dict[str, str]) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "scp-import/1"})
     for k, v in headers.items():
         req.add_unredirected_header(k, v)          # not carried to wherever a redirect points
-    opener = urllib.request.build_opener(_Redirect)
+    # no proxy from the environment (it would be the address connected to), and every connection, a redirect's
+    # included, goes to an address checked when it is made
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _PinnedHTTPHandler, _PinnedHTTPSHandler,
+                                         _Redirect)
     with opener.open(req, timeout=60) as r:
         data = r.read(MAX_BYTES + 1)
     if len(data) > MAX_BYTES:
@@ -594,7 +689,8 @@ def run_job(c: Companies, jid: str, user: User | None = None, now: dt.datetime |
     with c.lock:
         c.db.execute("UPDATE import_jobs SET last_run = ?, last_status = ?, last_summary = ?, next_run = ? WHERE id = ?",
                      (_iso(now), last.status if last else "nothing", last.summary if last else "no file to read",
-                      _iso(next_run(job["every"], job["at"], job["weekday"], now)) if job["enabled"] else None, jid))
+                      _iso(next_run(job["every"], job["at"], job["weekday"], now, company_timezone(c, job["company_id"])))
+                      if job["enabled"] else None, jid))
     return out
 
 
@@ -605,6 +701,8 @@ def _message(c: Companies, user: User, cid: str, job: Any, raw: bytes, source: s
         return _failed(c, job, source, str(e))
     except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
         return _failed(c, job, source, str(e))
+    except (TypeError, AttributeError, KeyError) as e:     # a file of a shape nobody foresaw (CV-M01)
+        return _failed(c, job, source, f"the file cannot be read as {job['kind']}: {e}")
 
 
 def due(c: Companies, now: dt.datetime) -> list[str]:
@@ -617,6 +715,29 @@ def due(c: Companies, now: dt.datetime) -> list[str]:
 
 
 def run_due(c: Companies, now: dt.datetime | None = None) -> dict[str, list[MessageRow]]:
-    """Run every job whose time has come."""
+    """Run every job whose time has come. One job that fails in a way nobody foresaw is logged against itself and
+    moved to its next time; the jobs after it still run (CV-M01)."""
     now = now or dt.datetime.now(dt.UTC)
-    return {jid: run_job(c, jid, now=now) for jid in due(c, now)}
+    out: dict[str, list[MessageRow]] = {}
+    for jid in due(c, now):
+        try:
+            out[jid] = run_job(c, jid, now=now)
+        except Exception as e:  # noqa: BLE001 - one job never stops the others
+            out[jid] = _gave_up(c, jid, now, str(e) or type(e).__name__)
+    return out
+
+
+def _gave_up(c: Companies, jid: str, now: dt.datetime, why: str) -> list[MessageRow]:
+    with c.lock:
+        job = c.db.execute("SELECT * FROM import_jobs WHERE id = ?", (jid,)).fetchone()
+        if job is None:
+            return []
+        c.db.execute("UPDATE import_jobs SET last_run = ?, last_status = 'failed', last_summary = ?, next_run = ? "
+                     "WHERE id = ?", (_iso(now), f"could not run: {why}"[:300],
+                                      _iso(next_run(job["every"], job["at"], job["weekday"], now,
+                                                    company_timezone(c, job["company_id"]))) if job["enabled"]
+                                      else None, jid))
+    try:
+        return [_failed(c, job, job["source"], why)]
+    except Exception:  # noqa: BLE001 - the job's own status says it
+        return []
