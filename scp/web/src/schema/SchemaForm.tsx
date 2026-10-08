@@ -84,6 +84,7 @@ const TITLE: Record<string, string> = {
   batches: "Kept by batch, first expiring first out", inspect_on_receipt: "Inspected on receipt",
   serial_numbers: "Serial number per unit", cold_chain: "Kept chilled (needs a refrigerated route)",
   negative_stock: "When a posting takes stock below zero", quality_in_planning: "Stock in inspection counts in planning",
+  quality_in_promise: "Stock in inspection can be promised", processing_workdays: "Buyers' processing time (working days)",
   firm_zone_days: "Firm zone (days)", delivery_tolerance: "Short delivery still counted in full",
   batch: "Batch", expires_on: "Expires on", made_on: "Made on", supplier_batch: "Supplier's batch number",
   stock_type: "Stock", serials: "Serial numbers", reversal_of: "Takes back movement", doc: "Material document",

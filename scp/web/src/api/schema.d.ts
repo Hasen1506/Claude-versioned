@@ -8332,6 +8332,12 @@ export interface components {
              */
             include_planned_orders: boolean;
             /**
+             * Quality In Promise
+             * @description Scope of check: stock in quality inspection can be promised (off, as SAP's checking rule A: only unrestricted stock is promised, since inspection stock cannot be shipped until it is released)
+             * @default false
+             */
+            quality_in_promise: boolean;
+            /**
              * Confirm Beyond Rlt
              * @description Confirm unconditionally beyond the replenishment lead time (else backorder)
              * @default true
@@ -8528,6 +8534,12 @@ export interface components {
              * @description Release strategy: levels by order value (empty: the approval limit is the one level)
              */
             release_levels?: components["schemas"]["ReleaseLevel"][];
+            /**
+             * Processing Workdays
+             * @description Purchasing processing time: working days the buyers take to turn a requisition into an order (S/4 plant parameter). Planning releases requisitions this much before the supplier's lead time starts, so the supplier's own lead time stays what they promise
+             * @default 0
+             */
+            processing_workdays: number;
             /**
              * Price Tolerance
              * @description An invoiced price this much over the order's price blocks the invoice
