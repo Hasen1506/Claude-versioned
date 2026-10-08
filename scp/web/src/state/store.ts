@@ -958,8 +958,12 @@ export const store = {
     done();
   },
 
-  /** Store a result computed outside `run` (e.g. a schedule with a hand-edited sequence). */
+  /** Store a result computed outside `run` (e.g. a schedule with a hand-edited sequence). It supersedes a `run` of
+   *  the same key still in flight: that answer was asked for before this one and is dropped when it arrives, so a
+   *  hand move made while "Recalculate" is still running is not overwritten by the older, profile-made schedule. */
   put<K extends RunKey>(key: K, data: RunResults[K], rev: number) {
+    runRequests[key] = (runRequests[key] ?? 0) + 1;
+    pendingCalc.delete(key);
     setRun(key, { data, revision: rev, on: rev === state.revision ? state.dataset : null, running: false, error: null,
       at: new Date().toLocaleTimeString("en-GB") } as Partial<Run<RunResults[K]>>);
   },

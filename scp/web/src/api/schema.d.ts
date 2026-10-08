@@ -4801,6 +4801,31 @@ export interface components {
             /** Kinds */
             kinds: string[];
         };
+        /**
+         * InboxAction
+         * @description The one thing the exception inbox suggests doing about an item (roadmap F).
+         */
+        InboxAction: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "expedite" | "switch_supplier" | "overtime" | "split_delivery" | "push_out" | "sell_first" | "chase" | "pay" | "release" | "review";
+            /** Label */
+            label: string;
+            /**
+             * Protects
+             * @default 0
+             */
+            protects: number;
+            /** Costs */
+            costs: number | null;
+            /**
+             * Href
+             * @default
+             */
+            href: string;
+        };
         /** InfoRecord */
         InfoRecord: {
             /** Source Id */
@@ -11896,6 +11921,16 @@ export interface components {
              */
             cleared: components["schemas"]["WorkItem"][];
             /**
+             * Inbox
+             * @default []
+             */
+            inbox: string[];
+            /**
+             * Money At Risk
+             * @default 0
+             */
+            money_at_risk: number;
+            /**
              * Data Quality
              * @default []
              */
@@ -11958,6 +11993,12 @@ export interface components {
              * @default 0.2
              */
             bias_alert: number;
+            /**
+             * Late Revenue Factor
+             * @description Exception inbox: the share of a late sale's revenue counted as at risk (1 = all of it, 0.2 = a fifth, e.g. a late-delivery penalty)
+             * @default 1
+             */
+            late_revenue_factor: number;
         };
         /** TraceRequest */
         TraceRequest: {
@@ -12374,6 +12415,19 @@ export interface components {
              * @default
              */
             note: string;
+            /**
+             * Money At Risk
+             * @default 0
+             */
+            money_at_risk: number;
+            /**
+             * Money Basis
+             * @default
+             */
+            money_basis: string;
+            /** Customer */
+            customer: string | null;
+            action: components["schemas"]["InboxAction"] | null;
         };
         /** WorkItemEntry */
         WorkItemEntry: {

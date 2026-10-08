@@ -49,3 +49,12 @@ candidate for a later PR. Newest at the bottom of each group.
   instructor's scenarios and a short debrief per question.
 - **Tally and Zoho imports (roadmap G, not started).** Import masters and open orders from Tally Prime and Zoho
   Inventory exports, so an Indian SME can load its own data instead of a case. Deferred on purpose.
+
+## Exception inbox
+- **Do the action, then show the delta.** The inbox's action links to the page where it is done; a one-click version
+  would branch the plan, apply it (expedite, switch supplier, add overtime) and re-plan, showing the money at risk
+  before and after instead of the estimate.
+- **Money at risk over time.** Keep the inbox total per run and draw it beside the KPIs, so a weekly review sees
+  whether the exposure is falling.
+- **Late-delivery penalties per customer.** `tower.late_revenue_factor` is one share for every sale; a contract's own
+  penalty (or a lost-sale probability by customer segment) would price late orders more fairly.
