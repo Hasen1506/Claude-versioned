@@ -307,7 +307,12 @@ test("S&OP: solve → pin → cut capacity → shadow prices → release to MRP 
 test("scheduling: schedule → select order → resequence → reset → edit setup matrix → stale", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
   await page.goto("/#/schedule");
+  // the example opens already scheduled, so "Orders scheduled" and "fresh" hold before this recalculation is back;
+  // wait for its answer itself (regression: CI moved a step while it was in flight, see the test below)
+  const recalculated = page.waitForResponse((r) => r.url().endsWith("/api/schedule") && r.request().method() === "POST");
   await page.getByRole("button", { name: "Recalculate", exact: true }).click();
+  await recalculated;
+  await expect(page.getByRole("button", { name: "Recalculate", exact: true })).toBeEnabled();
   await expect(page.getByText("Orders scheduled")).toBeVisible();
   await expect(freshness(page, "schedule")).toHaveAttribute("data-fresh", "fresh");
   await expect(page.locator(".gantt svg g[data-order]").first()).toBeVisible();
@@ -316,9 +321,11 @@ test("scheduling: schedule → select order → resequence → reset → edit se
   await page.locator('.gantt svg g[data-order="MO-00024"]').first().dispatchEvent("click");
   await expect(page.getByText("MO-00024 · Mixer grinder 500 W")).toBeVisible();
   await page.getByRole("button", { name: "later ▶" }).first().click();
-  await expect(page.getByText("Your sequence")).toBeVisible();
+  // exact: the banner's fallback line ("…re-timed with your sequence") can show for a render before the move's own
+  // sentence replaces it, and a substring match then finds two elements
+  await expect(page.getByText("Your sequence", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Undo my changes to the order" }).click();
-  await expect(page.getByText("Your sequence")).toHaveCount(0);
+  await expect(page.getByText("Your sequence", { exact: true })).toHaveCount(0);
 
   await page.goto("/#/schedule/orders");
   await expect(page.locator("td", { hasText: "MO-100455" })).toBeVisible();
@@ -332,6 +339,43 @@ test("scheduling: schedule → select order → resequence → reset → edit se
   await expect(freshness(page, "schedule")).toHaveAttribute("data-fresh", "stale");
   await page.goto("/#/data/changeovers");
   await expect(page.locator("td", { hasText: /^3$/ }).first()).toBeVisible();
+});
+
+// Regression (PR #28 CI, golden.spec.ts:307 "Your sequence" never appeared): "later ▶" clicked while the page's own
+// "Recalculate" was still in flight. The hand-moved schedule arrived first and the older, profile-made schedule then
+// overwrote it, so the banner never showed. store.put now supersedes a run of the same key still in flight. The
+// recalculation's answer is held back here until the move's has landed, so the old order is forced every time.
+test("scheduling: a step moved while a recalculation is in flight is not overwritten when that recalculation lands", async ({ page }) => {
+  await openExample(page, "Kaveri Kitchenware");
+  await page.goto("/#/schedule");
+  let hold = true;
+  let held: import("@playwright/test").Request | null = null;
+  let release!: () => void;
+  const released = new Promise<void>((r) => { release = r; });
+  await page.route("**/api/schedule", async (route) => {
+    if (!hold) return route.continue();
+    hold = false;
+    held = route.request();
+    const answer = await route.fetch();
+    await released;
+    await route.fulfill({ response: answer });
+  });
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Calculating…" })).toBeVisible();
+
+  await page.locator('.gantt svg g[data-order="MO-00024"]').first().dispatchEvent("click");
+  await expect(page.getByText("MO-00024 · Mixer grinder 500 W")).toBeVisible();
+  const moved = page.waitForResponse((r) => r.url().endsWith("/api/schedule") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "later ▶" }).first().click();
+  await moved;
+  await expect(page.getByText("Your sequence", { exact: true })).toBeVisible();
+
+  const landed = page.waitForEvent("requestfinished", (r) => r === held);
+  release();                                                        // now the older recalculation lands
+  await landed;
+  await page.waitForTimeout(300);   // a negative check: give its handler the moment it needs to (wrongly) replace the result
+  await expect(page.getByText("Your sequence", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Undo my changes to the order" })).toBeVisible();
 });
 
 test("shop floor methods: compare every method → pick a profile → drag a step on the board → undo", async ({ page }) => {
