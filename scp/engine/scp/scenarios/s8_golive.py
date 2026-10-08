@@ -90,6 +90,8 @@ def build() -> dict:
             *[{"location": "CUST", "product": p, "date": (START + dt.timedelta(weeks=w)).isoformat(), "qty": q,
                "period_days": 7, "released": True} for w in range(4) for p, q in (("JAM", 90), ("GIFT", 10))],
             {"location": "DC", "product": "JAM", "date": START.isoformat(), "qty": 15},        # trade counter
+            {"location": "DC", "product": "JAM", "date": (START + dt.timedelta(days=21)).isoformat(), "qty": 15},
+            # ↑ typed for single days three weeks apart: an order in between reaches neither with 7-day windows
             {"location": "PLANT", "product": "LABEL", "date": START.isoformat(), "qty": 500},  # spare labels, MTO
             {"id": "SO-9", "location": "CUST", "product": "JAM-XL", "date": "2026-07-09", "qty": 12, "kind": "sales_order"},
             {"id": "SO-OLD", "location": "CUST", "product": "JAM", "date": "2026-07-01", "qty": 8, "kind": "sales_order"},
@@ -145,7 +147,7 @@ WARNINGS = {
     ("CONFIRMATION_ORPHAN", "confirmation", "#0"), ("DEMAND_OUTSIDE_HORIZON", "demand", "*"),
     ("DEMAND_PAST_DUE", "demand", "*"), ("HISTORY_AFTER_START", "history", "*"),
     ("FORECAST_TWICE", "demand", "DC/JAM"),  # the DC's trade counter sells jam too: both are meant
-    ("FORECAST_INPUTS_CHANGED", "demand", "*"),
+    ("FORECAST_INPUTS_CHANGED", "demand", "*"), ("CONSUMPTION_GAP", "location_product", "DC/JAM"),
     ("LOCATION_PRODUCT_DEFAULTED", "location_product", "PLANT/JAR"), ("MOVEMENT_REF_UNKNOWN", "movement", "GM-2"),
     ("MTO_WITH_FORECAST", "location_product", "PLANT/LABEL"), ("NEGATIVE_STOCK", "location_product", "PLANT/JAR"),
     ("NPI_DUPLICATE", "npi", "CUST/GIFT"), ("NPI_LIKE_WITHOUT_HISTORY", "npi", "CUST/GIFT"),

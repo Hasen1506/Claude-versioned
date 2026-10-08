@@ -55,6 +55,8 @@ RULES: dict[str, tuple[Severity, str]] = {
     "DEMAND_OUTSIDE_HORIZON": ("warning", "Demand outside the planning horizon is ignored"),
     "DEMAND_PAST_DUE": ("warning", "Demand before planning start is treated as backlog"),
     "MTO_WITH_FORECAST": ("warning", "Forecast on an MTO product is ignored"),
+    "CONSUMPTION_GAP": ("warning", "Sales orders on some days can reach no forecast to consume: forecast and orders "
+                                   "are both planned"),
     "FORECAST_TWICE": ("warning", "Forecast at a place and at a customer it supplies: both are planned"),
     "FORECAST_INPUTS_CHANGED": ("warning", "Demand events, overrides or forecast settings changed after the forecast "
                                            "was last used in the plan"),
@@ -590,6 +592,38 @@ def _policies(ds: Dataset, c: _Collector) -> None:
                   "Enter the weekly forecast-error CV, or use days_of_supply", "safety_stock.demand_cv")
 
 
+def _consumption_gaps(ds: Dataset, c: _Collector, end: date) -> None:
+    """S/4 guide §5.4 and the double-demand pitfall: forecasts dated on single days (no period) further apart than the
+    consumption windows reach leave days on which a sales order can consume nothing, so the order and the forecast
+    it should have eaten are both planned. An order on day t reaches a forecast dated f covering ``span`` days when
+    f − forward ≤ t ≤ f + span − 1 + backward; a day between the first and last forecast that no forecast reaches
+    is a gap."""
+    by_node: dict[tuple[str, str], list] = {}
+    for d in ds.demand:
+        if d.kind is DemandKind.FORECAST and d.qty > 0 and ds.location_type(d.location) is not None:
+            by_node.setdefault((d.location, d.product), []).append(d)
+    for node in sorted(by_node):
+        lp = ds.demand_lp(node)
+        if lp.strategy not in (Strategy.MTS_CONSUME, Strategy.ATO) or len(by_node[node]) < 2:
+            continue
+        back, fwd = int(lp.consumption_backward_days), int(lp.consumption_forward_days)
+        reach = sorted((d.date - timedelta(days=fwd), d.date + timedelta(days=max(1, d.period_days or 1) - 1 + back))
+                       for d in by_node[node])
+        covered = reach[0][1]
+        for lo, hi in reach[1:]:
+            if lo > covered + timedelta(days=1) and covered < end:
+                first, last = covered + timedelta(days=1), lo - timedelta(days=1)
+                c.add("CONSUMPTION_GAP", "location_product", f"{node[0]}/{node[1]}",
+                      f"A sales order for {node[1]} at {node[0]} dated {first.isoformat()}"
+                      + (f" to {last.isoformat()}" if last > first else "")
+                      + f" can reach no forecast with consumption windows of {back} days back and {fwd} forward, "
+                      "so it is planned on top of the forecast",
+                      "Give each forecast the period it covers (period days), or widen the consumption windows to "
+                      "at least half the spacing of the forecasts", "consumption_backward_days")
+                break
+            covered = max(covered, hi)
+
+
 def _demand(ds: Dataset, c: _Collector) -> None:
     s = ds.settings
     end = s.planning_start + timedelta(days=s.horizon_days)
@@ -609,6 +643,7 @@ def _demand(ds: Dataset, c: _Collector) -> None:
     if outside:
         c.add("DEMAND_OUTSIDE_HORIZON", "demand", "*", f"{outside} demand records are after the end of the plan",
               "Lengthen the plan (Company settings → horizon days) to plan them")
+    _consumption_gaps(ds, c, end)
     for loc, prod in sorted(mto_fc):
         c.add("MTO_WITH_FORECAST", "location_product", f"{loc}/{prod}",
               "Forecast exists but the strategy is MTO", "Use MTS_CONSUME or ATO to pre-plan")

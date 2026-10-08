@@ -274,8 +274,12 @@ class MrpGroup(Model):
                                           description="Safety time: plan receipts this many working days early")
     planning_time_fence_days: float | None = Unit("days", default=None,
                                                   description="No new proposals inside this fence")
-    consumption_backward_days: float | None = Unit("days", default=None)
-    consumption_forward_days: float | None = Unit("days", default=None)
+    consumption_backward_days: float | None = Unit(
+        "days", default=None, description="Calendar days a sales order may reach back to consume forecast (empty: "
+                                          "each product's own)")
+    consumption_forward_days: float | None = Unit(
+        "days", default=None, description="Calendar days a sales order may reach forward to consume forecast "
+                                          "(empty: each product's own)")
     mrp_controller: str | None = Field(None, max_length=40, description="Who plans the group's products")
 
     def overrides(self) -> dict:
@@ -311,8 +315,16 @@ class LocationProduct(Model):
     planning_time_fence_days: float = Unit("days", default=0.0,
                                            description="No new proposals inside this fence (firming type 1)")
     gr_processing_days: float = Unit("days", default=0.0, description="Goods-receipt / putaway time")
-    consumption_backward_days: float = Unit("days", default=7.0)
-    consumption_forward_days: float = Unit("days", default=7.0)
+    consumption_backward_days: float = Unit(
+        "days", default=7.0,
+        description="Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days before its "
+                    "date a sales order may reach back to eat forecast; a forecast for a period counts on every day of "
+                    "it. An order consumes backward first, then forward")
+    consumption_forward_days: float = Unit(
+        "days", default=7.0,
+        description="Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days after its "
+                    "date a sales order may reach forward to eat forecast, once nothing is left backward. What no "
+                    "forecast in reach covers is planned on top of the forecast")
     holding_rate: float | None = Unit("fraction", le=2, default=None,
                                       description="Annual carrying rate override (default: WACC + spread)")
     ddmrp_buffer: bool = Field(False, description="Strategic decoupling point: DDMRP buffer positioned here")
