@@ -121,6 +121,12 @@ def _mto_fc(d):
     lp(d, "P", "A")["strategy"] = "MTO"
 
 
+def _consumption_gap(d):
+    # monthly forecasts dated on the 1st, no period, 7-day windows: an order mid-month reaches neither
+    d["settings"]["horizon_days"] = 70
+    d["demand"] = [demand("P", "A", "2026-01-05", 100), demand("P", "A", "2026-02-05", 100)]
+
+
 def _forecast_twice(d):
     d["locations"].append({"id": "K", "type": "customer"})
     d["lanes"].append({"id": "L-PK", "origin": "P", "destination": "K", "modes": [{"mode": "truck_ftl", "transit_days": 1}]})
@@ -248,7 +254,7 @@ MUTATORS = {
     "SOURCE_NOT_VALID_IN_HORIZON": _validity, "PRODUCTION_NO_OPERATIONS": _no_ops,
     "PRODUCTION_NO_LEAD_TIME": _no_ops, "PURCHASE_ZERO_LEAD_TIME": _zero_lt, "SS_AND_SAFETY_TIME": _ss_and_time,
     "QUOTA_SUM": _quota, "DEMAND_OUTSIDE_HORIZON": _outside, "DEMAND_PAST_DUE": _past,
-    "MTO_WITH_FORECAST": _mto_fc, "FORECAST_TWICE": _forecast_twice, "FORECAST_INPUTS_CHANGED": _inputs_changed, "STOCK_AT_CUSTOMER": _stock_at_customer, "RESOURCE_UNUSED": _unused,
+    "MTO_WITH_FORECAST": _mto_fc, "CONSUMPTION_GAP": _consumption_gap, "FORECAST_TWICE": _forecast_twice, "FORECAST_INPUTS_CHANGED": _inputs_changed, "STOCK_AT_CUSTOMER": _stock_at_customer, "RESOURCE_UNUSED": _unused,
     "LOCATION_PRODUCT_DEFAULTED": _defaulted, "SHELF_LIFE_VS_LEAD_TIME": _shelf,
     "HISTORY_AFTER_START": _history_late, "NPI_LIKE_WITHOUT_HISTORY": _npi_like, "NPI_DUPLICATE": _npi_dup,
     "OVERRIDE_OUTSIDE_HORIZON": _override_outside, "OVERRIDE_WITHOUT_FORECAST": _override_no_fc,

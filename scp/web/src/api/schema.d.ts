@@ -5912,11 +5912,13 @@ export interface components {
             gr_processing_days: number;
             /**
              * Consumption Backward Days
+             * @description Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days before its date a sales order may reach back to eat forecast; a forecast for a period counts on every day of it. An order consumes backward first, then forward
              * @default 7
              */
             consumption_backward_days: number;
             /**
              * Consumption Forward Days
+             * @description Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days after its date a sales order may reach forward to eat forecast, once nothing is left backward. What no forecast in reach covers is planned on top of the forecast
              * @default 7
              */
             consumption_forward_days: number;
@@ -6382,9 +6384,15 @@ export interface components {
              * @description No new proposals inside this fence
              */
             planning_time_fence_days?: number | null;
-            /** Consumption Backward Days */
+            /**
+             * Consumption Backward Days
+             * @description Calendar days a sales order may reach back to consume forecast (empty: each product's own)
+             */
             consumption_backward_days?: number | null;
-            /** Consumption Forward Days */
+            /**
+             * Consumption Forward Days
+             * @description Calendar days a sales order may reach forward to consume forecast (empty: each product's own)
+             */
             consumption_forward_days?: number | null;
             /**
              * Mrp Controller

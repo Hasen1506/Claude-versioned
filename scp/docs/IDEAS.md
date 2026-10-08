@@ -58,3 +58,38 @@ candidate for a later PR. Newest at the bottom of each group.
   whether the exposure is falling.
 - **Late-delivery penalties per customer.** `tower.late_revenue_factor` is one share for every sale; a contract's own
   penalty (or a lost-sale probability by customer segment) would price late orders more fairly.
+
+## S/4 guide backtest, part A (§1–5, §17, §20.1)
+Found while backtesting the engine against the S/4HANA supply-chain guide (8 Oct 2026). Ranked by value to a
+small or mid-sized planner. None is built.
+- **Reduce the forecast at goods issue across a roll (high, M — a confirmed defect that needs a design decision).**
+  The roll-forward drops elapsed forecast by time only, so an order delivered early in a period does not reduce what is
+  left of the forecast it consumed: forecast 100 for four weeks, 80 ordered and delivered in week one, roll after two
+  weeks → 50 forecast left, 130 planned for a period whose forecast was 100 (SAP: 20 left, guide §5.1/§17.2, §20.1 #1
+  "PIR consumed exactly once"). A per-record "reduced" quantity taken off the front of the period fixes the simple
+  case, but breaks the roll's invariant "a week then another = two weeks at once" (s9) whenever an order is delivered
+  in parts across rolls or delivered forecast is time-elapsed before an order consumes it: consumption by allocation
+  is path-dependent. Options: (a) drop the invariant for the reduction only; (b) keep the original forecast records
+  (date, period, quantity) and recompute consumption by delivered + open orders from scratch at every plan, dropping
+  only records wholly in the past; (c) reduce per node, not per record. (b) is the clean one. A tested attempt at the
+  per-record version is in the audit notes.
+- **Planning at a common platform (strategies 60/63 "planning material") (high, L).** Many SMEs sell variants (sizes,
+  colours, voltages) of one base: forecast the base once, let each variant's orders consume it with a conversion
+  factor. Today each variant needs its own forecast.
+- **Forecast on an assembly consumed by dependent demand (strategy 70/74) (med, M).** A forecast on a sub-assembly
+  is planned on top of the dependent requirements from its parents instead of being consumed by them, so pre-building
+  long-lead sub-assemblies to forecast double-counts.
+- **Strategy advisor from lead times (§5.4 deep dive) (med, S).** CDT ≥ CLT+ALT → make to order; ALT ≤ CDT <
+  CLT+ALT → assemble to order; CDT < ALT → make to stock consuming forecast. The engine knows ALT and CLT (lead-time
+  model); with a "customer accepts N days" per product it can flag a strategy that cannot meet it.
+- **Consumption mode: forward first, and windows in working days (med, S).** Orders always look back first, then
+  forward (SAP mode 2). SAP also has forward-then-backward (4); and SAP counts the windows in working days, the app in
+  calendar days (the field help now says so).
+- **Make-to-order stock kept apart (sales-order stock, special stock E) (med, L).** MTO orders use free stock first
+  (by design, and the form says so); an order-specific stock segment would let a business keep customer-specific
+  goods from being shipped to someone else.
+- **Purchasing processing time and GR in working days (§17.1) (low, S).** The buy lead time is supplier time +
+  transit + GR days, all calendar; the purchasing department's own processing time is missing and GR days can end on
+  a closed day.
+- **Exceptions per planner and per material class (§17.6) (low, S).** The tower ages exceptions; grouping their age
+  by MRP controller and product type would point at master-data root causes, as the guide recommends.

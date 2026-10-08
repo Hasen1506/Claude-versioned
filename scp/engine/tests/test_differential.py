@@ -41,6 +41,28 @@ INTENTIONAL: list[tuple[str, str, object]] = [
 ]
 
 
+def _engine_passage(path: str, start: str, stop: str) -> str:
+    """This engine's text of ``path`` from the line starting ``start`` up to (not including) ``stop``."""
+    text = (ENGINE / path).read_text()
+    i = text.index(start)
+    return text[i:text.index(stop, i)]
+
+
+# S/4 guide backtest part A: a readiness warning when consumption windows cannot bridge spot forecasts
+_GAP = "scp/validate/__init__.py"
+INTENTIONAL += [
+    ("S4-A (guide §5.4): CONSUMPTION_GAP joins the readiness rules", _GAP,
+     ('    "MTO_WITH_FORECAST": ("warning", "Forecast on an MTO product is ignored"),\n',
+      _engine_passage(_GAP, '    "MTO_WITH_FORECAST"', '    "FORECAST_TWICE"'))),
+    ("S4-A (guide §5.4): the check that raises it", _GAP,
+     ("def _demand(ds: Dataset, c: _Collector) -> None:\n",
+      _engine_passage(_GAP, "def _consumption_gaps(", "def _demand(") + "def _demand(ds: Dataset, c: _Collector) -> None:\n")),
+    ("S4-A (guide §5.4): run with the other demand checks", _GAP,
+     ("    for loc, prod in sorted(mto_fc):\n",
+      "    _consumption_gaps(ds, c, end)\n    for loc, prod in sorted(mto_fc):\n")),
+]
+
+
 def _git(*args: str, cwd: Path = ENGINE) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, timeout=120)
 
