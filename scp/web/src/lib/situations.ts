@@ -85,6 +85,22 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
           actions: [{ label: "See incoming orders", to: href("data", "receipts") }],
         };
         break;
+      case "RESCHEDULE_OUT":
+        s = {
+          title: `${plural(l.length, "incoming order")} could arrive later`,
+          why: "Each arrives well before anything needs it, so the stock just waits. Ask the supplier or carrier to deliver later, or move the production order back.",
+          items: l.map((e) => ({ label: `${e.order_id}: ${n(e.qty)} ${where(e)}`, detail: `first needed ${d(e.date)}`, to: node(e) })),
+          actions: [{ label: "See incoming orders", to: href("data", "receipts") }],
+        };
+        break;
+      case "RECEIPT_NOT_NEEDED":
+        s = {
+          title: `${plural(l.length, "incoming order")} not needed in the horizon`,
+          why: "Nothing in the plan needs them before the horizon ends. Cancel or push them out; if a new order covers the same need sooner, ask for this one sooner instead.",
+          items: l.map((e) => ({ label: `${e.order_id}: ${n(e.qty)} ${where(e)}`, detail: `arrives ${d(e.date)}`, to: node(e) })),
+          actions: [{ label: "See incoming orders", to: href("data", "receipts") }],
+        };
+        break;
       case "SCHEDULE_LATE":
         s = {
           title: `${plural(l.length, "production order")} the shop floor schedule finishes late`,
@@ -272,7 +288,7 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
 /** A short plain name for an exception code from any page (the code itself stays visible for analysts). */
 const CODE_LABEL: Record<string, string> = {
   DEMAND_AT_RISK: "Demand late or short", START_IN_PAST: "Should already have started", FENCE_SHIFT: "Moved out of the freeze window",
-  RESCHEDULE_IN: "Incoming order needed sooner", NO_VALID_SOURCE: "No way to supply", BELOW_SAFETY_STOCK: "Below safety stock",
+  RESCHEDULE_IN: "Incoming order needed sooner", RESCHEDULE_OUT: "Incoming order could come later", RECEIPT_NOT_NEEDED: "Incoming order not needed", NO_VALID_SOURCE: "No way to supply", BELOW_SAFETY_STOCK: "Below safety stock",
   EXCESS_STOCK: "Above maximum stock", SHELF_LIFE_RISK: "May expire", CAPACITY_OVERLOAD: "Over capacity",
   CAPACITY_OVERTIME: "Overtime needed", CAPACITY_DAY_OVERLOAD: "Over capacity on a day", SUPPLIER_CAPACITY: "Supplier over capacity", LANE_CAPACITY: "Lane over capacity",
   EOQ_FALLBACK: "No economic lot size", STOCKOUT: "Stock runs out", SCHEDULE_LATE: "Scheduled to finish late",
