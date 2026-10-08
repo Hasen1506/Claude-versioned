@@ -7081,6 +7081,11 @@ export interface components {
             price: number | null;
             /** Value */
             value: number | null;
+            /**
+             * Shipped
+             * @default 0
+             */
+            shipped: number;
         };
         /** OrderView */
         OrderView: {

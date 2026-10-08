@@ -74,7 +74,7 @@ export function Execution({ route }: { route: string[] }) {
   const start = ds.settings.planning_start;
 
   const head = (
-    <StageHeader title="Actuals" kicker="What actually happened: goods received, used and shipped, stock on hand, and how the forecast compared with real sales."
+    <StageHeader title="Stock & actuals" kicker="What actually happened: goods received, used and shipped, stock on hand, and how the forecast compared with real sales."
       how={<>Every goods movement (receipts, issues, deliveries, scrap, counts) is added up into stock; firm orders are received and
         closed as their goods arrive; past forecast is measured against actual sales. Moving the plan to a new start date recomputes
         all of it from the full journal. Planned orders inside the <Term t="Firm zone">firm zone</Term> can be turned into firm orders.</>}

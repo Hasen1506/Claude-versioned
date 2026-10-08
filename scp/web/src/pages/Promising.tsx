@@ -55,7 +55,7 @@ export function Promising({ route }: { route: string[] }) {
   };
 
   const head = (
-    <StageHeader title="Customer orders" kicker="What you can promise each customer order, how much, from where and when. Check a new order before you accept it."
+    <StageHeader title="Promise dates" kicker="What you can promise each customer order, how much, from where and when. Check a new order before you accept it."
       how={<>Each order is checked against <Term t="ATP" /> (stock and incoming supply not yet promised), in priority order, with its
         delivery rules, product allocations and alternative shipping locations. What stock can't cover is checked for <Term t="CTP" />:
         could it be moved, made or bought in time? Beyond the <Term t="RLT">replenishment lead time</Term> anything can be promised.
@@ -182,7 +182,9 @@ function Orders({ res, sel, ds, onDone }: { res: PromiseResult; sel?: string; ds
                     <td title={o.location}>{n.loc(o.location)}</td><td title={o.product}>{n.prod(o.product)}</td><td className="num">{o.priority}</td><td className="num">{qty(o.qty)}</td>
                     <td>{day(o.requested)}</td>
                     <td><Badge sev={sev}>{label}</Badge> {o.at_risk && <Badge sev="error">at risk</Badge>}
-                      {CHANGE[o.change] && o.change !== "new" && <> <Badge sev={CHANGE[o.change]}>{o.change}</Badge></>}</td>
+                      {CHANGE[o.change] && o.change !== "new" && <> <Badge sev={CHANGE[o.change]}>{o.change}</Badge></>}
+                      {o.shipped > 1e-6 && <div className="faint small" title="Recorded as shipped (Selling shows it delivered). The plan still counts it as open until you start a new week, which books it.">
+                        {o.shipped >= o.qty - 1e-6 ? "shipped" : `${qty(o.shipped)} shipped`} · booked at the next week start</div>}</td>
                     <td><div className="chips">{o.lines.map((l, i) => <LineChip key={i} l={l} />)}
                       {o.unconfirmed > 1e-6 && <span className="chip" style={{ borderColor: "var(--critical)" }}><b>{qty(o.unconfirmed)}</b>&nbsp;open</span>}</div></td>
                     <td className="num">{o.value === null || o.value === undefined ? <span className="faint">no price</span> : money(o.value, res.currency)}</td>
@@ -193,7 +195,7 @@ function Orders({ res, sel, ds, onDone }: { res: PromiseResult; sel?: string; ds
           </table>
         </div>
       </Panel>
-      {sel && !cur && <Panel><Empty title={`${sel} is not open`}>It was delivered or cancelled: see <a href={href("execution", "orders")}>Actuals → orders</a>.</Empty></Panel>}
+      {sel && !cur && <Panel><Empty title={`${sel} is not open`}>It was delivered or cancelled: see <a href={href("execution", "orders")}>Stock & actuals → Open orders & firming</a>.</Empty></Panel>}
       {cur && <OrderCard o={cur} currency={res.currency} actions={<OrderActions o={cur} ds={ds} currency={res.currency} onDone={onDone} />} />}
       <Reading formula="ATP(d) = min over later days e of [Σ receipts(≤ e) − Σ outflows(≤ e)] — the look-ahead keeps a new promise from taking stock an earlier promise needs later. Beyond the replenishment lead time everything is confirmable."
         soWhat="Commit promises to persist the schedule lines; after that, every check (and MRP's supply changes) is measured against them, and backorder processing decides who gives way in a shortage." />

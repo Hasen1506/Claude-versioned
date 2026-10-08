@@ -54,6 +54,8 @@ class OrderPromise(Out):
     reason: str = ""                 # why (part of) the order could not be confirmed
     price: float | None = None       # per unit: the order's own, else the customer's, else the product's
     value: float | None = None       # qty × price (empty without a price)
+    shipped: float = 0.0             # delivered in the journal and not yet booked by starting a new week: the plan
+                                     # still counts it as open until then, the Selling page already as delivered
 
 
 class AtpNode(Out):

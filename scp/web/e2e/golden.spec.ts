@@ -44,7 +44,9 @@ test("golden path: example opens planned → home → network → data check →
   await expect(freshness(page, "plan")).toHaveAttribute("data-fresh", "fresh");
 
   // network map renders every location and traces a product
-  await page.locator('.rail a[href="#/network"]').click();
+  // the map is a tab of Set up
+  await page.locator('.rail a[href="#/setup"]').click();
+  await page.locator('.section-tabs a[href="#/network"]').click();
   await expect(page.locator(".net .node")).toHaveCount(12);
   await page.selectOption('select[aria-label="Trace product"]', "KT-15");
   await expect(page.locator(".net .node.dim").first()).toBeVisible();
@@ -772,7 +774,8 @@ test("control tower: KPIs graded → drill into OTIF → worklist → assign & a
   await expect(page.locator(".section-band h2", { hasText: "OTIF to requested date" })).toBeVisible();
   await expect(page.locator("td", { hasText: "E-commerce marketplaces" }).first()).toBeVisible();
 
-  await page.getByRole("tab", { name: /Exception worklist/ }).click();
+  await page.getByRole("tab", { name: /Problems/ }).click();
+  await page.getByRole("radio", { name: "By owner and age" }).click();
   const owner = page.getByLabel(/^Owner of DEMAND_AT_RISK/).first();
   await owner.fill("Asha Kulkarni");
   await owner.press("Enter");
@@ -789,7 +792,7 @@ test("phone: the menu opens the pages, each page answers first, nothing scrolls 
   await expect(page.locator("#main-nav")).toBeHidden();
   await page.getByRole("button", { name: "☰ Menu" }).click();
   await expect(page.locator("#main-nav")).toBeVisible();
-  await page.locator("#main-nav").getByRole("link", { name: "Orders", exact: true }).click();
+  await page.locator("#main-nav").getByRole("link", { name: "Customer orders", exact: true }).click();
   await expect(page.locator("#main-nav")).toBeHidden();                 // picking a page closes the menu
   await expect(page.locator(".stage-head .answer")).toContainText("customer orders can ship in full");
   for (const hash of ["#/", "#/plan", "#/promise", "#/finance", "#/tower", "#/data", "#/capacity", "#/schedule/orders", "#/schedule/methods", "#/buying", "#/buying/orders", "#/buying/suppliers", "#/execution/count", "#/execution/orders"]) {
@@ -837,7 +840,8 @@ test("machines & shifts: named shifts and a shutdown change the hours the supply
 
 test("products at places: MRP views, the structure explorer and the stock/requirements list", async ({ page }) => {
   await openExample(page, "Kaveri Kitchenware");
-  await page.locator('.rail a[href="#/material"]').click();
+  await page.locator('.rail a[href="#/setup"]').click();
+  await page.locator('.section-tabs a[href="#/material"]').click();
   await expect(page.getByRole("heading", { name: "Products at places" })).toBeVisible();
   await page.locator('a[href="#/material/MG-500/PLT-PUNE"]').click();
   // stock and requirements: every receipt and requirement by date, with the stock after it
@@ -904,6 +908,7 @@ test("shop floor: steps wait for parts, and the schedule's dates go back into th
 });
 
 test("company on the server: sign up → keep it there → saves itself → a colleague saves first → merged by itself → both change one order → merge both → history → put back; a viewer changes nothing", async ({ page, browser }) => {
+  test.slow();   // about 50 s alone: the long journey needs headroom when the machine is busy
   page.on("dialog", (d) => d.accept());
   await openExample(page, "Kaveri Kitchenware");
   const chip = page.locator(".save-chip .save-long");

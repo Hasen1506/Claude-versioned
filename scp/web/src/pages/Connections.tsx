@@ -318,7 +318,7 @@ export function Connections({ route = [] }: { route?: string[] }) {
   const tab = (TABS.find((t) => t.id === route[1])?.id ?? "messages") as Tab;
   return <div>
     <StageHeader title="Connections" kicker={<>What your ERP and other systems send and take, the files read on a schedule, and the e-mail the
-      server sends.</>} how={<>A message is applied to the company's latest save on the server and saved as a new revision by the key that sent it,
+      server sends.</>} howLabel="How messages are applied" how={<>A message is applied to the company's latest save on the server and saved as a new revision by the key that sent it,
         so it is in the History and can be put back; your open window takes it in on its next save, as it would a colleague's change.
         Records you set aside as unfinished stay as they are. A message sent again with the same id is not applied twice.</>} />
     <div className="content">

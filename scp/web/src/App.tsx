@@ -1,38 +1,40 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { api } from "./api/client";
 import type { Dataset, ExampleInfo } from "./api/types";
 import { Badge, Empty, ThemeSwitch } from "./components/ui";
 import { setPlanYear } from "./lib/format";
 import { href, go, useRoute } from "./lib/router";
 import { NAV, PAGES, navItemFor, type NavItem } from "./lib/nav";
-import { Demand } from "./pages/Demand";
-import { Buying } from "./pages/Buying";
-import { Selling } from "./pages/Selling";
-import { Execution } from "./pages/Execution";
-import { Finance } from "./pages/Finance";
 import { Home, markVisited } from "./pages/Home";
-import { Tower } from "./pages/Tower";
-import { Versions } from "./pages/Versions";
-import { WhatIf } from "./pages/WhatIf";
-import { Inventory } from "./pages/Inventory";
-import { Promising } from "./pages/Promising";
-import { Proof } from "./pages/Proof";
-import { Schedule } from "./pages/Schedule";
-import { Sop } from "./pages/Sop";
-import { MasterData } from "./pages/MasterData";
-import { Network } from "./pages/Network";
-import { Plan } from "./pages/Plan";
-import { Readiness } from "./pages/Readiness";
-import { Setup } from "./pages/Setup";
 import { blankCompany, CompanyForm, nextMonday, type CompanyValues } from "./pages/Company";
-import { Material } from "./pages/Material";
-import { Machines } from "./pages/Machines";
-import { Capacity } from "./pages/Capacity";
 import { Account, CompanyList, SignIn, useAuthConfig } from "./pages/Account";
-import { History } from "./pages/History";
-import { Connections } from "./pages/Connections";
 import { SaveBanner, SaveChip } from "./components/SaveStatus";
 import { freshness, isModified, planFreshness, store, useStore, NO_ISSUES } from "./state/store";
+
+// Each page loads when it is first opened, so the first screen does not wait for all of them.
+const Demand = lazy(() => import("./pages/Demand").then((m) => ({ default: m.Demand })));
+const Buying = lazy(() => import("./pages/Buying").then((m) => ({ default: m.Buying })));
+const Selling = lazy(() => import("./pages/Selling").then((m) => ({ default: m.Selling })));
+const Execution = lazy(() => import("./pages/Execution").then((m) => ({ default: m.Execution })));
+const Finance = lazy(() => import("./pages/Finance").then((m) => ({ default: m.Finance })));
+const Tower = lazy(() => import("./pages/Tower").then((m) => ({ default: m.Tower })));
+const Versions = lazy(() => import("./pages/Versions").then((m) => ({ default: m.Versions })));
+const WhatIf = lazy(() => import("./pages/WhatIf").then((m) => ({ default: m.WhatIf })));
+const Inventory = lazy(() => import("./pages/Inventory").then((m) => ({ default: m.Inventory })));
+const Promising = lazy(() => import("./pages/Promising").then((m) => ({ default: m.Promising })));
+const Proof = lazy(() => import("./pages/Proof").then((m) => ({ default: m.Proof })));
+const Schedule = lazy(() => import("./pages/Schedule").then((m) => ({ default: m.Schedule })));
+const Sop = lazy(() => import("./pages/Sop").then((m) => ({ default: m.Sop })));
+const MasterData = lazy(() => import("./pages/MasterData").then((m) => ({ default: m.MasterData })));
+const Network = lazy(() => import("./pages/Network").then((m) => ({ default: m.Network })));
+const Plan = lazy(() => import("./pages/Plan").then((m) => ({ default: m.Plan })));
+const Readiness = lazy(() => import("./pages/Readiness").then((m) => ({ default: m.Readiness })));
+const Setup = lazy(() => import("./pages/Setup").then((m) => ({ default: m.Setup })));
+const Material = lazy(() => import("./pages/Material").then((m) => ({ default: m.Material })));
+const Machines = lazy(() => import("./pages/Machines").then((m) => ({ default: m.Machines })));
+const Capacity = lazy(() => import("./pages/Capacity").then((m) => ({ default: m.Capacity })));
+const History = lazy(() => import("./pages/History").then((m) => ({ default: m.History })));
+const Connections = lazy(() => import("./pages/Connections").then((m) => ({ default: m.Connections })));
 
 /** Open a dataset and calculate everything, so no page opens empty. */
 function openAndPlan(ds: Dataset) {
@@ -82,6 +84,7 @@ export function App() {
       <main className="main">
         {item?.tabs && <SectionTabs item={item} page={page} />}
         <SaveBanner />
+        <Suspense fallback={<div className="content"><p className="muted" aria-live="polite">Opening the page…</p></div>}>
         {page === "proof" ? <Proof route={route} />
           : page === "account" ? <Account route={route} />
           : !ds ? <div className="content"><Welcome /></div>
@@ -109,6 +112,7 @@ export function App() {
           : page === "history" ? <History />
           : page === "connections" ? <Connections route={route} />
           : <div className="content"><Home ds={ds} /></div>}
+        </Suspense>
       </main>
     </div>
   );
@@ -127,8 +131,8 @@ function PlanButton() {
   }
   return (
     <button className={`btn plan-btn ${f !== "fresh" && !blocked && !empty ? "accent" : ""}`} onClick={() => store.planAll()}
-      title={blocked ? "Fix the data problems first (Setup → Data check)" : empty ? "Your company isn't fully set up yet: see the Data check" : "Calculate every result from the current data. Your data is not changed."}>
-      {f === "stale" ? "Plan everything again" : "Plan everything"}
+      title={blocked ? "Fix the data problems first (Set up → Data check)" : empty ? "Your company isn't fully set up yet: see the Data check" : "Calculate every result from the current data. Your data is not changed."}>
+      Plan<span className="plan-more">{f === "stale" ? " everything again" : " everything"}</span>
     </button>
   );
 }
@@ -241,7 +245,7 @@ function Rail({ page }: { page: string }) {
   const active = navItemFor(page);
   const live = !!s.company?.live;
   const right = (it: NavItem) => {
-    if (it.id === "network" && errors) return <Badge sev="error">{errors}</Badge>;
+    if (it.id === "setup" && errors) return <Badge sev="error">{errors}</Badge>;   // the data check is a tab of Set up
     if (it.id === "tower" && offTrack && freshness(s, "tower") !== "none") return <span className="rail-count" title={`${offTrack} measures off target`}>{offTrack}</span>;
     if (!it.run || s.planning || !s.dataset?.locations?.length) return null;
     const f = freshness(s, it.run);
@@ -273,9 +277,10 @@ function Rail({ page }: { page: string }) {
   );
 }
 
-/** Tabs across the top of a section with more than one page (Supply, Network). */
+/** Tabs across the top of a section with more than one page (Supply, Customer orders, Set up). */
 function SectionTabs({ item, page }: { item: NavItem; page: string }) {
   const s = useStore((x) => x);
+  const errors = (s.validation?.issues ?? NO_ISSUES).filter((i) => i.severity === "error").length + s.schemaErrors.length;
   return (
     <nav className="section-tabs" aria-label={`${item.label} pages`}>
       {item.tabs!.map((t) => {
@@ -284,6 +289,7 @@ function SectionTabs({ item, page }: { item: NavItem; page: string }) {
           <a key={t.id} href={href(t.id)} className={t.id === page ? "on" : ""} aria-current={t.id === page ? "page" : undefined}
             title={t.question} data-fresh={f}>
             {t.label}{t.optional && <span className="opt">optional</span>}
+            {t.id === "readiness" && errors > 0 && <Badge sev="error">{errors}</Badge>}
             {f === "stale" && !s.planning && <span className="rail-dot stale" title="Out of date: the data changed after this was calculated"><span className="sr">out of date</span></span>}
           </a>
         );

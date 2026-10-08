@@ -93,8 +93,27 @@ class Pricer:
         return x is not None and x.type.value == "customer"
 
 
-def _supply_action(ds: Dataset, w: WorkItem, protects: float) -> InboxAction:
-    """For late or short supply: switch to a quicker supplier when one exists, else expedite."""
+_KIND = {"purchase": "buy", "production": "make", "transfer": "transfer"}
+
+
+def order_kinds(ds: Dataset, plan: PlanResult | None) -> dict[str, str]:
+    """``buy``, ``make`` or ``transfer`` for every planned and firm order, by its id."""
+    out = {o.id: str(getattr(o.kind, "value", o.kind)) for o in plan.orders} if plan is not None and plan.ok else {}
+    for r in ds.receipts:
+        out.setdefault(r.id, _KIND.get(str(getattr(r.kind, "value", r.kind)), ""))
+    for po in ds.purchase_orders:
+        out.setdefault(po.id, "buy")
+    return out
+
+
+def _supply_action(ds: Dataset, w: WorkItem, protects: float, kind: str | None = None) -> InboxAction:
+    """For late or short supply: the action that fits the order the item names (a transfer is shipped early, a
+    production order brought forward); otherwise switch to a quicker supplier when one exists, else expedite."""
+    if kind == "transfer":
+        return InboxAction(kind="expedite", label="Ship the transfer now", protects=protects, href="#/execution")
+    if kind == "make":
+        return InboxAction(kind="expedite", label="Bring the production order forward", protects=protects,
+                           href="#/execution")
     loc, prod, qty = w.location, w.product, abs(w.qty or 0.0)
     sources = [s for s in ds.purchasing_sources if s.product == prod and not s.blocked
                and (loc is None or s.location == loc)]
@@ -104,7 +123,8 @@ def _supply_action(ds: Dataset, w: WorkItem, protects: float) -> InboxAction:
         cur = min(sources, key=lambda s: (s.price, s.lead_time_days))
         alt = min((s for s in sources if s is not cur), key=lambda s: (s.lead_time_days, s.price))
         if alt.lead_time_days < cur.lead_time_days:
-            return InboxAction(kind="switch_supplier", label=f"Switch {qty:,.0f} to {alt.supplier} "
+            who = ds.location_by_id[alt.supplier].name if alt.supplier in ds.location_by_id else alt.supplier
+            return InboxAction(kind="switch_supplier", label=f"Switch {qty:,.0f} to {who or alt.supplier} "
                                f"({alt.lead_time_days:g} d instead of {cur.lead_time_days:g} d)",
                                protects=protects, costs=round((alt.price - cur.price) * qty, 2), href="#/buying")
     if sources:
@@ -119,6 +139,7 @@ def _supply_action(ds: Dataset, w: WorkItem, protects: float) -> InboxAction:
 def price_items(ds: Dataset, plan: PlanResult | None, items: list[WorkItem]) -> list[WorkItem]:
     """Fill ``money_at_risk``, ``money_basis``, ``customer`` and ``action`` on each item (in place; returned)."""
     pr = Pricer(ds, plan)
+    kinds = order_kinds(ds, plan)
     cur = ds.settings.currency
     rate = ds.settings.carrying_rate
     factor = ds.tower.late_revenue_factor
@@ -151,7 +172,7 @@ def price_items(ds: Dataset, plan: PlanResult | None, items: list[WorkItem]) -> 
             if hr and qty:
                 amount = qty * hr
                 basis = f"{qty:,.1f} h over × {hr:,.2f} {cur}/h " + ("overtime" if r and r.overtime_cost_per_hour else "machine cost")
-                action = InboxAction(kind="overtime", label=f"Add {qty:,.1f} h of overtime on {w.resource}",
+                action = InboxAction(kind="overtime", label=f"Add {qty:,.1f} h of overtime on {r.name or r.id}",
                                      protects=amount, costs=round(amount, 2), href="#/capacity")
             else:
                 basis = "no hourly cost on this machine" if r is not None else "no machine cost known"
@@ -202,7 +223,7 @@ def price_items(ds: Dataset, plan: PlanResult | None, items: list[WorkItem]) -> 
             if p is not None:
                 amount = qty * p
                 basis = f"{qty:,.0f} held up × {p:,.2f} {cur} {what}"
-                action = _supply_action(ds, w, amount)
+                action = _supply_action(ds, w, amount, kinds.get(w.order_id or ""))
         if not basis:
             basis = "not priced: no quantity or price to work it out from"
         w.money_at_risk = round(amount, 2)

@@ -480,7 +480,7 @@ function OrderDetail({ po, ds }: { po: PoView; ds: Dataset }) {
 
 const MODE_HINT: Record<Exclude<Mode, null>, string> = {
   confirm: "The date and quantity the supplier promised, or several deliveries. The plan expects each then, and counts no more than confirmed.",
-  receive: "Posts a goods receipt per line. Stock and the order update when the plan moves past this date (Actuals → Start a new week).",
+  receive: "Posts a goods receipt per line. Stock and the order update when the plan moves past this date (Stock & actuals → Start a new week).",
   change: "A new quantity or date needs a new confirmation from a supplier who confirms; an order that grows above the approval limit needs releasing again.",
   cancel: "Only lines nothing has been received for can be cancelled. The plan buys again what is still needed.",
 };

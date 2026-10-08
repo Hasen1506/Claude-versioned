@@ -329,6 +329,27 @@ onto a day square, and both stayed firm there when the plan was recalculated.
 | N117 | Overtime is a levelling choice in the supply plan, but not yet a choice of the shop floor optimiser, which still keeps to the shift hours. | Minor | Fixed (gaps after Q): *Schedule → Settings → overtime* lets the schedule (dispatching, local search or optimiser) use each machine's overtime hours after its last shift: the window is scheduled with and without it and the overtime schedule is kept only when it lowers the weighted objective. The result names the hours per machine, their cost and the objective without overtime; the Schedule page shows them. |
 | N118 | Measured yield is worked out per production version and part from orders whose parts were posted as used; backflushed orders only repeat the bill of materials and are left out, as are parts through a phantom assembly (their loss is the phantom's). | Minor | By design, recorded: *Parts used* on Actuals says which orders it counted. |
 
+## Found in the health check of 8 October 2026
+
+Main at 10b00bb (after PRs #21–#36) was checked in full: the engine suite, lint, the examples, the API types, the build
+and every browser test. Then the Kaveri example was opened as a signed-in owner, kept on the server, and every page
+and tab was looked at on a desktop and at phone width.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N145 | Fourteen places in the rail, plus five links below it, and about seventy tabs inside the pages. A planner had to know whether an order lived under *Orders*, *Selling* or *Actuals*, and setting up was split over five rail entries. | Serious | **Fixed.** Nine places, one per job: Home; Plan (*Demand*, *Supply*); Run the business (*Customer orders*, *Buying*, *Stock & actuals*); Results (*Money*, *Performance*); *Set up*. A job with several pages shows them as tabs across the top: *Customer orders* is *Promise dates* and *Selling*; *Set up* is *Guided setup*, *Products at places*, *Machines & shifts*, *Map*, *Data check* and *Master data*. Routes are unchanged, so old links still work. The data-error count moved to *Set up* and to its *Data check* tab. |
+| N146 | *Performance* showed the same open problems twice, as *Exception inbox* (ranked by money) and *Exception worklist* (by owner and age). | Minor | **Fixed.** One *Problems* tab, with a switch: *Ranked by money at risk* or *By owner and age*. |
+| N147 | Settings tabs (*Forecast settings*, *Rules & segments*, *Scenario levers* and others) sat in the middle of the working tabs. | Minor | **Fixed.** A page's settings tab sits apart at the end of its row, in lighter type. |
+| N148 | The inbox told a late *transfer* to "Bring the production order forward". Its action came from how the product is made, not from the order the problem names. | Serious | **Fixed.** The action follows the order's kind: a transfer is "Ship the transfer now", a production order is brought forward, and a purchase is expedited or switched to a quicker supplier. The overtime and switch-supplier actions name the machine and the supplier, not their ids. |
+| N149 | An order shipped this week showed as *delivered* on *Selling* but as an open order with its full quantity on *Orders*. The plan counts it until the week starts and books it. | Minor | **Fixed.** *Promise dates* shows "shipped · booked at the next week start" (or how many were shipped) under the order's status. A new `shipped` field on each promised order carries it. |
+| N150 | *Performance* said "5 of 10 measures" beside a tile reading "of 18 KPIs". | Minor | **Fixed.** "5 of 10 graded measures"; the tile says "of 18 measures". |
+| N151 | The account, history, versions, connections and data-check pages offered "How this is calculated" for text that explains how saving, versions or messages work. | Minor | **Fixed.** Each says what it explains ("How saving works", "How versions work"...). |
+| N152 | At phone width the save state was cut to "Sav", and order numbers broke in two ("SO-" / "88221"). | Minor | **Fixed.** The save state keeps its width; the plan button reads "Plan" on a phone; a document number never wraps. |
+| N153 | The whole app loaded as one 1 MB script before the first screen. | Minor | **Fixed.** Pages load when first opened: the first script is 304 KB (95 KB compressed). |
+| N154 | A fix to the shop-floor scheduler (whole pieces and full batch cycles when an operation is split over machines, and physical send-ahead) stayed on `fix/physical-parallel-scheduling` since 2 October and was never merged. | Serious | **Fixed.** Ported with its 20 tests (`test_parallel_work.py`), alongside main's tools on operations. |
+| N155 | The *GitHub Pages* workflow fails on every push to main: Pages is not switched on for the repository ("Get Pages site failed"). | Minor | Open: the repository owner turns Pages on (Settings → Pages → Source: GitHub Actions), or the workflow is removed if Render stays the one public address. |
+| N156 | The longest browser test (a company on the server, two people merging, history, put back) takes about 50 s of its 60 s limit and timed out once on a busy machine. | Minor | **Fixed.** Marked slow, which gives it three times the limit. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

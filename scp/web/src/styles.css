@@ -396,6 +396,8 @@ table.t td.stub { background: var(--surface); }
 table.t th.stub { z-index: 3; }
 table.t tr.emph td { font-weight: 700; }
 table.t.nowrap td, table.t td.stub { white-space: nowrap; }
+table.t td:first-child > b { white-space: nowrap; }    /* a document number (SO-88221) never breaks in two */
+@media (max-width: 420px) { .plan-btn .plan-more { display: none; } }
 td.neg { color: var(--critical-text); font-weight: 700; }
 td.warnc { color: var(--warning-text); }
 td.edit { background: var(--accent-soft) !important; box-shadow: inset 0 0 0 1.5px var(--accent); }
@@ -429,6 +431,8 @@ button.tile.choice.on { border: 1px solid var(--ink); box-shadow: inset 4px 0 0 
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--text); border-bottom-color: var(--ink); }
 .tab .count { font: 500 11px var(--mono); color: var(--text-3); margin-left: 2px; }
+.tab.aside { margin-left: auto; color: var(--text-3); font-weight: 500; }
+.tab.aside.active { color: var(--text); font-weight: 600; }
 
 /* ---- master data split ---- */
 .split { display: grid; grid-template-columns: var(--split-cols, minmax(0, 1fr) minmax(380px, 520px)); gap: 14px; align-items: start; }
@@ -489,6 +493,7 @@ button.tile.choice.on { border: 1px solid var(--ink); box-shadow: inset 4px 0 0 
   .app { grid-template-columns: minmax(0, 1fr); }
   .topbar { padding: 0 10px; gap: 4px; }
   .company, .version-chip, .brand-name { display: none; }
+  .topbar .save-chip { flex: none; }        /* the save state is never cut to "Sav" */
   .brand { min-width: 0; }
   .topbar .nav-toggle { display: inline-flex; padding: 0 8px; }
   .rail { display: none; }
