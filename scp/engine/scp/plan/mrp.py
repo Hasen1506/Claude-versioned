@@ -173,7 +173,8 @@ class _Planner:
                 continue
             lp = self.ds.demand_lp(node)
             period = {rid: rec.period_days for rid, rec in recs}
-            for r in effective_demand(recs, lp.strategy, lp.consumption_backward_days, lp.consumption_forward_days):
+            for r in effective_demand(recs, lp.strategy, lp.consumption_backward_days, lp.consumption_forward_days,
+                                          ds=self.ds, node=node):
                 for i, (d, q) in enumerate(self._split(node, r.date, r.qty, period.get(r.source_ref)
                                                         if r.kind == "forecast" else None)):
                     if d >= self.b.end:

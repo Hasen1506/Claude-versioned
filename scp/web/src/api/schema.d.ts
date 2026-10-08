@@ -3907,6 +3907,21 @@ export interface components {
              */
             period_days?: number | null;
             /**
+             * Original Date
+             * @description Forecast only, set by the roll-forward when the period begins: the first day of the forecast as it was entered. The record's own date, period and quantity are then what is left of the period by time; the original is what delivered orders are counted against, so an order delivered early in the period reduces what is left of it (S/4 reduction at goods issue). Empty: the record is the forecast as entered
+             */
+            original_date?: string | null;
+            /**
+             * Original Period Days
+             * @description Forecast only: the days the forecast as entered covered (see `original_date`)
+             */
+            original_period_days?: number | null;
+            /**
+             * Original Qty
+             * @description Forecast only: the quantity of the forecast as entered (see `original_date`)
+             */
+            original_qty?: number | null;
+            /**
              * Released
              * @description Forecast only: written by a forecast release. Releasing every series again replaces it, so a series the new forecast no longer has does not stay in demand
              * @default false
