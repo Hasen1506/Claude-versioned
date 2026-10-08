@@ -237,6 +237,17 @@ class Promiser:
         return ScheduleLine(ship_from=sh.node[0], ship_date=self.date(ship_day), date=deliv, qty=qty, method=method,
                             on_time=deliv <= max(requested, self.origin))
 
+    def release(self, d: DemandRecord, line: ScheduleLine) -> None:
+        """Give a committed schedule line's supply (and allocation) back: the inverse of :meth:`commit_line`."""
+        node = (line.ship_from, d.product)
+        day = self.day(line.ship_date)
+        self.series_for(node).add_out(day, -line.qty)
+        self.promised[node][min(max(day, 0), self.days - 1)] -= line.qty
+        allocs = self.allocations(d)
+        a = self.alloc_period(allocs, day) if allocs else None
+        if a:
+            self.alloc_used[a.id] -= line.qty
+
     def register(self, d: DemandRecord, c: Confirmation) -> ScheduleLine:
         """A persisted schedule line claims its supply as an outflow."""
         node = (c.ship_from, d.product)
@@ -295,7 +306,7 @@ class Promiser:
                 res.lines.append(self.commit_line(d, sh, i, take, "atp", allocs, d.date))
                 remaining -= take
             if remaining <= EPS:
-                return finish(res)
+                return self._lead_time_reason(d, finish(res))
         # 2) the rest from the first location: later ATP dates / beyond RLT, or CTP if that is sooner
         sh = ships[0]
         s = self.series_for(sh.node)
@@ -320,11 +331,29 @@ class Promiser:
             late = self._late(d, sh, i0, remaining, allocs)
         res.lines.extend(late)
         finish(res)
+        self._lead_time_reason(d, res)
         if res.unconfirmed > EPS:
             res.reason = (f"{res.unconfirmed:g} not available from {sh.node[0]} within the horizon"
                           + ("; no capable-to-promise route either" if self.cfg.ctp else "")
                           + ". ATP promises stock and receipts to orders, never the forecast: firm or plan more "
                             "supply to confirm more")
+        return res
+
+    def _lead_time_reason(self, d: DemandRecord, res: OrderPromise) -> OrderPromise:
+        """Say why a confirmed date is late when the cause is the calendar, not the stock (guide §6.2): the requested
+        delivery date is closer than the outbound lead time, so even goods shipped today arrive later. Everything
+        confirmed ships on the first possible day; the fix is a later request or a faster lane, not more supply."""
+        if res.reason or not res.lines or res.status != "late" or not (ships := self.ships(d)):
+            return res
+        sh = ships[0]
+        raw = (d.date if sh.lane is None
+               else schedule_transfer(self.ds, sh.lane, d.product, available=d.date).start_date)
+        first = self.date(self.ship_day(sh, d.product, d.date))
+        if raw < self.origin and all(x.ship_date <= first for x in res.lines):
+            earliest = max(x.date for x in res.lines)
+            res.reason = (f"Not a stock shortage: the requested delivery {d.date.isoformat()} is closer than the "
+                          f"time to ship it, so goods shipped from {sh.node[0]} today arrive {earliest.isoformat()} "
+                          "at the earliest. Ask for a later date or use a faster lane")
         return res
 
     def _late(self, d: DemandRecord, sh: Ship, i0: int, qty: float, allocs: list[Allocation]) -> list[ScheduleLine]:
