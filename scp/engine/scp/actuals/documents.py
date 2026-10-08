@@ -261,6 +261,17 @@ def _negative(ds: Dataset, journal: list[GoodsMovement], moves: list[GoodsMoveme
                        and x.stock_type is StockType.UNRESTRICTED], first)
         if bal < -EPS:
             short.append((k, bal))
+
+    def held(lo: str, p: str) -> str:
+        """Stock there that is not unrestricted (S/4 guide §10.3: inspection stock blocks delivery until the usage
+        decision): say so, so the fix is a release, not a receipt that was never missing."""
+        by: dict[StockType, float] = defaultdict(float)
+        for x in [*journal, *moves]:
+            if (x.location, x.product) == (lo, p) and x.stock_type is not StockType.UNRESTRICTED and x.date <= on:
+                by[x.stock_type] += x.signed
+        parts = [f"{_n(q)} {WORDS[t]}" for t, q in sorted(by.items(), key=lambda kv: kv[0].value) if q > EPS]
+        return f" ({' and '.join(parts)}: release it first)" if parts else ""
+
     if NegativeStock(ds.execution.negative_stock) is NegativeStock.REFUSE:
         for m in moves:
             if m.signed >= 0:
@@ -268,12 +279,13 @@ def _negative(ds: Dataset, journal: list[GoodsMovement], moves: list[GoodsMoveme
             qty = _lowest([x for x in [*journal, *moves] if x.location == m.location and x.product == m.product
                            and x.batch == m.batch and x.stock_type == m.stock_type], m.date)
             if qty < -EPS:
-                raise StockError(f"not enough in stock in batch {m.batch or '(unbatched)'} of {m.product} at {m.location}: "
-                                 "the company does not allow stock below zero")
+                raise StockError(f"not enough in stock in batch {m.batch or '(unbatched)'} of {m.product} at {m.location}"
+                                 f"{held(m.location, m.product)}: the company does not allow stock below zero")
     if not short:
         return []
     rule = NegativeStock(ds.execution.negative_stock)
-    words = ", ".join(f"{_name(ds, p)} at {_at(ds, lo)} would go to {_n(q)}" for (lo, p), q in short[:3])
+
+    words = ", ".join(f"{_name(ds, p)} at {_at(ds, lo)} would go to {_n(q)}{held(lo, p)}" for (lo, p), q in short[:3])
     if rule is NegativeStock.REFUSE:
         raise StockError(f"not enough in stock: {words}. Post the missing receipt or a count first (the company does "
                          "not allow stock below zero)")

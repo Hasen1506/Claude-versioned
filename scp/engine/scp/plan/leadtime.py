@@ -6,7 +6,8 @@ Date semantics of every planned order:
 * ``due_date``        — goods physically arrive at (or finish in) the receiving location
 * ``available_date``  — ``due_date`` + GR processing: usable for requirements (the netting date)
 
-Buy:      start --supplier lead_time_days--> dispatch --lane transit--> due --GR--> available
+Buy:      start (requisition released) --purchasing processing workdays--> PO placed
+          --supplier lead_time_days--> dispatch --lane transit--> due --GR--> available
           (the order is placed on a working day of the receiving location, whose buyers place it:
           backward scheduling moves it earlier, so the goods can arrive before they are needed, never after)
 Transfer: start (ship at origin) --lane transit--> due --GR--> available
@@ -325,18 +326,32 @@ def _component_dates(ds: Dataset, ps: ProductionSource, windows: list[OpWindow],
     return {n.product: by_seq.get(n.operation, first) if n.operation else first for n in needs(ds, ps)}
 
 
-def schedule_buy(ds: Dataset, src_id: str, *, available: date | None = None, start: date | None = None) -> Schedule:
+def processing_workdays(ds: Dataset) -> float:
+    """Purchasing department processing time (≈ S/4 plant parameter): working days the buyers take to turn a
+    requisition into a purchase order, before the supplier's planned delivery time starts."""
+    return ds.purchasing.processing_workdays
+
+
+def schedule_buy(ds: Dataset, src_id: str, *, available: date | None = None, start: date | None = None,
+                 requisition: bool = True) -> Schedule:
+    """S/4 guide §11 / §17.1: purchasing processing time (working days) + planned delivery time (the supplier's
+    lead time and the lane's transit) + GR processing time. ``start_date`` is when the requisition must be released
+    (with processing time 0, the day the order is placed). ``requisition`` False: ``start`` is the day a purchase
+    order is placed, so the buyers' processing time is already behind it."""
     pu = ds.purchasing_source_by_id[src_id]
     gr = gr_days(ds.location_product_by_key.get((pu.location, pu.product)))
     lane = supplier_lane(ds, pu.supplier, pu.location, pu.product)
     transit = lane.planning_mode.transit_days if lane else 0.0
     buyer = location_calendar(ds, pu.location)
+    proc = processing_workdays(ds) if requisition else 0.0
     if available is not None:
         latest = available - _days(gr) - _transit(transit) - _days(pu.lead_time_days)
-        st = buyer.prev_workday(latest)
+        placed = buyer.prev_workday(latest)
+        st = buyer.add_workdays(placed, -proc) if proc > 0 else placed
     else:
         st = buyer.next_workday(start)
-    ship = st + _days(pu.lead_time_days)
+        placed = buyer.add_workdays(st, proc) if proc > 0 else st
+    ship = placed + _days(pu.lead_time_days)
     due = ship + _transit(transit)
     return Schedule(st, due, due + _days(gr), [], ship_date=ship)
 
@@ -374,7 +389,11 @@ def nominal_lead_time_days(ds: Dataset, opt: SupplyOption, qty: float = 1.0) -> 
         if not pu:
             return None
         lane = supplier_lane(ds, pu.supplier, loc, prod)
-        return pu.lead_time_days + (lane.planning_mode.transit_days if lane else 0.0) + gr
+        proc = processing_workdays(ds)
+        if proc > 0:
+            per_week = max(1, sum(1 for d in range(7) if d in location_calendar(ds, loc)._workdays))  # noqa: SLF001
+            proc = proc * 7.0 / per_week
+        return proc + pu.lead_time_days + (lane.planning_mode.transit_days if lane else 0.0) + gr
     if opt.kind == "transfer":
         ln = ds.lane_by_id.get(opt.source_id)
         return (ln.planning_mode.transit_days + gr) if ln else None

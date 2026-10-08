@@ -80,6 +80,10 @@ class Confirmation(Model):
 class PromiseSettings(Model):
     include_planned_orders: bool = Field(
         True, description="Scope of check: count MRP planned receipts as supply (else stock and firm receipts only)")
+    quality_in_promise: bool = Field(
+        False, description="Scope of check: stock in quality inspection can be promised (off, as SAP's checking rule "
+                           "A: only unrestricted stock is promised, since inspection stock cannot be shipped until "
+                           "it is released)")
     confirm_beyond_rlt: bool = Field(
         True, description="Confirm unconditionally beyond the replenishment lead time (else backorder)")
     alternative_locations: bool = Field(

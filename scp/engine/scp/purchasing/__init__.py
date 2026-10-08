@@ -172,7 +172,7 @@ def agreement_for(ds: Dataset, supplier: str, location: str, product: str, on: d
 
 def _choice(ds: Dataset, pu, qty: float, order_date: date, need_by: date, assigned: bool) -> SourceChoice:
     q = qty if assigned else _lot(pu, qty)
-    sch = schedule_buy(ds, pu.id, start=order_date)
+    sch = schedule_buy(ds, pu.id, start=order_date, requisition=False)
     price, contract = price_on(ds, pu, q, order_date, pu.location)
     return SourceChoice(source_id=pu.id, supplier=pu.supplier, price=price, currency=_currency(ds, ds.price_currency(pu)),
                         value=q * price * fx(ds, ds.price_currency(pu)) * (1.0 + pu.duty_rate), qty=q,
@@ -256,7 +256,7 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
             qty = q2
         due = o.due_date
         if sid != o.source_id or today > o.start_date:
-            earliest = schedule_buy(ds, pu.id, start=max(today, ds.settings.planning_start)).due_date
+            earliest = schedule_buy(ds, pu.id, start=max(today, ds.settings.planning_start), requisition=False).due_date
             if earliest > due:
                 notes.append(f"{o.product}: {pu.supplier} can deliver {earliest.isoformat()}, "
                              f"{(earliest - due).days} d after it is needed there")
@@ -352,7 +352,7 @@ def create_one_off_po(ds: Dataset, source_id: str, qty: float, due_date: date | 
     q = _lot(pu, qty)
     if q > qty + EPS:
         notes.append(f"{pu.product}: {q:,.0f} instead of {qty:,.0f} ({pu.supplier}'s minimum or pack size)")
-    earliest = schedule_buy(ds, pu.id, start=max(today, ds.settings.planning_start)).due_date
+    earliest = schedule_buy(ds, pu.id, start=max(today, ds.settings.planning_start), requisition=False).due_date
     due = due_date or earliest
     if due < earliest:
         notes.append(f"{pu.product}: {pu.supplier} can deliver {earliest.isoformat()}, not {due.isoformat()}")
