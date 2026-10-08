@@ -81,6 +81,7 @@ class Promiser:
         self.alloc_used: dict[str, float] = defaultdict(float)
         self.orders_by_id = {o.id: o for o in plan.orders}
         self._rlt: dict[Node, float] = {}
+        self._quality: dict[Node, float] | None = None
         # free finite capacity per resource and day over the plan horizon (productive hours less the plan's load
         # that day), for CTP: a machine free that week but not on the days an order needs it does not confirm it
         end = max((b.end for b in plan.buckets), default=self.origin)
@@ -121,6 +122,23 @@ class Promiser:
         self._rlt[node] = lt
         return lt
 
+    def on_hand(self, node: Node) -> float:
+        """Stock the promise may count on at the start (S/4 guide §10.3: stock in quality inspection is invisible to
+        ATP unless the scope of check includes it). Planning's on-hand has inspection stock in it when the company
+        counts it in planning; the scope of check here decides separately, so an order is never confirmed from stock
+        that cannot be shipped until someone releases it."""
+        lp = self.ds.location_product_by_key.get(node)
+        q = lp.on_hand if lp else 0.0
+        in_plan, in_promise = self.ds.execution.quality_in_planning, self.cfg.quality_in_promise
+        if in_plan != in_promise:
+            if self._quality is None:
+                from ..actuals.lots import quality_stock
+                from ..actuals.stock import before
+                self._quality = quality_stock(self.ds, before(self.ds, self.origin), self.origin)
+            qi = self._quality.get(node, 0.0)
+            q = q - qi if in_plan else q + qi
+        return max(0.0, q)
+
     def series_for(self, node: Node) -> AtpSeries:
         if node in self.series:
             return self.series[node]
@@ -128,7 +146,7 @@ class Promiser:
         rlt_day = math.ceil(self.rlt(node) - 1e-9) if self.cfg.confirm_beyond_rlt else None
         s = AtpSeries(self.days, rlt_day)
         lp = ds.location_product_by_key.get(node)
-        s.add_in(0, lp.on_hand if lp else 0.0)
+        s.add_in(0, self.on_hand(node))
         for r in ds.receipts:
             if (r.location, r.product) == node:
                 for d, q in r.expected_parts():
@@ -462,14 +480,13 @@ class Promiser:
     # ---- views ----------------------------------------------------------------------------------
     def node_view(self, node: Node, span: int) -> AtpNode:
         s = self.series_for(node)
-        lp = self.ds.location_product_by_key.get(node)
         span = min(span, self.days)
         cum = s.cum()
         atp = s.atp()
         short = s.shortage()
         other = self.other.get(node, [0.0] * self.days)
         return AtpNode(
-            location=node[0], product=node[1], rlt_days=s.rlt_day, on_hand=lp.on_hand if lp else 0.0,
+            location=node[0], product=node[1], rlt_days=s.rlt_day, on_hand=self.on_hand(node),
             dates=[self.date(i) for i in range(span)], receipts=s.inflow[:span], other_demand=other[:span],
             promised=self.promised[node][:span], cumulative=cum[:span],
             available=[None if math.isinf(atp[i]) else max(0.0, atp[i]) for i in range(span)],

@@ -174,15 +174,24 @@ class Kpis:
             return d - dt.timedelta(days=(d.weekday() - ws) % 7)
 
         mos = [c for c in self.closed if c.kind == "production"]
-        v, num, den, brk = self._share(
-            mos, lambda c: c.last_delivery is not None and week(c.last_delivery) == week(c.due_date),
-            lambda c: 1.0, lambda c: c.location)
+        # S/4 guide §18.2: orders finished in the planned period ÷ orders PLANNED. A production order whose planned
+        # week is over and that is still open did not finish in it: it counts against adherence now, not only
+        # once it finally closes (else a plant whose orders run late shows only the few that made it)
+        this_week = week(self.as_of)
+        late_open = [r for r in self.ds.receipts if r.kind.value == "production" and self.since <= r.due_date
+                     and week(r.due_date) < this_week]
+        rows = [(c.location, c.last_delivery is not None and week(c.last_delivery) == week(c.due_date)) for c in mos]
+        rows += [(r.location, False) for r in late_open]
+        v, num, den, brk = self._share(rows, lambda x: x[1], lambda x: 1.0, lambda x: x[0])
         self.add(Kpi(id="schedule_adherence", name="Schedule adherence", unit="ratio", direction="up",
                      definition="Production orders finished in their planned week (neither early nor late) ÷ "
-                                "production orders closed in the window",
-                     source="Closed-order log (last goods receipt vs due date)", value=v, numerator=num,
-                     denominator=den, n=len(mos), breakdown_by="plant", breakdown=brk,
-                     note="" if mos else "No production orders closed in the window yet."))
+                                "production orders planned to finish in the window: closed ones, and open ones whose "
+                                "planned week is over",
+                     source="Closed-order log (last goods receipt vs due date) and open production orders",
+                     value=v, numerator=num, denominator=den, n=len(rows), breakdown_by="plant", breakdown=brk,
+                     note=(f"{len(late_open)} open order{'s' if len(late_open) != 1 else ''} past its planned week "
+                           "counted as missed." if late_open else "")
+                          or ("" if mos else "No production orders closed in the window yet.")))
 
     # ---- inventory ----------------------------------------------------------------------------------
     def inventory(self, plan: PlanResult) -> None:
