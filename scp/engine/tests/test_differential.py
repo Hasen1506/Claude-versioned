@@ -86,6 +86,25 @@ INTENTIONAL += [
 ]
 
 
+# Forecast reduction by delivered orders (guide §5.1, §17.2, §20.1 #1): the forecast as entered is kept on the record by
+# the roll, and every plan counts what delivered orders took of it (open orders' delivered part, the closed-order log)
+# before open orders consume the rest, matched by the forecast as entered. Companies with seed % 4 == 2 carry such
+# orders. The consumption module is taken whole; the two callers pass the dataset and the node.
+INTENTIONAL += [
+    ("Forecast reduction (guide §5.1/§17.2): consumption recomputed from delivered and open orders",
+     "scp/plan/consumption.py", "file"),
+    ("Forecast reduction: MRP passes the dataset and node to the consumption", "scp/plan/mrp.py",
+     ("effective_demand(recs, lp.strategy, lp.consumption_backward_days, lp.consumption_forward_days)",
+      "effective_demand(recs, lp.strategy, lp.consumption_backward_days, lp.consumption_forward_days,\n"
+      "                                          ds=self.ds, node=node)")),
+    ("Forecast reduction: the rate-based flow passes the dataset and node too", "scp/plan/rates.py",
+     ("                     for r in effective_demand(rs, lp.strategy, lp.consumption_backward_days,\n"
+      "                                               lp.consumption_forward_days)]",
+      "                     for r in effective_demand(rs, lp.strategy, lp.consumption_backward_days,\n"
+      "                                               lp.consumption_forward_days, ds=ds, node=node)]")),
+]
+
+
 def _git(*args: str, cwd: Path = ENGINE) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, timeout=120)
 
@@ -153,6 +172,24 @@ def companies(n: int) -> list[dict]:
             first = date.fromisoformat(start) - timedelta(weeks=52)
             d["history"] = [{"location": cus, "product": fg, "date": (first + timedelta(weeks=i)).isoformat(),
                              "qty": float(max(0, round(rng.gauss(60, 15))))} for i in range(52)]
+        if seed % 4 == 2:            # orders already partly or wholly delivered (forecast reduction, see INTENTIONAL)
+            from datetime import date, timedelta
+            k = 0
+            for row in d["demand"]:
+                if row["kind"] == "sales_order":
+                    row["id"] = f"SO{k}"
+                    k += 1
+                    if rng.random() < 0.5:     # partly delivered: ``qty`` is what is still open
+                        row["ordered_qty"] = float(row["qty"] + rng.randint(1, 40))
+            fcs = [row for row in d["demand"] if row["kind"] == "forecast"]
+            closed = []
+            for j, row in enumerate(rng.sample(fcs, k=min(len(fcs), 3))):
+                due = date.fromisoformat(row["date"]) + timedelta(days=rng.randint(-2, 3))
+                q = float(rng.randint(5, 80))
+                closed.append({"kind": "sales", "id": f"CS{j}", "location": row["location"], "product": row["product"],
+                               "ordered_qty": q, "delivered_qty": q, "due_date": due.isoformat(),
+                               "closed_on": due.isoformat()})
+            d["closed_orders"] = closed
         out.append(d)
     return out
 

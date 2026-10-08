@@ -130,17 +130,24 @@ recorded only.
 ## S/4 guide backtest, part A (§1–5, §17, §20.1)
 Found while backtesting the engine against the S/4HANA supply-chain guide (8 Oct 2026). Ranked by value to a
 small or mid-sized planner. None is built.
-- **Reduce the forecast at goods issue across a roll (high, M — a confirmed defect that needs a design decision).**
-  The roll-forward drops elapsed forecast by time only, so an order delivered early in a period does not reduce what is
-  left of the forecast it consumed: forecast 100 for four weeks, 80 ordered and delivered in week one, roll after two
-  weeks → 50 forecast left, 130 planned for a period whose forecast was 100 (SAP: 20 left, guide §5.1/§17.2, §20.1 #1
-  "PIR consumed exactly once"). A per-record "reduced" quantity taken off the front of the period fixes the simple
-  case, but breaks the roll's invariant "a week then another = two weeks at once" (s9) whenever an order is delivered
-  in parts across rolls or delivered forecast is time-elapsed before an order consumes it: consumption by allocation
-  is path-dependent. Options: (a) drop the invariant for the reduction only; (b) keep the original forecast records
-  (date, period, quantity) and recompute consumption by delivered + open orders from scratch at every plan, dropping
-  only records wholly in the past; (c) reduce per node, not per record. (b) is the clean one. A tested attempt at the
-  per-record version is in the audit notes.
+- **Reduce the forecast at goods issue across a roll — BUILT (8 Oct 2026, option (b)).** It was a confirmed defect: the
+  roll-forward dropped elapsed forecast by time only, so an order delivered early in a period did not reduce what
+  was left of the forecast it consumed. Forecast 100 for four weeks, with 80 ordered and delivered in week one, rolled
+  after two weeks: 50 forecast left and 130 planned (guide §5.1/§17.2, §20.1 #1). A per-record "reduced" quantity
+  broke the rule "a week then another = two weeks at once" (s9). The build takes option (b):
+  - The roll keeps the forecast as entered on the record (`original_date`/`original_period_days`/`original_qty`,
+    written once, when the period begins).
+  - Every plan recomputes consumption from scratch. Delivered orders (the delivered part of open orders, plus the
+    closed-order log) consume the original forecasts. The record keeps what neither the elapsed days nor those
+    deliveries took, whichever took more. Open orders then consume the rest, matched by the original periods.
+  - Composition holds by construction. The example now plans 20.
+  - Tests: `tests/test_forecast_reduction.py`. Recorded in `test_differential.INTENTIONAL`.
+  Follow-ups:
+  - Show the reduction: the requirement carries only open-order consumption today. A "reduced by deliveries"
+    figure on the requirement and in the roll report would explain why less forecast is planned.
+  - An S&OP release that splits a begun forecast makes its pieces new forecasts, without the original. Deliveries
+    made before the split then stop reducing the pieces.
+  - A begun forecast edited by hand keeps its original. Decide whether an edit should start a new original.
 - **Planning at a common platform (strategies 60/63 "planning material") (high, L).** Many SMEs sell variants (sizes,
   colours, voltages) of one base: forecast the base once, let each variant's orders consume it with a conversion
   factor. Today each variant needs its own forecast.
