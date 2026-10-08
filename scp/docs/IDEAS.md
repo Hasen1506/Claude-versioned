@@ -92,3 +92,10 @@ recorded only.
   customer: a requisition from the sales line, no stock, billing on the supplier-invoiced quantity.
 - **Cycle counting by ABC.** §12.4: propose count documents by ABC class (A monthly, B quarterly, C yearly) from the
   demand ABC the forecast already computes, and a low-stock count when a pick empties a place.
+- **Job-work subcontracting with component provision.** §10.1/§16.3 (item category L, movements 541/543): parts
+  sent to the job worker are tracked as stock at the supplier (special stock O) and consumed when the finished part
+  comes back; today a subcontracted step only adds days and a price, and the parts never leave the plant's stock.
+  High value for Indian manufacturers (job work under GST); large.
+- **Supplier lead-time deviation.** §11 outputs / §18.2: actual (PO date → goods receipt) vs planned lead time per
+  supplier and product, shown beside supplier reliability and offered as `lead_time_std_days`, so safety stock uses a
+  measured spread.
