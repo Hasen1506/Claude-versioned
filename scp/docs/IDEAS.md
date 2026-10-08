@@ -161,3 +161,10 @@ small or mid-sized planner. None is built.
   arrived with part C.
 - **Exceptions per planner and per material class (§17.6) (low, S).** The tower ages exceptions; grouping their age
   by MRP controller and product type would point at master-data root causes, as the guide recommends.
+
+## Robustness (found fixing main's red e2e run, 8 Oct 2026)
+- **One "latest answer wins" hook for every page that reads once and then edits (med, S).** The members table showed
+  its first read whenever it arrived, so a read answered before an invitation but delivered after it hid the invited
+  person (scp run 37731060982; fixed for members and the approval switch). Other panels that load on open and then
+  replace their list from a change's answer (limits, the company list, connections) follow the same pattern; a shared
+  `useLatest(read, deps)` that drops an answer older than the last change shown would close the class.

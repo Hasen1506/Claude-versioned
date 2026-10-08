@@ -211,12 +211,21 @@ function ResetLinkButton({ id, m }: { id: string; m: Member }) {
 function Approval({ id, owner }: { id: string; owner: boolean }) {
   const [on, setOn] = useState<boolean | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { api.companies().then((l) => setOn(!!l.find((c) => c.id === id)?.approval)).catch(() => setOn(null)); }, [id]);
+  // a first read that answers after the owner already changed the setting must not put the old value back
+  const changed = useRef(0);
+  useEffect(() => {
+    const asked = changed.current;
+    let live = true;
+    api.companies().then((l) => { if (live && changed.current === asked) setOn(!!l.find((c) => c.id === id)?.approval); })
+      .catch(() => { if (live && changed.current === asked) setOn(null); });
+    return () => { live = false; };
+  }, [id]);
   if (on === null) return null;
   return <div className="stack" style={{ gap: 4 }}>
     <label className="row small" style={{ gap: 8 }}>
       <input type="checkbox" checked={on} disabled={!owner} onChange={async (e) => {
         const want = e.target.checked;
+        changed.current += 1;
         setErr(null);
         setOn(want);
         try { setOn((await api.setApproval(id, want)).approval ?? false); } catch (x) { setOn(!want); setErr(x instanceof Error ? x.message : String(x)); }
@@ -237,7 +246,19 @@ function Members({ id, role }: { id: string; role: string }) {
   const [newRole, setNewRole] = useState("planner");
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  useEffect(() => { api.members(id).then(setList).catch((e) => setErr(String(e))); }, [id]);
+  // Every list the server answers with is numbered when it is shown. The first read of the members is shown only if no
+  // change (an invitation, a new role, a removal, new limits) answered since it was asked: the answer of a change is the
+  // newer list, and a read that arrives after it (the server answered it first, the browser delivered it late) must not
+  // put back a list without the person just invited (scp run 37731060982: the invited row vanished).
+  const shown = useRef(0);
+  const show = (l: Member[]) => { shown.current += 1; setList(l); };
+  useEffect(() => {
+    const asked = shown.current;
+    let live = true;
+    api.members(id).then((l) => { if (live && shown.current === asked) show(l); })
+      .catch((e) => { if (live) setErr(String(e)); });
+    return () => { live = false; };
+  }, [id]);
   const owner = role === "owner";
   const [invite, setInvite] = useState<{ email: string; link: string } | null>(null);
   const act = async (f: () => Promise<Member[]>, done: string) => {
@@ -246,7 +267,7 @@ function Members({ id, role }: { id: string; role: string }) {
     setInvite(null);
     try {
       const l = await f();
-      setList(l);
+      show(l);
       setMsg(done);
       const made = l.find((m) => m.invite_link);
       if (made?.invite_link) setInvite({ email: made.email, link: made.invite_link });
@@ -269,7 +290,7 @@ function Members({ id, role }: { id: string; role: string }) {
                       <option value="owner">owner</option><option value="planner">planner</option><option value="viewer">viewer</option>
                     </select>) : <>{m.role}{m.email === me?.email && <span className="faint"> (you)</span>}</>}
                     <div className="faint small">{ROLE_TEXT[m.role]}</div>
-                    <Limits key={`${m.email}-${m.places.join()}-${m.families.join()}`} m={m} id={id} owner={owner} onSaved={(l, done) => { setList(l); setMsg(done); }} />
+                    <Limits key={`${m.email}-${m.places.join()}-${m.families.join()}`} m={m} id={id} owner={owner} onSaved={(l, done) => { show(l); setMsg(done); }} />
                     {owner && m.email !== me?.email && <ResetLinkButton id={id} m={m} />}</td>
                   <td className="small">{when(m.since)}</td>
                   {owner && <td>{m.email !== me?.email && <button className="btn sm ghost" aria-label={`Remove ${m.email}`}

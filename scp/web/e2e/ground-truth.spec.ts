@@ -156,6 +156,50 @@ test("an invitation is accepted by the invited address only, once; the new membe
   await expect(page.locator("tr", { hasText: `viewer.only@gt-invite${R()}.example` })).not.toContainText("invited");
 });
 
+// scp run 37731060982 (main red): the members table read the list once when it opened, and showed that answer whenever
+// it came. When the server answered that read before an invitation but the browser delivered it after the invitation's
+// own answer, the table went back to the list without the invited person ("invited" row not found). The read's answer
+// is held here until the invitation has been answered and shown, then delivered: the invited row must stay.
+test("a slow first read of the members never hides a colleague invited meanwhile", async ({ page }) => {
+  let deliver!: () => void;
+  const late = new Promise<void>((r) => { deliver = r; });
+  let reads = 0;
+  // count the members answers the page has read (the invitation's, then the late one): a wait on the page having taken
+  // the late answer, never on time
+  await page.addInitScript(() => {
+    const w = window as unknown as { __membersRead: number };
+    w.__membersRead = 0;
+    const json = Response.prototype.json;
+    Response.prototype.json = async function (this: Response) {
+      const out = await json.call(this);
+      if (/\/members$/.test(this.url)) w.__membersRead += 1;
+      return out;
+    };
+  });
+  await page.route(/\/api\/companies\/[^/]+\/members$/, async (route) => {
+    if (route.request().method() !== "GET" || reads++ > 0) return route.continue();
+    const answered = await route.fetch();          // the server answers now, before the invitation exists
+    await late;                                    // ... and the browser gets that answer only after the invitation's
+    await route.fulfill({ response: answered });
+  });
+  await ownCompany(page, `owner@gt-slow-read${R()}.example`);
+  const email = `colleague@gt-slow-read${R()}.example`;
+  await invite(page, email, "planner");
+  await expect.poll(() => reads).toBe(1);          // the first read is the one held
+  const delivered = page.waitForResponse((r) => r.request().method() === "GET" && /\/members$/.test(r.url()));
+  deliver();
+  await (await delivered).finished();
+  // the page has read the late answer, and drawn two frames since
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __membersRead: number }).__membersRead)).toBe(2);
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await expect(page.locator("tr", { hasText: email })).toHaveCount(1);
+  await expect(page.locator("tr", { hasText: email })).toContainText("invited");
+  // and the server's list agrees after a reload
+  await page.unroute(/\/api\/companies\/[^/]+\/members$/);
+  await page.reload();
+  await expect(page.locator("tr", { hasText: email })).toContainText("invited");
+});
+
 // ---- password reset (on the server that sends mail) -----------------------------------------------------------------
 test.describe("password reset", () => {
   test.use({ baseURL: MAIL });
