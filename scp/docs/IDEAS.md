@@ -17,12 +17,6 @@ candidate for a later PR. Newest at the bottom of each group.
   rows forward over the empty weeks to the horizon (one undo step), for a planner who has no forecast yet.
 
 ## Security and accounts
-- **Drop the token from sign-in replies for browser requests.** Since roadmap D the web client signs in with the
-  HttpOnly cookie, yet the sign-in, sign-up and reset answers still carry `token` (for scripts). When the request asks
-  for a cookie (`X-SCP-Session: cookie`), answer with an empty token, so a script injected into the page at sign-in
-  time never sees one.
-- **Require the double-submit token on sign-in too (login CSRF).** A forged form could sign a browser into the
-  attacker's account; mint the `scp_csrf` cookie on the first page load and check it on sign-in/sign-up.
 - **A strength meter and re-authentication.** Show a zxcvbn-style score as the password is typed, and ask for the
   current password again before an e-mail or password change made from an old session.
 

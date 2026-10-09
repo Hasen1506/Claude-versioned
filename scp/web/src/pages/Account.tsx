@@ -56,7 +56,7 @@ export function SignIn({ config, onDone }: { config: AuthConfig | null; onDone?:
         return;
       }
       const s = mode === "in" ? await api.signIn(email, password) : await api.signUp(email, name, password);
-      store.signedIn({ token: s.token, user: s.user });
+      store.signedIn({ user: s.user });
       setPassword("");
       onDone?.();
     } catch (x) {
@@ -412,7 +412,7 @@ function ResetPassword({ token }: { token: string }) {
       setErr(null);
       try {
         const s = await api.resetPassword(token, pw);
-        store.signedIn({ token: s.token, user: s.user });
+        store.signedIn({ user: s.user });
         go("account");
       } catch (x) { setErr(x instanceof Error ? x.message : String(x)); }
     }}>

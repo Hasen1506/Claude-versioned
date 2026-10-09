@@ -21,7 +21,9 @@ Server settings (environment):
   CPU-heavy anonymous use (CV-M04). A public server should still set ``SCP_REQUIRE_SIGNIN=1``.
 
 **Browser sessions (roadmap D).** The web client asks for its session in a cookie (``X-SCP-Session: cookie`` on the
-sign-in, sign-up, reset and adopt calls; the single sign-on callback always does): ``scp_session`` is HttpOnly,
+sign-in, sign-up, reset and adopt calls; the single sign-on callback always does) and is answered without the token
+(it lives in the cookie only), and must send the double-submit token already on sign-in (login CSRF; from
+``GET /api/auth/csrf``), which is renewed when the session starts: ``scp_session`` is HttpOnly,
 ``SameSite=Lax`` (``None`` for the cross-site Pages client) and ``Secure`` whenever the server is reached over HTTPS
 (``SCP_COOKIE_SECURE=1``/``0`` forces it). A request that signs in with that cookie and changes something must carry
 the double-submit token: header ``X-CSRF-Token`` equal to the ``scp_csrf`` cookie (also handed out in the sign-in
@@ -69,6 +71,10 @@ OPEN_PATHS = ("/api/health", "/api/auth/config", "/api/auth/signin", "/api/auth/
 # calls that never act on the session cookie, so they need no CSRF token (sign-in itself, and swapping a token)
 NO_CSRF = ("/api/auth/signin", "/api/auth/signup", "/api/auth/reset", "/api/auth/reset/request", "/api/auth/adopt",
            "/api/auth/email/verify")
+# the sign-in calls that set the session cookie when a browser asks for it: that browser must prove it is this
+# application's own page (the double-submit token of ``GET /api/auth/csrf``), so a forged form cannot sign it into
+# someone else's account (login CSRF)
+COOKIE_SIGNIN = ("/api/auth/signin", "/api/auth/signup", "/api/auth/reset")
 SESSION_COOKIE, CSRF_COOKIE, CSRF_HEADER = "scp_session", "scp_csrf", "x-csrf-token"
 # the cost in units of one anonymous call (roadmap D): what is not listed costs 1
 ANON_COSTS: dict[str, int] = {
@@ -232,6 +238,9 @@ async def gate(request: Request, call_next):
             and path not in NO_CSRF and not csrf_ok(request)):
         # roadmap D: a change made with the session cookie must prove it comes from this application's own page
         return JSONResponse(status_code=403, content={"detail": "this request is missing its security token "
+                                                                "(X-CSRF-Token); reload the page and try again"})
+    if request.method == "POST" and path in COOKIE_SIGNIN and wants_cookie(request) and not csrf_ok(request):
+        return JSONResponse(status_code=403, content={"detail": "this sign-in is missing its security token "
                                                                 "(X-CSRF-Token); reload the page and try again"})
     if signin_required and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS":
         try:
@@ -433,10 +442,12 @@ def auth_config() -> AuthConfig:
 
 
 def browser_session(s: Session, request: Request, response: Response) -> Session:
-    """A browser that asked for it (``X-SCP-Session: cookie``) gets the session in its HttpOnly cookie, and the
-    double-submit token in the answer; other callers get the answer as before."""
+    """A browser that asked for it (``X-SCP-Session: cookie``) gets the session in its HttpOnly cookie and a fresh
+    double-submit token in the answer, and no token: a script running in the page at sign-in never sees the
+    session. Other callers (scripts) get the token as before."""
     if wants_cookie(request):
-        s.csrf = set_session_cookies(response, request, s.token)
+        s.csrf = set_session_cookies(response, request, s.token, csrf=secrets.token_urlsafe(24))
+        s.token = ""
     return s
 
 

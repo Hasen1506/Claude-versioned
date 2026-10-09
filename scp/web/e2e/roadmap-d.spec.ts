@@ -20,7 +20,9 @@ test("signing in keeps the session in an HttpOnly cookie, never in the browser's
   await page.goto("/");
   await page.getByText("Kaveri Kitchenware").click();
   await expect(page.getByText(/Everything is up to date/)).toBeVisible({ timeout: 45_000 });
+  const answer = page.waitForResponse((r) => r.url().endsWith("/api/auth/signup"));
   await makeAccount(page, email);
+  expect((await (await answer).json()).token).toBe("");  // the page never sees the session (it is in the cookie)
   await expect(page.getByText(/^Signed in as/)).toBeVisible();
   const kept = await page.evaluate(() => JSON.parse(localStorage.getItem("scp.session.v1") ?? "{}"));
   expect(kept.token).toMatch(/^cookie:/);                // a marker, not a token that signs in
@@ -33,6 +35,14 @@ test("signing in keeps the session in an HttpOnly cookie, never in the browser's
   expect((await (await page.request.get("/api/auth/me")).json()).user.email).toBe(email);
   await page.getByRole("button", { name: "Keep it on the server" }).click();
   await expect(page.locator(".save-chip .save-long")).toHaveText(/^Saved/);
+});
+
+test("a sign-in asking for the cookie without this browser's CSRF token is refused (login CSRF)", async ({ page }) => {
+  await page.goto("/");
+  const forged = await page.request.post("/api/auth/signup", { headers: { "X-SCP-Session": "cookie" },
+    data: { email: `forged-${Date.now()}@kaveri.in`, password: STRONG } });
+  expect(forged.status()).toBe(403);
+  expect((await page.context().cookies()).find((c) => c.name === "scp_session")).toBeUndefined();
 });
 
 test("a change made with the cookie but without the CSRF token is refused", async ({ page }) => {
