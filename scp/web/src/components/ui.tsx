@@ -65,7 +65,8 @@ export function Tabs<T extends string>({ tabs, value, onChange }: {
   return (
     <div className="tabs" role="tablist">
       {tabs.map((t) => (
-        <button key={t.id} role="tab" aria-selected={t.id === value} className={`tab ${t.id === value ? "active" : ""}`}
+        // a page's settings tab sits apart at the end, so the tabs for the work itself read first
+        <button key={t.id} role="tab" aria-selected={t.id === value} className={`tab ${t.id === value ? "active" : ""} ${t.id === "settings" ? "aside" : ""}`}
           onClick={() => onChange(t.id)}>
           {t.label}
           {t.count !== undefined && <span className="count">{t.count}</span>}
@@ -130,8 +131,8 @@ export function cols(template: string, extra?: CSSProperties): CSSProperties {
 
 /** Page header: the page's question in plain words, a one-line answer to "what is this", its actions, and
  *  "How this is calculated" folded away for anyone who wants the method. (`n` was the old stage number.) */
-export function StageHeader({ title, kicker, answer, how, right }: {
-  n?: string; title: string; kicker?: ReactNode; answer?: ReactNode; how?: ReactNode; right?: ReactNode;
+export function StageHeader({ title, kicker, answer, how, howLabel = "How this is calculated", right }: {
+  n?: string; title: string; kicker?: ReactNode; answer?: ReactNode; how?: ReactNode; howLabel?: string; right?: ReactNode;
 }) {
   return (
     <header className="stage-head">
@@ -139,7 +140,7 @@ export function StageHeader({ title, kicker, answer, how, right }: {
         <h1 className="title">{title}</h1>
         {kicker && <div className="kicker">{kicker}</div>}
         {answer && <p className="answer">{answer}</p>}
-        {how && <details className="how"><summary>How this is calculated</summary><div>{how}</div></details>}
+        {how && <details className="how"><summary>{howLabel}</summary><div>{how}</div></details>}
       </div>
       {right && <div className="row wrap">{right}</div>}
     </header>

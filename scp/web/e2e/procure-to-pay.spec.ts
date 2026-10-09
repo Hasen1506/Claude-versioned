@@ -37,6 +37,8 @@ test('procure to pay: firmed and sent, released at two levels, confirmed in two 
   // firming makes the purchase order and offers to send it; above two release levels it waits
   await page.goto('/#/execution/orders');
   const calculate=page.getByRole('button',{name:/^(Recalculate the supply plan|Calculate the supply plan)$/});
+  // pages load on demand: wait for the firm zone to be drawn before asking whether the plan needs calculating
+  await expect(page.getByRole('heading',{name:/^Firm zone:/})).toBeVisible({timeout:45000});
   if(await calculate.count()) await calculate.click();
   await page.getByRole('button',{name:'Make 1 order firm',exact:true}).click();
   await expect(done(page)).toContainText(/1 planned order firmed.*PO-00001/,{timeout:45000});

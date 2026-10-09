@@ -44,7 +44,7 @@ export function Readiness() {
     <div>
       <StageHeader title="Data check" kicker={<>What is still missing before your company can be planned, and anything in the data that
         would make the plan wrong. It runs again on every change.</>}
-        how={<>The checklist follows the order you set a company up in: places, products, demand, how each product is supplied and
+        howLabel="How the check works" how={<>The checklist follows the order you set a company up in: places, products, demand, how each product is supplied and
           made, and stock. Below it, a set of rules, like SAP's readiness checks, looks for data that contradicts itself.
           <b> Stop planning</b> problems must be fixed first; the others are planned around. A record you haven't finished is
           left out of the plan until it is, so it never stops the rest.</>}

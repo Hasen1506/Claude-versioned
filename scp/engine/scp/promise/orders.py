@@ -115,7 +115,7 @@ def make_supply(ds: Dataset, lines: list[tuple[DemandRecord, OrderPromise]]) -> 
     new_ = [rec for rec, p in lines if _on_new_supply(ds, rec, p)]
     if not new_:
         return ds, [], ""
-    manual = (" It needs new supply that is only planned: make it firm (Actuals → Open orders & firming) after the "
+    manual = (" It needs new supply that is only planned: make it firm (Stock & actuals → Open orders & firming) after the "
               "plan is recalculated, or it is not made.")
     if not ds.execution.promise_firms:
         return ds, [], manual

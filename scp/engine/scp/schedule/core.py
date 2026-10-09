@@ -6,8 +6,8 @@ The decoder turns it into a semi-active schedule:
 
 * an operation may start once its order is released and its predecessor operation (plus the
   queue time after it) is finished;
-* it runs on the resource unit that finishes it earliest; long operations are split into equal
-  sublots over up to ``parallel_units`` units, each sublot with its own setup;
+* it runs on the resource unit that finishes it earliest; long operations are split into
+  sublots over up to ``parallel_units`` units, preserving whole pieces and batch cycles;
 * setup depends on what ran last on that unit: nothing → full setup; same product → none; same
   setup group → ``minor_setup_factor`` × setup; otherwise the changeover matrix, else full setup;
 * work only happens inside shift windows (``ResourceClock``).
@@ -28,6 +28,7 @@ in the order they were scheduled, not before their scheduled start.
 """
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -73,6 +74,56 @@ class OpSpec:
     waits_on: list[tuple[str, float]] = field(default_factory=list)   # (order made in this schedule, receiving
                                                                       # workdays): parts it consumes from that order
     tools: list[str] = field(default_factory=list)   # tools it holds from its setup to its end
+    run_per_unit: float | None = None   # None: a generic scheduling instance supplies only total run hours
+    batch_qty: float | None = None
+    batch_hours: float = 0.0
+    whole: bool = False                # whole output pieces; fractional entering quantities can arise from scrap
+
+    def work(self, qty: float) -> float:
+        """Productive run hours for a sublot or send-ahead quantity, including complete batch cycles."""
+        if qty <= 0:
+            return 0.0
+        if self.run_per_unit is None:
+            return self.run * qty / self.qty if self.qty > 0 else 0.0
+        batches = math.ceil(qty / self.batch_qty - 1e-9) if self.batch_qty else 0
+        return self.run_per_unit * qty + self.batch_hours * batches
+
+    def pieces(self) -> bool:
+        return self.whole and abs(self.qty - round(self.qty)) < 1e-9
+
+    def transfer_work(self, qty: float, lot_qty: float | None = None, *, tail: bool = False) -> float:
+        """A batch releases its pieces together, after its per-unit work and complete cycle."""
+        lot_qty = self.qty if lot_qty is None else lot_qty
+        qty = min(qty, lot_qty)
+        if self.batch_qty and self.batch_hours > 0 and qty > 0:
+            if tail:
+                partial = lot_qty - math.floor(lot_qty / self.batch_qty + 1e-9) * self.batch_qty
+                qty = partial + math.ceil(max(0.0, qty - partial) / self.batch_qty - 1e-9) * self.batch_qty
+            else:
+                qty = math.ceil(qty / self.batch_qty - 1e-9) * self.batch_qty
+        return self.work(min(qty, lot_qty))
+
+    def sublots(self, count: int) -> list[float]:
+        """Balance indivisible batches when possible, then place the one partial batch.
+
+        A whole-piece product with a fractional batch capacity is balanced in pieces instead:
+        each resulting lot still pays the complete cycles it actually needs.
+        """
+        if count == 1 or self.qty <= 0:
+            return [self.qty]
+        if self.batch_qty and self.batch_hours > 0 and (
+                not self.pieces() or abs(self.batch_qty - round(self.batch_qty)) < 1e-9):
+            full = math.floor(self.qty / self.batch_qty + 1e-9)
+            partial = max(0.0, self.qty - full * self.batch_qty)
+            lots = [(full // count + (i < full % count)) * self.batch_qty for i in range(count)]
+            if partial > 1e-9:
+                lots[min(range(count), key=lambda i: (lots[i], i))] += partial
+        elif self.pieces():
+            qty = round(self.qty)
+            lots = [float(qty // count + (i < qty % count)) for i in range(count)]
+        else:
+            lots = [self.qty / count] * count
+        return [q for q in lots if q > 0]
 
 
 @dataclass
@@ -183,10 +234,10 @@ def handoff(inst: Instance, o: OpSpec, bl: list[Block], nxt: OpSpec | None,
         return after_end, 0.0
     first = min(bl, key=lambda b: (b.run_start, b.unit))
     res = inst.resources[first.resource]
-    frac = min(1.0, o.send_ahead / first.qty) if first.qty > 0 else 1.0
-    _, done = res.at(first.unit if res.finite else -1).advance(first.run_start, first.run_work * frac)
+    work = o.transfer_work(o.send_ahead, first.qty)
+    _, done = res.at(first.unit if res.finite else -1).advance(first.run_start, work)
     ready = min(after_end, inst.after(o, done))
-    tail = nxt.run * min(1.0, o.send_ahead / nxt.qty) if nxt.qty > 0 else 0.0
+    tail = nxt.transfer_work(o.send_ahead, tail=True)
     machines = [next_resource] if next_resource is not None else [nxt.resource, *nxt.alternatives]
     must = min((inst.resources[rid].clock.advance(after_end, tail)[1]
                 for rid in machines if rid in inst.resources), default=INF)
@@ -258,20 +309,21 @@ def decode(inst: Instance, seqs: dict[str, list[str]], hold: dict[str, float] | 
         return all(j in done or j not in last_key for j, _ in ops[k].waits_on)
 
     def trial(o: OpSpec, rid: str, res: Res, t0: float, n: int) -> list[tuple]:
-        """Greedy placement of ``n`` equal sublots, each on the unit that finishes it first."""
+        """Greedy placement of physical sublots, each on the unit that finishes it first."""
         fr = list(free[rid])
         stt = list(state[rid])
         out = []
-        for _ in range(n):
+        for qty in o.sublots(n):
+            work = o.work(qty)
             best: tuple | None = None
             for u in (range(len(fr)) if res.finite else [-1]):
                 prev = stt[u] if u >= 0 else None
                 su = inst.setup(rid, prev, o)
                 clk = res.at(u)
                 s0, s1 = clk.advance(max(t0, fr[u]) if u >= 0 else t0, su)
-                r0, r1 = clk.advance(s1, o.run / n)
+                r0, r1 = clk.advance(s1, work)
                 if best is None or (r1, u) < best[:2]:
-                    best = (r1, u, s0, r0, su, prev)
+                    best = (r1, u, s0, r0, su, prev, qty, work)
             if best is None or best[0] == INF:
                 raise NoWorkingTime(f"{rid} has no working time left for {o.key}")
             if best[1] >= 0:
@@ -298,6 +350,10 @@ def decode(inst: Instance, seqs: dict[str, list[str]], hold: dict[str, float] | 
         def split(rid: str, start: float) -> list[tuple]:
             res = inst.resources[rid]
             allowed = min(o.parallel or res.units, res.units) if res.finite else 1
+            if o.pieces() and o.qty > 0:
+                allowed = min(allowed, round(o.qty))
+            if o.batch_qty and o.batch_hours > 0 and o.qty > 0:
+                allowed = min(allowed, math.ceil(o.qty / o.batch_qty - 1e-9))
             plan = None
             for n in range(1, (allowed if o.run > EPS else 1) + 1):
                 try:
@@ -343,13 +399,13 @@ def decode(inst: Instance, seqs: dict[str, list[str]], hold: dict[str, float] | 
             raise NoWorkingTime(f"{', '.join(options)} has no working time left for {o.key}")
         _, rid, plan = best
         n = len(plan)
-        for sub, (r1, u, s0, r0, su, prev) in enumerate(plan):
+        for sub, (r1, u, s0, r0, su, prev, qty, work) in enumerate(plan):
             if u >= 0:
                 free[rid][u] = r1
                 state[rid][u] = (o.product, o.group)
             else:
                 u = len(blocks)
-            blocks.append(Block(k, sub, rid, u, o.qty / n, s0, r0, r1, su, o.run / n, prev))
+            blocks.append(Block(k, sub, rid, u, qty, s0, r0, r1, su, work, prev))
         end_all = max(c[0] for c in plan)
         op_end[k] = end_all
         for t in o.tools:
@@ -530,6 +586,10 @@ def check(inst: Instance, d: Decoded) -> list[str]:
             v.append(f"{b.key}/{b.sub}: setup does not fit the working time between its start and run start")
         if abs(clk.work_between(b.run_start, b.end) - b.run_work) > 1e-5:
             v.append(f"{b.key}/{b.sub}: run time does not match the working time in its window")
+        if abs(o.work(b.qty) - b.run_work) > 1e-5:
+            v.append(f"{b.key}/{b.sub}: run work does not cover its quantity and whole batch cycles")
+        if o.pieces() and abs(b.qty - round(b.qty)) > 1e-9:
+            v.append(f"{b.key}/{b.sub}: sublot splits a whole piece")
         if abs(inst.setup(b.resource, b.prev, o) - b.setup_work) > 1e-6:
             v.append(f"{b.key}/{b.sub}: setup {b.setup_work:.2f} h breaks the setup rule")
         if res.finite:

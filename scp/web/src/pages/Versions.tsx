@@ -138,7 +138,7 @@ export function Versions() {
     <div>
       <StageHeader title="Versions and what-ifs" kicker={<>Save today's data as a <b>base version</b>. To try a change, save it as a
         {" "}<b>scenario</b> of that base, then compare the two side by side, data and plan. Keep the scenario as the next base, or drop it.</>}
-        how={<>A saved version never changes: its content is stored with a fingerprint (SHA-256 of the data), which the table shows.
+        howLabel="How versions work" how={<>A saved version never changes: its content is stored with a fingerprint (SHA-256 of the data), which the table shows.
           Promoting a scenario writes a new base and marks the old one superseded, byte for byte as it was.</>} />
       <div className="content">
         {err && <div className="banner error"><Badge sev="error">Version store</Badge>{err}</div>}

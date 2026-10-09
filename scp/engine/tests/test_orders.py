@@ -78,7 +78,7 @@ def test_an_order_made_to_order_makes_its_production_firm():
     d["execution"] = {"promise_firms": False}
     x, made = accept(ds(d), order(6))
     assert not made.firmed and not [r for r in x.receipts if r.kind.value == "production"]
-    assert "It needs new supply that is only planned: make it firm (Actuals → Open orders & firming)" in made.message
+    assert "It needs new supply that is only planned: make it firm (Stock & actuals → Open orders & firming)" in made.message
 
 
 def test_a_changed_order_is_promised_again_and_cannot_go_below_what_was_delivered():

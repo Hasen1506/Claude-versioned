@@ -137,7 +137,7 @@ function byDay<T extends { date: string; qty: number; on_time: boolean }>(lines:
   return out;
 }
 
-/** Forecast accuracy against real sales, from the weeks moved forward (as Actuals shows it). */
+/** Forecast accuracy against real sales, from the weeks moved forward (as Stock & actuals shows it). */
 function realAccuracy(ds: Dataset): { accuracy: number; bias: number; weeks: number } | null {
   const recs = ds.accuracy ?? [];
   const f = recs.reduce((t, r) => t + r.forecast, 0), a = recs.reduce((t, r) => t + r.actual, 0);
@@ -302,7 +302,7 @@ export function Home({ ds }: { ds: Dataset }) {
         return <p className="muted">
           {real && <>Against real sales the forecast was <b>{pct(real.accuracy, 0)}</b> accurate over {plural(real.weeks, "week")}{side(real.bias)}. </>}
           {test && <>Tried on past weeks of the sales history (a backtest) it scores {pct(1 - test.wape!, 0)}{side(test.bias)}.</>}
-          {!real && test && <> Its accuracy against real sales shows once weeks are moved forward (Actuals).</>}
+          {!real && test && <> Its accuracy against real sales shows once weeks are moved forward (Stock & actuals).</>}
         </p>;
       })()}
     </Card>

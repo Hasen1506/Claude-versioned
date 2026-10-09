@@ -15,6 +15,7 @@ from collections import defaultdict
 
 from ..model import ConfirmationStrategy, Dataset, DemandKind, DemandRecord
 from ..model.promise import Confirmation
+from ..actuals.post import delivered, ordered_now
 from ..plan import run_mrp
 from ..validate import has_errors, validate
 from .atp import EPS
@@ -71,6 +72,8 @@ def _value(ds: Dataset, d: DemandRecord, r: OrderPromise) -> OrderPromise:
     """The order's price and value: its own price, else the customer's, else the product's; empty without one."""
     r.price = ds.selling_price(d.location, d.product, d.price)
     r.value = None if r.price is None else d.qty * r.price
+    if d.id:
+        r.shipped = round(max(0.0, delivered(ds, d.id) - (ordered_now(ds, d) - d.qty)), 6)
     return r
 
 

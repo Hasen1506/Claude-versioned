@@ -71,8 +71,22 @@ def test_a_quicker_second_supplier_is_suggested_with_its_extra_cost(ds):
     ds.purchasing_sources.append(fast)
     w = item("STOCKOUT", qty=50, location="PLT-PUNE", product="RM-STAMP", severity="error")
     price_items(ds, None, [w])
-    assert w.action is not None and w.action.kind == "switch_supplier" and "SUP-COPPER" in w.action.label
+    # the supplier by its name, as every other page shows it
+    assert w.action is not None and w.action.kind == "switch_supplier" and "Hindalco copper" in w.action.label
     assert w.action.costs == pytest.approx((130.0 - 118.0) * 50)
+
+
+def test_a_late_order_gets_the_action_for_its_kind_and_a_machine_its_name(ds):
+    """A transfer that should already have started is shipped, not "brought forward" as a production order; the
+    overtime action names the machine as the pages do."""
+    plan_kinds = {o.order_id: o.action.label for o in run_tower(ds, record=False).worklist
+                  if o.code == "START_IN_PAST" and o.action}
+    assert plan_kinds and all(lbl == "Ship the transfer now" for oid, lbl in plan_kinds.items() if oid.startswith("TO-"))
+    assert all(lbl == "Bring the production order forward" for oid, lbl in plan_kinds.items() if oid.startswith("MO-"))
+    w = item("CAPACITY_OVERLOAD", qty=4, resource="PUNE-L1", category="capacity", severity="error")
+    price_items(ds, None, [w])
+    name = next(r.name for r in ds.resources if r.id == "PUNE-L1")
+    assert w.action is not None and w.action.label == f"Add 4.0 h of overtime on {name}"
 
 
 def test_money_owed_is_its_open_amount_and_unpriced_items_say_so(ds):

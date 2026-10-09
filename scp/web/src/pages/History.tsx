@@ -183,7 +183,7 @@ export function History() {
     <div>
       <StageHeader title="History" kicker={<>Every save of <b>{company.name}</b>: who made it, when, and what changed. Compare an
         earlier state with now, or put the company back to it.</>}
-        how={<>Each save is a revision, and every one is kept: any of them can be compared with now and put back (a new
+        howLabel="How the history works" how={<>Each save is a revision, and every one is kept: any of them can be compared with now and put back (a new
           revision; nothing is lost). Saves made before every save was kept (one per person per ten minutes) show only what
           they changed.</>} />
       <div className="content">

@@ -632,7 +632,7 @@ def receive(ds: Dataset, po_id: str, lines: list[dict] | None, on: date | None =
     msg = (f"Goods received on {po_id} ({on.isoformat()})"
            + (f" in batch{'es' if len(got_in) != 1 else ''} {', '.join(got_in)}" if got_in else "") + ": "
            + "; ".join(notes + more)
-           + ". Stock and the order are updated when the plan moves past this date (Actuals → Start a new week).")
+           + ". Stock and the order are updated when the plan moves past this date (Stock & actuals → Start a new week).")
     new = ds.model_copy(update={"movements": [*ds.movements, *moves], "batches": [*ds.batches, *batches]})
     rep = ActionReport(ok=True, message=msg, movements=[m.id for m in moves], doc=moves[0].doc)
     from ..actuals.post import with_short

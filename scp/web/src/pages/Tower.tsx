@@ -53,7 +53,7 @@ function towerAnswer(res: TowerResult) {
   const off = res.kpis.filter((k) => k.status === "critical");
   const live = res.worklist.filter((w) => w.status === "open" || w.status === "acknowledged");
   const late = live.filter((w) => w.breached).length;
-  return <>{graded.length ? <>{graded.length - off.length} of {plural(graded.length, "measure")} {graded.length - off.length === 1 ? "is" : "are"} on or near target
+  return <>{graded.length ? <>{graded.length - off.length} of {plural(graded.length, "graded measure")} {graded.length - off.length === 1 ? "is" : "are"} on or near target
     {off.length ? <>; off target: {off.slice(0, 3).map((k) => k.name).join(", ")}{off.length > 3 ? ` and ${off.length - 3} more` : ""}.</> : "."}</> : "No measure has data yet."}
     {" "}{live.length ? <>{plural(live.length, "problem")} {live.length === 1 ? "is" : "are"} open{late ? <>, {late} past {late === 1 ? "its" : "their"} time limit</> : null}.</> : <>No problems are open.</>}</>;
 }
@@ -78,14 +78,22 @@ export function Tower({ route }: { route: string[] }) {
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   const live = res?.worklist.filter((w) => w.status === "open" || w.status === "acknowledged") ?? [];
+  // one list of problems seen two ways: ranked by the money leaving it costs, or followed up by owner and age
   const nav = (
-    <Tabs<View> value={view} onChange={(v) => go("tower", v)} tabs={[
+    <Tabs<View> value={view === "worklist" ? "inbox" : view} onChange={(v) => go("tower", v)} tabs={[
       { id: "kpis", label: "KPIs", count: res?.kpis.length },
-      { id: "inbox", label: "Exception inbox", count: res ? res.inbox.length : undefined },
-      { id: "worklist", label: "Exception worklist", count: res ? live.length : undefined },
+      { id: "inbox", label: "Problems", count: res ? live.length : undefined },
       { id: "quality", label: "Data quality", count: res?.data_quality.reduce((a, r) => a + r.count, 0) },
       { id: "settings", label: "Owners, SLA & targets" },
     ]} />
+  );
+  const lens = (
+    <div className="seg" role="radiogroup" aria-label="Show the problems" style={{ marginBottom: 14 }}>
+      {([["inbox", "Ranked by money at risk"], ["worklist", "By owner and age"]] as const).map(([id, label]) => (
+        <button key={id} role="radio" aria-checked={view === id} className={view === id ? "on" : ""}
+          onClick={() => go("tower", id)}>{label}</button>
+      ))}
+    </div>
   );
   if (view === "settings") return body(<>{nav}<Settings ds={ds} /></>);
   if (run.error) return body(<div className="banner error"><Badge sev="error">Could not refresh the tower</Badge>{run.error}</div>);
@@ -103,6 +111,7 @@ export function Tower({ route }: { route: string[] }) {
     {stale && <StaleMark what="tower" onRerun={() => store.run("tower")} busy={run.running} />}
     {nav}
     {view === "kpis" && <Kpis res={res} cur={cur} sel={route[2]} />}
+    {(view === "inbox" || view === "worklist") && lens}
     {view === "inbox" && <Inbox res={res} ds={ds} cur={cur} />}
     {view === "worklist" && <Worklist res={res} ds={ds} rev={run.revision ?? 0} />}
     {view === "quality" && <Quality res={res} />}
@@ -117,7 +126,7 @@ function Kpis({ res, cur, sel }: { res: TowerResult; cur: string; sel?: string }
   return (
     <div className="stack">
       <div className="grid-auto">
-        <StatTile label="On target" value={count("good")} sub={`of ${res.kpis.length} KPIs`} />
+        <StatTile label="On target" value={count("good")} sub={`of ${res.kpis.length} measures`} />
         <StatTile label="Near target" value={count("warning")} />
         <StatTile label="Off target" value={count("critical")} tone={count("critical") ? "hl" : undefined} />
         <StatTile label="Not graded" value={count("none")} sub="no data yet, no target, or read only" />
@@ -463,7 +472,7 @@ function Quality({ res }: { res: TowerResult }) {
   const total = res.data_quality.reduce((a, r) => a + r.count, 0);
   return (
     <div className="stack">
-      <div className="banner info"><Badge sev="info">Kept apart</Badge>Master-data defects go to data owners, not into planner worklists (S/4 guide §8.6). Fix them in the data check (Setup → Network → Data check).</div>
+      <div className="banner info"><Badge sev="info">Kept apart</Badge>Master-data defects go to data owners, not into planner worklists (S/4 guide §8.6). Fix them in the data check (Set up → Data check).</div>
       {total === 0 ? <Panel><Empty title="No data-quality findings"><p>Every readiness check passes.</p></Empty></Panel> : (
         <Panel flush title={`${total} findings by rule`}>
           <div className="table-wrap">
