@@ -147,3 +147,28 @@ test("scheduled import changes preserve credentials only at the same origin and 
   await expect(page.getByRole("button", { name: "Save the import" })).toHaveCount(0);
   expect((await saved()).header_names).toEqual([]);
 });
+
+test("a key list read before a key was made, delivered after it, does not hide the new key (one latest-answer rule)", async ({ page }) => {
+  await ownerOnServer(page);
+  // hold the first read of the keys until the owner has made one
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let first = true;
+  await page.route("**/api/companies/*/keys", async (route) => {
+    if (route.request().method() !== "GET" || !first) return route.continue();
+    first = false;
+    const response = await route.fetch();
+    await gate;
+    await route.fulfill({ response });
+  });
+  await page.locator(".rail-foot a", { hasText: "Connections" }).click();
+  await page.getByRole("tab", { name: "Keys" }).click();
+  await page.getByLabel("Name of the system").fill("SAP");
+  await page.getByRole("button", { name: "Make a key" }).click();
+  await expect(page.locator("table")).toContainText("SAP");
+  const late = page.waitForResponse((r) => r.url().endsWith("/keys") && r.request().method() === "GET");
+  release();
+  await (await late).finished();
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page.locator("table")).toContainText("SAP");
+});
