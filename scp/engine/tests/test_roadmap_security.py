@@ -26,6 +26,11 @@ def browser(https: bool = True) -> TestClient:
     return TestClient(app, base_url="https://testserver" if https else "http://testserver")
 
 
+def cookie_please(b: TestClient, **extra: str) -> dict[str, str]:
+    """The headers a browser's sign-in sends: ask for the cookie, with the double-submit token it was handed."""
+    return {**COOKIE, "X-CSRF-Token": b.get("/api/auth/csrf", headers=extra).json()["csrf"], **extra}
+
+
 def plain() -> TestClient:
     return TestClient(app)
 
@@ -72,8 +77,9 @@ def test_reset_and_change_follow_the_policy():
 # ---- cookie sessions + CSRF ---------------------------------------------------------------------------------------
 def test_browser_sign_in_sets_an_httponly_secure_samesite_cookie_and_csrf():
     b = browser()
-    r = b.post("/api/auth/signup", headers=COOKIE, json={"email": "meena@kaveri.in", "password": STRONG})
+    r = b.post("/api/auth/signup", headers=cookie_please(b), json={"email": "meena@kaveri.in", "password": STRONG})
     assert r.status_code == 200, r.text
+    assert r.json()["token"] == ""                    # the session lives in the HttpOnly cookie only
     ck = set_cookies(r)
     sess, csrf = ck["scp_session"].lower(), ck["scp_csrf"].lower()
     assert "httponly" in sess and "secure" in sess and "samesite=lax" in sess and "path=/" in sess
@@ -107,23 +113,26 @@ def test_without_asking_for_a_cookie_nothing_changes_for_scripts():
 
 
 def test_cookie_is_not_secure_on_plain_http_unless_forced(monkeypatch):
-    r = browser(https=False).post("/api/auth/signup", headers=COOKIE,
-                                  json={"email": "lan@kaveri.in", "password": STRONG})
+    b = browser(https=False)
+    r = b.post("/api/auth/signup", headers=cookie_please(b), json={"email": "lan@kaveri.in", "password": STRONG})
     assert "secure" not in set_cookies(r)["scp_session"].lower()
+    b = browser(https=False)
+    headers = cookie_please(b)          # handed out before the setting, so this plain-http client still sends it
     monkeypatch.setenv("SCP_COOKIE_SECURE", "1")
-    r = browser(https=False).post("/api/auth/signin", headers=COOKIE,
-                                  json={"email": "lan@kaveri.in", "password": STRONG})
+    r = b.post("/api/auth/signin", headers=headers, json={"email": "lan@kaveri.in", "password": STRONG})
     assert "secure" in set_cookies(r)["scp_session"].lower()
     # behind a TLS proxy
     monkeypatch.delenv("SCP_COOKIE_SECURE")
-    r = browser(https=False).post("/api/auth/signin", headers={**COOKIE, "X-Forwarded-Proto": "https"},
-                                  json={"email": "lan@kaveri.in", "password": STRONG})
+    b = browser(https=False)
+    r = b.post("/api/auth/signin", headers={**cookie_please(b), "X-Forwarded-Proto": "https"},
+               json={"email": "lan@kaveri.in", "password": STRONG})
     assert "secure" in set_cookies(r)["scp_session"].lower()
 
 
 def test_cross_site_pages_client_gets_samesite_none():
-    r = browser().post("/api/auth/signup", headers={**COOKIE, "Origin": "https://hasen1506.github.io"},
-                       json={"email": "pages@kaveri.in", "password": STRONG})
+    b = browser()
+    r = b.post("/api/auth/signup", headers=cookie_please(b, Origin="https://hasen1506.github.io"),
+               json={"email": "pages@kaveri.in", "password": STRONG})
     sess = set_cookies(r)["scp_session"].lower()
     assert "samesite=none" in sess and "secure" in sess
     assert r.headers.get("access-control-allow-credentials") == "true"
@@ -131,11 +140,33 @@ def test_cross_site_pages_client_gets_samesite_none():
 
 def test_csrf_endpoint_hands_out_the_cookie_value():
     b = browser()
-    b.post("/api/auth/signup", headers=COOKIE, json={"email": "x@kaveri.in", "password": STRONG})
+    first = cookie_please(b)["X-CSRF-Token"]
+    r = b.post("/api/auth/signup", headers=cookie_please(b), json={"email": "x@kaveri.in", "password": STRONG})
+    # the token is renewed when the session starts (a token planted before sign-in is worth nothing after it)
+    assert r.json()["csrf"] == b.cookies["scp_csrf"] != first
     assert b.get("/api/auth/csrf").json()["csrf"] == b.cookies["scp_csrf"]
     fresh = browser()
     tok = fresh.get("/api/auth/csrf").json()["csrf"]
     assert tok and fresh.cookies["scp_csrf"] == tok
+
+
+def test_a_browser_sign_in_needs_the_double_submit_token_login_csrf():
+    """A forged form (or a page elsewhere) cannot sign a browser into someone else's account: asking for the cookie
+    without this browser's token is refused, before the password is even looked at."""
+    plain().post("/api/auth/signup", json={"email": "victim-free@kaveri.in", "password": STRONG})
+    b = browser()
+    for path, body in (("/api/auth/signin", {"email": "victim-free@kaveri.in", "password": STRONG}),
+                       ("/api/auth/signup", {"email": "new@kaveri.in", "password": STRONG}),
+                       ("/api/auth/reset", {"token": "x", "password": STRONG})):
+        for headers in (COOKIE, {**COOKIE, "X-CSRF-Token": "forged"}):
+            r = b.post(path, headers=headers, json=body)
+            assert r.status_code == 403 and "security token" in r.json()["detail"], (path, r.text)
+    assert "scp_session" not in b.cookies
+    r = b.post("/api/auth/signin", headers=cookie_please(b), json={"email": "victim-free@kaveri.in", "password": STRONG})
+    assert r.status_code == 200 and r.json()["token"] == "" and b.cookies["scp_session"]
+    # a script (no cookie asked for) still signs in with its password alone, and gets its token
+    r = plain().post("/api/auth/signin", json={"email": "victim-free@kaveri.in", "password": STRONG})
+    assert r.status_code == 200 and r.json()["token"]
 
 
 # ---- adopt: a token kept in the browser's storage becomes a cookie, once -------------------------------------------

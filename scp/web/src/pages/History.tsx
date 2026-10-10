@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { Comparison, FieldChangeRow, HeldChange, LogRow } from "../api/types";
 import { Badge, Empty, Panel, StageHeader } from "../components/ui";
 import { when } from "../components/SaveStatus";
+import { useLatest } from "../lib/latest";
 import { href } from "../lib/router";
 import { store, unsaved, useStore } from "../state/store";
 import { CompareView } from "./Versions";
@@ -39,11 +40,11 @@ function FieldTable({ rows, who }: { rows: FieldChangeRow[]; who?: boolean }) {
 /** Master-data changes waiting for a second person (Phase L). */
 function Waiting({ id, canDecide, onDone }: { id: string; canDecide: boolean; onDone: (msg: string) => void }) {
   const pending = useStore((s) => s.company?.pending ?? 0);
-  const [list, setList] = useState<HeldChange[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [failed, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const revision = useStore((s) => s.company?.revision);
-  useEffect(() => { api.heldChanges(id).then(setList).catch((e) => setErr(String(e))); }, [id, revision, pending]);
+  const { value: list, show: setList, error: readErr } = useLatest<HeldChange[]>(() => api.heldChanges(id), [id, revision, pending]);
+  const err = failed ?? readErr;
   if (!list?.length) return err ? <div className="banner error">{err}</div> : null;
   const decide = async (h: HeldChange, d: "approve" | "reject" | "withdraw") => {
     const note = d === "reject" ? window.prompt(`Why is ${h.by}'s change rejected? (optional, they see it)`) ?? "" : "";

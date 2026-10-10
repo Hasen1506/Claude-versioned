@@ -1184,6 +1184,19 @@ class _Planner:
                 o.projected_available_date = last if last < beyond else None
                 o.delay_days = float(max(0, (last - o.need_date).days)) if last < beyond else -1.0
                 o.projected_on_time_qty = sum(q for d, q in prof if d <= o.need_date)
+                if last > o.available_date:
+                    # the input whose last share comes latest against its need: what the order waits for
+                    worst = None
+                    for rid in self.order_inputs.get(o.id, []):
+                        r = self.req_by_id[rid]
+                        if r.qty <= 1e-9:
+                            continue
+                        got = req_profile(r)[-1][0]
+                        if worst is None or (got - r.date) > (worst[1] - worst[0].date):
+                            worst = (r, got)
+                    if worst is not None:
+                        o.limited_by, o.limited_at = worst[0].product, worst[0].location
+                        o.limited_until = worst[1] if worst[1] < beyond else None
                 queue = [list(c) for c in prof]
                 for i in sorted(pegs_by_order.get(o.id, []),
                                 key=lambda i: (self.req_by_id[self.pegs[i].requirement_id].date, i)):

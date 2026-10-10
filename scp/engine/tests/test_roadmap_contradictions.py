@@ -82,3 +82,30 @@ def test_checklist_supply_is_done_when_routes_flow_one_way():
     d["lanes"].pop()
     supply = [i for i in checklist(ds(d)) if i.step == "supply"]
     assert any(i.status == "done" for i in supply)
+
+
+# ---- "why this date" -------------------------------------------------------------------------------------------
+def test_why_this_date_names_the_part_the_order_waits_for():
+    d = _late_motor()
+    d["promising"] = {"confirm_beyond_rlt": False, "ctp": False}
+    D = ds(d)
+    make = next(o for o in run_mrp(D).orders if o.product == "A" and o.location == "P"
+                and str(getattr(o.kind, "value", o.kind)) == "make")
+    assert make.limited_by == "B" and make.limited_until is not None
+    assert make.limited_until < make.projected_available_date
+    o = run_promise(D).orders[0]
+    assert [w.kind for w in o.why] == ["component", "planned", "ship"]
+    part, built, ship = o.why
+    assert part.product == "B" and part.date == make.limited_until and part.ref == make.id
+    assert built.ref == make.id and built.date == make.projected_available_date
+    assert ship.ref == "PC1" and ship.date == max(x.date for x in o.lines)
+
+
+def test_why_this_date_beyond_the_lead_time_and_by_ctp():
+    o = run_promise(ds(_late_motor())).orders[0]          # beyond RLT is confirmable by default
+    assert [w.kind for w in o.why] == ["rlt", "ship"] and "replenishment lead time" in o.why[0].note
+    d = _late_motor()
+    d["promising"] = {"confirm_beyond_rlt": False, "ctp": True, "include_planned_orders": False}
+    o = run_promise(ds(d)).orders[0]
+    assert o.ctp and [w.kind for w in o.why][-1] == "ship"
+    assert [w.note for w in o.why if w.kind == "ctp"] == [s.note or s.kind for s in o.ctp]

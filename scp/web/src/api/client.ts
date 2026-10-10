@@ -1,6 +1,6 @@
 import type {
   ProductionUsageInput,
-  Comparison, FinanceResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
+  Comparison, FinanceResult, FixResult, KeepResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   PlanTrace, ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
   PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoActionInput, RequisitionPick, PostAction, CountInput, UsageInput, StockType, SalesOrderChange, SalesOrderResponse,
   SalesView, SalesAction, SalesActionInput, SalesActionResponse,
@@ -106,6 +106,8 @@ const isBearer = (t: string | null) => !!t && !t.startsWith(COOKIE_SESSION);
 /** The double-submit token sent back on every change (header X-CSRF-Token = the scp_csrf cookie). */
 let csrf: string | null = null;
 export function setCsrf(t: string | null | undefined) { if (t) csrf = t; }
+/** Signed out: the server cleared the cookie, so the token kept here is no longer this browser's. */
+export function forgetCsrf() { csrf = null; }
 function csrfCookie(): string | null {
   try {
     const m = document.cookie.match(/(?:^|;\s*)scp_csrf=([^;]+)/);
@@ -255,10 +257,17 @@ export interface PostExtra {
   block?: boolean; uncounted_zero?: boolean;
 }
 
-/** Sign-in calls ask for the session in the HttpOnly cookie (roadmap D) and keep the CSRF token they answer with. */
-const COOKIE_PLEASE = { "X-SCP-Session": "cookie" };
-async function withCsrf(p: Promise<Session>): Promise<Session> {
-  const s = await p;
+/** Sign-in calls ask for the session in the HttpOnly cookie (roadmap D), prove they come from this page with the
+ *  double-submit token (login CSRF), and keep the fresh token they answer with. The answer carries no session token:
+ *  it lives in the cookie only. */
+async function cookieSignIn(path: string, body: unknown): Promise<Session> {
+  let token = csrfCookie();
+  if (!token) {                      // first visit, or a client served from another site: ask for this browser's
+    forgetCsrf();
+    token = await csrfToken();
+  }
+  const s = await call<Session>(path, { method: "POST", headers: { "X-SCP-Session": "cookie", ...(token ? { "X-CSRF-Token": token } : {}) },
+    body: JSON.stringify(body) });
   setCsrf((s as Session & { csrf?: string | null }).csrf);
   return s;
 }
@@ -352,10 +361,10 @@ export const api = {
   // ---- sign-in and companies kept on the server (Phase I)
   authConfig: () => call<AuthConfig>("/api/auth/config"),
   signUp: (email: string, name: string, password: string) =>
-    withCsrf(call<Session>("/api/auth/signup", { method: "POST", headers: COOKIE_PLEASE, body: JSON.stringify({ email, name, password }) })),
+    cookieSignIn("/api/auth/signup", { email, name, password }),
   signIn: (email: string, password: string) =>
-    withCsrf(call<Session>("/api/auth/signin", { method: "POST", headers: COOKIE_PLEASE, body: JSON.stringify({ email, password }) })),
-  signOut: () => call<{ ok: boolean }>("/api/auth/signout", { method: "POST" }),
+    cookieSignIn("/api/auth/signin", { email, password }),
+  signOut: () => call<{ ok: boolean }>("/api/auth/signout", { method: "POST" }).finally(forgetCsrf),
   me: () => call<Me>("/api/auth/me"),
   changePassword: (old: string, next: string) =>
     call<{ ok: boolean }>("/api/auth/password", { method: "POST", body: JSON.stringify({ old, new: next }) }),
@@ -394,9 +403,10 @@ export const api = {
   changes: (id: string, q = "", list = "", before?: number) =>
     call<FieldChangeRow[]>(`/api/companies/${encodeURIComponent(id)}/changes?q=${encodeURIComponent(q)}&list=${encodeURIComponent(list)}${before ? `&before=${before}` : ""}`),
   resetRequest: (email: string) => call<{ ok: boolean; mail: boolean }>("/api/auth/reset/request", { method: "POST", body: JSON.stringify({ email }) }),
-  resetPassword: (token: string, password: string) => withCsrf(call<Session>("/api/auth/reset", { method: "POST", headers: COOKIE_PLEASE, body: JSON.stringify({ token, password }) })),
+  resetPassword: (token: string, password: string) => cookieSignIn("/api/auth/reset", { token, password }),
   /** Once: swap a session token this browser kept in its storage (before roadmap D) for the HttpOnly cookie. */
-  adopt: (token: string) => withCsrf(call<Session>("/api/auth/adopt", { method: "POST", headers: { ...COOKIE_PLEASE, Authorization: `Bearer ${token}` } })),
+  adopt: (token: string) => call<Session>("/api/auth/adopt", { method: "POST", headers: { "X-SCP-Session": "cookie", Authorization: `Bearer ${token}` } })
+    .then((s) => { setCsrf((s as Session & { csrf?: string | null }).csrf); return s; }),
   /** Join a company invited to: with the invitation's link, or by its id once the address is verified (CV-C01). */
   acceptInvite: (o: { token?: string; company?: string }) =>
     call<CompanyMeta>("/api/auth/invites/accept", { method: "POST", body: JSON.stringify({ token: o.token ?? "", company: o.company ?? "" }) }),
@@ -441,12 +451,17 @@ export const api = {
   /** Roadmap H: example cases (fictional teaching datasets) with their brief and ready-made what-if scenarios. */
   cases: () => call<CaseInfo[]>("/api/cases"),
   /** Roadmap E: plan 2–4 scenarios from one base (chips) and compare them side by side. */
+  /** Keep a what-if scenario as a stored scenario of the working copy's version (stored as a base first when it has none). */
+  keepWhatIf: (base: Dataset, label: string, chips: WhatIfChip[], parent: string | null, baseName = "") =>
+    call<KeepResult>("/api/whatif/keep", { method: "POST", body: JSON.stringify({ base: clean(base), label, chips, parent, base_name: baseName }) }),
   whatif: (base: Dataset, scenarios: { label: string; chips: WhatIfChip[] }[]) =>
     call<WhatIfResult>("/api/whatif", { method: "POST", body: JSON.stringify({ base: clean(base), scenarios }) }).then(done("whatif")),
   compare: (a: Dataset, b: Dataset, labelA: string, labelB: string) =>
     call<Comparison>("/api/compare", { method: "POST", body: JSON.stringify({ a: clean(a), b: clean(b), label_a: labelA, label_b: labelB }) }).then(done("whatif")),
   finance: (ds: Dataset) => planPost<FinanceResult>("/api/finance", ds),
   tower: (ds: Dataset) => planPost<TowerResult>("/api/tower", ds),
+  /** Try an inbox item's action on a copy of the company: money at risk before and after, and the edits (nothing kept). */
+  towerFix: (ds: Dataset, key: string) => withDataset<FixResult>("/api/tower/fix", ds, { key }),
   /** Assign (owner "" = back to the rules), acknowledge / resolve / reopen, or annotate a worklist item. */
   towerItem: (id: string, patch: { owner?: string; status?: "open" | "acknowledged" | "resolved"; note?: string; sla_days?: Record<string, number> }) =>
     call<WorkItem>(`/api/tower/items/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(patch) }),

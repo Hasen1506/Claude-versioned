@@ -25,10 +25,12 @@ test("the exception inbox ranks open exceptions by money at risk, with the basis
   await expect(rows.first()).toContainText(/protects/);                     // …with what it protects
   await expect(page.locator(".tile", { hasText: "Money at risk" })).toBeVisible();
   // the tab says how many are waiting
-  await expect(page.getByRole("tab", { name: /Problems/ })).toContainText(String(await rows.count()));
-  // the same problems, followed up by owner and age, are one switch away
+  const n = await rows.count();
+  await expect(page.getByRole("tab", { name: /Problems/ })).toContainText(String(n));
+  // the same problems, followed up by owner and age, are one switch away (counted before the switch: the ranked
+  // table is gone after it)
   await page.getByRole("radio", { name: "By owner and age" }).click();
-  await expect(page.locator(".tile", { hasText: "Open" }).first().locator(".value")).toHaveText(String(await rows.count()));
+  await expect(page.locator(".tile", { hasText: "Open" }).first().locator(".value")).toHaveText(String(n));
 });
 
 test("the inbox groups by customer and by product, the group with the most at risk first", async ({ page }) => {
@@ -44,4 +46,39 @@ test("the inbox groups by customer and by product, the group with the most at ri
   await expect(page.getByRole("table", { name: /Exceptions for E-commerce/ })).toBeVisible();
   await page.getByLabel("Group by").selectOption("product");
   await expect(page.getByRole("table", { name: /Exceptions for / }).first()).toBeVisible();
+});
+
+test("one click: an action tried on a copy of the plan shows the money at risk before and after, and is kept as one change", async ({ page }) => {
+  await openKaveri(page);
+  await page.goto("/#/tower/inbox");
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
+  const table = page.getByRole("table", { name: "Exception inbox" });
+  await expect(table).toBeVisible();
+  // what needs a person says why it has no one-click version
+  const why = table.locator("details", { hasText: "Not in one click: why?" }).first();
+  await why.locator("summary").click();
+  await expect(why).toContainText(/nothing firm of .* arrives after .*: the late quantity is on planned orders/);
+  // overtime on a day over capacity: tried, planned again, the problem is gone
+  const overtime = /^Try it: Add .* of overtime/;
+  const row = table.getByTestId("inbox-row").filter({ has: page.getByRole("button", { name: overtime }) }).first();
+  const tryIt = row.getByRole("button", { name: overtime });
+  const before = Number(await row.locator("td[data-amount]").getAttribute("data-amount"));
+  await tryIt.click();
+  const out = page.getByRole("region", { name: "What this change does" });
+  await expect(out).toContainText("Tried on a copy of the plan");
+  await expect(out.locator(".tile", { hasText: "This problem" })).toContainText(/→ gone/);
+  await expect(out.locator(".tile", { hasText: "All problems" })).toContainText(/less/);
+  await expect(out.getByRole("list", { name: "The change" })).toContainText(/h overtime a day instead of/);
+  const tile = page.locator(".tile", { hasText: /^Money at risk/ }).first().locator(".value");
+  const total = (await tile.textContent())!;
+  expect(before).toBeGreaterThan(0);
+  // kept: one change, the list is worked out again without it
+  await out.getByRole("button", { name: "Keep this change" }).click();
+  await expect(out).toHaveCount(0);
+  await expect(tile).not.toHaveText(total, { timeout: 30_000 });
+  // one change, so one Undo takes it back
+  const undo = page.getByRole("button", { name: "Undo", exact: true });
+  await expect(undo).toBeEnabled();
+  await undo.click();
+  await expect(undo).toBeDisabled();
 });

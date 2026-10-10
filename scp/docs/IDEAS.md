@@ -4,9 +4,6 @@ Ideas met while implementing the roadmap from the UX audit of 7 Oct 2026 (PRs A�
 candidate for a later PR. Newest at the bottom of each group.
 
 ## Promising and planning
-- **"Why this date" on every promise.** Show the chain behind a confirmed date (component X arrives D, production
-  finishes D+2, transit 1 day). The engine already projects `projected_available_date` per planned order; expose the
-  limiting component on `ScheduleLine`.
 - **Promise against a P90 demand view.** Run ATP with the forecast's upper interval so sales sees a "safe" date beside
   the expected one.
 - **Plan around a loop instead of blocking.** Data check blocks the whole plan for one circular route; plan the rest
@@ -17,12 +14,6 @@ candidate for a later PR. Newest at the bottom of each group.
   rows forward over the empty weeks to the horizon (one undo step), for a planner who has no forecast yet.
 
 ## Security and accounts
-- **Drop the token from sign-in replies for browser requests.** Since roadmap D the web client signs in with the
-  HttpOnly cookie, yet the sign-in, sign-up and reset answers still carry `token` (for scripts). When the request asks
-  for a cookie (`X-SCP-Session: cookie`), answer with an empty token, so a script injected into the page at sign-in
-  time never sees one.
-- **Require the double-submit token on sign-in too (login CSRF).** A forged form could sign a browser into the
-  attacker's account; mint the `scp_csrf` cookie on the first page load and check it on sign-in/sign-up.
 - **A strength meter and re-authentication.** Show a zxcvbn-style score as the password is typed, and ask for the
   current password again before an e-mail or password change made from an old session.
 
@@ -32,10 +23,6 @@ candidate for a later PR. Newest at the bottom of each group.
   company's morning.
 
 ## What-if side by side
-- **Keep a scenario as a version.** A what-if that wins should become a stored scenario of the current base in one
-  click (its chips written into the data), so it can be promoted like any other version.
-- **More chips.** A machine down for N days, a price change for one customer, safety stock in days, an FX move on
-  imported parts: each is one small edit of the dataset, like the five chips there are.
 - **Sweep one chip.** Run demand −20 % … +40 % in steps and draw cost against service, so the planner sees where the
   next point of service gets expensive instead of four single points.
 - **Stored versions in the side by side.** The API already takes a whole dataset per scenario; the page only builds
@@ -51,9 +38,6 @@ candidate for a later PR. Newest at the bottom of each group.
   Inventory exports, so an Indian SME can load its own data instead of a case. Deferred on purpose.
 
 ## Exception inbox
-- **Do the action, then show the delta.** The inbox's action links to the page where it is done; a one-click version
-  would branch the plan, apply it (expedite, switch supplier, add overtime) and re-plan, showing the money at risk
-  before and after instead of the estimate.
 - **Money at risk over time.** Keep the inbox total per run and draw it beside the KPIs, so a weekly review sees
   whether the exposure is falling.
 - **Late-delivery penalties per customer.** `tower.late_revenue_factor` is one share for every sale; a contract's own
@@ -169,22 +153,10 @@ small or mid-sized planner. None is built.
 - **Exceptions per planner and per material class (§17.6) (low, S).** The tower ages exceptions; grouping their age
   by MRP controller and product type would point at master-data root causes, as the guide recommends.
 
-## Robustness (found fixing main's red e2e run, 8 Oct 2026)
-- **One "latest answer wins" hook for every page that reads once and then edits (med, S).** The members table showed
-  its first read whenever it arrived, so a read answered before an invitation but delivered after it hid the invited
-  person (scp run 37731060982; fixed for members and the approval switch). Other panels that load on open and then
-  replace their list from a change's answer (limits, the company list, connections) follow the same pattern; a shared
-  `useLatest(read, deps)` that drops an answer older than the last change shown would close the class.
-
 ## Working capital on the Performance page (8 Oct 2026)
 Inventory turns, DIO, DSO, DPO and the cash-to-cash cycle are built from data the app already holds: goods issued to
 customers at unit value, on-hand, customer invoices and supplier invoices with their payments. A flow with fewer than
-28 days of records shows "not enough data". Not built yet:
-- **Average stock instead of closing stock (med, S).** DIO and turns use stock on the planning start. The journal can
-  rebuild the daily stock over the window, so an average would not swing with a single large receipt.
+28 days of records shows "not enough data". Average stock, count-back DSO, ageing and the weekly trend were built
+on 9 Oct 2026. Not built yet:
 - **Targets for the working-capital measures (low, S).** They are ungraded until a company sets a target. A
   suggested target from the company's own last quarter would grade them from day one.
-- **DSO by the count-back method, and invoice-ageing buckets (med, S).** Seasonal sellers read a truer DSO from
-  count-back. The receivables table could show 0–30 / 31–60 / 60+ days overdue beside it.
-- **Cash-to-cash trend (med, M).** Keep each week's value from the base versions, as plan stability does, and chart
-  it.

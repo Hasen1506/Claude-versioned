@@ -1,11 +1,12 @@
 // Connected to the rest of the company (Phase Q): what other systems sent and took (the message log), the keys they
 // use, the files and addresses read on a schedule, and the e-mail the server sends (documents and worklist reminders).
 // Only for a company kept on the server: the ERP talks to the server, not to a browser.
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useState } from "react";
 import { api } from "../api/client";
 import type { ApiKey, ImportJob, ImportJobs, JobInput, MailRow, MailSetup, MessageRow } from "../api/types";
 import { Badge, Empty, Panel, StageHeader, Tabs, type Severity } from "../components/ui";
 import { when } from "../components/SaveStatus";
+import { useLatest } from "../lib/latest";
 import { go, href } from "../lib/router";
 import { store, useStore } from "../state/store";
 
@@ -41,11 +42,10 @@ function StatusBadge({ status }: { status: string }) {
 // ---- messages ----------------------------------------------------------------------------------------------------
 function Messages({ id }: { id: string }) {
   const revision = useStore((s) => s.company?.revision);
-  const [rows, setRows] = useState<MessageRow[] | null>(null);
   const [status, setStatus] = useState("");
   const [open, setOpen] = useState<number | null>(null);
-  const [e, setE] = useState<string | null>(null);
-  useEffect(() => { api.messages(id, { status }).then(setRows).catch((x) => setE(err(x))); }, [id, status, revision]);
+  // a filter changed quickly: the list of the last one asked is the one shown
+  const { value: rows, error: e } = useLatest<MessageRow[]>(() => api.messages(id, { status }), [id, status, revision]);
   return <Panel title="What other systems sent and took" actions={
     <select className="select" aria-label="Show messages" value={status} onChange={(ev) => setStatus(ev.target.value)} style={{ width: "auto" }}>
       <option value="">all</option><option value="refused">refused</option><option value="partly">partly taken</option><option value="applied">taken</option>
@@ -78,12 +78,12 @@ function Messages({ id }: { id: string }) {
 
 // ---- keys --------------------------------------------------------------------------------------------------------
 function Keys({ id, owner }: { id: string; owner: boolean }) {
-  const [list, setList] = useState<ApiKey[] | null>(null);
   const [name, setName] = useState("");
   const [role, setRole] = useState<"planner" | "viewer">("planner");
   const [made, setMade] = useState<ApiKey | null>(null);
-  const [e, setE] = useState<string | null>(null);
-  useEffect(() => { if (owner) api.keys(id).then(setList).catch((x) => setE(err(x))); }, [id, owner]);
+  const [failed, setE] = useState<string | null>(null);
+  const { value: list, show: setList, error: readErr } = useLatest<ApiKey[]>(owner ? () => api.keys(id) : null, [id, owner]);
+  const e = failed ?? readErr;
   if (!owner) return <Panel title="Keys for other systems"><p className="muted small" style={{ margin: 0 }}>Only an owner makes or withdraws keys.</p></Panel>;
   const live = (list ?? []).filter((k) => !k.revoked_at);
   return <Panel title="Keys for other systems">
@@ -199,12 +199,12 @@ function JobForm({ data, initial, onSave, onCancel }: { data: ImportJobs; initia
 }
 
 function Imports({ id, owner }: { id: string; owner: boolean }) {
-  const [data, setData] = useState<ImportJobs | null>(null);
   const [editing, setEditing] = useState<ImportJob | "new" | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [e, setE] = useState<string | null>(null);
-  useEffect(() => { api.imports(id).then(setData).catch((x) => setE(err(x))); }, [id]);
+  const [failed, setE] = useState<string | null>(null);
+  const { value: data, show: setData, error: readErr } = useLatest<ImportJobs>(() => api.imports(id), [id]);
+  const e = failed ?? readErr;
   const run = async (j: ImportJob) => {
     setBusy(j.id);
     setE(null);
@@ -253,15 +253,12 @@ function Imports({ id, owner }: { id: string; owner: boolean }) {
 
 // ---- e-mail ------------------------------------------------------------------------------------------------------
 function Mail({ id, owner }: { id: string; owner: boolean }) {
-  const [setup, setSetup] = useState<MailSetup | null>(null);
-  const [sent, setSent] = useState<MailRow[] | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [e, setE] = useState<string | null>(null);
-  const load = useCallback(() => {
-    api.mailSetup(id).then(setSetup).catch((x) => setE(err(x)));
-    api.mailSent(id).then(setSent).catch((x) => setE(err(x)));
-  }, [id]);
-  useEffect(load, [load]);
+  const [failed, setE] = useState<string | null>(null);
+  const { value: setup, show: setSetup, reload: reloadSetup, error: setupErr } = useLatest<MailSetup>(() => api.mailSetup(id), [id]);
+  const { value: sent, reload: reloadSent, error: sentErr } = useLatest<MailRow[]>(() => api.mailSent(id), [id]);
+  const load = () => { reloadSetup(); reloadSent(); };
+  const e = failed ?? setupErr ?? sentErr;
   if (!setup) return e ? <div className="banner error">{e}</div> : <div className="faint">Loading…</div>;
   const r = { on: !!setup.reminders.on, at: setup.reminders.at ?? "08:00", weekdays: setup.reminders.weekdays ?? [] };
   const save = async (p: Partial<typeof r>) => {

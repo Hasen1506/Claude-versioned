@@ -26,7 +26,7 @@ from ..actuals import ActualsView, FirmReport, PostingError, RollReport, actuals
 from ..actuals.post import production_usage
 from ..demand import ForecastResult, ReleaseResult, release, run_forecast
 from ..finance import FinanceResult, run_finance
-from ..tower import TowerResult, WorkItem, get_tracker, run_tower
+from ..tower import FixError, FixResult, TowerResult, WorkItem, get_tracker, run_tower, try_inbox_fix
 from ..demand import foundation
 from ..demand.models import SPECS
 from ..demand.result import FoundationStatus
@@ -56,7 +56,7 @@ from ..validate import RULES, Issue, validate
 from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, lenient_checked, plain_errors
 from ..validate.setup import SetupItem, checklist
 from ..cases import CASES, CaseInfo
-from ..whatif import WhatIfError, WhatIfRequest, WhatIfResult, compare_scenarios
+from ..whatif import KeepRequest, KeepResult, WhatIfError, WhatIfRequest, WhatIfResult, compare_scenarios, keep_scenario
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
 from ..companies import CompanyError
 from .connect import router as connect_router
@@ -976,6 +976,22 @@ def post_tower(ds: PlanData, sc: Scope, request: Request) -> Response:
     return send(run_tower(ds, scope=sc or None, record=record))
 
 
+class FixRequest(Out):
+    dataset: PlanData
+    key: str                        # the inbox item (WorkItem.key)
+
+
+@app.post("/api/tower/fix", response_model=FixResult)
+def post_tower_fix(req: FixRequest, sc: Scope) -> FixResult:
+    """Try an inbox item's action (expedite, switch supplier, add overtime) on a copy of the company, plan it again
+    and answer with the money at risk before and after and the edits that did it. Nothing is changed or recorded:
+    the browser keeps the edits as one change if the planner wants them."""
+    try:
+        return try_inbox_fix(req.dataset, req.key, scope=sc or "anon:-")
+    except FixError as e:
+        raise HTTPException(e.status, str(e)) from None
+
+
 class WorkItemUpdate(Out):
     owner: str | None = None        # "" = back to the owner rules
     status: Literal["open", "acknowledged", "resolved"] | None = None
@@ -1022,6 +1038,16 @@ def post_whatif(req: WhatIfRequest) -> WhatIfResult:
     side: cost, service, inventory, capacity, late units, their deltas against the first, and cost per service point."""
     try:
         return compare_scenarios(req)
+    except WhatIfError as e:
+        raise HTTPException(422, str(e)) from None
+
+
+@app.post("/api/whatif/keep", response_model=KeepResult)
+def post_whatif_keep(req: KeepRequest, sc: StoredEditScope) -> KeepResult:
+    """Keep a what-if scenario as a stored scenario: a branch of the working copy's version (or of the working copy,
+    stored as a base first) with the scenario's chips written into its data, ready to open, compare and promote."""
+    try:
+        return keep_scenario(req, get_store(), sc)
     except WhatIfError as e:
         raise HTTPException(422, str(e)) from None
 

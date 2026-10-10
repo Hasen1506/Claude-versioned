@@ -293,3 +293,16 @@ def test_example_promising():
         assert all(a is None or a >= 0 for a in n.available)
     b = run_bop(ex)
     assert b.ok and len(b.bop) == 9
+
+
+def test_why_this_date_on_time_from_stock_and_late_from_a_firm_receipt():
+    d = net()
+    lp(d, "D", "A")["on_hand"] = 100
+    d["demand"] = [so("C1", 40, "2026-01-12", "SO1")]
+    o = run_promise(ds(d)).orders[0]
+    assert [(w.kind, w.date.isoformat()) for w in o.why] == [("asked", "2026-01-12"), ("stock", "2026-01-05"),
+                                                             ("ship", "2026-01-12")]
+    o = run_promise(ds(_partial())).orders[0]                 # 30 from stock on time, 30 when STO1 arrives
+    assert [w.kind for w in o.why] == ["receipt", "ship"]
+    assert o.why[0].ref == "STO1" and o.why[0].date.isoformat() == "2026-01-15"
+    assert o.why[1].date.isoformat() == "2026-01-16"

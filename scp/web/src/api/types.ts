@@ -99,6 +99,7 @@ export type OrderPromise = S["OrderPromise"];
 export type AtpNode = S["AtpNode"];
 export type ScheduleLine = S["ScheduleLine"];
 export type CtpStep = S["CtpStep"];
+export type WhyStep = S["WhyStep"];
 export type BopRow = S["BopRow"];
 export type PromiseCommitResponse = S["PromiseCommitResponse"];
 
@@ -138,6 +139,8 @@ export type CapacityAppraisal = S["CapacityAppraisal"];
 export type TowerResult = S["TowerResult"];
 export type Kpi = S["Kpi"];
 export type WorkItem = S["WorkItem"];
+export type FixResult = S["FixResult"];
+export type FixEdit = S["FixEdit"];
 export type WorkItemEntry = S["WorkItemEntry"];
 export type DataQualityRow = S["DataQualityRow"];
 
@@ -147,6 +150,7 @@ export type Comparison = S["Comparison"];
 export type WhatIfResult = S["WhatIfResult"];
 export type CaseInfo = S["CaseInfo"];
 export type WhatIfScenarioOut = S["ScenarioOut"];
+export type KeepResult = S["KeepResult"];
 export type WhatIfChip = NonNullable<S["ScenarioIn-Input"]["chips"]>[number];
 export type DatasetDiff = S["DatasetDiff"];
 export type PlanSummary = S["PlanSummary"];

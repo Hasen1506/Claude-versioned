@@ -31,6 +31,17 @@ class CtpStep(Out):
     note: str = ""
 
 
+class WhyStep(Out):
+    """One link of the chain behind a confirmed date, earliest first ("why this date")."""
+    kind: Literal["asked", "stock", "receipt", "planned", "component", "ctp", "rlt", "ship"]
+    date: dt.date | None = None
+    location: str = ""
+    product: str = ""
+    ref: str = ""                    # the receipt, planned order or lane
+    qty: float = 0.0
+    note: str = ""                   # in plain words, with ids as they are
+
+
 class OrderPromise(Out):
     order: str
     location: str
@@ -54,6 +65,7 @@ class OrderPromise(Out):
     reason: str = ""                 # why (part of) the order could not be confirmed
     price: float | None = None       # per unit: the order's own, else the customer's, else the product's
     value: float | None = None       # qty × price (empty without a price)
+    why: list[WhyStep] = Field(default_factory=list)   # what sets the latest confirmed date
     shipped: float = 0.0             # delivered in the journal and not yet booked by starting a new week: the plan
                                      # still counts it as open until then, the Selling page already as delivered
 

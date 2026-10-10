@@ -1727,6 +1727,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tower/fix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Tower Fix
+         * @description Try an inbox item's action (expedite, switch supplier, add overtime) on a copy of the company, plan it again
+         *     and answer with the money at risk before and after and the edits that did it. Nothing is changed or recorded:
+         *     the browser keeps the edits as one change if the planner wants them.
+         */
+        post: operations["post_tower_fix_api_tower_fix_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tower/items/{iid}": {
         parameters: {
             query?: never;
@@ -1827,6 +1849,27 @@ export interface paths {
          *     side: cost, service, inventory, capacity, late units, their deltas against the first, and cost per service point.
          */
         post: operations["post_whatif_api_whatif_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/whatif/keep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Whatif Keep
+         * @description Keep a what-if scenario as a stored scenario: a branch of the working copy's version (or of the working copy,
+         *     stored as a base first) with the scenario's chips written into its data, ready to open, compare and promote.
+         */
+        post: operations["post_whatif_keep_api_whatif_keep_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3339,6 +3382,30 @@ export interface components {
              */
             discount: number;
         };
+        /** CustomerPriceChip */
+        "CustomerPriceChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "customer_price";
+            /** Customer */
+            customer: string;
+            /** Pct */
+            pct: number;
+        };
+        /** CustomerPriceChip */
+        "CustomerPriceChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "customer_price";
+            /** Customer */
+            customer: string;
+            /** Pct */
+            pct: number;
+        };
         /** CustomerRow */
         CustomerRow: {
             /** Customer */
@@ -4362,6 +4429,86 @@ export interface components {
             /** Reservations */
             reservations: number;
         };
+        /**
+         * FixEdit
+         * @description One field of one record, as the fix changes it.
+         */
+        FixEdit: {
+            /** Collection */
+            collection: string;
+            /** Id */
+            id: string;
+            /** Field */
+            field: string;
+            /** Before */
+            before: unknown;
+            /** Value */
+            value: unknown;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** FixRequest */
+        FixRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Key */
+            key: string;
+        };
+        /** FixResult */
+        FixResult: {
+            /** Key */
+            key: string;
+            /** Action */
+            action: string;
+            /** Label */
+            label: string;
+            /**
+             * Edits
+             * @default []
+             */
+            edits: components["schemas"]["FixEdit"][];
+            /**
+             * Before Total
+             * @default 0
+             */
+            before_total: number;
+            /**
+             * After Total
+             * @default 0
+             */
+            after_total: number;
+            /**
+             * Before Item
+             * @default 0
+             */
+            before_item: number;
+            /** After Item */
+            after_item: number | null;
+            /** Costs */
+            costs: number | null;
+            /**
+             * Cleared
+             * @default []
+             */
+            cleared: string[];
+            /**
+             * Opened
+             * @default []
+             */
+            opened: string[];
+            /**
+             * Plan Ok
+             * @default true
+             */
+            plan_ok: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
         /** Flow */
         Flow: {
             /**
@@ -4610,6 +4757,30 @@ export interface components {
             /** Detail */
             detail: string;
         };
+        /** FxChip */
+        "FxChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "fx";
+            /** Currency */
+            currency: string;
+            /** Pct */
+            pct: number;
+        };
+        /** FxChip */
+        "FxChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "fx";
+            /** Currency */
+            currency: string;
+            /** Pct */
+            pct: number;
+        };
         /** GoodsMovement */
         GoodsMovement: {
             /** Id */
@@ -4840,6 +5011,16 @@ export interface components {
              * @default
              */
             href: string;
+            /**
+             * One Click
+             * @default false
+             */
+            one_click: boolean;
+            /**
+             * Why Not
+             * @default
+             */
+            why_not: string;
         };
         /** InfoRecord */
         InfoRecord: {
@@ -5405,6 +5586,31 @@ export interface components {
              */
             enabled: boolean;
         };
+        /** KeepRequest */
+        KeepRequest: {
+            base: components["schemas"]["Dataset"];
+            /** Label */
+            label: string;
+            /** Chips */
+            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"] | components["schemas"]["MachineDownChip-Input"] | components["schemas"]["CustomerPriceChip-Input"] | components["schemas"]["SafetyDaysChip-Input"] | components["schemas"]["FxChip-Input"])[];
+            /** Parent */
+            parent?: string | null;
+            /**
+             * Base Name
+             * @default
+             */
+            base_name: string;
+        };
+        /** KeepResult */
+        KeepResult: {
+            version: components["schemas"]["VersionMeta"];
+            base: components["schemas"]["VersionMeta"] | null;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
         /** Kpi */
         Kpi: {
             /** Id */
@@ -5465,6 +5671,29 @@ export interface components {
              * @default []
              */
             breakdown: components["schemas"]["KpiRow"][];
+            /**
+             * Trend
+             * @default []
+             */
+            trend: components["schemas"]["KpiPoint"][];
+            /**
+             * Ageing
+             * @default []
+             */
+            ageing: components["schemas"]["KpiRow"][];
+        };
+        /**
+         * KpiPoint
+         * @description A KPI's value on an earlier day (the trend), worked out from the records dated before it.
+         */
+        KpiPoint: {
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Value */
+            value: number | null;
         };
         /**
          * KpiRow
@@ -6087,6 +6316,34 @@ export interface components {
              * @default 0
              */
             ordering_cost: number;
+        };
+        /** MachineDownChip */
+        "MachineDownChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "machine_down";
+            /** Resource */
+            resource: string;
+            /** Days */
+            days: number;
+            /** Start */
+            start?: string | null;
+        };
+        /** MachineDownChip */
+        "MachineDownChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "machine_down";
+            /** Resource */
+            resource: string;
+            /** Days */
+            days: number;
+            /** Start */
+            start: string | null;
         };
         /** MailInput */
         MailInput: {
@@ -7081,6 +7338,8 @@ export interface components {
             price: number | null;
             /** Value */
             value: number | null;
+            /** Why */
+            why: components["schemas"]["WhyStep"][];
             /**
              * Shipped
              * @default 0
@@ -7649,6 +7908,12 @@ export interface components {
             projected_available_date: string | null;
             /** Projected On Time Qty */
             projected_on_time_qty: number | null;
+            /** Limited By */
+            limited_by: string | null;
+            /** Limited At */
+            limited_at: string | null;
+            /** Limited Until */
+            limited_until: string | null;
             /**
              * Lot Excess
              * @default 0
@@ -9435,6 +9700,36 @@ export interface components {
             /** Description */
             description: string;
         };
+        /** SafetyDaysChip */
+        "SafetyDaysChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "safety_days";
+            /** Days */
+            days: number;
+            /**
+             * Products
+             * @default []
+             */
+            products: string[];
+        };
+        /** SafetyDaysChip */
+        "SafetyDaysChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "safety_days";
+            /** Days */
+            days: number;
+            /**
+             * Products
+             * @default []
+             */
+            products: string[];
+        };
         /**
          * SafetyStockMethod
          * @enum {string}
@@ -9910,7 +10205,7 @@ export interface components {
              * Chips
              * @default []
              */
-            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"])[];
+            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"] | components["schemas"]["MachineDownChip-Input"] | components["schemas"]["CustomerPriceChip-Input"] | components["schemas"]["SafetyDaysChip-Input"] | components["schemas"]["FxChip-Input"])[];
             dataset?: components["schemas"]["Dataset"] | null;
         };
         /** ScenarioIn */
@@ -9921,7 +10216,7 @@ export interface components {
              * Chips
              * @default []
              */
-            chips: (components["schemas"]["DemandChip-Output"] | components["schemas"]["SupplierOutChip-Output"] | components["schemas"]["LeadTimeChip-Output"] | components["schemas"]["AddShiftChip-Output"] | components["schemas"]["LaneDelayChip-Output"])[];
+            chips: (components["schemas"]["DemandChip-Output"] | components["schemas"]["SupplierOutChip-Output"] | components["schemas"]["LeadTimeChip-Output"] | components["schemas"]["AddShiftChip-Output"] | components["schemas"]["LaneDelayChip-Output"] | components["schemas"]["MachineDownChip-Output"] | components["schemas"]["CustomerPriceChip-Output"] | components["schemas"]["SafetyDaysChip-Output"] | components["schemas"]["FxChip-Output"])[];
             dataset: components["schemas"]["Dataset"] | null;
         };
         /** ScenarioInfo */
@@ -9991,6 +10286,11 @@ export interface components {
              */
             late_revenue: number;
             /**
+             * Sales Value
+             * @default 0
+             */
+            sales_value: number;
+            /**
              * Orders
              * @default 0
              */
@@ -10008,6 +10308,8 @@ export interface components {
             inventory_delta: number | null;
             /** Late Units Delta */
             late_units_delta: number | null;
+            /** Sales Delta */
+            sales_delta: number | null;
             /** Cost Per Service Point */
             cost_per_service_point: number | null;
             /**
@@ -12376,6 +12678,44 @@ export interface components {
              * @default
              */
             lowest_cost: string;
+        };
+        /**
+         * WhyStep
+         * @description One link of the chain behind a confirmed date, earliest first ("why this date").
+         */
+        WhyStep: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "asked" | "stock" | "receipt" | "planned" | "component" | "ctp" | "rlt" | "ship";
+            /** Date */
+            date: string | null;
+            /**
+             * Location
+             * @default
+             */
+            location: string;
+            /**
+             * Product
+             * @default
+             */
+            product: string;
+            /**
+             * Ref
+             * @default
+             */
+            ref: string;
+            /**
+             * Qty
+             * @default 0
+             */
+            qty: number;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /**
          * WorkItem
@@ -15699,6 +16039,39 @@ export interface operations {
             };
         };
     };
+    post_tower_fix_api_tower_fix_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FixRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_work_item_api_tower_items__iid__post: {
         parameters: {
             query?: never;
@@ -15883,6 +16256,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WhatIfResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_whatif_keep_api_whatif_keep_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeepRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeepResult"];
                 };
             };
             /** @description Validation Error */

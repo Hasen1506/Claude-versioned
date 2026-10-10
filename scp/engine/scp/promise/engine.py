@@ -36,7 +36,7 @@ from ..plan.leadtime import (
 )
 from ..time.capacity import day_capacity
 from .atp import EPS, AtpSeries
-from .result import AtpNode, CtpStep, OrderPromise, ScheduleLine
+from .result import AtpNode, CtpStep, OrderPromise, ScheduleLine, WhyStep
 
 _MAX_DEPTH = 6
 
@@ -81,6 +81,8 @@ class Promiser:
         self.alloc_used: dict[str, float] = defaultdict(float)
         self.orders_by_id = {o.id: o for o in plan.orders}
         self._rlt: dict[Node, float] = {}
+        # what flows into each node's supply picture and when: (day, kind, ref, qty), for "why this date"
+        self.sources: dict[Node, list[tuple[int, str, str, float]]] = defaultdict(list)
         self._quality: dict[Node, float] | None = None
         # free finite capacity per resource and day over the plan horizon (productive hours less the plan's load
         # that day), for CTP: a machine free that week but not on the days an order needs it does not confirm it
@@ -147,10 +149,14 @@ class Promiser:
         s = AtpSeries(self.days, rlt_day)
         lp = ds.location_product_by_key.get(node)
         s.add_in(0, self.on_hand(node))
+        if self.on_hand(node) > EPS:
+            self.sources[node].append((0, "stock", "", self.on_hand(node)))
         for r in ds.receipts:
             if (r.location, r.product) == node:
                 for d, q in r.expected_parts():
-                    s.add_in(self.day(d) + math.ceil(gr_days(lp) - 1e-9), q)
+                    k = self.day(d) + math.ceil(gr_days(lp) - 1e-9)
+                    s.add_in(k, q)
+                    self.sources[node].append((max(k, 0), "receipt", r.id, q))
         if self.cfg.include_planned_orders:
             for o in self.plan.orders:
                 if (o.location, o.product) == node:
@@ -179,15 +185,19 @@ class Promiser:
         projected date at all and confirms nothing; capable-to-promise or the replenishment lead time quote it."""
         if o.delay_days < 0:
             return
+        node = (o.location, o.product)
         late = o.projected_available_date
         if late is None or late <= o.available_date or o.delay_days <= 0:
             s.add_in(self.day(o.available_date), o.qty)
+            self.sources[node].append((max(self.day(o.available_date), 0), "planned", o.id, o.qty))
             return
         on_time = min(max(o.projected_on_time_qty or 0.0, 0.0), o.qty)
         if on_time > EPS:
             s.add_in(self.day(o.available_date), on_time)
+            self.sources[node].append((max(self.day(o.available_date), 0), "planned", o.id, on_time))
         if o.qty - on_time > EPS:
             s.add_in(self.day(late), o.qty - on_time)
+            self.sources[node].append((max(self.day(late), 0), "planned", o.id, o.qty - on_time))
 
     def ships(self, d: DemandRecord) -> list[Ship]:
         node = (d.location, d.product)
@@ -278,7 +288,56 @@ class Promiser:
 
     # ---- the check ------------------------------------------------------------------------------
     def check(self, d: DemandRecord, key: str, qty: float | None = None) -> OrderPromise:
-        """Promise ``qty`` (default: the order quantity) and commit the resulting schedule lines."""
+        """Promise ``qty`` (default: the order quantity) and commit the resulting schedule lines, with the chain
+        behind the latest confirmed date."""
+        res = self._check(d, key, qty)
+        res.why = self.explain(d, res)
+        return res
+
+    def explain(self, d: DemandRecord, res: OrderPromise) -> list[WhyStep]:
+        """Why the order gets the date it gets: the supply its latest schedule line ships from (stock, a firm receipt,
+        a planned order and the part it waits for, new supply by capable-to-promise, or the replenishment lead time)
+        and the way to the customer. An on-time order says so first."""
+        if not res.lines:
+            return []
+        line = max(res.lines, key=lambda x: (x.date, x.ship_date))
+        node = (line.ship_from, d.product)
+        k = self.day(line.ship_date)
+        out: list[WhyStep] = []
+        if line.on_time:
+            out.append(WhyStep(kind="asked", date=d.date, note="confirmed for the date asked"))
+        if line.method == "ctp":
+            for st in res.ctp:
+                out.append(WhyStep(kind="ctp", date=st.end or st.start, location=st.location, product=st.product,
+                                   qty=st.qty, note=st.note or st.kind))
+        elif line.method == "rlt":
+            out.append(WhyStep(kind="rlt", date=line.ship_date, location=node[0], product=d.product,
+                               qty=round(self.rlt(node), 1),
+                               note=f"beyond the replenishment lead time of {self.rlt(node):g} days: supply can be "
+                                    "arranged by then"))
+        else:
+            before = [x for x in self.sources.get(node, []) if x[0] <= k]
+            last = max((x[0] for x in before), default=None)
+            for day, kind, ref, q in (x for x in before if x[0] == last):
+                if kind == "planned" and (o := self.orders_by_id.get(ref)) is not None and o.limited_by:
+                    out.append(WhyStep(kind="component", date=o.limited_until, location=o.limited_at or o.location,
+                                       product=o.limited_by, ref=ref,
+                                       note=f"{o.limited_by} is all there"
+                                            + (f" on {o.limited_until.isoformat()}" if o.limited_until else
+                                               " only when more is planned")))
+                out.append(WhyStep(kind=kind, date=self.date(day), location=node[0], product=d.product, ref=ref, qty=q,
+                                   note={"stock": "in stock at the start",
+                                         "receipt": f"firm receipt {ref} is available",
+                                         "planned": f"planned order {ref} is ready"}[kind]))
+                if len(out) >= 4:
+                    break
+        lane = next((sh.lane for sh in self.ships(d) if sh.node == node), None)
+        if lane is not None:
+            out.append(WhyStep(kind="ship", date=line.date, location=node[0], product=d.product, ref=lane, qty=line.qty,
+                               note=f"shipped {line.ship_date.isoformat()} over {lane}, delivered {line.date.isoformat()}"))
+        return out
+
+    def _check(self, d: DemandRecord, key: str, qty: float | None = None) -> OrderPromise:
         q = d.qty if qty is None else qty
         price = (self.ds.product_by_id[d.product].price or 0.0) if d.product in self.ds.product_by_id else 0.0
         res = OrderPromise(order=key, location=d.location, product=d.product, qty=d.qty, requested=d.date,

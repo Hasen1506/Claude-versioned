@@ -19,18 +19,18 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to 26 from 19 Oct 2026; move on purpose, once Playwright supports it
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "22"   # as the scp workflow
           cache: npm
           cache-dependency-path: scp/web/package-lock.json
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
       - name: Build web client
         working-directory: scp/web
         env:
@@ -39,8 +39,8 @@ jobs:
           npm ci
           npx tsc -b
           npx vite build --mode pages
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: scp/web/dist
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

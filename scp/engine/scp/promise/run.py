@@ -194,6 +194,9 @@ def _same(a: list[ScheduleLine], b: list[ScheduleLine]) -> bool:
 
 def _finish(ds: Dataset, P: Promiser, res: PromiseResult, orders: list[OrderPromise]) -> PromiseResult:
     res.orders = orders
+    for o in orders:
+        if not o.why and o.lines:          # kept or combined promises: the chain behind their latest date too
+            o.why = P.explain(_rec(o), o)
     nodes = {(x.ship_from, o.product) for o in orders for x in o.lines}
     for _key, d in sales_orders(ds):
         for sh in P.ships(d):

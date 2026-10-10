@@ -5,6 +5,7 @@ import { api, SSO_START } from "../api/client";
 import type { AuthConfig, CompanyMeta, Member } from "../api/types";
 import { Badge, Empty, Panel, StageHeader } from "../components/ui";
 import { when } from "../components/SaveStatus";
+import { useLatest } from "../lib/latest";
 import { go, href } from "../lib/router";
 import { store, unsaved, useStore } from "../state/store";
 
@@ -56,7 +57,7 @@ export function SignIn({ config, onDone }: { config: AuthConfig | null; onDone?:
         return;
       }
       const s = mode === "in" ? await api.signIn(email, password) : await api.signUp(email, name, password);
-      store.signedIn({ token: s.token, user: s.user });
+      store.signedIn({ user: s.user });
       setPassword("");
       onDone?.();
     } catch (x) {
@@ -209,23 +210,14 @@ function ResetLinkButton({ id, m }: { id: string; m: Member }) {
 
 /** Master-data changes wait for a second person's approval (an owner turns it on). */
 function Approval({ id, owner }: { id: string; owner: boolean }) {
-  const [on, setOn] = useState<boolean | null>(null);
-  const [err, setErr] = useState<string | null>(null);
   // a first read that answers after the owner already changed the setting must not put the old value back
-  const changed = useRef(0);
-  useEffect(() => {
-    const asked = changed.current;
-    let live = true;
-    api.companies().then((l) => { if (live && changed.current === asked) setOn(!!l.find((c) => c.id === id)?.approval); })
-      .catch(() => { if (live && changed.current === asked) setOn(null); });
-    return () => { live = false; };
-  }, [id]);
+  const { value: on, show: setOn } = useLatest(() => api.companies().then((l) => !!l.find((c) => c.id === id)?.approval), [id]);
+  const [err, setErr] = useState<string | null>(null);
   if (on === null) return null;
   return <div className="stack" style={{ gap: 4 }}>
     <label className="row small" style={{ gap: 8 }}>
       <input type="checkbox" checked={on} disabled={!owner} onChange={async (e) => {
         const want = e.target.checked;
-        changed.current += 1;
         setErr(null);
         setOn(want);
         try { setOn((await api.setApproval(id, want)).approval ?? false); } catch (x) { setOn(!want); setErr(x instanceof Error ? x.message : String(x)); }
@@ -241,24 +233,13 @@ function Approval({ id, owner }: { id: string; owner: boolean }) {
 
 function Members({ id, role }: { id: string; role: string }) {
   const me = useStore((s) => s.session?.user);
-  const [list, setList] = useState<Member[] | null>(null);
   const [email, setEmail] = useState("");
   const [newRole, setNewRole] = useState("planner");
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  // Every list the server answers with is numbered when it is shown. The first read of the members is shown only if no
-  // change (an invitation, a new role, a removal, new limits) answered since it was asked: the answer of a change is the
-  // newer list, and a read that arrives after it (the server answered it first, the browser delivered it late) must not
-  // put back a list without the person just invited (scp run 37731060982: the invited row vanished).
-  const shown = useRef(0);
-  const show = (l: Member[]) => { shown.current += 1; setList(l); };
-  useEffect(() => {
-    const asked = shown.current;
-    let live = true;
-    api.members(id).then((l) => { if (live && shown.current === asked) show(l); })
-      .catch((e) => { if (live) setErr(String(e)); });
-    return () => { live = false; };
-  }, [id]);
+  // the first read is shown only if no change (an invitation, a new role, a removal, new limits) answered since it was
+  // asked: the change's answer is the newer list (scp run 37731060982: the invited row vanished)
+  const { value: list, show, error: readErr } = useLatest(() => api.members(id), [id]);
   const owner = role === "owner";
   const [invite, setInvite] = useState<{ email: string; link: string } | null>(null);
   const act = async (f: () => Promise<Member[]>, done: string) => {
@@ -318,7 +299,7 @@ function Members({ id, role }: { id: string; role: string }) {
       {invite && <div className="small">Send {invite.email} this invitation (it works for 14 days, only for that address; a server that
         sends mail has mailed it too): <input className="input" readOnly value={invite.link} aria-label="Invitation link"
           onFocus={(e) => e.target.select()} style={{ width: "100%", maxWidth: 480 }} /></div>}
-      {err && <div className="banner error" style={{ margin: 0 }}>{err}</div>}
+      {(err ?? readErr) && <div className="banner error" style={{ margin: 0 }}>{err ?? readErr}</div>}
     </div>
   );
 }
@@ -412,7 +393,7 @@ function ResetPassword({ token }: { token: string }) {
       setErr(null);
       try {
         const s = await api.resetPassword(token, pw);
-        store.signedIn({ token: s.token, user: s.user });
+        store.signedIn({ user: s.user });
         go("account");
       } catch (x) { setErr(x instanceof Error ? x.message : String(x)); }
     }}>

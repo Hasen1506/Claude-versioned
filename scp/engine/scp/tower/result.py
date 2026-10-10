@@ -18,6 +18,12 @@ class KpiRow(Out):
     denominator: float = 0.0
 
 
+class KpiPoint(Out):
+    """A KPI's value on an earlier day (the trend), worked out from the records dated before it."""
+    as_of: dt.date
+    value: float | None
+
+
 class Kpi(Out):
     id: str
     name: str
@@ -34,6 +40,8 @@ class Kpi(Out):
     note: str = ""
     breakdown_by: str = ""
     breakdown: list[KpiRow] = []
+    trend: list[KpiPoint] = []                          # weekly, oldest first, ending on the planning start
+    ageing: list[KpiRow] = []                           # what is open by days past due (value: amount, numerator: count)
 
 
 class InboxAction(Out):
@@ -44,6 +52,8 @@ class InboxAction(Out):
     protects: float = 0.0             # money at risk the action takes away, if it works (company currency)
     costs: float | None = None        # what doing it costs, when the data says (overtime hours, a dearer supplier)
     href: str = ""                    # where in the application it is done
+    one_click: bool = False           # it can be tried on a copy of the plan and kept in one click (tower/fix.py)
+    why_not: str = ""                 # an expedite, switch or overtime that cannot: why, in plain words
 
 
 class WorkItem(Out):

@@ -57,6 +57,11 @@ class PlannedOrder(Out):
     delay_days: float = 0.0       # projected lateness vs need incl. upstream delays; −1 = an input is uncovered
     projected_available_date: dt.date | None = None  # when all of it is projected available
     projected_on_time_qty: float | None = None       # how much is projected available by the need date
+    # projected late: the input that holds it up the longest (its product, where it is needed, when it is all there;
+    # no date = it is not covered at all)
+    limited_by: str | None = None
+    limited_at: str | None = None
+    limited_until: dt.date | None = None
     lot_excess: float = 0.0       # quantity not pegged to any requirement by the end of the horizon
     # why the order is this size, as planned: qty = for requirements + for_buffer + for_lot_size
     for_buffer: float = 0.0       # raises projected stock to the safety stock, stock target or reorder point

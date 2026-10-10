@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { AtpNode, CtpStep, Dataset, DemandRecord, OrderPromise, PromiseResult, ScheduleLine } from "../api/types";
+import type { AtpNode, CtpStep, Dataset, DemandRecord, OrderPromise, PromiseResult, ScheduleLine, WhyStep } from "../api/types";
 import { BucketChart } from "../components/charts";
 import {
   Badge, cols, Edits, Empty, Panel, Provenance, Reading, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term, type Severity, useTooltip,
@@ -228,10 +228,35 @@ function OrderCard({ o, currency, actions }: { o: OrderPromise; currency: string
           ))}
         </tbody>
       </table>
+      {o.why.length > 0 && <WhyDate steps={o.why} />}
       {o.previous.length > 0 && <p className="faint small">Committed before: {o.previous.map((l) => `${qty(l.qty)} on ${day(l.date)} from ${l.ship_from}`).join(" · ")}</p>}
       {o.ctp.length > 0 && <><SectionBand step="CTP" title="How the new supply gets there" /><CtpTimeline steps={o.ctp} /></>}
     </Panel>
   );
+}
+
+/** "Why this date": the chain behind the latest confirmed date, earliest first. */
+function WhyDate({ steps }: { steps: WhyStep[] }) {
+  const n = useNames();
+  const say = (w: WhyStep): React.ReactNode => {
+    switch (w.kind) {
+      case "asked": return <>Confirmed for the date the customer asked</>;
+      case "stock": return <>{qty(w.qty)} {n.prod(w.product)} in stock at {n.loc(w.location)}</>;
+      case "receipt": return <>Firm receipt <b>{w.ref}</b> brings {qty(w.qty)} to {n.loc(w.location)}</>;
+      case "component": return w.date ? <><b>{n.prod(w.product)}</b> is all there at {n.loc(w.location)}: <b>{w.ref}</b> waits for it</>
+        : <><b>{n.prod(w.product)}</b> is not covered yet: <b>{w.ref}</b> waits for it until more is bought or made</>;
+      case "planned": return <>Planned order <b>{w.ref}</b> ready with {qty(w.qty)} {n.prod(w.product)} at {n.loc(w.location)}</>;
+      case "ctp": return <>{n.text(w.note)}</>;
+      case "rlt": return <>Beyond the replenishment lead time of {w.qty} days: supply can be arranged by then</>;
+      case "ship": return <>Delivered from {n.loc(w.location)} over {w.ref}</>;
+    }
+  };
+  return <div className="why-date" style={{ marginTop: 12 }}>
+    <SectionBand step="Why" title="Why this date" />
+    <ol className="stack small" style={{ gap: 4, margin: 0, paddingLeft: 20 }} aria-label="Why this date">
+      {steps.map((w, i) => <li key={i}><span className="mono">{w.date ? day(w.date) : "not yet"}</span> · {say(w)}</li>)}
+    </ol>
+  </div>;
 }
 
 // ------------------------------------------------------------------------------------------------
