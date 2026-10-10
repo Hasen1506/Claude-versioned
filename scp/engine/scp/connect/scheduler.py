@@ -1,6 +1,7 @@
 """The server's clock for connections (Phase Q): every half minute it runs the scheduled imports whose time has come
-and sends the worklist reminders that are due. ``SCP_SCHEDULER=0`` switches it off (a second server on the same
-database, say, so imports do not run twice)."""
+and sends the worklist reminders that are due. With several server processes on one database, one of them runs it
+(the first to ask; the next takes over when it stops, see scp.dblock), so an import never runs twice.
+``SCP_SCHEDULER=0`` switches it off in a process."""
 from __future__ import annotations
 
 import datetime as dt
@@ -37,9 +38,16 @@ def start() -> threading.Thread | None:
         return None
 
     def run() -> None:
+        from ..versions.store import get_store
         while True:
             time.sleep(EVERY)
-            tick()
+            try:
+                leads = get_store().lock.lead("clock")
+            except Exception:  # noqa: BLE001 - a database that cannot be reached now is tried again next round
+                log.exception("could not reach the database for the clock")
+                continue
+            if leads:
+                tick()
 
     t = threading.Thread(target=run, name="scp-connections", daemon=True)
     t.start()

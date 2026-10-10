@@ -383,6 +383,34 @@ browser the way the guide reads, input → processing → output:
 | N165 | DIO and turns swung with one large receipt on the last day; DSO was an average; nothing aged what was owed; no trend. | Minor | **Fixed.** Average stock of the period, count-back DSO, ageing buckets for receivables and payables, a 12-week trend on DIO, DSO, DPO, turns and cash-to-cash. |
 | N166 | The CI actions ran on Node 20 (deprecated) and `ubuntu-latest` was due to move on 19 Oct. | Minor | **Fixed.** Actions on their Node 24 majors, runners pinned to Ubuntu 24.04, Node 22 for every build and the Docker image. |
 
+## Enterprise plan, phase 1: running it (10 October 2026)
+
+ENTERPRISE_PLAN 1.1, 1.2, 1.5 and 1.6, used against a local PostgreSQL 16 the way an administrator would:
+
+* *Several server processes* (input: four planners saving the same company at once, ten saves each, through
+  `uvicorn --workers 2` on PostgreSQL; processing: every read-then-write under the database's own lock, the save a
+  compare-and-swap on the revision; output: 40 saves on 40 revisions, 2 to 41 one after another, 74 refused with
+  409 and saved again over the newer revision, 41 history rows). With the lock and the compare-and-swap both taken
+  out, the two-process test fails at once (`UNIQUE constraint failed: company_revisions`), so it proves something.
+* *Watching it* (input: the same run with `SCP_LOG_FORMAT=json`; output: one JSON line per call with its request id,
+  route pattern, status and milliseconds, never a body or a query; `/api/metrics` counted 46 PUT 409 and 21 PUT 200
+  on `/api/companies/{cid}` with the time histogram; `/api/health` named the commit, the database and the uptime;
+  `X-Request-ID: drive-1` came back as sent).
+* *Backup and restore on PostgreSQL* (input: `scp.admin backup` against the live database while it ran; output: one
+  file that `check` reads, "1 accounts, d-9 (revision 41)"; `scp.admin restore` into an empty database compared every
+  table and committed; a second restore over it was refused; the owner signed in there with the same password and
+  revision 13 opened as saved).
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N167 | A save was checked against the revision under a lock inside the process: two server processes could both pass the check, and the second wrote the same revision (an error in the log, the planner's change lost). | Serious | **Fixed.** The lock is the database's (advisory lock, or a file lock beside SQLite), and the save is a compare-and-swap. |
+| N168 | The scheduled-import clock, the nightly copy and the sign-in failure counter lived in each process: with two, an import would run twice and an address would get ten wrong passwords per process. | Serious | **Fixed.** One process leads each clock (the next takes over when it stops); the counter is a table. |
+| N169 | A PostgreSQL connection dropped while idle (Neon sleeps after a few minutes) failed the next request. | Serious | **Fixed.** The connection is made again when the lock is taken, before anything is under way. |
+| N170 | Importing the build commit as `commit` in the API module hid the promise engine's `commit` (lint caught it before it ran). | Serious | **Fixed** before it shipped: imported as `build_commit`. |
+| N171 | Nothing showed what the server was doing: no request ids, no metrics, health said only "ok". | Minor | **Fixed.** Request ids, JSON logs, `/api/metrics`, an optional Sentry DSN, commit, database and uptime in health (503 when the database is unreachable). |
+| N172 | PostgreSQL could not be backed up or restored with the application's own commands, and no restore had been tried. | Serious | **Fixed.** `scp.admin backup` and `restore` work on PostgreSQL; the restore test opens every company at every kept revision. |
+| N173 | A production server could start open to anyone (open sign-up, no sign-in), as the live demonstration host does. | Serious | **Fixed** for servers that say `SCP_ENV=production`; the demonstration host's own settings are its owner's to change (DEPLOY.md). |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

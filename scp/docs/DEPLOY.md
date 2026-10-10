@@ -44,6 +44,8 @@ Everything is set by environment variables. None is needed to try it; the ones m
 
 | Variable | What it does | Default |
 |---|---|---|
+| `SCP_ENV` | `production`: the server refuses to start when anyone may make an account and no call needs a session (`SCP_SIGNUP=open` without `SCP_REQUIRE_SIGNIN=1`). *Production.* | none |
+| `SCP_OPEN_ON_PURPOSE` | `1`: start in production open to anyone all the same (a public demonstration). | off |
 | `SCP_DB` | The database file. Keep it on a volume that is backed up. | `~/.scp/scp.sqlite`; in the image `/data/scp.sqlite` |
 | `SCP_REQUIRE_SIGNIN` | `1`: every call needs a signed-in person, and everything is kept in a company. *Production.* | off; in the image `1` |
 | `SCP_SIGNUP` | Who may make an account: `open` (anyone), `invite` (an e-mail a company owner invited, and the very first account), `closed` (the first account only). *Production:* `invite`. | `open`; in the image `invite` |
@@ -58,6 +60,12 @@ Everything is set by environment variables. None is needed to try it; the ones m
 | `SCP_MAIL_OPEN_SIGNUP` | `1`: mail documents (*Send from here*) even though `SCP_SIGNUP=open`. Off, a server anyone may make an account on never mails documents for them. | off |
 | `SCP_MAIL_DAILY_PER_ACCOUNT` | Documents one person may send a day, across every company. | `100` |
 | `FORWARDED_ALLOW_IPS` | (image) The proxy addresses whose `X-Forwarded-*` headers uvicorn trusts. | `127.0.0.1` |
+| `SCP_WORKERS` | (image) Server processes (see *5. Size of the machine*). | `1` |
+| `SCP_LOG_FORMAT` | `json`: every log line is one JSON object (time, level, message, request id; for a call also method, route, status and milliseconds), for a log service. Otherwise plain text. No line holds a request's body, query or who asked. | text |
+| `SCP_LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`. | `INFO` |
+| `SCP_METRICS_TOKEN` | `GET /api/metrics` (Prometheus text: calls by route and status, time taken, calls under way, the build) then needs `Authorization: Bearer <token>`. Without it the page is open (it holds counts, never data). *Production.* | none |
+| `SCP_SENTRY_DSN` | Unexpected errors are reported to Sentry as well (install `sentry-sdk` in the image; no request body or personal data is sent). | none |
+| `SCP_COMMIT` | (image build argument) The build's commit, shown by `/api/health` and `/api/metrics`; on Render its own `RENDER_GIT_COMMIT` is used. | none |
 | `SCP_BACKUP_DIR` | A folder for the nightly copy of the database. None: no nightly copy. *Production.* | none |
 | `SCP_BACKUP_HOUR` | When the nightly copy is taken (hour, UTC). | `2` |
 | `SCP_BACKUP_KEEP` | How many nightly copies are kept; the oldest go. | `14` |
@@ -208,6 +216,22 @@ docker start scp
 Everyone is then signed in as they were at the time of the copy, and every company is as it was then; each
 company's *History* shows its saves up to that point.
 
+**On PostgreSQL** (`DATABASE_URL`, e.g. Neon) the same commands work. `backup` takes one consistent snapshot on its
+own read-only connection (the server goes on saving and waits for nothing) and writes the same kind of file;
+`restore` puts a file back into the database `DATABASE_URL` names, which must be empty (a new Neon branch or
+database): every field is compared before it commits, and a database that holds anything is refused. Then point
+the server at that database. Run `backup` from a scheduler (a cron job, a Render cron job) and copy the folder off
+the machine; Neon's own restore history is kept for a limited time only. The file also restores as a SQLite file
+(`restore` without `DATABASE_URL`), which moves a server off PostgreSQL.
+
+```bash
+DATABASE_URL=postgresql://… python -m scp.admin backup /backups
+DATABASE_URL=postgresql://…/empty python -m scp.admin restore /backups/scp-20260927-020000.sqlite
+```
+
+`engine/tests/test_backup_postgres.py` rehearses both: a copy taken while the server saves, put back into an empty
+database, every company opened at every kept revision, the owner signing in with the same password.
+
 Other administrator commands: `python -m scp.admin users` (the accounts and their companies),
 `python -m scp.admin reset-link <e-mail>`.
 
@@ -246,9 +270,20 @@ companies are not held up. A company of a few hundred products needs 2 cores and
 company's size every 25 saves (each save keeps only what changed, with a full copy every 25), so give the data volume
 some room and keep an eye on it.
 
-Run **one** server process (`--workers 1`, as the image does): a save is checked against the company's latest
-revision under a lock inside the process, and a second process would not see it. The forecast uses every core by
-itself.
+One server process (`--workers 1`, the image's default) is enough for most companies: the forecast uses every core
+by itself. More processes answer more people at once (`SCP_WORKERS=4` in the image, or `--workers 4`); they are safe
+on one database, PostgreSQL or a SQLite file on the same machine:
+
+* every read-then-write of the database (a save checked against the company's latest revision, a membership, the
+  sign-in counter) runs under a lock the database holds for all processes (an advisory lock on PostgreSQL, a file
+  lock beside a SQLite file), and a save moves the company on only from the revision it was checked against;
+* one process runs the clock for scheduled imports, reminders and the nightly copy (the next takes over when it
+  stops);
+* the sign-in failure counter is kept in the database, so ten wrong passwords are ten whichever process answered.
+
+Each process keeps its own copy of what it worked out lately (a plan opened twice is answered at once by the process
+that made it), so give each its share of memory: about 2 GB per process for a company of 5,000 products.
+A connection the database dropped while idle (a hosted server that sleeps) is made again on the next request.
 
 ## 6. Updating
 
