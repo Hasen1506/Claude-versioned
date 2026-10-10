@@ -55,7 +55,9 @@ test("one click: an action tried on a copy of the plan shows the money at risk b
   const table = page.getByRole("table", { name: "Exception inbox" });
   await expect(table).toBeVisible();
   // what needs a person says why it has no one-click version
-  await expect(table).toContainText(/Not in one click: nothing firm of .* arrives after/);
+  const why = table.locator("details", { hasText: "Not in one click: why?" }).first();
+  await why.locator("summary").click();
+  await expect(why).toContainText(/nothing firm of .* arrives after .*: the late quantity is on planned orders/);
   // overtime on a day over capacity: tried, planned again, the problem is gone
   const overtime = /^Try it: Add .* of overtime/;
   const row = table.getByTestId("inbox-row").filter({ has: page.getByRole("button", { name: overtime }) }).first();
@@ -65,7 +67,7 @@ test("one click: an action tried on a copy of the plan shows the money at risk b
   const out = page.getByRole("region", { name: "What this change does" });
   await expect(out).toContainText("Tried on a copy of the plan");
   await expect(out.locator(".tile", { hasText: "This problem" })).toContainText(/→ gone/);
-  await expect(out.locator(".tile", { hasText: "Money at risk, all problems" })).toContainText(/less/);
+  await expect(out.locator(".tile", { hasText: "All problems" })).toContainText(/less/);
   await expect(out.getByRole("list", { name: "The change" })).toContainText(/h overtime a day instead of/);
   const tile = page.locator(".tile", { hasText: /^Money at risk/ }).first().locator(".value");
   const total = (await tile.textContent())!;

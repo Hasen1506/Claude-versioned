@@ -350,6 +350,39 @@ and tab was looked at on a desktop and at phone width.
 | N155 | The *GitHub Pages* workflow fails on every push to main: Pages is not switched on for the repository ("Get Pages site failed"). | Minor | **Fixed** by the repository owner: Pages is switched on (Settings → Pages → Source: GitHub Actions); the next push to main deploys it. |
 | N156 | The longest browser test (a company on the server, two people merging, history, put back) takes about 50 s of its 60 s limit and timed out once on a busy machine. | Minor | **Fixed.** Marked slow, which gives it three times the limit. |
 
+## Built from the ideas list (9 October 2026)
+
+The seven next steps proposed after #20 were built in #37, one commit each, then used on the Kaveri example in a
+browser the way the guide reads, input → processing → output:
+
+* *Why this date* (Promise dates → an order): input an open order; the promise engine records where each place's
+  supply comes from; output "Mon 26 Oct · Planned order TO-01266 ready with 1,155 Electric kettle 1.5 L at Bhiwandi DC
+  · Wed 4 Nov · Delivered from Bhiwandi DC over LN-BHW-ECOM". A planned order that is late names the part it waits for.
+* One click on *Problems* (Performance → Problems): input "Add 282.2 h of overtime on Assembly operators"; *Try it*
+  plans a copy with 10 h overtime a day instead of 2 h; output money at risk ₹24.16 L → ₹22.97 L, this problem
+  ₹1.19 L → gone. *Keep this change* applied it as one undo step; *Undo* took it back.
+* What-if (What if… side by side): input three scenarios (assembly line down 14 days; web shop prices +10 % and USD
+  +20 %; 10 days of safety stock); output line down −0.7 points of service and +701 late units; prices and USD
+  +₹62.91 L of sales value and +₹11.74 L of cost at the same service; safety stock +₹1.21 Cr of stock. *Keep as a
+  version* stored the first as scenario V0002 of the working copy, ready to promote.
+* Working capital (Performance → KPIs): input sixteen weeks of goods issued and of customer and supplier invoices;
+  output DIO on the average stock of the 91 days (with the closing stock beside it), DSO counted back (42.0 days, the
+  period average beside it), receivables ₹19.04 L not yet due and ₹9.52 L 1–30 days overdue, and a 12-week
+  cash-to-cash trend (329 → 269 days) drawn with its table.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N157 | The *web* check of #37 failed: the inbox test read the ranked table's row count after switching to *By owner and age*, when the table could already be gone (expected 0 open problems, found 22). | Serious | **Fixed.** The rows are counted before the switch. |
+| N158 | A browser's sign-in answer carried the session token, and a sign-in with a cookie session needed no CSRF token (login CSRF). | Serious | **Fixed.** The token stays in the HttpOnly cookie; a cookie sign-in, sign-up or reset needs the double-submit token. |
+| N159 | Panels that read once and then change (members, keys, imports, mail, held changes) each had their own guard against a late read. | Minor | **Fixed.** One `useLatest` hook: the newest answer shown wins. |
+| N160 | A promise said when, not why. | Serious | **Fixed.** *Why this date* lists the chain behind the latest confirmed line: stock, a firm receipt, or the planned order and the part it waits for; beyond the lead time; the capable-to-promise steps; then the lane. |
+| N161 | The inbox suggested an action and estimated what it protects, but doing it meant another page and a fresh plan to see if it worked. | Serious | **Fixed.** *Try it* on an expedite, a supplier switch or overtime: a copy is planned with the change and the money at risk is shown before and after; kept as one change. What has no one-click version says why ("nothing firm … arrives after …: the late quantity is on planned orders"). |
+| N162 | A what-if that won could not be kept, and four common questions had no chip. | Minor | **Fixed.** *Keep as a version*, and chips for a machine down, one customer's prices, safety stock in days and an exchange-rate move; a sales-value row shows a price change. |
+| N163 | With a machine down, *Busiest machine* read "—" with a −98 % badge: a week with load and no hours is an infinite utilisation. | Minor | **Fixed.** The busiest week that has hours, and the note names the machine with work in a week with no hours. |
+| N164 | Rebuilding the daily stock backwards took Kaveri's opening balances (posted a week before the start) as receipts: before them the stock was nearly nil and the average fell to 416 K against 32.8 M closing. | Serious | **Fixed** before it shipped. An opening balance is stock already there and is not taken back. |
+| N165 | DIO and turns swung with one large receipt on the last day; DSO was an average; nothing aged what was owed; no trend. | Minor | **Fixed.** Average stock of the period, count-back DSO, ageing buckets for receivables and payables, a 12-week trend on DIO, DSO, DPO, turns and cash-to-cash. |
+| N166 | The CI actions ran on Node 20 (deprecated) and `ubuntu-latest` was due to move on 19 Oct. | Minor | **Fixed.** Actions on their Node 24 majors, runners pinned to Ubuntu 24.04, Node 22 for every build and the Docker image. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

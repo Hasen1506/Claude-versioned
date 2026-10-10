@@ -316,7 +316,7 @@ function Inbox({ res, ds, cur }: { res: TowerResult; ds: Dataset; cur: string })
                         disabled={tries[w.key]?.busy} onClick={() => tryFix(w.key)}>{tries[w.key]?.busy ? "Trying…" : "Try it"}</button>}
                     </div>
                     <span className="small faint">protects {money(a.protects ?? 0, cur)}{a.costs !== null && a.costs !== undefined ? ` · costs ${money(a.costs, cur)}` : ""}</span>
-                    {!a.one_click && a.why_not && <span className="small faint">Not in one click: {a.why_not}</span>}
+                    {!a.one_click && a.why_not && <details className="small faint"><summary>Not in one click: why?</summary>{a.why_not}</details>}
                   </div> : <span className="faint small">—</span>}</td>
                 </tr>
                 {tried && (tried.res || tried.error) && <tr className="fix-row"><td colSpan={5}>
@@ -342,7 +342,7 @@ function FixOutcome({ f, cur, ro, onKeep, onLeave }: { f: FixResult; cur: string
   return <div className="stack" style={{ gap: 8 }} role="region" aria-label="What this change does">
     <div className="small muted">Tried on a copy of the plan, planned again: <b>{f.label}</b></div>
     <div className="grid-auto">
-      <StatTile label="Money at risk, all problems" value={`${money(f.before_total, cur)} → ${money(f.after_total, cur)}`}
+      <StatTile label="All problems" value={`${money(f.before_total, cur)} → ${money(f.after_total, cur)}`}
         sub={delta < -0.005 ? `${money(-delta, cur)} less` : delta > 0.005 ? `${money(delta, cur)} more` : "no change"} tone={delta < -0.005 ? "hl" : undefined} />
       <StatTile label="This problem" value={`${money(f.before_item, cur)} → ${gone ? "gone" : money(f.after_item!, cur)}`}
         sub={f.costs !== null && f.costs !== undefined ? `the action costs ${money(f.costs, cur)}` : undefined} />

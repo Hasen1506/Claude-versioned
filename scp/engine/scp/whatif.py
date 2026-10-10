@@ -24,6 +24,7 @@ into the data of a branch, which is then promoted like any other version.
 from __future__ import annotations
 
 import datetime as dt
+import math
 from typing import Annotated, Literal
 
 from pydantic import Field
@@ -294,7 +295,15 @@ def _metrics(label: str, ds: Dataset) -> ScenarioOut:
             sales += dem * (ds.selling_price(n.location, n.product) or 0.0)
     out.sales_value = round(sales, 2)
     out.total_cost, out.service, out.inventory_value_avg = k.total_cost, k.on_time_fill_rate, k.inventory_value_avg
-    out.capacity_peak, out.late_units, out.late_revenue = k.max_utilization, late, round(rev, 2)
+    peak = k.max_utilization
+    if not math.isfinite(peak):
+        # work planned in a week with no capacity (a machine down): the busiest week that has hours, and say which
+        dead = sorted({rp.resource for rp in p.resources for b in rp.buckets
+                       if b.capacity_hours <= 0 < b.load_hours})
+        peak = max((b.load_hours / b.capacity_hours for rp in p.resources for b in rp.buckets
+                    if b.capacity_hours > 0), default=0.0)
+        out.note = f"{', '.join(dead)}: work planned in a week with no hours (it waits or moves)"
+    out.capacity_peak, out.late_units, out.late_revenue = peak, late, round(rev, 2)
     out.orders, out.errors = len(p.orders), sum(e.severity == "error" for e in p.exceptions)
     return out
 

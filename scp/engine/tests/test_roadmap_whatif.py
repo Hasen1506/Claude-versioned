@@ -208,6 +208,9 @@ def test_machine_down_takes_its_units_away_for_the_days_and_the_plan_feels_it():
     r = compare_scenarios(WhatIfRequest(base=kd, scenarios=[ScenarioIn(label="Base"), ScenarioIn(
         label="Line down", chips=[MachineDownChip(resource="PUNE-L1", days=14)])]))
     assert r.scenarios[1].service < r.scenarios[0].service                 # less on time while it is out
+    # a week with load and no hours is not an infinite peak: the busiest week with hours, and the machine is named
+    import math
+    assert math.isfinite(r.scenarios[1].capacity_peak) and "PUNE-L1: work planned in a week with no hours" in r.scenarios[1].note
     assert chip_label(MachineDownChip(resource="PUNE-L1", days=14)) == "PUNE-L1 down 14 d"
     with pytest.raises(WhatIfError):
         apply_chips(kd, [MachineDownChip(resource="NOPE", days=3)])
