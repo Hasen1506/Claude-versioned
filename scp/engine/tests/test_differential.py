@@ -105,6 +105,18 @@ INTENTIONAL += [
 ]
 
 
+# Why this date: a planned order projected late names the input that holds it up the longest (product, where, until)
+INTENTIONAL += [
+    ("Why this date: a late planned order says what it waits for (fields)", "scp/plan/result.py",
+     ("    projected_on_time_qty: float | None = None       # how much is projected available by the need date\n",
+      _engine_passage("scp/plan/result.py", "    projected_on_time_qty: float | None", "    lot_excess: float"))),
+    ("Why this date: the input found where the projected date is set", "scp/plan/mrp.py",
+     ("                o.projected_on_time_qty = sum(q for d, q in prof if d <= o.need_date)\n",
+      _engine_passage("scp/plan/mrp.py", "                o.projected_on_time_qty = sum",
+                      "                queue = [list(c) for c in prof]"))),
+]
+
+
 def _git(*args: str, cwd: Path = ENGINE) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, timeout=120)
 

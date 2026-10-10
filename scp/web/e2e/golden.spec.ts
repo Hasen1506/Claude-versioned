@@ -465,6 +465,10 @@ test("customer orders: check a new order → take it → change it → deliver p
   await expect(saved).toContainText(/SO-88222 taken: 40 /);   // the company's own numbering, continued
   await expect(page).toHaveURL(/#\/promise\/orders\/SO-88222$/);
   await expect(page.locator("tr", { hasText: "SO-88222" }).first()).toContainText("PO-7781");
+  // why this date: the chain behind the confirmed date, in plain words
+  const why = page.getByRole("list", { name: "Why this date" });
+  await expect(why).toBeVisible();
+  await expect(why.locator("li").first()).toContainText(/\d/);
 
   await page.getByRole("button", { name: "Change", exact: true }).click();
   await page.getByLabel("Ordered quantity").fill("50");

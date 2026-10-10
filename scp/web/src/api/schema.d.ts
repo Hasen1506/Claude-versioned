@@ -7081,6 +7081,8 @@ export interface components {
             price: number | null;
             /** Value */
             value: number | null;
+            /** Why */
+            why: components["schemas"]["WhyStep"][];
             /**
              * Shipped
              * @default 0
@@ -7649,6 +7651,12 @@ export interface components {
             projected_available_date: string | null;
             /** Projected On Time Qty */
             projected_on_time_qty: number | null;
+            /** Limited By */
+            limited_by: string | null;
+            /** Limited At */
+            limited_at: string | null;
+            /** Limited Until */
+            limited_until: string | null;
             /**
              * Lot Excess
              * @default 0
@@ -12376,6 +12384,44 @@ export interface components {
              * @default
              */
             lowest_cost: string;
+        };
+        /**
+         * WhyStep
+         * @description One link of the chain behind a confirmed date, earliest first ("why this date").
+         */
+        WhyStep: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "asked" | "stock" | "receipt" | "planned" | "component" | "ctp" | "rlt" | "ship";
+            /** Date */
+            date: string | null;
+            /**
+             * Location
+             * @default
+             */
+            location: string;
+            /**
+             * Product
+             * @default
+             */
+            product: string;
+            /**
+             * Ref
+             * @default
+             */
+            ref: string;
+            /**
+             * Qty
+             * @default 0
+             */
+            qty: number;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /**
          * WorkItem
