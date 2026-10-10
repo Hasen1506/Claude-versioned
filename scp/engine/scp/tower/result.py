@@ -18,6 +18,12 @@ class KpiRow(Out):
     denominator: float = 0.0
 
 
+class KpiPoint(Out):
+    """A KPI's value on an earlier day (the trend), worked out from the records dated before it."""
+    as_of: dt.date
+    value: float | None
+
+
 class Kpi(Out):
     id: str
     name: str
@@ -34,6 +40,8 @@ class Kpi(Out):
     note: str = ""
     breakdown_by: str = ""
     breakdown: list[KpiRow] = []
+    trend: list[KpiPoint] = []                          # weekly, oldest first, ending on the planning start
+    ageing: list[KpiRow] = []                           # what is open by days past due (value: amount, numerator: count)
 
 
 class InboxAction(Out):

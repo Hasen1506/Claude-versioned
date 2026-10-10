@@ -4,6 +4,7 @@ import type { Dataset, FixEdit, FixResult, Kpi, TowerResult, WorkItem, WorkItemE
 import {
   Badge, Edits, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, type Severity, RunButton,
 } from "../components/ui";
+import { BucketChart } from "../components/charts";
 import { codeLabel } from "../lib/situations";
 import { day, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Msg, namesOf } from "../lib/names";
@@ -201,6 +202,28 @@ function KpiDetail({ k, cur }: { k: Kpi; cur: string }) {
           )}
         </Panel>
       </div>
+      {(k.trend.length > 0 || k.ageing.length > 0) && <div className="grid-2" style={{ alignItems: "start", marginTop: 14 }}>
+        {k.trend.length > 0 && <Panel title="The last weeks" actions={<span className="faint small">each week's end, from the records before it</span>}>
+          {k.trend.some((p) => p.value !== null) ? <>
+            <BucketChart labels={k.trend.map((p) => day(p.as_of))} height={200} format={(v) => fmtKpi(k, v, cur)}
+              series={[{ name: k.name, color: "var(--series-1)", kind: "line", values: k.trend.map((p) => p.value ?? null) }]} />
+            <div className="table-wrap" style={{ maxHeight: 180 }}>
+              <table className="t" aria-label={`${k.name} week by week`}>
+                <thead><tr><th>Week ending</th><th className="num">{k.name}</th></tr></thead>
+                <tbody>{[...k.trend].reverse().map((p) => <tr key={p.as_of}><td>{day(p.as_of)}</td>
+                  <td className="num">{p.value === null ? <span className="faint">not enough data</span> : fmtKpi(k, p.value, cur)}</td></tr>)}</tbody>
+              </table>
+            </div>
+          </> : <p className="faint small">Not enough data in any of the last weeks yet.</p>}
+        </Panel>}
+        {k.ageing.length > 0 && <Panel flush title={k.id === "dso" ? "What customers owe, by days past due" : "What we owe, by days past due"}>
+          <table className="t" aria-label={k.id === "dso" ? "Receivables ageing" : "Payables ageing"}>
+            <thead><tr><th>Due</th><th className="num">Open</th><th className="num">Documents</th></tr></thead>
+            <tbody>{k.ageing.map((r) => <tr key={r.label}><td>{r.label}</td>
+              <td className={`num ${/over 60|31–60/.test(r.label) ? "neg" : ""}`}>{money(r.value, cur)}</td><td className="num faint">{qty(r.numerator)}</td></tr>)}</tbody>
+          </table>
+        </Panel>}
+      </div>}
     </>
   );
 }

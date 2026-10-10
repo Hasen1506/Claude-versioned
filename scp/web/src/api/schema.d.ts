@@ -5671,6 +5671,29 @@ export interface components {
              * @default []
              */
             breakdown: components["schemas"]["KpiRow"][];
+            /**
+             * Trend
+             * @default []
+             */
+            trend: components["schemas"]["KpiPoint"][];
+            /**
+             * Ageing
+             * @default []
+             */
+            ageing: components["schemas"]["KpiRow"][];
+        };
+        /**
+         * KpiPoint
+         * @description A KPI's value on an earlier day (the trend), worked out from the records dated before it.
+         */
+        KpiPoint: {
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Value */
+            value: number | null;
         };
         /**
          * KpiRow
