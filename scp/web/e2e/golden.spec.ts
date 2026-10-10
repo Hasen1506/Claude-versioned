@@ -772,7 +772,7 @@ test("control tower: KPIs graded → drill into OTIF → worklist → assign & a
   await expect(dso.locator(".kpi-n")).toHaveText("not enough data");
   await dso.click();
   await page.locator(".reading summary", { hasText: "How this is calculated" }).click();
-  await expect(page.getByText(/Receivables ÷ sales billed × days in the period/)).toBeVisible();
+  await expect(page.getByText(/Count-back: what customers still owe on the planning start/)).toBeVisible();
   await expect(page.getByText(/Not enough data: no customer invoices before the planning start/)).toBeVisible();
   await page.getByRole("button", { name: /^OTIF to requested date:/ }).click();
   await expect(page.locator(".section-band h2", { hasText: "OTIF to requested date" })).toBeVisible();
