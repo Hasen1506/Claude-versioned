@@ -67,3 +67,45 @@ test("every scenario needs its own name, and the working copy is not changed", a
   await page.goto("/#/home");
   await expect(page.getByText(/Everything is up to date/)).toBeVisible();
 });
+
+test("a machine down, one customer's prices, safety stock in days and the dollar; the winner kept as a version", async ({ page }) => {
+  await openExample(page, "Kaveri Kitchenware");
+  await page.goto("/#/whatif");
+  await expect(page.getByRole("heading", { name: "What if… side by side" })).toBeVisible();
+
+  // scenario 1: the assembly line out for two weeks
+  await page.getByLabel("Name of scenario 2").fill("Line down");
+  await page.getByLabel("Machine or line").selectOption("PUNE-L1");
+  await page.getByLabel("Days the machine is down").fill("14");
+  await page.getByRole("button", { name: "PUNE-L1 down" }).click();
+  await expect(page.getByLabel("Chips of Line down")).toContainText("PUNE-L1 down 14 d");
+
+  // scenario 2: the web shop pays 10 % more, ten days of safety stock and a dearer dollar
+  await page.getByRole("button", { name: "+ Add a scenario" }).click();
+  await page.getByLabel("Name of scenario 3").fill("Dearer web shop");
+  await page.getByLabel("Customer", { exact: true }).selectOption("CUS-ECOM");
+  await page.getByLabel("Price change in per cent").fill("10");
+  await page.getByRole("button", { name: "Price change for the customer" }).click();
+  await page.getByLabel("Safety stock in days").fill("10");
+  await page.getByRole("button", { name: "Safety stock in days" }).click();
+  await page.getByLabel("Currency", { exact: true }).selectOption("USD");
+  await page.getByLabel("Exchange rate change in per cent").fill("20");
+  await page.getByRole("button", { name: "Exchange rate move" }).click();
+  const chips = page.getByLabel("Chips of Dearer web shop");
+  await expect(chips).toContainText("Prices +10 % for CUS-ECOM");
+  await expect(chips).toContainText("Safety stock 10 d");
+  await expect(chips).toContainText("USD +20 %");
+
+  await page.getByRole("button", { name: "Compare side by side" }).click();
+  const table = page.getByRole("table", { name: "What-if comparison" });
+  await expect(table).toBeVisible({ timeout: 60_000 });
+  // the price change shows as more sales value; the line down costs service
+  await expect(table.locator("tr", { hasText: "Sales value" })).toContainText("+");
+  await expect(table.locator("tr", { hasText: "On-time service" })).toContainText("pts");
+
+  // keep the first scenario: the working copy is stored as a base, the scenario is its branch with the chip in it
+  await page.getByRole("button", { name: "Keep Line down as a version" }).click();
+  await expect(table.locator("tr", { hasText: "Keep it" })).toContainText(/Kept as V\d+/);
+  await table.getByRole("link", { name: "open it in Versions" }).click();
+  await expect(page.locator("main")).toContainText("Line down");
+});

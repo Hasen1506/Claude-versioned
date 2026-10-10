@@ -191,3 +191,86 @@ def test_whatif_is_priced_as_heavy_anonymous_work():
     assert anon_take(key, anon_cost("/api/whatif"), 120, now=1000.0) == 0
     assert anon_take(key, anon_cost("/api/whatif"), 120, now=1000.0) > 0
     _BUCKETS.pop(key, None)
+
+
+# ---- more chips and keeping a scenario (the ideas list of 9 Oct 2026) -----------------------------------------------
+
+def test_machine_down_takes_its_units_away_for_the_days_and_the_plan_feels_it():
+    from scp.whatif import MachineDownChip
+    k = example_dict("kitchenware_network")
+    from scp.model import Dataset
+    kd = Dataset.model_validate(k)
+    d = apply_chips(kd, [MachineDownChip(resource="PUNE-L1", days=14)])
+    ch = d.resource_by_id["PUNE-L1"].capacity_changes[-1]
+    assert (ch.units, ch.valid_from, (ch.valid_to - ch.valid_from).days) == (0, kd.settings.planning_start, 13)
+    rp = next(x for x in run_mrp(d).resources if x.resource == "PUNE-L1")
+    assert rp.buckets[0].capacity_hours == 0 and rp.buckets[1].capacity_hours == 0
+    r = compare_scenarios(WhatIfRequest(base=kd, scenarios=[ScenarioIn(label="Base"), ScenarioIn(
+        label="Line down", chips=[MachineDownChip(resource="PUNE-L1", days=14)])]))
+    assert r.scenarios[1].service < r.scenarios[0].service                 # less on time while it is out
+    assert chip_label(MachineDownChip(resource="PUNE-L1", days=14)) == "PUNE-L1 down 14 d"
+    with pytest.raises(WhatIfError):
+        apply_chips(kd, [MachineDownChip(resource="NOPE", days=3)])
+
+
+def test_a_price_change_for_one_customer_moves_its_sales_and_nothing_else():
+    from scp.model import Dataset
+    from scp.whatif import CustomerPriceChip
+    kd = Dataset.model_validate(example_dict("kitchenware_network"))
+    d = apply_chips(kd, [CustomerPriceChip(customer="CUS-ECOM", pct=10)])
+    for p in {r.product for r in kd.demand if r.location == "CUS-ECOM"}:
+        before, after = kd.selling_price("CUS-ECOM", p), d.selling_price("CUS-ECOM", p)
+        if before:
+            assert after == pytest.approx(before * 1.1)
+    other = next(r for r in kd.demand if r.location != "CUS-ECOM")
+    assert d.selling_price(other.location, other.product) == kd.selling_price(other.location, other.product)
+    r = compare_scenarios(WhatIfRequest(base=kd, scenarios=[ScenarioIn(label="Base"), ScenarioIn(
+        label="Dearer", chips=[CustomerPriceChip(customer="CUS-ECOM", pct=10)])]))
+    b, s = r.scenarios
+    assert s.sales_delta > 0 and s.cost_delta == 0 and s.service_delta == 0
+
+
+def test_safety_stock_in_days_raises_stock_and_fx_raises_the_cost_of_imports():
+    from scp.model import Dataset
+    from scp.whatif import FxChip, SafetyDaysChip
+    kd = Dataset.model_validate(example_dict("kitchenware_network"))
+    d = apply_chips(kd, [SafetyDaysChip(days=10, products=["KT-15"])])
+    hit = [lp for lp in d.location_products if lp.product == "KT-15"]
+    assert hit and all(lp.safety_stock.method.value == "days_of_supply" and lp.safety_stock.days == 10 for lp in hit)
+    assert all(lp.safety_stock == o.safety_stock for lp, o in zip(d.location_products, kd.location_products, strict=True)
+               if lp.product != "KT-15")
+    r = compare_scenarios(WhatIfRequest(base=kd, scenarios=[ScenarioIn(label="Base"),
+                                                             ScenarioIn(label="Buffer", chips=[SafetyDaysChip(days=10)]),
+                                                             ScenarioIn(label="Dollar", chips=[FxChip(currency="usd", pct=20)])]))
+    _, buf, usd = r.scenarios
+    assert buf.inventory_delta > 0
+    assert usd.cost_delta > 0 and usd.levers[0].what == "USD +20 %"
+    with pytest.raises(WhatIfError, match="own currency"):
+        apply_chips(kd, [FxChip(currency=kd.settings.currency, pct=5)])
+    with pytest.raises(WhatIfError, match="no exchange rate"):
+        apply_chips(kd, [FxChip(currency="JPY", pct=5)])
+
+
+def test_a_winning_scenario_is_kept_as_a_stored_scenario_of_the_base():
+    """No version yet: the working copy is stored as a base first; the scenario is its branch, with the chips in its data
+    (and the base untouched). With a version, the branch is of that version."""
+    c = TestClient(app, headers={"X-Browser-Key": "tests-browser-key-keep-1"})
+    d = _plant()
+    r = c.post("/api/whatif/keep", json={"base": d, "label": "Monsoon", "base_name": "Week 1",
+                                         "chips": [{"kind": "lane_delay", "days": 6, "location": "P"}]})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    base, scen = out["base"], out["version"]
+    assert base["kind"] == "base" and base["name"] == "Week 1"
+    assert scen["kind"] == "scenario" and scen["parent_id"] == base["id"] and scen["name"] == "Monsoon"
+    kept = c.get(f"/api/versions/{scen['id']}").json()["dataset"]
+    assert kept["lanes"][0]["modes"][0]["transit_days"] == 8
+    assert c.get(f"/api/versions/{base['id']}").json()["dataset"]["lanes"][0]["modes"][0]["transit_days"] == 2
+    again = c.post("/api/whatif/keep", json={"base": d, "label": "Demand up", "parent": base["id"],
+                                             "chips": [{"kind": "demand", "pct": 20}]}).json()
+    assert again["base"] is None and again["version"]["parent_id"] == base["id"]
+    # the scenario is a version like any other: it can be promoted
+    p = c.post(f"/api/versions/{scen['id']}/promote", json={"name": None})
+    assert p.status_code == 200, p.text
+    none = c.post("/api/whatif/keep", json={"base": d, "label": "Nothing", "chips": []})
+    assert none.status_code == 422

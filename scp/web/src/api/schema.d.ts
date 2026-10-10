@@ -1855,6 +1855,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/whatif/keep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Whatif Keep
+         * @description Keep a what-if scenario as a stored scenario: a branch of the working copy's version (or of the working copy,
+         *     stored as a base first) with the scenario's chips written into its data, ready to open, compare and promote.
+         */
+        post: operations["post_whatif_keep_api_whatif_keep_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/compare": {
         parameters: {
             query?: never;
@@ -3361,6 +3382,30 @@ export interface components {
              */
             discount: number;
         };
+        /** CustomerPriceChip */
+        "CustomerPriceChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "customer_price";
+            /** Customer */
+            customer: string;
+            /** Pct */
+            pct: number;
+        };
+        /** CustomerPriceChip */
+        "CustomerPriceChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "customer_price";
+            /** Customer */
+            customer: string;
+            /** Pct */
+            pct: number;
+        };
         /** CustomerRow */
         CustomerRow: {
             /** Customer */
@@ -4712,6 +4757,30 @@ export interface components {
             /** Detail */
             detail: string;
         };
+        /** FxChip */
+        "FxChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "fx";
+            /** Currency */
+            currency: string;
+            /** Pct */
+            pct: number;
+        };
+        /** FxChip */
+        "FxChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "fx";
+            /** Currency */
+            currency: string;
+            /** Pct */
+            pct: number;
+        };
         /** GoodsMovement */
         GoodsMovement: {
             /** Id */
@@ -5517,6 +5586,31 @@ export interface components {
              */
             enabled: boolean;
         };
+        /** KeepRequest */
+        KeepRequest: {
+            base: components["schemas"]["Dataset"];
+            /** Label */
+            label: string;
+            /** Chips */
+            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"] | components["schemas"]["MachineDownChip-Input"] | components["schemas"]["CustomerPriceChip-Input"] | components["schemas"]["SafetyDaysChip-Input"] | components["schemas"]["FxChip-Input"])[];
+            /** Parent */
+            parent?: string | null;
+            /**
+             * Base Name
+             * @default
+             */
+            base_name: string;
+        };
+        /** KeepResult */
+        KeepResult: {
+            version: components["schemas"]["VersionMeta"];
+            base: components["schemas"]["VersionMeta"] | null;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
         /** Kpi */
         Kpi: {
             /** Id */
@@ -6199,6 +6293,34 @@ export interface components {
              * @default 0
              */
             ordering_cost: number;
+        };
+        /** MachineDownChip */
+        "MachineDownChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "machine_down";
+            /** Resource */
+            resource: string;
+            /** Days */
+            days: number;
+            /** Start */
+            start?: string | null;
+        };
+        /** MachineDownChip */
+        "MachineDownChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "machine_down";
+            /** Resource */
+            resource: string;
+            /** Days */
+            days: number;
+            /** Start */
+            start: string | null;
         };
         /** MailInput */
         MailInput: {
@@ -9555,6 +9677,36 @@ export interface components {
             /** Description */
             description: string;
         };
+        /** SafetyDaysChip */
+        "SafetyDaysChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "safety_days";
+            /** Days */
+            days: number;
+            /**
+             * Products
+             * @default []
+             */
+            products: string[];
+        };
+        /** SafetyDaysChip */
+        "SafetyDaysChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "safety_days";
+            /** Days */
+            days: number;
+            /**
+             * Products
+             * @default []
+             */
+            products: string[];
+        };
         /**
          * SafetyStockMethod
          * @enum {string}
@@ -10030,7 +10182,7 @@ export interface components {
              * Chips
              * @default []
              */
-            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"])[];
+            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"] | components["schemas"]["MachineDownChip-Input"] | components["schemas"]["CustomerPriceChip-Input"] | components["schemas"]["SafetyDaysChip-Input"] | components["schemas"]["FxChip-Input"])[];
             dataset?: components["schemas"]["Dataset"] | null;
         };
         /** ScenarioIn */
@@ -10041,7 +10193,7 @@ export interface components {
              * Chips
              * @default []
              */
-            chips: (components["schemas"]["DemandChip-Output"] | components["schemas"]["SupplierOutChip-Output"] | components["schemas"]["LeadTimeChip-Output"] | components["schemas"]["AddShiftChip-Output"] | components["schemas"]["LaneDelayChip-Output"])[];
+            chips: (components["schemas"]["DemandChip-Output"] | components["schemas"]["SupplierOutChip-Output"] | components["schemas"]["LeadTimeChip-Output"] | components["schemas"]["AddShiftChip-Output"] | components["schemas"]["LaneDelayChip-Output"] | components["schemas"]["MachineDownChip-Output"] | components["schemas"]["CustomerPriceChip-Output"] | components["schemas"]["SafetyDaysChip-Output"] | components["schemas"]["FxChip-Output"])[];
             dataset: components["schemas"]["Dataset"] | null;
         };
         /** ScenarioInfo */
@@ -10111,6 +10263,11 @@ export interface components {
              */
             late_revenue: number;
             /**
+             * Sales Value
+             * @default 0
+             */
+            sales_value: number;
+            /**
              * Orders
              * @default 0
              */
@@ -10128,6 +10285,8 @@ export interface components {
             inventory_delta: number | null;
             /** Late Units Delta */
             late_units_delta: number | null;
+            /** Sales Delta */
+            sales_delta: number | null;
             /** Cost Per Service Point */
             cost_per_service_point: number | null;
             /**
@@ -16074,6 +16233,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WhatIfResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_whatif_keep_api_whatif_keep_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeepRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeepResult"];
                 };
             };
             /** @description Validation Error */

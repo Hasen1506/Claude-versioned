@@ -150,6 +150,7 @@ export type Comparison = S["Comparison"];
 export type WhatIfResult = S["WhatIfResult"];
 export type CaseInfo = S["CaseInfo"];
 export type WhatIfScenarioOut = S["ScenarioOut"];
+export type KeepResult = S["KeepResult"];
 export type WhatIfChip = NonNullable<S["ScenarioIn-Input"]["chips"]>[number];
 export type DatasetDiff = S["DatasetDiff"];
 export type PlanSummary = S["PlanSummary"];

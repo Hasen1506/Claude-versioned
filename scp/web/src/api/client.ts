@@ -1,6 +1,6 @@
 import type {
   ProductionUsageInput,
-  Comparison, FinanceResult, FixResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
+  Comparison, FinanceResult, FixResult, KeepResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   PlanTrace, ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
   PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoActionInput, RequisitionPick, PostAction, CountInput, UsageInput, StockType, SalesOrderChange, SalesOrderResponse,
   SalesView, SalesAction, SalesActionInput, SalesActionResponse,
@@ -451,6 +451,9 @@ export const api = {
   /** Roadmap H: example cases (fictional teaching datasets) with their brief and ready-made what-if scenarios. */
   cases: () => call<CaseInfo[]>("/api/cases"),
   /** Roadmap E: plan 2–4 scenarios from one base (chips) and compare them side by side. */
+  /** Keep a what-if scenario as a stored scenario of the working copy's version (stored as a base first when it has none). */
+  keepWhatIf: (base: Dataset, label: string, chips: WhatIfChip[], parent: string | null, baseName = "") =>
+    call<KeepResult>("/api/whatif/keep", { method: "POST", body: JSON.stringify({ base: clean(base), label, chips, parent, base_name: baseName }) }),
   whatif: (base: Dataset, scenarios: { label: string; chips: WhatIfChip[] }[]) =>
     call<WhatIfResult>("/api/whatif", { method: "POST", body: JSON.stringify({ base: clean(base), scenarios }) }).then(done("whatif")),
   compare: (a: Dataset, b: Dataset, labelA: string, labelB: string) =>

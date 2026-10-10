@@ -56,7 +56,7 @@ from ..validate import RULES, Issue, validate
 from ..validate.lenient import SINGULAR, DatasetRejected, SetAside, lenient, lenient_checked, plain_errors
 from ..validate.setup import SetupItem, checklist
 from ..cases import CASES, CaseInfo
-from ..whatif import WhatIfError, WhatIfRequest, WhatIfResult, compare_scenarios
+from ..whatif import KeepRequest, KeepResult, WhatIfError, WhatIfRequest, WhatIfResult, compare_scenarios, keep_scenario
 from ..versions import Comparison, VersionDoc, VersionError, VersionMeta, compare, get_store
 from ..companies import CompanyError
 from .connect import router as connect_router
@@ -1038,6 +1038,16 @@ def post_whatif(req: WhatIfRequest) -> WhatIfResult:
     side: cost, service, inventory, capacity, late units, their deltas against the first, and cost per service point."""
     try:
         return compare_scenarios(req)
+    except WhatIfError as e:
+        raise HTTPException(422, str(e)) from None
+
+
+@app.post("/api/whatif/keep", response_model=KeepResult)
+def post_whatif_keep(req: KeepRequest, sc: StoredEditScope) -> KeepResult:
+    """Keep a what-if scenario as a stored scenario: a branch of the working copy's version (or of the working copy,
+    stored as a base first) with the scenario's chips written into its data, ready to open, compare and promote."""
+    try:
+        return keep_scenario(req, get_store(), sc)
     except WhatIfError as e:
         raise HTTPException(422, str(e)) from None
 

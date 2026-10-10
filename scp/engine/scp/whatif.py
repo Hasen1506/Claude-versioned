@@ -11,19 +11,30 @@ own (a stored version). Chips:
 * ``lead_time``: purchasing lead times + days (one supplier, or all);
 * ``add_shift``: one more shift on a machine or line (one more of the usual length, with overtime trimmed to what is
   left of the day; or a named shift added after the last one), while the day still has room;
-* ``lane_delay``: transit days + days on every route from or to a place (a port held up by the monsoon).
+* ``lane_delay``: transit days + days on every route from or to a place (a port held up by the monsoon);
+* ``machine_down``: a machine or line out for N days from a date (planning start by default): no units in that period;
+* ``customer_price``: one customer's prices × (1 + pct/100): its own prices, its open orders' own prices, and the
+  product's price as its own where it had none;
+* ``safety_days``: safety stock as N days of forward cover (all products at their places, or some products);
+* ``fx``: a foreign currency's rate × (1 + pct/100) (imported parts dearer or cheaper in the company currency).
+
+A scenario that wins can be kept as a stored scenario of the current base (``keep_scenario``): its chips are written
+into the data of a branch, which is then promoted like any other version.
 """
 from __future__ import annotations
 
+import datetime as dt
 from typing import Annotated, Literal
 
 from pydantic import Field
 
 from .model import Dataset
 from .model.common import Out
-from .model.master import Shift
+from .model.master import CapacityChange, CustomerPrice, SafetyStockPolicy, Shift
+from .model.common import SafetyStockMethod
 from .plan import run_mrp
 from .versions.diff import diff
+from .versions.store import Store, VersionMeta
 
 
 class DemandChip(Out):
@@ -54,7 +65,33 @@ class LaneDelayChip(Out):
     location: str | None = None          # routes from or to this place; none: every route
 
 
-Chip = Annotated[DemandChip | SupplierOutChip | LeadTimeChip | AddShiftChip | LaneDelayChip, Field(discriminator="kind")]
+class MachineDownChip(Out):
+    kind: Literal["machine_down"] = "machine_down"
+    resource: str
+    days: int = Field(ge=1, le=366)
+    start: dt.date | None = None         # first day out; none: the planning start
+
+
+class CustomerPriceChip(Out):
+    kind: Literal["customer_price"] = "customer_price"
+    customer: str
+    pct: float = Field(ge=-90, le=500)
+
+
+class SafetyDaysChip(Out):
+    kind: Literal["safety_days"] = "safety_days"
+    days: float = Field(ge=0, le=365)    # 0 = no safety stock
+    products: list[str] = []
+
+
+class FxChip(Out):
+    kind: Literal["fx"] = "fx"
+    currency: str = Field(min_length=3, max_length=3)
+    pct: float = Field(ge=-90, le=500)
+
+
+Chip = Annotated[DemandChip | SupplierOutChip | LeadTimeChip | AddShiftChip | LaneDelayChip | MachineDownChip
+                 | CustomerPriceChip | SafetyDaysChip | FxChip, Field(discriminator="kind")]
 
 
 class WhatIfError(ValueError):
@@ -70,6 +107,14 @@ def chip_label(c: Chip) -> str:
         return f"Lead time {c.days:+g} d" + (f" at {c.supplier}" if c.supplier else "")
     if isinstance(c, AddShiftChip):
         return f"Add a shift on {c.resource}"
+    if isinstance(c, MachineDownChip):
+        return f"{c.resource} down {c.days} d" + (f" from {c.start.isoformat()}" if c.start else "")
+    if isinstance(c, CustomerPriceChip):
+        return f"Prices {c.pct:+g} % for {c.customer}"
+    if isinstance(c, SafetyDaysChip):
+        return f"Safety stock {c.days:g} d" + (f" ({', '.join(c.products)})" if c.products else "")
+    if isinstance(c, FxChip):
+        return f"{c.currency.upper()} {c.pct:+g} %"
     return f"Routes {'via ' + c.location + ' ' if c.location else ''}+{c.days:g} d"
 
 
@@ -135,6 +180,48 @@ def apply_chips(ds: Dataset, chips: list[Chip], notes: list[str] | None = None) 
             for ln in hit:
                 for m in ln.modes:
                     m.transit_days = m.transit_days + c.days
+        elif isinstance(c, MachineDownChip):
+            r = next((x for x in d.resources if x.id == c.resource), None)
+            if r is None:
+                raise WhatIfError(f"there is no machine or line {c.resource}")
+            first = c.start or d.settings.planning_start
+            # appended last: later rows win over the machine's other periods while it is out
+            r.capacity_changes = [*r.capacity_changes, CapacityChange(
+                valid_from=first, valid_to=first + dt.timedelta(days=c.days - 1), units=0, note="down (what-if)")]
+        elif isinstance(c, CustomerPriceChip):
+            if d.location_by_id.get(c.customer) is None:
+                raise WhatIfError(f"there is no customer {c.customer}")
+            f = 1 + c.pct / 100
+            sold = {r.product for r in d.demand if r.location == c.customer}
+            own = {cp.product for cp in d.customer_prices if cp.customer == c.customer}
+            for cp in d.customer_prices:
+                if cp.customer == c.customer:
+                    cp.price = round(cp.price * f, 6)
+                    for sc in cp.scales:
+                        sc.price = round(sc.price * f, 6)
+            for prod in sorted(sold - own):
+                p = d.product_by_id.get(prod)
+                if p is not None and p.price:
+                    d.customer_prices.append(CustomerPrice(customer=c.customer, product=prod, price=round(p.price * f, 6)))
+            for r in d.demand:
+                if r.location == c.customer and r.price is not None:
+                    r.price = round(r.price * f, 6)
+            if not sold and notes is not None:
+                notes.append(f"{c.customer} has no demand in the data: its prices change nothing in this plan")
+        elif isinstance(c, SafetyDaysChip):
+            hit = [lp for lp in d.location_products if not c.products or lp.product in c.products]
+            if not hit:
+                raise WhatIfError(f"no product is planned at a place for {', '.join(c.products)}")
+            for lp in hit:
+                lp.safety_stock = (SafetyStockPolicy(method=SafetyStockMethod.DAYS_OF_SUPPLY, days=c.days) if c.days
+                                   else SafetyStockPolicy())
+        elif isinstance(c, FxChip):
+            cur = c.currency.upper()
+            if cur == d.settings.currency.upper():
+                raise WhatIfError(f"{cur} is the company's own currency")
+            if cur not in d.settings.fx_rates:
+                raise WhatIfError(f"there is no exchange rate for {cur}: nothing is bought in it")
+            d.settings.fx_rates = {**d.settings.fx_rates, cur: round(d.settings.fx_rates[cur] * (1 + c.pct / 100), 8)}
     try:
         return Dataset.model_validate(d.model_dump(mode="json"))
     except ValueError as e:
@@ -166,6 +253,7 @@ class ScenarioOut(Out):
     capacity_peak: float = 0.0           # the busiest machine's utilisation (0–1+)
     late_units: float = 0.0
     late_revenue: float = 0.0            # late units at their selling price
+    sales_value: float = 0.0             # the plan's independent demand at the customer's (else product's) price
     orders: int = 0
     errors: int = 0
     # against the first scenario (the baseline): None on the baseline itself
@@ -173,6 +261,7 @@ class ScenarioOut(Out):
     service_delta: float | None = None   # in points of service (0.05 = +5 points)
     inventory_delta: float | None = None
     late_units_delta: float | None = None
+    sales_delta: float | None = None
     cost_per_service_point: float | None = None   # cost per point of service traded (None: no trade-off)
     verdict: str = ""                    # "trade-off", "better on both", "worse on both", "same service"
     note: str = ""
@@ -198,6 +287,12 @@ def _metrics(label: str, ds: Dataset) -> ScenarioOut:
         if e.code == "DEMAND_AT_RISK" and e.qty and e.product:
             price = ds.selling_price(e.location or "", e.product)
             rev += e.qty * (price or 0.0)
+    sales = 0.0
+    for n in p.nodes:
+        dem = sum(b.gross_independent for b in n.buckets)
+        if dem > 0:
+            sales += dem * (ds.selling_price(n.location, n.product) or 0.0)
+    out.sales_value = round(sales, 2)
     out.total_cost, out.service, out.inventory_value_avg = k.total_cost, k.on_time_fill_rate, k.inventory_value_avg
     out.capacity_peak, out.late_units, out.late_revenue = k.max_utilization, late, round(rev, 2)
     out.orders, out.errors = len(p.orders), sum(e.severity == "error" for e in p.exceptions)
@@ -235,6 +330,7 @@ def compare_scenarios(req: WhatIfRequest) -> WhatIfResult:
         o.service_delta = round(o.service - b.service, 6)
         o.inventory_delta = round(o.inventory_value_avg - b.inventory_value_avg, 2)
         o.late_units_delta = round(o.late_units - b.late_units, 6)
+        o.sales_delta = round(o.sales_value - b.sales_value, 2)
         pts = o.service_delta * 100
         if abs(pts) < 0.01:
             o.verdict = "same service"
@@ -247,3 +343,33 @@ def compare_scenarios(req: WhatIfRequest) -> WhatIfResult:
     return WhatIfResult(currency=req.base.settings.currency, scenarios=outs,
                         best_service=max(ok, key=lambda o: (o.service, -o.total_cost)).label if ok else "",
                         lowest_cost=min(ok, key=lambda o: (o.total_cost, -o.service)).label if ok else "")
+
+
+class KeepRequest(Out):
+    base: Dataset
+    label: str = Field(min_length=1, max_length=60)
+    chips: list[Chip] = Field(min_length=1)
+    parent: str | None = None            # the stored version the working copy is; none: the base is stored first
+    base_name: str = ""
+
+
+class KeepResult(Out):
+    version: VersionMeta                 # the new scenario, with the chips written into its data
+    base: VersionMeta | None = None      # the base stored first, when the working copy had none
+    notes: list[str] = []
+
+
+def keep_scenario(req: KeepRequest, store: Store, scope: str = "") -> KeepResult:
+    """A scenario that wins becomes a stored scenario of the current base: a branch of ``parent`` (or of the base
+    stored now) holding the base with the chips applied, to be opened, compared and promoted like any other."""
+    notes: list[str] = []
+    data = apply_chips(req.base, req.chips, notes)
+    saved = None
+    parent = req.parent
+    if parent is None:
+        saved = store.save_base(req.base, req.base_name or f"Plan of {req.base.settings.planning_start.isoformat()}",
+                                "stored to keep a what-if scenario", scope)
+        parent = saved.id
+    note = "what-if: " + " · ".join(chip_label(c) for c in req.chips)
+    b = store.branch(parent, req.label, note[:500], scope or None)
+    return KeepResult(version=store.update(b.id, data, scope or None), base=saved, notes=notes)

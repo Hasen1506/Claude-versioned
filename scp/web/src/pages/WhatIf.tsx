@@ -4,11 +4,11 @@
 // built from chips, quick changes made in one click.
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { CaseInfo, WhatIfChip, WhatIfResult, WhatIfScenarioOut } from "../api/types";
+import type { CaseInfo, VersionMeta, WhatIfChip, WhatIfResult, WhatIfScenarioOut } from "../api/types";
 import { Badge, Empty, Panel, Reading, StageHeader } from "../components/ui";
 import { money, pct, qty } from "../lib/format";
 import { href } from "../lib/router";
-import { useStore } from "../state/store";
+import { store, useReadOnly, useStore } from "../state/store";
 
 interface Scenario { label: string; chips: WhatIfChip[] }
 
@@ -22,6 +22,10 @@ export function chipLabel(c: WhatIfChip): string {
     case "lead_time": return `Lead time ${c.days > 0 ? "+" : ""}${c.days} d${c.supplier ? ` at ${c.supplier}` : ""}`;
     case "add_shift": return `Add a shift on ${c.resource}`;
     case "lane_delay": return `Routes ${c.location ? `via ${c.location} ` : ""}+${c.days} d`;
+    case "machine_down": return `${c.resource} down ${c.days} d${c.start ? ` from ${c.start}` : ""}`;
+    case "customer_price": return `Prices ${c.pct > 0 ? "+" : ""}${c.pct} % for ${c.customer}`;
+    case "safety_days": return `Safety stock ${c.days} d${c.products?.length ? ` (${c.products.join(", ")})` : ""}`;
+    case "fx": return `${c.currency.toUpperCase()} ${c.pct > 0 ? "+" : ""}${c.pct} %`;
   }
 }
 
@@ -44,6 +48,32 @@ export function WhatIf() {
   const [resId, setResId] = useState("");
   const [place, setPlace] = useState("");
   const [delay, setDelay] = useState("7");
+  const [down, setDown] = useState("7");
+  const [cust, setCust] = useState("");
+  const [custPct, setCustPct] = useState("5");
+  const [ssDays, setSsDays] = useState("10");
+  const [fxCur, setFxCur] = useState("");
+  const [fxPct, setFxPct] = useState("10");
+  const customers = useMemo(() => (ds.locations ?? []).filter((l) => l.type === "customer").map((l) => l.id).sort(), [ds]);
+  const currencies = useMemo(() => Object.keys(ds.settings.fx_rates ?? {}).sort(), [ds]);
+  const num = (s: string) => Number.isFinite(Number(s)) && s.trim() !== "";
+  // a scenario kept as a stored version (its chips written into a branch of the working copy's version)
+  const ro = useReadOnly();
+  const [kept, setKept] = useState<Record<string, VersionMeta>>({});
+  const [keepErr, setKeepErr] = useState<string | null>(null);
+  const keep = async (label: string) => {
+    const s = scen.find((x) => x.label.trim() === label);
+    if (!s) return;
+    setKeepErr(null);
+    try {
+      const before = store.captureWorking();
+      const out = await api.keepWhatIf(before.dataset, label, s.chips, before.version?.id ?? null);
+      if (out.base) store.saved(out.base, before);       // the working copy is that base now
+      setKept((k) => ({ ...k, [label]: out.version }));
+    } catch (e) {
+      setKeepErr(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   // an example case (roadmap H) brings its own scenarios: offered when its data is the one open
   const [cases, setCases] = useState<CaseInfo[]>([]);
@@ -55,7 +85,7 @@ export function WhatIf() {
     setRes(null);
   };
 
-  const edit = (i: number, f: (s: Scenario) => Scenario) => { setScen(scen.map((s, j) => (j === i ? f(s) : s))); setRes(null); };
+  const edit = (i: number, f: (s: Scenario) => Scenario) => { setScen(scen.map((s, j) => (j === i ? f(s) : s))); setRes(null); setKept({}); };
   const addChip = (c: WhatIfChip) => edit(active, (s) => ({ ...s, chips: [...s.chips, c] }));
   const addScenario = () => {
     if (scen.length >= MAX) return;
@@ -146,6 +176,25 @@ export function WhatIf() {
               <input className="input" type="number" min={0} aria-label="Route delay in days" value={delay} style={{ width: 70 }} onChange={(e) => setDelay(e.target.value)} />
               <button className="btn sm" disabled={!(Number(delay) > 0)} onClick={() => addChip({ kind: "lane_delay", days: Number(delay), location: place || null })}>Delay routes</button>
             </div>
+            <div className="row" style={{ gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+              <input className="input" type="number" min={1} aria-label="Days the machine is down" value={down} style={{ width: 70 }} onChange={(e) => setDown(e.target.value)} />
+              <button className="btn sm" disabled={!resId || !(Number(down) >= 1)}
+                onClick={() => addChip({ kind: "machine_down", resource: resId, days: Math.round(Number(down)), start: null })}>{resId ? `${resId} down` : "Machine down (pick one above)"}</button>
+              <input className="input" type="number" min={0} aria-label="Safety stock in days" value={ssDays} style={{ width: 70 }} onChange={(e) => setSsDays(e.target.value)} />
+              <button className="btn sm" disabled={!(Number(ssDays) >= 0) || !num(ssDays)} onClick={() => addChip({ kind: "safety_days", days: Number(ssDays), products: [] })}>Safety stock in days</button>
+            </div>
+            <div className="row" style={{ gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+              <select className="input" aria-label="Customer" value={cust} onChange={(e) => setCust(e.target.value)}>
+                <option value="">Customer…</option>{customers.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+              <input className="input" type="number" aria-label="Price change in per cent" value={custPct} style={{ width: 70 }} onChange={(e) => setCustPct(e.target.value)} />
+              <button className="btn sm" disabled={!cust || !num(custPct) || Number(custPct) === 0} onClick={() => addChip({ kind: "customer_price", customer: cust, pct: Number(custPct) })}>Price change for the customer</button>
+              {currencies.length > 0 && <>
+                <select className="input" aria-label="Currency" value={fxCur} onChange={(e) => setFxCur(e.target.value)}>
+                  <option value="">Currency…</option>{currencies.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                <input className="input" type="number" aria-label="Exchange rate change in per cent" value={fxPct} style={{ width: 70 }} onChange={(e) => setFxPct(e.target.value)} />
+                <button className="btn sm" disabled={!fxCur || !num(fxPct) || Number(fxPct) === 0} onClick={() => addChip({ kind: "fx", currency: fxCur, pct: Number(fxPct) })}>Exchange rate move</button>
+              </>}
+            </div>
           </div>}
           <div className="row" style={{ gap: 10, marginTop: 14 }}>
             <button className="btn accent" disabled={busy || dup} onClick={run}>{busy ? "Planning every scenario…" : "Compare side by side"}</button>
@@ -153,7 +202,8 @@ export function WhatIf() {
           </div>
         </Panel>
         {err && <div className="banner warning" role="alert">{err}</div>}
-        {res ? <SideBySide r={res} currency={cur} /> : !err && <Empty title="Nothing compared yet">Pick a change for each scenario, then compare.</Empty>}
+        {keepErr && <div className="banner warning" role="alert">{keepErr}</div>}
+        {res ? <SideBySide r={res} currency={cur} kept={kept} onKeep={ro ? undefined : keep} /> : !err && <Empty title="Nothing compared yet">Pick a change for each scenario, then compare.</Empty>}
         <Reading formula="Cost per service point = (scenario cost − baseline cost) ÷ (scenario on-time fill rate − baseline) × 100, shown only when both move the same way (a trade-off)."
           soWhat="Decide with the price of service in front of you: an extra shift that buys 3 points of service for ₹40,000 a point, against an expedite that buys 1." />
       </div>
@@ -163,7 +213,8 @@ export function WhatIf() {
 
 const VERDICT: Record<string, "ok" | "warning" | "info"> = { "better on both": "ok", "worse on both": "warning", "trade-off": "info", "same service": "info" };
 
-function SideBySide({ r, currency }: { r: WhatIfResult; currency: string }) {
+function SideBySide({ r, currency, kept, onKeep }: { r: WhatIfResult; currency: string; kept: Record<string, VersionMeta>; onKeep?: (label: string) => void }) {
+  const [keeping, setKeeping] = useState<string | null>(null);
   const m = (v: number) => money(v, currency);
   type Row = [string, (s: WhatIfScenarioOut) => number, (v: number) => string, boolean];
   const rows: Row[] = [
@@ -171,6 +222,7 @@ function SideBySide({ r, currency }: { r: WhatIfResult; currency: string }) {
     ["On-time service", (s) => s.service, (v) => pct(v, 1), true],
     ["Late units", (s) => s.late_units, qty, false],
     ["Sales at risk (late units × price)", (s) => s.late_revenue, m, false],
+    ["Sales value (demand × price)", (s) => s.sales_value, m, true],
     ["Average inventory value", (s) => s.inventory_value_avg, m, false],
     ["Busiest machine", (s) => s.capacity_peak, (v) => pct(v, 0), false],
     ["Planned orders", (s) => s.orders, qty, false],
@@ -204,6 +256,12 @@ function SideBySide({ r, currency }: { r: WhatIfResult; currency: string }) {
             <tr><td>Verdict</td>{r.scenarios.map((s, i) => <td key={s.label} className="num">
               {i === 0 ? <span className="faint">—</span> : s.verdict ? <Badge sev={VERDICT[s.verdict]}>{s.verdict}</Badge> : <Badge sev="error">not planned</Badge>}
               {s.note && <div className="small faint" style={{ whiteSpace: "normal", maxWidth: 260, marginLeft: "auto" }}>{s.note}</div>}</td>)}</tr>
+            {onKeep && <tr><td>Keep it</td>{r.scenarios.map((s, i) => <td key={s.label} className="num">
+              {i === 0 || !s.ok ? <span className="faint">—</span>
+                : kept[s.label] ? <span className="small">Kept as <b>{kept[s.label].id}</b> · <a href={href("versions")}>open it in Versions</a> to promote it</span>
+                : <button className="btn sm" disabled={keeping !== null} aria-label={`Keep ${s.label} as a version`}
+                    onClick={async () => { setKeeping(s.label); try { await onKeep(s.label); } finally { setKeeping(null); } }}>
+                    {keeping === s.label ? "Keeping…" : "Keep as a version"}</button>}</td>)}</tr>}
           </tbody>
         </table>
       </div>
