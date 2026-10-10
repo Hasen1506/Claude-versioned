@@ -32,8 +32,10 @@ VOLUME ["/data"]
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)"
-# one worker: saves are checked against the company's latest revision under a lock inside the process
+# SCP_WORKERS processes (one by default): the database's own lock keeps saves from several apart (scp.dblock)
 # X-Forwarded-* headers are trusted only from the proxy (FORWARDED_ALLOW_IPS, default the machine itself; CV-H10).
 # Links that leave the server are made from SCP_PUBLIC_URL alone, whatever the headers say.
-ENV FORWARDED_ALLOW_IPS=127.0.0.1
-CMD ["sh", "-c", "exec uvicorn scp.api.app:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips \"$FORWARDED_ALLOW_IPS\" --timeout-keep-alive 75"]
+# the build's commit, shown by /api/health and /api/metrics: docker build --build-arg SCP_COMMIT=$(git rev-parse HEAD)
+ARG SCP_COMMIT=""
+ENV FORWARDED_ALLOW_IPS=127.0.0.1 SCP_WORKERS=1 SCP_COMMIT=$SCP_COMMIT
+CMD ["sh", "-c", "exec uvicorn scp.api.app:app --host 0.0.0.0 --port 8000 --workers \"$SCP_WORKERS\" --proxy-headers --forwarded-allow-ips \"$FORWARDED_ALLOW_IPS\" --timeout-keep-alive 75"]

@@ -54,6 +54,10 @@ def parameters(sql):
     return ''.join(out)
 
 
+LOCK = 739310021                 # the store's lock: every transaction takes it, and so does StoreLock (scp.dblock)
+LEADS = {'clock': 739310022, 'backup': 739310023}   # server-wide jobs one process runs
+
+
 class Postgres:
     backend = 'postgresql'
 
@@ -63,11 +67,48 @@ class Postgres:
         mode = parse_qs(parsed.query).get('sslmode', ['verify-full'])[0]
         if not local and mode != 'verify-full':
             raise ValueError('Hosted PostgreSQL requires sslmode=verify-full')
-        self.connection = psycopg.connect(url, autocommit=True, row_factory=row_factory,
-                                         **({} if local else {'sslmode': 'verify-full', 'sslrootcert': certifi.where()}))
+        self.url = url
+        self.options = {} if local else {'sslmode': 'verify-full', 'sslrootcert': certifi.where()}
+        self.leading = {}            # job -> the connection that holds its lock
+        self._connect()
+
+    def _connect(self):
+        self.connection = psycopg.connect(self.url, autocommit=True, row_factory=row_factory, **self.options)
         self.connection.execute('CREATE SCHEMA IF NOT EXISTS scp')
         self.connection.execute('SET search_path TO scp, public')
         self.connection.execute('CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public')
+
+    def hold(self, blocking=True):
+        """Take the store's lock for this session (it waits for another process holding it, unless not
+        ``blocking``). A connection the server dropped while idle (a database that sleeps, a restart) is made again
+        first: nothing was under way."""
+        sql = f'SELECT pg_advisory_lock({LOCK})' if blocking else f'SELECT pg_try_advisory_lock({LOCK})'
+        try:
+            row = self.connection.execute(sql).fetchone()
+        except psycopg.OperationalError:
+            try:
+                self.connection.close()
+            except psycopg.Error:
+                pass
+            self._connect()
+            row = self.connection.execute(sql).fetchone()
+        return blocking or bool(row[0])
+
+    def let_go(self):
+        try:
+            self.connection.execute(f'SELECT pg_advisory_unlock({LOCK})')
+        except psycopg.Error:        # a lost connection holds nothing any more
+            pass
+
+    def lead(self, name):
+        """Whether this process runs the job ``name``: the first session to ask keeps it while it is connected."""
+        if self.leading.get(name) is self.connection and not self.connection.closed:
+            return True
+        row = self.connection.execute(f'SELECT pg_try_advisory_lock({LEADS[name]})').fetchone()
+        got = bool(list(row.values())[0])
+        if got:
+            self.leading[name] = self.connection
+        return got
 
     def close(self):
         self.connection.close()
@@ -83,7 +124,7 @@ class Postgres:
             return Result(cur.fetchall())
         if sql.strip().upper() == 'BEGIN':
             self.connection.execute('BEGIN')
-            self.connection.execute('SELECT pg_advisory_xact_lock(739310021)')
+            self.connection.execute(f'SELECT pg_advisory_xact_lock({LOCK})')
             return Result()
         ignore = sql.startswith('INSERT OR IGNORE INTO ')
         if ignore:
@@ -110,7 +151,7 @@ class Postgres:
         script = re.sub(r'email TEXT NOT NULL( UNIQUE)? COLLATE NOCASE',
                         lambda m: 'email CITEXT NOT NULL' + (m[1] or ''), script)
         with self.connection.transaction():
-            self.connection.execute('SELECT pg_advisory_xact_lock(739310021)')
+            self.connection.execute(f'SELECT pg_advisory_xact_lock({LOCK})')
             self.connection.execute(script, prepare=False)
             if immutable:
                 self.connection.execute("""

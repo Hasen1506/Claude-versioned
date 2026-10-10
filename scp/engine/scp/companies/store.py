@@ -107,6 +107,9 @@ CREATE TABLE IF NOT EXISTS email_checks (
   token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, email TEXT NOT NULL COLLATE NOCASE, expires_at TEXT NOT NULL,
   used INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS auth_failures (who TEXT NOT NULL, at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS auth_failures_who ON auth_failures (who, at);
+CREATE INDEX IF NOT EXISTS auth_failures_at ON auth_failures (at);
 """
 
 ROLES = ("owner", "planner", "viewer")
@@ -356,39 +359,74 @@ def summarise(before: dict | None, after: dict) -> tuple[str, list[ListChange]]:
     return "; ".join(parts), out
 
 
+class Failures:
+    """The sign-in failure counter (CV-M05, CV-H11), kept in the database so that every server process on it counts
+    the same tries (an address limited to ten wrong passwords is not given ten per process). Used under the lock."""
+
+    def __init__(self, db: Any) -> None:
+        self.db = db
+
+    def get(self, key: str, default: Any = None) -> list[dt.datetime]:
+        return [dt.datetime.fromisoformat(r["at"]) for r in
+                self.db.execute("SELECT at FROM auth_failures WHERE who = ? ORDER BY at", (key,))]
+
+    def put(self, key: str, times: list[dt.datetime]) -> None:
+        self.db.execute("DELETE FROM auth_failures WHERE who = ?", (key,))
+        self.db.executemany("INSERT INTO auth_failures (who, at) VALUES (?, ?)", [(key, _iso(t)) for t in times])
+        # every window is an hour at most: a day-old try counts for nothing
+        self.db.execute("DELETE FROM auth_failures WHERE at < ?", (_iso(_now() - dt.timedelta(days=1)),))
+
+    def pop(self, key: str, default: Any = None) -> None:
+        self.db.execute("DELETE FROM auth_failures WHERE who = ?", (key,))
+
+    def trim(self, most: int) -> None:
+        """Keep the ``most`` addresses tried last (the oldest go first)."""
+        over = len(self) - most
+        if over > 0:
+            self.db.execute("DELETE FROM auth_failures WHERE who IN (SELECT who FROM auth_failures GROUP BY who "
+                            "ORDER BY MAX(at), who LIMIT ?)", (over,))
+
+    def __contains__(self, key: object) -> bool:
+        return self.db.execute("SELECT 1 FROM auth_failures WHERE who = ? LIMIT 1", (key,)).fetchone() is not None
+
+    def __len__(self) -> int:
+        return self.db.execute("SELECT COUNT(DISTINCT who) FROM auth_failures").fetchone()[0]
+
+
 class Companies:
     def __init__(self, store: Store) -> None:
         self.store = store
         self.db = store.db
         self.lock = store.lock
-        self.db.executescript(SCHEMA)
-        cols = {r[1] for r in self.db.execute("PRAGMA table_info(company_revisions)")}
-        if "kind" not in cols:        # Phase L: deltas between whole copies, and the window each save came from
-            self.db.execute("ALTER TABLE company_revisions ADD COLUMN kind TEXT NOT NULL DEFAULT 'full'")
-        if "client" not in cols:
-            self.db.execute("ALTER TABLE company_revisions ADD COLUMN client TEXT NOT NULL DEFAULT ''")
-        for table in ("members", "invites"):  # Phase L: rights limited to places and product groups
-            have = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
-            for col in ("places", "families"):
-                if col not in have:
-                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT NOT NULL DEFAULT '[]'")
-        if "approval" not in {r[1] for r in self.db.execute("PRAGMA table_info(companies)")}:
-            self.db.execute("ALTER TABLE companies ADD COLUMN approval INTEGER NOT NULL DEFAULT 0")
-        ucols = {r[1] for r in self.db.execute("PRAGMA table_info(users)")}
-        if "sso_subject" not in ucols:
-            self.db.execute("ALTER TABLE users ADD COLUMN sso_subject TEXT")
-        if "kind" not in ucols:      # Phase Q: an account behind an integration key is not a person
-            self.db.execute("ALTER TABLE users ADD COLUMN kind TEXT NOT NULL DEFAULT 'person'")
-        if "verified_at" not in ucols:   # CV-C01: the address is shown to be the account holder's
-            self.db.execute("ALTER TABLE users ADD COLUMN verified_at TEXT")
-        icols = {r[1] for r in self.db.execute("PRAGMA table_info(invites)")}
-        if "token_hash" not in icols:    # CV-C01: an invitation is accepted with its link, never by e-mail match
-            self.db.execute("ALTER TABLE invites ADD COLUMN token_hash TEXT")
-        if "expires_at" not in icols:
-            self.db.execute("ALTER TABLE invites ADD COLUMN expires_at TEXT")
-        if "generation" not in {r[1] for r in self.db.execute("PRAGMA table_info(erp_withdrawn)")}:
-            self.db.execute("ALTER TABLE erp_withdrawn ADD COLUMN generation TEXT NOT NULL DEFAULT ''")
-        self.failures: dict[str, list[dt.datetime]] = {}
+        with self.lock:      # one server process at a time adds what an older database lacks (scp.dblock)
+            self.db.executescript(SCHEMA)
+            cols = {r[1] for r in self.db.execute("PRAGMA table_info(company_revisions)")}
+            if "kind" not in cols:        # Phase L: deltas between whole copies, and the window each save came from
+                self.db.execute("ALTER TABLE company_revisions ADD COLUMN kind TEXT NOT NULL DEFAULT 'full'")
+            if "client" not in cols:
+                self.db.execute("ALTER TABLE company_revisions ADD COLUMN client TEXT NOT NULL DEFAULT ''")
+            for table in ("members", "invites"):  # Phase L: rights limited to places and product groups
+                have = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
+                for col in ("places", "families"):
+                    if col not in have:
+                        self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT NOT NULL DEFAULT '[]'")
+            if "approval" not in {r[1] for r in self.db.execute("PRAGMA table_info(companies)")}:
+                self.db.execute("ALTER TABLE companies ADD COLUMN approval INTEGER NOT NULL DEFAULT 0")
+            ucols = {r[1] for r in self.db.execute("PRAGMA table_info(users)")}
+            if "sso_subject" not in ucols:
+                self.db.execute("ALTER TABLE users ADD COLUMN sso_subject TEXT")
+            if "kind" not in ucols:      # Phase Q: an account behind an integration key is not a person
+                self.db.execute("ALTER TABLE users ADD COLUMN kind TEXT NOT NULL DEFAULT 'person'")
+            if "verified_at" not in ucols:   # CV-C01: the address is shown to be the account holder's
+                self.db.execute("ALTER TABLE users ADD COLUMN verified_at TEXT")
+            icols = {r[1] for r in self.db.execute("PRAGMA table_info(invites)")}
+            if "token_hash" not in icols:    # CV-C01: an invitation is accepted with its link, never by e-mail match
+                self.db.execute("ALTER TABLE invites ADD COLUMN token_hash TEXT")
+            if "expires_at" not in icols:
+                self.db.execute("ALTER TABLE invites ADD COLUMN expires_at TEXT")
+            if "generation" not in {r[1] for r in self.db.execute("PRAGMA table_info(erp_withdrawn)")}:
+                self.db.execute("ALTER TABLE erp_withdrawn ADD COLUMN generation TEXT NOT NULL DEFAULT ''")
+        self.failures = Failures(self.db)
 
     # ---- accounts ------------------------------------------------------------------------------------------
     def _user(self, uid: str) -> User:
@@ -398,14 +436,10 @@ class Companies:
         return User(id=r["id"], email=r["email"], name=r["name"], verified=bool(r["verified_at"]))
 
     def _fail(self, key: str, recent: list[dt.datetime]) -> None:
-        """Remember failures (only real ones) for ``key``, keeping the map bounded (CV-M05; the lock is held)."""
+        """Remember failures (only real ones) for ``key``, keeping the counter bounded (CV-M05; the lock is held)."""
+        self.failures.put(key, recent)
         if recent:
-            self.failures.pop(key, None)
-            self.failures[key] = recent
-            while len(self.failures) > FAILURE_KEYS:
-                self.failures.pop(next(iter(self.failures)))
-        else:
-            self.failures.pop(key, None)
+            self.failures.trim(FAILURE_KEYS)
 
     def auth_rate(self, key: str, per_minute: int) -> bool:
         """Whether one more sign-in, sign-up or reset from ``key`` (a client address) fits ``per_minute`` (CV-H11)."""
@@ -1026,9 +1060,16 @@ class Companies:
             rev = r["revision"] + 1
             self.db.execute("BEGIN")
             try:
-                self.db.execute("UPDATE companies SET name = ?, updated_at = ?, updated_by = ?, revision = ?, sha256 = ?, "
-                                "size = ?, dataset = ? WHERE id = ?",
-                                (_company_name(doc), now, user.id, rev, sha(text), len(text.encode()), text, cid))
+                # compare-and-swap: the row moves on only from the revision this save was checked against, whatever
+                # another server process did meanwhile (the lock across processes makes it the rule, this the proof)
+                moved = self.db.execute("UPDATE companies SET name = ?, updated_at = ?, updated_by = ?, revision = ?, "
+                                        "sha256 = ?, size = ?, dataset = ? WHERE id = ? AND revision = ?",
+                                        (_company_name(doc), now, user.id, rev, sha(text), len(text.encode()), text,
+                                         cid, r["revision"])).rowcount
+                if moved != 1:
+                    raise CompanyError(f"this company was saved by someone else while yours was checked (revision "
+                                       f"{r['revision']} is no longer the latest); open it again", 409,
+                                       {"revision": r["revision"]})
                 self._keep(cid, rev, user.id, action, text, now, current, doc, client)
                 self._log(cid, rev, user.id, action, (note + ": " if note else "") + (summary or "no change"), changes)
                 self._document(cid, rev, user.id, now, current, doc)

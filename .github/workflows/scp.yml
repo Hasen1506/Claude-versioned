@@ -17,7 +17,15 @@ jobs:
   engine:
     runs-on: ubuntu-24.04   # pinned: ubuntu-latest moves to 26 from 19 Oct 2026; move on purpose, once Playwright supports it
     defaults: { run: { working-directory: scp/engine } }
+    services:
+      # several server processes on one PostgreSQL database (tests/test_multiprocess.py); databases are made per test
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: scp, POSTGRES_PASSWORD: scp, POSTGRES_DB: scp_test }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U scp" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
+      SCP_TEST_POSTGRES: postgresql://scp:scp@localhost:5432/scp_test
       # derandomised Hypothesis on pushes and PRs (the same examples every run: a red build is reproducible, never
       # flaky); a run started by hand explores
       HYPOTHESIS_PROFILE: ${{ github.event_name == 'workflow_dispatch' && 'deep' || 'ci' }}

@@ -65,7 +65,7 @@ from .working import asker, send_raw, takes_gzip, takes_rows
 
 router = APIRouter(prefix="/api", tags=["companies"])
 
-OPEN_PATHS = ("/api/health", "/api/auth/config", "/api/auth/signin", "/api/auth/signup", "/api/auth/reset",
+OPEN_PATHS = ("/api/health", "/api/metrics", "/api/auth/config", "/api/auth/signin", "/api/auth/signup", "/api/auth/reset",
               "/api/auth/reset/request", "/api/auth/sso/start", "/api/auth/sso/callback", "/api/auth/email/verify",
               "/api/auth/csrf", "/api/auth/adopt")
 # calls that never act on the session cookie, so they need no CSRF token (sign-in itself, and swapping a token)
@@ -109,6 +109,20 @@ def signup_policy() -> str:
     if p not in ("open", "invite", "closed"):
         raise CompanyError("SCP_SIGNUP must be open, invite, or closed", 503)
     return p
+
+
+def production_guard() -> None:
+    """With ``SCP_ENV=production`` the server does not start open to anyone: anyone may make an account
+    (``SCP_SIGNUP=open``) and no call needs a session (no ``SCP_REQUIRE_SIGNIN``) is refused, unless
+    ``SCP_OPEN_ON_PURPOSE=1`` says it is meant (a public demonstration). ENTERPRISE_PLAN 1.5."""
+    if os.environ.get("SCP_ENV", "").strip().lower() != "production":
+        return
+    on_purpose = os.environ.get("SCP_OPEN_ON_PURPOSE", "").strip().lower() in ("1", "true", "yes", "on")
+    if signup_policy() == "open" and not require_signin() and not on_purpose:
+        raise RuntimeError(
+            "SCP_ENV=production with open sign-up and no sign-in: anyone could make an account and use the server "
+            "without one. Set SCP_REQUIRE_SIGNIN=1 and SCP_SIGNUP=invite (or closed); for a public demonstration "
+            "set SCP_OPEN_ON_PURPOSE=1.")
 
 
 def require_signin() -> bool:

@@ -9,6 +9,9 @@ Order: the live service first (nothing else matters if it is not safe to run), t
 S/4 guide, then what customers buy (connectors), then depth.
 
 ## Phase 1: Running it (production hardening)
+Done: 1.1 (one connection per process, made again when dropped, under a lock the database holds for every process;
+no pool was needed), 1.2, 1.5, 1.6 (USABILITY_LOG N167–N173). Next: 1.3, 1.4.
+
 | # | Gap | Build |
 |---|---|---|
 | 1.1 | One server process only: saves are checked under a lock inside the process | Save as a compare-and-swap in the database (`UPDATE … WHERE revision = ?`), one connection per request from a pool, idempotent schema setup; `--workers N` on PostgreSQL proven by a test with two processes saving at once |

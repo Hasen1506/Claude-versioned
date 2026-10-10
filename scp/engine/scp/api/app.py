@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import time
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -62,10 +63,11 @@ from ..companies import CompanyError
 from .connect import router as connect_router
 from .companies import (
     CORS_ORIGINS,
-    Scope, StoredEditScope, StoredScope, company_error, edit_scope, gate, is_company, require_signin,
+    Scope, StoredEditScope, StoredScope, company_error, edit_scope, gate, is_company, production_guard, require_signin,
     router as companies_router, signup_policy, who_asks,
 )
 from .working import PlanData, answer, is_ref, read as read_ref, respond, send
+from .monitor import STARTED, commit as build_commit, metrics_page, observe, setup_logging
 
 ROOT = Path(__file__).resolve().parents[3]          # scp/
 EXAMPLES = ROOT / "examples"
@@ -84,6 +86,7 @@ async def lifespan(_app: FastAPI):
 
     signup_policy()
     require_signin()
+    production_guard()
     store = get_store()
     start_nightly(store.db, store.lock)
     start_clock()       # scheduled imports and worklist reminders (Phase Q)
@@ -109,6 +112,8 @@ app.add_middleware(CORSMiddleware, allow_origins=list(CORS_ORIGINS), allow_crede
 
 
 app.middleware("http")(gate)
+setup_logging()
+app.middleware("http")(observe)       # outermost: request id, time taken, the log line and the counts (Phase 1.2)
 
 app.add_exception_handler(CompanyError, company_error)  # type: ignore[arg-type]
 app.include_router(companies_router)
@@ -132,8 +137,11 @@ def _version_error(_request, exc: VersionError) -> JSONResponse:
 
 
 class Health(Out):
-    status: str
+    status: str                    # ok | database unreachable
     version: str
+    commit: str                    # the build's commit ("" when the build did not say)
+    database: str                  # sqlite | postgresql
+    up_seconds: int                # since this server process started
 
 
 class ExampleInfo(Out):
@@ -206,9 +214,25 @@ class NetworkView(Out):
     cycles: list[list[tuple[str, str]]]
 
 
-@app.get("/api/health", response_model=Health)
-def health() -> Health:
-    return Health(status="ok", version=__version__)
+@app.get("/api/health", response_model=Health, responses={503: {"model": Health}})
+def health() -> Response:
+    """Whether the server answers and reaches its database (a load balancer or the image's check calls it)."""
+    store = get_store()
+    try:
+        with store.lock:
+            store.db.execute("SELECT 1").fetchone()
+        status = "ok"
+    except Exception:  # noqa: BLE001 - said in the answer, logged by the request line
+        status = "database unreachable"
+    body = Health(status=status, version=__version__, commit=build_commit(), database=store.backend,
+                  up_seconds=int(time.time() - STARTED))
+    return JSONResponse(status_code=200 if status == "ok" else 503, content=body.model_dump())
+
+
+@app.get("/api/metrics", include_in_schema=False)
+def metrics(request: Request) -> Response:
+    """This process's counts in the Prometheus text format (scp.api.monitor); SCP_METRICS_TOKEN guards it."""
+    return metrics_page(request)
 
 
 @app.get("/api/examples", response_model=list[ExampleInfo])
