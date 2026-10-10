@@ -44,6 +44,8 @@ class InboxAction(Out):
     protects: float = 0.0             # money at risk the action takes away, if it works (company currency)
     costs: float | None = None        # what doing it costs, when the data says (overtime hours, a dearer supplier)
     href: str = ""                    # where in the application it is done
+    one_click: bool = False           # it can be tried on a copy of the plan and kept in one click (tower/fix.py)
+    why_not: str = ""                 # an expedite, switch or overtime that cannot: why, in plain words
 
 
 class WorkItem(Out):

@@ -15,8 +15,10 @@ from ..versions.store import Store, canonical, get_store, sha
 from .kpis import Kpis
 from .money import inbox_order, price_items
 from .result import DataQualityRow, Kpi, KpiRow, TowerResult, WorkItem
-from .worklist import Tracker, collect, get_tracker
+from .fix import FixError, FixResult, fix_edits, try_fix
+from .worklist import Raw, Tracker, collect, get_tracker
 
+ONE_CLICK = {"expedite", "switch_supplier", "overtime"}
 SEV = {"error": 0, "warning": 1, "info": 2}
 
 
@@ -41,6 +43,21 @@ def plan_stability(cur: PlanResult, prev: PlanResult, prev_end: dt.date, start: 
     rows = [KpiRow(label=k, value=v[0] / v[1] if v[1] else None, numerator=v[0], denominator=v[1])
             for k, v in sorted(by.items())]
     return (m / n if n else None), n, m, rows
+
+
+def detect(ds: Dataset, plan: PlanResult) -> list[Raw]:
+    """This run's exceptions: from the plan, promising, open orders, money owed and forecast bias."""
+    promise = run_promise(ds) if plan.ok else None
+    window = ds.settings.planning_start - dt.timedelta(days=ds.tower.kpi_window_days)
+    acc = accuracy_report([r for r in ds.accuracy if r.end > window and r.start < ds.settings.planning_start])
+    return collect(ds, plan if plan.ok else None, promise, acc)
+
+
+def try_inbox_fix(ds: Dataset, key: str, *, tracker: Tracker | None = None, store: Store | None = None,
+                  scope: str | None = None) -> FixResult:
+    """Try the inbox item ``key``'s action on a copy of ``ds`` (tower/fix.py), recording nothing."""
+    tracker = tracker or (Tracker(store) if store is not None else get_tracker())
+    return try_fix(ds, key, lambda d, p: tracker.peek(d, detect(d, p), scope)[0])
 
 
 def _previous_base(ds: Dataset, store: Store | None = None, scope: str | None = None) -> tuple[Dataset | None, str]:
@@ -73,16 +90,20 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
         key=lambda r: (SEV.get(r.severity, 3), -r.count, r.code))
 
     plan = plan or run_mrp(ds)
-    promise = run_promise(ds) if plan.ok else None
-    window = ds.settings.planning_start - dt.timedelta(days=ds.tower.kpi_window_days)
-    acc = accuracy_report([r for r in ds.accuracy if r.end > window and r.start < ds.settings.planning_start])
-    raws = collect(ds, plan if plan.ok else None, promise, acc)
+    raws = detect(ds, plan)
     live, cleared = tracker.sync(ds, raws, scope) if record else tracker.peek(ds, raws, scope)
     order = {"open": 0, "acknowledged": 1, "resolved": 2}
     out.worklist = sorted(live, key=lambda w: (order.get(w.status, 3), not w.breached, SEV[w.severity], -w.age_days,
                                                w.category, w.key))
     out.cleared = cleared
     price_items(ds, plan if plan.ok else None, out.worklist)          # roadmap F: money at risk and one action each
+    for w in out.worklist:                                            # which actions can be tried in one click
+        if w.action is not None and w.action.kind in ONE_CLICK:
+            try:
+                fix_edits(ds, plan if plan.ok else None, w)
+                w.action.one_click = True
+            except FixError as e:
+                w.action.why_not = str(e)
     out.inbox = inbox_order(out.worklist)
     by_id = {w.id: w for w in out.worklist}
     out.money_at_risk = round(sum(by_id[i].money_at_risk for i in out.inbox), 2)
@@ -118,4 +139,5 @@ def run_tower(ds: Dataset, *, tracker: Tracker | None = None, plan: PlanResult |
     return out
 
 
-__all__ = ["Kpi", "TowerResult", "WorkItem", "get_tracker", "plan_stability", "run_tower"]
+__all__ = ["FixError", "FixResult", "Kpi", "TowerResult", "WorkItem", "get_tracker", "plan_stability", "run_tower",
+           "try_inbox_fix"]

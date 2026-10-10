@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import type { Dataset, Kpi, TowerResult, WorkItem, WorkItemEntry } from "../api/types";
+import type { Dataset, FixEdit, FixResult, Kpi, TowerResult, WorkItem, WorkItemEntry } from "../api/types";
 import {
   Badge, Edits, Empty, Panel, Provenance, Reading, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, type Severity, RunButton,
 } from "../components/ui";
@@ -9,7 +9,7 @@ import { day, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Msg, namesOf } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
-import { isStale, store, useStore } from "../state/store";
+import { isStale, store, useReadOnly, useStore } from "../state/store";
 
 type View = "kpis" | "inbox" | "worklist" | "quality" | "settings";
 
@@ -220,7 +220,26 @@ const AGE_BINS: { label: string; lo: number; hi: number }[] = [
 type Group = "none" | "product" | "customer";
 function Inbox({ res, ds, cur }: { res: TowerResult; ds: Dataset; cur: string }) {
   const [group, setGroup] = useState<Group>("none");
+  const [tries, setTries] = useState<Record<string, { busy: boolean; res?: FixResult; error?: string }>>({});
+  const ro = useReadOnly();
   const nm = namesOf(ds);
+  // the action tried on a copy of the plan: nothing changes until the planner keeps it
+  const tryFix = (key: string) => {
+    setTries((m) => ({ ...m, [key]: { busy: true } }));
+    api.towerFix(ds, key).then((res) => setTries((m) => ({ ...m, [key]: { busy: false, res } })))
+      .catch((e) => setTries((m) => ({ ...m, [key]: { busy: false, error: e instanceof Error ? e.message : String(e) } })));
+  };
+  const keepFix = (key: string, edits: FixEdit[]) => {
+    store.update((d) => {
+      for (const e of edits) {
+        const rows = (d as unknown as Record<string, Array<Record<string, unknown>>>)[e.collection];
+        const row = rows?.find((r) => r.id === e.id);
+        if (row) row[e.field] = e.value as unknown;
+      }
+    });
+    setTries((m) => { const { [key]: _, ...rest } = m; return rest; });
+    void store.run("tower");
+  };
   const ranked = useMemo(() => {
     const byId = new Map(res.worklist.map((w) => [w.id, w]));
     return res.inbox.map((id) => byId.get(id)).filter((w): w is WorkItem => !!w);
@@ -259,7 +278,8 @@ function Inbox({ res, ds, cur }: { res: TowerResult; ds: Dataset; cur: string })
               {g.ws.map((w) => {
                 rank += 1;
                 const a = w.action;
-                return <tr key={w.id} data-testid="inbox-row">
+                const tried = tries[w.key];
+                return <Fragment key={w.id}><tr data-testid="inbox-row">
                   <td className="faint">{rank}</td>
                   <td className="num mono" data-amount={w.money_at_risk}><b>{money(w.money_at_risk, cur)}</b></td>
                   <td><div><Badge sev={ITEM_SEV[w.severity]}>{codeLabel(w.code)}</Badge> <Msg text={w.message} /></div>
@@ -267,10 +287,21 @@ function Inbox({ res, ds, cur }: { res: TowerResult; ds: Dataset; cur: string })
                   <td className="small">{[w.product && nm.prod(w.product), w.location && nm.loc(w.location), w.resource && nm.res(w.resource),
                     w.customer && w.customer !== w.location ? nm.loc(w.customer) : null].filter(Boolean).join(" · ")}</td>
                   <td>{a ? <div className="stack" style={{ gap: 2 }}>
-                    <a className="btn sm" href={a.href || "#/tower/worklist"}>{a.label}</a>
+                    <div className="row wrap" style={{ gap: 6 }}>
+                      <a className="btn sm" href={a.href || "#/tower/worklist"}>{a.label}</a>
+                      {a.one_click && <button className="btn sm primary" aria-label={`Try it: ${a.label}`}
+                        disabled={tries[w.key]?.busy} onClick={() => tryFix(w.key)}>{tries[w.key]?.busy ? "Trying…" : "Try it"}</button>}
+                    </div>
                     <span className="small faint">protects {money(a.protects ?? 0, cur)}{a.costs !== null && a.costs !== undefined ? ` · costs ${money(a.costs, cur)}` : ""}</span>
+                    {!a.one_click && a.why_not && <span className="small faint">Not in one click: {a.why_not}</span>}
                   </div> : <span className="faint small">—</span>}</td>
-                </tr>;
+                </tr>
+                {tried && (tried.res || tried.error) && <tr className="fix-row"><td colSpan={5}>
+                  {tried.error ? <div className="banner error" role="alert">{tried.error}</div>
+                    : <FixOutcome f={tried.res!} cur={cur} ro={ro} onKeep={() => keepFix(w.key, tried.res!.edits)}
+                      onLeave={() => setTries((m) => { const { [w.key]: _, ...rest } = m; return rest; })} />}
+                </td></tr>}
+                </Fragment>;
               })}
             </tbody>
           </table>
@@ -278,6 +309,33 @@ function Inbox({ res, ds, cur }: { res: TowerResult; ds: Dataset; cur: string })
       ))}
     </div>
   );
+}
+
+/** What the tried action does to the money at risk, planned again on a copy: before → after, the edits, what it clears
+ *  and brings. Keeping it applies the edits as one change (one undo step). */
+function FixOutcome({ f, cur, ro, onKeep, onLeave }: { f: FixResult; cur: string; ro: boolean; onKeep: () => void; onLeave: () => void }) {
+  const delta = f.after_total - f.before_total;
+  const gone = f.after_item === null || f.after_item === undefined;
+  return <div className="stack" style={{ gap: 8 }} role="region" aria-label="What this change does">
+    <div className="small muted">Tried on a copy of the plan, planned again: <b>{f.label}</b></div>
+    <div className="grid-auto">
+      <StatTile label="Money at risk, all problems" value={`${money(f.before_total, cur)} → ${money(f.after_total, cur)}`}
+        sub={delta < -0.005 ? `${money(-delta, cur)} less` : delta > 0.005 ? `${money(delta, cur)} more` : "no change"} tone={delta < -0.005 ? "hl" : undefined} />
+      <StatTile label="This problem" value={`${money(f.before_item, cur)} → ${gone ? "gone" : money(f.after_item!, cur)}`}
+        sub={f.costs !== null && f.costs !== undefined ? `the action costs ${money(f.costs, cur)}` : undefined} />
+    </div>
+    <ul className="small" style={{ margin: 0, paddingLeft: 18 }} aria-label="The change">
+      {f.edits.map((e, i) => <li key={i}><Msg text={e.note} /></li>)}
+    </ul>
+    {f.cleared.length > 0 && <div className="small">Also clears: {f.cleared.slice(0, 4).map((c, i) => <span key={i}>{i ? "; " : ""}<Msg text={c} /></span>)}{f.cleared.length > 4 ? ` and ${f.cleared.length - 4} more` : ""}</div>}
+    {f.opened.length > 0 && <div className="small">Brings: {f.opened.slice(0, 4).map((c, i) => <span key={i}>{i ? "; " : ""}<Msg text={c} /></span>)}{f.opened.length > 4 ? ` and ${f.opened.length - 4} more` : ""}</div>}
+    {f.note && <div className="small faint"><Msg text={f.note} /></div>}
+    <div className="row wrap" style={{ gap: 8 }}>
+      {!ro && f.plan_ok && <button className="btn sm primary" onClick={onKeep}>Keep this change</button>}
+      <button className="btn sm" onClick={onLeave}>Leave it</button>
+      {ro && <span className="small faint">You can look but not change this company.</span>}
+    </div>
+  </div>;
 }
 
 function Worklist({ res, ds, rev }: { res: TowerResult; ds: Dataset; rev: number }) {

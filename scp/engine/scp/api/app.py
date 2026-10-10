@@ -26,7 +26,7 @@ from ..actuals import ActualsView, FirmReport, PostingError, RollReport, actuals
 from ..actuals.post import production_usage
 from ..demand import ForecastResult, ReleaseResult, release, run_forecast
 from ..finance import FinanceResult, run_finance
-from ..tower import TowerResult, WorkItem, get_tracker, run_tower
+from ..tower import FixError, FixResult, TowerResult, WorkItem, get_tracker, run_tower, try_inbox_fix
 from ..demand import foundation
 from ..demand.models import SPECS
 from ..demand.result import FoundationStatus
@@ -974,6 +974,22 @@ def post_tower(ds: PlanData, sc: Scope, request: Request) -> Response:
         except CompanyError:
             record = False
     return send(run_tower(ds, scope=sc or None, record=record))
+
+
+class FixRequest(Out):
+    dataset: PlanData
+    key: str                        # the inbox item (WorkItem.key)
+
+
+@app.post("/api/tower/fix", response_model=FixResult)
+def post_tower_fix(req: FixRequest, sc: Scope) -> FixResult:
+    """Try an inbox item's action (expedite, switch supplier, add overtime) on a copy of the company, plan it again
+    and answer with the money at risk before and after and the edits that did it. Nothing is changed or recorded:
+    the browser keeps the edits as one change if the planner wants them."""
+    try:
+        return try_inbox_fix(req.dataset, req.key, scope=sc or "anon:-")
+    except FixError as e:
+        raise HTTPException(e.status, str(e)) from None
 
 
 class WorkItemUpdate(Out):

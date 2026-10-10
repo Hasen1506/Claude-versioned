@@ -1727,6 +1727,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tower/fix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Tower Fix
+         * @description Try an inbox item's action (expedite, switch supplier, add overtime) on a copy of the company, plan it again
+         *     and answer with the money at risk before and after and the edits that did it. Nothing is changed or recorded:
+         *     the browser keeps the edits as one change if the planner wants them.
+         */
+        post: operations["post_tower_fix_api_tower_fix_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tower/items/{iid}": {
         parameters: {
             query?: never;
@@ -4362,6 +4384,86 @@ export interface components {
             /** Reservations */
             reservations: number;
         };
+        /**
+         * FixEdit
+         * @description One field of one record, as the fix changes it.
+         */
+        FixEdit: {
+            /** Collection */
+            collection: string;
+            /** Id */
+            id: string;
+            /** Field */
+            field: string;
+            /** Before */
+            before: unknown;
+            /** Value */
+            value: unknown;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** FixRequest */
+        FixRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /** Key */
+            key: string;
+        };
+        /** FixResult */
+        FixResult: {
+            /** Key */
+            key: string;
+            /** Action */
+            action: string;
+            /** Label */
+            label: string;
+            /**
+             * Edits
+             * @default []
+             */
+            edits: components["schemas"]["FixEdit"][];
+            /**
+             * Before Total
+             * @default 0
+             */
+            before_total: number;
+            /**
+             * After Total
+             * @default 0
+             */
+            after_total: number;
+            /**
+             * Before Item
+             * @default 0
+             */
+            before_item: number;
+            /** After Item */
+            after_item: number | null;
+            /** Costs */
+            costs: number | null;
+            /**
+             * Cleared
+             * @default []
+             */
+            cleared: string[];
+            /**
+             * Opened
+             * @default []
+             */
+            opened: string[];
+            /**
+             * Plan Ok
+             * @default true
+             */
+            plan_ok: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
         /** Flow */
         Flow: {
             /**
@@ -4840,6 +4942,16 @@ export interface components {
              * @default
              */
             href: string;
+            /**
+             * One Click
+             * @default false
+             */
+            one_click: boolean;
+            /**
+             * Why Not
+             * @default
+             */
+            why_not: string;
         };
         /** InfoRecord */
         InfoRecord: {
@@ -15732,6 +15844,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TowerResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_tower_fix_api_tower_fix_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FixRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixResult"];
                 };
             };
             /** @description Validation Error */
