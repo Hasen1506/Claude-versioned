@@ -25,10 +25,12 @@ test("the exception inbox ranks open exceptions by money at risk, with the basis
   await expect(rows.first()).toContainText(/protects/);                     // …with what it protects
   await expect(page.locator(".tile", { hasText: "Money at risk" })).toBeVisible();
   // the tab says how many are waiting
-  await expect(page.getByRole("tab", { name: /Problems/ })).toContainText(String(await rows.count()));
-  // the same problems, followed up by owner and age, are one switch away
+  const n = await rows.count();
+  await expect(page.getByRole("tab", { name: /Problems/ })).toContainText(String(n));
+  // the same problems, followed up by owner and age, are one switch away (counted before the switch: the ranked
+  // table is gone after it)
   await page.getByRole("radio", { name: "By owner and age" }).click();
-  await expect(page.locator(".tile", { hasText: "Open" }).first().locator(".value")).toHaveText(String(await rows.count()));
+  await expect(page.locator(".tile", { hasText: "Open" }).first().locator(".value")).toHaveText(String(n));
 });
 
 test("the inbox groups by customer and by product, the group with the most at risk first", async ({ page }) => {
