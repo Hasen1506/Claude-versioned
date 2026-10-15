@@ -186,9 +186,13 @@ test('a working-copy comparison reports edits made during its calculation instea
       g.onsuccess=()=>{db.close(); done((g.result as {past?:unknown[]}|undefined)?.past?.length??0);}; g.onerror=()=>{db.close(); done(0);}; };
   })),{timeout:15_000}).toBeGreaterThan(0);
   await page.goto('/#/versions');
-  await page.evaluate(()=>localStorage.removeItem('scp.undo.where'));
-  await page.reload();
-  await expect(page.getByRole('button',{name:'Undo',exact:true})).toBeEnabled();
+  // the page writes the screens record on every change of its state, so one arriving between the removal and the
+  // reload writes it back: remove and reload until the reloaded page has none
+  await expect(async()=>{
+    await page.evaluate(()=>localStorage.removeItem('scp.undo.where'));
+    await page.reload();
+    await expect(page.getByRole('button',{name:'Undo',exact:true})).toBeEnabled({timeout:3_000});
+  }).toPass({timeout:30_000});
   const delayed=await hold(page,'**/api/compare');
   await page.getByRole('button',{name:`Compare ${base} as A`,exact:true}).click();
   await page.getByRole('button',{name:'Compare __working__ as B',exact:true}).click();
