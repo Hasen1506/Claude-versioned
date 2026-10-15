@@ -41,6 +41,17 @@ async function imported(page:Page) {
   await expect(page.locator('.topbar .company')).toHaveText('Two-step Pumps');
 }
 
+/** Sign in with the password, once the signed-out page has settled (both fields keep what was typed). */
+async function passwordStep(page:Page,email:string) {
+  await expect(page.getByRole('tab',{name:'Sign in'})).toBeVisible();
+  await expect(async()=>{
+    await page.getByLabel('E-mail').fill(email);
+    await page.getByLabel(/^Password/).fill(PASSWORD);
+    await expect(page.getByLabel('E-mail')).toHaveValue(email,{timeout:500});
+  }).toPass({timeout:10_000});
+  await page.getByRole('button',{name:'Sign in',exact:true}).click();
+}
+
 test('two-step sign-in: turn it on, sign in with the code, require it of the company',async({page})=>{
   await page.goto('/'); await imported(page); await page.goto('/#/account');
   await page.getByRole('tab',{name:'Make an account'}).click();
@@ -84,9 +95,7 @@ test('two-step sign-in: turn it on, sign in with the code, require it of the com
   // sign out, and in again: the password alone is not enough
   await page.goto('/#/account');
   await page.getByRole('button',{name:'Sign out',exact:true}).click();
-  await page.getByLabel('E-mail').fill(email);
-  await page.getByLabel(/^Password/).fill(PASSWORD);
-  await page.getByRole('button',{name:'Sign in',exact:true}).click();
+  await passwordStep(page,email);
   await expect(page.getByText('The password is right.')).toBeVisible();
   await page.getByLabel('Code from the app').fill(totp(key,1));
   await page.getByRole('button',{name:'Sign in',exact:true}).click();
@@ -97,9 +106,7 @@ test('two-step sign-in: turn it on, sign in with the code, require it of the com
   // once more with a recovery code instead of the app (a lost phone)
   await page.goto('/#/account');
   await page.getByRole('button',{name:'Sign out',exact:true}).click();
-  await page.getByLabel('E-mail').fill(email);
-  await page.getByLabel(/^Password/).fill(PASSWORD);
-  await page.getByRole('button',{name:'Sign in',exact:true}).click();
+  await passwordStep(page,email);
   await page.getByLabel('Code from the app').fill(recovery);
   await page.getByRole('button',{name:'Sign in',exact:true}).click();
   await expect(page.getByText('9 recovery codes left')).toBeVisible();
@@ -143,9 +150,6 @@ test('the account downloads everything it holds, then deletes itself and its com
   await form.getByLabel('Type DELETE to confirm').fill('delete');
   page.once('dialog',(d)=>{ expect(d.message()).toContain('Two-step Pumps deleted'); void d.accept(); });
   await button.click();
-  await expect(page.getByRole('tab',{name:'Sign in'})).toBeVisible();
-  await page.getByLabel('E-mail').fill(email);
-  await page.getByLabel(/^Password/).fill(PASSWORD);
-  await page.getByRole('button',{name:'Sign in',exact:true}).click();
+  await passwordStep(page,email);
   await expect(page.getByRole('alert')).toContainText('not right');
 });
