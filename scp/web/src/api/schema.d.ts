@@ -55,6 +55,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/signin/second": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Signin Second
+         * @description Finish signing in with two steps: the ticket the password gave, and the authenticator app's code.
+         */
+        post: operations["auth_signin_second_api_auth_signin_second_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/adopt": {
         parameters: {
             query?: never;
@@ -199,6 +219,166 @@ export interface paths {
         put?: never;
         /** Auth Password */
         post: operations["auth_password_api_auth_password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Email Change
+         * @description Move the account to another address (password and, with two steps, the app's code again). The old address is
+         *     told; a link to confirm the new one goes there when the server sends mail. Other sessions are signed out.
+         */
+        post: operations["auth_email_change_api_auth_email_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/account/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Account Export
+         * @description Download everything the account holds (one JSON file), after the password (and code) again.
+         */
+        post: operations["auth_account_export_api_auth_account_export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/account/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auth Account Deletion Plan
+         * @description What deleting the account would do: said first.
+         */
+        get: operations["auth_account_deletion_plan_api_auth_account_delete_get"];
+        put?: never;
+        /**
+         * Auth Account Delete
+         * @description Delete the account (password and code again; each company it alone owns handed over or deleted, as chosen).
+         *     Signs this browser out.
+         */
+        post: operations["auth_account_delete_api_auth_account_delete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/two-step": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Auth Two Step */
+        get: operations["auth_two_step_api_auth_two_step_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/two-step/begin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Two Step Begin
+         * @description A new key for an authenticator app (password again). Nothing changes until a code from the app comes back.
+         */
+        post: operations["auth_two_step_begin_api_auth_two_step_begin_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/two-step/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Two Step Enable
+         * @description Turn two-step sign-in on with a code from the app: answers the recovery codes, once. Signs out elsewhere.
+         */
+        post: operations["auth_two_step_enable_api_auth_two_step_enable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/two-step/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Auth Two Step Disable */
+        post: operations["auth_two_step_disable_api_auth_two_step_disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/two-step/recovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Two Step Recovery
+         * @description New recovery codes (the old ones stop working).
+         */
+        post: operations["auth_two_step_recovery_api_auth_two_step_recovery_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -375,6 +555,26 @@ export interface paths {
          * @description An owner turns master-data approval on or off (on needs a second person who can change the data).
          */
         put: operations["set_company_approval_api_companies__cid__approval_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/two-step": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Company Two Step
+         * @description An owner requires two-step sign-in of every member (or stops): one without it cannot open the company.
+         */
+        put: operations["set_company_two_step_api_companies__cid__two_step_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1960,6 +2160,49 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AccountConfirm */
+        AccountConfirm: {
+            /**
+             * Password
+             * @default
+             */
+            password: string;
+            /**
+             * Code
+             * @default
+             */
+            code: string;
+            /**
+             * Confirm
+             * @default
+             */
+            confirm: string;
+        };
+        /** AccountDelete */
+        AccountDelete: {
+            /**
+             * Password
+             * @default
+             */
+            password: string;
+            /**
+             * Code
+             * @default
+             */
+            code: string;
+            /**
+             * Confirm
+             * @default
+             */
+            confirm: string;
+            /**
+             * Choices
+             * @default {}
+             */
+            choices: {
+                [key: string]: string;
+            };
+        };
         /**
          * AccuracyRecord
          * @description Forecast against actual sales for one series over one elapsed week (written by the roll-forward).
@@ -2939,6 +3182,25 @@ export interface components {
             /** Items */
             items: components["schemas"]["ItemChange"][];
         };
+        /** CompanyChoice */
+        CompanyChoice: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Role
+             * @default owner
+             */
+            role: string;
+            /**
+             * Members
+             * @default []
+             */
+            members: {
+                [key: string]: string;
+            }[];
+        };
         /** CompanyDoc */
         CompanyDoc: {
             meta: components["schemas"]["CompanyMeta"];
@@ -2985,6 +3247,16 @@ export interface components {
              * @default []
              */
             families: string[];
+            /**
+             * Two Step
+             * @default false
+             */
+            two_step: boolean;
+            /**
+             * Needs Two Step
+             * @default false
+             */
+            needs_two_step: boolean;
         };
         /** CompareRequest */
         CompareRequest: {
@@ -3656,6 +3928,22 @@ export interface components {
              */
             note: string;
         };
+        /** Deleted */
+        Deleted: {
+            /** Deleted At */
+            deleted_at: string;
+            /** Done */
+            done: string[];
+        };
+        /** DeletionPlan */
+        DeletionPlan: {
+            /** Alone */
+            alone: components["schemas"]["CompanyChoice"][];
+            /** Shared */
+            shared: components["schemas"]["CompanyChoice"][];
+            /** Member */
+            member: components["schemas"]["CompanyChoice"][];
+        };
         /**
          * Delivery
          * @description An outbound delivery (≈ LIKP): picked, packed, then goods issued, which posts the sale movements.
@@ -4039,6 +4327,18 @@ export interface components {
              * @default []
              */
             unpriced: string[];
+        };
+        /** EmailChange */
+        EmailChange: {
+            /** Password */
+            password: string;
+            /** Email */
+            email: string;
+            /**
+             * Code
+             * @default
+             */
+            code: string;
         };
         /** EmailVerify */
         EmailVerify: {
@@ -7586,6 +7886,11 @@ export interface components {
             old: string;
             /** New */
             new: string;
+            /**
+             * Code
+             * @default
+             */
+            code: string;
         };
         /**
          * PayableRow
@@ -9121,6 +9426,16 @@ export interface components {
              */
             list_price?: number | null;
         };
+        /** Reauth */
+        Reauth: {
+            /** Password */
+            password: string;
+            /**
+             * Code
+             * @default
+             */
+            code: string;
+        };
         /**
          * ReceiptKind
          * @enum {string}
@@ -9172,6 +9487,11 @@ export interface components {
             records: {
                 [key: string]: unknown;
             }[];
+        };
+        /** RecoveryCodes */
+        RecoveryCodes: {
+            /** Codes */
+            codes: string[];
         };
         /**
          * ReleaseLevel
@@ -9388,6 +9708,11 @@ export interface components {
             token: string;
             /** Password */
             password: string;
+            /**
+             * Code
+             * @default
+             */
+            code: string;
         };
         /** ResetRequest */
         ResetRequest: {
@@ -10957,6 +11282,13 @@ export interface components {
             trace: number[];
             optimizer: components["schemas"]["OptimizerInfo"] | null;
         };
+        /** SecondStep */
+        SecondStep: {
+            /** Ticket */
+            ticket: string;
+            /** Code */
+            code: string;
+        };
         /** Segment */
         Segment: {
             /**
@@ -11109,6 +11441,11 @@ export interface components {
             expires_at: string;
             /** Csrf */
             csrf: string | null;
+            /**
+             * Second Step
+             * @default
+             */
+            second_step: string;
         };
         /**
          * SetAside
@@ -12389,6 +12726,40 @@ export interface components {
          * @enum {string}
          */
         TransportMode: "truck_ftl" | "truck_ltl" | "reefer" | "rail" | "sea" | "air" | "courier" | "pipeline";
+        /** TwoStepCode */
+        TwoStepCode: {
+            /** Code */
+            code: string;
+        };
+        /** TwoStepKey */
+        TwoStepKey: {
+            /** Secret */
+            secret: string;
+            /** Grouped */
+            grouped: string;
+            /** Uri */
+            uri: string;
+        };
+        /** TwoStepSetting */
+        TwoStepSetting: {
+            /** Required */
+            required: boolean;
+        };
+        /** TwoStepState */
+        TwoStepState: {
+            /** On */
+            on: boolean;
+            /**
+             * Recovery Left
+             * @default 0
+             */
+            recovery_left: number;
+            /**
+             * Password
+             * @default true
+             */
+            password: boolean;
+        };
         /**
          * Unbooked
          * @description Postings dated before the planning start that the starting position does not reflect yet (a late posting, or
@@ -12440,6 +12811,11 @@ export interface components {
              * @default false
              */
             verified: boolean;
+            /**
+             * Two Step
+             * @default false
+             */
+            two_step: boolean;
         };
         /** ValidationError */
         ValidationError: {
@@ -12967,6 +13343,39 @@ export interface operations {
             };
         };
     };
+    auth_signin_second_api_auth_signin_second_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecondStep"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     auth_adopt_api_auth_adopt_post: {
         parameters: {
             query?: never;
@@ -13157,6 +13566,279 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_email_change_api_auth_email_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_account_export_api_auth_account_export_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountConfirm"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_account_deletion_plan_api_auth_account_delete_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletionPlan"];
+                };
+            };
+        };
+    };
+    auth_account_delete_api_auth_account_delete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountDelete"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_two_step_api_auth_two_step_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TwoStepState"];
+                };
+            };
+        };
+    };
+    auth_two_step_begin_api_auth_two_step_begin_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Reauth"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TwoStepKey"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_two_step_enable_api_auth_two_step_enable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TwoStepCode"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodes"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_two_step_disable_api_auth_two_step_disable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Reauth"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_two_step_recovery_api_auth_two_step_recovery_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Reauth"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodes"];
                 };
             };
             /** @description Validation Error */
@@ -13570,6 +14252,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ApprovalSetting"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_company_two_step_api_companies__cid__two_step_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TwoStepSetting"];
             };
         };
         responses: {

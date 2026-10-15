@@ -14,7 +14,7 @@ import psycopg
 
 class Row(dict):
     def __getitem__(self, key):
-        return list(self.values())[key] if isinstance(key, int) else super().__getitem__(key)
+        return list(self.values())[key] if isinstance(key, (int, slice)) else super().__getitem__(key)
 
 
 class Result:

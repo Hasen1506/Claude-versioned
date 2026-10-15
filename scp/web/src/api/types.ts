@@ -201,6 +201,10 @@ export type SalesActionInput = Omit<Partial<S["SalesActionRequest"]>, "dataset" 
 // Phase I: sign-in and companies kept on the server
 export type AuthConfig = S["AuthConfig"];
 export type Session = S["Session"];
+export type TwoStepState = S["TwoStepState"];
+export type TwoStepKey = S["TwoStepKey"];
+export type DeletionPlan = S["DeletionPlan"];
+export type Deleted = S["Deleted"];
 export type User = S["User"];
 export type Me = S["Me"];
 export type CompanyMeta = S["CompanyMeta"];

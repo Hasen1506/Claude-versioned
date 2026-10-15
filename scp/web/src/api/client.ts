@@ -5,7 +5,7 @@ import type {
   PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoActionInput, RequisitionPick, PostAction, CountInput, UsageInput, StockType, SalesOrderChange, SalesOrderResponse,
   SalesView, SalesAction, SalesActionInput, SalesActionResponse,
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
-  User,
+  User, TwoStepState, TwoStepKey, DeletionPlan, Deleted,
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings,
   WhatIfChip, WhatIfResult, CaseInfo,
 } from "./types";
@@ -366,8 +366,30 @@ export const api = {
     cookieSignIn("/api/auth/signin", { email, password }),
   signOut: () => call<{ ok: boolean }>("/api/auth/signout", { method: "POST" }).finally(forgetCsrf),
   me: () => call<Me>("/api/auth/me"),
-  changePassword: (old: string, next: string) =>
-    call<{ ok: boolean }>("/api/auth/password", { method: "POST", body: JSON.stringify({ old, new: next }) }),
+  changePassword: (old: string, next: string, code = "") =>
+    call<{ ok: boolean }>("/api/auth/password", { method: "POST", body: JSON.stringify({ old, new: next, code }) }),
+  /** Move the account to another address (the password, and the app's code with two steps, again). */
+  changeEmail: (password: string, email: string, code = "") =>
+    call<User>("/api/auth/email", { method: "POST", body: JSON.stringify({ password, email, code }) }),
+  /** The second step of signing in: the ticket the password gave and the authenticator app's code. */
+  signInSecond: (ticket: string, code: string) => cookieSignIn("/api/auth/signin/second", { ticket, code }),
+  twoStep: () => call<TwoStepState>("/api/auth/two-step"),
+  twoStepBegin: (password: string) =>
+    call<TwoStepKey>("/api/auth/two-step/begin", { method: "POST", body: JSON.stringify({ password }) }),
+  twoStepEnable: (code: string) =>
+    call<{ codes: string[] }>("/api/auth/two-step/enable", { method: "POST", body: JSON.stringify({ code }) }),
+  twoStepDisable: (password: string, code: string) =>
+    call<{ ok: boolean }>("/api/auth/two-step/disable", { method: "POST", body: JSON.stringify({ password, code }) }),
+  recoveryCodes: (password: string, code: string) =>
+    call<{ codes: string[] }>("/api/auth/two-step/recovery", { method: "POST", body: JSON.stringify({ password, code }) }),
+  /** Everything the account holds, as one JSON document (the password, and the code, again). */
+  exportAccount: (o: { password?: string; code?: string; confirm?: string }) =>
+    call<Record<string, unknown>>("/api/auth/account/export", { method: "POST", body: JSON.stringify(o) }),
+  deletionPlan: () => call<DeletionPlan>("/api/auth/account/delete"),
+  deleteAccount: (o: { password?: string; code?: string; confirm?: string; choices: Record<string, string> }) =>
+    call<Deleted>("/api/auth/account/delete", { method: "POST", body: JSON.stringify(o) }).finally(forgetCsrf),
+  setTwoStep: (id: string, required: boolean) =>
+    call<CompanyMeta>(`/api/companies/${encodeURIComponent(id)}/two-step`, { method: "PUT", body: JSON.stringify({ required }) }),
   companies: () => call<CompanyMeta[]>("/api/companies"),
   createCompany: (dataset: Dataset, note = "") =>
     call<CompanyMeta>("/api/companies", { method: "POST", body: JSON.stringify({ dataset, note }) }),
@@ -403,7 +425,7 @@ export const api = {
   changes: (id: string, q = "", list = "", before?: number) =>
     call<FieldChangeRow[]>(`/api/companies/${encodeURIComponent(id)}/changes?q=${encodeURIComponent(q)}&list=${encodeURIComponent(list)}${before ? `&before=${before}` : ""}`),
   resetRequest: (email: string) => call<{ ok: boolean; mail: boolean }>("/api/auth/reset/request", { method: "POST", body: JSON.stringify({ email }) }),
-  resetPassword: (token: string, password: string) => cookieSignIn("/api/auth/reset", { token, password }),
+  resetPassword: (token: string, password: string, code = "") => cookieSignIn("/api/auth/reset", { token, password, code }),
   /** Once: swap a session token this browser kept in its storage (before roadmap D) for the HttpOnly cookie. */
   adopt: (token: string) => call<Session>("/api/auth/adopt", { method: "POST", headers: { "X-SCP-Session": "cookie", Authorization: `Bearer ${token}` } })
     .then((s) => { setCsrf((s as Session & { csrf?: string | null }).csrf); return s; }),

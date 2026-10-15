@@ -401,6 +401,23 @@ ENTERPRISE_PLAN 1.1, 1.2, 1.5 and 1.6, used against a local PostgreSQL 16 the wa
   table and committed; a second restore over it was refused; the owner signed in there with the same password and
   revision 13 opened as saved).
 
+Then 1.3 and 1.4 (15 October 2026): two-step sign-in, the download and deleting a one-company account through the screens in a browser; the rest through the API, on SQLite and on PostgreSQL:
+
+* *Two-step sign-in* (input: an owner turns it on with a code their app shows, keeps the ten recovery codes, signs
+  out; processing: the password gives only a five-minute ticket, the code finishes it, each code good once; output:
+  signed in only after the code, a code used once refused the second time, a recovery code signs in once and the count
+  drops to 9, five wrong codes stop codes for 15 minutes). The owner could not require it of the company before having
+  it; after, the history said "required of every member; not on yet for planner", the planner saw the company marked
+  and was refused opening it until they turned it on, and an integration key went on working.
+* *Asking again* (input: a password change, an address change, a reset link, with two steps on; output: each refused
+  without the code; the address change told the old address, mailed a confirmation link to the new one and ended the
+  other session; the reset link set nothing until the code came too).
+* *Their own data* (input: *Download everything*, then *Delete my account* for an owner of four companies, two alone;
+  output: one JSON file with each company's data, members, history and plan versions; deletion said first what would
+  happen, refused until each company owned alone had a choice, undid everything when one choice could not be done,
+  then handed one company to a planner, deleted the other, left the two shared ones, and the histories kept the
+  actions under "Deleted account" with no address in them; the address could make a new account afterwards).
+
 | # | Found | Severity | Outcome |
 |---|---|---|---|
 | N167 | A save was checked against the revision under a lock inside the process: two server processes could both pass the check, and the second wrote the same revision (an error in the log, the planner's change lost). | Serious | **Fixed.** The lock is the database's (advisory lock, or a file lock beside SQLite), and the save is a compare-and-swap. |
@@ -410,6 +427,12 @@ ENTERPRISE_PLAN 1.1, 1.2, 1.5 and 1.6, used against a local PostgreSQL 16 the wa
 | N171 | Nothing showed what the server was doing: no request ids, no metrics, health said only "ok". | Minor | **Fixed.** Request ids, JSON logs, `/api/metrics`, an optional Sentry DSN, commit, database and uptime in health (503 when the database is unreachable). |
 | N172 | PostgreSQL could not be backed up or restored with the application's own commands, and no restore had been tried. | Serious | **Fixed.** `scp.admin backup` and `restore` work on PostgreSQL; the restore test opens every company at every kept revision. |
 | N173 | A production server could start open to anyone (open sign-up, no sign-in), as the live demonstration host does. | Serious | **Fixed** for servers that say `SCP_ENV=production`; the demonstration host's own settings are its owner's to change (DEPLOY.md). |
+| N174 | A password-reset link (mailed, or made by an owner) set a new password and signed in by itself: whoever could read the mailbox took the account. | Serious | **Fixed** for accounts with two-step sign-in: the reset asks for the app's code as well, and changes nothing without it. |
+| N175 | The sign-in address could not be changed at all, and changing the password asked only for the old one. | Minor | **Fixed.** An address change asks for the password (and code), tells the old address, ends other sessions and leaves the new address unconfirmed until its link is opened. |
+| N176 | An account could not take its data away or be deleted, and a company it alone owned would have been left without an owner. | Serious | **Fixed.** *Download everything*; *Delete my account* says first what happens and hands over or deletes each company owned alone, as the holder chooses. |
+| N177 | The keys behind the app's codes are readable in the database (a code can only be checked with its key), so a stolen copy of the database gives them away. | Minor | **Open.** Said in DEPLOY.md (keep backups as private as the database); keeping them encrypted with a server key would need a key the server holds outside the database. |
+| N178 | The recovery codes were centred in one narrow column, and a refused *require two steps* flicked the checkbox on and off (a browser test caught it as a race). | Minor | **Fixed** before it shipped: codes left-aligned in columns; the test clicks and waits for the box to come back unticked with the reason. |
+| N179 | A PostgreSQL row could not be sliced like a SQLite row, so one older test failed when the suite ran on PostgreSQL. | Minor | **Fixed.** |
 
 ## Found in the second reality check (after Phase E)
 

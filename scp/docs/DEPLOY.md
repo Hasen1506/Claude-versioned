@@ -65,6 +65,7 @@ Everything is set by environment variables. None is needed to try it; the ones m
 | `SCP_LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`. | `INFO` |
 | `SCP_METRICS_TOKEN` | `GET /api/metrics` (Prometheus text: calls by route and status, time taken, calls under way, the build) then needs `Authorization: Bearer <token>`. Without it the page is open (it holds counts, never data). *Production.* | none |
 | `SCP_SENTRY_DSN` | Unexpected errors are reported to Sentry as well (install `sentry-sdk` in the image; no request body or personal data is sent). | none |
+| `SCP_TWO_STEP_ISSUER` | The name an authenticator app shows beside the account when two-step sign-in is turned on ("Acme planning"). | `SCP` |
 | `SCP_COMMIT` | (image build argument) The build's commit, shown by `/api/health` and `/api/metrics`; on Render its own `RENDER_GIT_COMMIT` is used. | none |
 | `SCP_BACKUP_DIR` | A folder for the nightly copy of the database. None: no nightly copy. *Production.* | none |
 | `SCP_BACKUP_HOUR` | When the nightly copy is taken (hour, UTC). | `2` |
@@ -143,6 +144,28 @@ The person signs in (or signs up) with that address and opens the link. An accou
 (by the link in *Confirm my address*, by a reset link mailed to it, or by single sign-on) also sees its invitations
 on the Account page. An owner's *Link to set a new password* works only for members who accepted, have no company of
 their own and belong to no other company; with mail it goes to the member's own address instead of the owner.
+
+### Two-step sign-in, and an account's own data
+
+Each person turns on *two-step sign-in* on the Account page (their password again, a key typed or opened in an
+authenticator app, a code from it back): signing in then takes the password and the app's six-digit code, and ten
+one-time recovery codes are shown once for a lost phone. An owner can require it of everyone in a company (*Every
+member signs in with two steps*, once they have it themselves): a member without it still sees the company in their
+list but cannot open it until they turn it on. Integration keys and accounts that sign in only through single sign-on
+are not asked (the sign-on service has its own second step); a scheduled import keeps running as the person who made
+it. A reset link alone no longer takes an account that has two steps: setting the new password asks for the code too.
+Changing the password, the sign-in address or the second step asks for the password (and the code) again; changing the
+address tells the old one by mail and signs out every other session.
+
+The keys behind the app codes are kept in the database as they are (a code can only be checked with the key), next to
+the password hashes: keep backups as private as the database itself.
+
+*Download everything* on the Account page gives one JSON file with the account, each company it belongs to (its data
+as last saved, its members, history and plan versions) and what the account did there. *Delete my account* first says
+what happens: each company the account alone owns is handed to a member of the holder's choosing (who becomes an
+owner) or deleted, every membership ends, and the address, name, password and second step are erased. The companies'
+histories keep what the account did, under "Deleted account". A scheduled import it made stops with a message asking
+an owner to save it again.
 
 ## 3. The reverse proxy
 

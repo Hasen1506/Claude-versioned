@@ -10,7 +10,7 @@ S/4 guide, then what customers buy (connectors), then depth.
 
 ## Phase 1: Running it (production hardening)
 Done: 1.1 (one connection per process, made again when dropped, under a lock the database holds for every process;
-no pool was needed), 1.2, 1.5, 1.6 (USABILITY_LOG N167–N173). Next: 1.3, 1.4.
+no pool was needed), 1.2, 1.5, 1.6 (USABILITY_LOG N167–N173), 1.3 and 1.4 (N174–N179). Phase 1 is complete.
 
 | # | Gap | Build |
 |---|---|---|

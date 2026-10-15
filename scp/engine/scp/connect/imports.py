@@ -659,7 +659,7 @@ def run_job(c: Companies, jid: str, user: User | None = None, now: dt.datetime |
     out: list[MessageRow] = []
     try:
         runner = c._user(job["run_as"])
-        c._need(runner, cid, "owner", "planner")
+        c._need(runner, cid, "owner", "planner", two_step=False)   # a schedule, not a sign-in
     except CompanyError:
         out.append(_failed(c, job, job["source"], f"{c._name(job['run_as'])}, who made it, may no longer change this "
                                                   "company: an owner should save the import again"))
