@@ -60,6 +60,8 @@ const TITLE: Record<string, string> = {
   alternatives: "Alternative machines", tools: "Tools it holds (mould, die)", capacity_overtime: "Levelling may plan overtime", break_minutes: "Break (minutes)", cost_share: "Share of the run's cost",
   capacity_constrained: "Plan within machine capacity", wait_for_parts: "Wait for parts", step_resources: "Steps on an alternative machine",
   scheduled: "Dated by the shop floor schedule",
+  rescheduling_horizon_days: "Rescheduling horizon (working days)",
+  reschedule_out_tolerance_days: "Early by up to this is left alone (days)",
   capacity_direction: "When a day is full, first try", capacity_max_early_days: "Build at most this many days ahead",
   earliness_weight: "Weight: an hour early", makespan_weight: "Weight: an hour to clear the window", start_rule: "Start rule",
   optimizer: "Use the optimiser (constraint solver)", backward_buffer_days: "Backward: buffer before the due date (days)",

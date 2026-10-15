@@ -64,6 +64,12 @@ class Settings(Model):
     capacity_max_early_days: int | None = Unit(
         "days", ge=0, le=365, default=None,
         description="Levelling: move an order at most this many days earlier to fit; empty = as far as today")
+    rescheduling_horizon_days: float = Unit(
+        "workdays", le=365, default=0.0,
+        description="Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner. A product or MRP group may set its own")
+    reschedule_out_tolerance_days: float = Unit(
+        "days", le=365, default=3.0,
+        description="Rescheduling tolerance: a firm order up to this many days earlier than needed is left alone; earlier than that, the plan advises pushing it out. A product or MRP group may set its own")
 
     @property
     def carrying_rate(self) -> float:
@@ -281,11 +287,17 @@ class MrpGroup(Model):
         "days", default=None, description="Calendar days a sales order may reach forward to consume forecast "
                                           "(empty: each product's own)")
     mrp_controller: str | None = Field(None, max_length=40, description="Who plans the group's products")
+    rescheduling_horizon_days: float | None = Unit(
+        "workdays", le=365, default=None,
+        description="Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner (empty: each product's own, else the company's)")
+    reschedule_out_tolerance_days: float | None = Unit(
+        "days", le=365, default=None, description="Rescheduling tolerance: a firm order up to this many days earlier than needed is left alone; earlier than that, the plan advises pushing it out (empty: each product's own, else the company's)")
 
     def overrides(self) -> dict:
         """The fields of a product at a place that the group sets."""
         keys = ("strategy", "lot_sizing", "safety_time_days", "planning_time_fence_days", "consumption_backward_days",
-                "consumption_forward_days", "mrp_controller")
+                "consumption_forward_days", "mrp_controller", "rescheduling_horizon_days",
+                "reschedule_out_tolerance_days")
         return {k: getattr(self, k) for k in keys if getattr(self, k) is not None}
 
 
@@ -314,6 +326,10 @@ class LocationProduct(Model):
     max_stock: float | None = Unit("qty", default=None, description="MIN_MAX target / excess threshold")
     planning_time_fence_days: float = Unit("days", default=0.0,
                                            description="No new proposals inside this fence (firming type 1)")
+    rescheduling_horizon_days: float | None = Unit(
+        "workdays", le=365, default=None, description="Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner (empty: the company's)")
+    reschedule_out_tolerance_days: float | None = Unit(
+        "days", le=365, default=None, description="Rescheduling tolerance: a firm order up to this many days earlier than needed is left alone; earlier than that, the plan advises pushing it out (empty: the company's)")
     gr_processing_days: float = Unit("days", default=0.0, description="Goods-receipt / putaway time")
     consumption_backward_days: float = Unit(
         "days", default=7.0,

@@ -6458,6 +6458,16 @@ export interface components {
              */
             planning_time_fence_days: number;
             /**
+             * Rescheduling Horizon Days
+             * @description Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner (empty: the company's)
+             */
+            rescheduling_horizon_days?: number | null;
+            /**
+             * Reschedule Out Tolerance Days
+             * @description Rescheduling tolerance: a firm order up to this many days earlier than needed is left alone; earlier than that, the plan advises pushing it out (empty: the company's)
+             */
+            reschedule_out_tolerance_days?: number | null;
+            /**
              * Gr Processing Days
              * @description Goods-receipt / putaway time
              * @default 0
@@ -6980,6 +6990,16 @@ export interface components {
              * @description Who plans the group's products
              */
             mrp_controller?: string | null;
+            /**
+             * Rescheduling Horizon Days
+             * @description Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner (empty: each product's own, else the company's)
+             */
+            rescheduling_horizon_days?: number | null;
+            /**
+             * Reschedule Out Tolerance Days
+             * @description Rescheduling tolerance: a firm order up to this many days earlier than needed is left alone; earlier than that, the plan advises pushing it out (empty: each product's own, else the company's)
+             */
+            reschedule_out_tolerance_days?: number | null;
         };
         /**
          * MrpType
@@ -11587,6 +11607,18 @@ export interface components {
              * @description Levelling: move an order at most this many days earlier to fit; empty = as far as today
              */
             capacity_max_early_days?: number | null;
+            /**
+             * Rescheduling Horizon Days
+             * @description Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner. A product or MRP group may set its own
+             * @default 0
+             */
+            rescheduling_horizon_days: number;
+            /**
+             * Reschedule Out Tolerance Days
+             * @description Rescheduling tolerance: a firm order up to this many days earlier than needed is left alone; earlier than that, the plan advises pushing it out. A product or MRP group may set its own
+             * @default 3
+             */
+            reschedule_out_tolerance_days: number;
         };
         /** SetupAction */
         SetupAction: {

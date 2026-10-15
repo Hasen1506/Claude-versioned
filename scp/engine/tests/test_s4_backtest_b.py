@@ -181,6 +181,84 @@ def test_reschedule_out_respects_tolerance_and_safety_stock():
     assert not {"RESCHEDULE_OUT", "RECEIPT_NOT_NEEDED"} & set(codes(plan(d)))
 
 
+
+def test_late_firm_order_without_a_horizon_is_duplicated_by_a_new_one():
+    """The defect ENTERPRISE_PLAN 2.1 names, as the plan still behaves with no rescheduling horizon (the company's
+    default, as in S/4 when none is set): a 3-day lead time could bring a new order on time, so a PO due a week late
+    gets a requisition beside it, and the PO itself is reported as not needed."""
+    d = buy()
+    dem(d, "2026-01-12", 50)
+    rec(d, "2026-01-19", 50)
+    res = plan(d)
+    [o] = orders(res)
+    assert (o.qty, o.need_date) == (50, date(2026, 1, 12))
+    assert "RECEIPT_NOT_NEEDED" in codes(res)
+
+
+def test_rescheduling_horizon_brings_a_late_firm_order_in_before_new_supply():
+    """ENTERPRISE_PLAN 2.1, §8.1: within the rescheduling horizon a firm receipt is proposed for 'reschedule in'
+    (exception 10) and no new order is planned; beyond the horizon, new supply. Monday–Friday calendar, need on Monday
+    12 Jan, PO due Monday 19 Jan: five working days later (13, 14, 15, 16, 19 Jan)."""
+    d = buy(workdays=WEEKDAYS)
+    d["settings"]["rescheduling_horizon_days"] = 5
+    dem(d, "2026-01-12", 50)
+    rec(d, "2026-01-19", 50)
+    res = plan(d)
+    assert orders(res) == []
+    [e] = [e for e in res.exceptions if e.code == "RESCHEDULE_IN"]
+    assert (e.order_id, e.date, e.qty) == ("PO1", date(2026, 1, 12), 50)
+    assert "expedite it by 7 d" in e.message and "5-working-day rescheduling horizon" in e.message
+    assert "RECEIPT_NOT_NEEDED" not in codes(res)
+    assert [r.date for r in res.receipts] == [date(2026, 1, 19)]   # advice only: the PO keeps its date
+    # four working days are one short of the PO: a new order on time, and the PO is not needed
+    d["settings"]["rescheduling_horizon_days"] = 4
+    res = plan(d)
+    assert [(o.qty, o.need_date) for o in orders(res)] == [(50, date(2026, 1, 12))]
+    assert "RESCHEDULE_IN" not in codes(res)
+
+
+def test_rescheduling_horizon_takes_only_what_the_shortage_needs():
+    """Two firm orders inside the horizon: the earlier one covers the shortage, the later one keeps its date and is
+    checked the other way as usual."""
+    d = buy()
+    d["settings"]["rescheduling_horizon_days"] = 10
+    dem(d, "2026-01-08", 40)
+    rec(d, "2026-01-10", 40, id="PO-A")
+    rec(d, "2026-01-14", 40, id="PO-B")
+    dem(d, "2026-01-20", 40)
+    res = plan(d)
+    assert orders(res) == []
+    assert [e.order_id for e in res.exceptions if e.code == "RESCHEDULE_IN"] == ["PO-A"]
+    [e] = [e for e in res.exceptions if e.code == "RESCHEDULE_OUT"]
+    assert (e.order_id, e.date) == ("PO-B", date(2026, 1, 20))
+
+
+def test_rescheduling_horizon_and_tolerance_by_product_and_mrp_group():
+    """A product's own horizon and tolerance win over the company's; an MRP group's win over the product's."""
+    d = buy(rescheduling_horizon_days=10)
+    dem(d, "2026-01-12", 50)
+    rec(d, "2026-01-19", 50)
+    assert orders(plan(d)) == []
+    d["location_products"][0]["rescheduling_horizon_days"] = 0       # the product says none, over the company's 10
+    d["settings"]["rescheduling_horizon_days"] = 10
+    assert len(orders(plan(d))) == 1
+    d["mrp_groups"] = [{"id": "G", "rescheduling_horizon_days": 7}]
+    d["location_products"][0]["mrp_group"] = "G"
+    assert orders(plan(d)) == []
+
+    # tolerance: 6 days early is left alone at 7, reported at the company's 3
+    d = buy()
+    rec(d, "2026-01-09", 50)
+    dem(d, "2026-01-15", 50)
+    assert "RESCHEDULE_OUT" in codes(plan(d))
+    d["settings"]["reschedule_out_tolerance_days"] = 7
+    assert "RESCHEDULE_OUT" not in codes(plan(d))
+    d["settings"]["reschedule_out_tolerance_days"] = 3
+    d["mrp_groups"] = [{"id": "G", "reschedule_out_tolerance_days": 6}]
+    d["location_products"][0]["mrp_group"] = "G"
+    assert "RESCHEDULE_OUT" not in codes(plan(d))
+
+
 # ================================================================================================ §8.2 MRP types
 def test_no_planning_type_creates_nothing():
     """§8.2 ND: excluded from MRP; a shortage is projected but never replenished."""

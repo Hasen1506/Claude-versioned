@@ -80,7 +80,7 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
       case "RESCHEDULE_IN":
         s = {
           title: `${plural(l.length, "incoming order")} should arrive sooner`,
-          why: "Each is due after the date it's needed, and a new order couldn't arrive any earlier. Ask the supplier or carrier to expedite.",
+          why: "Each is due after the date it's needed. The plan counts on it there instead of ordering again, because a new order couldn't arrive any earlier or the order is due within the rescheduling horizon. Ask the supplier or carrier to expedite.",
           items: l.map((e) => ({ label: `${e.order_id}: ${n(e.qty)} ${where(e)}`, detail: `needed ${d(e.date)}`, to: node(e) })),
           actions: [{ label: "See incoming orders", to: href("data", "receipts") }],
         };
@@ -96,7 +96,7 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
       case "RECEIPT_NOT_NEEDED":
         s = {
           title: `${plural(l.length, "incoming order")} not needed in the horizon`,
-          why: "Nothing in the plan needs them before the horizon ends. Cancel or push them out; if a new order covers the same need sooner, ask for this one sooner instead.",
+          why: "Nothing in the plan needs them before the planning horizon ends. Cancel or push them out; if a new order covers the same need sooner, ask for this one sooner instead, or give the product a rescheduling horizon so the plan counts on it first.",
           items: l.map((e) => ({ label: `${e.order_id}: ${n(e.qty)} ${where(e)}`, detail: `arrives ${d(e.date)}`, to: node(e) })),
           actions: [{ label: "See incoming orders", to: href("data", "receipts") }],
         };

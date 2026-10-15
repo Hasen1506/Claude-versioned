@@ -434,6 +434,26 @@ Then 1.3 and 1.4 (15 October 2026): two-step sign-in, the download and deleting 
 | N178 | The recovery codes were centred in one narrow column, and a refused *require two steps* flicked the checkbox on and off (a browser test caught it as a race). | Minor | **Fixed** before it shipped: codes left-aligned in columns; the test clicks and waits for the box to come back unticked with the reason. |
 | N179 | A PostgreSQL row could not be sliced like a SQLite row, so one older test failed when the suite ran on PostgreSQL. | Minor | **Fixed.** |
 
+## Enterprise plan, phase 2: planning against the S/4 guide (15 October 2026)
+
+ENTERPRISE_PLAN 2.1, used in a browser and through the API on a pump plant: 120 casings for a customer order on
+Monday 12 January, and the foundry's PO-4501 for 120 due a week later, on the 19th. A new order takes 3 days.
+
+* *Rescheduling horizon* (input: no horizon, then 10 working days on the casing's *Ordering* view, then an MRP group
+  "Castings" with 3; processing: a firm order due within the horizon after a shortage is brought in to cover it before
+  any new supply is planned; output: without a horizon, requisition PR-00001 for 120 on the 12th beside the PO, which
+  is reported as not needed; with 10 working days, no requisition, and *Incoming order needed sooner*: "PO-4501:
+  arrives 2026-01-19 but is needed 2026-01-12; expedite it by 7 d (it is due within the 10-working-day rescheduling
+  horizon, so it is brought in rather than ordered again)"; with the group's 3, which ends before the 19th, the
+  requisition again). The PO keeps its date: the advice is the planner's to act on.
+* *Tolerance* (input: a PO six days before it is needed; output: *Incoming order could come later* at the company's
+  3 days, nothing at 7, nothing with an MRP group that says 6).
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N180 | A firm order due a week late was duplicated by a new requisition whenever a new order could still arrive on time, and the firm order was then called not needed (§8.1). | Serious | **Fixed.** A rescheduling horizon in working days (company setting, product, MRP group): within it the firm order is brought in first. The company default is 0, as in S/4 when none is set, so saved companies plan as before until a horizon is given; the not-needed situation now points to it. The reschedule-out tolerance (3 days) is a setting too. |
+| N181 | "Nothing needs them before the horizon ends" read as the new rescheduling horizon. | Minor | **Fixed.** It says *planning horizon*. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

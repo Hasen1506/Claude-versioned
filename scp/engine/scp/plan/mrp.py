@@ -54,7 +54,6 @@ from .result import (
 )
 
 EPS = 1e-9
-RESCHEDULE_OUT_TOLERANCE_DAYS = 3   # a firm receipt up to this many days early is left alone (S/4 rescheduling tolerance)
 _PREFIX = {"make": "MO", "buy": "PR", "transfer": "TO"}
 
 
@@ -400,7 +399,8 @@ class _Planner:
         date. Receipts are taken in date order; each is needed on the first checked date where the stock without it
         (and without the firm receipts after it) would fall below the safety stock, target or reorder point. Needed
         nowhere in the horizon: RECEIPT_NOT_NEEDED (cancel it, or pull it in instead of a new order); needed more than
-        RESCHEDULE_OUT_TOLERANCE_DAYS later: RESCHEDULE_OUT to that date. Advice only: the receipt keeps its date."""
+        the rescheduling tolerance later: RESCHEDULE_OUT to that date. Advice only: the receipt keeps its date."""
+        tolerance = self._tolerance(st.lp)
         firm = sorted((s for s in st.supplies if s.kind == "receipt"), key=lambda s: (s.date, s.id))
         if not firm or not thresholds:
             return
@@ -423,9 +423,9 @@ class _Planner:
             if needed is None:
                 self._exc("RECEIPT_NOT_NEEDED", "warning",
                           f"{rc.id}: {rc.qty:,.1f} arrive {rc.date.isoformat()} but nothing needs them before the "
-                          f"horizon ends: cancel or push it out (or pull it in in place of a new order)",
+                          f"planning horizon ends: cancel or push it out (or pull it in in place of a new order)",
                           node=node, order=rc.id, when=rc.date, qty=rc.qty)
-            elif (needed - rc.date).days > RESCHEDULE_OUT_TOLERANCE_DAYS:
+            elif (needed - rc.date).days > tolerance + EPS:
                 self._exc("RESCHEDULE_OUT", "warning",
                           f"{rc.id}: arrives {rc.date.isoformat()} but is first needed {needed.isoformat()}; push it "
                           f"out by {(needed - rc.date).days} d", node=node, order=rc.id, when=needed, qty=rc.qty)
@@ -514,6 +514,16 @@ class _Planner:
             q = max(shortage, min(q, shortage + usable))
         return q, gap
 
+    def _horizon(self, lp: LocationProduct) -> float:
+        """Working days after a shortage within which a later firm order is brought in rather than ordered again: the
+        product's (or its MRP group's), else the company's."""
+        h = lp.rescheduling_horizon_days
+        return self.s.rescheduling_horizon_days if h is None else h
+
+    def _tolerance(self, lp: LocationProduct) -> float:
+        t = lp.reschedule_out_tolerance_days
+        return self.s.reschedule_out_tolerance_days if t is None else t
+
     def _earliest_new(self, node: Node, st: _NodeState, need: date, qty: float) -> date | None:
         """When a new order for ``need`` would be available: on time if its backward-scheduled start is not in
         the past (nor inside the fence), else its forward-scheduled date from today (or the fence end)."""
@@ -532,8 +542,10 @@ class _Planner:
 
     def _reschedule_in(self, node: Node, st: _NodeState, receipts: list[_Supply], rec_on: dict[date, float],
                        d: date, short: float, lot: float) -> float:
-        """Pull later firm receipts forward to ``d`` (for netting) while a new order of ``lot`` could not arrive
-        before them. Their physical date is kept, so the projection and the pegging still show the delay.
+        """Pull later firm receipts forward to ``d`` (for netting) instead of planning new supply beside them: those
+        due within the rescheduling horizon (S/4 §8.1: reschedule in first, new supply only beyond it), and later ones
+        while a new order of ``lot`` could not arrive before them either. Their physical date is kept, so the
+        projection and the pegging still show the delay.
 
         A receipt dated by the detailed schedule is always counted where it is needed: the schedule already put it
         as early as the machines allow, and a new order planned at unlimited capacity would only look faster."""
@@ -549,6 +561,22 @@ class _Planner:
                       f"needed on {d.isoformat()}", node=node, order=s.id, when=d, qty=s.qty)
             s.date = d
             got += s.qty
+        if got >= short - EPS:
+            return got
+        if (horizon := self._horizon(st.lp)) > EPS:
+            reach = location_calendar(self.ds, node[0]).add_workdays(d, horizon)
+            for s in receipts:
+                if got >= short - EPS:
+                    return got
+                if s.kind != "receipt" or s.date <= d or s.date > reach:
+                    continue
+                rec_on[s.date] -= s.qty
+                self._exc("RESCHEDULE_IN", "warning",
+                          f"{s.id}: arrives {s.date.isoformat()} but is needed {d.isoformat()}; expedite it by "
+                          f"{(s.date - d).days} d (it is due within the {horizon:g}-working-day rescheduling horizon, "
+                          f"so it is brought in rather than ordered again)", node=node, order=s.id, when=d, qty=s.qty)
+                s.date = d
+                got += s.qty
         if got >= short - EPS:
             return got
         earliest = self._earliest_new(node, st, d, lot)

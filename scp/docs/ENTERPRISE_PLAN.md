@@ -22,6 +22,8 @@ no pool was needed), 1.2, 1.5, 1.6 (USABILITY_LOG N167–N173), 1.3 and 1.4 (N17
 | 1.6 | Backup restore never rehearsed on PostgreSQL | `scp.admin` dump and restore for PostgreSQL, and a test that restores into an empty database and opens every company |
 
 ## Phase 2: Planning defects against the S/4 guide
+Done: 2.1 (USABILITY_LOG N180–N181).
+
 | # | Gap (guide §) | Build |
 |---|---|---|
 | 2.1 | A late firm order gets a duplicate requisition (§8.1) | Rescheduling horizon per product / MRP group: reschedule in first, new supply only beyond it; tolerance as a setting |

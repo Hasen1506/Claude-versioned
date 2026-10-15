@@ -146,7 +146,7 @@ export const COLLECTIONS: CollectionDef[] = [
   {
     key: "mrp_groups", label: "MRP groups", singular: "MRP group", defName: "MrpGroup", issueType: "mrp_group",
     group: "Planning data", keyOf: (o) => s(o.id),
-    blurb: "Planning values shared by many products: a planning policy that names the group is planned with the group's strategy, lot size, safety time, fence and consumption windows wherever the group sets one.",
+    blurb: "Planning values shared by many products: a planning policy that names the group is planned with the group's strategy, lot size, safety time, fence, consumption windows and rescheduling horizon wherever the group sets one.",
     columns: [
       { label: "Id", get: (o) => s(o.id) }, { label: "Name", get: (o) => s(o.name) },
       { label: "Strategy", get: (o) => s(o.strategy ?? "each product's own") },
