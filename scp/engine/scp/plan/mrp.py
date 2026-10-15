@@ -28,6 +28,7 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Callable
+from itertools import accumulate
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, TypeVar
@@ -162,6 +163,7 @@ class _Planner:
         self.lane_load: dict[str, list[float]] = defaultdict(lambda: [0.0] * len(self.b))
         self.kpi = Kpis()
         self._expiring: dict[Node, list[tuple[date, float, str]]] | None = None
+        self._buffers: dict | None = None
 
     # ------------------------------------------------------------------ setup
     def lp(self, node: Node) -> LocationProduct:
@@ -333,6 +335,10 @@ class _Planner:
         if lp.mrp_type is MrpType.NONE:
             self._peg(node, st)
             return
+        if lp.mrp_type is MrpType.DDMRP and not mto and disc is None and (b := self._buffer(node)) is not None:
+            self._plan_ddmrp(node, st, b, onhand)
+            self._peg(node, st)
+            return
         reqs = sorted(st.reqs, key=lambda r: (r.date, r.priority, r.id))
         receipts = sorted((s for s in st.supplies if s.kind in ("receipt", "co_product")), key=lambda s: s.date)
         # the buffer is checked where requirements fall, buckets start and targets are set, never on a date where
@@ -428,6 +434,71 @@ class _Planner:
         if disc is None:
             self._reschedule_out(node, st, thresholds)
         self._peg(node, st)
+
+    def _buffer(self, node: Node):
+        """The DDMRP buffer of a node planned by MRP type ``ddmrp`` (None: not a stocking position)."""
+        if self._buffers is None:
+            from .ddbuffer import size_all
+            only = {n for n in self.g.order if self.lp(n).mrp_type is MrpType.DDMRP}
+            self._buffers = size_all(self.ds, self.g, self.flow, only=only)
+        return self._buffers.get(node)
+
+    def _plan_ddmrp(self, node: Node, st: _NodeState, b, onhand: float) -> None:
+        """MRP type ``ddmrp`` (S/4 MRP type D1; Ptak & Smith, ch. 9): the buffer, not the net requirements, decides the
+        orders. On every day the net flow position can change (a requirement falls due, a spike comes within the
+        decoupled lead time, a bucket starts)
+
+            NFP = on hand + open supply − requirements due by that day − spikes within the decoupled lead time
+
+        and when NFP is at or under the top of yellow an order of TOG − NFP is placed that day, arriving a lead time
+        later: supply follows the buffer, so one signal plans the item instead of a buffer advising beside an MRP that
+        nets requirements. The red zone stands in for safety stock in the projection, so stock projected into red is
+        reported; the buffer's state on the first day goes to the inbox (red: expedite, yellow: order now)."""
+        inv = self.ds.inventory
+        st.ss_by_bucket = [b.tor] * len(self.b)
+        st.ss_note = (f"DDMRP buffer: red to {b.tor:,.1f}, yellow to {b.toy:,.1f}, green to {b.tog:,.1f} "
+                      f"(ADU {b.adu:,.2f} a day over a decoupled lead time of {b.dlt:g} d)")
+        reqs = sorted(st.reqs, key=lambda r: (r.date, r.priority, r.id))
+        req_on: dict[date, float] = defaultdict(float)
+        for r in reqs:
+            req_on[r.date] += r.qty
+        window = max(1, math.ceil(b.dlt - EPS))
+        spikes = [(r.date, r.qty) for r in reqs if r.qty > inv.spike_factor * b.tor + EPS]
+        checks = ({r.date for r in reqs} | {bk.start for bk in self.b}
+                  | {d - timedelta(days=window - 1) for d, _ in spikes})
+        checks = sorted(d for d in checks if self.start <= d < self.b.end)
+        supply = onhand + sum(s.qty for s in st.supplies if s.kind in ("receipt", "co_product"))
+        days = sorted(req_on)
+        cum = list(accumulate(req_on[dd] for dd in days))
+        first: tuple[float, float, list[str]] | None = None
+        for d in checks:
+            k = bisect.bisect_right(days, d)
+            due = cum[k - 1] if k else 0.0     # due by d, what fell due before the start included
+            nfp = supply - due - sum(q for dd, q in spikes if d < dd < d + timedelta(days=window))
+            made: list[str] = []
+            if nfp <= b.toy + EPS and (q := b.tog - nfp) > EPS:
+                opt = self._choose(node, d, q)
+                need = schedule(self.ds, opt, q, start=d).available_date if opt is not None else d
+                k = len(self.orders)
+                q = self._supply(node, st, q, need, shortage=q, below_zero=0.0)
+                supply += q
+                made = [o.id for o in self.orders[k:]]
+            if first is None:
+                first = (nfp, q if made else b.tog - nfp, made)
+        if first is None:
+            return
+        nfp, q, made = first
+        what = f" ({', '.join(made)})" if made else ""
+        if nfp <= b.tor + EPS:
+            self._exc("BUFFER_RED", "warning",
+                      f"Buffer in red: the net flow position {nfp:,.1f} is at or under the top of red ({b.tor:,.1f}). "
+                      f"Order {q:,.1f} today{what} and expedite the open supply", node=node, when=self.start, qty=q,
+                      order=made[0] if made else None)
+        elif nfp <= b.toy + EPS:
+            self._exc("BUFFER_YELLOW", "warning",
+                      f"Buffer in yellow: the net flow position {nfp:,.1f} is at or under the top of yellow "
+                      f"({b.toy:,.1f}). Order {q:,.1f} today{what} to bring it back to the top of green ({b.tog:,.1f})",
+                      node=node, when=self.start, qty=q, order=made[0] if made else None)
 
     def _reschedule_out(self, node: Node, st: _NodeState, thresholds: dict[date, float]) -> None:
         """The rescheduling check the other way (S/4 exceptions 15 and 20): a firm receipt the plan does not need on its

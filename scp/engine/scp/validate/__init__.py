@@ -14,7 +14,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from ..model import (
-    Dataset, DemandKind, LocationType, SafetyStockMethod, Strategy, TransportMode,
+    Dataset, DemandKind, LocationType, MrpType, SafetyStockMethod, Strategy, TransportMode,
 )
 from ..model.common import PRODUCTION_LOCATION_TYPES, STOCKING_LOCATION_TYPES
 from ..network import build_graph
@@ -51,6 +51,9 @@ RULES: dict[str, tuple[Severity, str]] = {
     "PRODUCTION_NO_LEAD_TIME": ("warning", "Production source with neither routing nor fixed lead time"),
     "PURCHASE_ZERO_LEAD_TIME": ("warning", "Purchasing source with zero lead time"),
     "SS_AND_SAFETY_TIME": ("warning", "Safety stock and safety time both set: double buffering"),
+    "DDMRP_NOT_A_BUFFER": ("warning", "MRP type ddmrp where no buffer can be held: planned by requirements"),
+    "DDMRP_SAFETY_STOCK": ("warning", "MRP type ddmrp with a safety stock: the red zone is the buffer, the safety stock "
+                                      "is not used"),
     "QUOTA_SUM": ("warning", "Quotas for a node do not add up to 1"),
     "DEMAND_OUTSIDE_HORIZON": ("warning", "Demand outside the planning horizon is ignored"),
     "DEMAND_PAST_DUE": ("warning", "Demand before planning start is treated as backlog"),
@@ -583,6 +586,16 @@ def _policies(ds: Dataset, c: _Collector) -> None:
     for lp in ds.location_products:
         oid = f"{lp.location}/{lp.product}"
         ss = lp.safety_stock
+        if lp.mrp_type is MrpType.DDMRP:
+            if (lp.strategy is Strategy.MTO or lp.direct_production
+                    or ds.location_type(lp.location) is LocationType.CUSTOMER):
+                c.add("DDMRP_NOT_A_BUFFER", "location_product", oid,
+                      "Made to order (or a customer): there is no stock to buffer, so it is planned by its requirements",
+                      "Use MRP type deterministic, or make it to stock", "mrp_type")
+            elif ss.method is not SafetyStockMethod.NONE:
+                c.add("DDMRP_SAFETY_STOCK", "location_product", oid,
+                      "The buffer's red zone is its safety stock: the safety stock set here is not planned",
+                      "Set the safety stock method to none", "safety_stock.method")
         if ss.method is not SafetyStockMethod.NONE and lp.safety_time_days > 0:
             c.add("SS_AND_SAFETY_TIME", "location_product", oid,
                   "Safety stock and safety time are both set", "Use one buffer mechanism")

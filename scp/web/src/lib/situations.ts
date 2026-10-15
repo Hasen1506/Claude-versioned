@@ -85,6 +85,22 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
           actions: [{ label: "Change the firming type (planning policies)", to: href("data", "location_products") }],
         };
         break;
+      case "BUFFER_RED":
+        s = {
+          title: `${plural(l.length, "buffer")} in the red`,
+          why: "Stock on hand plus what is on order, less what is due now and the big orders coming within the lead time, is down in the red zone: the buffer's safety. The plan orders back up to the top of green today; release that order now and ask the suppliers already delivering to hurry.",
+          items: l.map((e) => ({ label: `${where(e)}`, detail: `order ${n(e.qty)} today${e.order_id ? ` (${e.order_id})` : ""}`, to: node(e) })),
+          actions: [{ label: "See the buffers (Supply → Buffers → DDMRP buffers)", to: href("inventory", "ddmrp") }],
+        };
+        break;
+      case "BUFFER_YELLOW":
+        s = {
+          title: `${plural(l.length, "buffer")} to reorder today`,
+          why: "Stock on hand plus what is on order, less what is due now, has come down into the yellow zone, so the buffer is reordered today, back up to the top of green. This is the normal order signal, not a shortage.",
+          items: l.map((e) => ({ label: `${where(e)}`, detail: `order ${n(e.qty)} today${e.order_id ? ` (${e.order_id})` : ""}`, to: node(e) })),
+          actions: [{ label: "See the buffers (Supply → Buffers → DDMRP buffers)", to: href("inventory", "ddmrp") }],
+        };
+        break;
       case "RESCHEDULE_IN":
         s = {
           title: `${plural(l.length, "incoming order")} should arrive sooner`,
@@ -296,6 +312,7 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
 /** A short plain name for an exception code from any page (the code itself stays visible for analysts). */
 const CODE_LABEL: Record<string, string> = {
   DEMAND_AT_RISK: "Demand late or short", START_IN_PAST: "Should already have started", FENCE_SHIFT: "Moved out of the freeze window", FENCE_SHORTAGE: "Short inside the freeze window",
+  BUFFER_RED: "Buffer in the red", BUFFER_YELLOW: "Buffer to reorder today",
   RESCHEDULE_IN: "Incoming order needed sooner", RESCHEDULE_OUT: "Incoming order could come later", RECEIPT_NOT_NEEDED: "Incoming order not needed", NO_VALID_SOURCE: "No way to supply", BELOW_SAFETY_STOCK: "Below safety stock",
   EXCESS_STOCK: "Above maximum stock", SHELF_LIFE_RISK: "May expire", CAPACITY_OVERLOAD: "Over capacity",
   CAPACITY_OVERTIME: "Overtime needed", CAPACITY_DAY_OVERLOAD: "Over capacity on a day", SUPPLIER_CAPACITY: "Supplier over capacity", LANE_CAPACITY: "Lane over capacity",

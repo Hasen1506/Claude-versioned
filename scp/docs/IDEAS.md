@@ -52,7 +52,7 @@ Found while backtesting the engine against the S/4HANA supply-chain guide (8 Oct
 - **A rescheduling horizon (§8.1) (built, ENTERPRISE_PLAN 2.1).** MRP pulls a firm receipt in only when a new order could not arrive sooner, so a PO
   due a week late is duplicated by a new PR (now reported as RECEIPT_NOT_NEEDED). Within a horizon per product, propose
   "reschedule in" first and create new supply only beyond it. Plan-changing: needs a documented differential entry.
-- **DDMRP as a planning type, not only an analysis (§8.7 pitfall).** `ddmrp_buffer` sizes zones and a net-flow
+- **DDMRP as a planning type, not only an analysis (§8.7 pitfall) (built, ENTERPRISE_PLAN 2.4).** `ddmrp_buffer` sizes zones and a net-flow
   recommendation on the inventory page, but MRP still plans the same item by net requirements: the two competing signals
   the guide warns about. An MRP type `ddmrp` would let the buffer (TOG − NFP when NFP ≤ TOY) drive the planned orders,
   with buffer-status (red/yellow) items in the inbox.

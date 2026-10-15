@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import copy
 import math
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -522,6 +522,85 @@ def test_ddmrp_net_flow_counts_what_released_orders_reserve_regression():
     row = next(r for r in run_inventory(make_ds(d), time_limit=5).ddmrp if r.product == "B")
     assert row.qualified_demand == pytest.approx(40)
     assert row.nfp == pytest.approx(100 + row.open_supply - 40)
+
+
+def steady(on_hand: float, mrp_type: str = "ddmrp") -> dict:
+    """The zone-math case planned: 10 a day for six weeks, a 10-day purchase lead time, weekly CV 0.2, so the buffer is
+    TOR 87.5, TOY 187.5, TOG 257.5 (``test_ddmrp_zone_math_by_hand``)."""
+    d = buy(on_hand=on_hand, lt=10, bucket="week", mrp_type=mrp_type, safety_stock={"demand_cv": 0.2})
+    for i in range(42):
+        dem(d, (date(2026, 1, 5) + timedelta(days=i)).isoformat(), 10)
+    return d
+
+
+def test_ddmrp_mrp_type_lets_the_buffer_place_the_orders():
+    """ENTERPRISE_PLAN 2.4, §8.7: with MRP type ddmrp the net flow position, not the net requirements, decides. 200 on
+    hand: 5 Jan NFP 190 (green, no order); 6 Jan NFP 180 ≤ TOY 187.5 → order TOG − NFP = 77.5 (78 whole) that day,
+    arriving 16 Jan. Supply is now 278: 13 Jan NFP 188 (no order), 14 Jan NFP 178 → 79.5 (80). Planned by its
+    requirements instead, the same stock lasts to 25 Jan and MRP orders 10 at a time from 15 Jan: two signals that
+    disagree, the pitfall the guide names. The red zone stands in for safety stock in the projection."""
+    res = plan(steady(200))
+    o = orders(res)
+    assert [(x.start_date.isoformat(), x.available_date.isoformat(), x.qty) for x in o[:2]] == [
+        ("2026-01-06", "2026-01-16", 78), ("2026-01-14", "2026-01-24", 80)]
+    [node] = [n for n in res.nodes if n.product == "B"]
+    assert node.buckets[0].safety_stock == pytest.approx(87.5)
+    assert "DDMRP buffer: red to 87.5, yellow to 187.5, green to 257.5" in node.safety_stock_note
+    assert not {"BUFFER_RED", "BUFFER_YELLOW"} & set(codes(res))     # green on the first day
+    mrp = orders(plan(steady(200, "deterministic")))
+    assert (mrp[0].start_date.isoformat(), mrp[0].qty) == ("2026-01-15", 10)
+
+
+def test_ddmrp_red_and_yellow_buffers_go_to_the_inbox_and_agree_with_the_inventory_screen():
+    """§8.7 buffer status: 50 on hand, NFP on 5 Jan 40 ≤ TOR 87.5: red, order 217.5 (218) today and expedite; 120 on
+    hand: NFP 110, yellow, order 147.5 (148). The inventory screen's DDMRP row for the same day shows the same zone and
+    the same order, so the advice and the plan are one signal."""
+    for oh, code, zone, qty in ((50, "BUFFER_RED", "red", 218), (120, "BUFFER_YELLOW", "yellow", 148)):
+        d = steady(oh)
+        res = plan(d)
+        first = orders(res)[0]
+        assert (first.start_date.isoformat(), first.qty) == (START, qty)
+        [e] = [e for e in res.exceptions if e.code in ("BUFFER_RED", "BUFFER_YELLOW")]
+        assert (e.code, e.severity, e.order_id, e.qty) == (code, "warning", first.id, qty)
+        assert f"net flow position {oh - 10:,.1f}" in e.message
+        row = next(r for r in run_inventory(Dataset.model_validate(d), time_limit=5).ddmrp if r.product == "B")
+        assert (row.positioned, row.zone, math.ceil(row.order_qty)) == (True, zone, qty)
+    from scp.tower.worklist import CATEGORY
+    assert CATEGORY["BUFFER_RED"] == CATEGORY["BUFFER_YELLOW"] == "orders"
+
+
+def test_ddmrp_a_spike_inside_the_decoupled_lead_time_is_qualified_demand():
+    """§8.7 qualified demand: an order of 150 on 12 Jan is over the spike threshold (0.5 × TOR) and inside the 10-day
+    DLT, so on 5 Jan it already counts: NFP 200 − 10 − 150 = 40, red, and the buffer orders on the first day. The same
+    150 on 25 Jan is outside the DLT on 5 Jan: NFP 190, under this bigger buffer's TOY but over its TOR, so yellow. The
+    buffer itself is the formula's for the
+    ADU these orders make (``ddmrp.size``)."""
+    d = steady(200)
+    dem(d, "2026-01-12", 150)
+    res = plan(d)
+    b = ddmrp.size((280 + 150) / 28, 10, 0.2, 0, InventorySettings())
+    assert 150 > 0.5 * b.tor
+    first = orders(res)[0]
+    assert (first.start_date.isoformat(), first.qty) == (START, math.ceil(b.tog - 40))
+    assert "BUFFER_RED" in codes(res)
+    d["demand"][-1]["date"] = "2026-01-25"
+    later = plan(d)
+    assert b.tor < 190 <= b.toy
+    [e] = [e for e in later.exceptions if e.code in ("BUFFER_RED", "BUFFER_YELLOW")]
+    assert e.code == "BUFFER_YELLOW" and "net flow position 190.0" in e.message
+    assert orders(later)[0].qty == math.ceil(b.tog - 190)
+
+
+def test_ddmrp_where_no_buffer_can_be_held_is_said():
+    """A make-to-order part has no stock to buffer: it is planned by its requirements and the readiness check says so;
+    a safety stock beside the buffer is not planned and is named too."""
+    d = steady(0)
+    d["location_products"][0]["strategy"] = "MTO"
+    assert "DDMRP_NOT_A_BUFFER" in [i.code for i in validate(Dataset.model_validate(d))]
+    d = steady(0)
+    d["location_products"][0]["safety_stock"] = {"method": "fixed", "qty": 30, "demand_cv": 0.2}
+    assert "DDMRP_SAFETY_STOCK" in [i.code for i in validate(Dataset.model_validate(d))]
+    assert plan(d).nodes[0].buckets[0].safety_stock == pytest.approx(87.5)
 
 
 # ================================================================================================ §7.1 classic ATP

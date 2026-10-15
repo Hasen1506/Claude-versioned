@@ -54,9 +54,10 @@ def build() -> dict:
             {"location": "PLANT", "product": "SUGAR", "phantom": True},                        # bought, not made
             {"location": "DC", "product": "JAM", "on_hand": 40},
             {"location": "DC", "product": "JAM", "on_hand": 50, "strategy": "MTO"},              # maintained twice
-            {"location": "DC", "product": "GIFT"},
+            {"location": "DC", "product": "GIFT", "mrp_type": "ddmrp",                        # a buffer and a safety stock
+             "safety_stock": {"method": "fixed", "qty": 5}},
             {"location": "CUST", "product": "JAM", "on_hand": 20},
-            {"location": "PLANT", "product": "LABEL", "strategy": "MTO"},
+            {"location": "PLANT", "product": "LABEL", "strategy": "MTO", "mrp_type": "ddmrp"},  # no stock to buffer
         ],
         "resources": [
             {"id": "KETTLE", "location": "PLANT"}, {"id": "KETTLE", "location": "PLANT", "units": 2},
@@ -160,6 +161,7 @@ WARNINGS = {
     ("FIXED_SOURCE_TWICE", "purchasing_source", "PU-SUGAR-2"), ("OPEN_PO_BLOCKED_SUPPLIER", "vendor", "SUP-OLD"), ("QUOTA_SUM", "location_product", "PLANT/SUGAR"),
     ("RESOURCE_UNUSED", "resource", "OLD-OVEN"), ("SHELF_LIFE_VS_LEAD_TIME", "location_product", "PLANT/FRUIT"),
     ("SOURCE_NOT_VALID_IN_HORIZON", "purchasing_source", "PU-JAR"),
+    ("DDMRP_NOT_A_BUFFER", "location_product", "PLANT/LABEL"), ("DDMRP_SAFETY_STOCK", "location_product", "DC/GIFT"),
     ("SS_AND_SAFETY_TIME", "location_product", "PLANT/JAM"), ("STOCK_AT_CUSTOMER", "location_product", "CUST/JAM"),
     ("STOCK_NOT_SYNCED", "location_product", "PLANT/FRUIT"), ("STOCK_EXPIRED", "location_product", "PLANT/FRUIT"),
     ("BATCH_UNKNOWN", "movement", "GM-3"), ("SERIALS_COUNT", "movement", "GM-3"),

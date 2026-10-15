@@ -93,6 +93,7 @@ class MrpType(str, Enum):
     DETERMINISTIC = "deterministic"   # SAP PD
     REORDER_POINT = "reorder_point"   # SAP VB
     NONE = "none"                     # SAP ND — projected, never replenished
+    DDMRP = "ddmrp"                   # SAP D1 — a DDMRP buffer: the net flow position decides the orders
 
 
 class ProcurementType(str, Enum):

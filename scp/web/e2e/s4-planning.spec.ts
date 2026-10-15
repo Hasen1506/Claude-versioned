@@ -104,3 +104,35 @@ test('firming type 4: nothing planned inside the fence, and the shortage is said
   await page.goto('/#/plan');
   await expect(page.getByText('1 product short inside the freeze window')).toBeVisible({timeout:45_000});
 });
+
+// 2.4 (§8.7): a casing positioned as a DDMRP buffer (10 a day, 10 days to buy, weekly CV 0.2: TOR 87.5, TOY 187.5,
+// TOG 257.5) with 120 on hand. As advice only the screen says so; once the buffer plans the orders, the plan buys
+// TOG − NFP = 147.5 (148 whole) today and the Problems list asks for it
+test('DDMRP buffer: from advice beside MRP to the buffer placing the orders',async({page})=>{
+  const buffered={...lateCasing,settings:{...lateCasing.settings,company_name:'Buffered Casing Pumps',bucket:'week'},
+    calendars:[{id:'CAL',workdays:[0,1,2,3,4,5,6]}],receipts:[],
+    location_products:[{location:'PUNE',product:'CASING',on_hand:120,ddmrp_buffer:true,safety_stock:{demand_cv:0.2}}],
+    purchasing_sources:[{...lateCasing.purchasing_sources[0],lead_time_days:10}],
+    demand:Array.from({length:42},(_,i)=>({id:`SO-${i+1}`,location:'PUNE',product:'CASING',kind:'sales_order',qty:10,
+      date:new Date(Date.UTC(2026,0,5+i)).toISOString().slice(0,10)}))};
+  await imported(page,'Buffered Casing Pumps',buffered);
+  await page.goto('/#/inventory/ddmrp');
+  await page.getByRole('button',{name:'Recalculate',exact:true}).click();
+  const row=page.getByRole('row').filter({hasText:'Pump casing'});
+  await expect(row).toContainText('yellow',{timeout:45_000});
+  await expect(row).toContainText(/110yellow.*148/);       // NFP 110, order 148 (147.5 in whole casings)
+  await expect(page.getByText('Advice only')).toBeVisible();
+
+  await page.getByLabel('Let the buffer of Pump casing at Pune plant place the orders').check();
+  await expect(page.getByText('Advice only')).toHaveCount(0);
+
+  await page.goto('/#/material/CASING/PUNE');
+  const again=page.getByRole('button',{name:'Plan again',exact:true});
+  const planned=page.getByRole('row').filter({hasText:/Planned purchase PR-/});
+  await expect(again.or(planned.first())).toBeVisible({timeout:45_000});
+  if(await again.isVisible()) await again.click();
+  await expect(planned.first()).toContainText('Mon 5 Jan',{timeout:45_000});
+  await expect(planned.first()).toContainText('148');
+  await page.goto('/#/plan');
+  await expect(page.getByText('1 buffer to reorder today')).toBeVisible({timeout:45_000});
+});

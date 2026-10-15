@@ -475,10 +475,26 @@ Thursday 15 January) and the customer's 120 on Monday the 12th.
   10th; goods delivered on Saturday the 10th with two days of goods receipt are there on Tuesday the 13th instead of
   Monday the 12th).
 
+ENTERPRISE_PLAN 2.4, in a browser and through the engine: the casing bought with 10 days' lead time, used 10 a day
+for six weeks, weekly CV 0.2, so its buffer is red to 87.5, yellow to 187.5 and green to 257.5.
+
+* *A buffer that places the orders* (input: *Positioned* on *Supply → Buffers → DDMRP buffers*, then *Plans the
+  orders*, which sets MRP type ddmrp, also offered on the *Ordering* view as "Demand-driven buffer (D1)"; processing:
+  on every day the net flow position can move, on hand plus open supply less what is due and the spikes inside the
+  decoupled lead time, and an order of top of green less NFP that day when it is at or under the top of yellow;
+  output: with 120 on hand, positioned but planned by requirements, the screen says *Advice only* while the row says
+  yellow, order 148; ticked, the plan buys 148 on Monday 5 January, the Problems list says "1 buffer to reorder today",
+  and the red zone is the safety stock the projection shows). With 200 on hand the first order is 78 on the 6th and
+  the next 80 on the 14th, where planning by requirements orders 10 a day from the 15th. 50 on hand is *Buffer in the
+  red*: order 218 today and expedite. A part made to order cannot hold a buffer, and a safety stock beside one is not
+  planned: the readiness check names both.
+
 | # | Found | Severity | Outcome |
 |---|---|---|---|
 | N183 | Only one firming rule existed: a plant that must not get automatic orders inside its fence got them moved to the fence end anyway, and nothing was firmed as the fence moved over the plan (§8.5). | Serious | **Fixed.** Firming types 1–4 on the product or MRP group; 2 and 4 plan nothing inside the fence and report the shortage; 1 and 2 firm the fence's orders at the roll, as last week's plan had them. The default, 3, is how the fence behaved before (its description called it type 1, which it was not: nothing was firmed). |
 | N184 | The planning time fence and goods-receipt time counted calendar days, so a Friday receipt with two days of goods receipt was available on Sunday. | Minor | **Fixed** for companies that count working days: new companies do; saved companies keep calendar days until the setting is switched on (it moves their dates). |
+| N186 | A DDMRP buffer only advised: its zones and order showed on the buffer screen while MRP planned the same part by net requirements, two signals that disagree (§8.7 pitfall). | Serious | **Fixed.** MRP type ddmrp (S/4 D1): the buffer's net flow places the planned orders, red and yellow buffers go to the Problems list and the inbox, and the buffer screen marks a positioned part still planned by requirements as advice only. Other MRP types plan as before. |
+| N187 | The red and yellow buffer situations pointed to "Inventory → DDMRP buffers", a name the navigation does not use. | Minor | **Fixed** before it shipped: "Supply → Buffers → DDMRP buffers". |
 | N185 | Automatic firming at the roll first firmed an order on time for the 16th as one moved to the new fence end, the 19th: the plan is worked out afresh, so the order last week had was gone. | Serious | **Fixed** before it shipped: the rolled company is planned with each fence ending where it ended last week, and what starts inside the new fence is firmed. |
 
 | # | Found | Severity | Outcome |

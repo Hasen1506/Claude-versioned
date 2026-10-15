@@ -7034,7 +7034,7 @@ export interface components {
          * MrpType
          * @enum {string}
          */
-        MrpType: "deterministic" | "reorder_point" | "none";
+        MrpType: "deterministic" | "reorder_point" | "none" | "ddmrp";
         /**
          * NegativeStock
          * @description What happens when a posting would take stock below zero (R17).

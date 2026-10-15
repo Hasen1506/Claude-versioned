@@ -103,7 +103,7 @@ const ENUM_LABEL: Record<string, string> = {
   unrestricted: "Unrestricted", quality: "In quality inspection", status: "stock change",
   reefer: "Refrigerated truck",
   any: "Made here or got from outside", make: "Made here only (in-house)", external: "Bought or shipped in only (external)",
-  deterministic: "Plan to requirements (PD)", reorder_point: "Reorder point (VB)", none: "None",
+  deterministic: "Plan to requirements (PD)", reorder_point: "Reorder point (VB)", ddmrp: "Demand-driven buffer (D1)", none: "None",
   MTS: "Make to stock, orders don't consume the forecast (10)", MTS_CONSUME: "Make to stock, orders consume the forecast (40)",
   MTO: "Make to order (20)", ATO: "Assemble to order (50)",
   L4L: "Lot for lot: exactly what is needed", FIXED: "Fixed lot size", EOQ: "Economic order quantity",
