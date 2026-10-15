@@ -213,22 +213,30 @@ function MaterialPage({ ds, prod, loc, tab }: { ds: Dataset; prod: string; loc: 
 }
 
 // ------------------------------------------------------------------------------------------------
-interface Element { date: string; kind: "stock" | "in" | "out"; what: string; detail?: string; qty: number; link?: string[] }
+interface Element { date: string; kind: "stock" | "in" | "out"; what: string; detail?: string; qty: number; link?: string[]; held?: string }
 
 /** Every receipt and requirement of the node, by date (MD04). */
 function elements(ds: Dataset, plan: PlanResult, reqs: Requirement[], prod: string, loc: string, nm: ReturnType<typeof useNames>): Element[] {
   const out: Element[] = [];
   const node = plan.nodes.find((n) => n.location === loc && n.product === prod);
   const start = ds.settings.planning_start;
+  // sales-order stock (S/4 segments): stock and firm orders held for one order, with that order's requirements
+  const heldStock = ((ds.location_products ?? []).find((x) => x.location === loc && x.product === prod)?.order_stock ?? [])
+    .filter((h) => h.qty > 1e-9);
+  const forOrder = new Map((ds.receipts ?? []).filter((x) => x.sales_order && x.location === loc && x.product === prod)
+    .map((x) => [x.id, x.sales_order as string]));
+  const segments = new Set([...heldStock.map((h) => h.order), ...forOrder.values()]);
   if (node && node.on_hand) out.push({ date: start, kind: "stock", what: "On hand today", qty: node.on_hand });
+  for (const h of heldStock) out.push({ date: start, kind: "stock", what: "In stock, held for this order", qty: h.qty, held: h.order });
   for (const r of plan.receipts) if (r.location === loc && r.product === prod)
-    out.push({ date: r.date, kind: "in", what: `Firm ${r.kind} order ${r.id}`, qty: r.qty });
+    out.push({ date: r.date, kind: "in", what: `Firm ${r.kind} order ${r.id}`, qty: r.qty, held: forOrder.get(r.id) });
   const byId = new Map(plan.orders.map((o) => [o.id, o]));
   for (const o of plan.orders) {
     if (o.location === loc && o.product === prod) {
       const from = o.kind === "transfer" && o.origin ? ` from ${nm.loc(o.origin)}` : o.kind === "buy" && o.origin ? ` from ${nm.loc(o.origin)}` : "";
       out.push({ date: o.available_date, kind: "in", what: `Planned ${ORDER_LABEL[o.kind]?.toLowerCase() ?? o.kind} ${o.id}${from}`,
-        detail: `starts ${day(o.start_date)}${o.start_in_past ? " — should already have started" : ""}`, qty: o.qty, link: ["plan", "orders", o.id] });
+        detail: `starts ${day(o.start_date)}${o.start_in_past ? " — should already have started" : ""}${o.sales_order ? ` · for ${o.sales_order}` : ""}`,
+        qty: o.qty, link: ["plan", "orders", o.id], held: o.sales_order && segments.has(o.sales_order) ? o.sales_order : undefined });
     }
     if (o.kind === "make" && o.location === loc && o.product !== prod) {
       const ps = (ds.production_sources ?? []).find((x) => x.id === o.source_id);
@@ -245,8 +253,9 @@ function elements(ds: Dataset, plan: PlanResult, reqs: Requirement[], prod: stri
       : r.kind === "transfer" && parent ? `Shipped to ${nm.loc(parent.location)} (${parent.id})`
       : r.kind === "dependent" || r.kind === "transfer" ? `${KIND[r.kind]} ${r.parent_order ?? ""}`
       : r.kind === "expiry" ? `Batch ${r.id.split(":").pop()} expires unused` : KIND[r.kind] ?? r.kind;
-    out.push({ date: r.date, kind: "out", what, detail: r.past_due ? "overdue: due before today" : undefined, qty: -r.qty,
-      link: parent ? ["plan", "orders", parent.id] : undefined });
+    const so = r.kind === "sales_order" ? r.id.replace(/^D:/, "").split("~")[0] : undefined;
+    out.push({ date: r.date, kind: "out", what: so ? `${what} ${so}` : what, detail: r.past_due ? "overdue: due before today" : undefined, qty: -r.qty,
+      link: parent ? ["plan", "orders", parent.id] : undefined, held: so && segments.has(so) ? so : undefined });
   }
   const rank = { stock: 0, in: 1, out: 2 };
   return out.sort((a, b) => a.date.localeCompare(b.date) || rank[a.kind] - rank[b.kind]);
@@ -269,7 +278,13 @@ function StockList({ ds, plan, prod, loc }: { ds: Dataset; plan: PlanResult | nu
   const ss = node?.buckets[0]?.safety_stock ?? 0;
   const ex = plan.exceptions.filter((e) => e.location === loc && e.product === prod && e.severity !== "info");
   let bal = 0;
-  const rows = els.map((e) => { bal += e.qty; return { ...e, bal }; });
+  const rows = els.filter((e) => !e.held).map((e) => { bal += e.qty; return { ...e, bal }; });
+  const held = new Map<string, (Element & { bal: number })[]>();
+  for (const e of els) if (e.held) {
+    const g = held.get(e.held) ?? [];
+    g.push({ ...e, bal: (g.at(-1)?.bal ?? 0) + e.qty });
+    held.set(e.held, g);
+  }
   const low = rows.find((r) => r.bal < -1e-6);
   return (
     <div className="stack">
@@ -297,6 +312,24 @@ function StockList({ ds, plan, prod, loc }: { ds: Dataset; plan: PlanResult | nu
                 <td className={`num ${r.bal < -1e-6 ? "neg" : r.bal < ss - 1e-6 ? "warnc" : ""}`}><b>{qty(r.bal)}</b></td>
               </tr>
             ))}</tbody>
+          </table>
+        </div>
+      </Panel>}
+      {node && tr.data && held.size > 0 && <Panel flush title={`Held for sales orders (${held.size})`}>
+        <p className="small muted" style={{ margin: "8px 12px" }}>Stock and firm orders made or bought for one customer order are that order's alone:
+          they are not in the free stock above, and nothing else is planned, promised or shipped from them.</p>
+        <div className="table-wrap">
+          <table className="t">
+            <thead><tr><th>Order</th><th>Date</th><th>What</th><th className="num">In / out</th><th className="num">Held after</th></tr></thead>
+            <tbody>{[...held.entries()].flatMap(([so, g]) => g.map((r, i) => (
+              <tr key={`${so}-${i}`}>
+                <td>{i === 0 ? <b>{so}</b> : ""}</td>
+                <td className="nowrap">{day(r.date)}</td>
+                <td>{r.link ? <a href={href(...r.link)}>{r.what}</a> : r.what}{r.detail && <div className="faint small">{r.detail}</div>}</td>
+                <td className={`num ${r.qty < 0 ? "" : "pos"}`}>{r.qty > 0 ? "+" : ""}{qty(r.qty)}</td>
+                <td className={`num ${r.bal < -1e-6 ? "neg" : ""}`}><b>{qty(r.bal)}</b></td>
+              </tr>
+            )))}</tbody>
           </table>
         </div>
       </Panel>}

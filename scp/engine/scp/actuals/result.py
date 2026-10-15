@@ -35,6 +35,7 @@ class StockRow(Out):
     lots: list[LotRow] = []               # by batch and stock type (only when there is more than plain unrestricted)
     serials: list[str] = []               # serial numbers here
     in_transit: float = 0.0               # shipped to this place on a transfer and not yet received
+    held: dict[str, float] = {}           # held for sales orders (sales-order stock), by order: not in the figures above
     planning_stock: float | None = None   # what the plan starts from: usable stock before the as-of date (None: no movements)
     counting: str | None = None           # an open physical inventory document that counts it
 

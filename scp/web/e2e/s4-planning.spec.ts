@@ -138,3 +138,36 @@ test('DDMRP buffer: from advice beside MRP to the buffer placing the orders',asy
   await page.goto('/#/plan');
   await expect(page.getByText('1 buffer to reorder today')).toBeVisible({timeout:45_000});
 });
+
+// 2.5 (§16.2): casings bought to order. PO-1 (50, due 14 Jan) was bought for SO-1 (20 Jan); SO-2 wants 50 on the 12th,
+// and a new order takes 10 days. 20 casings in stock are held for SO-3. Free, PO-1 would go to SO-2; held, it stays
+// with SO-1, the plan buys for SO-2, the promise says SO-1 is served from what is held for it, and the stock page
+// shows the held 20 apart from the free stock
+test('sales-order stock: supply held for one order is planned, promised and shown for it alone',async({page})=>{
+  const mto={...lateCasing,settings:{...lateCasing.settings,company_name:'Bespoke Casing Pumps'},
+    location_products:[{location:'PUNE',product:'CASING',on_hand:0,strategy:'MTO',order_stock:[{order:'SO-3',qty:20}]}],
+    purchasing_sources:[{...lateCasing.purchasing_sources[0],lead_time_days:10}],
+    demand:[{id:'SO-1',location:'PUNE',product:'CASING',date:'2026-01-20',qty:50,kind:'sales_order'},
+      {id:'SO-2',location:'PUNE',product:'CASING',date:'2026-01-12',qty:50,kind:'sales_order'},
+      {id:'SO-3',location:'PUNE',product:'CASING',date:'2026-01-22',qty:20,kind:'sales_order'}],
+    receipts:[{id:'PO-1',kind:'purchase',location:'PUNE',product:'CASING',qty:50,due_date:'2026-01-14',source:'PIR-CASING',sales_order:'SO-1'}],
+    promising:{include_planned_orders:false,confirm_beyond_rlt:false,ctp:false}};
+  await imported(page,'Bespoke Casing Pumps',mto);
+  await page.goto('/#/material/CASING/PUNE');
+  // the free stock: SO-2 is 50 short on the 12th (the 20 held for SO-3 do not soften it), and bought for
+  await expect(page.getByText('Stock runs out on Mon 12 Jan (-50)')).toBeVisible({timeout:45_000});
+  await expect(page.getByRole('row').filter({hasText:/Planned purchase PR-/})).toContainText('for SO-2');
+  await expect(page.getByText('Incoming order needed sooner')).toHaveCount(0);
+  // what is held, order by order
+  const held=page.locator('.panel',{has:page.getByRole('heading',{name:'Held for sales orders (2)'})});
+  await expect(held.getByRole('row').filter({hasText:'Firm purchase order PO-1'})).toContainText('+50');
+  await expect(held.getByRole('row').filter({hasText:'Customer order SO-1'})).toContainText('-50');
+  await expect(held.getByRole('row').filter({hasText:'In stock, held for this order'})).toContainText('SO-3');
+
+  await page.goto('/#/promise/orders/SO-1');
+  const why=page.getByRole('list',{name:'Why this date'});
+  await expect(why).toContainText('Firm receipt PO-1 brings 50 to Pune plant, held for this order',{timeout:45_000});
+
+  await page.goto('/#/execution');
+  await expect(page.getByText('20 held for SO-3')).toBeVisible({timeout:45_000});
+});

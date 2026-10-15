@@ -85,6 +85,14 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
           actions: [{ label: "Change the firming type (planning policies)", to: href("data", "location_products") }],
         };
         break;
+      case "ORDER_STOCK_LEFT":
+        s = {
+          title: `${plural(l.length, "product")} held for an order that no longer needs it`,
+          why: "Stock or a firm order was made or bought for one sales order, and that order now needs less (or nothing). No other order may use it while it is held: move it to free stock, or change or cancel the firm order it came on.",
+          items: l.map((e) => ({ label: `${n(e.qty)} ${where(e)}`, detail: e.message.split(":")[0], to: node(e) })),
+          actions: [{ label: "See the stock (Stock & actuals)", to: href("execution") }],
+        };
+        break;
       case "BUFFER_RED":
         s = {
           title: `${plural(l.length, "buffer")} in the red`,
@@ -312,7 +320,7 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
 /** A short plain name for an exception code from any page (the code itself stays visible for analysts). */
 const CODE_LABEL: Record<string, string> = {
   DEMAND_AT_RISK: "Demand late or short", START_IN_PAST: "Should already have started", FENCE_SHIFT: "Moved out of the freeze window", FENCE_SHORTAGE: "Short inside the freeze window",
-  BUFFER_RED: "Buffer in the red", BUFFER_YELLOW: "Buffer to reorder today",
+  ORDER_STOCK_LEFT: "Held for an order that no longer needs it", BUFFER_RED: "Buffer in the red", BUFFER_YELLOW: "Buffer to reorder today",
   RESCHEDULE_IN: "Incoming order needed sooner", RESCHEDULE_OUT: "Incoming order could come later", RECEIPT_NOT_NEEDED: "Incoming order not needed", NO_VALID_SOURCE: "No way to supply", BELOW_SAFETY_STOCK: "Below safety stock",
   EXCESS_STOCK: "Above maximum stock", SHELF_LIFE_RISK: "May expire", CAPACITY_OVERLOAD: "Over capacity",
   CAPACITY_OVERTIME: "Overtime needed", CAPACITY_DAY_OVERLOAD: "Over capacity on a day", SUPPLIER_CAPACITY: "Supplier over capacity", LANE_CAPACITY: "Lane over capacity",

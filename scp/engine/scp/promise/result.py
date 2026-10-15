@@ -59,6 +59,7 @@ class OrderPromise(Out):
     unconfirmed: float = 0.0
     status: Literal["on_time", "late", "partial", "unconfirmed"] = "unconfirmed"
     allocation_capped: float = 0.0   # what the allocation withheld on the requested date
+    held: bool = False               # promised (in part) from stock or orders held for this order alone
     ctp: list[CtpStep] = Field(default_factory=list)
     previous: list[ScheduleLine] = Field(default_factory=list)
     change: Literal["new", "kept", "gained", "lost", "changed", "unchanged"] = "new"

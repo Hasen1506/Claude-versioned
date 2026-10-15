@@ -104,6 +104,9 @@ class ScheduledReceipt(Model):
                                                "needed, planning counts it where it is needed and reports the delay "
                                                "instead of adding an order in front of it")
     po: str | None = Field(None, max_length=64, description="Purchase: the purchase order (header) this line is on")
+    sales_order: str | None = Field(None, max_length=64,
+                                    description="Made or bought for this sales order (S/4 sales-order stock): planned, "
+                                                "promised and issued only to it, and held for it once received")
     planned_as: str | None = Field(None, max_length=64,
                                    description="The planned order it was firmed from (for reference: planned numbers "
                                                "are handed out again on every plan)")

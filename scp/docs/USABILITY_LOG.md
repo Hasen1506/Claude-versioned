@@ -489,10 +489,28 @@ for six weeks, weekly CV 0.2, so its buffer is red to 87.5, yellow to 187.5 and 
   red*: order 218 today and expedite. A part made to order cannot hold a buffer, and a safety stock beside one is not
   planned: the readiness check names both.
 
+ENTERPRISE_PLAN 2.5, in a browser and through the engine: pump casings bought to order at Pune, 10 days to buy. PO-1
+for 50, due Wednesday 14 January, was bought for SO-1 (50 on Tuesday the 20th); SO-2 wants 50 on Monday the 12th; 20
+casings in stock are held for SO-3 (Thursday the 22nd).
+
+* *Held for one order* (input: *Held for sales order* on the firm order, or stock held for an order; a requisition or
+  production order planned for one customer order of a made-to-order product carries that order when it is firmed;
+  processing: what is held for an order goes to that order first and to no other, in planning, promising and the
+  journal; output: free, PO-1 went to SO-2 with "expedite it by 2 d" and SO-1 got a new requisition; held, PO-1 stays
+  with SO-1, the plan buys for SO-2 (*Planned purchase … for SO-2*), the product's list shows the free stock running
+  out on the 12th at −50 and, below it, *Held for sales orders* order by order; SO-1's *Why this date* says "Firm
+  receipt PO-1 brings 50 to Pune plant, held for this order"; *Stock & actuals* shows "20 held for SO-3" beside the
+  free stock). Received, PO-1 goes into stock held for SO-1, starting the week puts it there in the plan, and SO-1's
+  delivery takes it from there; cut SO-1 to 30 and the plan says 20 are held for an order that no longer needs them.
+  A held order due after its order is due is to be expedited, with nothing else planned in front of it.
+
 | # | Found | Severity | Outcome |
 |---|---|---|---|
 | N183 | Only one firming rule existed: a plant that must not get automatic orders inside its fence got them moved to the fence end anyway, and nothing was firmed as the fence moved over the plan (§8.5). | Serious | **Fixed.** Firming types 1–4 on the product or MRP group; 2 and 4 plan nothing inside the fence and report the shortage; 1 and 2 firm the fence's orders at the roll, as last week's plan had them. The default, 3, is how the fence behaved before (its description called it type 1, which it was not: nothing was firmed). |
 | N184 | The planning time fence and goods-receipt time counted calendar days, so a Friday receipt with two days of goods receipt was available on Sunday. | Minor | **Fixed** for companies that count working days: new companies do; saved companies keep calendar days until the setting is switched on (it moves their dates). |
+| N188 | Make-to-order supply could be taken by another order: a PO bought for one customer order was expedited for an earlier one, and the first got a new order (§16.2, §9.2). | Serious | **Fixed.** Sales-order stock: firm orders and stock held for one sales order, planned, promised and issued only to it; firming carries the order from the plan; the journal keeps held stock apart from free stock. Companies without held supply plan as before. |
+| N189 | The product's running list counted stock held for another order as available, so a shortage of 50 read as 30. | Minor | **Fixed** before it shipped: the list and the plan's projection are the free stock; what is held is shown order by order below it. |
+| N190 | Stock planned to expire was left out of the requirements once held supply was taken out of netting. | Minor | **Fixed** before it shipped (a test caught it): requirements added while a product is being netted join both lists. |
 | N186 | A DDMRP buffer only advised: its zones and order showed on the buffer screen while MRP planned the same part by net requirements, two signals that disagree (§8.7 pitfall). | Serious | **Fixed.** MRP type ddmrp (S/4 D1): the buffer's net flow places the planned orders, red and yellow buffers go to the Problems list and the inbox, and the buffer screen marks a positioned part still planned by requirements as advice only. Other MRP types plan as before. |
 | N187 | The red and yellow buffer situations pointed to "Inventory → DDMRP buffers", a name the navigation does not use. | Minor | **Fixed** before it shipped: "Supply → Buffers → DDMRP buffers". |
 | N185 | Automatic firming at the roll first firmed an order on time for the 16th as one moved to the new fence end, the 19th: the plan is worked out afresh, so the order last week had was gone. | Serious | **Fixed** before it shipped: the rolled company is planned with each fence ending where it ended last week, and what starts inside the new fence is firmed. |

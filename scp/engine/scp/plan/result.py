@@ -50,6 +50,7 @@ class PlannedOrder(Out):
     wanted_start: dt.date | None = None   # start in the past: when it should have started to arrive in time
     fence_shifted: bool = False
     convertible: bool = True      # False: ATO forecast-driven FG supply
+    sales_order: str | None = None   # made to order for this sales order: firmed with it (sales-order stock)
     unit_cost: float = 0.0
     total_cost: float = 0.0
     costs: dict[str, float] = {}  # total_cost by category (purchase, production, setup, ordering, transport, handling)

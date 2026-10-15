@@ -83,7 +83,7 @@ recorded only.
   working days before the PO date; a PO placed today does not wait for it again.
 - **Schedule adherence counts orders still open past their week (built).** §18.2: finished in the planned period ÷
   orders *planned*; the KPI divided by closed orders only, so a plant whose orders run late showed only those that made it.
-- **Sales-order stock for make to order (segment E).** §16.2: supply made for one MTO order is reserved to it and
+- **Sales-order stock for make to order (segment E) (built, ENTERPRISE_PLAN 2.5).** §16.2: supply made for one MTO order is reserved to it and
   cannot be consumed by another. Planning nets MTO anonymously (free stock first, any order's receipt); give firm
   receipts an optional sales-order assignment and peg/issue only to it. High value for job shops; large.
 - **Moving-average valuation and actual GR prices.** §12.4: stock is valued at one planned price per place (≈ price
@@ -144,7 +144,7 @@ small or mid-sized planner. None is built.
 - **Consumption mode: forward first, and windows in working days (med, S).** Orders always look back first, then
   forward (SAP mode 2). SAP also has forward-then-backward (4); and SAP counts the windows in working days, the app in
   calendar days (the field help now says so).
-- **Make-to-order stock kept apart (sales-order stock, special stock E) (med, L).** MTO orders use free stock first
+- **Make-to-order stock kept apart (sales-order stock, special stock E) (med, L) (built, ENTERPRISE_PLAN 2.5).** MTO orders use free stock first
   (by design, and the form says so); an order-specific stock segment would let a business keep customer-specific
   goods from being shipped to someone else.
 - **GR processing in working days (§17.1) (low, S).** GR days are counted in calendar days, so goods can become

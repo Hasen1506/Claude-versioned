@@ -242,8 +242,8 @@ function WhyDate({ steps }: { steps: WhyStep[] }) {
   const say = (w: WhyStep): React.ReactNode => {
     switch (w.kind) {
       case "asked": return <>Confirmed for the date the customer asked</>;
-      case "stock": return <>{qty(w.qty)} {n.prod(w.product)} in stock at {n.loc(w.location)}</>;
-      case "receipt": return <>Firm receipt <b>{w.ref}</b> brings {qty(w.qty)} to {n.loc(w.location)}</>;
+      case "stock": return <>{qty(w.qty)} {n.prod(w.product)} in stock at {n.loc(w.location)}{w.note.endsWith("held for this order") && ", held for this order"}</>;
+      case "receipt": return <>Firm receipt <b>{w.ref}</b> brings {qty(w.qty)} to {n.loc(w.location)}{w.note.endsWith("held for this order") && ", held for this order"}</>;
       case "component": return w.date ? <><b>{n.prod(w.product)}</b> is all there at {n.loc(w.location)}: <b>{w.ref}</b> waits for it</>
         : <><b>{n.prod(w.product)}</b> is not covered yet: <b>{w.ref}</b> waits for it until more is bought or made</>;
       case "planned": return <>Planned order <b>{w.ref}</b> ready with {qty(w.qty)} {n.prod(w.product)} at {n.loc(w.location)}</>;

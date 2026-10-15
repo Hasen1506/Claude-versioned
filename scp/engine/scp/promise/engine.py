@@ -85,6 +85,11 @@ class Promiser:
         # what flows into each node's supply picture and when: (day, kind, ref, qty), for "why this date"
         self.sources: dict[Node, list[tuple[int, str, str, float]]] = defaultdict(list)
         self._quality: dict[Node, float] | None = None
+        # sales-order stock (S/4 §16.2): stock, firm receipts and planned orders held for one sales order, which only
+        # that order may be promised from; kept out of the shared supply picture
+        self.held: dict[tuple[Node, str], AtpSeries] = {}
+        self.held_sources: dict[tuple[Node, str], list[tuple[int, str, str, float]]] = defaultdict(list)
+        self._held_built = False
         # free finite capacity per resource and day over the plan horizon (productive hours less the plan's load
         # that day), for CTP: a machine free that week but not on the days an order needs it does not confirm it
         end = max((b.end for b in plan.buckets), default=self.origin)
@@ -152,14 +157,14 @@ class Promiser:
         if self.on_hand(node) > EPS:
             self.sources[node].append((0, "stock", "", self.on_hand(node)))
         for r in ds.receipts:
-            if (r.location, r.product) == node:
+            if (r.location, r.product) == node and not r.sales_order:
                 for d, q in r.expected_parts():
                     k = self.day(gr_after(ds, r.location, r.product, d))
                     s.add_in(k, q)
                     self.sources[node].append((max(k, 0), "receipt", r.id, q))
         if self.cfg.include_planned_orders:
             for o in self.plan.orders:
-                if (o.location, o.product) == node:
+                if (o.location, o.product) == node and not o.sales_order:
                     self._add_planned(s, o)
         other = [0.0] * self.days
         for rq in self.plan.requirements:
@@ -177,6 +182,85 @@ class Promiser:
         self.series[node] = s
         self.other[node] = other
         return s
+
+    def held_for(self, node: Node, order: str | None) -> AtpSeries | None:
+        """What is held for ``order`` at ``node``: its sales-order stock, the firm receipts made or bought for it and,
+        when planned orders are in scope, the planned orders made for it. None when nothing is."""
+        if not self._held_built:
+            self._held_built = True
+            ds = self.ds
+
+            def series(key: tuple[Node, str]) -> AtpSeries:
+                if key not in self.held:
+                    self.held[key] = AtpSeries(self.days)
+                return self.held[key]
+            for lp in ds.location_products:
+                for os_ in lp.order_stock:
+                    if os_.qty > EPS:
+                        key = ((lp.location, lp.product), os_.order)
+                        series(key).add_in(0, os_.qty)
+                        self.held_sources[key].append((0, "stock", "", os_.qty))
+            for r in ds.receipts:
+                if r.sales_order:
+                    key = ((r.location, r.product), r.sales_order)
+                    for d, q in r.expected_parts():
+                        k = self.day(gr_after(ds, r.location, r.product, d))
+                        series(key).add_in(k, q)
+                        self.held_sources[key].append((max(k, 0), "receipt", r.id, q))
+            if self.cfg.include_planned_orders:
+                for o in self.plan.orders:
+                    if o.sales_order:
+                        key = ((o.location, o.product), o.sales_order)
+                        hs = series(key)
+                        before = len(self.sources[key[0]])
+                        self._add_planned(hs, o)
+                        self.held_sources[key].extend(self.sources[key[0]][before:])
+                        del self.sources[key[0]][before:]
+        return self.held.get((node, order)) if order else None
+
+    def _from_held(self, d: DemandRecord, key: str, ships: list[Ship], qty: float,
+                   res: OrderPromise) -> float:
+        """Promise an order from what is held for it, first and only to it: on the date asked when it is there by
+        then, else when it comes. Returns what is left to promise from the shared supply."""
+        for sh in ships:
+            hs = self.held_for(sh.node, key)
+            if hs is None or qty <= EPS:
+                continue
+            i = self.ship_day(sh, d.product, d.date)
+            days = sorted({i} | {k for k, *_ in self.held_sources[(sh.node, key)] if k > i})
+            if d.complete_delivery:
+                k = next((k for k in days if hs.available(k) >= qty - EPS), None)
+                days = [] if k is None else [k]
+            for k in days:
+                take = min(qty, hs.available(k))
+                if take <= EPS:
+                    continue
+                hs.add_out(k, take)
+                self.promised[sh.node][min(max(k, 0), self.days - 1)] += take
+                gi, deliv = self.outbound(sh, d.product, k)
+                deliv = max(deliv, d.date)
+                res.lines.append(ScheduleLine(ship_from=sh.node[0], ship_date=self.date(k), date=deliv, qty=take,
+                                              method="atp", on_time=deliv <= max(d.date, self.origin), goods_issue=gi))
+                res.held = True
+                qty -= take
+                if qty <= EPS:
+                    break
+        return qty
+
+    def _claim(self, d: DemandRecord, node: Node, day: int, qty: float) -> None:
+        """A line's supply as an outflow: from what is held for the order first, the rest from the shared supply
+        (a negative quantity gives it back, the shared part first)."""
+        hs = self.held_for(node, d.id)
+        if hs is not None:
+            if qty > 0:
+                part = min(qty, max(0.0, sum(hs.inflow) - sum(hs.outflow)))
+            else:
+                part = -min(-qty, sum(hs.outflow))
+            if abs(part) > EPS:
+                hs.add_out(day, part)
+                qty -= part
+        if abs(qty) > EPS:
+            self.series_for(node).add_out(day, qty)
 
     def _add_planned(self, s: AtpSeries, o) -> None:
         """A planned receipt counts on the date the plan projects it, not the date MRP wanted it: an order whose
@@ -258,7 +342,7 @@ class Promiser:
         """Give a committed schedule line's supply (and allocation) back: the inverse of :meth:`commit_line`."""
         node = (line.ship_from, d.product)
         day = self.day(line.ship_date)
-        self.series_for(node).add_out(day, -line.qty)
+        self._claim(d, node, day, -line.qty)
         self.promised[node][min(max(day, 0), self.days - 1)] -= line.qty
         allocs = self.allocations(d)
         a = self.alloc_period(allocs, day) if allocs else None
@@ -269,7 +353,7 @@ class Promiser:
         """A persisted schedule line claims its supply as an outflow."""
         node = (c.ship_from, d.product)
         day = self.day(c.ship_date)
-        self.series_for(node).add_out(day, c.qty)
+        self._claim(d, node, day, c.qty)
         self.promised[node][min(max(day, 0), self.days - 1)] += c.qty
         allocs = self.allocations(d)
         a = self.alloc_period(allocs, day) if allocs else None
@@ -280,10 +364,13 @@ class Promiser:
 
     def snapshot(self) -> tuple:
         return ({n: s.snapshot() for n, s in self.series.items()}, {n: list(v) for n, v in self.promised.items()},
-                dict(self.alloc_used), {r: list(v) for r, v in self.free.items()})
+                dict(self.alloc_used), {r: list(v) for r, v in self.free.items()},
+                {k: s.snapshot() for k, s in self.held.items()})
 
     def restore(self, snap: tuple) -> None:
-        series, promised, alloc, free = snap
+        series, promised, alloc, free, held = snap
+        for k, h in held.items():
+            self.held[k].restore(h)
         for n in list(self.series):
             if n in series:
                 self.series[n].restore(series[n])
@@ -323,7 +410,8 @@ class Promiser:
                                note=f"beyond the replenishment lead time of {self.rlt(node):g} days: supply can be "
                                     "arranged by then"))
         else:
-            before = [x for x in self.sources.get(node, []) if x[0] <= k]
+            held = self.held_sources.get((node, res.order)) if res.held else None
+            before = [x for x in (held or self.sources.get(node, [])) if x[0] <= k]
             last = max((x[0] for x in before), default=None)
             for day, kind, ref, q in (x for x in before if x[0] == last):
                 if kind == "planned" and (o := self.orders_by_id.get(ref)) is not None and o.limited_by:
@@ -335,7 +423,8 @@ class Promiser:
                 out.append(WhyStep(kind=kind, date=self.date(day), location=node[0], product=d.product, ref=ref, qty=q,
                                    note={"stock": "in stock at the start",
                                          "receipt": f"firm receipt {ref} is available",
-                                         "planned": f"planned order {ref} is ready"}[kind]))
+                                         "planned": f"planned order {ref} is ready"}[kind]
+                                   + (", held for this order" if held else "")))
                 if len(out) >= 4:
                     break
         lane = next((sh.lane for sh in self.ships(d) if sh.node == node), None)
@@ -362,7 +451,9 @@ class Promiser:
         if not ships or q <= EPS:
             return finish(res)
         allocs = self.allocations(d)
-        remaining = q
+        remaining = self._from_held(d, key, ships, q, res)
+        if remaining <= EPS:
+            return self._lead_time_reason(d, finish(res))
         # 1) on time: the first location, then alternatives (alternative-based confirmation)
         for k, sh in enumerate(ships):
             s = self.series_for(sh.node)

@@ -27,10 +27,10 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from ..model import (
-    ClosedOrder, Dataset, DemandKind, GoodsMovement, LocationProduct, MovementType, NegativeStock, RolledWeek,
-    SalesHistory, StockType,
+    ClosedOrder, Dataset, DemandKind, GoodsMovement, LocationProduct, MovementType, NegativeStock, OrderStock,
+    RolledWeek, SalesHistory, StockType,
 )
-from .lots import batch_index, lots, planning_stock
+from .lots import batch_index, lots, order_stock, planning_stock
 from .result import OrderChange, RollReport, StockChange
 from .stock import (
     EPS, _sum, accuracy_records, before, by_ref, counterparty, demand_keys, pending_openings, refresh_actuals,
@@ -75,6 +75,16 @@ def roll_forward(ds: Dataset, as_of: date) -> tuple[Dataset, RollReport]:
         lp.on_hand = after_q
         if abs(after_q - before_q) > EPS:
             rep.stock.append(StockChange(location=node[0], product=node[1], before=before_q, after=after_q))
+    # stock held for sales orders: planned, promised and issued only to its order
+    held = order_stock(movs)
+    for node in sorted(set(held) | {k for k, lp in by_key.items() if lp.order_stock}):
+        lp = by_key.get(node)
+        if lp is None:
+            lp = LocationProduct(location=node[0], product=node[1])
+            lps.append(lp)
+            by_key[node] = lp
+        lp.order_stock = [OrderStock(order=so, qty=round(q, 6)) for so, q in sorted(held.get(node, {}).items())
+                          if q > EPS]
 
     # ② firm receipts -------------------------------------------------------------------------------------
     got, g_first, g_last, g_final = _sum(movs, {MovementType.RECEIPT},
@@ -301,7 +311,7 @@ def _firm_fence(ds: Dataset, rep: RollReport, prev: date) -> tuple[Dataset, Roll
 def unrestricted(movs) -> dict[tuple[str, str], float]:
     out: dict[tuple[str, str], float] = defaultdict(float)
     for m in movs:
-        if m.stock_type is StockType.UNRESTRICTED:
+        if m.stock_type is StockType.UNRESTRICTED and m.sales_order is None:
             out[(m.location, m.product)] += m.signed
     return out
 

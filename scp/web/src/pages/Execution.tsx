@@ -219,7 +219,9 @@ function StockLine({ r, ds, asOf, onDone }: { r: StockRow; ds: Dataset; asOf: st
     <tr>
       <td>{detail && <button className="btn sm ghost" style={{ padding: "0 6px" }} onClick={() => setOpen(!open)} aria-expanded={open}
         aria-label={`Batches and stock of ${r.product} at ${r.location}`}>{open ? "▾" : "▸"}</button>}</td>
-      <td><Loc id={r.location} /></td><td><Prod id={r.product} />{r.counting && <> <Badge sev="info">counting</Badge></>}</td>
+      <td><Loc id={r.location} /></td><td><Prod id={r.product} />{r.counting && <> <Badge sev="info">counting</Badge></>}
+        {Object.entries(r.held ?? {}).map(([so, q]) => <span key={so} title={`Held for sales order ${so}: only that order may use it, and it is not in the figures beside it`}>
+          {" "}<Badge sev="info">{qty(q)} held for {so}</Badge></span>)}</td>
       <td className="num">{qty(r.master_on_hand)}{r.opening_from_setup && <> <span title="Stock entered at setup is the opening balance; starting a new week writes it into the journal"><Badge sev="info">opening</Badge></span></>}</td>
       <td className="num">{r.movement_stock === null ? <span className="faint">—</span> : qty(r.movement_stock)}</td>
       <td className="num">{Math.abs(r.difference) > 1e-6 ? <Badge sev="warning">{r.difference > 0 ? "+" : ""}{qty(r.difference)}</Badge> : <span className="faint">0</span>}

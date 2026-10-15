@@ -285,7 +285,8 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
             price, contract = price_on(ds, pu, qty, today, sa.location)
             receipts.append(ScheduledReceipt(id=lid, kind=ReceiptKind.PURCHASE, location=sa.location, product=pu.product,
                                              qty=qty, due_date=due, start_date=today, source=pu.id, po=sa_id,
-                                             price=price, planned_as=rid, contract=contract))
+                                             price=price, planned_as=rid, contract=contract,
+                                             sales_order=by_id[rid].sales_order))
             created.lines.append(lid)
             created.value += qty * price
             created.notes += notes
@@ -308,7 +309,8 @@ def create_purchase_orders(ds: Dataset, plan: PlanResult, lines: list[dict] | No
             price, contract = price_on(ds, pu, qty, today, loc)
             receipts.append(ScheduledReceipt(id=lid, kind=ReceiptKind.PURCHASE, location=loc, product=pu.product, qty=qty,
                                              due_date=due, start_date=today, source=pu.id, po=pid, price=price,
-                                             planned_as=rid, contract=contract))
+                                             planned_as=rid, contract=contract,
+                                             sales_order=by_id[rid].sales_order))
             if contract:
                 created.notes.append(f"{lid}: at {price:,.2f}, the price agreed in contract {contract}")
             created.lines.append(lid)

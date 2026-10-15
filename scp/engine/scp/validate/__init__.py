@@ -51,6 +51,8 @@ RULES: dict[str, tuple[Severity, str]] = {
     "PRODUCTION_NO_LEAD_TIME": ("warning", "Production source with neither routing nor fixed lead time"),
     "PURCHASE_ZERO_LEAD_TIME": ("warning", "Purchasing source with zero lead time"),
     "SS_AND_SAFETY_TIME": ("warning", "Safety stock and safety time both set: double buffering"),
+    "HELD_FOR_UNKNOWN_ORDER": ("warning", "Stock or a firm order held for a sales order that is not open for that "
+                                          "product: no order may use it"),
     "DDMRP_NOT_A_BUFFER": ("warning", "MRP type ddmrp where no buffer can be held: planned by requirements"),
     "DDMRP_SAFETY_STOCK": ("warning", "MRP type ddmrp with a safety stock: the red zone is the buffer, the safety stock "
                                       "is not used"),
@@ -582,7 +584,25 @@ def _lanes(ds: Dataset, c: _Collector) -> None:
                       "Enter the volume per base unit", "volume_m3")
 
 
+def _held(ds: Dataset, c: _Collector) -> None:
+    """Stock and firm orders held for a sales order (sales-order stock) must name an open sales order of the product:
+    otherwise nothing may use them, and they sit there."""
+    open_so = {(d.id, d.product) for d in ds.demand if d.kind is DemandKind.SALES_ORDER and d.id}
+    for rc in ds.receipts:
+        if rc.sales_order and (rc.sales_order, rc.product) not in open_so:
+            c.add("HELD_FOR_UNKNOWN_ORDER", "receipt", rc.id,
+                  f"{rc.id} is held for {rc.sales_order}, which is not an open sales order for {rc.product}",
+                  "Correct the sales order, or clear it so the order is free supply", "sales_order")
+    for lp in ds.location_products:
+        for os_ in lp.order_stock:
+            if os_.qty > 0 and (os_.order, lp.product) not in open_so:
+                c.add("HELD_FOR_UNKNOWN_ORDER", "location_product", f"{lp.location}/{lp.product}",
+                      f"{os_.qty:g} held for {os_.order}, which is not an open sales order for {lp.product}",
+                      "Move it to free stock (count it there), or correct the order", "order_stock")
+
+
 def _policies(ds: Dataset, c: _Collector) -> None:
+    _held(ds, c)
     for lp in ds.location_products:
         oid = f"{lp.location}/{lp.product}"
         ss = lp.safety_stock

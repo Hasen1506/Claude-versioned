@@ -79,6 +79,9 @@ class GoodsMovement(Model):
     note: str = Field("", max_length=200)
     batch: str | None = Field(None, max_length=40, description="The batch moved (batch-managed products)")
     stock_type: StockType = Field(StockType.UNRESTRICTED, description="The stock the quantity comes from or goes to")
+    sales_order: str | None = Field(None, max_length=64,
+                                    description="Stock held for this sales order (S/4 sales-order stock): received "
+                                                "for it, issued only to it")
     doc: str | None = Field(None, max_length=20, description="Material document: the movements posted together")
     reversal_of: str | None = Field(None, max_length=64, description="The movement this one takes back: its "
                                                                         "quantity counts with the opposite sign")

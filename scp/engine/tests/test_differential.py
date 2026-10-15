@@ -117,6 +117,14 @@ INTENTIONAL += [
 ]
 
 
+# ENTERPRISE_PLAN 2.5: a planned order made to order names the sales order it is for (none in these companies: the
+# random companies hold no stock or firm orders for a sales order, so only the empty field shows)
+INTENTIONAL += [
+    ("Sales-order stock: a planned order says which sales order it is made for (field)", "scp/plan/result.py",
+     ("    convertible: bool = True      # False: ATO forecast-driven FG supply\n",
+      _engine_passage("scp/plan/result.py", "    convertible: bool", "    unit_cost: float"))),
+]
+
 def _git(*args: str, cwd: Path = ENGINE) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, timeout=120)
 

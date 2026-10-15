@@ -66,6 +66,7 @@ class _Supply:
     qty: float
     avail_date: date  # physical availability
     fixed: bool = False   # a receipt dated by the detailed schedule
+    segment: str | None = None   # held for this sales order (sales-order stock): pegged only to it
 
 
 @dataclass
@@ -77,6 +78,8 @@ class _NodeState:
     targets: list[tuple[date, float]] = field(default_factory=list)   # S&OP stock targets (date, qty), by date
     ss_note: str = ""
     lead_time: float | None = None
+    fixed: list[tuple[_Supply, str, float]] = field(default_factory=list)   # sales-order stock pegged to its order
+    netted: list[Requirement] | None = None   # the requirements left once the sales orders' own supply is counted
 
 
 class _Fresh:
@@ -164,6 +167,7 @@ class _Planner:
         self.kpi = Kpis()
         self._expiring: dict[Node, list[tuple[date, float, str]]] | None = None
         self._buffers: dict | None = None
+        self._pegs_of: dict[str, list[Peg]] = defaultdict(list)   # supply id → its pegs so far
 
     # ------------------------------------------------------------------ setup
     def lp(self, node: Node) -> LocationProduct:
@@ -214,10 +218,10 @@ class _Planner:
             if rc.confirmations:        # confirmed in several deliveries: each arrives on its own day
                 for day, q in rc.expected_parts():
                     d = self._available(rc, day)
-                    st.supplies.append(_Supply("receipt", rc.id, d, q, d, rc.scheduled))
+                    st.supplies.append(_Supply("receipt", rc.id, d, q, d, rc.scheduled, rc.sales_order))
             elif rc.expected_qty > EPS:   # a supplier who confirmed less than ordered: the plan counts what is confirmed
                 d = self.receipt_date(rc)
-                st.supplies.append(_Supply("receipt", rc.id, d, rc.expected_qty, d, rc.scheduled))
+                st.supplies.append(_Supply("receipt", rc.id, d, rc.expected_qty, d, rc.scheduled, rc.sales_order))
             self._firm_load(rc)
             # what the firm order still draws from stock: components, or goods at a transfer's origin
             for rv in rc.reservations:
@@ -277,7 +281,10 @@ class _Planner:
         return [(x, qty / len(days)) for x in days]
 
     def _add_req(self, node: Node, req: Requirement) -> None:
-        self.state[node].reqs.append(req)
+        st = self.state[node]
+        st.reqs.append(req)
+        if st.netted is not None and st.netted is not st.reqs:   # added while the node is netted (stock that expires)
+            st.netted.append(req)
         self.req_by_id[req.id] = req
 
     # ------------------------------------------------------------------ safety stock
@@ -332,6 +339,12 @@ class _Planner:
         if onhand > 0:
             st.supplies.insert(0, _Supply("on_hand", f"OH:{node[0]}:{node[1]}", self.start, onhand, self.start))
             self._expiry(node, st, onhand)
+        if not self.is_customer(node):
+            for os_ in lp.order_stock:
+                if os_.qty > EPS:
+                    st.supplies.insert(0, _Supply("on_hand", f"OS:{node[0]}:{node[1]}:{os_.order}", self.start,
+                                                  os_.qty, self.start, segment=os_.order))
+        netted = self._segments(node, st)
         if lp.mrp_type is MrpType.NONE:
             self._peg(node, st)
             return
@@ -339,8 +352,9 @@ class _Planner:
             self._plan_ddmrp(node, st, b, onhand)
             self._peg(node, st)
             return
-        reqs = sorted(st.reqs, key=lambda r: (r.date, r.priority, r.id))
-        receipts = sorted((s for s in st.supplies if s.kind in ("receipt", "co_product")), key=lambda s: s.date)
+        reqs = sorted(netted, key=lambda r: (r.date, r.priority, r.id))
+        receipts = sorted((s for s in st.supplies if s.kind in ("receipt", "co_product") and s.segment is None),
+                          key=lambda s: s.date)
         # the buffer is checked where requirements fall, buckets start and targets are set, never on a date where
         # only a receipt lands: a stock target ramps daily, so checking on receipt dates would size orders by
         # when firm supply happens to arrive (and firming a plan, then planning again, would change it)
@@ -432,7 +446,7 @@ class _Planner:
                       f"by hand or bring a firm order in; beyond the fence the plan covers it",
                       node=node, when=held[0][0], qty=worst)
         if disc is None:
-            self._reschedule_out(node, st, thresholds)
+            self._reschedule_out(node, st, thresholds, netted)
         self._peg(node, st)
 
     def _buffer(self, node: Node):
@@ -500,19 +514,91 @@ class _Planner:
                       f"({b.toy:,.1f}). Order {q:,.1f} today{what} to bring it back to the top of green ({b.tog:,.1f})",
                       node=node, when=self.start, qty=q, order=made[0] if made else None)
 
-    def _reschedule_out(self, node: Node, st: _NodeState, thresholds: dict[date, float]) -> None:
+    def sales_order_of(self, r: Requirement) -> str | None:
+        """The sales order a requirement serves: its own id for a sales order, and for what a delivery to a customer
+        draws from the place that ships it, the sales order that delivery is for (one transfer, one order)."""
+        if r.kind == "sales_order":
+            return r.id.removeprefix("D:").split("~")[0]
+        o = self.order_by_id.get(r.parent_order or "")
+        if o is None or o.kind != "transfer":
+            return None
+        if o.sales_order is not None:
+            return o.sales_order
+        found = {self.sales_order_of(self.req_by_id[p.requirement_id]) for p in self._pegs_of.get(o.id, ())
+                 if p.requirement_id in self.req_by_id}
+        return found.pop() if len(found) == 1 else None
+
+    def _segments(self, node: Node, st: _NodeState) -> list[Requirement]:
+        """Sales-order stock and fixed pegging (S/4 §16.2 make-to-order segment, account assignment E): stock and firm
+        orders held for a sales order go to that order alone, first, in date order, and are never counted for any
+        other requirement. What they do not cover is netted with the rest; what the order no longer needs stays held
+        and is reported, and one that arrives after its order is due is to be expedited (no other supply is planned in
+        front of it: it is that order's). Returns the requirements the free supply is netted against."""
+        held: dict[str, list[_Supply]] = defaultdict(list)
+        for sp in st.supplies:
+            if sp.segment is not None:
+                held[sp.segment].append(sp)
+        st.netted = list(st.reqs)
+        if not held:
+            return st.netted
+        by_so: dict[str, list[Requirement]] = defaultdict(list)
+        for r in st.reqs:
+            if (so := self.sales_order_of(r)) in held:
+                by_so[so].append(r)
+        cut: dict[str, float] = defaultdict(float)
+        for so, sups in sorted(held.items()):
+            sups.sort(key=lambda x: (x.date, x.kind != "on_hand", x.id))
+            left = [x.qty for x in sups]
+            i = 0
+            late: dict[str, tuple[_Supply, Requirement]] = {}
+            for r in sorted(by_so.get(so, []), key=lambda r: (r.date, r.id)):
+                need = r.qty
+                while need > EPS and i < len(sups):
+                    take = min(need, left[i])
+                    if take > EPS:
+                        st.fixed.append((sups[i], r.id, take))
+                        cut[r.id] += take
+                        left[i] -= take
+                        need -= take
+                        if sups[i].date > r.date and sups[i].id not in late:
+                            late[sups[i].id] = (sups[i], r)
+                    if left[i] <= EPS:
+                        i += 1
+            for sp, r in late.values():
+                self._exc("RESCHEDULE_IN", "warning",
+                          f"{sp.id}: arrives {sp.date.isoformat()} but {so}, the sales order it is held for, needs it "
+                          f"{r.date.isoformat()}; expedite it by {(sp.date - r.date).days} d (it is that order's, so "
+                          f"nothing else is planned for it)", node=node, order=sp.id, when=r.date, qty=sp.qty)
+            spare = sum(left)
+            if spare > EPS:
+                what = ", ".join(dict.fromkeys(sp.id if sp.kind == "receipt" else "stock" for sp, q in
+                                               zip(sups, left, strict=True) if q > EPS))
+                self._exc("ORDER_STOCK_LEFT", "warning",
+                          f"{spare:,.1f} held for {so} ({what}) that {so} no longer needs: no other order may use it. "
+                          f"Move it to free stock, or change or cancel the order it came on",
+                          node=node, when=self.start, qty=spare)
+        out: list[Requirement] = []
+        for r in st.reqs:
+            q = r.qty - cut.get(r.id, 0.0)
+            if q > EPS:
+                out.append(r if q >= r.qty - EPS else r.model_copy(update={"qty": q}))
+        st.netted = out
+        return out
+
+    def _reschedule_out(self, node: Node, st: _NodeState, thresholds: dict[date, float],
+                        reqs: list[Requirement]) -> None:
         """The rescheduling check the other way (S/4 exceptions 15 and 20): a firm receipt the plan does not need on its
         date. Receipts are taken in date order; each is needed on the first checked date where the stock without it
         (and without the firm receipts after it) would fall below the safety stock, target or reorder point. Needed
         nowhere in the horizon: RECEIPT_NOT_NEEDED (cancel it, or pull it in instead of a new order); needed more than
         the rescheduling tolerance later: RESCHEDULE_OUT to that date. Advice only: the receipt keeps its date."""
         tolerance = self._tolerance(st.lp)
-        firm = sorted((s for s in st.supplies if s.kind == "receipt"), key=lambda s: (s.date, s.id))
+        firm = sorted((s for s in st.supplies if s.kind == "receipt" and s.segment is None), key=lambda s: (s.date, s.id))
         if not firm or not thresholds:
             return
-        others = [s for s in st.supplies if s.kind != "receipt"]
+        others = [s for s in st.supplies if s.kind != "receipt" and s.segment is None]
         out_req: dict[date, float] = defaultdict(float)
-        for r in st.reqs:
+        for r in reqs:
             out_req[r.date] += r.qty
         checks = sorted(thresholds)
         for k, rc in enumerate(firm):
@@ -1216,20 +1302,22 @@ class _Planner:
 
     # ------------------------------------------------------------------ pegging
     def _peg(self, node: Node, st: _NodeState) -> None:
-        supplies = sorted(st.supplies, key=lambda s: (s.date, {"on_hand": 0, "receipt": 1, "co_product": 2, "follow_up": 3,
-                                                               "order": 3}[s.kind],
-                                                      s.id))
-        reqs = sorted(st.reqs, key=lambda r: (r.date, r.priority, r.id))
-        left = [s.qty for s in supplies]
         first_peg = len(self.pegs)
+        for sp, rid, q in st.fixed:       # sales-order stock: to its own order, already matched
+            self._add_peg(Peg(supply_kind=sp.kind, supply_id=sp.id, requirement_id=rid, qty=q))
+        supplies = sorted((s for s in st.supplies if s.segment is None),
+                          key=lambda s: (s.date, {"on_hand": 0, "receipt": 1, "co_product": 2, "follow_up": 3,
+                                                  "order": 3}[s.kind], s.id))
+        reqs = sorted(st.netted if st.netted is not None else st.reqs, key=lambda r: (r.date, r.priority, r.id))
+        left = [s.qty for s in supplies]
         i = 0
         for r in reqs:
             need = r.qty
             while need > EPS and i < len(supplies):
                 take = min(need, left[i])
                 if take > EPS:
-                    self.pegs.append(Peg(supply_kind=supplies[i].kind, supply_id=supplies[i].id,
-                                         requirement_id=r.id, qty=take))
+                    self._add_peg(Peg(supply_kind=supplies[i].kind, supply_id=supplies[i].id,
+                                      requirement_id=r.id, qty=take))
                     left[i] -= take
                     need -= take
                 if left[i] <= EPS:
@@ -1237,11 +1325,24 @@ class _Planner:
         for s, rem in zip(supplies, left, strict=True):
             if s.kind == "order":
                 self.order_by_id[s.id].lot_excess = max(0.0, rem)
+        if st.lp.strategy is Strategy.MTO or st.lp.direct_production:
+            # made to order: an order that serves one sales order alone is that order's, and is firmed for it
+            serves: dict[str, set[str | None]] = defaultdict(set)
+            for p in self.pegs[first_peg:]:
+                if p.supply_kind == "order" and p.requirement_id in self.req_by_id:
+                    serves[p.supply_id].add(self.sales_order_of(self.req_by_id[p.requirement_id]))
+            for oid, sos in serves.items():
+                if len(sos) == 1 and (so := next(iter(sos))) is not None:
+                    self.order_by_id[oid].sales_order = so
         if st.lp.strategy is Strategy.ATO:
             forecast_reqs = {r.id for r in st.reqs if r.kind == "forecast"}
             for p in self.pegs[first_peg:]:
                 if p.supply_kind == "order" and p.requirement_id in forecast_reqs:
                     self.order_by_id[p.supply_id].convertible = False
+
+    def _add_peg(self, p: Peg) -> None:
+        self.pegs.append(p)
+        self._pegs_of[p.supply_id].append(p)
 
     # ------------------------------------------------------------------ run
     def run(self) -> None:
@@ -1372,7 +1473,9 @@ class _Planner:
             bks = [NodeBucket(bucket=i, safety_stock=st.ss_by_bucket[i] if st.ss_by_bucket else 0.0,
                               target_stock=target_at(st.targets, self.b[i].end - timedelta(days=1)))
                    for i in range(n)]
-            for r in st.reqs:
+            # the free stock (S/4's anonymous segment): what is held for a sales order, and what of that order it
+            # covers, is the order's alone and not in this projection
+            for r in (st.netted if st.netted is not None else st.reqs):
                 bi = self.b.index_of(r.date)
                 if 0 <= bi < n:
                     if r.kind in ("forecast", "sales_order"):
@@ -1382,7 +1485,7 @@ class _Planner:
                     else:
                         bks[bi].gross_dependent += r.qty
             for sp in st.supplies:
-                if sp.kind == "on_hand":
+                if sp.kind == "on_hand" or sp.segment is not None:
                     continue
                 bi = self.b.index_of(sp.avail_date)
                 if 0 <= bi < n:
@@ -1402,7 +1505,7 @@ class _Planner:
                     k.holding_cost += bk.holding_cost
                     inv_avg_num += max(0.0, poh) * val * meta.days
             if not self.is_customer(node):
-                inv_start += onhand * val
+                inv_start += (onhand + sum(x.qty for x in lp.order_stock)) * val
                 inv_end += max(0.0, bks[-1].projected_on_hand) * val if bks else 0.0
             self._node_exceptions(node, st, bks)
             # service: independent demand projected available on time

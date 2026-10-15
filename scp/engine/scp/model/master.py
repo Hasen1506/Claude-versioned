@@ -319,6 +319,13 @@ class MrpGroup(Model):
         return {k: getattr(self, k) for k in keys if getattr(self, k) is not None}
 
 
+class OrderStock(Model):
+    """Stock held for one sales order (S/4 sales-order stock, special stock E): only that order may use it."""
+
+    order: str = Field(min_length=1, max_length=64, description="The sales order it is held for")
+    qty: float = Unit("qty", description="Quantity held")
+
+
 class LocationProduct(Model):
     """How one product is planned at one location (≈ S/4 MARC, MRP views 1–4)."""
 
@@ -335,6 +342,9 @@ class LocationProduct(Model):
     strategy: Strategy = Strategy.MTS_CONSUME
     mrp_type: MrpType = MrpType.DETERMINISTIC
     on_hand: float = Unit("qty", default=0.0, description="Unrestricted stock at planning start")
+    order_stock: list[OrderStock] = Field(default_factory=list,
+                                          description="Stock at planning start held for one sales order each (not in "
+                                                      "on hand): planned, promised and issued only to that order")
     unit_cost: float | None = Unit("money_per_unit", default=None, description="Valuation override")
     lot_sizing: LotSizing = Field(default_factory=LotSizing)
     safety_stock: SafetyStockPolicy = Field(default_factory=SafetyStockPolicy)

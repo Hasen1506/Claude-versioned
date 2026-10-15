@@ -603,6 +603,99 @@ def test_ddmrp_where_no_buffer_can_be_held_is_said():
     assert plan(d).nodes[0].buckets[0].safety_stock == pytest.approx(87.5)
 
 
+# ================================================================================================ §16.2 sales-order stock
+def made_to_order(assigned: bool) -> dict:
+    """A part bought to order with a 10-day lead time (a new order is there 15 Jan at the earliest). SO-1 wants 50 on
+    20 Jan and PO-1 for 50, due 14 Jan, was bought for it; SO-2 wants 50 on 12 Jan."""
+    d = buy(strategy="MTO", lt=10)
+    dem(d, "2026-01-20", 50, id="SO-1")
+    dem(d, "2026-01-12", 50, id="SO-2")
+    rec(d, "2026-01-14", 50, id="PO-1", **({"sales_order": "SO-1"} if assigned else {}))
+    return d
+
+
+def test_a_firm_order_bought_for_one_sales_order_is_not_taken_by_another():
+    """ENTERPRISE_PLAN 2.5, §16.2: make-to-order supply is that order's (S/4 sales-order segment). Free, PO-1 goes to
+    the earlier order SO-2 (expedite it 2 days) and SO-1 gets a new requisition; bought for SO-1 it stays with SO-1,
+    the plan buys for SO-2 instead, and that requisition is marked for SO-2 so it is firmed for it."""
+    free = plan(made_to_order(False))
+    assert {(p.supply_id, p.requirement_id) for p in free.pegs} == {("PO-1", "D:SO-2"), ("PR-00001", "D:SO-1")}
+    assert "RESCHEDULE_IN" in codes(free)
+    held = plan(made_to_order(True))
+    assert {(p.supply_id, p.requirement_id) for p in held.pegs} == {("PO-1", "D:SO-1"), ("PR-00001", "D:SO-2")}
+    [o] = orders(held)
+    assert (o.need_date.isoformat(), o.qty, o.sales_order) == ("2026-01-12", 50, "SO-2")
+    assert "RESCHEDULE_IN" not in codes(held)
+    # the projection is the free stock: 20 more held for SO-3 do not soften SO-2's shortage of 50 on the 12th
+    d = made_to_order(True)
+    d["location_products"][0]["order_stock"] = [{"order": "SO-3", "qty": 20}]
+    dem(d, "2026-01-22", 20, id="SO-3")
+    [e] = [e for e in plan(d).exceptions if e.code == "STOCKOUT"]
+    assert e.qty == pytest.approx(50)
+
+
+def test_held_supply_that_comes_late_is_expedited_and_held_supply_not_needed_is_reported():
+    """A held PO due after its order is expedited, with no other supply planned in front of it; when the order is cut
+    to 30 the other 20 stay held, and the plan says so (no other order may use them)."""
+    d = made_to_order(True)
+    d["demand"][0]["date"] = "2026-01-12"           # SO-1 now wanted on the 12th; PO-1 comes on the 14th
+    res = plan(d)
+    [e] = [e for e in res.exceptions if e.code == "RESCHEDULE_IN"]
+    assert (e.order_id, e.date.isoformat()) == ("PO-1", "2026-01-12")
+    assert "SO-1, the sales order it is held for" in e.message and "expedite it by 2 d" in e.message
+    assert all(o.sales_order != "SO-1" for o in orders(res))
+    d = made_to_order(True)
+    d["demand"][0]["qty"] = 30
+    [e] = [e for e in plan(d).exceptions if e.code == "ORDER_STOCK_LEFT"]
+    assert e.qty == pytest.approx(20) and "held for SO-1 (PO-1)" in e.message
+
+
+def test_a_promise_is_made_from_what_is_held_for_the_order_and_never_from_another_orders():
+    """§16.2 / §7: SO-2 now wants its 50 on the 15th, after PO-1 arrives, and was entered first, so it is checked
+    first. Free, it takes PO-1 and SO-1 gets nothing; held for SO-1, SO-1 is confirmed from it and why says so, and SO-2 gets
+    nothing from it."""
+    def promised(assigned: bool) -> dict:
+        d = promising(made_to_order(assigned))
+        d["demand"][1]["date"] = "2026-01-15"
+        d["demand"].reverse()
+        return by_order(run_promise(Dataset.model_validate(d)))
+    free = promised(False)
+    assert (lines(free["SO-2"]), lines(free["SO-1"])) == ([("2026-01-15", 50, "atp")], [])
+    held = promised(True)
+    assert (lines(held["SO-1"]), lines(held["SO-2"])) == ([("2026-01-20", 50, "atp")], [])
+    assert held["SO-1"].held and "firm receipt PO-1 is available, held for this order" in [w.note for w in held["SO-1"].why]
+
+
+def test_sales_order_stock_from_firming_to_receipt_to_delivery():
+    """The whole road: the requisition planned for SO-2 becomes a PO line held for SO-2; PO-1 received on the 14th is
+    held stock for SO-1, not free stock; after the roll the plan covers SO-1 from it and buys nothing more for it,
+    and SO-1's delivery issues it from that stock."""
+    from scp.actuals.firm import firm_orders
+    from scp.actuals.post import post
+    from scp.actuals.roll import roll_forward
+    ds = Dataset.model_validate(made_to_order(True))
+    res = run_mrp(ds)
+    firmed, rep = firm_orders(ds, res, ids=[orders(res)[0].id])
+    [line] = [r for r in firmed.receipts if r.id != "PO-1"]
+    assert line.sales_order == "SO-2"
+    got, _ = post(firmed, "receive", order="PO-1", on=date(2026, 1, 14))
+    [m] = [m for m in got.movements if m.reference == "PO-1"]
+    assert m.sales_order == "SO-1"
+    rolled, _ = roll_forward(got, date(2026, 1, 19))
+    lp = rolled.location_product_by_key[("P", "B")]
+    assert (lp.on_hand, [(x.order, x.qty) for x in lp.order_stock]) == (0, [("SO-1", 50)])
+    after = run_mrp(rolled)
+    assert [(p.supply_id, p.requirement_id) for p in after.pegs if p.requirement_id == "D:SO-1"] == [
+        ("OS:P:B:SO-1", "D:SO-1")]
+    assert all(o.sales_order != "SO-1" for o in after.orders)
+    shipped, msg = post(rolled, "deliver", order="SO-1", on=date(2026, 1, 20))
+    [sale] = [m for m in shipped.movements if m.reference == "SO-1"]
+    assert (sale.sales_order, sale.qty) == ("SO-1", 50)
+    assert "from the stock held for SO-1" in msg.message
+    final, _ = roll_forward(shipped, date(2026, 1, 26))
+    assert final.location_product_by_key[("P", "B")].order_stock == []
+
+
 # ================================================================================================ §7.1 classic ATP
 def test_cumulative_atp_protects_a_later_promise():
     """§7.1 ATP(d) = Σ inflows(≤ d) − Σ outflows(≤ d), checked with look-ahead so a new order cannot take what an

@@ -5144,6 +5144,11 @@ export interface components {
              */
             stock_type: components["schemas"]["StockType"];
             /**
+             * Sales Order
+             * @description Stock held for this sales order (S/4 sales-order stock): received for it, issued only to it
+             */
+            sales_order?: string | null;
+            /**
              * Doc
              * @description Material document: the movements posted together
              */
@@ -6447,6 +6452,11 @@ export interface components {
              */
             on_hand: number;
             /**
+             * Order Stock
+             * @description Stock at planning start held for one sales order each (not in on hand): planned, promised and issued only to that order
+             */
+            order_stock?: components["schemas"]["OrderStock"][];
+            /**
              * Unit Cost
              * @description Valuation override
              */
@@ -7672,6 +7682,11 @@ export interface components {
              * @default 0
              */
             allocation_capped: number;
+            /**
+             * Held
+             * @default false
+             */
+            held: boolean;
             /** Ctp */
             ctp: components["schemas"]["CtpStep"][];
             /** Previous */
@@ -7703,6 +7718,22 @@ export interface components {
              * @default 0
              */
             shipped: number;
+        };
+        /**
+         * OrderStock
+         * @description Stock held for one sales order (S/4 sales-order stock, special stock E): only that order may use it.
+         */
+        OrderStock: {
+            /**
+             * Order
+             * @description The sales order it is held for
+             */
+            order: string;
+            /**
+             * Qty
+             * @description Quantity held
+             */
+            qty: number;
         };
         /** OrderView */
         OrderView: {
@@ -8243,6 +8274,8 @@ export interface components {
              * @default true
              */
             convertible: boolean;
+            /** Sales Order */
+            sales_order: string | null;
             /**
              * Unit Cost
              * @default 0
@@ -11235,6 +11268,11 @@ export interface components {
              */
             po?: string | null;
             /**
+             * Sales Order
+             * @description Made or bought for this sales order (S/4 sales-order stock): planned, promised and issued only to it, and held for it once received
+             */
+            sales_order?: string | null;
+            /**
              * Planned As
              * @description The planned order it was firmed from (for reference: planned numbers are handed out again on every plan)
              */
@@ -12128,6 +12166,13 @@ export interface components {
              * @default 0
              */
             in_transit: number;
+            /**
+             * Held
+             * @default {}
+             */
+            held: {
+                [key: string]: number;
+            };
             /** Planning Stock */
             planning_stock: number | null;
             /** Counting */

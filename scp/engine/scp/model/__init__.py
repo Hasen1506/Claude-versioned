@@ -29,7 +29,7 @@ from .schedule import Changeover, ScheduleSettings
 from .sop import SopMode, SopSettings, StockTarget
 from .master import (
     BomAlternative, BomItem, Calendar, CapacityChange, CoProduct, CustomerPrice, LaneMode, Location, LocationProduct, LotSizing, MrpGroup, Operation, Product,
-    ProductionSource, PurchasingSource, Resource, SafetyStockPolicy, Settings, Shift, Subcontract, TransportLane,
+    OrderStock, ProductionSource, PurchasingSource, Resource, SafetyStockPolicy, Settings, Shift, Subcontract, TransportLane,
     UomConversion,
 )
 from .transactional import DemandRecord, Reservation, SalesHistory, ConfirmedDelivery, ScheduledReceipt
@@ -45,6 +45,6 @@ __all__ = [
     "BomAlternative", "BomItem", "BucketSize", "MrpGroup", "Calendar", "CapacityChange", "CoProduct", "CustomerPrice", "ProcurementType", "Subcontract", "Changeover", "Dataset", "DemandKind", "DemandRecord", "LaneMode",
     "Location", "LocationProduct", "LocationType", "LotSizePolicy", "LotSizing", "MrpType",
     "Operation", "Product", "ProductType", "ProductionSource", "PurchasingSource", "ReceiptKind",
-    "Resource", "ResourceKind", "SafetyStockMethod", "SafetyStockPolicy", "SalesHistory",
+    "OrderStock", "Resource", "ResourceKind", "SafetyStockMethod", "SafetyStockPolicy", "SalesHistory",
     "ScheduleSettings", "ScheduledReceipt", "Settings", "Shift", "SopMode", "SopSettings", "StockTarget", "Strategy", "TransportLane", "TransportMode", "UomConversion",
 ]

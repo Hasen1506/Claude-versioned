@@ -32,7 +32,7 @@ from .documents import (
     StockError, cancel_counts, complete, count_doc, enter_counts, move_stock, post_counts, reverse, scrap, short_orders,
     shorten,
 )
-from .lots import planning_stock
+from .lots import order_stock, planning_stock
 from .stock import EPS, counterparty, movement_ids, pending_openings
 from ..plan.structure import needs
 
@@ -348,13 +348,26 @@ def deliver(ds: Dataset, oid: str, qty: float | None = None, on: date | None = N
     if q <= EPS:
         raise PostingError(f"everything on {oid} has already been delivered")
     on = _on(ds, on)
-    m = GoodsMovement(id=next(movement_ids(ds)), date=on, type=MovementType.SALE, location=frm, product=d.product,
+    ids = movement_ids(ds)
+    m = GoodsMovement(id=next(ids), date=on, type=MovementType.SALE, location=frm, product=d.product,
                       qty=_q(q), reference=oid, counterparty=d.location, final=bool(final),
                       note=(note or ("Delivered, rest cancelled" if final else "Delivered"))[:200],
                       batch=(lot or {}).get("batch"))
+    # stock held for this order at the shipping place goes first (S/4 sales-order stock); the rest is free stock
+    held = order_stock(x for x in [*ds.movements, *pending_openings(ds)] if x.date <= on).get((frm, d.product), {})
+    mine = min(q, max(0.0, held.get(oid, 0.0)))
+    first = [m]
+    if mine > EPS:
+        first = [m.model_copy(update={"qty": _q(mine), "sales_order": oid})]
+        if q - mine > EPS:
+            first.append(m.model_copy(update={"id": next(ids), "qty": _q(q - mine), "final": False}))
+            first[0] = first[0].model_copy(update={"final": False})
+            first[-1] = first[-1].model_copy(update={"final": bool(final)})
     left = ordered - done - q
     status = ("closed short" if left > EPS else "complete") if final or left <= EPS else f"{_n(left)} still open"
-    moves, _, notes = _complete(ds, [m], on, lot)
+    moves, _, notes = _complete(ds, first, on, lot)
+    if mine > EPS:
+        notes = [f"{_n(mine)} from the stock held for {oid}", *notes]
     msg = (f"{oid}: {_n(q)} delivered to {_at(ds, d.location)} from {_at(ds, frm)} on {on.isoformat()}{_batches(moves)} "
            f"({status})" + ("; " + "; ".join(notes) if notes else "")
            + ". Stock and the order are updated when the plan moves past this date.")
