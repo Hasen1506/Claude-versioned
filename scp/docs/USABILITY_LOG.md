@@ -566,6 +566,42 @@ ENTERPRISE_PLAN 2.7, in a browser and through the engine. Kumar orders a kit fro
 | N181 | "Nothing needs them before the horizon ends" read as the new rescheduling horizon. | Minor | **Fixed.** It says *planning horizon*. |
 | N182 | A warehouse that needs a day to pick confirmed every order a day too early: the promise shipped goods the day they arrived, with no picking, packing, loading or transport booking (§6.2). | Serious | **Fixed.** Picking and packing and loading times on the shipping place, transport booking on the route, all in working days (0 by default, so nothing moves until they are set); stock is checked on the material availability date, and the line and the confirmation carry the goods issue. |
 
+## Enterprise plan, phase 3: connectors (15 October 2026)
+
+ENTERPRISE_PLAN 3.1, in a browser and through the engine. Kaveri keeps its stock in Tally: the closing stock sheet has
+Tally's item codes (`MG500`), its godown names (*Pune Works*) and quantities in dozens. A web shop sends its orders as
+JSON, an order per object with its lines inside, its own customer codes and dates written `08 Jan 2026`. A warehouse
+system answers page by page and can give only what changed after a time.
+
+* *Mapping* (input: on *Connections → Scheduled imports*, *Name the fields myself*: place from `Godown` with
+  `Pune Works=PLT-PUNE`, product from `Item Code` with `MG500=MG-500`, quantity from `Closing Qty (doz)` × 12; for
+  the shop, records at `orders`, one row per element of `line_items`, product from `line.sku`, the date from
+  `note_attributes.deliver_by` written `%d %b %Y`; processing: each field here is filled from the column or path named,
+  codes translated, numbers multiplied, dates read as written, the rest as a recognised file is; output: PLT-PUNE /
+  MG-500 120). A field named that is not a field here is refused with the fields there are.
+* *Try it first* (input: a few lines pasted in, or nothing to read the source now; processing: the message is applied
+  to the company's latest save and nothing is saved, logged or moved; output: "Dry run, nothing saved: 2 stock: 1
+  taken, 1 refused", each line "would be taken" or refused with why (*there is no place 'Mumbai Depot'*), the columns
+  found in what was read, and the first rows as the fields here). A saved import has *Dry run* beside *Run now*: a
+  file in the folder stays where it is and the schedule is as it was.
+* *A web API, page by page, only what changed* (input: from *a web API*, the next page's address at `links.next` or
+  numbered pages until a flag says there are no more, `{since}` in the address; processing: the pages are read into one
+  message, the key goes only to the API's own host, `{since}` is the start of the last good run; output: one message
+  for every page; the next day only what changed is asked for). A failed page fails the run: half an answer is never
+  taken and the time is not moved on.
+* *The log keeps what was read* (output: *Messages → What was read (the start)* shows the first 2,000 characters of the
+  file or answer, also for a file that could not be read).
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N200 | Imports recognised columns only by their names: a Tally sheet (`Item Code`, `Godown`, quantities in dozens) or a shop's nested JSON could not be read, and codes that differ from ours had to be changed in the other system first. | Serious | **Fixed.** A mapping per import: column or path, codes translated, a factor, a date format, a value when empty, one row per element of a list. |
+| N201 | An import could only be tried by running it, which saves what it read. | Serious | **Fixed.** *Try it* before saving (a sample or the source) and *Dry run* for a saved import: nothing saved, logged or moved. |
+| N202 | A web API that pages its answer was read one page at a time, and every run read everything again. | Serious | **Fixed.** Pages by the next page's address or by number, at most a set number (more fails the run); `{since}` is the last good run's start. |
+| N203 | A refused file left no trace of what it held: the log said "not a list of records" and nothing else. | Minor | **Fixed.** The log keeps the start of what was read with the message. |
+| N204 | The mapping table offered a date format and a factor for every field, the place and product included. | Minor | **Fixed** before it shipped: a factor only for numbers, a date format only for dates (any field of master data). |
+| N205 | The form sends only an `Authorization` header; an API with its own header (Shopify's `X-Shopify-Access-Token`) can be set only through the API. | Minor | Open: the named connectors of 3.2 and 3.3 carry their own credential fields. |
+| N206 | An API that names its next page in a `Link` header (Shopify) cannot be paged, since only the body is read. | Minor | Open, for 3.3. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

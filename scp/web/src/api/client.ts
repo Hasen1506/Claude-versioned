@@ -6,7 +6,7 @@ import type {
   SalesView, SalesAction, SalesActionInput, SalesActionResponse,
   AuthConfig, Session, Me, CompanyMeta, CompanyDoc, SaveReport, Member, LogRow, MergeResult, HeldChange, FieldChangeRow, ResetLink,
   User, TwoStepState, TwoStepKey, DeletionPlan, Deleted,
-  ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings,
+  ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings, Tried, TryInput,
   WhatIfChip, WhatIfResult, CaseInfo,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
@@ -450,6 +450,8 @@ export const api = {
     call<ImportJobs>(`${co(id)}/imports${jid ? `/${encodeURIComponent(jid)}` : ""}`, { method: jid ? "PUT" : "POST", body: JSON.stringify(job) }),
   removeImport: (id: string, jid: string) => call<ImportJobs>(`${co(id)}/imports/${encodeURIComponent(jid)}`, { method: "DELETE" }),
   runImport: (id: string, jid: string) => call<MessageRow[]>(`${co(id)}/imports/${encodeURIComponent(jid)}/run`, { method: "POST" }, RUN_TIMEOUT_MS),
+  tryImport: (id: string, body: TryInput) => call<Tried>(`${co(id)}/imports/try`, { method: "POST", body: JSON.stringify(body) }, RUN_TIMEOUT_MS),
+  dryRunImport: (id: string, jid: string) => call<Tried>(`${co(id)}/imports/${encodeURIComponent(jid)}/dry-run`, { method: "POST" }, RUN_TIMEOUT_MS),
   messages: (id: string, o: { kind?: string; status?: string; before?: number } = {}) =>
     call<MessageRow[]>(`${co(id)}/messages?kind=${encodeURIComponent(o.kind ?? "")}&status=${encodeURIComponent(o.status ?? "")}${o.before ? `&before=${o.before}` : ""}`),
   mailSetup: (id: string) => call<MailSetup>(`${co(id)}/mail`),

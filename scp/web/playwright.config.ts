@@ -1,4 +1,5 @@
 import { defineConfig } from "@playwright/test";
+import { importDir } from "./e2e/paths";
 
 // The engine serves the built client (run `npm run build` first). Locally a pre-installed Chromium
 // can be used via PW_CHROMIUM=/path/to/chrome; CI installs Playwright's own browser.
@@ -19,7 +20,7 @@ export default defineConfig({
       command: `python3 -m uvicorn scp.api.app:app --port ${port}`,
       cwd: "../engine",
       // a fresh version store per run; the per-address limits are for the internet, not one test browser
-      env: { SCP_DB: ":memory:", SCP_AUTH_RATE: "0", SCP_ANON_RATE: "0" },
+      env: { SCP_DB: ":memory:", SCP_AUTH_RATE: "0", SCP_ANON_RATE: "0", SCP_IMPORT_DIR: importDir },
       url: `http://127.0.0.1:${port}/api/health`,
       reuseExistingServer: false,
       timeout: 60_000,

@@ -1023,6 +1023,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/companies/{cid}/imports/try": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Try Import
+         * @description Try an import before saving it, on a sample pasted in or on what its source gives now: what would become of
+         *     each line, the columns found and the first rows as the fields here. Nothing is saved, moved or logged.
+         */
+        post: operations["try_import_api_companies__cid__imports_try_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/imports/{jid}/dry-run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dry Run Import
+         * @description A saved import read now and checked line by line, with nothing saved, no file moved and its schedule as it
+         *     was.
+         */
+        post: operations["dry_run_import_api_companies__cid__imports__jid__dry_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/companies/{cid}/imports/{jid}/run": {
         parameters: {
             query?: never;
@@ -4643,6 +4685,38 @@ export interface components {
             /** Theirs */
             theirs: unknown;
         };
+        /** FieldMap */
+        FieldMap: {
+            /**
+             * Source
+             * @description The column (CSV) or the path in a record (JSON: customer.code); with `each`, line.<path> is the element
+             * @default
+             */
+            source: string;
+            /**
+             * Value
+             * @description Used when the source is empty or missing; with no source, always
+             */
+            value?: string | number | boolean | null;
+            /**
+             * Values
+             * @description Codes translated (WH-01 → P); * for any other code
+             */
+            values?: {
+                [key: string]: string;
+            };
+            /**
+             * Factor
+             * @description A number is multiplied by this (12: dozens to units)
+             */
+            factor?: number | null;
+            /**
+             * Date Format
+             * @description How dates are written, as strftime does (%d-%b-%Y); empty: recognised
+             * @default
+             */
+            date_format: string;
+        };
         /** FinanceResult */
         FinanceResult: {
             /** Ok */
@@ -5320,6 +5394,10 @@ export interface components {
             last_status: string;
             /** Last Summary */
             last_summary: string;
+            mapping: components["schemas"]["Mapping"] | null;
+            paging: components["schemas"]["Paging"] | null;
+            /** Since */
+            since: string | null;
         };
         /** ImportJobs */
         ImportJobs: {
@@ -5331,6 +5409,13 @@ export interface components {
             timezone: string;
             /** Kinds */
             kinds: string[];
+            /**
+             * Fields
+             * @default {}
+             */
+            fields: {
+                [key: string]: string[];
+            };
         };
         /**
          * InboxAction
@@ -5882,12 +5967,16 @@ export interface components {
              * Source Type
              * @enum {string}
              */
-            source_type: "url" | "folder";
+            source_type: "url" | "folder" | "api";
             /**
              * Source
-             * @description The web address, or the file pattern in the folder
+             * @description The web address, or the file pattern in the folder; {since} in an address is the time the last good run started (only what changed since)
              */
             source: string;
+            /** @description Which column or field there fills each field here; none: columns are recognised by their names */
+            mapping?: components["schemas"]["Mapping"] | null;
+            /** @description api: how the answer comes page by page */
+            paging?: components["schemas"]["Paging"] | null;
             /**
              * Headers
              * @description A web address: headers to send (Authorization); omitted keeps them only for the same origin, {} removes them
@@ -6795,6 +6884,25 @@ export interface components {
             /** Last Reminder */
             last_reminder: string | null;
         };
+        /** Mapping */
+        Mapping: {
+            /**
+             * Items
+             * @description JSON: the path to the list of records (data.items); empty: the file itself, or its list named after the kind
+             * @default
+             */
+            items: string;
+            /**
+             * Each
+             * @description The path in each record to a list it holds (line_items): one row per element, read as line.<path>
+             * @default
+             */
+            each: string;
+            /** Fields */
+            fields?: {
+                [key: string]: components["schemas"]["FieldMap"];
+            };
+        };
         /** Me */
         Me: {
             user: components["schemas"]["User"];
@@ -6959,6 +7067,16 @@ export interface components {
              * @default
              */
             source: string;
+            /**
+             * Sample
+             * @default
+             */
+            sample: string;
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
             /**
              * Items
              * @default []
@@ -7973,6 +8091,36 @@ export interface components {
              * @description Product families
              */
             families?: string[];
+        };
+        /**
+         * Paging
+         * @description How a web API gives its records page by page.
+         */
+        Paging: {
+            /**
+             * Mode
+             * @description next: each answer names the next page's address; page: pages are numbered
+             * @default next
+             * @enum {string}
+             */
+            mode: "next" | "page";
+            /**
+             * Next
+             * @description next: the path in the answer to the next page's address (links.next, @odata.nextLink); page: the path to a flag that more pages follow (page_context.has_more_page); empty: until a page has no records
+             * @default
+             */
+            next: string;
+            /**
+             * Param
+             * @description page: the parameter that numbers the pages, from 1
+             * @default page
+             */
+            param: string;
+            /**
+             * Max Pages
+             * @default 50
+             */
+            max_pages: number;
         };
         /** PartSupply */
         PartSupply: {
@@ -12900,6 +13048,40 @@ export interface components {
          * @enum {string}
          */
         TransportMode: "truck_ftl" | "truck_ltl" | "reefer" | "rail" | "sea" | "air" | "courier" | "pipeline";
+        /**
+         * Tried
+         * @description A dry run: what an import would do now, with nothing saved, no file moved and its schedule as it was.
+         */
+        Tried: {
+            /** Messages */
+            messages: components["schemas"]["MessageRow"][];
+            /**
+             * Columns
+             * @default []
+             */
+            columns: string[];
+            /**
+             * Rows
+             * @default []
+             */
+            rows: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** TryInput */
+        TryInput: {
+            job: components["schemas"]["JobInput"];
+            /**
+             * Content
+             * @description A sample of the file or answer to try the mapping on; none: read the source now
+             */
+            content?: string | null;
+            /**
+             * Id
+             * @description The saved import this changes: its headers and {since} are used
+             */
+            id?: string | null;
+        };
         /** TwoStepCode */
         TwoStepCode: {
             /** Code */
@@ -15300,6 +15482,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImportJobs"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    try_import_api_companies__cid__imports_try_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TryInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tried"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dry_run_import_api_companies__cid__imports__jid__dry_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                jid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tried"];
                 };
             };
             /** @description Validation Error */

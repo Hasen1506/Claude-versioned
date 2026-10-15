@@ -251,9 +251,50 @@ Where the ERP cannot call an API, it writes an export that the server reads. An 
   - Customer orders have one row per line; rows with the same order number make one order.
 - **JSON.** The message as the API takes it, or just its list of items.
 
+**A web API, page by page.** From *a web API* reads JSON answers page by page into one message:
+- **Next page at** a path in the answer that holds the next page's address (`links.next`, `@odata.nextLink`); an
+  address that names a page already read ends the reading.
+- **Numbered pages**: `?page=1`, `2`, … (the parameter is named on the import), until a flag in the answer says there
+  are no more (`page_context.has_more_page`) or, without one, a page has no records.
+- **At most** a number of pages (50 unless set): an answer with more fails the run rather than take a part of it.
+- The headers go to the import's own host only; a next page on another host is asked without them.
+
+**Only what changed.** `{since}` anywhere in a web address (a file's or an API's) is the time the last good run started,
+as `2026-10-15T06%3A00%3A00%2B00%3A00` (the first run: 1970). A run that fails leaves it as it was, so nothing is missed.
+Changing the import to another host or another kind of record starts again from the beginning.
+
+**Mapping.** Without one, columns are recognised by their names (below). With *Name the fields myself* (`mapping` in
+the API) each field here is filled from what the mapping names:
+
+```json
+{"items": "orders", "each": "line_items",
+ "fields": {"number": {"source": "name"},
+            "customer": {"source": "customer.code", "values": {"C-77": "CUS-WEST-TRADE"}},
+            "date": {"source": "note_attributes.deliver_by", "date_format": "%d %b %Y"},
+            "product": {"source": "line.sku", "values": {"MG500": "MG-500"}},
+            "qty": {"source": "line.quantity", "factor": 12},
+            "location": {"value": "PLT-PUNE"}}}
+```
+
+- `source`: a column of a CSV file (as written, or in any case and spacing), or a path in a JSON record
+  (`customer.code`, `lines.0.sku`); with `each`, `line.<path>` is the element of the list.
+- `items`: the path to the list of records in a JSON answer; `each`: a list in each record that makes one row per
+  element (an order's lines; the order's own fields are repeated on each).
+- `values`: codes translated, `*` for any other; `factor`: numbers multiplied; `date_format`: as `strftime` writes it
+  (`%d-%b-%Y`), and it must give a day, month and year; `value`: used when the source is empty, or always with no source.
+- For master data, a field within a field is named with a dot (`lot_sizing.policy`).
+- The fields each kind has are in `GET /imports` (`fields`); a mapping naming another is refused.
+
+**Try it first.** `POST /imports/try` with `{"job": {…the import…}, "content": "…a sample…"}` (no `content`: the source
+is read now; `"id"` of a saved import uses its saved headers for the same host) and `POST /imports/{id}/dry-run` for a
+saved import answer what would become of each line (`"dry_run": true`, summary "Dry run, nothing saved: …"), the
+columns found (`columns`) and the first rows as the fields here (`rows`). Nothing is saved, logged or moved, and the
+schedule and `{since}` stay as they were. Only an owner may: an import reads from outside with the owner's rights.
+
 **Each file once.** A file is applied as the message of its kind, by the owner who set the import up, and logged with what became of each line. The same file content is never applied twice.
 
-**Run now** reads the file at once.
+**Run now** reads the file at once. The message log keeps the first 2,000 characters of what was read beside each
+message (*What was read* on **Connections → Messages**, `sample` in `GET /messages`).
 
 ## E-mail from the server
 

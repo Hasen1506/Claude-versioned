@@ -1,4 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { importDir } from "./paths";
 
 // Phase Q: an owner makes a key, the ERP sends customer orders with it, the message log says what became of each,
 // the company's history has the ERP's save, a scheduled import is set up and run, and the e-mail tab says what the
@@ -171,4 +174,67 @@ test("a key list read before a key was made, delivered after it, does not hide t
   await (await late).finished();
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await expect(page.locator("table")).toContainText("SAP");
+});
+
+test("a connector's mapping: a Tally stock sheet tried on a sample, a dry run moves nothing, the log keeps what was read", async ({ page }) => {
+  // ENTERPRISE_PLAN 3.1. Input: Tally's closing stock, its own item codes and godown names, quantities in dozens.
+  // Processing: the owner names which column fills which field, translates the codes, multiplies by 12 and tries it.
+  // Output: what would be taken and refused before anything is saved; then the real run, logged with the file read.
+  const { cid } = await ownerOnServer(page);
+  const sheet = "Item Code,Godown,Closing Qty (doz)\nMG500,Pune Works,10\nMG500,Mumbai Depot,1\n";
+  await page.goto("/#/connections/imports");
+  await page.getByRole("button", { name: "New import" }).click();
+  await page.getByLabel("Import name").fill("Tally stock");
+  await page.getByLabel("What it brings").selectOption("stock");
+  await page.getByLabel("Read from").selectOption("folder");
+  await page.getByLabel("Source").fill("tally-*.csv");
+  await page.getByRole("checkbox", { name: "Name the fields myself" }).check();
+  const map = page.getByRole("group", { name: "Field mapping" });
+  await expect(map.locator("tbody tr")).toHaveCount(3);
+  await page.getByLabel("location from").fill("Godown");
+  await page.getByLabel("location codes").fill("Pune Works=PLT-PUNE");
+  await page.getByLabel("product from").fill("Item Code");
+  await page.getByLabel("product codes").fill("MG500=MG-500");
+  await page.getByLabel("qty from").fill("Closing Qty (doz)");
+  await page.getByLabel("qty times").fill("12");
+  await page.getByText("Try it first").click();
+  await page.getByLabel("Sample to try").fill(sheet);
+  await page.getByRole("button", { name: "Try it", exact: true }).click();
+  const tried = page.getByLabel("Dry run");
+  await expect(tried).toContainText("Dry run, nothing saved: 2 stock: 1 taken, 1 refused");
+  await expect(tried.getByRole("table", { name: "First rows as the fields here" })).toContainText("PLT-PUNE");
+  await expect(tried.getByRole("table", { name: "First rows as the fields here" })).toContainText("120");
+  await expect(tried).toContainText("Mumbai Depot / MG-500");
+  await expect(tried).toContainText("would be taken");
+  await expect(tried).toContainText("Item Code");                     // the columns found
+  await page.getByRole("button", { name: "Save the import" }).click();
+  await expect(page.getByRole("status").first()).toContainText("Tally stock saved");
+  await expect(page.locator("main")).toContainText("3 fields mapped");
+
+  // Tally leaves the file in the company's folder; a dry run reads it and moves nothing
+  const folder = join(importDir, cid);
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "tally-1.csv"), sheet);
+  await page.getByRole("button", { name: "Dry run" }).click();
+  await expect(page.getByLabel("Dry run of Tally stock")).toContainText("Dry run, nothing saved: 2 stock: 1 taken, 1 refused");
+  expect(existsSync(join(folder, "tally-1.csv"))).toBe(true);
+  await page.getByRole("tab", { name: "Messages" }).click();
+  await expect(page.locator("main")).toContainText("Nothing yet");
+
+  // the real run: taken, the file moved to done/, the log keeps what was read
+  await page.getByRole("tab", { name: "Scheduled imports" }).click();
+  await page.getByRole("button", { name: "Run now" }).click();
+  await expect(page.getByRole("status").first()).toContainText("tally-1.csv: 2 stock: 1 taken, 1 refused");
+  expect(existsSync(join(folder, "done", "tally-1.csv"))).toBe(true);
+  await page.getByRole("tab", { name: "Messages" }).click();
+  const row = page.locator("tr", { hasText: "Tally stock" }).first();
+  await expect(row).toContainText("partly taken");
+  await row.getByRole("button", { name: "2 lines" }).click();
+  await page.getByText("What was read (the start)").click();
+  await expect(page.locator("main pre")).toContainText("MG500,Pune Works,10");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#/connections/imports");
+  await page.getByRole("button", { name: "Change", exact: true }).click();
+  await expect(page.getByRole("group", { name: "Field mapping" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 });

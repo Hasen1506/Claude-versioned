@@ -3,12 +3,13 @@
 // Only for a company kept on the server: the ERP talks to the server, not to a browser.
 import { Fragment, useState } from "react";
 import { api } from "../api/client";
-import type { ApiKey, ImportJob, ImportJobs, JobInput, MailRow, MailSetup, MessageRow } from "../api/types";
+import type { ApiKey, ImportJob, ImportJobs, JobInput, MailRow, MailSetup, MessageRow, Paging, Tried } from "../api/types";
 import { Badge, Empty, Panel, StageHeader, Tabs, type Severity } from "../components/ui";
 import { when } from "../components/SaveStatus";
 import { useLatest } from "../lib/latest";
 import { go, href } from "../lib/router";
 import { store, useStore } from "../state/store";
+import { fromMapping, MappingEditor, PagingFields, startRows, toMapping, TryResult, type MapRow } from "./ImportMapping";
 
 type Tab = "messages" | "keys" | "imports" | "mail";
 const TABS: { id: Tab; label: string }[] = [
@@ -63,13 +64,15 @@ function Messages({ id }: { id: string }) {
           <td>{m.direction === "out" ? "← " : "→ "}{kindName(m.kind)}{m.message_id && <div className="faint small">message {m.message_id}</div>}</td>
           <td><StatusBadge status={m.status} /> <span className="small">{m.summary}</span>
             {m.revision != null && <div className="faint small">saved as revision {m.revision} · <a href={href("history")}>History</a></div>}</td>
-          <td>{m.items.length > 0 && <button className="btn sm ghost" aria-expanded={open === m.seq} onClick={() => setOpen(open === m.seq ? null : m.seq)}>
-            {open === m.seq ? "Hide" : `${m.items.length} line${m.items.length === 1 ? "" : "s"}`}</button>}</td>
+          <td>{(m.items.length > 0 || !!m.sample) && <button className="btn sm ghost" aria-expanded={open === m.seq} onClick={() => setOpen(open === m.seq ? null : m.seq)}>
+            {open === m.seq ? "Hide" : m.items.length ? `${m.items.length} line${m.items.length === 1 ? "" : "s"}` : "What was read"}</button>}</td>
         </tr>
         {open === m.seq && <tr><td colSpan={5}>
           <table className="t small"><tbody>{m.items.map((it, i) => <tr key={i}>
             <td className="nowrap"><b>{it.ref || "—"}</b></td><td><Badge sev={ITEM[it.status]}>{STATUS[it.status]?.[0] ?? it.status}</Badge></td>
             <td>{it.message}</td><td className="faint">{it.id ?? ""}</td></tr>)}</tbody></table>
+          {m.sample && <details open={!m.items.length}><summary className="small">What was read (the start)</summary>
+            <pre className="mono small" style={{ whiteSpace: "pre-wrap", maxHeight: 240, overflow: "auto", margin: 0 }}>{m.sample}</pre></details>}
         </td></tr>}
       </Fragment>)}</tbody>
     </table></div>}
@@ -137,47 +140,94 @@ function schedule(j: Pick<ImportJob, "every" | "at" | "weekday">): string {
   return `every day at ${j.at}`;
 }
 
-function JobForm({ data, initial, onSave, onCancel }: { data: ImportJobs; initial: JobInput; onSave: (j: JobInput) => Promise<void>; onCancel: () => void }) {
+function JobForm({ cid, jid, data, initial, onSave, onCancel }: { cid: string; jid?: string; data: ImportJobs; initial: JobInput; onSave: (j: JobInput) => Promise<void>; onCancel: () => void }) {
   const [j, setJ] = useState<JobInput>(initial);
   const [auth, setAuth] = useState("");
   const [clearAuth, setClearAuth] = useState(false);
   const [e, setE] = useState<string | null>(null);
+  const start = fromMapping(initial.mapping);
+  const [mapped, setMapped] = useState(start.rows.length > 0);
+  const [items, setItems] = useState(start.items);
+  const [each, setEach] = useState(start.each);
+  const [rows, setRows] = useState<MapRow[]>(start.rows);
+  const [paging, setPaging] = useState<Paging>(initial.paging ?? { mode: "next", next: "", param: "page", max_pages: 50 });
+  const [sample, setSample] = useState("");
+  const [tried, setTried] = useState<Tried | null>(null);
+  const [trying, setTrying] = useState(false);
   const set = (p: Partial<JobInput>) => setJ({ ...j, ...p });
+  const fields = data.fields?.[j.kind] ?? [];
+  const web = j.source_type !== "folder";
+  const payload = (): JobInput => {
+    const headers = clearAuth || !web ? {} : auth.trim() ? { Authorization: auth.trim() } : j.headers;
+    const { name, kind, source_type, source, day_first, every, at, weekday, enabled } = j;
+    const format = source_type === "api" ? "json" : j.format;
+    const mapping = mapped ? toMapping(items, each, rows) : items.trim() && format === "json" ? toMapping(items, "", []) : null;
+    return { name, kind, source_type, source, format, day_first, every, at, weekday, enabled, headers, mapping,
+      paging: source_type === "api" ? paging : null };
+  };
+  const tryIt = async () => {
+    setE(null);
+    setTrying(true);
+    try { setTried(await api.tryImport(cid, { job: payload(), content: sample.trim() ? sample : null, id: jid ?? null })); }
+    catch (x) { setE(err(x)); setTried(null); } finally { setTrying(false); }
+  };
   return <form className="stack" style={{ gap: 10 }} aria-label="Scheduled import" onSubmit={async (ev) => {
     ev.preventDefault();
     setE(null);
-    const headers = clearAuth || j.source_type !== "url" ? {} : auth.trim() ? { Authorization: auth.trim() } : j.headers;
-    const { name, kind, source_type, source, format, day_first, every, at, weekday, enabled } = j;
-    try { await onSave({ name, kind, source_type, source, format, day_first, every, at, weekday, enabled, headers }); }
+    try { await onSave(payload()); }
     catch (x) { setE(err(x)); }
   }}>
     <div className="qrow">
       <label className="qf"><span className="qf-l">Name</span>
         <input className="input" required maxLength={60} value={j.name} onChange={(ev) => set({ name: ev.target.value })} placeholder="Open orders from SAP" aria-label="Import name" /></label>
       <label className="qf"><span className="qf-l">What it brings</span>
-        <select className="select" value={j.kind} onChange={(ev) => set({ kind: ev.target.value })} aria-label="What it brings">
+        <select className="select" value={j.kind} onChange={(ev) => { set({ kind: ev.target.value }); if (mapped) setRows(startRows(ev.target.value, data.fields?.[ev.target.value] ?? [])); }} aria-label="What it brings">
           {data.kinds.map((k) => <option key={k} value={k}>{kindName(k)}</option>)}</select></label>
-      <label className="qf"><span className="qf-l">Format</span>
+      {j.source_type !== "api" && <label className="qf"><span className="qf-l">Format</span>
         <select className="select" value={j.format} onChange={(ev) => set({ format: ev.target.value as JobInput["format"] })} aria-label="Format">
-          <option value="csv">CSV (or a semicolon list)</option><option value="json">JSON</option></select></label>
+          <option value="csv">CSV (or a semicolon list)</option><option value="json">JSON</option></select></label>}
     </div>
     <div className="qrow">
       <label className="qf"><span className="qf-l">From</span>
         <select className="select" value={j.source_type} onChange={(ev) => set({ source_type: ev.target.value as JobInput["source_type"] })} aria-label="Read from">
-          <option value="url">a web address</option><option value="folder" disabled={!data.folder}>a folder on the server{data.folder ? "" : " (not set up)"}</option></select></label>
-      <label className="qf" style={{ flex: "2 1 280px" }}><span className="qf-l">{j.source_type === "url" ? "Web address" : "Files"}</span>
+          <option value="url">a file at a web address</option><option value="api">a web API (JSON, page by page)</option>
+          <option value="folder" disabled={!data.folder}>a folder on the server{data.folder ? "" : " (not set up)"}</option></select></label>
+      <label className="qf" style={{ flex: "2 1 280px" }}><span className="qf-l">{web ? "Web address" : "Files"}</span>
         <input className="input" required value={j.source} onChange={(ev) => set({ source: ev.target.value })} aria-label="Source"
-          placeholder={j.source_type === "url" ? "https://erp.example.com/exports/orders.csv" : "orders-*.csv"} />
-        <span className="qf-h">{j.source_type === "url" ? "only addresses on hosts the server's administrator allowed"
+          placeholder={j.source_type === "api" ? "https://erp.example.com/api/stock?changed_after={since}" : web ? "https://erp.example.com/exports/orders.csv" : "orders-*.csv"} />
+        <span className="qf-h">{web ? <>only addresses on hosts the server's administrator allowed; <code>{"{since}"}</code> in it is the time the last good run started, so only what changed is read
+          {(initial as Partial<ImportJob>).since && <> (now {when((initial as Partial<ImportJob>).since!)})</>}</>
           : <>files matching this in <code>{data.folder}</code>; each read file moves to <code>done/</code> (or <code>failed/</code>)</>}</span></label>
     </div>
-    {j.source_type === "url" && <label className="qf"><span className="qf-l">Authorization header <span className="faint">(optional)</span></span>
+    {web && <label className="qf"><span className="qf-l">Authorization header <span className="faint">(optional)</span></span>
       <input className="input" type="password" disabled={clearAuth} value={auth} onChange={(ev) => setAuth(ev.target.value)} aria-label="Authorization header" autoComplete="off"
         placeholder={(initial.headers && Object.keys(initial.headers).length) || (initial as Partial<ImportJob>).header_names?.length ? "kept as it is" : "Bearer …"} />
-      <span className="qf-h">sent with each request; not shown again. Saved credentials are cleared if the host, protocol or port changes.</span>
+      <span className="qf-h">sent with each request to this host only (a next page elsewhere gets none); not shown again. Saved credentials are cleared if the host, protocol or port changes.</span>
       {(initial as Partial<ImportJob>).header_names?.length ? <span className="row small">
         <input type="checkbox" checked={clearAuth} onChange={(ev) => setClearAuth(ev.target.checked)} aria-label="Remove saved request headers" />
         Remove saved request headers</span> : null}</label>}
+    {j.source_type === "api" && <PagingFields value={paging} onChange={setPaging} />}
+    <fieldset className="stack" style={{ gap: 8, border: "1px solid var(--border)", padding: "8px 12px", margin: 0 }}>
+      <legend className="small"><label className="row small"><input type="checkbox" checked={mapped} onChange={(ev) => {
+        setMapped(ev.target.checked);
+        if (ev.target.checked && !rows.length) setRows(startRows(j.kind, fields));
+      }} /> <b>Name the fields myself</b></label></legend>
+      {!mapped ? <span className="faint small">Off: columns are recognised by their names, in English and as SAP exports name them{(j.format === "json" || j.source_type === "api") && "; a JSON answer is the message the ERP would send"}.
+        {(j.format === "json" || j.source_type === "api") && <label className="qf" style={{ marginTop: 6 }}><span className="qf-l">Records at</span>
+          <input className="input mono" value={items} onChange={(ev) => setItems(ev.target.value)} placeholder="data.items" aria-label="Records at" /></label>}</span>
+        : <MappingEditor kind={j.kind} fields={fields} json={j.format === "json" || j.source_type === "api"} items={items} each={each} rows={rows}
+          columns={tried?.columns ?? []} onChange={(p) => { if (p.items !== undefined) setItems(p.items); if (p.each !== undefined) setEach(p.each); if (p.rows) setRows(p.rows); }} />}
+    </fieldset>
+    <details className="small" open={!!tried}><summary><b>Try it first</b>: a dry run, nothing is saved</summary>
+      <div className="stack" style={{ gap: 8, marginTop: 8 }}>
+        <label className="qf"><span className="qf-l">A sample <span className="faint">(optional)</span></span>
+          <textarea className="input mono" rows={4} value={sample} onChange={(ev) => setSample(ev.target.value)} aria-label="Sample to try"
+            placeholder={j.format === "json" || j.source_type === "api" ? '{"orders": [ … ]}' : "Item Code,Godown,Closing Qty\nTIN-W,Main Godown,8"} />
+          <span className="qf-h">paste a few lines of the file (or one page of the answer); empty: the source is read now</span></label>
+        <div><button type="button" className="btn sm" disabled={trying || (!sample.trim() && !j.source.trim())} onClick={tryIt}>{trying ? "Trying…" : "Try it"}</button></div>
+        {tried && <TryResult t={tried} />}
+      </div>
+    </details>
     <div className="qrow">
       <label className="qf"><span className="qf-l">How often</span>
         <select className="select" value={j.every} onChange={(ev) => set({ every: ev.target.value as JobInput["every"] })} aria-label="How often">
@@ -188,7 +238,7 @@ function JobForm({ data, initial, onSave, onCancel }: { data: ImportJobs; initia
       <label className="qf"><span className="qf-l">{j.every === "hour" ? "Minute past" : "At"}</span>
         <input className="input" type="time" value={j.at} onChange={(ev) => set({ at: ev.target.value })} aria-label="Time" />
         <span className="qf-h">{data.timezone} time</span></label>
-      {j.format === "csv" && <label className="row small" style={{ alignSelf: "end" }}>
+      {j.format === "csv" && j.source_type !== "api" && <label className="row small" style={{ alignSelf: "end" }}>
         <input type="checkbox" checked={j.day_first} onChange={(ev) => set({ day_first: ev.target.checked })} /> dates are day first (05/01 is 5 January)</label>}
       <label className="row small" style={{ alignSelf: "end" }}>
         <input type="checkbox" checked={j.enabled} onChange={(ev) => set({ enabled: ev.target.checked })} /> on</label>
@@ -203,12 +253,14 @@ function Imports({ id, owner }: { id: string; owner: boolean }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [failed, setE] = useState<string | null>(null);
+  const [dry, setDry] = useState<{ name: string; t: Tried } | null>(null);
   const { value: data, show: setData, error: readErr } = useLatest<ImportJobs>(() => api.imports(id), [id]);
   const e = failed ?? readErr;
   const run = async (j: ImportJob) => {
     setBusy(j.id);
     setE(null);
     setMsg(null);
+    setDry(null);
     try {
       const rows = await api.runImport(id, j.id);
       setMsg(rows.length ? rows.map((r) => `${r.source || j.name}: ${r.summary}`).join(" · ") : `${j.name}: no new file.`);
@@ -216,13 +268,20 @@ function Imports({ id, owner }: { id: string; owner: boolean }) {
       if (rows.some((r) => r.revision != null)) await store.refreshCompany();
     } catch (x) { setE(err(x)); } finally { setBusy(null); }
   };
+  const tryRun = async (j: ImportJob) => {
+    setBusy(`dry:${j.id}`);
+    setE(null);
+    setMsg(null);
+    try { setDry({ name: j.name, t: await api.dryRunImport(id, j.id) }); } catch (x) { setE(err(x)); } finally { setBusy(null); }
+  };
   if (!data) return e ? <div className="banner error">{e}</div> : <div className="faint">Loading…</div>;
   return <Panel title="Files and addresses read on a schedule" actions={owner && !editing && <button className="btn sm" onClick={() => setEditing("new")}>New import</button>}>
     <p className="small muted" style={{ marginTop: 0 }}>The server reads an export your ERP writes (open orders, stock, movements, master data) at the time set, and
       takes it in as that system's message would be: each line taken or refused with why, in Messages. The same file is never
-      taken twice. Column names are recognised in English and as SAP exports name them; see the integration guide.</p>
+      taken twice. Column names are recognised in English and as SAP exports name them, or you name which column fills which field;
+      a web API is read page by page, only what changed since the last good run. <i>Dry run</i> shows what would become of each line first.</p>
     {editing && <div className="hcard" style={{ marginBottom: 12 }}>
-      <JobForm data={data} initial={editing === "new" ? blank(data.kinds) : { ...editing, headers: undefined } as unknown as JobInput}
+      <JobForm cid={id} jid={editing === "new" ? undefined : editing.id} data={data} initial={editing === "new" ? blank(data.kinds) : { ...editing, headers: undefined } as unknown as JobInput}
         onCancel={() => setEditing(null)} onSave={async (j) => {
           setData(await api.saveImport(id, j, editing === "new" ? undefined : editing.id));
           setEditing(null);
@@ -233,12 +292,14 @@ function Imports({ id, owner }: { id: string; owner: boolean }) {
       : <div className="table-wrap"><table className="t">
         <thead><tr><th>Import</th><th>When</th><th>Last time</th><th /></tr></thead>
         <tbody>{data.jobs.map((j) => <tr key={j.id}>
-          <td><b>{j.name}</b> {!j.enabled && <Badge>off</Badge>}<div className="small">{kindName(j.kind)} · {j.format.toUpperCase()} from {j.source_type === "url" ? "" : "the folder: "}<span className="mono">{j.source}</span></div>
+          <td><b>{j.name}</b> {!j.enabled && <Badge>off</Badge>}<div className="small">{kindName(j.kind)} · {j.source_type === "api" ? "web API" : j.format.toUpperCase()} from {j.source_type === "folder" ? "the folder: " : ""}<span className="mono">{j.source}</span></div>
+            {j.mapping && Object.keys(j.mapping.fields ?? {}).length > 0 && <div className="faint small">{Object.keys(j.mapping.fields ?? {}).length} fields mapped</div>}
             <div className="faint small">runs as {j.run_as}</div></td>
           <td className="small">{schedule(j)}{j.enabled && j.next_run && <div className="faint">next {when(j.next_run)}</div>}</td>
           <td className="small">{j.last_run ? <>{when(j.last_run)} <StatusBadge status={j.last_status} /><div>{j.last_summary}</div></> : <span className="faint">not yet</span>}</td>
           <td className="nowrap">{owner && <>
             <button className="btn sm" disabled={busy === j.id} onClick={() => run(j)}>{busy === j.id ? "Reading…" : "Run now"}</button>{" "}
+            <button className="btn sm ghost" disabled={busy === `dry:${j.id}`} onClick={() => tryRun(j)}>{busy === `dry:${j.id}` ? "Trying…" : "Dry run"}</button>{" "}
             <button className="btn sm ghost" onClick={() => setEditing(j)}>Change</button>{" "}
             <button className="btn sm ghost" aria-label={`Remove ${j.name}`} onClick={async () => {
               if (!window.confirm(`Remove the import ${j.name}?`)) return;
@@ -246,6 +307,10 @@ function Imports({ id, owner }: { id: string; owner: boolean }) {
             }}>Remove</button></>}</td>
         </tr>)}</tbody>
       </table></div>}
+    {dry && <div className="hcard" style={{ marginTop: 12 }} aria-label={`Dry run of ${dry.name}`}>
+      <div className="row" style={{ justifyContent: "space-between" }}><b>Dry run of {dry.name}</b>
+        <button className="btn sm ghost" onClick={() => setDry(null)}>Close</button></div>
+      <TryResult t={dry.t} /></div>}
     {msg && <div className="banner ok" role="status">{msg}</div>}
     {e && <div className="banner error">{e}</div>}
   </Panel>;

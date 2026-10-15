@@ -36,6 +36,8 @@ Done: 2.1 (USABILITY_LOG N180–N181), 2.2 (N182), 2.3 (N183–N185), 2.4 (N186�
 | 2.7 | Allocation is one level; kits confirmed line by line; only EOQ beside fixed lots (§7.2, §7.4, §8.3) | Allocation hierarchy with carry-forward, single delivery for a whole order, part-period balancing / least unit cost / Groff |
 
 ## Phase 3: Connectors
+Done: 3.1 (N200–N206).
+
 | # | Gap | Build |
 |---|---|---|
 | 3.1 | No packaged connectors (Netstock lists 30+) | A connector framework on top of the existing keys and imports: mapping, dry run, schedule, message log |
