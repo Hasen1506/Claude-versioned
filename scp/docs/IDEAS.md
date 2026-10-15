@@ -45,7 +45,7 @@ candidate for a later PR. Newest at the bottom of each group.
 
 ## S/4 guide backtest, part B (§6 order capture, §7 aATP, §8 MRP, §9 PP/DS)
 Found while backtesting the engine against the S/4HANA supply-chain guide (8 Oct 2026). Ranked by value; none built.
-- **Outbound handling times in delivery scheduling (fig. 6.2).** The promised date is scheduled back from the requested
+- **Outbound handling times in delivery scheduling (fig. 6.2) (built, ENTERPRISE_PLAN 2.2).** The promised date is scheduled back from the requested
   delivery date by transit and goods-receipt time only. Add pick/pack and loading time at the shipping location (and a
   transport-planning lead time on the lane), so the material availability date and goods-issue date the guide draws
   are real: today every warehouse that needs a day to pick confirms a day too early.

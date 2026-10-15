@@ -3323,6 +3323,7 @@ export interface components {
             /**
              * Ship Date
              * Format: date
+             * @description Material availability date: the goods are there to pick and pack
              */
             ship_date: string;
             /**
@@ -3339,6 +3340,11 @@ export interface components {
              * @enum {string}
              */
             method: "atp" | "rlt" | "ctp";
+            /**
+             * Goods Issue
+             * @description The goods leave, after picking, packing and loading (empty: the day they are there)
+             */
+            goods_issue?: string | null;
         };
         /**
          * ConfirmationStrategy
@@ -6379,6 +6385,18 @@ export interface components {
              * @default 0
              */
             handling_cost_per_unit: number;
+            /**
+             * Pick Pack Workdays
+             * @description Shipping from here: working days to pick and pack once the goods are there (S/4 pick/pack time at the shipping point). Promises check stock this much earlier than the goods leave
+             * @default 0
+             */
+            pick_pack_workdays: number;
+            /**
+             * Loading Workdays
+             * @description Shipping from here: working days to load a shipment before it leaves (goods issue)
+             * @default 0
+             */
+            loading_workdays: number;
         };
         /**
          * LocationProduct
@@ -10820,6 +10838,8 @@ export interface components {
             method: "atp" | "rlt" | "ctp";
             /** On Time */
             on_time: boolean;
+            /** Goods Issue */
+            goods_issue: string | null;
         };
         /** ScheduleRequest */
         ScheduleRequest: {
@@ -12752,6 +12772,12 @@ export interface components {
             priority: number;
             /** Quota */
             quota?: number | null;
+            /**
+             * Transport Planning Workdays
+             * @description Working days to book the carrier before loading (S/4 transportation planning time); it runs alongside picking and packing, so the longer of the two counts
+             * @default 0
+             */
+            transport_planning_workdays: number;
         };
         /**
          * TransportMode
@@ -13105,7 +13131,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "asked" | "stock" | "receipt" | "planned" | "component" | "ctp" | "rlt" | "ship";
+            kind: "asked" | "stock" | "receipt" | "planned" | "component" | "ctp" | "rlt" | "handling" | "ship";
             /** Date */
             date: string | null;
             /**

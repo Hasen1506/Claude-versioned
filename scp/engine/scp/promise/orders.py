@@ -145,7 +145,7 @@ def _promise(ds: Dataset, rec: DemandRecord) -> tuple[OrderPromise, list[Confirm
         raise OrderError("the data has problems that stop planning; fix them first (Home lists them)")
     p = res.checked
     confs = [Confirmation(order=rec.id or "", ship_from=x.ship_from, ship_date=x.ship_date, date=x.date, qty=x.qty,
-                          method=x.method) for x in p.lines]
+                          method=x.method, goods_issue=x.goods_issue) for x in p.lines]
     return p, confs
 
 

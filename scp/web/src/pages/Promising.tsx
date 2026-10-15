@@ -131,7 +131,8 @@ function Nav({ view, res }: { view: View; res: PromiseResult | null }) {
 function LineChip({ l }: { l: ScheduleLine }) {
   const from = useNames().loc(l.ship_from);
   return (
-    <span className="chip" title={`ships ${day(l.ship_date)} from ${from} · delivers ${day(l.date)}`}>
+    <span className="chip" title={l.goods_issue ? `there to pick ${day(l.ship_date)} at ${from} · leaves ${day(l.goods_issue)} · delivers ${day(l.date)}`
+      : `ships ${day(l.ship_date)} from ${from} · delivers ${day(l.date)}`}>
       <b>{qty(l.qty)}</b>&nbsp;{day(l.date)}&nbsp;<span className="faint">{from}</span>
       {l.method !== "atp" && <>&nbsp;<Badge sev={l.method === "ctp" ? "info" : "warning"}>{l.method.toUpperCase()}</Badge></>}
       {!l.on_time && <>&nbsp;<span style={{ color: "var(--warning-text)" }}>late</span></>}
@@ -219,10 +220,10 @@ function OrderCard({ o, currency, actions }: { o: OrderPromise; currency: string
       {o.reason && <div className="banner warning"><Badge sev="warning">Why not</Badge>{o.reason}</div>}
       {o.at_risk && <div className="banner error"><Badge sev="error">At risk</Badge>Supply no longer covers this confirmation: run backorder processing to re-promise it.</div>}
       <table className="t nowrap">
-        <thead><tr><th>Ships from</th><th>Ship date</th><th>Delivery</th><th className="num">Qty</th><th>Method</th><th>On time</th></tr></thead>
+        <thead><tr><th>Ships from</th>{o.lines.some((l) => l.goods_issue) ? <><th>There to pick</th><th>Leaves</th></> : <th>Ship date</th>}<th>Delivery</th><th className="num">Qty</th><th>Method</th><th>On time</th></tr></thead>
         <tbody>
           {o.lines.map((l, i) => (
-            <tr key={i}><td><Loc id={l.ship_from} /></td><td>{day(l.ship_date)}</td><td>{day(l.date)}</td><td className="num">{qty(l.qty)}</td>
+            <tr key={i}><td><Loc id={l.ship_from} /></td><td>{day(l.ship_date)}</td>{o.lines.some((x) => x.goods_issue) && <td>{day(l.goods_issue ?? l.ship_date)}</td>}<td>{day(l.date)}</td><td className="num">{qty(l.qty)}</td>
               <td>{l.method === "atp" ? "available-to-promise" : l.method === "rlt" ? <Badge sev="warning">beyond RLT</Badge> : <Badge sev="info">capable-to-promise</Badge>}</td>
               <td>{l.on_time ? <Badge sev="ok">yes</Badge> : <Badge sev="warning">late</Badge>}</td></tr>
           ))}
@@ -248,6 +249,7 @@ function WhyDate({ steps }: { steps: WhyStep[] }) {
       case "planned": return <>Planned order <b>{w.ref}</b> ready with {qty(w.qty)} {n.prod(w.product)} at {n.loc(w.location)}</>;
       case "ctp": return <>{n.text(w.note)}</>;
       case "rlt": return <>Beyond the replenishment lead time of {w.qty} days: supply can be arranged by then</>;
+      case "handling": return <>Leaves {n.loc(w.location)}: picking, packing and loading take {qty(w.qty)} working {w.qty === 1 ? "day" : "days"} once the goods are there</>;
       case "ship": return <>Delivered from {n.loc(w.location)} over {w.ref}</>;
     }
   };

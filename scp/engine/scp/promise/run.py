@@ -163,7 +163,7 @@ def _bop(ds: Dataset, P: Promiser) -> tuple[list[OrderPromise], list[BopRow]]:
         r = out.get(key)
         prev = persisted.get(key, [])
         prev_lines = [ScheduleLine(ship_from=c.ship_from, ship_date=c.ship_date, date=c.date, qty=c.qty, method=c.method,
-                                   on_time=c.date <= max(d.date, P.origin)) for c in prev]
+                                   on_time=c.date <= max(d.date, P.origin), goods_issue=c.goods_issue) for c in prev]
         if r is None:   # not selected and nothing persisted: untouched
             r = finish(OrderPromise(order=key, location=d.location, product=d.product, qty=d.qty, requested=d.date,
                                     priority=d.priority, complete_delivery=d.complete_delivery))
@@ -286,5 +286,5 @@ def commit(ds: Dataset, mode: str = "entry") -> tuple[Dataset, PromiseResult]:
     if not res.ok:
         return ds, res
     confs = [Confirmation(order=o.order, ship_from=x.ship_from, ship_date=x.ship_date, date=x.date, qty=x.qty,
-                          method=x.method) for o in res.orders for x in o.lines]
+                          method=x.method, goods_issue=x.goods_issue) for o in res.orders for x in o.lines]
     return ds.model_copy(update={"confirmations": confs}), res

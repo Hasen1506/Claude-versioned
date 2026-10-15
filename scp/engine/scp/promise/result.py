@@ -14,11 +14,12 @@ Method = Literal["atp", "rlt", "ctp"]
 
 class ScheduleLine(Out):
     ship_from: str
-    ship_date: dt.date
+    ship_date: dt.date               # material availability: the goods are there to pick (the stock is taken)
     date: dt.date                    # delivery at the demand location
     qty: float
     method: Method
     on_time: bool
+    goods_issue: dt.date | None = None   # the goods leave, after picking, packing and loading (None: on ship_date)
 
 
 class CtpStep(Out):
@@ -33,7 +34,7 @@ class CtpStep(Out):
 
 class WhyStep(Out):
     """One link of the chain behind a confirmed date, earliest first ("why this date")."""
-    kind: Literal["asked", "stock", "receipt", "planned", "component", "ctp", "rlt", "ship"]
+    kind: Literal["asked", "stock", "receipt", "planned", "component", "ctp", "rlt", "handling", "ship"]
     date: dt.date | None = None
     location: str = ""
     product: str = ""

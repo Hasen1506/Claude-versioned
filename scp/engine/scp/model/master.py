@@ -147,6 +147,13 @@ class Location(Model):
     storage_capacity_m3: float | None = Unit("m3", default=None)
     handling_cost_per_unit: float = Unit("money_per_unit", default=0.0,
                                          description="Inbound handling cost per base unit received")
+    pick_pack_workdays: float = Unit(
+        "workdays", le=60, default=0.0,
+        description="Shipping from here: working days to pick and pack once the goods are there (S/4 pick/pack time "
+                    "at the shipping point). Promises check stock this much earlier than the goods leave")
+    loading_workdays: float = Unit(
+        "workdays", le=60, default=0.0,
+        description="Shipping from here: working days to load a shipment before it leaves (goods issue)")
 
 
 class UomConversion(Model):
@@ -795,6 +802,10 @@ class TransportLane(Model):
     modes: list[LaneMode] = Field(min_length=1)
     priority: int = Field(1, ge=1, le=99)
     quota: float | None = Unit("fraction", default=None, le=1)
+    transport_planning_workdays: float = Unit(
+        "workdays", le=60, default=0.0,
+        description="Working days to book the carrier before loading (S/4 transportation planning time); it runs "
+                    "alongside picking and packing, so the longer of the two counts")
 
     @model_validator(mode="after")
     def _ends(self) -> TransportLane:

@@ -356,18 +356,34 @@ def schedule_buy(ds: Dataset, src_id: str, *, available: date | None = None, sta
     return Schedule(st, due, due + _days(gr), [], ship_date=ship)
 
 
+def outbound_workdays(ds: Dataset, ln) -> float:
+    """Working days at the shipping place between the goods being there and their leaving over the lane (S/4 §6.2
+    delivery scheduling): loading, after the longer of picking and packing and booking the transport."""
+    origin = ds.location_by_id.get(ln.origin)
+    pick = origin.pick_pack_workdays if origin else 0.0
+    load = origin.loading_workdays if origin else 0.0
+    return load + max(pick, ln.transport_planning_workdays)
+
+
 def schedule_transfer(ds: Dataset, lane_id: str, product: str, *, available: date | None = None,
                       start: date | None = None) -> Schedule:
+    """A shipment over a lane (S/4 §6.2, fig. 6.2, backward from the date it is wanted): goods receipt time at the
+    destination, transit, the goods issue on a working day of the shipping place, and before it loading after the
+    longer of picking and packing and booking the transport. ``start_date`` is the material availability date (the
+    day the goods must be there to pick, when stock is checked), ``ship_date`` the goods issue."""
     ln = ds.lane_by_id[lane_id]
     gr = gr_days(ds.location_product_by_key.get((ln.destination, product)))
     transit = ln.planning_mode.transit_days
     ship_cal = location_calendar(ds, ln.origin)  # goods leave on the origin's working days
+    handling = outbound_workdays(ds, ln)
     if available is not None:
-        st = ship_cal.prev_workday(available - _days(gr) - _transit(transit))
+        gi = ship_cal.prev_workday(available - _days(gr) - _transit(transit))
+        st = ship_cal.add_workdays(gi, -handling) if handling > 0 else gi
     else:
         st = ship_cal.next_workday(start)
-    due = st + _transit(transit)
-    return Schedule(st, due, due + _days(gr), [], ship_date=st)
+        gi = ship_cal.add_workdays(st, handling) if handling > 0 else st
+    due = gi + _transit(transit)
+    return Schedule(st, due, due + _days(gr), [], ship_date=gi)
 
 
 def schedule(ds: Dataset, opt: SupplyOption, qty: float, *, available: date | None = None,
@@ -396,7 +412,13 @@ def nominal_lead_time_days(ds: Dataset, opt: SupplyOption, qty: float = 1.0) -> 
         return proc + pu.lead_time_days + (lane.planning_mode.transit_days if lane else 0.0) + gr
     if opt.kind == "transfer":
         ln = ds.lane_by_id.get(opt.source_id)
-        return (ln.planning_mode.transit_days + gr) if ln else None
+        if not ln:
+            return None
+        handling = outbound_workdays(ds, ln)
+        if handling > 0:
+            per_week = max(1, sum(1 for d in range(7) if d in location_calendar(ds, ln.origin)._workdays))  # noqa: SLF001
+            handling = handling * 7.0 / per_week
+        return handling + ln.planning_mode.transit_days + gr
     ps = ds.production_source_by_id.get(opt.source_id)
     if not ps:
         return None

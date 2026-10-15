@@ -586,6 +586,76 @@ def test_forward_scheduling_when_the_date_is_past_and_says_why_regression():
     assert "Not a stock shortage" in o.reason and "2026-01-08" in o.reason
 
 
+
+def test_picking_packing_and_loading_check_stock_before_the_goods_leave():
+    """ENTERPRISE_PLAN 2.2, fig. 6.2: delivery 20 Jan, 3 days on the road → goods issue 17 Jan; a day to load after a
+    day to pick and pack → the goods must be there on 15 Jan (material availability date), and stock is checked then.
+    The line says both dates, and why."""
+    d = _customer(promising(buy(on_hand=100, lt=30)))
+    d["locations"][0].update(pick_pack_workdays=1, loading_workdays=1)
+    dem(d, "2026-01-20", 10, location="CU")
+    [o] = run_promise(Dataset.model_validate(d)).orders
+    assert [(x.ship_date, x.goods_issue, x.date) for x in o.lines] == [
+        (date(2026, 1, 15), date(2026, 1, 17), date(2026, 1, 20))]
+    assert o.status == "on_time"
+    assert [(w.kind, w.date) for w in o.why][-2:] == [("handling", date(2026, 1, 17)), ("ship", date(2026, 1, 20))]
+    assert o.why[-2].note == "there to pick 2026-01-15; picking, packing and loading take 2 working days, so it leaves 2026-01-17"
+    assert o.why[-2].qty == 2 and o.why[-1].note == "shipped 2026-01-17 over L1, delivered 2026-01-20"
+
+
+def test_a_warehouse_that_needs_a_day_to_pick_no_longer_confirms_a_day_early():
+    """The defect ENTERPRISE_PLAN 2.2 names: stock arrives 16 Jan for a delivery on 20 Jan with 3 days' transit. With
+    no handling time the order is confirmed on time, shipped the day the goods arrive. A day to pick and pack and a day
+    to load make it there to pick on 16 Jan, leaving 18 Jan, delivered 21 Jan: one day late, and said so."""
+    d = _customer(promising(buy(lt=30)))
+    rec(d, "2026-01-16", 50)
+    dem(d, "2026-01-20", 10, location="CU")
+    [o] = run_promise(Dataset.model_validate(d)).orders
+    assert [(x.ship_date, x.goods_issue, x.date) for x in o.lines] == [(date(2026, 1, 17), None, date(2026, 1, 20))]
+    assert o.status == "on_time"
+    d["locations"][0].update(pick_pack_workdays=1, loading_workdays=1)
+    [o] = run_promise(Dataset.model_validate(d)).orders
+    assert [(x.ship_date, x.goods_issue, x.date) for x in o.lines] == [
+        (date(2026, 1, 16), date(2026, 1, 18), date(2026, 1, 21))]
+    assert o.status == "late"
+
+
+def test_transport_planning_runs_alongside_picking_on_working_days():
+    """Fig. 6.2: booking the carrier (transportation planning, on the route) and picking both end at loading, so the
+    longer counts. Monday–Friday at the warehouse: delivery Tue 20 Jan, 3 days on the road → goods issue Sat 17 is not a
+    working day, so Fri 16; loading 1 → Thu 15; the longer of picking 1 and booking 2 → Tue 13 Jan."""
+    d = _customer(promising(buy(on_hand=100, lt=30, workdays=WEEKDAYS)))
+    d["locations"][0].update(pick_pack_workdays=1, loading_workdays=1)
+    d["lanes"][0]["transport_planning_workdays"] = 2
+    dem(d, "2026-01-20", 10, location="CU")
+    [o] = run_promise(Dataset.model_validate(d)).orders
+    assert [(x.ship_date, x.goods_issue, x.date) for x in o.lines] == [
+        (date(2026, 1, 13), date(2026, 1, 16), date(2026, 1, 20))]   # delivered on the date asked, not early
+
+
+def test_outbound_handling_moves_the_planned_shipment_and_is_kept_on_the_confirmation():
+    """The plan schedules a shipment the same way: the stock leaves the warehouse's requirements on the material
+    availability date, two working days before the goods issue. Promising and keeping the confirmation stores the
+    goods issue with it."""
+    from scp.promise.run import commit
+
+    d = _customer(buy(on_hand=0, lt=1))
+    d["locations"][0].update(pick_pack_workdays=1, loading_workdays=1)
+    dem(d, "2026-01-20", 10, location="CU", kind="forecast")
+    res = plan(d)
+    [t] = [o for o in res.orders if o.kind == "transfer"]
+    assert (t.start_date, t.available_date) == (date(2026, 1, 15), date(2026, 1, 20))
+    [b] = [o for o in res.orders if o.kind == "buy"]
+    assert b.available_date <= date(2026, 1, 15)
+
+    d = _customer(promising(buy(on_hand=100, lt=30)))
+    d["locations"][0].update(pick_pack_workdays=1, loading_workdays=1)
+    dem(d, "2026-01-20", 10, location="CU", id="SO-1")
+    kept, _ = commit(Dataset.model_validate(d))
+    [c] = kept.confirmations
+    assert (c.ship_date, c.goods_issue, c.date) == (date(2026, 1, 15), date(2026, 1, 17), date(2026, 1, 20))
+
+
 # ================================================================================================ §9 PP/DS
 def _op(product: str, group: str, setup: float = 2.0) -> OpSpec:
     return OpSpec(key=f"{product}:10", order=product, seq=10, resource="R", product=product, group=group, qty=1,

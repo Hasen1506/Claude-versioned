@@ -61,6 +61,8 @@ const TITLE: Record<string, string> = {
   capacity_constrained: "Plan within machine capacity", wait_for_parts: "Wait for parts", step_resources: "Steps on an alternative machine",
   scheduled: "Dated by the shop floor schedule",
   rescheduling_horizon_days: "Rescheduling horizon (working days)",
+  pick_pack_workdays: "Picking and packing (working days)", loading_workdays: "Loading (working days)",
+  transport_planning_workdays: "Booking the transport (working days)",
   reschedule_out_tolerance_days: "Early by up to this is left alone (days)",
   capacity_direction: "When a day is full, first try", capacity_max_early_days: "Build at most this many days ahead",
   earliness_weight: "Weight: an hour early", makespan_weight: "Weight: an hour to clear the window", start_rule: "Start rule",

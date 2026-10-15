@@ -311,7 +311,8 @@ export const COLLECTIONS: CollectionDef[] = [
     blurb: "Committed promises (schedule lines) per sales order. Written by Promising → Commit; they claim supply in every later check.",
     columns: [
       { label: "Order", get: (o) => s(o.order) }, { label: "From", get: (o) => s(o.ship_from) },
-      { label: "Ships", get: (o) => s(o.ship_date) }, { label: "Delivers", get: (o) => s(o.date) },
+      { label: "There to pick", get: (o) => s(o.ship_date) }, { label: "Leaves", get: (o) => s(o.goods_issue ?? o.ship_date) },
+      { label: "Delivers", get: (o) => s(o.date) },
       { label: "Method", get: (o) => s(o.method ?? "atp") }, { label: "Qty", get: (o) => o.qty as number, num: true },
     ],
   },

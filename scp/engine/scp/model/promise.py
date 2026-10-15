@@ -71,10 +71,12 @@ class Confirmation(Model):
 
     order: str = Field(min_length=1, max_length=64, description="Sales-order demand record id")
     ship_from: str = Ref("location")
-    ship_date: dt.date
+    ship_date: dt.date = Field(description="Material availability date: the goods are there to pick and pack")
     date: dt.date = Field(description="Confirmed delivery date at the demand location")
     qty: float = Unit("qty", gt=0)
     method: Literal["atp", "rlt", "ctp"] = "atp"
+    goods_issue: dt.date | None = Field(None, description="The goods leave, after picking, packing and loading "
+                                                          "(empty: the day they are there)")
 
 
 class PromiseSettings(Model):

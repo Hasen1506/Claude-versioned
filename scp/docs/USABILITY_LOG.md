@@ -449,10 +449,23 @@ Monday 12 January, and the foundry's PO-4501 for 120 due a week later, on the 19
 * *Tolerance* (input: a PO six days before it is needed; output: *Incoming order could come later* at the company's
   3 days, nothing at 7, nothing with an MRP group that says 6).
 
+ENTERPRISE_PLAN 2.2, in a browser: a towel warehouse in Bhiwandi that takes a working day to pick and pack and one to
+load, shipping to Hotel Sagar 3 days away. 50 towels arrive on PO-77 on Friday 16 January; the hotel wants 10 on
+Tuesday the 20th.
+
+* *Delivery scheduling* (input: the two handling times on the warehouse, and a transport-booking time on the route
+  when there is one; processing: backward from the delivery date by transit to the goods issue, then loading, then the
+  longer of picking and packing and booking the transport, to the date the goods must be there; output: the order's
+  lines read *There to pick* Fri 16 Jan, *Leaves* Sun 18 Jan, *Delivery* Wed 21 Jan, late, and *Why this date* says
+  "Leaves Bhiwandi warehouse: picking, packing and loading take 2 working days once the goods are there"). Without
+  the handling times the same order is confirmed on time, shipped the day the towels arrive. The plan schedules its
+  shipments the same way, and a kept confirmation stores the day the goods leave.
+
 | # | Found | Severity | Outcome |
 |---|---|---|---|
 | N180 | A firm order due a week late was duplicated by a new requisition whenever a new order could still arrive on time, and the firm order was then called not needed (§8.1). | Serious | **Fixed.** A rescheduling horizon in working days (company setting, product, MRP group): within it the firm order is brought in first. The company default is 0, as in S/4 when none is set, so saved companies plan as before until a horizon is given; the not-needed situation now points to it. The reschedule-out tolerance (3 days) is a setting too. |
 | N181 | "Nothing needs them before the horizon ends" read as the new rescheduling horizon. | Minor | **Fixed.** It says *planning horizon*. |
+| N182 | A warehouse that needs a day to pick confirmed every order a day too early: the promise shipped goods the day they arrived, with no picking, packing, loading or transport booking (§6.2). | Serious | **Fixed.** Picking and packing and loading times on the shipping place, transport booking on the route, all in working days (0 by default, so nothing moves until they are set); stock is checked on the material availability date, and the line and the confirmation carry the goods issue. |
 
 ## Found in the second reality check (after Phase E)
 

@@ -10,9 +10,10 @@ Supply picture per shipping node (the *scope of check*):
   sales-order confirmation shipping from the node. Forecast and the customer demand itself are not
   outflows: ATP promises supply to orders, not to forecasts.
 
-A sales order at a customer is shipped over a lane from a stocking location; the requested ship
-date is the requested delivery date minus transit and goods-receipt time. Its confirmed delivery
-date is the confirmed ship date plus the same.
+A sales order at a customer is shipped over a lane from a stocking location, scheduled backward from the
+requested delivery date (§6.2, fig. 6.2): goods-receipt time, transit, the goods issue, loading, and before that
+the longer of picking and packing and booking the transport. Stock is checked on the material availability date
+that leaves (the line's ship date); the goods issue and the delivery date are scheduled forward from it.
 """
 from __future__ import annotations
 
@@ -31,8 +32,8 @@ from ..network import NetworkGraph, Node, build_graph, supply_options
 from ..plan import PlanResult
 from ..plan.structure import entering, needs
 from ..plan.leadtime import (
-    gr_days, nominal_lead_time_days, resource_calendar, schedule_buy, schedule_make, schedule_transfer,
-    transit_whole_days,
+    gr_days, nominal_lead_time_days, outbound_workdays, resource_calendar, schedule_buy, schedule_make,
+    schedule_transfer, transit_whole_days,
 )
 from ..time.capacity import day_capacity
 from .atp import EPS, AtpSeries
@@ -214,9 +215,15 @@ class Promiser:
         return max(0, self.day(schedule_transfer(self.ds, sh.lane, product, available=delivery).start_date))
 
     def delivery(self, sh: Ship, product: str, ship_day: int) -> date:
+        return self.outbound(sh, product, ship_day)[1]
+
+    def outbound(self, sh: Ship, product: str, ship_day: int) -> tuple[date | None, date]:
+        """The goods issue (None when the goods leave the day they are there) and the delivery for goods there to
+        pick on ``ship_day``."""
         if sh.lane is None:
-            return self.date(ship_day)
-        return schedule_transfer(self.ds, sh.lane, product, start=self.date(ship_day)).available_date
+            return None, self.date(ship_day)
+        sch = schedule_transfer(self.ds, sh.lane, product, start=self.date(ship_day))
+        return (sch.ship_date if sch.ship_date and sch.ship_date != sch.start_date else None), sch.available_date
 
     # ---- product allocation ----------------------------------------------------------------------
     def allocations(self, d: DemandRecord) -> list[Allocation]:
@@ -243,9 +250,10 @@ class Promiser:
         if a:
             self.alloc_used[a.id] += qty
         # goods that can arrive early (the ship date snaps back to a working day) are delivered on the requested date
-        deliv = max(self.delivery(sh, d.product, ship_day), requested)
+        gi, deliv = self.outbound(sh, d.product, ship_day)
+        deliv = max(deliv, requested)
         return ScheduleLine(ship_from=sh.node[0], ship_date=self.date(ship_day), date=deliv, qty=qty, method=method,
-                            on_time=deliv <= max(requested, self.origin))
+                            on_time=deliv <= max(requested, self.origin), goods_issue=gi)
 
     def release(self, d: DemandRecord, line: ScheduleLine) -> None:
         """Give a committed schedule line's supply (and allocation) back: the inverse of :meth:`commit_line`."""
@@ -269,7 +277,7 @@ class Promiser:
         if a:
             self.alloc_used[a.id] += c.qty
         return ScheduleLine(ship_from=c.ship_from, ship_date=c.ship_date, date=c.date, qty=c.qty, method=c.method,
-                            on_time=c.date <= max(d.date, self.origin))
+                            on_time=c.date <= max(d.date, self.origin), goods_issue=c.goods_issue)
 
     def snapshot(self) -> tuple:
         return ({n: s.snapshot() for n, s in self.series.items()}, {n: list(v) for n, v in self.promised.items()},
@@ -333,8 +341,15 @@ class Promiser:
                     break
         lane = next((sh.lane for sh in self.ships(d) if sh.node == node), None)
         if lane is not None:
+            if line.goods_issue:
+                handling = outbound_workdays(self.ds, self.ds.lane_by_id[lane])
+                out.append(WhyStep(kind="handling", date=line.goods_issue, location=node[0], product=d.product,
+                                   ref=lane, qty=handling,
+                                   note=f"there to pick {line.ship_date.isoformat()}; picking, packing and loading "
+                                        f"take {handling:g} working days, so it leaves {line.goods_issue.isoformat()}"))
+            left = line.goods_issue or line.ship_date
             out.append(WhyStep(kind="ship", date=line.date, location=node[0], product=d.product, ref=lane, qty=line.qty,
-                               note=f"shipped {line.ship_date.isoformat()} over {lane}, delivered {line.date.isoformat()}"))
+                               note=f"shipped {left.isoformat()} over {lane}, delivered {line.date.isoformat()}"))
         return out
 
     def _check(self, d: DemandRecord, key: str, qty: float | None = None) -> OrderPromise:
@@ -464,6 +479,7 @@ class Promiser:
                 src = opt.upstream[0]
                 ln = self.ds.lane_by_id[opt.source_id]
                 transit = (transit_whole_days(ln.planning_mode.transit_days)
+                           + math.ceil(outbound_workdays(self.ds, ln) - 1e-9)
                            + math.ceil(gr_days(self.ds.location_product_by_key.get(node)) - 1e-9))
                 up = self.ctp(src, qty, max(0, need - transit), depth + 1, path)
                 if up is not None:
