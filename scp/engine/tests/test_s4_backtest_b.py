@@ -368,14 +368,105 @@ def test_backward_scheduling_and_forward_from_today():
 
 
 def test_planning_time_fence_shifts_new_proposals_to_the_fence_end():
-    """§8.5 firming type 1: inside a 10-day fence no new proposal; the requirement of 8 Jan is covered at the fence end
-    (15 Jan, late) and the move is reported."""
+    """§8.5 firming types 1 and 3 (3 is the default): inside a 10-day fence no new proposal; the requirement of 8 Jan
+    is covered at the fence end (15 Jan, late) and the move is reported."""
     d = buy(lt=1, planning_time_fence_days=10)
     dem(d, "2026-01-08", 10)
     res = plan(d)
     [o] = orders(res)
     assert o.fence_shifted and o.available_date == date(2026, 1, 15)
     assert "FENCE_SHIFT" in codes(res)
+
+
+
+def test_firming_type_2_plans_nothing_inside_the_fence_and_reports_the_shortage():
+    """ENTERPRISE_PLAN 2.3, §8.5 firming types 2 and 4: inside a 10-day fence no order at all, not even one moved to
+    its end; the shortage is reported, and the first check beyond the fence (15 Jan, daily buckets) covers it together
+    with what is needed then."""
+    for ft in (2, 4):
+        d = buy(lt=1, planning_time_fence_days=10, firming_type=ft)
+        dem(d, "2026-01-08", 10)
+        dem(d, "2026-01-20", 5)
+        res = plan(d)
+        assert [(o.qty, o.need_date, o.fence_shifted) for o in orders(res)] == [
+            (10, date(2026, 1, 15), False), (5, date(2026, 1, 20), False)]
+        [e] = [e for e in res.exceptions if e.code == "FENCE_SHORTAGE"]
+        assert (e.date, e.qty) == (date(2026, 1, 8), 10)
+        assert f"firming type {ft} plans no new order there" in e.message
+        assert "FENCE_SHIFT" not in codes(res)
+    # an MRP group can say it for many products
+    d = buy(lt=1, planning_time_fence_days=10, mrp_group="G")
+    d["mrp_groups"] = [{"id": "G", "firming_type": 2}]
+    dem(d, "2026-01-08", 10)
+    assert "FENCE_SHORTAGE" in codes(plan(d))
+
+
+def test_firming_types_1_and_2_firm_the_fence_when_the_week_rolls():
+    """ENTERPRISE_PLAN 2.3, §8.5 automatic firming: rolling to Monday 12 Jan, the planned orders that start inside the
+    product's 7-day fence (to 19 Jan) are firmed as last week's plan had them: the order for 16 Jan (1-day lead time)
+    becomes a purchase order due on the 16th, not one moved to the new fence end; the one for 30 Jan, outside the
+    fence, stays planned. Firming types 3 and 4 leave both to the planner."""
+    from scp.actuals.roll import roll_forward
+
+    def company(ft: int) -> Dataset:
+        d = buy(lt=1, planning_time_fence_days=7, firming_type=ft)
+        dem(d, "2026-01-16", 10, kind="forecast")
+        dem(d, "2026-01-30", 20, kind="forecast")
+        return Dataset.model_validate(d)
+
+    for ft in (1, 2):
+        new, rep = roll_forward(company(ft), date(2026, 1, 12))
+        assert rep.ok
+        assert [(f.kind, f.qty, f.planned_id.startswith("PR-")) for f in rep.firmed] == [("purchase", 10, True)]
+        assert len(rep.purchase_orders) == 1
+        assert [(r.kind.value, r.qty, r.due_date) for r in new.receipts] == [("purchase", 10, date(2026, 1, 16))]
+        assert [(o.qty, o.need_date) for o in orders(run_mrp(new))] == [(20, date(2026, 1, 30))]
+    for ft in (3, 4):
+        new, rep = roll_forward(company(ft), date(2026, 1, 12))
+        assert rep.firmed == [] and new.receipts == []
+
+
+
+def test_fence_and_goods_receipt_time_count_working_days_when_the_company_says_so():
+    """ENTERPRISE_PLAN 2.3: S/4 counts the planning time fence and the goods-receipt time in working days. Monday–Friday
+    plant, planning from Monday 5 Jan. A 5-day fence ends Saturday 10 Jan in calendar days, Monday 12 Jan in working
+    days. Two days of goods receipt after a PO arrives on Friday 9 Jan: Sunday 11 Jan in calendar days, Tuesday 13 Jan
+    in working days. Off (saved companies) nothing moves."""
+    d = buy(lt=1, workdays=WEEKDAYS, planning_time_fence_days=5)
+    dem(d, "2026-01-07", 10)
+    shift = lambda res: [e.message for e in res.exceptions if e.code == "FENCE_SHIFT"]  # noqa: E731
+    assert shift(plan(d)) == ["PR-00001 moved to the planning time fence end 2026-01-10"]
+    d["settings"]["working_day_fences"] = True
+    assert shift(plan(d)) == ["PR-00001 moved to the planning time fence end 2026-01-12"]
+
+    d = promising(buy(lt=30, workdays=WEEKDAYS, gr_processing_days=2))
+    rec(d, "2026-01-09", 50)
+    dem(d, "2026-01-12", 10)
+    assert [x.ship_date for x in run_promise(Dataset.model_validate(d)).orders[0].lines] == [date(2026, 1, 12)]
+    d["settings"]["working_day_fences"] = True
+    assert [x.ship_date for x in run_promise(Dataset.model_validate(d)).orders[0].lines] == [date(2026, 1, 13)]
+
+    # placed on Friday 9 Jan (the buyers' working day), delivered Saturday 10 Jan: two days of goods receipt make it
+    # Monday 12 Jan in calendar days, Tuesday 13 Jan in working days
+    d = buy(lt=1, workdays=WEEKDAYS, gr_processing_days=2)
+    dem(d, "2026-01-14", 10)
+    [o] = orders(plan(d))
+    assert (o.due_date, o.available_date) == (date(2026, 1, 10), date(2026, 1, 12))
+    d["settings"]["working_day_fences"] = True
+    [o] = orders(plan(d))
+    assert (o.due_date, o.available_date) == (date(2026, 1, 10), date(2026, 1, 13))
+
+
+def test_automatic_firming_keeps_last_weeks_fence_in_working_days():
+    """Rolling a week with a fence of 5 working days (Monday–Friday): last week's fence ended Monday 12 Jan, this
+    week's ends Monday 19 Jan. An order for Wednesday 14 Jan is firmed on its own date, not moved to the 19th."""
+    from scp.actuals.roll import roll_forward
+
+    d = buy(lt=1, workdays=WEEKDAYS, planning_time_fence_days=5, firming_type=1)
+    d["settings"]["working_day_fences"] = True
+    dem(d, "2026-01-14", 10, kind="forecast")
+    new, rep = roll_forward(Dataset.model_validate(d), date(2026, 1, 12))
+    assert [(r.qty, r.due_date) for r in new.receipts] == [(10, date(2026, 1, 14))]
 
 
 # ================================================================================================ §8.6 exceptions

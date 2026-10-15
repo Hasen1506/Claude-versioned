@@ -142,6 +142,18 @@ class OrderChange(Out):
     closed: bool
 
 
+class FirmedOrder(Out):
+    planned_id: str
+    receipt_id: str
+    kind: str
+    location: str
+    product: str
+    qty: float
+    start_date: dt.date
+    due_date: dt.date
+    reservations: int
+
+
 class RollReport(Out):
     ok: bool
     from_date: dt.date
@@ -155,18 +167,8 @@ class RollReport(Out):
     history_added: int
     confirmations_trimmed: int
     warnings: list[str]
-
-
-class FirmedOrder(Out):
-    planned_id: str
-    receipt_id: str
-    kind: str
-    location: str
-    product: str
-    qty: float
-    start_date: dt.date
-    due_date: dt.date
-    reservations: int
+    firmed: list[FirmedOrder] = []        # firming types 1 and 2: planned orders inside the fence, firmed at the roll
+    purchase_orders: list[str] = []       # the purchase orders made for the firmed buys
 
 
 class FirmReport(Out):

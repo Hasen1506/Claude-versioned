@@ -61,6 +61,7 @@ const TITLE: Record<string, string> = {
   capacity_constrained: "Plan within machine capacity", wait_for_parts: "Wait for parts", step_resources: "Steps on an alternative machine",
   scheduled: "Dated by the shop floor schedule",
   rescheduling_horizon_days: "Rescheduling horizon (working days)",
+  firming_type: "Firming type (1–4)", working_day_fences: "Time fence and goods receipt in working days",
   pick_pack_workdays: "Picking and packing (working days)", loading_workdays: "Loading (working days)",
   transport_planning_workdays: "Booking the transport (working days)",
   reschedule_out_tolerance_days: "Early by up to this is left alone (days)",

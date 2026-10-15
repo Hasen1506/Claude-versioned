@@ -43,8 +43,8 @@ from ..validate import has_errors, validate
 from . import costing, rates
 from .consumption import effective_demand
 from .leadtime import (
-    Schedule, batch_multiple, gr_days, lead_time_std_days, location_calendar, nominal_lead_time_days, resource_calendar,
-    schedule, schedule_make, supplier_lane,
+    Schedule, batch_multiple, gr_after, lead_time_std_days, location_calendar, nominal_lead_time_days,
+    resource_calendar, schedule, schedule_make, supplier_lane,
 )
 from .lotsize import apply_modifiers, base_lot
 from .structure import co_output, needs
@@ -114,6 +114,27 @@ class _Fresh:
         if gone:
             self.lots = [x for x in self.lots if x[0] >= on]
         return gone
+
+
+def fence_end(ds: Dataset, node: Node, lp: LocationProduct) -> date | None:
+    """The end of the planning time fence (S/4 §8.5) from the planning start (None: no fence): working days of the
+    place's calendar when the company counts them so, else calendar days."""
+    if lp.planning_time_fence_days <= 0:
+        return None
+    start = ds.settings.planning_start
+    if ds.settings.working_day_fences:
+        return location_calendar(ds, node[0]).add_workdays(start, lp.planning_time_fence_days)
+    return start + timedelta(days=lp.planning_time_fence_days)
+
+
+def fence_days_to(ds: Dataset, node: Node, end: date) -> float:
+    """The fence, in the company's days, that ends on ``end`` (the inverse of :func:`fence_end`)."""
+    start = ds.settings.planning_start
+    if end <= start:
+        return 0.0
+    if ds.settings.working_day_fences:
+        return float(location_calendar(ds, node[0]).workdays_between(start + timedelta(days=1), end + timedelta(days=1)))
+    return float((end - start).days)
 
 
 class _Planner:
@@ -241,8 +262,7 @@ class _Planner:
         return self._available(rc, rc.expected_date)
 
     def _available(self, rc, day: date) -> date:
-        gr = gr_days(self.ds.location_product_by_key.get((rc.location, rc.product)))
-        return max(day + timedelta(days=math.ceil(gr - 1e-9)), self.start)
+        return max(gr_after(self.ds, rc.location, rc.product, day), self.start)
 
     def _split(self, node: Node, d: date, qty: float, period_days: int | None) -> list[tuple[date, float]]:
         """PIR splitting: spread a period forecast evenly over the working days of its window."""
@@ -339,6 +359,11 @@ class _Planner:
         shelf = self.shelf(node)
         fresh = _Fresh(onhand) if shelf else None
         thresholds: dict[date, float] = {}
+        # firming types 2 and 4 (S/4 §8.5): nothing new inside the fence; what is short there waits for the first
+        # check beyond it, and is reported
+        fence_end = self._fence_end(node, lp)
+        hold = fence_end if fence_end is not None and lp.firming_type in (2, 4) else None
+        held: list[tuple[date, float]] = []
         for d in dates:
             if fresh is not None:
                 for last, q, what in fresh.expire(d):
@@ -375,6 +400,9 @@ class _Planner:
                 fresh.add(d + timedelta(days=shelf), pulled, "the firm orders brought forward")
             if avail >= threshold - EPS:
                 continue
+            if hold is not None and d < hold:
+                held.append((d, threshold - avail))
+                continue
             shortage = threshold - avail
             qty, gap = self._lot(lp, mto, shortage, d, avail, req_on, rec_on, eoq_qty, shelf)
             # safety time (S/4 §8.1): the receipt is planned this many WORKING days early on the location's calendar,
@@ -390,6 +418,13 @@ class _Planner:
             if fresh is not None:
                 for o in self.orders[first:]:   # a batch keeps from the day it is there
                     fresh.add(max(d, o.available_date) + timedelta(days=shelf), o.qty, o.id)
+        if held:
+            worst = max(q for _, q in held)
+            self._exc("FENCE_SHORTAGE", "warning",
+                      f"{worst:,.1f} short inside the planning time fence (to {hold.isoformat()}), first on "
+                      f"{held[0][0].isoformat()}: firming type {lp.firming_type} plans no new order there. Firm one "
+                      f"by hand or bring a firm order in; beyond the fence the plan covers it",
+                      node=node, when=held[0][0], qty=worst)
         if disc is None:
             self._reschedule_out(node, st, thresholds)
         self._peg(node, st)
@@ -514,6 +549,9 @@ class _Planner:
             q = max(shortage, min(q, shortage + usable))
         return q, gap
 
+    def _fence_end(self, node: Node, lp: LocationProduct) -> date | None:
+        return fence_end(self.ds, node, lp)
+
     def _horizon(self, lp: LocationProduct) -> float:
         """Working days after a shortage within which a later firm order is brought in rather than ordered again: the
         product's (or its MRP group's), else the company's."""
@@ -528,8 +566,8 @@ class _Planner:
         """When a new order for ``need`` would be available: on time if its backward-scheduled start is not in
         the past (nor inside the fence), else its forward-scheduled date from today (or the fence end)."""
         excluded: set[tuple[str, str]] = set()
-        fence_end = self.start + timedelta(days=st.lp.planning_time_fence_days)
-        target = max(need, fence_end) if st.lp.planning_time_fence_days > 0 else need
+        fence_end = self._fence_end(node, st.lp)
+        target = max(need, fence_end) if fence_end is not None else need
         while (opt := self._choose(node, need, qty, excluded)) is not None:
             try:
                 sch = schedule(self.ds, opt, qty, available=target)
@@ -788,8 +826,8 @@ class _Planner:
     def _create_order(self, node: Node, st: _NodeState, opt: SupplyOption, qty: float, need: date) -> None:
         ds = self.ds
         target = need
-        fence_end = self.start + timedelta(days=st.lp.planning_time_fence_days)
-        fenced = st.lp.planning_time_fence_days > 0 and need < fence_end
+        fence_end = self._fence_end(node, st.lp)
+        fenced = fence_end is not None and need < fence_end
         if fenced:
             target = fence_end
         sch: Schedule = schedule(ds, opt, qty, available=target)

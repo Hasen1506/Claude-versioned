@@ -32,7 +32,7 @@ from ..network import NetworkGraph, Node, build_graph, supply_options
 from ..plan import PlanResult
 from ..plan.structure import entering, needs
 from ..plan.leadtime import (
-    gr_days, nominal_lead_time_days, outbound_workdays, resource_calendar, schedule_buy, schedule_make,
+    gr_after, gr_days, nominal_lead_time_days, outbound_workdays, resource_calendar, schedule_buy, schedule_make,
     schedule_transfer, transit_whole_days,
 )
 from ..time.capacity import day_capacity
@@ -148,14 +148,13 @@ class Promiser:
         ds = self.ds
         rlt_day = math.ceil(self.rlt(node) - 1e-9) if self.cfg.confirm_beyond_rlt else None
         s = AtpSeries(self.days, rlt_day)
-        lp = ds.location_product_by_key.get(node)
         s.add_in(0, self.on_hand(node))
         if self.on_hand(node) > EPS:
             self.sources[node].append((0, "stock", "", self.on_hand(node)))
         for r in ds.receipts:
             if (r.location, r.product) == node:
                 for d, q in r.expected_parts():
-                    k = self.day(d) + math.ceil(gr_days(lp) - 1e-9)
+                    k = self.day(gr_after(ds, r.location, r.product, d))
                     s.add_in(k, q)
                     self.sources[node].append((max(k, 0), "receipt", r.id, q))
         if self.cfg.include_planned_orders:
@@ -554,7 +553,7 @@ class Promiser:
             sched = schedule_make(ds, ps, qty, start=self.date(start))
         except NoWorkingTime:
             return None
-        done = max(self.day(sched.available_date), finish + math.ceil(gr_days(ds.location_product_by_key.get(node)) - 1e-9))
+        done = max(self.day(sched.available_date), self.day(gr_after(ds, loc, prod, self.date(finish))))
         steps.append(CtpStep(kind="make", location=loc, product=prod, qty=qty, start=self.date(start), end=self.date(done),
                              note=f"new production via {ps_id}"))
         return CtpPlan(done, steps, actions)

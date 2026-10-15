@@ -461,6 +461,26 @@ Tuesday the 20th.
   the handling times the same order is confirmed on time, shipped the day the towels arrive. The plan schedules its
   shipments the same way, and a kept confirmation stores the day the goods leave.
 
+ENTERPRISE_PLAN 2.3, in a browser and through the engine: the casing again, with a 10-day planning time fence (to
+Thursday 15 January) and the customer's 120 on Monday the 12th.
+
+* *Firming types* (input: the casing's firming type on its *Ordering* view; output: type 3, the default and how the
+  fence behaved before, plans the requisition for the fence end, the 15th; type 4 plans nothing inside the fence, the
+  product shows *Short inside the freeze window*, the Problems list says "1 product short inside the freeze window",
+  and the requisition comes at the first check beyond the fence, Monday the 19th). Types 1 and 2 also firm: rolling
+  a week to Monday 12 January with a 7-day fence, the order last week's plan had for the 16th became a purchase order
+  due on the 16th; types 3 and 4 left it planned.
+* *Working days* (input: the company setting *Time fence and goods receipt in working days*, on for new companies;
+  output on a Monday–Friday plant: a 5-day fence from Monday 5 January ends Monday the 12th instead of Saturday the
+  10th; goods delivered on Saturday the 10th with two days of goods receipt are there on Tuesday the 13th instead of
+  Monday the 12th).
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N183 | Only one firming rule existed: a plant that must not get automatic orders inside its fence got them moved to the fence end anyway, and nothing was firmed as the fence moved over the plan (§8.5). | Serious | **Fixed.** Firming types 1–4 on the product or MRP group; 2 and 4 plan nothing inside the fence and report the shortage; 1 and 2 firm the fence's orders at the roll, as last week's plan had them. The default, 3, is how the fence behaved before (its description called it type 1, which it was not: nothing was firmed). |
+| N184 | The planning time fence and goods-receipt time counted calendar days, so a Friday receipt with two days of goods receipt was available on Sunday. | Minor | **Fixed** for companies that count working days: new companies do; saved companies keep calendar days until the setting is switched on (it moves their dates). |
+| N185 | Automatic firming at the roll first firmed an order on time for the 16th as one moved to the new fence end, the 19th: the plan is worked out afresh, so the order last week had was gone. | Serious | **Fixed** before it shipped: the rolled company is planned with each fence ending where it ended last week, and what starts inside the new fence is firmed. |
+
 | # | Found | Severity | Outcome |
 |---|---|---|---|
 | N180 | A firm order due a week late was duplicated by a new requisition whenever a new order could still arrive on time, and the firm order was then called not needed (§8.1). | Serious | **Fixed.** A rescheduling horizon in working days (company setting, product, MRP group): within it the firm order is brought in first. The company default is 0, as in S/4 when none is set, so saved companies plan as before until a horizon is given; the not-needed situation now points to it. The reschedule-out tolerance (3 days) is a setting too. |

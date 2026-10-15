@@ -58,9 +58,9 @@ Found while backtesting the engine against the S/4HANA supply-chain guide (8 Oct
   with buffer-status (red/yellow) items in the inbox.
 - **Configurable rescheduling tolerance (built, ENTERPRISE_PLAN 2.1).** `RESCHEDULE_OUT` uses a fixed 3-day tolerance; make it a planning setting
   (per MRP group) as S/4 does.
-- **Firming types 2–4 (§8.5).** Only type 1 exists (new proposals move to the fence end). Add "no proposals inside the
+- **Firming types 2–4 (§8.5) (built, ENTERPRISE_PLAN 2.3).** Only type 1 exists (new proposals move to the fence end). Add "no proposals inside the
   fence, report the shortage" (type 2) and manual firming, for plants that must not get automatic late orders.
-- **Fences and GR time in working days.** Safety time now counts working days (S4-B2); the planning time fence and the
+- **Fences and GR time in working days (built, ENTERPRISE_PLAN 2.3, a company setting).** Safety time now counts working days (S4-B2); the planning time fence and the
   goods-receipt processing time still count calendar days, while S/4 counts all three in working days. Changing them
   changes saved data's meaning: needs a migration note.
 - **Allocation hierarchy and sequence (§7.4).** Allocations cap one product × customer set × period. A product-family

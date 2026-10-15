@@ -19,7 +19,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "mrp2", label: "How it is supplied" }, { id: "mrp3", label: "Strategy & buffers" },
   { id: "mrp4", label: "What it is made from" },
 ];
-const MRP1 = ["mrp_group", "mrp_type", "mrp_controller", "reorder_point", "lot_sizing", "max_stock", "planning_time_fence_days",
+const MRP1 = ["mrp_group", "mrp_type", "mrp_controller", "reorder_point", "lot_sizing", "max_stock", "planning_time_fence_days", "firming_type",
   "rescheduling_horizon_days", "reschedule_out_tolerance_days"];
 const MRP2 = ["procurement", "phantom", "withdraw_from", "direct_production", "on_hand", "gr_processing_days", "safety_time_days",
   "float_before_workdays", "float_after_workdays", "unit_cost", "discontinued_on", "follow_up"];
@@ -194,7 +194,7 @@ function MaterialPage({ ds, prod, loc, tab }: { ds: Dataset; prod: string; loc: 
           {(() => {
             const g = (ds.mrp_groups ?? []).find((x) => x.id === lp?.mrp_group);
             const set = g ? Object.entries({ strategy: g.strategy, "lot size": g.lot_sizing?.policy, "safety time": g.safety_time_days,
-              fence: g.planning_time_fence_days, "consumption back": g.consumption_backward_days, "consumption forward": g.consumption_forward_days,
+              fence: g.planning_time_fence_days, "firming type": g.firming_type, "consumption back": g.consumption_backward_days, "consumption forward": g.consumption_forward_days,
               controller: g.mrp_controller,
               "rescheduling horizon": g.rescheduling_horizon_days, "rescheduling tolerance": g.reschedule_out_tolerance_days }).filter(([, v]) => v !== null && v !== undefined) : [];
             return g ? <div className="banner info" style={{ marginBottom: 10 }}>Planned with MRP group <b>{g.name || g.id}</b>'s values where it sets one,

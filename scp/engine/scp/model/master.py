@@ -64,6 +64,11 @@ class Settings(Model):
     capacity_max_early_days: int | None = Unit(
         "days", ge=0, le=365, default=None,
         description="Levelling: move an order at most this many days earlier to fit; empty = as far as today")
+    working_day_fences: bool = Field(
+        False, description="Count the planning time fence and goods-receipt time in working days of the place's "
+                           "calendar, as S/4 does (new companies). Off: calendar days, as companies made before 15 "
+                           "October 2026 were planned; switching moves their dates (a 10-day fence becomes two "
+                           "working weeks)")
     rescheduling_horizon_days: float = Unit(
         "workdays", le=365, default=0.0,
         description="Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner. A product or MRP group may set its own")
@@ -275,6 +280,11 @@ class SafetyStockPolicy(Model):
         return self
 
 
+FIRMING = ("Firming type inside the planning time fence (S/4 §8.5): 1 = new orders move to the fence end, and those "
+           "inside it are firmed when the week rolls; 2 = no new orders inside the fence (the shortage is reported), "
+           "firmed when the week rolls; 3 = as 1, firmed by hand; 4 = as 2, firmed by hand")
+
+
 class MrpGroup(Model):
     """Planning parameters shared by many products (≈ S/4 MRP group): a product at a place that names the group is
     planned with the group's values wherever the group sets one, instead of its own."""
@@ -287,6 +297,7 @@ class MrpGroup(Model):
                                           description="Safety time: plan receipts this many working days early")
     planning_time_fence_days: float | None = Unit("days", default=None,
                                                   description="No new proposals inside this fence")
+    firming_type: int | None = Field(None, ge=1, le=4, description=FIRMING + " (empty: each product's own)")
     consumption_backward_days: float | None = Unit(
         "days", default=None, description="Calendar days a sales order may reach back to consume forecast (empty: "
                                           "each product's own)")
@@ -304,7 +315,7 @@ class MrpGroup(Model):
         """The fields of a product at a place that the group sets."""
         keys = ("strategy", "lot_sizing", "safety_time_days", "planning_time_fence_days", "consumption_backward_days",
                 "consumption_forward_days", "mrp_controller", "rescheduling_horizon_days",
-                "reschedule_out_tolerance_days")
+                "reschedule_out_tolerance_days", "firming_type")
         return {k: getattr(self, k) for k in keys if getattr(self, k) is not None}
 
 
@@ -332,12 +343,15 @@ class LocationProduct(Model):
     reorder_point: float | None = Unit("qty", default=None, description="reorder_point MRP type trigger")
     max_stock: float | None = Unit("qty", default=None, description="MIN_MAX target / excess threshold")
     planning_time_fence_days: float = Unit("days", default=0.0,
-                                           description="No new proposals inside this fence (firming type 1)")
+                                           description="No new proposals inside this fence: see the firming type. "
+                                                       "Working days when the company counts them so")
+    firming_type: int = Field(3, ge=1, le=4, description=FIRMING)
     rescheduling_horizon_days: float | None = Unit(
         "workdays", le=365, default=None, description="Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner (empty: the company's)")
     reschedule_out_tolerance_days: float | None = Unit(
         "days", le=365, default=None, description="Rescheduling tolerance: a firm order up to this many days earlier than needed is left alone; earlier than that, the plan advises pushing it out (empty: the company's)")
-    gr_processing_days: float = Unit("days", default=0.0, description="Goods-receipt / putaway time")
+    gr_processing_days: float = Unit("days", default=0.0, description="Goods-receipt / putaway time (working days "
+                                                                      "when the company counts them so)")
     consumption_backward_days: float = Unit(
         "days", default=7.0,
         description="Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days before its "

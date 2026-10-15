@@ -77,6 +77,14 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
           actions: [{ label: "Change the time fence (planning policies)", to: href("data", "location_products") }],
         };
         break;
+      case "FENCE_SHORTAGE":
+        s = {
+          title: `${plural(l.length, "product")} short inside the freeze window`,
+          why: "Their firming type says the plan adds no orders inside the planning time fence, so the shortage stays until the fence ends. Firm an order by hand, or bring a firm order in, if it can't wait.",
+          items: l.map((e) => ({ label: `${n(e.qty)} ${where(e)}`, detail: `short from ${d(e.date)}`, to: node(e) })),
+          actions: [{ label: "Change the firming type (planning policies)", to: href("data", "location_products") }],
+        };
+        break;
       case "RESCHEDULE_IN":
         s = {
           title: `${plural(l.length, "incoming order")} should arrive sooner`,
@@ -287,7 +295,7 @@ export function situations(plan: PlanResult, ds: Dataset): Situation[] {
 
 /** A short plain name for an exception code from any page (the code itself stays visible for analysts). */
 const CODE_LABEL: Record<string, string> = {
-  DEMAND_AT_RISK: "Demand late or short", START_IN_PAST: "Should already have started", FENCE_SHIFT: "Moved out of the freeze window",
+  DEMAND_AT_RISK: "Demand late or short", START_IN_PAST: "Should already have started", FENCE_SHIFT: "Moved out of the freeze window", FENCE_SHORTAGE: "Short inside the freeze window",
   RESCHEDULE_IN: "Incoming order needed sooner", RESCHEDULE_OUT: "Incoming order could come later", RECEIPT_NOT_NEEDED: "Incoming order not needed", NO_VALID_SOURCE: "No way to supply", BELOW_SAFETY_STOCK: "Below safety stock",
   EXCESS_STOCK: "Above maximum stock", SHELF_LIFE_RISK: "May expire", CAPACITY_OVERLOAD: "Over capacity",
   CAPACITY_OVERTIME: "Overtime needed", CAPACITY_DAY_OVERLOAD: "Over capacity on a day", SUPPLIER_CAPACITY: "Supplier over capacity", LANE_CAPACITY: "Lane over capacity",

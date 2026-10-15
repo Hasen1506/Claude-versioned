@@ -6471,10 +6471,16 @@ export interface components {
             max_stock?: number | null;
             /**
              * Planning Time Fence Days
-             * @description No new proposals inside this fence (firming type 1)
+             * @description No new proposals inside this fence: see the firming type. Working days when the company counts them so
              * @default 0
              */
             planning_time_fence_days: number;
+            /**
+             * Firming Type
+             * @description Firming type inside the planning time fence (S/4 §8.5): 1 = new orders move to the fence end, and those inside it are firmed when the week rolls; 2 = no new orders inside the fence (the shortage is reported), firmed when the week rolls; 3 = as 1, firmed by hand; 4 = as 2, firmed by hand
+             * @default 3
+             */
+            firming_type: number;
             /**
              * Rescheduling Horizon Days
              * @description Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner (empty: the company's)
@@ -6487,7 +6493,7 @@ export interface components {
             reschedule_out_tolerance_days?: number | null;
             /**
              * Gr Processing Days
-             * @description Goods-receipt / putaway time
+             * @description Goods-receipt / putaway time (working days when the company counts them so)
              * @default 0
              */
             gr_processing_days: number;
@@ -6993,6 +6999,11 @@ export interface components {
              * @description No new proposals inside this fence
              */
             planning_time_fence_days?: number | null;
+            /**
+             * Firming Type
+             * @description Firming type inside the planning time fence (S/4 §8.5): 1 = new orders move to the fence end, and those inside it are firmed when the week rolls; 2 = no new orders inside the fence (the shortage is reported), firmed when the week rolls; 3 = as 1, firmed by hand; 4 = as 2, firmed by hand (empty: each product's own)
+             */
+            firming_type?: number | null;
             /**
              * Consumption Backward Days
              * @description Calendar days a sales order may reach back to consume forecast (empty: each product's own)
@@ -10025,6 +10036,16 @@ export interface components {
             confirmations_trimmed: number;
             /** Warnings */
             warnings: string[];
+            /**
+             * Firmed
+             * @default []
+             */
+            firmed: components["schemas"]["FirmedOrder"][];
+            /**
+             * Purchase Orders
+             * @default []
+             */
+            purchase_orders: string[];
         };
         /** RollRequest */
         RollRequest: {
@@ -11627,6 +11648,12 @@ export interface components {
              * @description Levelling: move an order at most this many days earlier to fit; empty = as far as today
              */
             capacity_max_early_days?: number | null;
+            /**
+             * Working Day Fences
+             * @description Count the planning time fence and goods-receipt time in working days of the place's calendar, as S/4 does (new companies). Off: calendar days, as companies made before 15 October 2026 were planned; switching moves their dates (a 10-day fence becomes two working weeks)
+             * @default false
+             */
+            working_day_fences: boolean;
             /**
              * Rescheduling Horizon Days
              * @description Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner. A product or MRP group may set its own

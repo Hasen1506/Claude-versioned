@@ -81,3 +81,26 @@ test('picking, packing and loading: the promise checks stock before the goods le
   await expect(page.getByLabel('Picking and packing (working days)')).toHaveValue('1');
   await expect(page.getByLabel('Loading (working days)')).toHaveValue('1');
 });
+
+// 2.3 (§8.5): a casing with a 10-day fence (to Thu 15 Jan). Type 3, the default, moves the order for the 12th to the
+// fence end; type 4 plans nothing inside the fence, says so, and covers it at the first check beyond it (Mon 19 Jan)
+test('firming type 4: nothing planned inside the fence, and the shortage is said',async({page})=>{
+  const fenced={...lateCasing,settings:{...lateCasing.settings,company_name:'Fenced Casing Pumps'},receipts:[],
+    location_products:[{location:'PUNE',product:'CASING',on_hand:0,planning_time_fence_days:10}]};
+  await imported(page,'Fenced Casing Pumps',fenced);
+  await page.goto('/#/material/CASING/PUNE');
+  const planned=page.getByRole('row').filter({hasText:/Planned purchase PR-/});
+  await expect(planned).toHaveCount(1,{timeout:45_000});
+  await expect(planned).toContainText('Thu 15 Jan');
+  await page.getByRole('tab',{name:'Ordering',exact:true}).click();
+  await page.getByLabel('Firming type (1–4)').fill('4');
+  await page.getByRole('tab',{name:'Stock & requirements',exact:true}).click();
+  const again=page.getByRole('button',{name:'Plan again',exact:true});
+  await expect(again.or(page.getByText('Short inside the freeze window'))).toBeVisible({timeout:45_000});
+  if(await again.isVisible()) await again.click();
+  await expect(page.getByText('Short inside the freeze window')).toBeVisible({timeout:45_000});
+  await expect(planned).toHaveCount(1);
+  await expect(planned).toContainText('Mon 19 Jan');
+  await page.goto('/#/plan');
+  await expect(page.getByText('1 product short inside the freeze window')).toBeVisible({timeout:45_000});
+});
