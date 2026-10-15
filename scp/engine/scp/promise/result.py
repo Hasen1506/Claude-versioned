@@ -89,7 +89,9 @@ class AtpNode(Out):
 
 class AllocationUse(Out):
     id: str
-    product: str
+    product: str | None
+    family: str | None = None
+    carry_forward: bool = False
     customers: list[str]
     start: dt.date
     end: dt.date

@@ -309,19 +309,57 @@ class Promiser:
         return (sch.ship_date if sch.ship_date and sch.ship_date != sch.start_date else None), sch.available_date
 
     # ---- product allocation ----------------------------------------------------------------------
-    def allocations(self, d: DemandRecord) -> list[Allocation]:
-        return [a for a in self.ds.allocations
-                if a.product == d.product and (not a.customers or d.location in a.customers)]
+    # ``allocs`` below is the hierarchy that applies to an order: one list of periods per level, the family's first
+    def allocations(self, d: DemandRecord) -> list[list[Allocation]]:
+        p = self.ds.product_by_id.get(d.product)
+        family = p.family if p else ""
+        levels = []
+        for scope in ([a for a in self.ds.allocations if family and a.family == family],
+                      [a for a in self.ds.allocations if a.product == d.product]):
+            mine = [a for a in scope if d.location in a.customers]
+            level = mine or [a for a in scope if not a.customers]
+            if level:
+                levels.append(sorted(level, key=lambda a: a.start))
+        return levels
 
-    def alloc_period(self, allocs: list[Allocation], day: int) -> Allocation | None:
+    def alloc_period(self, level: list[Allocation], day: int) -> Allocation | None:
         dt_ = self.date(day)
-        return next((a for a in allocs if a.start <= dt_ < a.end), None)
+        return next((a for a in level if a.start <= dt_ < a.end), None)
 
-    def alloc_cap(self, allocs: list[Allocation], day: int) -> float:
+    def _chain(self, level: list[Allocation], day: int) -> list[Allocation]:
+        """The periods a confirmation on ``day`` may draw on: its own, then, carried forward, the earlier periods of
+        the same allocation from the latest back."""
+        a = self.alloc_period(level, day)
+        if a is None:
+            return []
+        if not a.carry_forward:
+            return [a]
+        return [a, *sorted((p for p in level if p.end <= a.start), key=lambda p: p.start, reverse=True)]
+
+    def alloc_cap(self, allocs: list[list[Allocation]], day: int) -> float:
         if not allocs:
             return math.inf
-        a = self.alloc_period(allocs, day)
-        return max(0.0, a.qty - self.alloc_used[a.id]) if a else 0.0
+        return min(sum(max(0.0, p.qty - self.alloc_used[p.id]) for p in self._chain(level, day)) for level in allocs)
+
+    def _use_alloc(self, allocs: list[list[Allocation]], day: int, qty: float) -> None:
+        """Count ``qty`` against every level: its own period first, then what earlier periods carried forward. A
+        negative quantity gives it back the same way."""
+        for level in allocs:
+            left = qty
+            for p in self._chain(level, day):
+                if abs(left) <= EPS:
+                    break
+                take = min(left, max(0.0, p.qty - self.alloc_used[p.id])) if left > 0 else max(left, -self.alloc_used[p.id])
+                self.alloc_used[p.id] += take
+                left -= take
+            if abs(left) > EPS and (own := self.alloc_period(level, day)) is not None:
+                self.alloc_used[own.id] += left       # beyond the cap (a kept promise): shown as used over
+
+    def _reject_until(self, allocs: list[list[Allocation]], day: int) -> date | None:
+        """The end of the period an order must be confirmed in, when an allocation rejects the rest instead of
+        confirming it later."""
+        ends = [p.end for level in allocs if (p := self.alloc_period(level, day)) is not None and p.fallback == "reject"]
+        return min(ends) if ends else None
 
     # ---- committing -----------------------------------------------------------------------------
     def commit_line(self, d: DemandRecord, sh: Ship, ship_day: int, qty: float, method: str,
@@ -329,14 +367,51 @@ class Promiser:
         s = self.series_for(sh.node)
         s.add_out(ship_day, qty)
         self.promised[sh.node][min(max(ship_day, 0), self.days - 1)] += qty
-        a = self.alloc_period(allocs, ship_day) if allocs else None
-        if a:
-            self.alloc_used[a.id] += qty
+        self._use_alloc(allocs, ship_day, qty)
         # goods that can arrive early (the ship date snaps back to a working day) are delivered on the requested date
         gi, deliv = self.outbound(sh, d.product, ship_day)
         deliv = max(deliv, requested)
         return ScheduleLine(ship_from=sh.node[0], ship_date=self.date(ship_day), date=deliv, qty=qty, method=method,
                             on_time=deliv <= max(requested, self.origin), goods_issue=gi)
+
+    def together(self, group: list[tuple[DemandRecord, OrderPromise]]) -> None:
+        """One delivery for a whole order (S/4 guide §7.2, complete delivery on the header, for kits): every line is
+        confirmed in full and on the date the last one can be, or none is. Moving a confirmation later only frees
+        supply on the days between, so no other order loses by it."""
+        short = [r.order for _, r in group if r.unconfirmed > EPS]
+        if short:
+            for d, r in group:
+                for x in r.lines:
+                    self.release(d, x)
+                r.lines = []
+                r.reason = (f"Ships as one delivery with the rest of its order, and {', '.join(short)} cannot be "
+                            "confirmed in full yet: no line is confirmed until every line can be")
+                finish(r)
+            return
+        last = max((x.date for _, r in group for x in r.lines), default=None)
+        if last is None:
+            return
+        for d, r in group:
+            moved = []
+            for x in r.lines:
+                sh = next((s for s in self.ships(d) if s.node[0] == x.ship_from), None)
+                if x.date >= last or sh is None:
+                    moved.append(x)
+                    continue
+                self.release(d, x)
+                day = max(self.ship_day(sh, d.product, last), self.day(x.ship_date))
+                node = (x.ship_from, d.product)
+                self._claim(d, node, day, x.qty)
+                self.promised[node][min(max(day, 0), self.days - 1)] += x.qty
+                self._use_alloc(self.allocations(d), day, x.qty)
+                gi, deliv = self.outbound(sh, d.product, day)
+                when = max(deliv, last)
+                moved.append(x.model_copy(update={"ship_date": self.date(day), "date": when, "goods_issue": gi,
+                                                  "on_time": when <= max(d.date, self.origin)}))
+            if any(a is not b for a, b in zip(moved, r.lines, strict=True)):
+                r.reason = r.reason or f"Ships with the rest of its order: every line is delivered on {last.isoformat()}"
+            r.lines = moved
+            finish(r)
 
     def release(self, d: DemandRecord, line: ScheduleLine) -> None:
         """Give a committed schedule line's supply (and allocation) back: the inverse of :meth:`commit_line`."""
@@ -344,10 +419,7 @@ class Promiser:
         day = self.day(line.ship_date)
         self._claim(d, node, day, -line.qty)
         self.promised[node][min(max(day, 0), self.days - 1)] -= line.qty
-        allocs = self.allocations(d)
-        a = self.alloc_period(allocs, day) if allocs else None
-        if a:
-            self.alloc_used[a.id] -= line.qty
+        self._use_alloc(self.allocations(d), day, -line.qty)
 
     def register(self, d: DemandRecord, c: Confirmation) -> ScheduleLine:
         """A persisted schedule line claims its supply as an outflow."""
@@ -355,10 +427,7 @@ class Promiser:
         day = self.day(c.ship_date)
         self._claim(d, node, day, c.qty)
         self.promised[node][min(max(day, 0), self.days - 1)] += c.qty
-        allocs = self.allocations(d)
-        a = self.alloc_period(allocs, day) if allocs else None
-        if a:
-            self.alloc_used[a.id] += c.qty
+        self._use_alloc(self.allocations(d), day, c.qty)
         return ScheduleLine(ship_from=c.ship_from, ship_date=c.ship_date, date=c.date, qty=c.qty, method=c.method,
                             on_time=c.date <= max(d.date, self.origin), goods_issue=c.goods_issue)
 
@@ -522,12 +591,11 @@ class Promiser:
 
     def _late(self, d: DemandRecord, sh: Ship, i0: int, qty: float, allocs: list[Allocation]) -> list[ScheduleLine]:
         s = self.series_for(sh.node)
-        reject = allocs and (p := self.alloc_period(allocs, i0)) is not None and p.fallback == "reject"
-        period = self.alloc_period(allocs, i0) if reject else None
+        until = self._reject_until(allocs, i0)
         lines: list[ScheduleLine] = []
         remaining = qty
         for i in range(i0, self.days):
-            if period is not None and not (period.start <= self.date(i) < period.end):
+            if until is not None and self.date(i) >= until:
                 break
             cap = self.alloc_cap(allocs, i)
             if cap <= EPS:

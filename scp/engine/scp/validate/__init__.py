@@ -177,7 +177,8 @@ def _ref(ds: Dataset, c: _Collector, kind: str, value: str | None, typ: str, oid
     index = {"location": ds.location_by_id, "product": ds.product_by_id,
              "calendar": ds.calendar_by_id, "resource": ds.resource_by_id,
              "mrp_group": {g.id: g for g in ds.mrp_groups},
-             "payment_terms": ds.payment_terms_by_id}[kind]
+             "payment_terms": ds.payment_terms_by_id,
+             "family": {p.family: p for p in ds.products if p.family}}[kind]
     if value not in index:
         c.add("REF_UNKNOWN", typ, oid, f"{field} refers to unknown {kind} '{value}'",
               f"Create {kind} '{value}' or fix the reference", field)
@@ -295,6 +296,7 @@ def _references(ds: Dataset, c: _Collector) -> None:
     so_ids = {d.id for d in ds.demand if d.kind is DemandKind.SALES_ORDER and d.id}
     for a in ds.allocations:
         _ref(ds, c, "product", a.product, "allocation", a.id, "product")
+        _ref(ds, c, "family", a.family, "allocation", a.id, "family")
         for cu in a.customers:
             _ref(ds, c, "location", cu, "allocation", a.id, "customers")
     for i, cf in enumerate(ds.confirmations):

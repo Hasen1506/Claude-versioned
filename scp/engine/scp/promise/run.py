@@ -62,10 +62,39 @@ def _entry(ds: Dataset, P: Promiser) -> list[OrderPromise]:
         for r in out.values():
             if any((x.ship_from, r.product) == node and P.day(x.ship_date) in short for x in r.lines):
                 r.at_risk = True
+    together = {h.id for h in ds.sales_orders if h.single_delivery}
+    groups: dict[str, list[tuple[DemandRecord, OrderPromise]]] = defaultdict(list)
     for key, d in orders:
         if key not in out:
+            if d.order in together:          # one delivery for the whole order: each line in full, then aligned
+                d = d.model_copy(update={"complete_delivery": True})
             out[key] = _value(ds, d, P.check(d, key))
+            if d.order in together:
+                groups[d.order].append((d, out[key]))
+    for group in groups.values():
+        P.together(group)
     return [out[k] for k, _ in orders]
+
+
+def ship_together(ds: Dataset, oid: str) -> list[OrderPromise]:
+    """Promise an order's lines as one delivery (they were just taken line by line): the promises after aligning."""
+    res, P = _start(ds, "check")
+    if P is None:
+        return []
+    persisted = _persisted(ds)
+    group = []
+    for key, d in sales_orders(ds):
+        if d.order == oid:
+            lines = [P.register(d, c) for c in persisted.get(key, [])]
+            group.append((d, _value(ds, d, finish(OrderPromise(
+                order=key, location=d.location, product=d.product, qty=d.qty, requested=d.date, priority=d.priority,
+                complete_delivery=True, lines=lines)))))
+    for key, d in sales_orders(ds):           # everything else keeps its promise
+        if d.order != oid:
+            for c in persisted.get(key, []):
+                P.register(d, c)
+    P.together(group)
+    return [r for _, r in group]
 
 
 def _value(ds: Dataset, d: DemandRecord, r: OrderPromise) -> OrderPromise:
@@ -203,7 +232,8 @@ def _finish(ds: Dataset, P: Promiser, res: PromiseResult, orders: list[OrderProm
             nodes.add(sh.node)
     span = ds.settings.horizon_days
     res.nodes = [P.node_view(n, span) for n in sorted(nodes)]
-    res.allocations = [AllocationUse(id=a.id, product=a.product, customers=a.customers, start=a.start, end=a.end, qty=a.qty,
+    res.allocations = [AllocationUse(id=a.id, product=a.product, family=a.family, carry_forward=a.carry_forward,
+                                     customers=a.customers, start=a.start, end=a.end, qty=a.qty,
                                      used=P.alloc_used.get(a.id, 0.0), fallback=a.fallback) for a in ds.allocations]
     k = PromiseKpis(orders=len(orders))
     for o in orders:

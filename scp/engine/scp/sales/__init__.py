@@ -40,7 +40,9 @@ from ..plan.leadtime import gr_after
 from ..model.sales import (
     Delivery, DeliveryLine, Invoice, InvoiceLine, Payment, Quotation, QuoteLine, ReturnOrder, SalesOrder,
 )
+from ..model.promise import Confirmation
 from ..promise.orders import OrderError, _promise, make_supply, next_order_id
+from ..promise.run import ship_together
 from .result import (
     CustomerRow, DeliveryView, InvoiceView, OrderLineView, OrderView, QuotationView, ReturnView, SalesReport, SalesView,
     TaxPart, ToBill, ToDeliver,
@@ -312,8 +314,9 @@ def _sellable(ds: Dataset, customer: str) -> None:
 # ------------------------------------------------------------------------------------------------ orders
 def create_order(ds: Dataset, customer: str, lines: list[dict], *, order_date: date | None = None,
                  customer_ref: str = "", payment_terms: str | None = None, note: str = "",
-                 quotation: str | None = None) -> tuple[Dataset, SalesReport]:
-    """Take an order of several lines (``[{"product", "qty", "date", "price"?, "priority"?, "complete_delivery"?}]``)."""
+                 quotation: str | None = None, single_delivery: bool = False) -> tuple[Dataset, SalesReport]:
+    """Take an order of several lines (``[{"product", "qty", "date", "price"?, "priority"?, "complete_delivery"?}]``).
+    ``single_delivery``: the lines ship together, each in full, on the date the last one can (S/4 guide §7.2)."""
     _sellable(ds, customer)
     if not lines:
         raise SalesError("an order needs at least one line")
@@ -335,13 +338,13 @@ def create_order(ds: Dataset, customer: str, lines: list[dict], *, order_date: d
         net, _, disc = price(ds, customer, prod, q, ln.get("price"))
         recs.append(DemandRecord(id=f"{oid}/{10 * (i + 1)}", order=oid, location=customer, product=prod, date=when,
                                  qty=q, kind=DemandKind.SALES_ORDER, priority=int(ln.get("priority") or 5),
-                                 complete_delivery=bool(ln.get("complete_delivery")), price=net,
+                                 complete_delivery=single_delivery or bool(ln.get("complete_delivery")), price=net,
                                  discount=round(max(0.0, disc), 6), customer_ref=customer_ref[:64]))
     value = sum(r.qty * (r.price or 0.0) * (1 + line_rate(ds, customer, r.product)) for r in recs)
     blocked, why = _credit(ds, customer, round(value, 2))
     head = SalesOrder(id=oid, customer=customer, order_date=_today(ds, order_date), customer_ref=customer_ref[:64],
                       payment_terms=payment_terms, quotation=quotation, credit_block=blocked, credit_note=why[:200],
-                      note=note[:400])
+                      note=note[:400], single_delivery=single_delivery)
     cur = ds.model_copy(update={"sales_orders": [*ds.sales_orders, head]})
     promised = []
     for r in recs:
@@ -352,8 +355,21 @@ def create_order(ds: Dataset, customer: str, lines: list[dict], *, order_date: d
         cur = cur.model_copy(update={"demand": [*cur.demand, r], "confirmations": [*cur.confirmations, *confs]})
         promised.append((r, p))
     cur = _validated(cur)
+    if single_delivery and len(recs) > 1:
+        # one delivery (§7.2): the lines were checked one by one, each in full; now every line moves to the date the
+        # last one can come, or none is promised
+        aligned = {p.order: p for p in ship_together(cur, oid)}
+        promised = [(r, aligned.get(r.id or "", p)) for r, p in promised]
+        ids = {r.id for r in recs}
+        confs = [Confirmation(order=p.order, ship_from=x.ship_from, ship_date=x.ship_date, date=x.date, qty=x.qty,
+                              method=x.method, goods_issue=x.goods_issue) for _, p in promised for x in p.lines]
+        cur = cur.model_copy(update={"confirmations": [c for c in cur.confirmations if c.order not in ids] + confs})
     cur, firmed, made = make_supply(cur, promised)
     words = "; ".join(f"{_n(r.qty)} {_name(ds, r.product)} {_promised(p)}" for r, p in promised)
+    if single_delivery and len(recs) > 1:
+        last = max((x.date for _, p in promised for x in p.lines), default=None)
+        words += (f". One delivery: every line on {_day(last)}" if last and all(p.unconfirmed <= EPS for _, p in promised)
+                  else ". One delivery: nothing is promised until every line can be")
     msg = (f"{oid} taken for {_name(ds, customer)}: {plural(len(recs), 'line')}, {_m(ds, round(value, 2))} with tax. "
            f"{words}.{made}")
     if blocked:
@@ -1191,7 +1207,7 @@ def act(ds: Dataset, action: str, *, id: str | None = None, customer: str | None
     if action == "create_order":
         return create_order(ds, need(customer, "customer"), lines or [], order_date=on,
                             customer_ref=kw.get("customer_ref") or "", payment_terms=kw.get("payment_terms"),
-                            note=kw.get("note") or "")
+                            note=kw.get("note") or "", single_delivery=bool(kw.get("single_delivery")))
     if action == "add_lines":
         return add_lines(ds, need(id, "order"), lines or [])
     if action == "release_credit":

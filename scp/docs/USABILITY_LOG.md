@@ -521,6 +521,25 @@ sells at 1,500.
   15,000 already past the requested date and not delivered; they count once they close", and the same against the
   confirmed date).
 
+ENTERPRISE_PLAN 2.7, in a browser and through the engine. Kumar orders a kit from Pune: a pump (10 in stock) and a motor
+(none; 20 arrive on PO-7 on Wednesday 14 January); pumps and motors are the PUMPS family.
+
+* *One delivery for a whole order* (input: *Ship the whole order together* on the order form, or `single_delivery` on an
+  imported order; processing: each line is confirmed in full, then every line moves to the date the last one can come,
+  or no line is promised; output: "10 Pump promised 10 on Thu 15 Jan; 20 Motor promised 20 on Thu 15 Jan. One
+  delivery: every line on Thu 15 Jan"; a line the order cannot get in full keeps the whole order unpromised, and says
+  so). The pump's 10 stay free for other orders until the 15th.
+* *Allocations by family, the customer's own first, carried forward* (input: an allocation names a product or a
+  family, and may carry forward; processing: the family's cap is checked before the product's, a customer with
+  allocations of their own is held to them and not to the one for everyone else, and a period that carries forward adds
+  what earlier periods left; output: *Promise dates → Allocations* shows "family PUMPS · carries forward · 30 / 100"
+  beside "Motor · 20 / 50").
+* *Optimising lot sizes* (input: *Part-period balancing*, *Least unit cost* or *Groff's rule* as the lot-size rule,
+  with an ordering cost; processing: the lot covers the coming periods while holding stays within an order's cost, the
+  cost per unit falls, or Groff's rule holds; output: for 100, 60, 40 and 100 a week at 10 an order and 0.01 a unit a
+  day, part-period balancing orders 200 and 100, least unit cost 160 and 140; without an ordering cost or a value it
+  orders lot for lot and says so).
+
 | # | Found | Severity | Outcome |
 |---|---|---|---|
 | N183 | Only one firming rule existed: a plant that must not get automatic orders inside its fence got them moved to the fence end anyway, and nothing was firmed as the fence moved over the plan (§8.5). | Serious | **Fixed.** Firming types 1–4 on the product or MRP group; 2 and 4 plan nothing inside the fence and report the shortage; 1 and 2 firm the fence's orders at the roll, as last week's plan had them. The default, 3, is how the fence behaved before (its description called it type 1, which it was not: nothing was firmed). |
@@ -535,6 +554,11 @@ sells at 1,500.
 | N192 | A line without an agreed price was billed at the list price on the invoice day, without its quantity scale (§15 pitfall, pricing type B). | Serious | **Fixed.** Its price is fixed at goods issue, at its scale, and billed at that. |
 | N193 | OTIF counted only closed orders: a backlog of late lines not yet shipped was in no figure (§18.2). | Minor | **Fixed.** The OTIF notes give the count and value of open lines already past their requested and confirmed dates. |
 | N194 | The deliveries list showed nothing until *Calculate*, though the company had just been imported with lines due to ship. | Minor | By design: every page with a *Calculate* button calculates on request; noted only. |
+| N195 | A kit's lines were promised one by one: the pump for the 7th, the motor for the 14th, two deliveries to a customer who wanted one (§7.2). | Serious | **Fixed.** An order can ship as one delivery: every line on the date the last can come, or none. |
+| N196 | Allocations had one level: no family cap, a catch-all applied to customers who had their own, and what a week left unused was lost (§7.4). | Serious | **Fixed.** Family before product, the customer's own allocations before the catch-all, carry-forward per allocation. |
+| N197 | EOQ was the only optimising lot size, poor for lumpy demand (§8.3). | Minor | **Fixed.** Part-period balancing, least unit cost and Groff's rule, holding each requirement from its own date. |
+| N198 | The kit test company first had no source for the pump, and taking the order said only that the data has problems. | Minor | Open: the order form could name the problem (here "Pump has no way to be supplied") instead of pointing to Home. |
+| N199 | A one-click what-if waited 5 seconds in its browser test for a plan run, and failed once under load. | Minor | **Fixed** in the test: it waits as long as the other plan runs. |
 
 | # | Found | Severity | Outcome |
 |---|---|---|---|

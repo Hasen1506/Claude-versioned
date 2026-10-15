@@ -362,12 +362,13 @@ function NewOrder({ res, ds }: { res: SalesView; ds: Dataset }) {
   const places = useMemo(() => customersOf(ds), [ds]);
   const [customer, setCustomer] = useState(places[0]?.id ?? "");
   const [ref, setRef] = useState("");
+  const [together, setTogether] = useState(false);
   const [terms, setTerms] = useState("");
   const { busy, run, banners } = useAction();
   const credit = res.customers.find((c) => c.customer === customer);
   const blocked = (ds.customers ?? []).find((c) => c.customer === customer && c.blocked);
   if (places.length === 0) return <Panel><Empty title="No customers">Add a place of type customer in <a href={href("setup")}>Set up</a>.</Empty></Panel>;
-  const payload = (lines: Line[]) => ({ customer, customer_ref: ref, payment_terms: terms || null,
+  const payload = (lines: Line[]) => ({ customer, customer_ref: ref, payment_terms: terms || null, single_delivery: together,
     lines: lines.map((l) => ({ product: l.product, qty: l.qty, date: l.date, price: l.price })) });
   return <div className="stack">
     {banners}
@@ -382,6 +383,8 @@ function NewOrder({ res, ds }: { res: SalesView; ds: Dataset }) {
           <select value={terms} onChange={(e) => setTerms(e.target.value)} aria-label="Payment terms">
             <option value="">The customer's ({credit?.payment_terms ?? "net 30 days"})</option>
             {(ds.payment_terms ?? []).map((t) => <option key={t.id} value={t.id}>{t.name || t.id}</option>)}</select></label>
+        <label className="row small" style={{ gap: 6 }}><input type="checkbox" checked={together} onChange={(e) => setTogether(e.target.checked)}
+          aria-label="Ship the whole order together" /> Ship the whole order together (every line on the date the last can come)</label>
       </div>
       {blocked && <div className="banner error" style={{ marginTop: 10 }}><Badge sev="error">Blocked for sales</Badge>{blocked.block_reason || "Lift the block on the customer's sales data first."}</div>}
       {credit?.credit_limit != null && <p className="small" role="status">Credit: owes {exactMoney(credit.exposure, res.currency)} of a {exactMoney(credit.credit_limit, res.currency)} limit

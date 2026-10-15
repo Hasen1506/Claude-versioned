@@ -37,6 +37,7 @@ from ..model import (
     Dataset, LocationProduct, LocationType, LotSizePolicy, MrpType, ReceiptKind, SafetyStockMethod, SafetyStockPolicy,
     Strategy,
 )
+from ..model.common import DYNAMIC_LOTS
 from ..network import NetworkGraph, Node, SupplyOption, build_graph
 from ..time import Buckets
 from ..time.capacity import NoWorkingTime, day_capacity, hours_between, overtime_between
@@ -47,7 +48,7 @@ from .leadtime import (
     Schedule, batch_multiple, gr_after, lead_time_std_days, location_calendar, nominal_lead_time_days,
     resource_calendar, schedule, schedule_make, supplier_lane,
 )
-from .lotsize import apply_modifiers, base_lot
+from .lotsize import apply_modifiers, base_lot, dynamic_periods
 from .structure import co_output, needs
 from .result import (
     BucketOut, Kpis, NodeBucket, NodePlan, OrderLoad, Peg, PlanException, PlannedOrder, PlanResult,
@@ -167,6 +168,7 @@ class _Planner:
         self.kpi = Kpis()
         self._expiring: dict[Node, list[tuple[date, float, str]]] | None = None
         self._buffers: dict | None = None
+        self._lot_costs: dict[Node, tuple[float, float]] = {}
         self._pegs_of: dict[str, list[Peg]] = defaultdict(list)   # supply id → its pegs so far
 
     # ------------------------------------------------------------------ setup
@@ -696,6 +698,8 @@ class _Planner:
                 we = min(we, keeps)
             window = max(0.0, sum(q for dd, q in req_on.items() if d < dd < we)
                          - sum(q for dd, q in rec_on.items() if d < dd < we))
+        elif ls.policy in DYNAMIC_LOTS and not mto:
+            window = self._dynamic_window(lp, d, shortage, req_on, rec_on, keeps)
         gap = (lp.max_stock - avail) if lp.max_stock is not None else None
         if mto:
             return shortage, gap
@@ -705,6 +709,39 @@ class _Planner:
                          - sum(qq for dd, qq in rec_on.items() if d < dd < keeps))
             q = max(shortage, min(q, shortage + usable))
         return q, gap
+
+    def _dynamic_window(self, lp: LocationProduct, d: date, shortage: float, req_on: dict[date, float],
+                        rec_on: dict[date, float], keeps: date | None) -> float:
+        """What a lot ordered for a shortage on ``d`` also covers under part-period balancing, least unit cost or
+        Groff (S/4 guide §8.3): the net requirements of the periods the rule joins, each held from ``d`` to its own
+        date at the product's carrying rate, against the cost of one order. Within the shelf life, as POQ."""
+        node = (lp.location, lp.product)
+        if node not in self._lot_costs:
+            s = rates.ordering_cost(self.ds, lp, self.g.options.get(node) or [])
+            h = self.val.unit_value.get(node, 0.0) * rates.holding_rate(self.ds, lp) / 365.0
+            self._lot_costs[node] = (s, h)
+            if s <= 0 or h <= 0:
+                self._exc("EOQ_FALLBACK", "info", f"{lp.lot_sizing.policy.value} lot size undefined (no ordering cost "
+                          "or value): lot-for-lot used", node=node)
+        s, h = self._lot_costs[node]
+        bi = self.b.index_of(d)
+        needs: list[tuple[float, float]] = []
+        for i in range(max(bi, 0), len(self.b)):
+            lo, hi = (d, self.b[i].end) if i == bi else (self.b[i].start, self.b[i].end)
+            if keeps is not None:
+                hi = min(hi, keeps)
+            if hi <= lo:
+                break
+            got = [(dd, q) for dd, q in req_on.items() if (d < dd if i == bi else lo <= dd) and dd < hi]
+            came = sum(q for dd, q in rec_on.items() if (d < dd if i == bi else lo <= dd) and dd < hi)
+            q = max(0.0, sum(x for _, x in got) - came)
+            part_days = sum(x * (dd - d).days for dd, x in got)
+            needs.append((q + (shortage if i == bi else 0.0),
+                          part_days / sum(x for _, x in got) if got and i != bi else float((lo - d).days)))
+        if not needs:
+            return 0.0
+        n = dynamic_periods(lp.lot_sizing.policy, needs, s, h, float(self.b[max(bi, 0)].days))
+        return needs[0][0] - shortage + sum(q for q, _ in needs[1:n])
 
     def _fence_end(self, node: Node, lp: LocationProduct) -> date | None:
         return fence_end(self.ds, node, lp)

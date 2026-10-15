@@ -63,11 +63,11 @@ Found while backtesting the engine against the S/4HANA supply-chain guide (8 Oct
 - **Fences and GR time in working days (built, ENTERPRISE_PLAN 2.3, a company setting).** Safety time now counts working days (S4-B2); the planning time fence and the
   goods-receipt processing time still count calendar days, while S/4 counts all three in working days. Changing them
   changes saved data's meaning: needs a migration note.
-- **Allocation hierarchy and sequence (§7.4).** Allocations cap one product × customer set × period. A product-family
+- **Allocation hierarchy and sequence (§7.4) (built, ENTERPRISE_PLAN 2.7).** Allocations cap one product × customer set × period. A product-family
   cap checked before the customer cap, carry-forward of unused allocation, and a catch-all bucket are missing.
-- **Optimising lot sizes (§8.3).** Part-period balancing / least unit cost / Groff for lumpy demand, beside EOQ.
-- **Fixed pegging (§9.2).** Hard-link a firm supply to a sales order (MTO traceability) so replanning cannot reassign it.
-- **Multi-item single delivery (§7.2).** Confirm the lines of one order together (all on the date the last is
+- **Optimising lot sizes (§8.3) (built, ENTERPRISE_PLAN 2.7).** Part-period balancing / least unit cost / Groff for lumpy demand, beside EOQ.
+- **Fixed pegging (§9.2) (built, ENTERPRISE_PLAN 2.5).** Hard-link a firm supply to a sales order (MTO traceability) so replanning cannot reassign it.
+- **Multi-item single delivery (§7.2) (built, ENTERPRISE_PLAN 2.7).** Confirm the lines of one order together (all on the date the last is
   available) for kits, instead of line by line.
 
 ## S/4 guide backtest, part C (§10–16, §18.2)

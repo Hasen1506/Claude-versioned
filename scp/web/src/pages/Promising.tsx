@@ -661,7 +661,10 @@ function Allocations({ res }: { res: PromiseResult }) {
           <tbody>
             {res.allocations.map((a) => (
               <tr key={a.id}>
-                <td><b>{a.id}</b></td><td><Prod id={a.product} /></td><td>{a.customers.join(", ") || "all"}</td><td>{day(a.start)} – {day(a.end)}</td>
+                <td><b>{a.id}</b>{a.carry_forward && <span className="faint small"> carries forward</span>}</td>
+                <td>{a.product ? <Prod id={a.product} /> : <>family <b>{a.family}</b></>}</td>
+                <td>{a.customers.join(", ") || (res.allocations.some((b) => b.customers.length && b.product === a.product && b.family === a.family)
+                  ? "everyone else" : "everyone")}</td><td>{day(a.start)} – {day(a.end)}</td>
                 <td><div className="row"><div className="bar-track" style={{ flex: 1, minWidth: 90 }}><div className="bar-fill" style={{ width: `${Math.min(100, (a.used / Math.max(a.qty, 1e-9)) * 100)}%`,
                   background: a.used >= a.qty - 1e-6 ? "var(--warning)" : "var(--series-1)" }} /></div><span className="num small">{qty(a.used)} / {qty(a.qty)}</span></div></td>
                 <td className="num">{qty(Math.max(0, a.qty - a.used))}</td><td>{a.fallback === "next_period" ? "next period" : "reject the rest"}</td>
@@ -670,7 +673,7 @@ function Allocations({ res }: { res: PromiseResult }) {
           </tbody>
         </table>
       </Panel>
-      <Reading formula="Confirmable = min(ATP, allocation left in the period of the ship date). Once a product-customer has allocations, a date outside every period has none."
+      <Reading formula="Confirmable = min(ATP, the allocation left at every level in the period of the ship date): a product family's cap first, then the product's. At each level the customer's own allocations apply, else the one for everyone else; a period that carries forward adds what earlier periods left unused. Once a product-customer has allocations, a date outside every period has none."
         soWhat="Use allocations for launches and scarce supply to share fairly across channels; the S&OP constrained plan is a natural source for the quantities." />
     </div>
   );

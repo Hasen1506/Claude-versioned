@@ -23,7 +23,7 @@ no pool was needed), 1.2, 1.5, 1.6 (USABILITY_LOG N167–N173), 1.3 and 1.4 (N17
 
 ## Phase 2: Planning defects against the S/4 guide
 Done: 2.1 (USABILITY_LOG N180–N181), 2.2 (N182), 2.3 (N183–N185), 2.4 (N186–N187), 2.5 (N188–N190),
-2.6 (N191–N194).
+2.6 (N191–N194), 2.7 (N195–N199). Phase 2 is complete.
 
 | # | Gap (guide §) | Build |
 |---|---|---|

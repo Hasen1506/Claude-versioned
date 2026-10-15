@@ -20,6 +20,7 @@ from scp.model import Dataset, InventorySettings
 from scp.plan import run_mrp
 from scp.promise.run import run_bop, run_promise
 from scp.schedule.core import OpSpec, setup_rule
+from scp import sales
 from scp.validate import validate
 
 from .factory import base, demand as fdemand, ds as make_ds
@@ -333,6 +334,51 @@ def test_economic_order_quantity_by_hand():
         dem(d, day, 10, kind="forecast")
     first = orders(plan(d))[0]
     assert first.qty == math.ceil(math.sqrt(2 * 3650 * 100 / 2))
+
+
+def lumpy(policy: str, third: float) -> list[tuple[float, date]]:
+    """Weekly buckets; 100 on Mon 12 Jan, 60 on the 19th, ``third`` on the 26th, 100 on Mon 2 Feb. An order costs 10;
+    a unit held a day costs 10 × 0.365 ÷ 365 = 0.01 (0.07 a week)."""
+    d = buy(bucket="week", horizon=42, lot_sizing={"policy": policy, "ordering_cost": 10}, holding_rate=0.365)
+    for day, q in (("2026-01-12", 100), ("2026-01-19", 60), ("2026-01-26", third), ("2026-02-02", 100)):
+        dem(d, day, q)
+    return [(o.qty, o.need_date) for o in orders(plan(d))]
+
+
+@pytest.mark.parametrize("policy,third,lots", [
+    # part-period balancing: holding 60×7×0.01 = 4.2, + 40×14×0.01 = 9.8 ≤ 10, + 100×21×0.01 > 10 → 200, then 100
+    ("PPB", 40, [(200, date(2026, 1, 12)), (100, date(2026, 2, 2))]),
+    # with 45 the third week costs 6.3: 10.5 > 10 → 160; then 45 + 100 (holding 7 ≤ 10) → 145
+    ("PPB", 45, [(160, date(2026, 1, 12)), (145, date(2026, 1, 26))]),
+    # least unit cost: 10/100 = 0.1, 14.2/160 = 0.089, 19.8/200 = 0.099 rises → 160; then 40: 0.25 → 17/140 → 140
+    ("LUC", 40, [(160, date(2026, 1, 12)), (140, date(2026, 1, 26))]),
+    # Groff: a period joins while qty × k × (k+1) ≤ 2 × 10 ÷ 0.07 = 285.7: 60×2 = 120, 45×6 = 270, 100×12 > → 205
+    ("GROFF", 45, [(205, date(2026, 1, 12)), (100, date(2026, 2, 2))]),
+    ("GROFF", 50, [(160, date(2026, 1, 12)), (150, date(2026, 1, 26))]),   # 50×6 = 300 > 285.7
+])
+def test_optimising_lot_sizes_by_hand(policy, third, lots):
+    """§8.3 optimising family beside EOQ, for lumpy demand: part-period balancing (WI), least unit cost (SP) and
+    Groff (GR) decide how many periods one lot covers."""
+    assert lumpy(policy, third) == lots
+
+
+def test_part_period_balancing_holds_each_requirement_from_its_own_date():
+    """60 wanted on Thu 22 Jan, not Mon 19: held 10 days (6.0), + 40 × 14 × 0.01 = 11.6 > 10 → the first lot is 160."""
+    d = buy(bucket="week", horizon=42, lot_sizing={"policy": "PPB", "ordering_cost": 10}, holding_rate=0.365)
+    for day, q in (("2026-01-12", 100), ("2026-01-22", 60), ("2026-01-26", 40), ("2026-02-02", 100)):
+        dem(d, day, q)
+    assert [o.qty for o in orders(plan(d))][0] == 160
+
+
+@pytest.mark.parametrize("cost,price", [(0, 10), (10, 0)])
+def test_optimising_lot_size_without_an_ordering_cost_or_a_value_orders_lot_for_lot_and_says_so(cost, price):
+    d = buy(bucket="week", horizon=42, lot_sizing={"policy": "PPB", "ordering_cost": cost})
+    d["purchasing_sources"][0]["price"] = price
+    for day in ("2026-01-12", "2026-01-19"):
+        dem(d, day, 50)
+    p = plan(d)
+    assert [o.qty for o in orders(p)] == [50, 50]
+    assert any(e.code == "EOQ_FALLBACK" and "PPB lot size undefined" in e.message for e in p.exceptions)
 
 
 def test_minimum_then_rounding():
@@ -765,6 +811,129 @@ def test_allocation_without_a_period_confirms_nothing():
     d["allocations"] = [{"id": "MAR", "product": "B", "start": "2026-03-02", "end": "2026-03-09", "qty": 30}]
     [o] = run_promise(Dataset.model_validate(d)).orders
     assert lines(o) == [("2026-03-02", 10, "atp")]
+
+
+def two_pumps() -> dict:
+    """B and B2 are both pumps (family PUMPS), 100 of each in stock; Q is a customer one day away."""
+    d = promising(buy(on_hand=100, lt=60))
+    d["products"][0]["family"] = "PUMPS"
+    d["products"].append({"id": "B2", "type": "RM", "family": "PUMPS"})
+    d["location_products"].append({"location": "P", "product": "B2", "on_hand": 100, "mrp_type": "none"})
+    d["purchasing_sources"].append({"id": "PIR-B2", "supplier": "S", "product": "B2", "location": "P", "price": 10,
+                                    "lead_time_days": 60})
+    d["locations"].append({"id": "Q", "type": "customer"})
+    d["lanes"] = [{"id": "P-Q", "origin": "P", "destination": "Q", "modes": [{"transit_days": 0}]}]
+    return d
+
+
+def test_allocation_hierarchy_checks_the_family_before_the_product():
+    """§7.4 hierarchy: the pump family may confirm 40 in the week of 5 Jan, B alone 30. B's order of 60 gets 30 (its
+    own cap); B2's order of 20 then gets the 10 the family has left, though B2 has no cap of its own."""
+    d = two_pumps()
+    d["allocations"] = [{"id": "FAM", "family": "PUMPS", "start": "2026-01-05", "end": "2026-01-12", "qty": 40,
+                         "fallback": "reject"},
+                        {"id": "B-W1", "product": "B", "start": "2026-01-05", "end": "2026-01-12", "qty": 30,
+                         "fallback": "reject"}]
+    dem(d, "2026-01-07", 60, id="SO-B")
+    d["demand"].append({"location": "P", "product": "B2", "date": "2026-01-08", "qty": 20, "kind": "sales_order",
+                        "id": "SO-B2"})
+    res = run_promise(Dataset.model_validate(d))
+    o = by_order(res)
+    assert (o["SO-B"].confirmed, o["SO-B2"].confirmed) == (30, 10)
+    assert {a.id: a.used for a in res.allocations} == {"FAM": 40, "B-W1": 30}
+
+
+def test_a_customer_with_an_allocation_of_their_own_is_not_held_to_the_catch_all():
+    """§7.4 catch-all: 10 for everyone without an allocation of their own (listed first), 50 for P. P's order of 40 is
+    confirmed in full; Q, with none of its own, gets the catch-all's 10."""
+    d = two_pumps()
+    d["allocations"] = [{"id": "REST", "product": "B", "start": "2026-01-05", "end": "2026-01-12", "qty": 10,
+                         "fallback": "reject"},
+                        {"id": "P-W1", "product": "B", "customers": ["P"], "start": "2026-01-05", "end": "2026-01-12",
+                         "qty": 50, "fallback": "reject"}]
+    dem(d, "2026-01-07", 40, id="SO-P")
+    dem(d, "2026-01-08", 40, id="SO-Q", location="Q")
+    o = by_order(run_promise(Dataset.model_validate(d)))
+    assert (o["SO-P"].confirmed, o["SO-Q"].confirmed) == (40, 10)
+    # the next week only the catch-all has a period: P, which has allocations of its own, is not given it
+    d["allocations"].append({"id": "REST-W2", "product": "B", "start": "2026-01-12", "end": "2026-01-19", "qty": 100,
+                             "fallback": "reject"})
+    dem(d, "2026-01-13", 5, id="SO-P2")
+    o = by_order(run_promise(Dataset.model_validate(d)))
+    assert o["SO-P2"].confirmed == 0
+
+
+@pytest.mark.parametrize("carry,confirmed", [(True, 50), (False, 30)])
+def test_allocation_left_unused_carries_forward_when_the_period_says_so(carry, confirmed):
+    """§7.4 carry-forward: 30 a week. The first week confirms 10 of its 30; an order of 50 in the second week gets its
+    30 and, carried forward, the first week's 20 left — or only 30 without carry-forward."""
+    d = promising(buy(on_hand=100, lt=60))
+    d["allocations"] = [{"id": "W1", "product": "B", "start": "2026-01-05", "end": "2026-01-12", "qty": 30},
+                        {"id": "W2", "product": "B", "start": "2026-01-12", "end": "2026-01-19", "qty": 30,
+                         "carry_forward": carry, "fallback": "reject"}]
+    dem(d, "2026-01-07", 10, id="SO-1")
+    dem(d, "2026-01-13", 50, id="SO-2")
+    o = by_order(run_promise(Dataset.model_validate(d)))
+    assert o["SO-1"].confirmed == 10
+    assert (o["SO-2"].confirmed, lines(o["SO-2"])[0][0]) == (confirmed, "2026-01-13")
+
+
+def test_an_allocation_names_a_product_or_a_family_and_the_family_must_exist():
+    d = two_pumps()
+    d["allocations"] = [{"id": "X", "start": "2026-01-05", "end": "2026-01-12", "qty": 1}]
+    with pytest.raises(ValueError, match="either a product or a product family"):
+        Dataset.model_validate(d)
+    d["allocations"] = [{"id": "X", "family": "VALVES", "start": "2026-01-05", "end": "2026-01-12", "qty": 1}]
+    issues = validate(Dataset.model_validate(d))
+    assert any(i.code == "REF_UNKNOWN" and "unknown family 'VALVES'" in i.message for i in issues)
+
+
+# ================================================================================================ §7.2 one delivery
+def kit() -> dict:
+    """Q orders a kit: 10 B (in stock) and 20 B2 (none in stock, 20 arriving on a PO on Wed 14 Jan)."""
+    d = two_pumps()
+    d["location_products"][-1]["on_hand"] = 0
+    d["receipts"] = [{"id": "PO-7", "kind": "purchase", "location": "P", "product": "B2", "qty": 20,
+                      "due_date": "2026-01-14", "source": "PIR-B2"}]
+    return d
+
+
+@pytest.mark.parametrize("together,dates", [(False, ["2026-01-07", "2026-01-14"]),
+                                            (True, ["2026-01-14", "2026-01-14"])])
+def test_an_order_shipped_as_one_delivery_confirms_every_line_on_the_date_the_last_can_come(together, dates):
+    """§7.2 'multi-item single delivery': line by line, B is confirmed for Wed 7 Jan and B2 for the 14th, when PO-7
+    arrives; as one delivery both lines are confirmed for the 14th, and B's stock stays free until then."""
+    x = Dataset.model_validate(kit())
+    x, rep = sales.create_order(x, "Q", [{"product": "B", "qty": 10, "date": "2026-01-07"},
+                                         {"product": "B2", "qty": 20, "date": "2026-01-07"}], single_delivery=together)
+    got = {c.order: c.date.isoformat() for c in x.confirmations}
+    assert [got[f"{rep.documents[0]}/10"], got[f"{rep.documents[0]}/20"]] == dates
+    assert ("One delivery: every line on Wed 14 Jan" in rep.message) is together
+    # the next promise run keeps it
+    res = run_promise(x)
+    assert sorted({ln.date.isoformat() for o in res.orders for ln in o.lines}) == sorted(set(dates))
+
+
+def test_one_delivery_promises_nothing_until_every_line_can_be_confirmed_in_full():
+    """B2 wants 30 and only 20 come in the horizon: as one delivery no line is promised, B's 10 included."""
+    x = Dataset.model_validate(kit())
+    x, rep = sales.create_order(x, "Q", [{"product": "B", "qty": 10, "date": "2026-01-07"},
+                                         {"product": "B2", "qty": 30, "date": "2026-01-07"}], single_delivery=True)
+    assert x.confirmations == []
+    assert "One delivery: nothing is promised until every line can be" in rep.message
+
+
+def test_a_promise_run_aligns_the_lines_of_an_order_shipped_as_one_delivery():
+    """Lines imported without confirmations: the availability check confirms them together."""
+    d = kit()
+    d["sales_orders"] = [{"id": "SO-K", "customer": "Q", "order_date": "2026-01-05", "single_delivery": True}]
+    d["demand"] = [{"id": "SO-K/10", "order": "SO-K", "location": "Q", "product": "B", "date": "2026-01-07",
+                    "qty": 10, "kind": "sales_order"},
+                   {"id": "SO-K/20", "order": "SO-K", "location": "Q", "product": "B2", "date": "2026-01-07",
+                    "qty": 20, "kind": "sales_order"}]
+    o = by_order(run_promise(Dataset.model_validate(d)))
+    assert [lines(o[k]) for k in ("SO-K/10", "SO-K/20")] == [[("2026-01-14", 10, "atp")], [("2026-01-14", 20, "atp")]]
+    assert "Ships with the rest of its order" in o["SO-K/10"].reason
 
 
 # ================================================================================================ §7.3 BOP

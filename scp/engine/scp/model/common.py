@@ -120,6 +120,12 @@ class LotSizePolicy(str, Enum):
     EOQ = "EOQ"          # economic order quantity
     POQ = "POQ"          # periodic: cover the next N buckets (SAP WB/MB/PK)
     MIN_MAX = "MIN_MAX"  # replenish up to max stock (SAP HB)
+    PPB = "PPB"          # part-period balancing: periods while holding ≤ ordering cost (SAP WI)
+    LUC = "LUC"          # least unit cost: periods while the cost per unit falls (SAP SP)
+    GROFF = "GROFF"      # Groff's rule: a period joins while its holding cost is below the order cost saved (SAP GR)
+
+
+DYNAMIC_LOTS = frozenset({LotSizePolicy.PPB, LotSizePolicy.LUC, LotSizePolicy.GROFF})
 
 
 class SafetyStockMethod(str, Enum):

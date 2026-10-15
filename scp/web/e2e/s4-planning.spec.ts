@@ -212,3 +212,48 @@ test('a delivery takes only what can be picked, the price is fixed when the good
   await page.getByRole('button',{name:'Ship it'}).click();
   await expect(done).toContainText(/SO-1 had no agreed price: INR 1,500.00 a unit fixed at goods issue/,{timeout:45_000});
 });
+
+// 2.7 (§7.2, §7.4): Kumar orders a kit, a pump (10 in stock) and a motor (none; 20 arrive on PO-7 on Wed 14 Jan).
+// Shipped together, both lines are promised for the day after the motors come. The pump family may promise 100 a
+// week across its products, the motor line no more than its own 50.
+test('one delivery for a whole order, and allocations by product family',async({page})=>{
+  const kit={settings:{company_name:'Kit Pumps',planning_start:'2026-01-05',horizon_days:28,bucket:'week',default_calendar:'CAL'},
+    calendars:[{id:'CAL',workdays:[0,1,2,3,4,5,6]}],
+    locations:[{id:'PUNE',type:'plant',name:'Pune plant'},{id:'KUMAR',type:'customer',name:'Kumar Pumps'},{id:'MOTORS',type:'supplier',name:'Nashik motors'}],
+    lanes:[{id:'PUNE-KUMAR',origin:'PUNE',destination:'KUMAR',modes:[{transit_days:1}]}],
+    products:[{id:'PUMP',type:'FG',name:'Pump',price:1000,family:'PUMPS'},{id:'MOTOR',type:'FG',name:'Motor',price:500,family:'PUMPS'}],
+    location_products:[{location:'PUNE',product:'PUMP',on_hand:10},{location:'PUNE',product:'MOTOR',on_hand:0}],
+    purchasing_sources:[{id:'PIR-MOTOR',supplier:'MOTORS',location:'PUNE',product:'MOTOR',price:300,lead_time_days:30},
+      {id:'PIR-PUMP',supplier:'MOTORS',location:'PUNE',product:'PUMP',price:600,lead_time_days:30}],
+    receipts:[{id:'PO-7',kind:'purchase',location:'PUNE',product:'MOTOR',qty:20,due_date:'2026-01-14',source:'PIR-MOTOR'}],
+    allocations:[{id:'FAMILY-W',family:'PUMPS',start:'2026-01-05',end:'2026-02-02',qty:100,carry_forward:true},
+      {id:'MOTOR-W',product:'MOTOR',start:'2026-01-05',end:'2026-02-02',qty:50}],
+    promising:{include_planned_orders:false,confirm_beyond_rlt:false,ctp:false}};
+  await imported(page,'Kit Pumps',kit);
+  const done=page.locator('.banner[role="status"]').last();
+  await page.goto('/#/selling/new');
+  const cust=page.getByRole('combobox',{name:'Customer',exact:true});
+  const calcSelling=page.getByRole('button',{name:'Calculate',exact:true});
+  await expect(cust.or(calcSelling)).toBeVisible({timeout:45_000});      // calculated at once, or on request
+  if(await calcSelling.isVisible()) await calcSelling.click();
+  await cust.selectOption('KUMAR',{timeout:45_000});
+  await page.getByLabel('Line 10 product').selectOption('PUMP');
+  await page.getByLabel('Line 10 quantity').fill('10');
+  await page.getByLabel('Line 10 wanted on').fill('2026-01-08');
+  await page.getByRole('button',{name:'+ Add a line'}).click();
+  await page.getByLabel('Line 20 product').selectOption('MOTOR');
+  await page.getByLabel('Line 20 quantity').fill('20');
+  await page.getByLabel('Line 20 wanted on').fill('2026-01-08');
+  await page.getByLabel('Ship the whole order together').check();
+  await page.getByRole('button',{name:'Take the order'}).click();
+  await expect(done).toContainText(/10 Pump promised 10 on Thu 15 Jan; 20 Motor promised 20 on Thu 15 Jan\. One delivery: every line on Thu 15 Jan/,{timeout:45_000});
+
+  await page.goto('/#/promise/allocations');
+  const calc=page.getByRole('button',{name:/^(Calculate|Recalculate)$/});
+  if(await calc.isVisible()) await calc.click();
+  await expect(page.getByRole('row',{name:/FAMILY-W/})).toContainText('family PUMPS',{timeout:45_000});
+  await expect(page.getByRole('row',{name:/FAMILY-W/})).toContainText('carries forward');
+  await expect(page.getByRole('row',{name:/FAMILY-W/})).toContainText('30 / 100');
+  await expect(page.getByRole('row',{name:/MOTOR-W/})).toContainText('20 / 50');
+  await page.screenshot({path:'test-results/allocations-family.png',fullPage:true});
+});

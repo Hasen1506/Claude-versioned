@@ -816,6 +816,7 @@ class SalesActionRequest(Out):
     date: dt.date | None = None                     # the day it happens (default: the planning start)
     customer_ref: str = ""
     payment_terms: str | None = None
+    single_delivery: bool = False                   # create_order: ship the whole order together
     note: str = ""
     reason: str = ""
     by: str = ""                                    # released by, signed by

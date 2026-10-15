@@ -2370,18 +2370,30 @@ export interface components {
         };
         /**
          * Allocation
-         * @description Product allocation (PAL): caps what can be confirmed for a product (and optionally a set of
-         *     customers) in a period, independent of stock. Once a product-customer combination has any
-         *     allocation, a date in no allocation period has nothing to confirm (strict, as in aATP).
+         * @description Product allocation (PAL): caps what can be confirmed for a product or a product family (and optionally a set
+         *     of customers) in a period, independent of stock. Once a product-customer combination has any allocation, a date
+         *     in no allocation period has nothing to confirm (strict, as in aATP).
+         *
+         *     Hierarchy (S/4 guide §7.4): a family's cap is checked before the product's, and an order is confirmed only as far
+         *     as every level allows. At each level the allocations naming the customer apply; an allocation for no customer in
+         *     particular is the catch-all for every customer without one of their own.
          */
         Allocation: {
             /** Id */
             id: string;
-            /** Product */
-            product: string;
+            /**
+             * Product
+             * @description The product it caps (or give a family)
+             */
+            product?: string | null;
+            /**
+             * Family
+             * @description The product family it caps, across its products (checked before a product's own allocation)
+             */
+            family?: string | null;
             /**
              * Customers
-             * @description Demand locations it applies to (empty = all)
+             * @description Demand locations it applies to (empty = every customer without an allocation of their own)
              */
             customers?: string[];
             /**
@@ -2404,13 +2416,26 @@ export interface components {
              * @enum {string}
              */
             fallback: "next_period" | "reject";
+            /**
+             * Carry Forward
+             * @description What earlier periods of the same allocation left unused can be confirmed in this one
+             * @default false
+             */
+            carry_forward: boolean;
         };
         /** AllocationUse */
         AllocationUse: {
             /** Id */
             id: string;
             /** Product */
-            product: string;
+            product: string | null;
+            /** Family */
+            family: string | null;
+            /**
+             * Carry Forward
+             * @default false
+             */
+            carry_forward: boolean;
             /** Customers */
             customers: string[];
             /**
@@ -6632,7 +6657,7 @@ export interface components {
          * LotSizePolicy
          * @enum {string}
          */
-        LotSizePolicy: "L4L" | "FIXED" | "EOQ" | "POQ" | "MIN_MAX";
+        LotSizePolicy: "L4L" | "FIXED" | "EOQ" | "POQ" | "MIN_MAX" | "PPB" | "LUC" | "GROFF";
         /** LotSizing */
         LotSizing: {
             /** @description Empty: the company default (settings) */
@@ -10216,6 +10241,11 @@ export interface components {
             /** Payment Terms */
             payment_terms?: string | null;
             /**
+             * Single Delivery
+             * @default false
+             */
+            single_delivery: boolean;
+            /**
              * Note
              * @default
              */
@@ -10356,6 +10386,12 @@ export interface components {
              * @description The quotation the order was won from
              */
             quotation?: string | null;
+            /**
+             * Single Delivery
+             * @description Ship the whole order together (a kit): every line is confirmed in full, for the date the last one can be, or none is
+             * @default false
+             */
+            single_delivery: boolean;
             /**
              * Credit Block
              * @description Over the customer's credit limit: not delivered until released

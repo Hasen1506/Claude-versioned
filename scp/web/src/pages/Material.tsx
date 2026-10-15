@@ -30,6 +30,8 @@ export function orderingLabel(policy?: string | null, periods?: number | null): 
   if (!policy) return "company default";
   const n = periods ?? 1;
   return ({ L4L: "exactly what's needed", FIXED: "fixed batches", EOQ: "economic batch size", MIN_MAX: "top up to a maximum",
+    PPB: "periods while holding stays within an order's cost", LUC: "periods at the least cost a unit",
+    GROFF: "periods by Groff's rule",
     POQ: n === 1 ? "a period's need" : `${n} periods' need` } as Record<string, string>)[policy] ?? policy.toLowerCase();
 }
 const PROC: Record<string, string> = { any: "made or got from outside", make: "made here only", external: "bought or shipped in only" };

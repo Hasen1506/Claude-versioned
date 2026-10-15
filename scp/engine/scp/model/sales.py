@@ -112,6 +112,8 @@ class SalesOrder(Model):
     customer_ref: str = Field("", max_length=64, description="The customer's own order number")
     payment_terms: str | None = Ref("payment_terms", default=None, description="Empty = the customer's")
     quotation: str | None = Field(None, max_length=64, description="The quotation the order was won from")
+    single_delivery: bool = Field(False, description="Ship the whole order together (a kit): every line is confirmed "
+                                                     "in full, for the date the last one can be, or none is")
     credit_block: bool = Field(False, description="Over the customer's credit limit: not delivered until released")
     credit_note: str = Field("", max_length=200, description="Why it was blocked, or who released it")
     confirmation_sent_on: dt.date | None = Field(None, description="When the order confirmation went to the customer")
