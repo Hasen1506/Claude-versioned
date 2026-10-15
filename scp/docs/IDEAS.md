@@ -92,11 +92,11 @@ recorded only.
 - **Inventory turns and cash-to-cash.** Not in §18.2's list, but the money view the guide closes with (§15): DIO from
   stock value ÷ COGS per day, DSO from open receivables, DPO from open payables (both already in Selling/Buying),
   cash-to-cash = DIO + DSO − DPO, on the KPI page with numerator and denominator like the others.
-- **Availability re-check at delivery creation.** §13: the delivery re-checks availability (rule A) before picking.
+- **Availability re-check at delivery creation (built, ENTERPRISE_PLAN 2.6).** §13: the delivery re-checks availability (rule A) before picking.
   Today a delivery is created whatever the stock, and the shortfall only shows at goods issue.
-- **OTIF blind spot for orders not shipped yet.** §18.2 OTIF is delivery-based, as the app's; add the count (and
+- **OTIF blind spot for orders not shipped yet (built, ENTERPRISE_PLAN 2.6).** §18.2 OTIF is delivery-based, as the app's; add the count (and
   value) of open lines already past their requested/confirmed date to the KPI note so a late backlog is not invisible.
-- **Re-pricing of lines without an agreed price.** §15 PITFALL (pricing type B vs G): a line taken through Selling
+- **Re-pricing of lines without an agreed price (built, ENTERPRISE_PLAN 2.6).** §15 PITFALL (pricing type B vs G): a line taken through Selling
   carries its price forward, but an imported line with no price is billed at today's list price (without its quantity
   scale). Freeze the price on such a line at goods issue.
 - **Third-party (drop-ship) orders.** §16.3 TAS: a sales line bought from a supplier who ships straight to the

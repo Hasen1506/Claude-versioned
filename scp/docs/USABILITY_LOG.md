@@ -504,6 +504,23 @@ casings in stock are held for SO-3 (Thursday the 22nd).
   delivery takes it from there; cut SO-1 to 30 and the plan says 20 are held for an order that no longer needs them.
   A held order due after its order is due is to be expedited, with nothing else planned in front of it.
 
+ENTERPRISE_PLAN 2.6, in a browser and through the engine: 40 pump casings at Pune for Kumar Pumps. SO-0 (10, asked for
+Friday 2 January), SO-1 (30, Tuesday the 6th) and SO-2 (30, Wednesday the 7th), imported without prices; the casing
+sells at 1,500.
+
+* *The delivery checks the stock* (input: *Make deliveries*; processing: unrestricted stock at the shipping place plus
+  firm receipts in by the planned goods issue, less what open deliveries take, first to ship first served, stock held
+  for another order left alone; output: *Due to ship* has a *Can be picked* column — SO-0 10, SO-1 30, SO-2 *none in
+  stock*, left unticked; ticked anyway, the delivery is made for SO-0 and SO-1 and says "SO-2: nothing of 30 can be
+  picked (Pump casing at Pune plant by Mon 5 Jan), it stays to deliver"; inspection or blocked stock is named with
+  "release it first"). *Check stock when a delivery is made* in the selling settings switches it off.
+* *The price is fixed when the goods leave* (input: *Ship it*, or a delivery posted on the order; output: "SO-1 had no
+  agreed price: INR 1,500.00 a unit fixed at goods issue"; the line now carries that price, at its quantity scale, and
+  the invoice uses it whatever the price list says on the invoice day). A line with its own price keeps it.
+* *Late and not shipped* (output: the OTIF notes on *Performance* say "Not in this figure: 1 open order line worth INR
+  15,000 already past the requested date and not delivered; they count once they close", and the same against the
+  confirmed date).
+
 | # | Found | Severity | Outcome |
 |---|---|---|---|
 | N183 | Only one firming rule existed: a plant that must not get automatic orders inside its fence got them moved to the fence end anyway, and nothing was firmed as the fence moved over the plan (§8.5). | Serious | **Fixed.** Firming types 1–4 on the product or MRP group; 2 and 4 plan nothing inside the fence and report the shortage; 1 and 2 firm the fence's orders at the roll, as last week's plan had them. The default, 3, is how the fence behaved before (its description called it type 1, which it was not: nothing was firmed). |
@@ -514,6 +531,10 @@ casings in stock are held for SO-3 (Thursday the 22nd).
 | N186 | A DDMRP buffer only advised: its zones and order showed on the buffer screen while MRP planned the same part by net requirements, two signals that disagree (§8.7 pitfall). | Serious | **Fixed.** MRP type ddmrp (S/4 D1): the buffer's net flow places the planned orders, red and yellow buffers go to the Problems list and the inbox, and the buffer screen marks a positioned part still planned by requirements as advice only. Other MRP types plan as before. |
 | N187 | The red and yellow buffer situations pointed to "Inventory → DDMRP buffers", a name the navigation does not use. | Minor | **Fixed** before it shipped: "Supply → Buffers → DDMRP buffers". |
 | N185 | Automatic firming at the roll first firmed an order on time for the 16th as one moved to the new fence end, the 19th: the plan is worked out afresh, so the order last week had was gone. | Serious | **Fixed** before it shipped: the rolled company is planned with each fence ending where it ended last week, and what starts inside the new fence is firmed. |
+| N191 | A delivery was made for whatever was asked, stock or not; the shortfall showed only at goods issue, after picking (§13). | Serious | **Fixed.** The delivery takes what can be picked by its goods issue and leaves the rest to deliver; the list says what can be picked before the delivery is made. |
+| N192 | A line without an agreed price was billed at the list price on the invoice day, without its quantity scale (§15 pitfall, pricing type B). | Serious | **Fixed.** Its price is fixed at goods issue, at its scale, and billed at that. |
+| N193 | OTIF counted only closed orders: a backlog of late lines not yet shipped was in no figure (§18.2). | Minor | **Fixed.** The OTIF notes give the count and value of open lines already past their requested and confirmed dates. |
+| N194 | The deliveries list showed nothing until *Calculate*, though the company had just been imported with lines due to ship. | Minor | By design: every page with a *Calculate* button calculates on request; noted only. |
 
 | # | Found | Severity | Outcome |
 |---|---|---|---|

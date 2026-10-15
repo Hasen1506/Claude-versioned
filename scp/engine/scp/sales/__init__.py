@@ -28,13 +28,15 @@ from math import isfinite
 from collections import defaultdict
 from datetime import date, timedelta
 
-from ..actuals.documents import StockError, complete
-from ..actuals.post import delivered, ordered_now, ship_point
-from ..actuals.stock import EPS, movement_ids
+from ..actuals.documents import WORDS, StockError, complete
+from ..actuals.lots import Lot, batch_index, lots, order_stock
+from ..actuals.post import delivered, freeze_price, ordered_now, ship_point
+from ..actuals.stock import EPS, before, movement_ids
 from ..model import (
     ClosedOrder, Dataset, DemandKind, DemandRecord, GoodsMovement, LocationType, MovementType, StockType,
 )
 from ..model.common import STOCKING_LOCATION_TYPES
+from ..plan.leadtime import gr_after
 from ..model.sales import (
     Delivery, DeliveryLine, Invoice, InvoiceLine, Payment, Quotation, QuoteLine, ReturnOrder, SalesOrder,
 )
@@ -503,6 +505,65 @@ def lose_quotation(ds: Dataset, qid: str, reason: str = "") -> tuple[Dataset, Sa
 
 
 # ------------------------------------------------------------------------------------------------ deliveries
+class _Pickable:
+    """What a delivery can take at its shipping place by its planned goods issue (S/4 guide §13: the delivery re-checks
+    availability, checking rule A, before picking): unrestricted, unexpired stock there today plus the firm receipts
+    in by then, less what open deliveries from there already take. Stock and receipts held for a sales order serve
+    only that order, and before its free share."""
+
+    def __init__(self, ds: Dataset, day: date) -> None:
+        self.ds = ds
+        self.journal = before(ds, day + timedelta(days=1))
+        self.bi = batch_index(ds)
+        self.lots = lots(self.journal)
+        self.held = order_stock(self.journal)
+        self.taken: dict[tuple[str, str], list[tuple[str, float]]] = defaultdict(list)
+        for dl in ds.deliveries:
+            if dl.issued_on is None:
+                for x in dl.lines:
+                    self.taken[(dl.ship_from, x.product)].append((x.order, x.qty))
+
+    def supply(self, node: tuple[str, str], gi: date) -> tuple[float, dict[str, float]]:
+        free = 0.0
+        for (b, t), q in self.lots.get(node, {}).items():
+            exp = self.bi[(node[1], b)].expires_on if b and (node[1], b) in self.bi else None
+            if t is StockType.UNRESTRICTED and not Lot(b, t, q, exp).expired(gi):
+                free += q
+        held = defaultdict(float, {o: q for o, q in self.held.get(node, {}).items() if q > EPS})
+        for r in self.ds.receipts:
+            if (r.location, r.product) != node:
+                continue
+            for d, q in r.expected_parts():
+                if gr_after(self.ds, r.location, r.product, d) <= gi:
+                    if r.sales_order:
+                        held[r.sales_order] += q
+                    else:
+                        free += q
+        return free, held
+
+    def available(self, node: tuple[str, str], order: str, gi: date) -> float:
+        """What the order line ``order`` can still take at ``node`` by ``gi``."""
+        free, held = self.supply(node, gi)
+        used: dict[str, float] = defaultdict(float)
+        for o, q in self.taken[node]:
+            mine = min(q, max(0.0, held.get(o, 0.0) - used[o]))
+            used[o] += mine
+            free -= q - mine
+        return max(0.0, free) + max(0.0, held.get(order, 0.0) - used[order])
+
+    def take(self, node: tuple[str, str], order: str, qty: float) -> None:
+        self.taken[node].append((order, qty))
+
+    def restricted(self, node: tuple[str, str]) -> str:
+        """Stock there that cannot be picked yet (inspection, blocked), said so the fix is a release (§10.3)."""
+        by: dict[StockType, float] = defaultdict(float)
+        for (_, t), q in self.lots.get(node, {}).items():
+            if t is not StockType.UNRESTRICTED:
+                by[t] += q
+        parts = [f"{_n(q)} {WORDS[t]}" for t, q in sorted(by.items(), key=lambda kv: kv[0].value) if q > EPS]
+        return f"; {' and '.join(parts)}: release it first" if parts else ""
+
+
 def _on_open_deliveries(ds: Dataset) -> dict[str, float]:
     out: dict[str, float] = defaultdict(float)
     for dl in ds.deliveries:
@@ -518,6 +579,7 @@ def to_deliver(ds: Dataset, as_of: date | None = None) -> list[ToDeliver]:
     until = day + timedelta(days=ds.sales.delivery_days)
     on_dl = _on_open_deliveries(ds)
     out = []
+    gi: dict[str, date] = {}
     for d in ds.demand:
         if d.kind is not DemandKind.SALES_ORDER or not d.id:
             continue
@@ -533,10 +595,18 @@ def to_deliver(ds: Dataset, as_of: date | None = None) -> list[ToDeliver]:
         if q <= EPS:
             continue
         h = _header_of(ds, d)
+        gi[d.id] = max(day, cf[0].ship_date) if cf else day       # the goods issue a delivery made now plans
         out.append(ToDeliver(order=d.id, header=d.order or d.id, customer=d.location, product=d.product,
                              qty=round(q, 6), ship_from=ship_point(ds, d), ship_date=ship,
                              credit_block=bool(h and h.credit_block)))
-    return sorted(out, key=lambda x: (x.ship_date, x.order))
+    out.sort(key=lambda x: (x.ship_date, x.order))
+    pk = _Pickable(ds, day)
+    for t in out:                       # first to ship, first served
+        if t.ship_from and ds.location_type(t.ship_from) in STOCKING_LOCATION_TYPES:
+            node = (t.ship_from, t.product)
+            t.available = round(min(t.qty, pk.available(node, t.order, gi[t.order])), 6)
+            pk.take(node, t.order, t.available)
+    return out
 
 
 def create_deliveries(ds: Dataset, lines: list[dict] | None = None, on: date | None = None
@@ -551,6 +621,8 @@ def create_deliveries(ds: Dataset, lines: list[dict] | None = None, on: date | N
     on_dl = _on_open_deliveries(ds)
     groups: dict[tuple[str, str], list[DeliveryLine]] = defaultdict(list)
     plan_day: dict[tuple[str, str], date] = {}
+    pk = _Pickable(ds, day) if ds.sales.delivery_check else None
+    short: list[str] = []
     for x in picks:
         lid = str(x.get("order") or "")
         d = next((r for r in ds.demand if r.kind is DemandKind.SALES_ORDER and r.id == lid), None)
@@ -572,10 +644,26 @@ def create_deliveries(ds: Dataset, lines: list[dict] | None = None, on: date | N
             raise SalesError(f"{lid} has no place to ship from: promise it first, or give {_name(ds, d.location)} a "
                              "route from a plant or warehouse")
         key = (d.location, frm)
+        cf = [c.ship_date for c in ds.confirmations if c.order == lid]
+        gi = max(day, min(cf, default=day))
+        if pk is not None:
+            # S/4 guide §13: the delivery takes what can be picked by its goods issue; the rest stays to deliver
+            a = pk.available((frm, d.product), lid, gi)
+            if ds.whole(d.product):
+                a = float(int(a + EPS))
+            if a < q - EPS:
+                where = f"{_name(ds, d.product)} at {_name(ds, frm)} by {_day(gi)}{pk.restricted((frm, d.product))}"
+                short.append(f"{lid}: {_n(a) if a > EPS else 'nothing'} of {_n(q)} can be picked ({where})"
+                             + (f", {_n(q - a)} stay to deliver" if a > EPS else ", it stays to deliver"))
+                q = a
+            if q <= EPS:
+                continue
+            pk.take((frm, d.product), lid, q)
         groups[key].append(DeliveryLine(order=lid, product=d.product, qty=round(q, 6), batch=x.get("batch")))
         on_dl[lid] = on_dl.get(lid, 0.0) + q
-        cf = [c.ship_date for c in ds.confirmations if c.order == lid]
-        plan_day[key] = min(plan_day.get(key, date.max), max(day, min(cf, default=day)))
+        plan_day[key] = min(plan_day.get(key, date.max), gi)
+    if not groups:
+        raise SalesError("nothing can be picked: " + "; ".join(short) + ". Receive the stock, or move it there first")
     ids = [dl.id for dl in ds.deliveries]
     made = []
     for (cust, frm), ls in groups.items():
@@ -585,9 +673,11 @@ def create_deliveries(ds: Dataset, lines: list[dict] | None = None, on: date | N
                              lines=ls))
     msg = "; ".join(f"{m.id} to {_name(ds, m.customer)} from {_name(ds, m.ship_from)}: {plural(len(m.lines), 'line')}"
                     for m in made)
+    msg += f". Pick, pack and ship {'them' if len(made) > 1 else 'it'}."
+    if short:
+        msg += " Not enough in stock: " + "; ".join(short) + "."
     return (ds.model_copy(update={"deliveries": [*ds.deliveries, *made]}),
-            SalesReport(message=f"{msg}. Pick, pack and ship {'them' if len(made) > 1 else 'it'}.",
-                        documents=[m.id for m in made]))
+            SalesReport(message=msg, documents=[m.id for m in made]))
 
 
 def _delivery(ds: Dataset, did: str, open_: bool = True) -> Delivery:
@@ -664,6 +754,10 @@ def issue(ds: Dataset, did: str, on: date | None = None) -> tuple[Dataset, Sales
     except StockError as e:
         raise SalesError(str(e)) from e
     new = dl.model_copy(update={"issued_on": day, "movements": [m.id for m in out]})
+    for x in dict.fromkeys(m.reference for m in out if m.reference):
+        ds, fixed = freeze_price(ds, x)
+        if fixed:
+            notes.append(fixed)
     msg = (f"{did} shipped to {_name(ds, dl.customer)} on {_day(day)}: "
            + ", ".join(f"{_n(m.qty)} {_name(ds, m.product)}" + (f" (batch {m.batch})" if m.batch else "") for m in out)
            + "." + (" " + "; ".join(notes) + "." if notes else "") + " It can be invoiced now.")

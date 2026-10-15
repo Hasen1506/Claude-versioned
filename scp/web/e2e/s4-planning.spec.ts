@@ -171,3 +171,44 @@ test('sales-order stock: supply held for one order is planned, promised and show
   await page.goto('/#/execution');
   await expect(page.getByText('20 held for SO-3')).toBeVisible({timeout:45_000});
 });
+
+// 2.6 (§13, §15, §18.2): 40 casings at Pune. SO-0 (10, asked for Fri 2 Jan, so late) and SO-1 (30) take them; SO-2
+// (30) finds none to pick. The imported lines carry no price: the casing's price is fixed when they ship, and the
+// OTIF note says what is late and not shipped yet.
+test('a delivery takes only what can be picked, the price is fixed when the goods leave, late open lines are counted',async({page})=>{
+  const short={settings:{company_name:'Short Casing Pumps',planning_start:'2026-01-05',horizon_days:28,bucket:'week',default_calendar:'CAL'},
+    calendars:[{id:'CAL',workdays:[0,1,2,3,4]}],
+    locations:[{id:'PUNE',type:'plant',name:'Pune plant'},{id:'KUMAR',type:'customer',name:'Kumar Pumps'}],
+    lanes:[{id:'PUNE-KUMAR',origin:'PUNE',destination:'KUMAR',modes:[{transit_days:1}]}],
+    products:[{id:'CASING',type:'FG',name:'Pump casing',price:1500}],
+    location_products:[{location:'PUNE',product:'CASING',on_hand:40}],
+    demand:[{id:'SO-0',location:'KUMAR',product:'CASING',date:'2026-01-02',qty:10,kind:'sales_order'},
+      {id:'SO-1',location:'KUMAR',product:'CASING',date:'2026-01-06',qty:30,kind:'sales_order'},
+      {id:'SO-2',location:'KUMAR',product:'CASING',date:'2026-01-07',qty:30,kind:'sales_order'}]};
+  await imported(page,'Short Casing Pumps',short);
+  const done=page.locator('.banner').last();
+
+  // the late backlog is in the OTIF note before anything ships
+  await page.goto('/#/tower');
+  await page.getByRole('button',{name:'Calculate',exact:true}).click();
+  await page.getByRole('button',{name:/^OTIF to requested date:/}).click({timeout:45_000});
+  await page.locator('.reading summary',{hasText:'How this is calculated'}).click();
+  await expect(page.getByText(/Not in this figure: 1 open order line worth INR 15,000 already past the requested date/)).toBeVisible({timeout:45_000});
+
+  // what can be picked, first to ship first served
+  await page.goto('/#/selling/deliver');
+  await page.getByRole('button',{name:'Calculate',exact:true}).click();
+  await expect(page.getByRole('row',{name:/SO-2/})).toContainText('none in stock',{timeout:45_000});
+  await expect(page.getByLabel('Deliver SO-2')).not.toBeChecked();
+  await expect(page.getByRole('row',{name:/SO-1/})).not.toContainText('only');
+  await page.screenshot({path:'test-results/delivery-check.png',fullPage:true});
+  await page.getByLabel('Deliver SO-2').check();
+  await page.getByRole('button',{name:/Make deliveries for 3 lines/}).click();
+  await expect(done).toContainText(/Not enough in stock: SO-2: nothing of 30 can be picked \(Pump casing at Pune plant by Mon 5 Jan\), it stays to deliver/,{timeout:45_000});
+  await expect(page.getByRole('row',{name:/SO-2/})).toContainText('none in stock');
+
+  // shipped: the price the lines had none of is fixed
+  await page.getByRole('row',{name:/DL-00001/}).click();
+  await page.getByRole('button',{name:'Ship it'}).click();
+  await expect(done).toContainText(/SO-1 had no agreed price: INR 1,500.00 a unit fixed at goods issue/,{timeout:45_000});
+});

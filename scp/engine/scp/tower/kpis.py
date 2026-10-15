@@ -125,6 +125,37 @@ class Kpis:
                      value=value, numerator=num, denominator=den, n=len(rows), breakdown_by="customer", breakdown=brk,
                      note="" if rows else "No promises yet: check and commit orders in Promising."))
 
+    def _late_open(self, confirmed: bool) -> str:
+        """S/4 guide §18.2 measures OTIF on deliveries, as here; an order not shipped yet is in no delivery, so a late
+        backlog would be invisible. Say how many open lines are already past their date, and what they are worth."""
+        from ..actuals.post import delivered, ordered_now
+        conf: dict[str, dt.date] = {}
+        for cf in self.ds.confirmations:
+            conf[cf.order] = max(conf.get(cf.order, cf.date), cf.date)
+        n, value, unpriced = 0, 0.0, 0
+        for d in self.ds.demand:
+            if d.kind.value != "sales_order" or not d.id:
+                continue
+            due = conf.get(d.id) if confirmed else d.date
+            if due is None or due >= self.as_of:
+                continue
+            left = ordered_now(self.ds, d) - delivered(self.ds, d.id)
+            if left <= EPS:
+                continue
+            n += 1
+            p = self.ds.selling_price(d.location, d.product, d.price)
+            if p is None:
+                unpriced += 1
+            else:
+                value += left * p
+        if not n:
+            return ""
+        what = "confirmed" if confirmed else "requested"
+        worth = f" worth {self.ds.settings.currency} {value:,.0f}" + (f" ({unpriced} without a price)" if unpriced
+                                                                       else "")
+        return (f"Not in this figure: {n} open order line{'s' if n != 1 else ''}{worth} already past the {what} "
+                "date and not delivered; they count once they close.")
+
     def otif(self) -> None:
         sales = [c for c in self.closed if c.kind == "sales"]
 
@@ -140,14 +171,16 @@ class Kpis:
                      source="Closed-order log (deliveries vs last confirmed date; a delivery counts on the day the customer "
                             "signed for it, else on goods issue plus the lane's transit)", value=v, numerator=num,
                      denominator=den, n=len(conf), breakdown_by="customer", breakdown=brk,
-                     note="" if conf else "No closed, confirmed sales orders in the window yet."))
+                     note=" ".join(x for x in ("" if conf else "No closed, confirmed sales orders in the window yet.",
+                                               self._late_open(True)) if x)))
         v, num, den, brk = self._share(sales, lambda c: self._in_full(c) and on_time(c, c.due_date), lambda c: 1.0,
                                        lambda c: c.location)
         self.add(Kpi(id="otif_requested", name="OTIF to requested date", unit="ratio", direction="up",
                      definition="Sales orders delivered in full by the customer's requested date ÷ orders closed in "
                                 "the window", source="Closed-order log (deliveries vs requested date; signed-for day, else issue plus transit)", value=v,
                      numerator=num, denominator=den, n=len(sales), breakdown_by="customer", breakdown=brk,
-                     note="" if sales else "No sales orders closed in the window yet: roll forward to log deliveries."))
+                     note=" ".join(x for x in ("" if sales else "No sales orders closed in the window yet: roll "
+                                                               "forward to log deliveries.", self._late_open(False)) if x)))
         v, num, den, brk = self._share(
             sales, lambda c: (on_time(c, c.due_date) and c.delivered_qty >= c.ordered_qty - EPS
                               and c.first_delivery == c.last_delivery), lambda c: 1.0, lambda c: c.location)

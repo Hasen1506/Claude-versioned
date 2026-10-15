@@ -317,6 +317,22 @@ def ordered_now(ds: Dataset, d: DemandRecord) -> float:
     return d.ordered_qty if d.ordered_qty is not None else d.qty
 
 
+def freeze_price(ds: Dataset, oid: str) -> tuple[Dataset, str]:
+    """Fix the price of a line that has none of its own when its goods leave (S/4 guide §15, pricing type G rather than
+    B): today's list price at the line's quantity scale, less the customer's discounts. It is billed at that, not at
+    whatever the list says when the invoice is made. Returns the words saying so ("" when nothing changed)."""
+    d = next((x for x in ds.demand if x.kind is DemandKind.SALES_ORDER and x.id == oid), None)
+    if d is None or d.price is not None:
+        return ds, ""
+    base, disc = ds.list_price(d.location, d.product, ordered_now(ds, d))
+    if base is None:
+        return ds, ""
+    net = round(base * (1 - disc), 6)
+    new = d.model_copy(update={"price": net, "discount": round(disc, 6)})
+    return (ds.model_copy(update={"demand": [new if x is d else x for x in ds.demand]}),
+            f"{oid} had no agreed price: {ds.settings.currency} {net:,.2f} a unit fixed at goods issue")
+
+
 def ship_point(ds: Dataset, d: DemandRecord) -> str | None:
     """Where a sales order ships from: where it was promised from, else the customer's first route, else the order's
     own place when it is one that holds stock."""
@@ -368,6 +384,9 @@ def deliver(ds: Dataset, oid: str, qty: float | None = None, on: date | None = N
     moves, _, notes = _complete(ds, first, on, lot)
     if mine > EPS:
         notes = [f"{_n(mine)} from the stock held for {oid}", *notes]
+    ds, fixed = freeze_price(ds, oid)
+    if fixed:
+        notes.append(fixed)
     msg = (f"{oid}: {_n(q)} delivered to {_at(ds, d.location)} from {_at(ds, frm)} on {on.isoformat()}{_batches(moves)} "
            f"({status})" + ("; " + "; ".join(notes) if notes else "")
            + ". Stock and the order are updated when the plan moves past this date.")

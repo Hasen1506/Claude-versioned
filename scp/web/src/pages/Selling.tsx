@@ -431,7 +431,9 @@ function Quotes({ res }: { res: SalesView }) {
 function Deliveries({ res, ds, sel }: { res: SalesView; ds: Dataset; sel?: string }) {
   const { busy, run, banners } = useAction();
   const [pick, setPick] = useState<Set<string> | null>(null);
-  const free = res.to_deliver.filter((t) => !t.credit_block);
+  const check = ds.sales?.delivery_check ?? true;
+  // a line nothing of which can be picked by its goods issue is not ticked: the delivery would take none of it (§13)
+  const free = res.to_deliver.filter((t) => !t.credit_block && !(check && t.available !== null && t.available <= 1e-9));
   const chosen = pick ?? new Set(free.map((t) => t.order));
   const open = res.deliveries.find((d) => d.id === sel);
   const toggle = (id: string) => { const n = new Set(chosen); if (n.has(id)) n.delete(id); else n.add(id); setPick(n); };
@@ -444,13 +446,16 @@ function Deliveries({ res, ds, sel }: { res: SalesView; ds: Dataset; sel?: strin
         Make deliveries for {plural(chosen.size, "line")}</button></Edits>}>
       {res.to_deliver.length === 0 ? <p className="faint" style={{ padding: "8px 12px" }}>Nothing is due to ship that is not on a delivery already.</p> :
         <div className="table-wrap"><table className="t">
-          <thead><tr><th /><th>Order line</th><th>Customer</th><th>Product</th><th className="num">Quantity</th><th>From</th><th>Ships</th></tr></thead>
+          <thead><tr><th /><th>Order line</th><th>Customer</th><th>Product</th><th className="num">Quantity</th><th className="num">Can be picked</th><th>From</th><th>Ships</th></tr></thead>
           <tbody>{res.to_deliver.map((t) => (
             <tr key={t.order}>
               <td>{t.credit_block ? <Badge sev="error">credit block</Badge>
                 : <input type="checkbox" checked={chosen.has(t.order)} onChange={() => toggle(t.order)} aria-label={`Deliver ${t.order}`} />}</td>
               <td><a href={href("selling", "orders", t.header)}>{t.order}</a></td><td><Loc id={t.customer} /></td><td><Prod id={t.product} /></td>
-              <td className="num">{qty(t.qty)}</td><td>{t.ship_from ? <Loc id={t.ship_from} /> : "—"}</td><td>{day(t.ship_date)}</td>
+              <td className="num">{qty(t.qty)}</td>
+              <td className="num">{t.available === null ? "—" : t.available >= t.qty - 1e-9 ? qty(t.available)
+                : <Badge sev={t.available > 1e-9 ? "warning" : "error"}>{t.available > 1e-9 ? `only ${qty(t.available)}` : "none in stock"}</Badge>}</td>
+              <td>{t.ship_from ? <Loc id={t.ship_from} /> : "—"}</td><td>{day(t.ship_date)}</td>
             </tr>))}
           </tbody>
         </table></div>}

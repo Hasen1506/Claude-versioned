@@ -10521,6 +10521,12 @@ export interface components {
              */
             delivery_days: number;
             /**
+             * Delivery Check
+             * @description A delivery takes only what can be picked by its planned goods issue: unrestricted stock at the shipping place plus firm receipts in by then, less what other open deliveries take (S/4 availability check at delivery creation); the rest stays to deliver
+             * @default true
+             */
+            delivery_check: boolean;
+            /**
              * Reminder Days
              * @description Days past the due date for the first, second, third … payment reminder (dunning levels). Empty: no reminders
              */
@@ -12650,6 +12656,8 @@ export interface components {
              * @default false
              */
             credit_block: boolean;
+            /** Available */
+            available: number | null;
         };
         /**
          * ToInvoice

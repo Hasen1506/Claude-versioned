@@ -62,7 +62,7 @@ const TITLE: Record<string, string> = {
   scheduled: "Dated by the shop floor schedule",
   rescheduling_horizon_days: "Rescheduling horizon (working days)",
   firming_type: "Firming type (1–4)",
-  sales_order: "Held for sales order", order_stock: "Stock held for sales orders", working_day_fences: "Time fence and goods receipt in working days",
+  sales_order: "Held for sales order", order_stock: "Stock held for sales orders", delivery_check: "Check stock when a delivery is made", working_day_fences: "Time fence and goods receipt in working days",
   pick_pack_workdays: "Picking and packing (working days)", loading_workdays: "Loading (working days)",
   transport_planning_workdays: "Booking the transport (working days)",
   reschedule_out_tolerance_days: "Early by up to this is left alone (days)",
