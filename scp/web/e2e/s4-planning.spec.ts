@@ -129,9 +129,11 @@ test('DDMRP buffer: from advice beside MRP to the buffer placing the orders',asy
   await page.goto('/#/material/CASING/PUNE');
   const again=page.getByRole('button',{name:'Plan again',exact:true});
   const planned=page.getByRole('row').filter({hasText:/Planned purchase PR-/});
-  await expect(again.or(planned.first())).toBeVisible({timeout:45_000});
-  if(await again.isVisible()) await again.click();
-  await expect(planned.first()).toContainText('Mon 5 Jan',{timeout:45_000});
+  // the plan from before the tick may still be on screen, with Plan again offered now or a moment later
+  await expect(async()=>{
+    if(await again.isVisible()) await again.click();
+    await expect(planned.first()).toContainText('Mon 5 Jan',{timeout:2_000});
+  }).toPass({timeout:45_000});
   await expect(planned.first()).toContainText('148');
   await page.goto('/#/plan');
   await expect(page.getByText('1 buffer to reorder today')).toBeVisible({timeout:45_000});
