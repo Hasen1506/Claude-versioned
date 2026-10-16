@@ -1045,6 +1045,47 @@ the generated company of 5,000 products.
 | N297 | A price difference is a figure on the page, not a posting to an account; a moving price cannot be revalued by hand (S/4 MR21); there is one price per product at a place, not per batch or valuation type. | Minor | Open: the account postings come with the double-entry journal (7.4); a price change by hand and split valuation, open. |
 | N298 | *Roll the plan forward* kept the date it offered while the company under it changed: after a roll then an undo (or another company opened with the page still mounted) it offered the week after the roll, 19 Jan, for a plan starting on 5 Jan. The browser test failed on it in CI and passed here only because the page happened to be mounted again. | Minor | **Fixed:** the date picked belongs to the planning start it was picked from; another start offers a week after its own. The test checks the date after the undo and the redo, with the page open. |
 
+### 6.3: Carriers, freight orders, loads by weight and volume, freight settled
+
+ENTERPRISE_PLAN 6.3, in a browser on the Kaveri Kitchenware example (*Selling → Deliveries*, *Stock & actuals →
+Transport*, at desktop and phone width), through the API, and through the engine on 2,000 deliveries. Kaveri has three
+fictional carriers:
+* *Sahyadri* charges 24,000 a truck plus 1.20 a kilogram from Pune to Delhi.
+* *Deccan* charges a flat 32,000 a truck.
+* *Northline* carries part loads on every LTL lane at 3.20 a kilogram (5 t, 30 m³ vehicles), never under 1,500.
+
+* *Loads. Input:* the orders due in the next ten days put on deliveries; the stock transfer STO-2201, 600 kettles
+  from Pune to Delhi due on 29 Sep, three days on the road, so late to leave. *Processing:* each lane's loads in
+  vehicles, first fit, heaviest first, by kilograms and cubic metres; every carrier costed on its own vehicles.
+  *Output:* four vehicles for ₹1.42 L:
+  * The transfer goes with Sahyadri: 780 kg, 17 % of a 9 t truck, ₹24,936. Deccan's ₹32,000 is shown beside it, and
+    the transfer is marked late.
+  * The Delhi delivery goes with Northline: 3,962 kg and 25.78 m³, 86 % full by volume, ₹12,678.40.
+  * The courier lane has no carrier, so it is costed at what planning assumes it costs.
+  * A note names the low-filled truck and says a longer window lets later loads share it.
+* *A freight order's life.* The transfer's order goes through each step:
+  1. Tendered to Sahyadri: "FO-00004 tendered to Sahyadri Freight Carriers for INR 24,936.00."
+  2. Rejected, it goes to the next carrier whose truck takes it: "tendered to Deccan Roadlines for INR 32,000.00
+     (+7,064.00)".
+  3. Accepted.
+  4. Shipped, which dispatches the transfer: "left Pune plant (Chakan) for Delhi NCR DC on Mon 28 Sep with STO-2201".
+  5. Settled against Deccan's bill DR-5521 of ₹33,150: "+1,150.00 against the planned INR 32,000.00; to pay by Wed
+     28 Oct".
+
+  The Delhi delivery's order, shipped, is its goods issue. *Carriers* then shows ₹33,150 to pay to Deccan and one
+  order turned down by Sahyadri.
+* *At 2,000 deliveries on four lanes, three carriers:* the vehicles planned in 0.11 s (958 of them), the freight
+  orders made in 0.23 s, the page read in 0.03 s.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N299 | A carrier whose vehicle was too small for a delivery was proposed when it was cheapest: the delivery was marked "bigger than one vehicle", although another carrier's truck took it whole. | Major | **Fixed:** a vehicle too small for what it must carry is the last resort, whatever it costs. A test catches it. |
+| N300 | The lane's assumed cost competed with the carriers' rates, so a light load went "with no carrier" at planning's estimate, where nobody carries it at that price. | Major | **Fixed:** the lane's own cost is used only where no carrier has a rate for the lane. |
+| N301 | After a rejection, the freight order went to the lane's own cost (₹7,212) before the next carrier (Deccan, ₹32,000), because the cheaper one came first. | Major | **Fixed:** the next carrier first; the lane's own cost only when no carrier is left. |
+| N302 | The message for new freight orders gave the fill by weight (9 %), the vehicle table the fuller of weight and volume (17 %). | Minor | **Fixed:** both give the fuller. |
+| N303 | The fill bars hid their own percentage: the text sat under the bar. This also affected the bins on the Warehouse page (6.1). | Minor | **Fixed** on both pages. |
+| N304 | One vehicle goes to one place: no multi-stop tours. A delivery bigger than one vehicle is named, not split. Freight is not added to a transfer's value in the books, nor to the cost to serve on Money. A settled bill is shown as to pay on *Carriers*, not in what we owe. A carrier's answer is recorded by hand. | Minor | Open: multi-stop tours and splitting, freight into the books and cost to serve (with 7.4), freight bills in payables, tendering by message. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

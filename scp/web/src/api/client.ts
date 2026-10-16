@@ -9,6 +9,7 @@ import type {
   User, TwoStepState, TwoStepKey, DeletionPlan, Deleted,
   ApiKey, ImportJobs, JobInput, MessageRow, MailInput, MailRow, MailSetup, ReminderSettings, Tried, TryInput,
   WhatIfChip, WhatIfResult, SweepResult, CaseInfo, WarehouseView, ValuationView, CyclePlan, PutawayProposal, PickList, WarehouseActionResponse,
+  TransportView, TransportAction, TransportActionResponse,
   WarehouseAction,
 } from "./types";
 import { applyPatch, type Patch } from "../lib/patch";
@@ -349,6 +350,12 @@ export const api = {
   cycleCounts: (ds: Dataset, location?: string) =>
     planPost<CyclePlan>(`/api/cycle-counts${location ? `?location=${encodeURIComponent(location)}` : ""}`, ds),
   /** A place's bins with what each holds, and the stock in no bin (Enterprise 6.1). */
+  /** What is waiting to load, in vehicles with the cheapest carrier, and the freight orders (Enterprise 6.3). */
+  transport: (ds: Dataset) => planPost<TransportView>("/api/transport", ds),
+  /** One transport step: freight orders for what is waiting, tender, accept, reject, ship, settle, cancel. */
+  transportAct: (dataset: Dataset, action: TransportAction, extra: {
+    order?: string; lanes?: string[]; billed?: number; bill?: string; date?: string;
+  } = {}) => write<TransportActionResponse>("/api/transport/act", dataset, { action, ...extra }),
   warehouse: (ds: Dataset, location: string) =>
     planPost<WarehouseView>(`/api/warehouse?location=${encodeURIComponent(location)}`, ds),
   /** Where the stock in no bin would be put away, by the place's rules (nothing is changed). */

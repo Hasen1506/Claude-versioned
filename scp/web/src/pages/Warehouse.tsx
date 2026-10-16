@@ -115,7 +115,7 @@ export function Warehouse({ route }: { route: string[] }) {
 
 function Fill({ f }: { f?: number | null }) {
   if (f === null || f === undefined) return <span className="faint">—</span>;
-  return <span className="fill" title={`${pct(f, 0)} of the bin's limit`}><span style={{ width: `${Math.min(100, f * 100)}%` }} />{pct(f, 0)}</span>;
+  return <span className="fill" title={`${pct(f, 0)} of the bin's limit`}><span style={{ width: `${Math.min(100, f * 100)}%` }} /><b>{pct(f, 0)}</b></span>;
 }
 
 function Bins({ v }: { v: WarehouseView }) {

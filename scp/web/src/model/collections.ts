@@ -10,7 +10,7 @@ export type CollectionKey =
   | "movements" | "closed_orders" | "accuracy" | "forecast_snapshots" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches" | "mrp_groups"
   | "customers" | "payment_terms" | "sales_orders" | "quotations" | "deliveries" | "invoices" | "returns"
   | "contracts" | "supplier_invoices" | "supplier_returns" | "budgets"
-  | "storage_types" | "bins" | "putaway_rules";
+  | "storage_types" | "bins" | "putaway_rules" | "carriers";
 
 export interface Column {
   label: string;
@@ -417,6 +417,16 @@ export const COLLECTIONS: CollectionDef[] = [
     columns: [
       { label: "Place", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) || "every other" },
       { label: "Storage types, in order", get: (o) => ((o.storage_types as string[]) ?? []).join(" → ") },
+    ],
+  },
+  {
+    key: "carriers", label: "Carriers", singular: "carrier", defName: "Carrier", issueType: "carrier",
+    group: "Network", keyOf: (o) => s(o.id),
+    blurb: "The transport companies and what a vehicle costs with each on a lane (or on every lane of a mode). Transport puts the loads with the cheapest.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Name", get: (o) => s(o.name) },
+      { label: "Rates", get: (o) => ((o.rates as Obj[]) ?? []).map((r) => `${s(r.lane) || `every ${s(r.mode)} lane`}`).join(", ") },
+      { label: "Pays in days", get: (o) => o.payment_days as number, num: true }, { label: "Blocked", get: (o) => (o.blocked ? "yes" : "") },
     ],
   },
   {

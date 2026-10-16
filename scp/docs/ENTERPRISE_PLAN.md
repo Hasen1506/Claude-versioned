@@ -72,6 +72,8 @@ safety stock phased in over weeks, the engine's money format and sizes planned f
 Done: 6.1 (N281–N288; counts by bin, staging for production, a camera reader for every phone and replenishment of
 picking bins, open).
 Done: 6.2 (N292–N297; postings to accounts with 7.4, a price change by hand and split valuation, open).
+Done: 6.3 (N299–N304; multi-stop tours, freight into the books and cost to serve, freight bills in payables and
+tendering by message, open). Phase 6 done.
 
 | # | Gap (guide §) | Build |
 |---|---|---|

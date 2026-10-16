@@ -103,6 +103,10 @@ const TITLE: Record<string, string> = {
   a_share: "A: share of the value used up", b_share: "A and B together: share of the value used up",
   counts_a: "Counts a year of an A product", counts_b: "Counts a year of a B product", counts_c: "Counts a year of a C product",
   lookback_days: "Classes made of the last (days)", cycle_count: "Cycle counting class (set by hand)",
+  rates: "Rates", per_shipment: "A vehicle (per shipment)", per_kg: "Per kilogram", per_m3: "Per cubic metre",
+  min_charge: "Never less than", capacity_kg: "Vehicle carries (kg)", capacity_m3: "Vehicle carries (m³)",
+  payment_days: "Pays its bill in (days)", window_days: "Loads within (days) share a vehicle",
+  low_fill: "Name a vehicle filled less than",
   batch: "Batch", expires_on: "Expires on", made_on: "Made on", supplier_batch: "Supplier's batch number",
   stock_type: "Stock", serials: "Serial numbers", reversal_of: "Takes back movement", doc: "Material document",
 };
@@ -187,7 +191,8 @@ function refOptions(ds: Dataset | null, kind: string): { id: string; label: stri
   const list =
     kind === "location" ? ds.locations : kind === "product" ? ds.products : kind === "resource" ? ds.resources
       : kind === "calendar" ? ds.calendars ?? [] : kind === "mrp_group" ? ds.mrp_groups ?? []
-      : kind === "payment_terms" ? ds.payment_terms ?? [] : [];
+      : kind === "payment_terms" ? ds.payment_terms ?? [] : kind === "lane" ? ds.lanes ?? []
+      : kind === "carrier" ? ds.carriers ?? [] : [];
   return (list ?? []).map((x) => {
     const o = x as { id: string; name?: string; type?: string };
     return { id: o.id, label: o.name && o.name !== o.id ? `${o.name} · ${o.id}` : o.id };

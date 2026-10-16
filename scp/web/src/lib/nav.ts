@@ -49,6 +49,7 @@ export const NAV: NavGroup[] = [
     { ...actuals, tabs: [
       actuals,
       { id: "warehouse", label: "Warehouse", question: "In which bin is each product, what goes where, and what do we pick?", optional: true },
+      { id: "transport", label: "Transport", question: "Which vehicle carries what, with which carrier, and what does it cost?", optional: true },
     ] },
   ] },
   { label: "Results", items: [
