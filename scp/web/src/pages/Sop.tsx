@@ -10,8 +10,9 @@ import { Loc, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
+import { CycleView } from "./SopCycle";
 
-type View = "overview" | "demand" | "capacity" | "prices" | "supply" | "settings";
+type View = "overview" | "demand" | "capacity" | "prices" | "supply" | "cycle" | "settings";
 
 // A pinned result to compare scenarios against. It lives for the browser session, outside React
 // state, so it survives navigating between tabs and pages.
@@ -74,6 +75,7 @@ export function Sop({ route }: { route: string[] }) {
     {err && <div className="banner error"><Badge sev="error">Release failed</Badge>{err}</div>}
   </>;
   if (view === "settings") return body(<><Nav view={view} res={res} /><Levers ds={ds} /></>);
+  if (view === "cycle") return body(<><Nav view={view} res={res} /><CycleView ds={ds} /></>);
   if (run.error) return body(<div className="banner error"><Badge sev="error">Solve failed</Badge>{run.error}</div>);
   if (!res) {
     return body(<>
@@ -111,6 +113,7 @@ function Nav({ view, res }: { view: View; res: SopResult | null }) {
       { id: "capacity", label: "Capacity", count: res?.resources.filter((r) => r.finite).length },
       { id: "prices", label: "Shadow prices", count: res?.binding.length },
       { id: "supply", label: "Sourcing", count: res?.flows.filter((f) => f.qty.some((q) => q > 0)).length },
+      { id: "cycle", label: "Monthly cycle" },
       { id: "settings", label: "Scenario levers" },
     ]} />
   );

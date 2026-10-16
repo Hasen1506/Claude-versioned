@@ -50,6 +50,11 @@ class DemandRecord(Model):
         None, ge=1, le=366, description="Forecast only: the days the forecast as entered covered (see `original_date`)")
     original_qty: float | None = Unit(
         "qty", default=None, description="Forecast only: the quantity of the forecast as entered (see `original_date`)")
+    high_qty: float | None = Unit(
+        "qty", default=None,
+        description="Forecast only: the high end of the forecast's interval over the record (P90 at the default 80 % "
+                    "interval), written by a forecast release. An order check keeps it for the orders still to come "
+                    "to give a safe date beside the expected one. Empty: no spread is known")
     released: bool = Field(
         False, description="Forecast only: written by a forecast release. Releasing every series again replaces it, "
                            "so a series the new forecast no longer has does not stay in demand")
@@ -104,6 +109,9 @@ class ScheduledReceipt(Model):
                                                "needed, planning counts it where it is needed and reports the delay "
                                                "instead of adding an order in front of it")
     po: str | None = Field(None, max_length=64, description="Purchase: the purchase order (header) this line is on")
+    sales_order: str | None = Field(None, max_length=64,
+                                    description="Made or bought for this sales order (S/4 sales-order stock): planned, "
+                                                "promised and issued only to it, and held for it once received")
     planned_as: str | None = Field(None, max_length=64,
                                    description="The planned order it was firmed from (for reference: planned numbers "
                                                "are handed out again on every plan)")

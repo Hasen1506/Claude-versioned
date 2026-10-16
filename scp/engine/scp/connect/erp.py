@@ -376,7 +376,8 @@ def _posting(ds: Dataset, p: ErpPosting) -> tuple[Dataset, ItemResult]:
 #: lists an ERP may send record by record; orders, documents and the journal have their own messages
 NOT_RECORDS = {"movements", "sales_orders", "purchase_orders", "deliveries", "invoices", "returns", "quotations",
                "supplier_invoices", "supplier_returns", "confirmations", "closed_orders", "inventory_docs", "batches",
-               "allocations", "accuracy", "rolled_weeks", "cancelled_purchase_orders"}
+               "allocations", "accuracy", "rolled_weeks", "cancelled_purchase_orders", "warehouse_tasks", "waves",
+               "freight_orders"}
 
 
 def record_lists() -> list[str]:
@@ -389,8 +390,11 @@ def _key(name: str, rec: dict) -> tuple:
     return tuple(rec.get(f) for f in KEYS.get(name, ("id",)))
 
 
-def apply_records(ds: Dataset, name: str, records: list[dict[str, Any]]) -> tuple[Dataset, list[ItemResult]]:
-    """Records of one list, each added or, when one with the same key is here, changed in the fields sent."""
+def apply_records(ds: Dataset, name: str, records: list[dict[str, Any]], add_only: frozenset[str] = frozenset()
+                  ) -> tuple[Dataset, list[ItemResult]]:
+    """Records of one list, each added or, when one with the same key is here, changed in the fields sent.
+    ``add_only``: fields that only a new record takes (a connector's product type and unit: a product kept here
+    is not made another type because the other system says so)."""
     if name not in record_lists():
         raise ValueError(f"{name!r} is not a list of master data the ERP can send; it is one of "
                          f"{', '.join(record_lists())}")
@@ -407,6 +411,7 @@ def apply_records(ds: Dataset, name: str, records: list[dict[str, Any]]) -> tupl
             continue
         try:
             if k in pos:
+                raw = {f: v for f, v in raw.items() if f not in add_only}
                 old = rows[pos[k]].model_dump(mode="json")
                 merged = {**old, **raw}
                 if merged == old:

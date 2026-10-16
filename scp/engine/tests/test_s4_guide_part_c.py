@@ -263,6 +263,10 @@ def test_12_shipping_from_inspection_stock_says_it_is_in_inspection():
     receipt': the goods were received; they are waiting for a usage decision."""
     x, _ = roll_forward(ds(qi_company(negative_stock="refuse")), JAN5)
     x = x.model_copy(update={"deliveries": []})
+    # since ENTERPRISE_PLAN 2.6 the delivery itself checks what can be picked (§13), and says why
+    with pytest.raises(sales.SalesError, match="100 in quality inspection: release it first"):
+        sales.create_deliveries(x, [{"order": "SO-1", "qty": 50, "ship_from": "P"}], on=date(2026, 1, 6))
+    x = x.model_copy(update={"sales": x.sales.model_copy(update={"delivery_check": False})})
     x, _ = sales.create_deliveries(x, [{"order": "SO-1", "qty": 50, "ship_from": "P"}], on=date(2026, 1, 6))
     with pytest.raises(sales.SalesError, match="100 in quality inspection: release it first"):
         sales.issue(x, x.deliveries[0].id, on=date(2026, 1, 6))
@@ -364,6 +368,101 @@ def test_15_billing_carries_the_order_price_forward_through_a_price_list_change(
     x = type(x).model_validate(x.model_dump())
     x, _ = sales.create_invoices(x, on=JAN5)
     assert x.invoices[-1].lines[0].price == 50
+
+
+# ---- ENTERPRISE_PLAN 2.6: the delivery re-checks availability (§13), the price is fixed at goods issue (§15) ----
+def two_orders(on_hand: float = 40) -> tuple:
+    """40 A at P; SO-1 (30) already on a delivery; SO-2 (30) asked for."""
+    d = o2c()
+    lp(d, "P", "A")["on_hand"] = on_hand
+    d["demand"] = [demand("CU", "A", "2026-01-07", 30, kind="sales_order", id="SO-1"),
+                   demand("CU", "A", "2026-01-07", 30, kind="sales_order", id="SO-2")]
+    x, _ = roll_forward(ds(d), JAN5)
+    x, _ = sales.create_deliveries(x, [{"order": "SO-1", "ship_from": "P"}], on=JAN5)
+    return x
+
+
+def test_13_a_delivery_takes_only_what_can_be_picked_and_the_rest_stays_to_deliver():
+    """§13 'the delivery re-checks availability (checking rule A) before picking'. 40 on hand, 30 already on SO-1's
+    delivery: SO-2 asks for 30 and gets 10; 20 stay to deliver, and the list says none of them can be picked."""
+    x = two_orders()
+    x, rep = sales.create_deliveries(x, [{"order": "SO-2", "ship_from": "P"}], on=JAN5)
+    assert [(ln.order, ln.qty) for ln in x.deliveries[-1].lines] == [("SO-2", 10)]
+    assert "SO-2: 10 of 30 can be picked (A at P by Mon 5 Jan), 20 stay to deliver" in rep.message
+    left = next(t for t in sales.to_deliver(x, JAN5) if t.order == "SO-2")
+    assert (left.qty, left.available) == (20, 0)
+    with pytest.raises(sales.SalesError, match="nothing can be picked: SO-2: nothing of 20"):
+        sales.create_deliveries(x, [{"order": "SO-2", "ship_from": "P"}], on=JAN5)
+
+
+def test_13_firm_receipts_in_by_the_goods_issue_count_and_later_ones_do_not():
+    """Rule A counts firm receipts: 20 more arriving Tue 6 Jan cover SO-2 on a delivery made (and so picked) on Wed
+    7 Jan, not on one made today. (Unconfirmed lines plan their goods issue on the day the delivery is made.)"""
+    x = two_orders()
+    po = {"id": "PO-9", "kind": "purchase", "location": "P", "product": "A", "qty": 20, "due_date": "2026-01-06"}
+    x = type(x).model_validate({**x.model_dump(mode="json"), "receipts": [po]})
+    today = next(t for t in sales.to_deliver(x, JAN5) if t.order == "SO-2")
+    assert today.available == 10                                  # by Mon 5 Jan only the 10 in stock
+    later = next(t for t in sales.to_deliver(x, date(2026, 1, 7)) if t.order == "SO-2")
+    assert later.available == 30
+    y, rep = sales.create_deliveries(x, [{"order": "SO-2", "ship_from": "P"}], on=date(2026, 1, 7))
+    assert y.deliveries[-1].lines[0].qty == 30 and "Not enough" not in rep.message
+
+
+def test_13_stock_held_for_another_order_is_not_picked_for_this_one():
+    """Sales-order stock (2.5) serves only its order: 10 free + 20 held for SO-9 (and a receipt today held for it)
+    leave SO-2 its 10, not 30 or 35."""
+    x = two_orders(on_hand=40)
+    j = x.model_dump(mode="json")
+    lp(j, "P", "A")["order_stock"] = [{"order": "SO-9", "qty": 20}]
+    j["receipts"] = [{"id": "PO-9", "kind": "purchase", "location": "P", "product": "A", "qty": 5,
+                      "due_date": "2026-01-05", "sales_order": "SO-9"}]
+    x = type(x).model_validate(j)
+    x, _ = roll_forward(x, JAN5)
+    held = next(t for t in sales.to_deliver(x, JAN5) if t.order == "SO-2")
+    assert held.available == 10
+
+
+def test_13_without_the_check_a_delivery_takes_what_is_asked():
+    x = two_orders()
+    x = x.model_copy(update={"sales": x.sales.model_copy(update={"delivery_check": False})})
+    x, rep = sales.create_deliveries(x, [{"order": "SO-2", "ship_from": "P"}], on=JAN5)
+    assert x.deliveries[-1].lines[0].qty == 30 and "Not enough" not in rep.message
+
+
+def test_15_a_line_without_a_price_is_priced_at_goods_issue_with_its_scale_and_billed_at_that():
+    """§15 PITFALL (pricing type B vs G). An imported line without a price: the customer's price is 50, 45 from 20 a
+    line. It ships 30 at 45 (fixed at goods issue); the price list then goes to 60 and 55: the invoice still says 45.
+    Before the fix it was billed at the list price without its scale on the invoice day (60)."""
+    d = o2c()
+    d["customer_prices"] = [{"customer": "CU", "product": "A", "price": 50, "scales": [{"from_qty": 20, "price": 45}]}]
+    d["demand"] = [demand("CU", "A", "2026-01-07", 30, kind="sales_order", id="SO-1")]
+    x, _ = roll_forward(ds(d), JAN5)
+    x, _ = sales.create_deliveries(x, on=JAN5)
+    x, rep = sales.issue(x, x.deliveries[-1].id, on=JAN5)
+    assert "SO-1 had no agreed price: INR 45.00 a unit fixed at goods issue" in rep.message.replace(
+        x.settings.currency, "INR")
+    j = x.model_dump(mode="json")
+    j["customer_prices"][0].update(price=60, scales=[{"from_qty": 20, "price": 55}])
+    x = type(x).model_validate(j)
+    x, _ = sales.create_invoices(x, on=JAN5)
+    assert x.invoices[-1].lines[0].price == 45
+
+
+def test_15_a_line_delivered_straight_from_the_journal_is_priced_the_same_way():
+    d = o2c()
+    d["demand"] = [demand("CU", "A", "2026-01-07", 30, kind="sales_order", id="SO-1")]
+    x, _ = roll_forward(ds(d), JAN5)
+    x, rep = post(x, "deliver", order="SO-1", on=JAN5)
+    assert next(r for r in x.demand if r.id == "SO-1").price == 50 and "fixed at goods issue" in rep.message
+
+
+def test_15_a_line_with_its_own_price_keeps_it_at_goods_issue():
+    x = two_orders()
+    x = x.model_copy(update={"demand": [d.model_copy(update={"price": 42}) if d.id == "SO-1" else d for d in x.demand]})
+    x, rep = sales.issue(x, x.deliveries[-1].id, on=JAN5)
+    assert "fixed at goods issue" not in rep.message
+    assert next(d for d in x.demand if d.id == "SO-1").price == 42
 
 
 def test_15_invoice_payment_with_cash_discount_closes_the_receivable():
@@ -527,6 +626,26 @@ def test_18_2_otif_counts_in_full_within_tolerance_and_on_time_to_the_confirmed_
     assert k["otif_confirmed"].value == pytest.approx(2 / 3)
     assert k["otif_requested"].value == pytest.approx(1 / 3)
     assert k["perfect_order"].value == pytest.approx(0 / 3)               # S1 short by 2 has no tolerance here
+
+
+def test_18_2_otif_note_counts_open_lines_already_late_and_their_value():
+    """§18.2 OTIF is delivery-based, so an order not shipped is in no figure. Open on Mon 5 Jan: SO-1 (10 left at 50,
+    requested Fri 2 Jan, confirmed Sat 3 Jan), SO-3 and SO-2 (requested Thu 8 Jan, not late yet)."""
+    d = o2c()
+    d["demand"] = [demand("CU", "A", "2026-01-02", 10, kind="sales_order", id="SO-1"),
+                   demand("CU", "A", "2026-01-08", 5, kind="sales_order", id="SO-2"),
+                   demand("CU", "A", "2026-01-03", 4, kind="sales_order", id="SO-3")]
+    d["confirmations"] = [{"order": "SO-1", "ship_from": "P", "ship_date": "2026-01-02", "date": "2026-01-03",
+                           "qty": 10},
+                          {"order": "SO-3", "ship_from": "P", "ship_date": "2026-01-08", "date": "2026-01-09",
+                           "qty": 4}]
+    k = kpis(d)
+    cur = ds(d).settings.currency
+    # SO-3 (4 at 50, requested Sat 3 Jan) is late to its request but confirmed for Fri 9 Jan: not late to that
+    assert (f"Not in this figure: 2 open order lines worth {cur} 700 already past the requested date"
+            in k["otif_requested"].note)
+    assert f"1 open order line worth {cur} 500 already past the confirmed date" in k["otif_confirmed"].note
+    assert "open order line" not in kpis(o2c())["otif_requested"].note
 
 
 def test_18_2_api_shows_every_kpi_with_its_definition():

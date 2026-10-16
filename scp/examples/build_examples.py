@@ -8,10 +8,19 @@ in the UI ("Load example"), and they are validated in the engine test suite.
 from __future__ import annotations
 
 import json
+import os
+import platform
 import random
 import sys
 from datetime import date, timedelta
 from pathlib import Path
+
+# One linear-algebra kernel on every x86 machine, set before numpy loads: OpenBLAS otherwise picks one per processor,
+# and the forecasts fitted for the kept releases differ by a tenth between them (an AVX-512 machine and an AVX2 one
+# rounded a kettle week to 641 and 640), so the file would not be the same on every machine.
+if platform.machine().lower() in ("x86_64", "amd64"):
+    os.environ.setdefault("OPENBLAS_CORETYPE", "Haswell")
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "engine"))
@@ -56,6 +65,41 @@ def weekly_history(loc: str, prod: str, base: float, season: dict[int, float], r
     return out
 
 
+def delhi_warehouse() -> dict:
+    """The Delhi DC's bins (Enterprise 6.1): a picking area of shelves along the walk, filled first and topped up with
+    the same product, and a high-rack reserve by weight behind it. Stock taken at go-live is in no bin yet: putting
+    it away is the first warehouse step."""
+    shelves = [{"location": "DC-DELHI", "id": f"S-01-{i:02d}", "storage_type": "SHELF", "walk": 10 * i, "max_qty": 300}
+               for i in range(1, 9)]
+    racks = [{"location": "DC-DELHI", "id": f"R-{a:02d}-{i:02d}", "storage_type": "RACK", "walk": 100 * a + 10 * i,
+              "max_kg": 1800} for a in (1, 2) for i in range(1, 5)]
+    return {
+        "storage_types": [
+            {"location": "DC-DELHI", "id": "SHELF", "name": "Picking shelves", "putaway": "add_to_stock",
+             "bins_per_product": 2, "sequence": 10},
+            {"location": "DC-DELHI", "id": "RACK", "name": "High rack reserve", "putaway": "next_empty",
+             "picking": False, "sequence": 20}],
+        "bins": shelves + racks,
+        "putaway_rules": [{"location": "DC-DELHI", "product": "", "storage_types": ["SHELF", "RACK"]}],
+    }
+
+
+def kaveri_carriers() -> list[dict]:
+    """Three fictional carriers (Enterprise 6.3). Sahyadri charges a smaller flat fee and a rate a kilogram, so it is
+    the cheaper truck for a light load; Deccan a flat rate a truck, the cheaper one when it is full. Northline carries
+    part loads on every LTL lane by the kilogram, never under its minimum."""
+    return [
+        {"id": "CR-DECCAN", "name": "Deccan Roadlines", "payment_days": 30, "rates": [
+            {"lane": "LN-PUNE-DEL", "mode": "truck_ftl", "per_shipment": 32000},
+            {"lane": "LN-PUNE-BHW", "mode": "truck_ftl", "per_shipment": 9500}]},
+        {"id": "CR-SAHYADRI", "name": "Sahyadri Freight Carriers", "payment_days": 15, "rates": [
+            {"lane": "LN-PUNE-DEL", "mode": "truck_ftl", "per_shipment": 24000, "per_kg": 1.2},
+            {"lane": "LN-PUNE-BHW", "mode": "truck_ftl", "per_shipment": 7000, "per_kg": 0.5}]},
+        {"id": "CR-NORTHLINE", "name": "Northline LTL Express", "payment_days": 30, "rates": [
+            {"mode": "truck_ltl", "per_kg": 3.2, "min_charge": 1500, "capacity_kg": 5000, "capacity_m3": 30}]},
+    ]
+
+
 def kitchenware() -> dict:
     rng = random.Random(42)
     festive = {10: 1.35, 11: 1.25, 12: 0.95, 1: 0.9, 2: 0.95, 3: 1.05}
@@ -88,11 +132,11 @@ def kitchenware() -> dict:
     ]
     products = [
         {"id": "MG-500", "name": "Mixer grinder 500 W", "type": "FG", "family": "Mixer grinders", "weight_kg": 4.2,
-         "volume_m3": 0.028, "price": 2890, "setup_group": "MG"},
+         "volume_m3": 0.028, "price": 2890, "setup_group": "MG", "customer_wait_days": 2, "barcode": "8906011250005"},
         {"id": "MG-750", "name": "Mixer grinder 750 W", "type": "FG", "family": "Mixer grinders", "weight_kg": 4.9,
-         "volume_m3": 0.031, "price": 3990, "setup_group": "MG"},
+         "volume_m3": 0.031, "price": 3990, "setup_group": "MG", "barcode": "8906011250012"},
         {"id": "KT-15", "name": "Electric kettle 1.5 L", "type": "FG", "family": "Kettles", "weight_kg": 1.3,
-         "volume_m3": 0.009, "price": 1190, "setup_group": "KT"},
+         "volume_m3": 0.009, "price": 1190, "setup_group": "KT", "customer_wait_days": 2, "barcode": "8906011250029"},
         {"id": "MOT-500", "name": "Motor assembly 500 W", "type": "SFG", "weight_kg": 1.6, "volume_m3": 0.004,
          "setup_group": "W500"},
         {"id": "MOT-750", "name": "Motor assembly 750 W", "type": "SFG", "weight_kg": 2.0, "volume_m3": 0.005,
@@ -320,6 +364,8 @@ def kitchenware() -> dict:
         "resources": resources, "production_sources": production_sources, "purchasing_sources": purchasing,
         "lanes": lanes, "vendors": vendors, "purchase_orders": [],
         "purchasing": {"approval_limit": 1000000, "release_window_days": 7},
+        **delhi_warehouse(),
+        "carriers": kaveri_carriers(),
         "demand": demand, "receipts": receipts, "history": history, "events": events, "npi": npi,
         "overrides": overrides,
         # sequence-dependent setups: winding gauge change (thick→thin needs re-tensioning) and
@@ -330,6 +376,14 @@ def kitchenware() -> dict:
              "end": "2026-11-01", "qty": 1500, "fallback": "next_period"},
             {"id": "AL-ECOM-KT-NOV", "product": "KT-15", "customers": ["CUS-ECOM"], "start": "2026-11-01",
              "end": "2026-12-01", "qty": 1800, "fallback": "next_period"},
+        ],
+        # the year's sales budget by product family, which the monthly S&OP cycle sets the plan against
+        "budgets": [
+            {"month": f"{y}-{m:02d}-01", "family": fam, "qty": qty, "revenue": rev}
+            for (y, m), lift in (((2026, 10), 1.25), ((2026, 11), 1.1), ((2026, 12), 1.0), ((2027, 1), 0.9),
+                                 ((2027, 2), 0.9), ((2027, 3), 1.0))
+            for fam, qty, rev in (("Mixer grinders", round(9200 * lift), round(30_500_000 * lift, -4)),
+                                  ("Kettles", round(7400 * lift), round(8_800_000 * lift, -4)))
         ],
         # capacity investments appraised against the S&OP plan (P9)
         "finance": {"capacity_options": [
@@ -347,6 +401,12 @@ def kitchenware() -> dict:
     }
 
 
+def _kept_rows(ds: Dataset) -> list[dict]:
+    """The kept forecasts of a released company, in whole units so the file is reproducible across platforms."""
+    return [{**k.model_dump(mode="json"), **{f: round(getattr(k, f)) for f in ("naive", "statistical", "adjusted", "final")}}
+            for k in ds.forecast_snapshots]
+
+
 def released(data: dict) -> dict:
     """Run the demand-planning pipeline and write its consensus forecast into ``demand`` exactly as the
     Release button does, rounded to whole units so the file is reproducible across platforms."""
@@ -355,7 +415,38 @@ def released(data: dict) -> dict:
     fc = [{"location": d.location, "product": d.product, "date": d.date.isoformat(), "qty": round(d.qty),
            "kind": "forecast", "period_days": d.period_days}
           for d in new.demand if d.kind is DemandKind.FORECAST and round(d.qty) > 0]
-    return {**data, "demand": fc + [d for d in data["demand"] if d["kind"] != "forecast"]}
+    return {**data, "demand": fc + [d for d in data["demand"] if d["kind"] != "forecast"],
+            "forecast_snapshots": _kept_rows(new)}
+
+
+# the planners' overrides of the twelve weeks before the planning start (forecast value add): Sales West lifts its
+# trade forecasts by a quarter for the season it expects; the e-commerce desk adds a tenth to the marketplace for
+# the sale-season weeks it sees in its traffic
+PAST_OVERRIDES = (
+    [{"location": "CUS-WEST-TRADE", "product": p, "date": (START - timedelta(weeks=w)).isoformat(), "change": 0.25,
+      "reason": "Distributors expect a strong season", "author": "Sales West"}
+     for p in ("MG-500", "MG-750") for w in (2, 4, 5, 7, 8, 10)]
+    + [{"location": "CUS-ECOM", "product": p, "date": (START - timedelta(weeks=w)).isoformat(), "change": 0.1,
+        "reason": "Marketplace traffic up", "author": "E-commerce desk"}
+       for p in ("MG-500", "KT-15") for w in (1, 2, 3, 5, 6)]
+)
+
+
+def with_kept_forecasts(data: dict, weeks: int = 12) -> dict:
+    """Twelve weekly forecast releases before the planning start, as the company would have made them: each from the
+    sales known that Monday, with the planners' overrides of the time, keeping what every layer said (forecast value
+    add). The overrides of those weeks are in the kept forecasts; the overrides list keeps only today's."""
+    kept: list[dict] = []
+    for w in range(weeks, 0, -1):
+        origin = START - timedelta(weeks=w)
+        past = {**data, "settings": {**data["settings"], "planning_start": origin.isoformat()},
+                "history": [h for h in data["history"] if date.fromisoformat(h["date"]) < origin],
+                "overrides": [o for o in PAST_OVERRIDES if date.fromisoformat(o["date"]) >= origin],
+                "forecast_snapshots": kept}
+        ds = Dataset.model_validate(past)
+        new, _ = release(ds, run_forecast(ds))
+        kept = _kept_rows(new)
+    return {**data, "forecast_snapshots": kept}
 
 
 def with_journal(data: dict) -> dict:
@@ -721,7 +812,7 @@ def chennai_port_pumps() -> dict:
 
 
 def main() -> None:
-    for name, build in (("kitchenware_network", lambda: with_history(with_journal(released(kitchenware())))),
+    for name, build in (("kitchenware_network", lambda: with_history(with_journal(released(with_kept_forecasts(kitchenware()))))),
                         ("single_product_plant", single_product),
                         ("chennai_port_pumps", chennai_port_pumps)):
         data = build()

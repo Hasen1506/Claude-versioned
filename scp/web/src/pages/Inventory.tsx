@@ -9,8 +9,9 @@ import { Loc, namesOf, Prod } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useStore } from "../state/store";
+import { StrategyView } from "./InventoryStrategy";
 
-type View = "overview" | "placement" | "ddmrp" | "pooling" | "settings";
+type View = "overview" | "placement" | "ddmrp" | "pooling" | "strategy" | "settings";
 const key = (n: { location: string; product: string }) => `${n.location}|${n.product}`;
 const days = (v: number) => `${v.toFixed(v < 10 && v % 1 ? 1 : 0)} d`;
 
@@ -34,6 +35,7 @@ export function Inventory({ route }: { route: string[] }) {
   );
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{children}</div></div>;
   if (view === "settings") return body(<><Nav view={view} res={res} /><SettingsView ds={ds} /></>);
+  if (view === "strategy") return body(<><Nav view={view} res={res} /><StrategyView ds={ds} /></>);
   if (run.error) return body(<div className="banner error"><Badge sev="error">Optimisation failed</Badge>{run.error}</div>);
   if (!res) {
     return body(<>
@@ -68,6 +70,7 @@ function Nav({ view, res }: { view: View; res: InventoryResult | null }) {
       { id: "placement", label: "Multi-echelon placement", count: stocking },
       { id: "ddmrp", label: "DDMRP buffers", count: res?.totals?.ddmrp_positions },
       { id: "pooling", label: "Pooling", count: res?.pooling.length },
+      { id: "strategy", label: "Strategy" },
       { id: "settings", label: "Settings" },
     ]} />
   );
@@ -242,12 +245,12 @@ function Placement({ res, ds }: { res: InventoryResult; ds: Dataset }) {
                 return (
                   <tr key={k} className={sel.has(k) ? "selected" : ""}>
                     <td>{n.role === "stocking" && <input type="checkbox" aria-label={`Select ${nm.prod(n.product)} at ${nm.loc(n.location)}`} checked={sel.has(k)} onChange={() => toggle(k)} />}</td>
-                    <td>{n.location}{n.demand_facing && <span className="faint small"> · faces demand</span>}</td>
+                    <td><Loc id={n.location} />{n.demand_facing && <span className="faint small"> · faces demand</span>}</td>
                     <td><b><Prod id={n.product} /></b>{!lpExists && <span className="faint small"> · no policy yet</span>}</td>
                     <td>{n.decision === "buffer" ? <Badge sev="ok">buffer</Badge> : n.decision === "no_stock" ? <Badge>make to order</Badge> : <Badge>pass through</Badge>}</td>
                     <td className="num">{qty(n.mean_daily)}</td>
                     <td className="num" title={`source: ${n.cv_source}`}>{n.cv_weekly.toFixed(2)}<span className="faint small"> {n.cv_source === "policy" ? "measured" : n.cv_source}</span></td>
-                    <td className="num">{days(n.lead_time_days)}</td>
+                    <td className="num">{days(n.lead_time_days)}{n.lead_time_std_days >= 0.05 && <span className="faint small"> ± {n.lead_time_std_days.toFixed(1)}</span>}</td>
                     <td className="num">{n.meio_inbound_days}</td>
                     <td className="num">{n.meio_service_days}{n.max_service_days !== null && <span className="faint small"> ≤{n.max_service_days}</span>}</td>
                     <td className="num"><b>{n.meio_net_days}</b></td>
@@ -262,7 +265,7 @@ function Placement({ res, ds }: { res: InventoryResult; ds: Dataset }) {
           </table>
         </div>
       </Panel>
-      <Reading formula="SI = inbound service time (the longest service quoted by its suppliers); S = outbound service time; τ = SI + T − S days of demand covered from stock."
+      <Reading formula="SI = inbound service time (the longest service quoted by its suppliers); S = outbound service time; τ = SI + T − S days of demand covered from stock. Lead time ± its spread (σ_L): the supplier's, as planned on the purchasing source, with the lane's."
         soWhat="Applying writes a fixed safety-stock quantity to each approved location-product, so the supply plan holds exactly this stock. Re-optimise after demand or lead times change." />
     </div>
   );
@@ -288,25 +291,40 @@ function ZoneBar({ r, scale }: { r: DdmrpRow; scale: number }) {
 function Ddmrp({ res, ds }: { res: InventoryResult; ds: Dataset }) {
   const nm = namesOf(ds);
   const [all, setAll] = useState(false);
-  // the checkbox shows the dataset (what you set), the zones show the last run (what was computed)
-  const isPos = (r: DdmrpRow) => ds.location_products?.find((x) => x.location === r.location && x.product === r.product)?.ddmrp_buffer ?? false;
+  // the checkboxes show the dataset (what you set), the zones show the last run (what was computed)
+  const lpOf = (r: DdmrpRow) => ds.location_products?.find((x) => x.location === r.location && x.product === r.product);
+  const plans = (r: DdmrpRow) => lpOf(r)?.mrp_type === "ddmrp";
+  const isPos = (r: DdmrpRow) => (lpOf(r)?.ddmrp_buffer ?? false) || plans(r);
   const rows = res.ddmrp.filter((r) => all || r.positioned || isPos(r));
   const scale = Math.max(1, ...rows.map((r) => Math.max(r.tog, r.nfp)));
-  const setPos = (r: DdmrpRow, on: boolean) => store.update((d) => {
+  const edit = (r: DdmrpRow, f: (lp: NonNullable<Dataset["location_products"]>[number]) => void) => store.update((d) => {
     d.location_products ??= [];
     let lp = d.location_products.find((x) => x.location === r.location && x.product === r.product);
     if (!lp) {
       lp = { location: r.location, product: r.product } as (typeof d.location_products)[number];
       d.location_products.push(lp);
     }
-    lp.ddmrp_buffer = on;
+    f(lp);
   });
+  const setPos = (r: DdmrpRow, on: boolean) => edit(r, (lp) => {
+    lp.ddmrp_buffer = on;
+    if (!on && lp.mrp_type === "ddmrp") lp.mrp_type = "deterministic";
+  });
+  const setPlans = (r: DdmrpRow, on: boolean) => edit(r, (lp) => {
+    lp.mrp_type = on ? "ddmrp" : "deterministic";
+    if (on) lp.ddmrp_buffer = true;
+  });
+  const advice = rows.filter((r) => isPos(r) && !plans(r)).length;
   const c = res.currency;
   return (
     <div className="stack">
       {!res.totals?.ddmrp_positions && !all && (
         <div className="banner info"><Badge>No positions</Badge><span>No location-product is a DDMRP decoupling point yet. Show every stocking
           stage to see the buffer it would need, then position the ones you want.</span></div>
+      )}
+      {advice > 0 && (
+        <div className="banner warning"><Badge sev="warning">Advice only</Badge><span>{advice === 1 ? "1 buffer is" : `${advice} buffers are`} positioned but the plan still orders by requirements, so the buffer's order and the plan's can disagree.
+          Tick <b>Plans the orders</b> to let the buffer place them.</span></div>
       )}
       <Panel flush title="Buffers and net flow" actions={<label className="row small"><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> Show every stocking stage</label>}>
         <div className="legend" style={{ padding: "8px 12px 0" }}>
@@ -317,12 +335,13 @@ function Ddmrp({ res, ds }: { res: InventoryResult; ds: Dataset }) {
         </div>
         <div className="table-wrap" style={{ maxHeight: 560 }}>
           <table className="t nowrap">
-            <thead><tr><th>Positioned</th><th>Location</th><th>Product</th><th className="num">ADU</th><th className="num">DLT</th>
+            <thead><tr><th>Positioned</th><th>Plans the orders</th><th>Location</th><th>Product</th><th className="num">ADU</th><th className="num">DLT</th>
               <th>LTF · VF</th><th>Buffer</th><th className="num">NFP</th><th>Zone</th><th className="num">Order</th><th className="num">Avg value</th></tr></thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={key(r)}>
                   <td><Edits><input type="checkbox" aria-label={`Position a buffer of ${nm.prod(r.product)} at ${nm.loc(r.location)}`} checked={isPos(r)} onChange={(e) => setPos(r, e.target.checked)} /></Edits></td>
+                  <td><Edits><input type="checkbox" aria-label={`Let the buffer of ${nm.prod(r.product)} at ${nm.loc(r.location)} place the orders`} checked={plans(r)} onChange={(e) => setPlans(r, e.target.checked)} /></Edits></td>
                   <td><Loc id={r.location} /></td><td><b><Prod id={r.product} /></b></td>
                   <td className="num">{qty(r.adu)}</td>
                   <td className="num">{days(r.dlt)}</td>
@@ -339,7 +358,7 @@ function Ddmrp({ res, ds }: { res: InventoryResult; ds: Dataset }) {
         </div>
       </Panel>
       <Reading formula="Yellow = ADU × DLT; red = ADU × DLT × LTF × (1 + VF); green = max(ADU × order cycle, ADU × DLT × LTF, MOQ). NFP = on hand + open supply − qualified demand (orders due today and spikes inside the DLT)."
-        soWhat="Positioning a buffer cuts the decoupled lead time of every stage it feeds. Order TOG − NFP whenever NFP falls to the top of yellow or below." />
+        soWhat="Positioning a buffer cuts the decoupled lead time of every stage it feeds. Order TOG − NFP whenever NFP falls to the top of yellow or below. With Plans the orders ticked (MRP type ddmrp) the plan does exactly that, every day the net flow moves; otherwise this is advice beside an MRP that orders by requirements." />
     </div>
   );
 }

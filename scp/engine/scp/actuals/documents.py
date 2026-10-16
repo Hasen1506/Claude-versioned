@@ -123,6 +123,8 @@ def complete(ds: Dataset, moves: list[GoodsMovement], on: date, *, batch: str | 
         if m.type in (MovementType.RECEIPT, MovementType.OPENING) and m.qty > 0:
             rc = next((r for r in ds.receipts if r.id == m.reference), None)
             transfer = rc is not None and rc.kind is ReceiptKind.TRANSFER and m.type is MovementType.RECEIPT
+            if rc is not None and rc.sales_order and m.type is MovementType.RECEIPT and m.product == rc.product:
+                upd["sales_order"] = rc.sales_order    # received for a sales order: held for it
             if o.get("stock_type") is not None:
                 upd["stock_type"] = StockType(o["stock_type"])
             elif inspect and prod and prod.inspect_on_receipt and not transfer and m.type is MovementType.RECEIPT:
@@ -154,9 +156,10 @@ def complete(ds: Dataset, moves: list[GoodsMovement], on: date, *, batch: str | 
                     sn = _next_serials(ds, m.product, round(m.qty), {s for x in out for s in x.serials})
                 upd["serials"] = sn
         elif m.type is MovementType.ADJUSTMENT and m.qty < 0 and m.batch is None and prod is not None:
-            pieces = [(b, -q) for b, q in pick(ds, [*journal, *out], node, -m.qty, m.date, stock_type=m.stock_type)]
+            pieces = [(b, -q) for b, q in pick(ds, [*journal, *out], node, -m.qty, m.date, stock_type=m.stock_type,
+                                                    order=m.sales_order)]
         elif m.type in OUT and m.batch is None and prod is not None:
-            pieces = pick(ds, [*journal, *out], node, m.qty, m.date, stock_type=m.stock_type)
+            pieces = pick(ds, [*journal, *out], node, m.qty, m.date, stock_type=m.stock_type, order=m.sales_order)
         if m.type in OUT and o.get("batch"):
             pieces = [(o["batch"], m.qty)]
         serial_parts: dict[str | None, list[str]] = {}

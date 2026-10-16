@@ -12,6 +12,7 @@ import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { addressList, useServerMail } from "../components/ServerSend";
 import { poDocument, poEmail } from "../lib/podoc";
 import { isStale, store, useFreshResult, useReadOnly, useStore } from "../state/store";
+import { CycleCounts } from "./CycleCounts";
 import {
   daysBetween, hasDetail, LotFields, lotExtra, LotsDetail, NO_LOT, PhysicalInventory, postAct, ShortOrders, StockRules, StockTypeCells, type LotInput,
 } from "./ExecutionStock";
@@ -219,7 +220,9 @@ function StockLine({ r, ds, asOf, onDone }: { r: StockRow; ds: Dataset; asOf: st
     <tr>
       <td>{detail && <button className="btn sm ghost" style={{ padding: "0 6px" }} onClick={() => setOpen(!open)} aria-expanded={open}
         aria-label={`Batches and stock of ${r.product} at ${r.location}`}>{open ? "▾" : "▸"}</button>}</td>
-      <td><Loc id={r.location} /></td><td><Prod id={r.product} />{r.counting && <> <Badge sev="info">counting</Badge></>}</td>
+      <td><Loc id={r.location} /></td><td><Prod id={r.product} />{r.counting && <> <Badge sev="info">counting</Badge></>}
+        {Object.entries(r.held ?? {}).map(([so, q]) => <span key={so} title={`Held for sales order ${so}: only that order may use it, and it is not in the figures beside it`}>
+          {" "}<Badge sev="info">{qty(q)} held for {so}</Badge></span>)}</td>
       <td className="num">{qty(r.master_on_hand)}{r.opening_from_setup && <> <span title="Stock entered at setup is the opening balance; starting a new week writes it into the journal"><Badge sev="info">opening</Badge></span></>}</td>
       <td className="num">{r.movement_stock === null ? <span className="faint">—</span> : qty(r.movement_stock)}</td>
       <td className="num">{Math.abs(r.difference) > 1e-6 ? <Badge sev="warning">{r.difference > 0 ? "+" : ""}{qty(r.difference)}</Badge> : <span className="faint">0</span>}
@@ -343,6 +346,7 @@ function Count({ ds, res }: { ds: Dataset; res: ActualsView | null }) {
   const shown = rows.filter((r) => !place || r[0] === place);
   return (
     <div className="stack">
+      <CycleCounts ds={ds} />
       <PhysicalInventory ds={ds} nodes={rows} />
       <Panel title="Quick count" actions={
         <Edits><button className="btn sm accent" onClick={save} disabled={busy || !changed.length || below.length > 0}
@@ -818,7 +822,11 @@ function Journal({ ds }: { ds: Dataset }) {
 // ------------------------------------------------------------------------------------------------
 function Roll({ ds }: { ds: Dataset }) {
   const start = ds.settings.planning_start;
-  const [to, setTo] = useState(addDays(start, 7));
+  // the date picked belongs to the planning start it was picked from: another company, an undo or a roll made
+  // elsewhere starts again a week after its own start (the page may stay mounted through all of them)
+  const [pick, setPick] = useState({ start, to: addDays(start, 7) });
+  const to = pick.start === start ? pick.to : addDays(start, 7);
+  const setTo = (v: string) => setPick({ start, to: v });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<RollSnapshot | null>(lastRoll);
@@ -833,7 +841,7 @@ function Roll({ ds }: { ds: Dataset }) {
       lastRoll = { report: out.report, on: out.dataset };
       setSnapshot(lastRoll);
       await store.run("actuals");
-      setTo(addDays(to, 7));
+      setPick({ start: out.dataset.settings.planning_start, to: addDays(to, 7) });
     } catch (e) {
       setErr(String(e));
     } finally {

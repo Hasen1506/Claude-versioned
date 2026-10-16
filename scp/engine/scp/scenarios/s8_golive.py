@@ -44,7 +44,9 @@ def build() -> dict:
              "cold_chain": True},
             {"id": "JAR", "name": "Jar and lid", "type": "PKG", "weight_kg": 0.2, "serial_numbers": True},
             {"id": "SUGAR", "name": "Sugar", "type": "RM", "weight_kg": 1},
-            {"id": "LABEL", "name": "Label", "type": "PKG"},
+            {"id": "LABEL", "name": "Label", "type": "PKG", "planning_material": "LABEL-STD"},   # its own forecast too
+            {"id": "LABEL-STD", "name": "Label, any print", "type": "PKG"},
+            {"id": "LABEL-GOLD", "name": "Gold label", "type": "PKG", "planning_material": "LABEL"},  # a variant's variant
         ],
         "location_products": [
             {"location": "PLANT", "product": "JAM", "safety_stock": {"method": "fixed", "qty": 100},
@@ -52,11 +54,13 @@ def build() -> dict:
             {"location": "PLANT", "product": "FRUIT", "on_hand": 250,
              "safety_stock": {"method": "service_level", "service_level": 0.95}},
             {"location": "PLANT", "product": "SUGAR", "phantom": True},                        # bought, not made
-            {"location": "DC", "product": "JAM", "on_hand": 40},
+            {"location": "DC", "product": "JAM", "on_hand": 40,
+             "order_stock": [{"order": "SO-GONE", "qty": 6}]},                                # its order is gone
             {"location": "DC", "product": "JAM", "on_hand": 50, "strategy": "MTO"},              # maintained twice
-            {"location": "DC", "product": "GIFT"},
+            {"location": "DC", "product": "GIFT", "mrp_type": "ddmrp",                        # a buffer and a safety stock
+             "safety_stock": {"method": "fixed", "qty": 5}},
             {"location": "CUST", "product": "JAM", "on_hand": 20},
-            {"location": "PLANT", "product": "LABEL", "strategy": "MTO"},
+            {"location": "PLANT", "product": "LABEL", "strategy": "MTO", "mrp_type": "ddmrp"},  # no stock to buffer
         ],
         "resources": [
             {"id": "KETTLE", "location": "PLANT"}, {"id": "KETTLE", "location": "PLANT", "units": 2},
@@ -126,6 +130,10 @@ def build() -> dict:
              "reversal_of": "GM-99", "serials": [f"J-{i:04d}" for i in range(1, 11)]},     # takes back a lost posting
         ],
         "batches": [{"product": "FRUIT", "id": "F-0701", "made_on": "2026-07-01", "expires_on": "2026-07-03"}],
+        # the DC's racking labelled before its storage types were set up
+        "bins": [{"location": "DC", "id": "A-01", "storage_type": "RACK"}],
+        # a haulier's rate keyed to a lane that was renamed since
+        "carriers": [{"id": "CR-HAUL", "name": "Valley haulage", "rates": [{"lane": "L-OLD", "per_shipment": 900}]}],
     }
 
 
@@ -160,10 +168,13 @@ WARNINGS = {
     ("FIXED_SOURCE_TWICE", "purchasing_source", "PU-SUGAR-2"), ("OPEN_PO_BLOCKED_SUPPLIER", "vendor", "SUP-OLD"), ("QUOTA_SUM", "location_product", "PLANT/SUGAR"),
     ("RESOURCE_UNUSED", "resource", "OLD-OVEN"), ("SHELF_LIFE_VS_LEAD_TIME", "location_product", "PLANT/FRUIT"),
     ("SOURCE_NOT_VALID_IN_HORIZON", "purchasing_source", "PU-JAR"),
+    ("DDMRP_NOT_A_BUFFER", "location_product", "PLANT/LABEL"), ("HELD_FOR_UNKNOWN_ORDER", "location_product", "DC/JAM"), ("DDMRP_SAFETY_STOCK", "location_product", "DC/GIFT"),
     ("SS_AND_SAFETY_TIME", "location_product", "PLANT/JAM"), ("STOCK_AT_CUSTOMER", "location_product", "CUST/JAM"),
     ("STOCK_NOT_SYNCED", "location_product", "PLANT/FRUIT"), ("STOCK_EXPIRED", "location_product", "PLANT/FRUIT"),
     ("BATCH_UNKNOWN", "movement", "GM-3"), ("SERIALS_COUNT", "movement", "GM-3"),
     ("REVERSAL_UNKNOWN", "movement", "GM-4"), ("COLD_CHAIN_LANE", "lane", "L-FARM"),
+    ("PLANNING_MATERIAL_CHAIN", "product", "LABEL-GOLD"), ("VARIANT_FORECAST", "demand", "PLANT/LABEL"),
+    ("WH_MISFIT", "bin", "DC/A-01"), ("TM_MISFIT", "carrier", "CR-HAUL"),
 }
 
 

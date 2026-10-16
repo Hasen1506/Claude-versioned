@@ -46,23 +46,35 @@ def _default_segments() -> list[BopSegment]:
 
 
 class Allocation(Model):
-    """Product allocation (PAL): caps what can be confirmed for a product (and optionally a set of
-    customers) in a period, independent of stock. Once a product-customer combination has any
-    allocation, a date in no allocation period has nothing to confirm (strict, as in aATP)."""
+    """Product allocation (PAL): caps what can be confirmed for a product or a product family (and optionally a set
+    of customers) in a period, independent of stock. Once a product-customer combination has any allocation, a date
+    in no allocation period has nothing to confirm (strict, as in aATP).
+
+    Hierarchy (S/4 guide §7.4): a family's cap is checked before the product's, and an order is confirmed only as far
+    as every level allows. At each level the allocations naming the customer apply; an allocation for no customer in
+    particular is the catch-all for every customer without one of their own."""
 
     id: Id
-    product: str = Ref("product")
-    customers: list[str] = Field(default_factory=list, description="Demand locations it applies to (empty = all)")
+    product: str | None = Ref("product", default=None, description="The product it caps (or give a family)")
+    family: str | None = Field(None, max_length=64, description="The product family it caps, across its products "
+                                                                "(checked before a product's own allocation)")
+    customers: list[str] = Field(default_factory=list,
+                                 description="Demand locations it applies to (empty = every customer without an "
+                                             "allocation of their own)")
     start: dt.date
     end: dt.date = Field(description="Exclusive")
     qty: float = Unit("qty")
     fallback: Literal["next_period", "reject"] = Field(
         "next_period", description="When the period is used up: confirm the rest in later periods, or not at all")
+    carry_forward: bool = Field(False, description="What earlier periods of the same allocation left unused can be "
+                                                   "confirmed in this one")
 
     @model_validator(mode="after")
     def _span(self) -> Allocation:
         if self.end <= self.start:
             raise ValueError("an allocation period ends after it starts")
+        if (self.product is None) == (self.family is None):
+            raise ValueError("an allocation caps either a product or a product family")
         return self
 
 
@@ -71,10 +83,12 @@ class Confirmation(Model):
 
     order: str = Field(min_length=1, max_length=64, description="Sales-order demand record id")
     ship_from: str = Ref("location")
-    ship_date: dt.date
+    ship_date: dt.date = Field(description="Material availability date: the goods are there to pick and pack")
     date: dt.date = Field(description="Confirmed delivery date at the demand location")
     qty: float = Unit("qty", gt=0)
     method: Literal["atp", "rlt", "ctp"] = "atp"
+    goods_issue: dt.date | None = Field(None, description="The goods leave, after picking, packing and loading "
+                                                          "(empty: the day they are there)")
 
 
 class PromiseSettings(Model):

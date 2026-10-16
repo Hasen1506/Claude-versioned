@@ -65,7 +65,7 @@ test("one click: an action tried on a copy of the plan shows the money at risk b
   const before = Number(await row.locator("td[data-amount]").getAttribute("data-amount"));
   await tryIt.click();
   const out = page.getByRole("region", { name: "What this change does" });
-  await expect(out).toContainText("Tried on a copy of the plan");
+  await expect(out).toContainText("Tried on a copy of the plan", { timeout: 45_000 });   // a plan runs first
   await expect(out.locator(".tile", { hasText: "This problem" })).toContainText(/→ gone/);
   await expect(out.locator(".tile", { hasText: "All problems" })).toContainText(/less/);
   await expect(out.getByRole("list", { name: "The change" })).toContainText(/h overtime a day instead of/);

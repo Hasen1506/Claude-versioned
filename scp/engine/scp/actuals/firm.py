@@ -86,7 +86,8 @@ def firm_orders(ds: Dataset, plan: PlanResult, ids: list[str] | None = None,
                for r in reqs.get(o.id, [])]
         receipts.append(ScheduledReceipt(id=rid, kind=kind, location=o.location, product=o.product, qty=o.qty,
                                          due_date=due, start_date=start, source=o.source_id,
-                                         reservations=rvs, step_resources=dict(o.step_resources), planned_as=o.id))
+                                         reservations=rvs, step_resources=dict(o.step_resources), planned_as=o.id,
+                                         sales_order=o.sales_order))
         rep.firmed.append(FirmedOrder(planned_id=o.id, receipt_id=rid, kind=kind.value, location=o.location,
                                       product=o.product, qty=o.qty, start_date=start, due_date=due,
                                       reservations=len(rvs)))

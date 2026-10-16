@@ -7,9 +7,10 @@ type Obj = Record<string, unknown>;
 export type CollectionKey =
   | "locations" | "products" | "location_products" | "resources" | "production_sources"
   | "purchasing_sources" | "lanes" | "calendars" | "changeovers" | "allocations" | "confirmations" | "demand" | "receipts" | "history" | "events" | "npi" | "overrides"
-  | "movements" | "closed_orders" | "accuracy" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches" | "mrp_groups"
+  | "movements" | "closed_orders" | "accuracy" | "forecast_snapshots" | "rolled_weeks" | "vendors" | "purchase_orders" | "customer_prices" | "batches" | "mrp_groups"
   | "customers" | "payment_terms" | "sales_orders" | "quotations" | "deliveries" | "invoices" | "returns"
-  | "contracts" | "supplier_invoices" | "supplier_returns";
+  | "contracts" | "supplier_invoices" | "supplier_returns" | "budgets"
+  | "storage_types" | "bins" | "putaway_rules" | "carriers";
 
 export interface Column {
   label: string;
@@ -146,7 +147,7 @@ export const COLLECTIONS: CollectionDef[] = [
   {
     key: "mrp_groups", label: "MRP groups", singular: "MRP group", defName: "MrpGroup", issueType: "mrp_group",
     group: "Planning data", keyOf: (o) => s(o.id),
-    blurb: "Planning values shared by many products: a planning policy that names the group is planned with the group's strategy, lot size, safety time, fence and consumption windows wherever the group sets one.",
+    blurb: "Planning values shared by many products: a planning policy that names the group is planned with the group's strategy, lot size, safety time, fence, consumption windows and rescheduling horizon wherever the group sets one.",
     columns: [
       { label: "Id", get: (o) => s(o.id) }, { label: "Name", get: (o) => s(o.name) },
       { label: "Strategy", get: (o) => s(o.strategy ?? "each product's own") },
@@ -306,12 +307,24 @@ export const COLLECTIONS: CollectionDef[] = [
     ],
   },
   {
+    key: "budgets", label: "Budgets", singular: "budget", defName: "Budget", issueType: "budget",
+    group: "Demand inputs", keyOf: (o) => `${s(o.month).slice(0, 7)}/${s(o.product ?? o.family ?? "*")}`,
+    blurb: "What the company planned to sell each month, for a product, a product family or the whole company. The monthly S&OP cycle sets the demand and supply plans against it, volume and revenue.",
+    columns: [
+      { label: "Month", get: (o) => s(o.month).slice(0, 7) },
+      { label: "For", get: (o) => (o.product ? s(o.product) : o.family ? `family ${s(o.family)}` : "the company") },
+      { label: "Units", get: (o) => o.qty as number, num: true },
+      { label: "Revenue", get: (o) => (o.revenue ?? null) as number | null, num: true },
+    ],
+  },
+  {
     key: "confirmations", label: "Confirmations", singular: "confirmation", defName: "Confirmation", issueType: "confirmation",
     group: "Planning data", keyOf: (_o, i) => `#${i}`,
     blurb: "Committed promises (schedule lines) per sales order. Written by Promising → Commit; they claim supply in every later check.",
     columns: [
       { label: "Order", get: (o) => s(o.order) }, { label: "From", get: (o) => s(o.ship_from) },
-      { label: "Ships", get: (o) => s(o.ship_date) }, { label: "Delivers", get: (o) => s(o.date) },
+      { label: "There to pick", get: (o) => s(o.ship_date) }, { label: "Leaves", get: (o) => s(o.goods_issue ?? o.ship_date) },
+      { label: "Delivers", get: (o) => s(o.date) },
       { label: "Method", get: (o) => s(o.method ?? "atp") }, { label: "Qty", get: (o) => o.qty as number, num: true },
     ],
   },
@@ -377,6 +390,46 @@ export const COLLECTIONS: CollectionDef[] = [
     ],
   },
   {
+    key: "storage_types", label: "Storage types", singular: "storage type", defName: "StorageType", issueType: "storage_type",
+    group: "Execution", keyOf: (o) => `${s(o.location)}/${s(o.id)}`,
+    blurb: "The areas inside a plant or warehouse, each with one way of putting away: a picking shelf, a high rack, a cold room. The Warehouse page puts goods away and picks by them.",
+    columns: [
+      { label: "Place", get: (o) => s(o.location) }, { label: "Code", get: (o) => s(o.id) }, { label: "Name", get: (o) => s(o.name) },
+      { label: "Put away", get: (o) => s(o.putaway) }, { label: "Picked from", get: (o) => (o.picking === false ? "no (reserve)" : "yes") },
+      { label: "Bins a product", get: (o) => s(o.bins_per_product) },
+    ],
+  },
+  {
+    key: "bins", label: "Storage bins", singular: "bin", defName: "Bin", issueType: "bin",
+    group: "Execution", keyOf: (o) => `${s(o.location)}/${s(o.id)}`,
+    blurb: "Every bin with the label its barcode carries, its place on the picking walk and what it holds at most (units or kilograms).",
+    columns: [
+      { label: "Place", get: (o) => s(o.location) }, { label: "Bin", get: (o) => s(o.id) }, { label: "Storage type", get: (o) => s(o.storage_type) },
+      { label: "Walk", get: (o) => o.walk as number, num: true }, { label: "Most units", get: (o) => o.max_qty as number, num: true },
+      { label: "Most kg", get: (o) => o.max_kg as number, num: true }, { label: "Kept for", get: (o) => s(o.product) },
+      { label: "Blocked", get: (o) => (o.blocked ? "yes" : "") },
+    ],
+  },
+  {
+    key: "putaway_rules", label: "Put-away rules", singular: "put-away rule", defName: "PutawayRule", issueType: "putaway_rule",
+    group: "Execution", keyOf: (o) => `${s(o.location)}/${s(o.product) || "*"}`,
+    blurb: "Which storage types a product goes to, in order. The rule without a product holds for every product without one of its own.",
+    columns: [
+      { label: "Place", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) || "every other" },
+      { label: "Storage types, in order", get: (o) => ((o.storage_types as string[]) ?? []).join(" → ") },
+    ],
+  },
+  {
+    key: "carriers", label: "Carriers", singular: "carrier", defName: "Carrier", issueType: "carrier",
+    group: "Network", keyOf: (o) => s(o.id),
+    blurb: "The transport companies and what a vehicle costs with each on a lane (or on every lane of a mode). Transport puts the loads with the cheapest.",
+    columns: [
+      { label: "Id", get: (o) => s(o.id) }, { label: "Name", get: (o) => s(o.name) },
+      { label: "Rates", get: (o) => ((o.rates as Obj[]) ?? []).map((r) => `${s(r.lane) || `every ${s(r.mode)} lane`}`).join(", ") },
+      { label: "Pays in days", get: (o) => o.payment_days as number, num: true }, { label: "Blocked", get: (o) => (o.blocked ? "yes" : "") },
+    ],
+  },
+  {
     key: "closed_orders", label: "Closed orders", singular: "closed order", defName: "ClosedOrder", issueType: "closed_order",
     group: "Execution", keyOf: (o) => `${s(o.kind)}|${s(o.id)}`,
     blurb: "Orders the roll-forward completed, with due and delivery dates: the record OTIF and supplier reliability are measured on.",
@@ -394,6 +447,17 @@ export const COLLECTIONS: CollectionDef[] = [
       { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
       { label: "Week of", get: (o) => s(o.start) }, { label: "Forecast", get: (o) => o.forecast as number, num: true },
       { label: "Actual", get: (o) => o.actual as number, num: true },
+    ],
+  },
+  {
+    key: "forecast_snapshots", label: "Kept forecasts", singular: "kept forecast", defName: "ForecastSnapshot", issueType: "forecast_snapshot",
+    group: "Demand inputs", keyOf: (o) => `${s(o.location)}|${s(o.product)}|${s(o.start)}`,
+    blurb: "What each layer of the forecast said for a period, kept by every forecast release: naïve, statistical, after events and new products, and after the planners' overrides. Forecast value add judges them once the period has sold.",
+    columns: [
+      { label: "Location", get: (o) => s(o.location) }, { label: "Product", get: (o) => s(o.product) },
+      { label: "Period from", get: (o) => s(o.start) }, { label: "Kept on", get: (o) => s(o.made) },
+      { label: "Statistical", get: (o) => o.statistical as number, num: true },
+      { label: "Final", get: (o) => o.final as number, num: true }, { label: "Overridden by", get: (o) => s(o.author) },
     ],
   },
   {

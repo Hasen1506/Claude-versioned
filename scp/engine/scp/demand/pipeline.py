@@ -8,6 +8,7 @@ so a planner can see why a number is what it is.
 from __future__ import annotations
 
 import copy
+import math
 import hashlib
 import os
 import threading
@@ -20,7 +21,7 @@ from statistics import NormalDist
 import numpy as np
 
 from ..model import (
-    Dataset, DemandKind, DemandRecord, ForecastModelId, ForecastPeriod, NpiRule, OutlierMethod, Strategy,
+    Dataset, DemandKind, DemandRecord, ForecastModelId, ForecastPeriod, ForecastSnapshot, NpiRule, OutlierMethod, Strategy,
 )
 from ..validate import blocks_demand, validate
 from . import foundation as fm
@@ -89,14 +90,17 @@ def _aggregate(ds: Dataset, period: ForecastPeriod, cutoff: date) -> dict[tuple[
     if not usable:
         return {}
     data_end = min(next_start(max(usable), period), horizon_start)
+    base = ds.planning_base
     for r, parts in spans:
-        k = (r.location, r.product)
+        # a variant is forecast through its planning material: its sales count there, in the base's units
+        b, factor = base.get(r.product, (r.product, 1.0))
+        k = (r.location, b)
         prod = ds.product_by_id.get(r.product)
         price = r.price if r.price is not None else (prod.price or prod.standard_cost or 0.0) if prod else 0.0
         for ps, q in parts:
             if ps >= horizon_start:
                 continue
-            qty[k][ps] += q
+            qty[k][ps] += q * factor
             if r.promo:
                 promo[k].add(ps)
             revenue[k] += q * price
@@ -324,6 +328,11 @@ def run_forecast(ds: Dataset) -> ForecastResult:
             series[k].notes.append("NPI rule ignored: the product has enough history for a statistical forecast.")
             continue
         series[k] = _npi_series(ctx, rule, series, pooled, hists.get(k))
+    for (_, prod), s in series.items():
+        if prod in ds.variants_of:
+            s.notes.append("Forecast once for its variants (" + ", ".join(
+                (ds.product_by_id[v].name or v) + ("" if f == 1 else f" × {f:g}") for v, f in ds.variants_of[prod])
+                + "): their sales are counted here, and their orders use this forecast up.")
     _apply_overrides(ds, series, fut)
     for (_, prod), s in series.items():
         if ds.whole(prod):
@@ -331,7 +340,7 @@ def run_forecast(ds: Dataset) -> ForecastResult:
 
     out = sorted(series.values(), key=lambda s: (s.location, s.product))
     return ForecastResult(ok=True, period=period.value, season_length=m, periods=[p.label for p in fut], issues=issues,
-                          series=out, summary=_summary(out), foundation=foundation_status)
+                          series=out, summary=_summary(out, ds), foundation=foundation_status)
 
 
 PARALLEL_MIN_SERIES = 24
@@ -527,6 +536,7 @@ def _apply_overrides(ds: Dataset, series: dict[tuple[str, str], Series], fut: li
                 base = pt.statistical * pt.event_factor - pt.cannibalised
                 pt.override = ov.qty if ov.qty is not None else max(0.0, base * (1 + (ov.change or 0.0)))
                 pt.override_reason = ov.reason
+                pt.override_author = ov.author
                 if pt.final > 0:  # keep the interval's relative width around the new value
                     ratio = pt.override / pt.final
                     pt.lower, pt.upper = pt.lower * ratio, pt.upper * ratio
@@ -549,7 +559,14 @@ def _whole(s: Series) -> None:
         p.final = q if p.share >= 1 else float(round(p.final))
 
 
-def _summary(series: list[Series]) -> Summary:
+def high_end(p: ForecastPoint, whole: bool) -> float:
+    """What a release writes as the high end of a period: the top of its interval over the part in the horizon, never
+    below the forecast itself, rounded up to a whole unit for a product counted in each."""
+    high = max(p.released_qty, p.upper * p.share)
+    return float(math.ceil(high - 1e-6)) if whole else round(high, 4)
+
+
+def _summary(series: list[Series], ds: Dataset) -> Summary:
     abs_err = act = bias = naive_err = 0.0
     champions: dict[str, int] = defaultdict(int)
     abc: dict[str, int] = defaultdict(int)
@@ -568,10 +585,36 @@ def _summary(series: list[Series]) -> Summary:
                 naive_err += naive.wape * a
     return Summary(series=len(series), wape=abs_err / act if act else None, bias=bias / act if act else None,
                    fva=(naive_err - abs_err) / act if act else None, champions=dict(champions), abc=dict(abc),
-                   patterns=dict(patterns), total_final=sum(p.released_qty for s in series for p in s.forecast))
+                   patterns=dict(patterns), total_final=sum(p.released_qty for s in series for p in s.forecast),
+                   total_high=sum(high_end(p, ds.whole(s.product)) for s in series for p in s.forecast if p.released_qty > 0))
 
 
 # ---- release --------------------------------------------------------------------------------------
+def _kept(ds: Dataset, result: ForecastResult, chosen: list[Series]) -> list[ForecastSnapshot]:
+    """The forecast snapshots after a release of ``chosen``: each released series' periods at least ``fva_lag``
+    periods away are kept (replacing what an earlier release kept for them), nearer and past periods stay as an
+    earlier release froze them. Each layer is kept for the whole period, so it can be judged against the period's
+    sales: the naïve forecast (the last period's sales; a series without sales of its own has none, so its naïve is
+    its statistical forecast), the champion model, after events and new products, and the consensus."""
+    lag = ds.forecasting.fva_lag
+    made = ds.settings.planning_start
+    fresh: dict[tuple[str, str, date], ForecastSnapshot] = {}
+    for s in chosen:
+        naive = s.history[-1].raw if s.history else None
+        for i, p in enumerate(s.forecast):
+            if i < lag:
+                continue
+            adjusted = max(0.0, p.statistical * p.event_factor - p.cannibalised)
+            fresh[(s.location, s.product, p.start)] = ForecastSnapshot(
+                location=s.location, product=s.product, start=p.start, end=p.end, made=made,
+                naive=round(max(0.0, naive if naive is not None else p.statistical), 4),
+                statistical=round(max(0.0, p.statistical), 4), adjusted=round(adjusted, 4),
+                final=round(max(0.0, p.final), 4), overridden=p.override is not None,
+                author=p.override_author if p.override is not None else "")
+    kept = [k for k in ds.forecast_snapshots if (k.location, k.product, k.start) not in fresh]
+    return sorted(kept + list(fresh.values()), key=lambda k: (k.location, k.product, k.start))
+
+
 def release(ds: Dataset, result: ForecastResult, keys: list[str] | None = None) -> tuple[Dataset, ReleaseResult]:
     """Write the consensus forecast into the dataset as forecast demand (≈ PIRs), replacing the
     forecast records of the released series. Releasing every series also removes what earlier releases wrote for a
@@ -602,9 +645,11 @@ def release(ds: Dataset, result: ForecastResult, keys: list[str] | None = None) 
                 continue
             frm = max(p.start, ds.settings.planning_start)
             days = max(1, round(p.share * (p.end - p.start).days))
+            high = high_end(p, ds.whole(s.product))
             new.append(DemandRecord(location=s.location, product=s.product, date=frm, qty=qty,
-                                    kind=DemandKind.FORECAST, period_days=days, released=True))
-    out = ds.model_copy(update={"demand": kept + new, "forecasting": ds.forecasting.model_copy(
+                                    kind=DemandKind.FORECAST, period_days=days, released=True, high_qty=high))
+    out = ds.model_copy(update={"demand": kept + new, "forecast_snapshots": _kept(ds, result, chosen),
+                                "forecasting": ds.forecasting.model_copy(
         update={"released_inputs": ds.forecast_inputs()})})
     cv: list[CvSuggestion] = []
     for s in chosen:

@@ -1,16 +1,18 @@
 // Roadmap E: what-if side by side (UX audit section 4). Two to four scenarios are planned from the working copy (the
 // first is the baseline) and compared in one table: cost, service, inventory, capacity and late units, with each
 // scenario's deltas against the baseline, the cost of one point of service, and the levers it pulled. A scenario is
-// built from chips, quick changes made in one click.
+// built from chips, quick changes made in one click, or is a stored version (with chips on top). Enterprise plan 5.3
+// adds money at risk over time for each scenario, and a sweep of one change over several sizes (WhatIfSweep).
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { CaseInfo, VersionMeta, WhatIfChip, WhatIfResult, WhatIfScenarioOut } from "../api/types";
-import { Badge, Empty, Panel, Reading, StageHeader } from "../components/ui";
+import { Badge, Empty, Panel, Reading, StageHeader, Tabs } from "../components/ui";
 import { money, pct, qty } from "../lib/format";
 import { href } from "../lib/router";
 import { store, useReadOnly, useStore } from "../state/store";
+import { RiskOverTime, Sweep } from "./WhatIfSweep";
 
-interface Scenario { label: string; chips: WhatIfChip[] }
+interface Scenario { label: string; chips: WhatIfChip[]; version?: string | null }
 
 const MAX = 4;
 
@@ -26,6 +28,7 @@ export function chipLabel(c: WhatIfChip): string {
     case "customer_price": return `Prices ${c.pct > 0 ? "+" : ""}${c.pct} % for ${c.customer}`;
     case "safety_days": return `Safety stock ${c.days} d${c.products?.length ? ` (${c.products.join(", ")})` : ""}`;
     case "fx": return `${c.currency.toUpperCase()} ${c.pct > 0 ? "+" : ""}${c.pct} %`;
+    case "supplier_price": return `Purchase prices ${c.pct > 0 ? "+" : ""}${c.pct} %${c.supplier ? ` at ${c.supplier}` : ""}${c.products?.length ? ` (${c.products.join(", ")})` : ""}`;
   }
 }
 
@@ -42,9 +45,15 @@ export function WhatIf() {
   const [res, setRes] = useState<WhatIfResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useState<"side" | "sweep">("side");
+  // stored versions of this company, each can be a column (read on the server, chips go on top)
+  const [versions, setVersions] = useState<VersionMeta[]>([]);
+  const [verId, setVerId] = useState("");
+  useEffect(() => { api.versions().then((v) => setVersions(v.filter((x) => x.status !== "discarded"))).catch(() => setVersions([])); }, []);
   // the chip being configured: which supplier / machine / place, how many days
   const [sup, setSup] = useState("");
   const [lt, setLt] = useState("7");
+  const [buyPct, setBuyPct] = useState("10");
   const [resId, setResId] = useState("");
   const [place, setPlace] = useState("");
   const [delay, setDelay] = useState("7");
@@ -94,6 +103,17 @@ export function WhatIf() {
     setActive(n);
     setRes(null);
   };
+  const addVersion = () => {
+    const v = versions.find((x) => x.id === verId);
+    if (!v || scen.length >= MAX) return;
+    const taken = new Set(scen.map((s) => s.label.trim()));
+    let label = v.name.slice(0, 60) || v.id;
+    if (taken.has(label)) label = `${v.name.slice(0, 50)} (${v.id})`;
+    setScen([...scen, { label, chips: [], version: v.id }]);
+    setActive(scen.length);
+    setVerId("");
+    setRes(null);
+  };
   const remove = (i: number) => {
     setScen(scen.filter((_, j) => j !== i));
     setActive(Math.max(1, Math.min(active, scen.length - 2)));
@@ -106,7 +126,7 @@ export function WhatIf() {
     setBusy(true);
     setErr(null);
     try {
-      setRes(await api.whatif(ds, scen.map((s) => ({ label: s.label.trim(), chips: s.chips }))));
+      setRes(await api.whatif(ds, scen.map((s) => ({ label: s.label.trim(), chips: s.chips, version: s.version ?? null }))));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setRes(null);
@@ -124,13 +144,22 @@ export function WhatIf() {
           others show their difference from it, and the cost of one point of service where cost and service move together.
           To compare stored versions instead, use <a href={href("versions")}>Versions</a>.</>} />
       <div className="content">
+        <Tabs tabs={[{ id: "side", label: "Side by side" }, { id: "sweep", label: "Sweep one change" }]} value={view} onChange={setView} />
+        {view === "sweep" ? <Sweep ds={ds} /> : <>
         {kase && <Panel title={kase.title} actions={<Badge sev="info">Example case</Badge>}>
           <p className="small muted" style={{ marginTop: 0 }}>{kase.label}</p>
           <p style={{ marginTop: 0 }}>{kase.brief}</p>
           {kase.questions.length > 0 && <ol className="small">{kase.questions.map((q) => <li key={q}>{q}</li>)}</ol>}
           <button className="btn" onClick={() => loadCase(kase)}>Load the case's scenarios</button>
         </Panel>}
-        <Panel title="Scenarios" actions={scen.length < MAX && <button className="btn sm" onClick={addScenario}>+ Add a scenario</button>}>
+        <Panel title="Scenarios" actions={scen.length < MAX && <div className="row wrap" style={{ gap: 6 }}>
+          <button className="btn sm" onClick={addScenario}>+ Add a scenario</button>
+          {versions.length > 0 && <>
+            <select className="input" aria-label="Stored version" value={verId} onChange={(e) => setVerId(e.target.value)}>
+              <option value="">Stored version…</option>
+              {versions.map((v) => <option key={v.id} value={v.id}>{v.id} · {v.name}</option>)}</select>
+            <button className="btn sm" disabled={!verId} onClick={addVersion}>+ Add it as a column</button></>}
+        </div>}>
           <div className="row" aria-label="Scenarios" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
             {scen.map((s, i) => (
               <div key={i} className={`panel tile ${i === active ? "hl" : ""}`} style={{ minWidth: 220, padding: 10 }}
@@ -142,8 +171,9 @@ export function WhatIf() {
                     : scen.length > 2 && <button className="btn sm ghost" aria-label={`Remove ${s.label}`} onClick={(e) => { e.stopPropagation(); remove(i); }}>×</button>}
                 </div>
                 <div className="row" style={{ gap: 4, flexWrap: "wrap", marginTop: 6 }} aria-label={`Chips of ${s.label}`}>
-                  {i === 0 && <span className="faint small">today's data, as it is</span>}
-                  {i > 0 && s.chips.length === 0 && <span className="faint small">no change yet: add chips below</span>}
+                  {s.version && <span className="chip" title="read from the stored version on the server">stored version {s.version}</span>}
+                  {i === 0 && !s.version && <span className="faint small">today's data, as it is</span>}
+                  {i > 0 && !s.version && s.chips.length === 0 && <span className="faint small">no change yet: add chips below</span>}
                   {s.chips.map((c, k) => (
                     <span key={k} className="chip on">{chipLabel(c)}
                       <button aria-label={`Remove ${chipLabel(c)} from ${s.label}`}
@@ -166,6 +196,9 @@ export function WhatIf() {
               <input className="input" type="number" aria-label="Lead time change in days" value={lt} style={{ width: 70 }} onChange={(e) => setLt(e.target.value)} />
               <button className="btn sm" disabled={!(Number(lt) !== 0 && Number.isFinite(Number(lt)))}
                 onClick={() => addChip({ kind: "lead_time", days: Number(lt), supplier: sup || null })}>{sup ? `Lead time at ${sup}` : "Lead time, every supplier"}</button>
+              <input className="input" type="number" aria-label="Change of purchase prices in per cent" value={buyPct} style={{ width: 70 }} onChange={(e) => setBuyPct(e.target.value)} />
+              <button className="btn sm" disabled={!num(buyPct) || Number(buyPct) === 0}
+                onClick={() => addChip({ kind: "supplier_price", pct: Number(buyPct), supplier: sup || null, products: [] })}>{sup ? `Purchase prices at ${sup}` : "Purchase prices, every supplier"}</button>
             </div>
             <div className="row" style={{ gap: 6, flexWrap: "wrap", marginTop: 8 }}>
               <select className="input" aria-label="Machine or line" value={resId} onChange={(e) => setResId(e.target.value)}>
@@ -203,9 +236,13 @@ export function WhatIf() {
         </Panel>
         {err && <div className="banner warning" role="alert">{err}</div>}
         {keepErr && <div className="banner warning" role="alert">{keepErr}</div>}
-        {res ? <SideBySide r={res} currency={cur} kept={kept} onKeep={ro ? undefined : keep} /> : !err && <Empty title="Nothing compared yet">Pick a change for each scenario, then compare.</Empty>}
+        {res ? <SideBySide r={res} currency={cur} kept={kept} onKeep={ro ? undefined : keep}
+          stored={new Set(scen.filter((s) => s.version).map((s) => s.label.trim()))} /> : !err && <Empty title="Nothing compared yet">Pick a change for each scenario, then compare.</Empty>}
+        {res && <RiskOverTime title="Money at risk over time" periods={res.periods} cur={cur}
+          rows={res.scenarios.filter((s) => s.ok).map((s) => ({ label: s.label, at_risk: s.at_risk }))} />}
         <Reading formula="Cost per service point = (scenario cost − baseline cost) ÷ (scenario on-time fill rate − baseline) × 100, shown only when both move the same way (a trade-off)."
           soWhat="Decide with the price of service in front of you: an extra shift that buys 3 points of service for ₹40,000 a point, against an expedite that buys 1." />
+        </>}
       </div>
     </div>
   );
@@ -213,7 +250,7 @@ export function WhatIf() {
 
 const VERDICT: Record<string, "ok" | "warning" | "info"> = { "better on both": "ok", "worse on both": "warning", "trade-off": "info", "same service": "info" };
 
-function SideBySide({ r, currency, kept, onKeep }: { r: WhatIfResult; currency: string; kept: Record<string, VersionMeta>; onKeep?: (label: string) => void }) {
+function SideBySide({ r, currency, kept, onKeep, stored }: { r: WhatIfResult; currency: string; kept: Record<string, VersionMeta>; onKeep?: (label: string) => void; stored: Set<string> }) {
   const [keeping, setKeeping] = useState<string | null>(null);
   const m = (v: number) => money(v, currency);
   type Row = [string, (s: WhatIfScenarioOut) => number, (v: number) => string, boolean];
@@ -258,6 +295,7 @@ function SideBySide({ r, currency, kept, onKeep }: { r: WhatIfResult; currency: 
               {s.note && <div className="small faint" style={{ whiteSpace: "normal", maxWidth: 260, marginLeft: "auto" }}>{s.note}</div>}</td>)}</tr>
             {onKeep && <tr><td>Keep it</td>{r.scenarios.map((s, i) => <td key={s.label} className="num">
               {i === 0 || !s.ok ? <span className="faint">—</span>
+                : stored.has(s.label) ? <span className="small faint">a stored version: open it in <a href={href("versions")}>Versions</a></span>
                 : kept[s.label] ? <span className="small">Kept as <b>{kept[s.label].id}</b> · <a href={href("versions")}>open it in Versions</a> to promote it</span>
                 : <button className="btn sm" disabled={keeping !== null} aria-label={`Keep ${s.label} as a version`}
                     onClick={async () => { setKeeping(s.label); try { await onKeep(s.label); } finally { setKeeping(null); } }}>

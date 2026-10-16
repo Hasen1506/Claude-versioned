@@ -59,6 +59,7 @@ class ForecastPoint(Out):
     cannibalised: float = 0.0    # volume taken by an NPI product that follows this one
     override: float | None = None
     override_reason: str = ""
+    override_author: str = ""
     final: float                 # consensus value for the whole period
     lower: float
     upper: float
@@ -113,6 +114,7 @@ class Summary(Out):
     abc: dict[str, int] = {}
     patterns: dict[str, int] = {}
     total_final: float = 0.0
+    total_high: float = 0.0            # what a release writes as the high end (P90 at the default 80 % interval)
 
 
 class ForecastResult(Out):

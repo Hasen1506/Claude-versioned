@@ -101,7 +101,7 @@ def test_an_erp_order_is_taken_once_changed_line_by_line_and_cancelled_by_its_nu
     r = client.post(url, headers=h(key), json={"message_id": "M1", "orders": [ORDER]})
     assert r.status_code == 200, r.text
     m = r.json()["message"]
-    assert m["status"] == "applied" and m["by"] == "SAP (key)" and m["summary"] == "1 orders: 1 taken"
+    assert m["status"] == "applied" and m["by"] == "SAP (key)" and m["summary"] == "1 order: 1 taken"
     assert m["items"][0]["id"] == "SO-00001" and "SO-00001 taken for Kumar Stores" in m["items"][0]["message"]
     rev = r.json()["revision"]
     d = doc_of(owner, cid)["dataset"]
@@ -409,8 +409,8 @@ def test_a_folder_import_reads_each_file_in_order_and_moves_it_aside(monkeypatch
         "at": "00:15"})
     assert r.json()["folder"] == str(folder)
     rows = client.post(f"/api/companies/{cid}/imports/J0001/run", headers=h(owner)).json()
-    assert [(x["status"], x["summary"]) for x in rows] == [("applied", "1 orders: 1 taken"),
-                                                          ("refused", "1 orders: 1 refused")]
+    assert [(x["status"], x["summary"]) for x in rows] == [("applied", "1 order: 1 taken"),
+                                                          ("refused", "1 order: 1 refused")]
     assert rows[1]["items"][0]["message"].startswith("lines.0.qty:")
     d = doc_of(owner, cid)["dataset"]
     assert [(x["id"], x["qty"], x["date"], x["price"]) for x in d["demand"]] == [

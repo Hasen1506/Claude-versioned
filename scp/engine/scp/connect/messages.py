@@ -26,7 +26,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
   seq INTEGER PRIMARY KEY AUTOINCREMENT, company_id TEXT NOT NULL, at TEXT NOT NULL, user_id TEXT NOT NULL,
   direction TEXT NOT NULL, kind TEXT NOT NULL, message_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
-  summary TEXT NOT NULL, revision INTEGER, items TEXT NOT NULL DEFAULT '[]', source TEXT NOT NULL DEFAULT ''
+  summary TEXT NOT NULL, revision INTEGER, items TEXT NOT NULL DEFAULT '[]', source TEXT NOT NULL DEFAULT '',
+  sample TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS messages_by_company ON messages (company_id, seq);
 CREATE INDEX IF NOT EXISTS messages_by_id ON messages (company_id, kind, message_id);
@@ -47,6 +48,8 @@ class MessageRow(Out):
     summary: str
     revision: int | None = None    # the company's revision it made
     source: str = ""               # a scheduled import: the job and the file or address it read
+    sample: str = ""               # a scheduled import: the start of what it read
+    dry_run: bool = False          # tried only: nothing was saved and it is not in the log
     items: list[ItemResult] = []
 
 
@@ -60,6 +63,8 @@ class MessageAnswer(Out):
 def _ensure(c: Companies) -> None:
     if not getattr(c, "_messages_ready", False):
         c.db.executescript(SCHEMA)
+        if "sample" not in {r[1] for r in c.db.execute("PRAGMA table_info(messages)")}:   # ENTERPRISE_PLAN 3.1
+            c.db.execute("ALTER TABLE messages ADD COLUMN sample TEXT NOT NULL DEFAULT ''")
         c._messages_ready = True  # type: ignore[attr-defined]
 
 
@@ -81,24 +86,30 @@ def _summary(kind: str, items: list[ItemResult]) -> str:
     words = {"applied": "taken", "unchanged": "as here already", "duplicate": "sent before", "refused": "refused"}
     bits = [f"{v} {words[k]}" for k, v in n.items() if v]
     what = kind.replace("records:", "").replace("_", " ")
-    return f"{len(items)} {what}: " + ", ".join(bits) if bits else f"no {what}"
+    one = {"batches": "batch"}.get(what, what[:-1] if what.endswith("s") else what)
+    return f"{len(items)} {one if len(items) == 1 else what}: " + ", ".join(bits) if bits else f"no {what}"
 
 
 def _row(c: Companies, r: Any, detail: bool = True) -> MessageRow:
     return MessageRow(seq=r["seq"], at=r["at"], by=c._name(r["user_id"]), direction=r["direction"], kind=r["kind"],
                       message_id=r["message_id"], status=r["status"], summary=r["summary"], revision=r["revision"],
-                      source=r["source"],
+                      source=r["source"], sample=r["sample"] if detail else "",
                       items=[ItemResult(**i) for i in json.loads(r["items"])] if detail else [])
 
 
 def log(c: Companies, cid: str, uid: str, direction: str, kind: str, message_id: str, status: str, summary: str,
-        revision: int | None, items: list[ItemResult], source: str = "") -> MessageRow:
-    """Log a message (the lock is held by the caller or not needed)."""
+        revision: int | None, items: list[ItemResult], source: str = "", sample: str = "",
+        dry_run: bool = False) -> MessageRow:
+    """Log a message (the lock is held by the caller or not needed); a dry run is only described, not logged."""
+    if dry_run:
+        return MessageRow(seq=0, at=_now(), by=c._name(uid), direction=direction, kind=kind,  # type: ignore[arg-type]
+                          message_id=message_id, status=status, summary=f"Dry run, nothing saved: {summary}",  # type: ignore[arg-type]
+                          revision=None, source=source, sample=sample, dry_run=True, items=items)
     _ensure(c)
     cur = c.db.execute("INSERT INTO messages (company_id, at, user_id, direction, kind, message_id, status, summary, "
-                       "revision, items, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                       "revision, items, source, sample) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                        (cid, _now(), uid, direction, kind, message_id, status, summary, revision,
-                        json.dumps([i.model_dump(mode="json") for i in items]), source))
+                        json.dumps([i.model_dump(mode="json") for i in items]), source, sample))
     return _row(c, c.db.execute("SELECT * FROM messages WHERE seq = ?", (cur.lastrowid,)).fetchone())
 
 
@@ -154,8 +165,10 @@ def changed_doc(doc: dict, before: Dataset, after: Dataset, aside_lists: set[str
 
 
 def receive(c: Companies, user: User, cid: str, kind: str, message_id: str,
-            change: Callable[[Dataset], tuple[Dataset, list[ItemResult]]], source: str = "") -> MessageAnswer:
-    """Apply a message to the company's latest save and log it; a message id seen before gives the first answer."""
+            change: Callable[[Dataset], tuple[Dataset, list[ItemResult]]], source: str = "", sample: str = "",
+            dry_run: bool = False) -> MessageAnswer:
+    """Apply a message to the company's latest save and log it; a message id seen before gives the first answer.
+    A ``dry_run`` says what would become of each item and saves and logs nothing."""
     message_id = (message_id or "").strip()[:100]
     with c.lock:
         _ensure(c)
@@ -166,8 +179,9 @@ def receive(c: Companies, user: User, cid: str, kind: str, message_id: str,
             if seen is not None:
                 first = _row(c, seen)
                 rev = c.db.execute("SELECT revision FROM companies WHERE id = ?", (cid,)).fetchone()[0]
-                again = first.model_copy(update={"status": "duplicate",
-                                                 "summary": f"sent before (message {message_id}, {first.at}): "
+                again = first.model_copy(update={"status": "duplicate", "dry_run": dry_run,
+                                                 "summary": ("Dry run, nothing saved: " if dry_run else "")
+                                                            + f"sent before (message {message_id}, {first.at}): "
                                                             f"{first.summary}"})
                 return MessageAnswer(message=again, revision=rev)
         r = c.db.execute("SELECT dataset, revision FROM companies WHERE id = ?", (cid,)).fetchone()
@@ -179,6 +193,9 @@ def receive(c: Companies, user: User, cid: str, kind: str, message_id: str,
         rev, held = r["revision"], None
         if any(i.status == "applied" for i in items):
             after = changed_doc(doc, ds, new, {a.collection for a in aside})
+            if dry_run:
+                return MessageAnswer(message=log(c, cid, user.id, "in", kind, message_id, status, summary, None, items,
+                                                 source, sample, dry_run=True), revision=rev)
             rep = c.save(user, cid, after, r["revision"], action="received",
                          note=f"{kind.replace('_', ' ')} from {c._name(user.id)}"
                               + (f" (message {message_id})" if message_id else ""))
@@ -187,7 +204,7 @@ def receive(c: Companies, user: User, cid: str, kind: str, message_id: str,
                 held = rep.held.summary
                 summary += f"; master data waiting for approval: {held}"
         row = log(c, cid, user.id, "in", kind, message_id, status, summary,
-                  rev if rev != r["revision"] else None, items, source)
+                  rev if rev != r["revision"] else None, items, source, sample, dry_run=dry_run)
         return MessageAnswer(message=row, revision=rev, held=held)
 
 

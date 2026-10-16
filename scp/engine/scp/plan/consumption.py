@@ -23,6 +23,10 @@ every plan the consumption is worked out again from scratch, from the original f
 3. open orders then consume what is left (strategy 40/50), matched by the original periods, so an order dated early
    in a period that has since begun still consumes that period's forecast.
 
+Planning material (S/4 strategies 60 and 63, §5.2): a variant that names a planning material is forecast through
+it. Its orders, open and delivered, in the base's units (× the variant's factor), use up the base's forecast where
+they are sold, as the base's own orders would; they are planned as the variant's own requirements, never the base's.
+
 Nothing is carried from one roll to the next but the original forecast and the journal, so rolling a week and then
 another plans exactly what rolling two weeks at once does. Forecast 100 over four weeks, 80 ordered and delivered in
 week one, roll two weeks: 50 is left by time, deliveries took 80, so 20 is planned (not 50, which planned 130 for a
@@ -80,23 +84,29 @@ def _consume(fcs: list[tuple[str, date, int]], cap: dict[str, float], orders: li
     return took
 
 
-def delivered_orders(ds, node: tuple[str, str], records: list[tuple[str, DemandRecord]]) -> list[tuple[date, float]]:
+Variants = list[tuple[float, tuple[str, str], list[tuple[str, DemandRecord]]]]   # (factor, node, its records)
+
+
+def delivered_orders(ds, node: tuple[str, str], records: list[tuple[str, DemandRecord]],
+                     variants: Variants = ()) -> list[tuple[date, float]]:
     """What orders at ``node`` already delivered, on their requested dates: the delivered part of open orders (ordered
-    less open) and the closed sales orders of the closed-order log. Orders dated before the node's earliest forecast
-    period are left out: what they consumed is gone with the period they fell in."""
+    less open) and the closed sales orders of the closed-order log, and those of the variants that use up its forecast
+    (in its units). Orders dated before the node's earliest forecast period are left out: what they consumed is gone
+    with the period they fell in."""
     starts = [original_window(r)[0] for _, r in records if r.kind is DemandKind.FORECAST]
     if not starts:
         return []
     first = min(starts)
     out: list[tuple[date, str, float]] = []
-    for rid, r in records:
-        ordered = getattr(r, "ordered_qty", None)
-        if r.kind is DemandKind.SALES_ORDER and ordered is not None and ordered - r.qty > EPS and r.date >= first:
-            out.append((r.date, f"D:{rid}", ordered - r.qty))
-    for c in getattr(ds, "closed_orders", None) or []:
-        if (c.kind == "sales" and (c.location, c.product) == node and c.delivered_qty > EPS
-                and c.due_date >= first):
-            out.append((c.due_date, f"C:{c.id}", c.delivered_qty))
+    for factor, at, recs in ((1.0, node, records), *variants):
+        for rid, r in recs:
+            ordered = getattr(r, "ordered_qty", None)
+            if r.kind is DemandKind.SALES_ORDER and ordered is not None and ordered - r.qty > EPS and r.date >= first:
+                out.append((r.date, f"D:{rid}", (ordered - r.qty) * factor))
+        for c in getattr(ds, "closed_orders", None) or []:
+            if (c.kind == "sales" and (c.location, c.product) == at and c.delivered_qty > EPS
+                    and c.due_date >= first):
+                out.append((c.due_date, f"C:{c.id}", c.delivered_qty * factor))
     return [(d, q) for d, _, q in sorted(out)]
 
 
@@ -115,10 +125,12 @@ def elapsed_share(ds, r: DemandRecord) -> float:
 
 
 def effective_demand(records: list[tuple[str, DemandRecord]], strategy: Strategy,
-                     back_days: float, fwd_days: float, ds=None, node: tuple[str, str] | None = None
-                     ) -> list[IndependentReq]:
+                     back_days: float, fwd_days: float, ds=None, node: tuple[str, str] | None = None,
+                     variants: Variants = ()) -> list[IndependentReq]:
     """The node's independent requirements by strategy: forecasts after reduction by delivered orders (when ``ds``
-    and ``node`` are given) and consumption by open orders, plus the orders."""
+    and ``node`` are given) and consumption by open orders, plus the orders. ``variants`` are the variants whose
+    orders use up this node's forecast (it is their planning material), each with its factor: their orders consume
+    here, and are not returned."""
     fcs = [IndependentReq(f"D:{rid}", r.date, r.qty, "forecast", r.priority, rid)
            for rid, r in records if r.kind is DemandKind.FORECAST]
     sos = [IndependentReq(f"D:{rid}", r.date, r.qty, "sales_order", r.priority, rid)
@@ -131,7 +143,7 @@ def effective_demand(records: list[tuple[str, DemandRecord]], strategy: Strategy
     windows = [(f.id, win[f.id][0], win[f.id][1]) for f in order]
     # ① what delivered orders took of the original forecasts; ② what of the record that leaves for the rest of it
     if ds is not None and node is not None:
-        delivered = delivered_orders(ds, node, records)
+        delivered = delivered_orders(ds, node, records, variants)
         if delivered:
             took = _consume(windows, {f.id: win[f.id][2] for f in fcs}, delivered, back_days, fwd_days)
             for f in fcs:
@@ -141,7 +153,10 @@ def effective_demand(records: list[tuple[str, DemandRecord]], strategy: Strategy
     if strategy is Strategy.MTS:
         return sorted([f for f in fcs if f.qty > 1e-9 or f.qty == src[f.id].qty], key=_k)
     # ③ open orders consume what is left, matched by the original periods
-    took = _consume(windows, {f.id: f.qty for f in fcs}, [(so.date, so.qty) for so in sorted(sos, key=_k)],
+    eating = [(so.date, 0, so.id, so.qty) for so in sos]
+    eating += [(r.date, 0, f"V:{rid}", r.qty * factor) for factor, _, recs in variants for rid, r in recs
+               if r.kind is DemandKind.SALES_ORDER]
+    took = _consume(windows, {f.id: f.qty for f in fcs}, [(d, q) for d, _, _, q in sorted(eating)],
                     back_days, fwd_days)
     out = [IndependentReq(f.id, f.date, f.qty - took[f.id], "forecast", f.priority, f.source_ref, took[f.id])
            for f in fcs if f.qty - took[f.id] > 1e-9]

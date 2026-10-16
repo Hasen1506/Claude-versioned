@@ -640,11 +640,17 @@ def test_m04_anonymous_planning_calls_are_limited_per_address_and_in_size(monkey
 
 
 # ---- CV-M06: backups -------------------------------------------------------------------------------------------------
-def test_m06_backup_and_restore_refuse_on_postgres(monkeypatch, capsys):
+def test_m06_a_postgres_restore_checks_the_backup_before_it_connects(monkeypatch, capsys, tmp_path):
+    """PostgreSQL is backed up and put back by scp.admin since ENTERPRISE_PLAN 1.6 (tests/test_backup_postgres.py);
+    a backup that is not there, or not a backup, is refused before the database is touched."""
     from scp import admin
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@db.example/scp")
-    assert admin.main(["restore", "/tmp/nothing.sqlite"]) == 2
-    assert "PostgreSQL" in capsys.readouterr().err
+    assert admin.main(["restore", str(tmp_path / "nothing.sqlite")]) == 2
+    assert "no backup file" in capsys.readouterr().err
+    junk = tmp_path / "junk.sqlite"
+    junk.write_text("not a database")
+    assert admin.main(["restore", str(junk)]) == 1
+    assert "not restored" in capsys.readouterr().err
 
 
 # ---- CV-L06: sessions ------------------------------------------------------------------------------------------------

@@ -14,12 +14,46 @@ def eoq(annual_demand: float, ordering_cost: float, unit_value: float, carrying_
     return math.sqrt(2.0 * annual_demand * ordering_cost / h)
 
 
+def dynamic_periods(policy: LotSizePolicy, needs: list[tuple[float, float]], order_cost: float,
+                    hold_per_day: float, bucket_days: float) -> int:
+    """How many of the coming periods one lot covers under an optimising rule (S/4 guide §8.3), for lumpy demand.
+
+    ``needs`` is the net requirement per period, the first the one short now, each with its days after it (0 for the
+    first). Holding a unit for a day costs ``hold_per_day``; an order costs ``order_cost``.
+
+    * part-period balancing (PPB): periods join while the holding cost of the lot stays within one order's cost;
+    * least unit cost (LUC): periods join while the cost per unit (order + holding) ÷ quantity does not rise;
+    * Groff: a period joins while its quantity × periods × (periods + 1) stays within 2 × order cost ÷ the holding
+      cost of a unit for a period (the order cost it saves per period is at least the holding it adds).
+    """
+    n = 1
+    if order_cost <= 0 or hold_per_day <= 0:
+        return n
+    held = 0.0
+    qty = needs[0][0]
+    for k, (q, days) in enumerate(needs[1:], start=1):
+        add = q * days * hold_per_day
+        if policy is LotSizePolicy.PPB:
+            if held + add > order_cost + 1e-9:
+                break
+        elif policy is LotSizePolicy.LUC:
+            if qty > 1e-9 and q > 1e-9 and (order_cost + held + add) / (qty + q) > (order_cost + held) / qty + 1e-12:
+                break
+        elif policy is LotSizePolicy.GROFF:
+            if q * k * (k + 1) > 2.0 * order_cost / (hold_per_day * bucket_days) + 1e-9:
+                break
+        held += add
+        qty += q
+        n = k + 1
+    return n
+
+
 def base_lot(ls: LotSizing, shortage: float, *, window_requirements: float = 0.0,
              max_stock_gap: float | None = None, eoq_qty: float | None = None) -> float:
     """Base quantity before modifiers.
 
     ``shortage``            quantity needed now to restore the threshold
-    ``window_requirements`` POQ: further requirements inside the covered window
+    ``window_requirements`` POQ and the optimising rules: further requirements inside the covered periods
     ``max_stock_gap``       MIN_MAX: max_stock − available
     """
     p = ls.policy
@@ -35,6 +69,8 @@ def base_lot(ls: LotSizing, shortage: float, *, window_requirements: float = 0.0
         return shortage + window_requirements
     if p is LotSizePolicy.MIN_MAX:
         return max(shortage, max_stock_gap or 0.0)
+    if p.value in ("PPB", "LUC", "GROFF"):       # the optimising rules: the periods they join (dynamic_periods)
+        return shortage + window_requirements
     raise ValueError(p)
 
 

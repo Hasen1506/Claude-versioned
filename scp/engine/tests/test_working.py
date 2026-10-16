@@ -35,17 +35,25 @@ def fp(ds) -> str:
     return hashlib.sha256(ds.model_dump_json().encode()).hexdigest()
 
 
+def plan_of(resp) -> dict:
+    """A plan answer without how it was made (planned from scratch, or again from the previous plan's work)."""
+    out = resp.json()
+    out.pop("planned_again", None)
+    return out
+
+
 def test_a_plan_of_the_kept_company_is_the_plan_of_the_company_sent_whole():
     tok, cid, doc, rev = company()
-    whole = client.post("/api/plan", json=doc).json()
+    whole = plan_of(client.post("/api/plan", json=doc))
     by_ref = client.post("/api/plan", json=ref(rev), headers=h(tok, cid))
     assert by_ref.status_code == 200, by_ref.text
-    assert by_ref.json() == whole
+    assert plan_of(by_ref) == whole
     # with unsaved changes: what changed goes along, and the answer is the changed company's
     changed = {**doc, "demand": [{**doc["demand"][0], "qty": doc["demand"][0]["qty"] + 50}, *doc["demand"][1:]]}
     patch = make_patch(doc, changed)
     assert len(str(patch)) < len(str(doc)) / 20
-    assert client.post("/api/plan", json=ref(rev, patch), headers=h(tok, cid)).json() == client.post("/api/plan", json=changed).json()
+    assert plan_of(client.post("/api/plan", json=ref(rev, patch), headers=h(tok, cid))) == plan_of(
+        client.post("/api/plan", json=changed))
     # in a request's dataset field too
     a = client.post("/api/actuals", json={"dataset": ref(rev)}, headers=h(tok, cid)).json()
     assert a == client.post("/api/actuals", json={"dataset": doc}).json()
@@ -164,7 +172,8 @@ def test_a_lean_plan_leaves_the_pegging_to_be_asked_for_by_order_or_product(monk
     assert lean.headers.get("x-rows") == "1"
     got = unpack_rows(lean.json())
     assert "requirements" not in got and "pegs" not in got
-    assert got == {k: v for k, v in full.items() if k not in ("requirements", "pegs")}
+    skip = ("requirements", "pegs", "planned_again")    # (how it was made: from scratch, or again from the last plan)
+    assert {k: v for k, v in got.items() if k not in skip} == {k: v for k, v in full.items() if k not in skip}
     # one product at one place: its requirements, in plan order, and what covers them
     r0 = full["requirements"][0]
     at = client.post("/api/plan/trace", json={"dataset": ref(rev), "location": r0["location"], "product": r0["product"]},
@@ -196,7 +205,8 @@ def test_unsaved_changes_are_read_on_the_kept_save_and_share_the_rest():
     assert edited.ds.history is base.ds.history and edited.ds.products is base.ds.products   # shared, not read again
     assert edited.ds.demand is not base.ds.demand and edited.ds.demand[0].qty == doc["demand"][0]["qty"] + 9
     assert got == client.post("/api/validate", json=changed).json()
-    assert client.post("/api/plan", json=ref(rev, patch), headers=hd).json() == client.post("/api/plan", json=changed).json()
+    assert plan_of(client.post("/api/plan", json=ref(rev, patch), headers=hd)) == plan_of(
+        client.post("/api/plan", json=changed))
     # a record that would be set aside: the company is read whole, and the record is set aside as ever
     working.forget()
     client.post("/api/validate", json=ref(rev), headers=hd)

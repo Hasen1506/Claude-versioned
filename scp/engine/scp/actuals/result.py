@@ -35,6 +35,7 @@ class StockRow(Out):
     lots: list[LotRow] = []               # by batch and stock type (only when there is more than plain unrestricted)
     serials: list[str] = []               # serial numbers here
     in_transit: float = 0.0               # shipped to this place on a transfer and not yet received
+    held: dict[str, float] = {}           # held for sales orders (sales-order stock), by order: not in the figures above
     planning_stock: float | None = None   # what the plan starts from: usable stock before the as-of date (None: no movements)
     counting: str | None = None           # an open physical inventory document that counts it
 
@@ -142,6 +143,18 @@ class OrderChange(Out):
     closed: bool
 
 
+class FirmedOrder(Out):
+    planned_id: str
+    receipt_id: str
+    kind: str
+    location: str
+    product: str
+    qty: float
+    start_date: dt.date
+    due_date: dt.date
+    reservations: int
+
+
 class RollReport(Out):
     ok: bool
     from_date: dt.date
@@ -155,18 +168,8 @@ class RollReport(Out):
     history_added: int
     confirmations_trimmed: int
     warnings: list[str]
-
-
-class FirmedOrder(Out):
-    planned_id: str
-    receipt_id: str
-    kind: str
-    location: str
-    product: str
-    qty: float
-    start_date: dt.date
-    due_date: dt.date
-    reservations: int
+    firmed: list[FirmedOrder] = []        # firming types 1 and 2: planned orders inside the fence, firmed at the roll
+    purchase_orders: list[str] = []       # the purchase orders made for the firmed buys
 
 
 class FirmReport(Out):

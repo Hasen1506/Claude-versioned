@@ -1,8 +1,10 @@
 """The server administrator's commands (Phase L). Run next to the server, with the same ``SCP_DB``:
 
-    python -m scp.admin backup <folder> [--keep 14]   copy the database now (safe while the server runs)
+    python -m scp.admin backup <folder> [--keep 14]   copy the database now (safe while the server runs);
+                                                      with DATABASE_URL, PostgreSQL into the same kind of file
     python -m scp.admin check <backup file>           what a backup holds
-    python -m scp.admin restore <backup file>         put a backup back (stop the server first)
+    python -m scp.admin restore <backup file>         put a backup back (stop the server first); with
+                                                      DATABASE_URL, into that PostgreSQL database (empty only)
     python -m scp.admin reset-link <e-mail> [--url https://plan.example.com]
                                                       a link for that account to set a new password (1 day)
     python -m scp.admin users                         the accounts and their companies
@@ -11,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -36,12 +39,26 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "check":
         print("\n".join(check(a.file)))
         return 0
-    if a.cmd in ("backup", "restore") and os.environ.get("DATABASE_URL", "").strip():
-        # CV-M06: these copy the SQLite file; a PostgreSQL server (Neon) is backed up and put back with its own tools
-        print(f"{a.cmd} works on the SQLite database file, but this server keeps its data in PostgreSQL "
-              "(DATABASE_URL): use pg_dump / pg_restore, or a Neon branch or point-in-time restore (docs/NEON.md)",
-              file=sys.stderr)
-        return 2
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if a.cmd == "backup" and url:
+        # ENTERPRISE_PLAN 1.6: one consistent snapshot of PostgreSQL, written as the same backup file SQLite makes
+        from .backup import backup_postgres
+        print(backup_postgres(url, a.folder, a.keep))
+        return 0
+    if a.cmd == "restore" and url:
+        # into an empty database only (a new Neon branch or database): every field is compared before it commits
+        from .migrate_postgres import migrate
+        if not Path(a.file).is_file():
+            print(f"not restored: there is no backup file {a.file}", file=sys.stderr)
+            return 2
+        try:
+            check(a.file)
+            migrate(Path(a.file), apply=True)
+        except (ValueError, sqlite3.DatabaseError) as e:
+            print(f"not restored: {e}. Restore into an empty database (a new Neon branch or database) and point "
+                  "DATABASE_URL at it.", file=sys.stderr)
+            return 1
+        return 0
     if a.cmd == "restore":
         db = os.environ.get("SCP_DB") or str(Path.home() / ".scp" / "scp.sqlite")
         kept = restore(a.file, db)

@@ -26,7 +26,7 @@ from statistics import NormalDist
 from ..model import DemandKind, SafetyStockMethod
 from ..model.dataset import Dataset
 from ..network import NetworkGraph, Node, build_graph
-from ..plan import costing
+from ..plan import costing, ddbuffer
 from ..plan.leadtime import lead_time_std_days, nominal_lead_time_days
 from ..plan.rates import (
     SQRT7, Flow, bucket_days, demand_flows, node_role, policy_safety_stock, typical_lot, upstream_mix,
@@ -215,13 +215,8 @@ def _ddmrp(ds: Dataset, g: NetworkGraph, role: dict[Node, str], stock_up: dict[N
            lt: dict[Node, float], horizon: Flow, unit_value: dict[Node, float]) -> list[DdmrpRow]:
     inv = ds.inventory
     start = ds.settings.planning_start
-    adu_flow = demand_flows(ds, g, start, start + timedelta(days=inv.adu_window_days))
-    positioned = {n for n in g.order if (lp := ds.location_product_by_key.get(n)) and lp.ddmrp_buffer}
-    dlt: dict[Node, float] = {}
-    for n in reversed(g.order):
-        if role[n] == "customer":
-            continue
-        dlt[n] = lt[n] + max((dlt.get(u, 0.0) for u in stock_up[n] if u not in positioned), default=0.0)
+    positioned = ddbuffer.positioned(ds)
+    buffers = ddbuffer.size_all(ds, g, horizon, role=role, stock_up=stock_up, lt=lt)
     # Sales orders by the stocking node that ships them: its own, and those of the customers it serves,
     # dated when they must leave (due date − the customer lane's transit), split by quota where quotas exist.
     orders: dict[Node, list[tuple[date, float]]] = defaultdict(list)
@@ -250,12 +245,8 @@ def _ddmrp(ds: Dataset, g: NetworkGraph, role: dict[Node, str], stock_up: dict[N
         if role[n] != "stocking":
             continue
         lp = ds.location_product_by_key.get(n)
-        mean = horizon.mean[n]
-        cv = math.sqrt(horizon.var[n]) / (mean * SQRT7) if mean > 0 else 0.0
-        ls = lp.lot_sizing if lp else None
-        moq = (ls.fixed_qty or ls.min_qty) if ls else 0.0
-        b = ddmrp.size(adu_flow.mean[n], dlt[n], cv, moq, inv)
-        spike_end = start + timedelta(days=max(1, math.ceil(dlt[n])))
+        b = buffers[n]
+        spike_end = start + timedelta(days=max(1, math.ceil(b.dlt)))
         qualified = 0.0
         for ship, qty in orders.get(n, ()):
             if ship <= start or (ship < spike_end and qty > inv.spike_factor * b.tor):

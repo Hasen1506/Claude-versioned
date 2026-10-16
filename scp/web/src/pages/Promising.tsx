@@ -8,6 +8,7 @@ import {
 import { addDays, day, money, pct, plural, qty, unitMoney } from "../lib/format";
 import { Loc, Prod, namesOf, useNames } from "../lib/names";
 import { orderProblems, orderWarnings } from "../lib/orderchecks";
+import { highEnd, safeWords } from "../lib/safe";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useFreshResult, useStore } from "../state/store";
@@ -131,7 +132,8 @@ function Nav({ view, res }: { view: View; res: PromiseResult | null }) {
 function LineChip({ l }: { l: ScheduleLine }) {
   const from = useNames().loc(l.ship_from);
   return (
-    <span className="chip" title={`ships ${day(l.ship_date)} from ${from} · delivers ${day(l.date)}`}>
+    <span className="chip" title={l.goods_issue ? `there to pick ${day(l.ship_date)} at ${from} · leaves ${day(l.goods_issue)} · delivers ${day(l.date)}`
+      : `ships ${day(l.ship_date)} from ${from} · delivers ${day(l.date)}`}>
       <b>{qty(l.qty)}</b>&nbsp;{day(l.date)}&nbsp;<span className="faint">{from}</span>
       {l.method !== "atp" && <>&nbsp;<Badge sev={l.method === "ctp" ? "info" : "warning"}>{l.method.toUpperCase()}</Badge></>}
       {!l.on_time && <>&nbsp;<span style={{ color: "var(--warning-text)" }}>late</span></>}
@@ -219,10 +221,10 @@ function OrderCard({ o, currency, actions }: { o: OrderPromise; currency: string
       {o.reason && <div className="banner warning"><Badge sev="warning">Why not</Badge>{o.reason}</div>}
       {o.at_risk && <div className="banner error"><Badge sev="error">At risk</Badge>Supply no longer covers this confirmation: run backorder processing to re-promise it.</div>}
       <table className="t nowrap">
-        <thead><tr><th>Ships from</th><th>Ship date</th><th>Delivery</th><th className="num">Qty</th><th>Method</th><th>On time</th></tr></thead>
+        <thead><tr><th>Ships from</th>{o.lines.some((l) => l.goods_issue) ? <><th>There to pick</th><th>Leaves</th></> : <th>Ship date</th>}<th>Delivery</th><th className="num">Qty</th><th>Method</th><th>On time</th></tr></thead>
         <tbody>
           {o.lines.map((l, i) => (
-            <tr key={i}><td><Loc id={l.ship_from} /></td><td>{day(l.ship_date)}</td><td>{day(l.date)}</td><td className="num">{qty(l.qty)}</td>
+            <tr key={i}><td><Loc id={l.ship_from} /></td><td>{day(l.ship_date)}</td>{o.lines.some((x) => x.goods_issue) && <td>{day(l.goods_issue ?? l.ship_date)}</td>}<td>{day(l.date)}</td><td className="num">{qty(l.qty)}</td>
               <td>{l.method === "atp" ? "available-to-promise" : l.method === "rlt" ? <Badge sev="warning">beyond RLT</Badge> : <Badge sev="info">capable-to-promise</Badge>}</td>
               <td>{l.on_time ? <Badge sev="ok">yes</Badge> : <Badge sev="warning">late</Badge>}</td></tr>
           ))}
@@ -241,13 +243,14 @@ function WhyDate({ steps }: { steps: WhyStep[] }) {
   const say = (w: WhyStep): React.ReactNode => {
     switch (w.kind) {
       case "asked": return <>Confirmed for the date the customer asked</>;
-      case "stock": return <>{qty(w.qty)} {n.prod(w.product)} in stock at {n.loc(w.location)}</>;
-      case "receipt": return <>Firm receipt <b>{w.ref}</b> brings {qty(w.qty)} to {n.loc(w.location)}</>;
+      case "stock": return <>{qty(w.qty)} {n.prod(w.product)} in stock at {n.loc(w.location)}{w.note.endsWith("held for this order") && ", held for this order"}</>;
+      case "receipt": return <>Firm receipt <b>{w.ref}</b> brings {qty(w.qty)} to {n.loc(w.location)}{w.note.endsWith("held for this order") && ", held for this order"}</>;
       case "component": return w.date ? <><b>{n.prod(w.product)}</b> is all there at {n.loc(w.location)}: <b>{w.ref}</b> waits for it</>
         : <><b>{n.prod(w.product)}</b> is not covered yet: <b>{w.ref}</b> waits for it until more is bought or made</>;
       case "planned": return <>Planned order <b>{w.ref}</b> ready with {qty(w.qty)} {n.prod(w.product)} at {n.loc(w.location)}</>;
       case "ctp": return <>{n.text(w.note)}</>;
       case "rlt": return <>Beyond the replenishment lead time of {w.qty} days: supply can be arranged by then</>;
+      case "handling": return <>Leaves {n.loc(w.location)}: picking, packing and loading take {qty(w.qty)} working {w.qty === 1 ? "day" : "days"} once the goods are there</>;
       case "ship": return <>Delivered from {n.loc(w.location)} over {w.ref}</>;
     }
   };
@@ -567,7 +570,13 @@ function Simulate({ ds, onDone }: { ds: Dataset; onDone: (m: string) => void }) 
             <StatTile label="Confirmed" value={qty(c.confirmed)} sub={c.unconfirmed > 1e-6 ? `${qty(c.unconfirmed)} cannot be promised` : "full quantity"} />
             <StatTile label="Last delivery" value={c.lines.length ? day(c.lines[c.lines.length - 1].date) : "—"} sub={c.lines.length > 1 ? `${c.lines.length} schedule lines` : "one line"} />
             {c.allocation_capped > 0 && <StatTile label="Allocation withheld" value={qty(c.allocation_capped)} sub="on the requested date" />}
+            {c.safe && <StatTile label={`High demand (${highEnd(ds)})`} value={c.safe.status === "on_time" ? "On time" : c.safe.date ? day(c.safe.date) : "—"}
+              sub={c.safe.status === "on_time" ? "the date holds" : safeWords(c.safe, c.qty)} tone={c.safe.status === "on_time" ? undefined : "hl"} />}
           </div>
+          {c.safe && <p className="small muted" style={{ margin: 0 }}>{c.safe.reserved > 1e-9
+            ? <>The second answer first promises the {qty(c.safe.reserved)} more that other customers would order by {day(c.requested)} if they ordered at
+              the high end of their forecast ({highEnd(ds)}). {c.safe.status === "on_time" ? "The date holds even then: it is safe to give." : "A date given from the first answer may cost an order later; the second is safe to give."}</>
+            : <>No forecast is still to be ordered by {day(c.requested)}, so the date holds when demand runs high too.</>}</p>}
           <OrderCard o={c} currency={out!.currency} />
         </>}
       </div>
@@ -659,7 +668,10 @@ function Allocations({ res }: { res: PromiseResult }) {
           <tbody>
             {res.allocations.map((a) => (
               <tr key={a.id}>
-                <td><b>{a.id}</b></td><td><Prod id={a.product} /></td><td>{a.customers.join(", ") || "all"}</td><td>{day(a.start)} – {day(a.end)}</td>
+                <td><b>{a.id}</b>{a.carry_forward && <span className="faint small"> carries forward</span>}</td>
+                <td>{a.product ? <Prod id={a.product} /> : <>family <b>{a.family}</b></>}</td>
+                <td>{a.customers.join(", ") || (res.allocations.some((b) => b.customers.length && b.product === a.product && b.family === a.family)
+                  ? "everyone else" : "everyone")}</td><td>{day(a.start)} – {day(a.end)}</td>
                 <td><div className="row"><div className="bar-track" style={{ flex: 1, minWidth: 90 }}><div className="bar-fill" style={{ width: `${Math.min(100, (a.used / Math.max(a.qty, 1e-9)) * 100)}%`,
                   background: a.used >= a.qty - 1e-6 ? "var(--warning)" : "var(--series-1)" }} /></div><span className="num small">{qty(a.used)} / {qty(a.qty)}</span></div></td>
                 <td className="num">{qty(Math.max(0, a.qty - a.used))}</td><td>{a.fallback === "next_period" ? "next period" : "reject the rest"}</td>
@@ -668,7 +680,7 @@ function Allocations({ res }: { res: PromiseResult }) {
           </tbody>
         </table>
       </Panel>
-      <Reading formula="Confirmable = min(ATP, allocation left in the period of the ship date). Once a product-customer has allocations, a date outside every period has none."
+      <Reading formula="Confirmable = min(ATP, the allocation left at every level in the period of the ship date): a product family's cap first, then the product's. At each level the customer's own allocations apply, else the one for everyone else; a period that carries forward adds what earlier periods left unused. Once a product-customer has allocations, a date outside every period has none."
         soWhat="Use allocations for launches and scarce supply to share fairly across channels; the S&OP constrained plan is a natural source for the quantities." />
     </div>
   );

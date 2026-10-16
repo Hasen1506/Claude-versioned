@@ -383,6 +383,709 @@ browser the way the guide reads, input → processing → output:
 | N165 | DIO and turns swung with one large receipt on the last day; DSO was an average; nothing aged what was owed; no trend. | Minor | **Fixed.** Average stock of the period, count-back DSO, ageing buckets for receivables and payables, a 12-week trend on DIO, DSO, DPO, turns and cash-to-cash. |
 | N166 | The CI actions ran on Node 20 (deprecated) and `ubuntu-latest` was due to move on 19 Oct. | Minor | **Fixed.** Actions on their Node 24 majors, runners pinned to Ubuntu 24.04, Node 22 for every build and the Docker image. |
 
+## Enterprise plan, phase 1: running it (10 October 2026)
+
+ENTERPRISE_PLAN 1.1, 1.2, 1.5 and 1.6, used against a local PostgreSQL 16 the way an administrator would:
+
+* *Several server processes* (input: four planners saving the same company at once, ten saves each, through
+  `uvicorn --workers 2` on PostgreSQL; processing: every read-then-write under the database's own lock, the save a
+  compare-and-swap on the revision; output: 40 saves on 40 revisions, 2 to 41 one after another, 74 refused with
+  409 and saved again over the newer revision, 41 history rows). With the lock and the compare-and-swap both taken
+  out, the two-process test fails at once (`UNIQUE constraint failed: company_revisions`), so it proves something.
+* *Watching it* (input: the same run with `SCP_LOG_FORMAT=json`; output: one JSON line per call with its request id,
+  route pattern, status and milliseconds, never a body or a query; `/api/metrics` counted 46 PUT 409 and 21 PUT 200
+  on `/api/companies/{cid}` with the time histogram; `/api/health` named the commit, the database and the uptime;
+  `X-Request-ID: drive-1` came back as sent).
+* *Backup and restore on PostgreSQL* (input: `scp.admin backup` against the live database while it ran; output: one
+  file that `check` reads, "1 accounts, d-9 (revision 41)"; `scp.admin restore` into an empty database compared every
+  table and committed; a second restore over it was refused; the owner signed in there with the same password and
+  revision 13 opened as saved).
+
+Then 1.3 and 1.4 (15 October 2026): two-step sign-in, the download and deleting a one-company account through the screens in a browser; the rest through the API, on SQLite and on PostgreSQL:
+
+* *Two-step sign-in* (input: an owner turns it on with a code their app shows, keeps the ten recovery codes, signs
+  out; processing: the password gives only a five-minute ticket, the code finishes it, each code good once; output:
+  signed in only after the code, a code used once refused the second time, a recovery code signs in once and the count
+  drops to 9, five wrong codes stop codes for 15 minutes). The owner could not require it of the company before having
+  it; after, the history said "required of every member; not on yet for planner", the planner saw the company marked
+  and was refused opening it until they turned it on, and an integration key went on working.
+* *Asking again* (input: a password change, an address change, a reset link, with two steps on; output: each refused
+  without the code; the address change told the old address, mailed a confirmation link to the new one and ended the
+  other session; the reset link set nothing until the code came too).
+* *Their own data* (input: *Download everything*, then *Delete my account* for an owner of four companies, two alone;
+  output: one JSON file with each company's data, members, history and plan versions; deletion said first what would
+  happen, refused until each company owned alone had a choice, undid everything when one choice could not be done,
+  then handed one company to a planner, deleted the other, left the two shared ones, and the histories kept the
+  actions under "Deleted account" with no address in them; the address could make a new account afterwards).
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N167 | A save was checked against the revision under a lock inside the process: two server processes could both pass the check, and the second wrote the same revision (an error in the log, the planner's change lost). | Serious | **Fixed.** The lock is the database's (advisory lock, or a file lock beside SQLite), and the save is a compare-and-swap. |
+| N168 | The scheduled-import clock, the nightly copy and the sign-in failure counter lived in each process: with two, an import would run twice and an address would get ten wrong passwords per process. | Serious | **Fixed.** One process leads each clock (the next takes over when it stops); the counter is a table. |
+| N169 | A PostgreSQL connection dropped while idle (Neon sleeps after a few minutes) failed the next request. | Serious | **Fixed.** The connection is made again when the lock is taken, before anything is under way. |
+| N170 | Importing the build commit as `commit` in the API module hid the promise engine's `commit` (lint caught it before it ran). | Serious | **Fixed** before it shipped: imported as `build_commit`. |
+| N171 | Nothing showed what the server was doing: no request ids, no metrics, health said only "ok". | Minor | **Fixed.** Request ids, JSON logs, `/api/metrics`, an optional Sentry DSN, commit, database and uptime in health (503 when the database is unreachable). |
+| N172 | PostgreSQL could not be backed up or restored with the application's own commands, and no restore had been tried. | Serious | **Fixed.** `scp.admin backup` and `restore` work on PostgreSQL; the restore test opens every company at every kept revision. |
+| N173 | A production server could start open to anyone (open sign-up, no sign-in), as the live demonstration host does. | Serious | **Fixed** for servers that say `SCP_ENV=production`; the demonstration host's own settings are its owner's to change (DEPLOY.md). |
+| N174 | A password-reset link (mailed, or made by an owner) set a new password and signed in by itself: whoever could read the mailbox took the account. | Serious | **Fixed** for accounts with two-step sign-in: the reset asks for the app's code as well, and changes nothing without it. |
+| N175 | The sign-in address could not be changed at all, and changing the password asked only for the old one. | Minor | **Fixed.** An address change asks for the password (and code), tells the old address, ends other sessions and leaves the new address unconfirmed until its link is opened. |
+| N176 | An account could not take its data away or be deleted, and a company it alone owned would have been left without an owner. | Serious | **Fixed.** *Download everything*; *Delete my account* says first what happens and hands over or deletes each company owned alone, as the holder chooses. |
+| N177 | The keys behind the app's codes are readable in the database (a code can only be checked with its key), so a stolen copy of the database gives them away. | Minor | **Open.** Said in DEPLOY.md (keep backups as private as the database); keeping them encrypted with a server key would need a key the server holds outside the database. |
+| N178 | The recovery codes were centred in one narrow column, and a refused *require two steps* flicked the checkbox on and off (a browser test caught it as a race). | Minor | **Fixed** before it shipped: codes left-aligned in columns; the test clicks and waits for the box to come back unticked with the reason. |
+| N179 | A PostgreSQL row could not be sliced like a SQLite row, so one older test failed when the suite ran on PostgreSQL. | Minor | **Fixed.** |
+
+## Enterprise plan, phase 2: planning against the S/4 guide (15 October 2026)
+
+ENTERPRISE_PLAN 2.1, used in a browser and through the API on a pump plant: 120 casings for a customer order on
+Monday 12 January, and the foundry's PO-4501 for 120 due a week later, on the 19th. A new order takes 3 days.
+
+* *Rescheduling horizon* (input: no horizon, then 10 working days on the casing's *Ordering* view, then an MRP group
+  "Castings" with 3; processing: a firm order due within the horizon after a shortage is brought in to cover it before
+  any new supply is planned; output: without a horizon, requisition PR-00001 for 120 on the 12th beside the PO, which
+  is reported as not needed; with 10 working days, no requisition, and *Incoming order needed sooner*: "PO-4501:
+  arrives 2026-01-19 but is needed 2026-01-12; expedite it by 7 d (it is due within the 10-working-day rescheduling
+  horizon, so it is brought in rather than ordered again)"; with the group's 3, which ends before the 19th, the
+  requisition again). The PO keeps its date: the advice is the planner's to act on.
+* *Tolerance* (input: a PO six days before it is needed; output: *Incoming order could come later* at the company's
+  3 days, nothing at 7, nothing with an MRP group that says 6).
+
+ENTERPRISE_PLAN 2.2, in a browser: a towel warehouse in Bhiwandi that takes a working day to pick and pack and one to
+load, shipping to Hotel Sagar 3 days away. 50 towels arrive on PO-77 on Friday 16 January; the hotel wants 10 on
+Tuesday the 20th.
+
+* *Delivery scheduling* (input: the two handling times on the warehouse, and a transport-booking time on the route
+  when there is one; processing: backward from the delivery date by transit to the goods issue, then loading, then the
+  longer of picking and packing and booking the transport, to the date the goods must be there; output: the order's
+  lines read *There to pick* Fri 16 Jan, *Leaves* Sun 18 Jan, *Delivery* Wed 21 Jan, late, and *Why this date* says
+  "Leaves Bhiwandi warehouse: picking, packing and loading take 2 working days once the goods are there"). Without
+  the handling times the same order is confirmed on time, shipped the day the towels arrive. The plan schedules its
+  shipments the same way, and a kept confirmation stores the day the goods leave.
+
+ENTERPRISE_PLAN 2.3, in a browser and through the engine: the casing again, with a 10-day planning time fence (to
+Thursday 15 January) and the customer's 120 on Monday the 12th.
+
+* *Firming types* (input: the casing's firming type on its *Ordering* view; output: type 3, the default and how the
+  fence behaved before, plans the requisition for the fence end, the 15th; type 4 plans nothing inside the fence, the
+  product shows *Short inside the freeze window*, the Problems list says "1 product short inside the freeze window",
+  and the requisition comes at the first check beyond the fence, Monday the 19th). Types 1 and 2 also firm: rolling
+  a week to Monday 12 January with a 7-day fence, the order last week's plan had for the 16th became a purchase order
+  due on the 16th; types 3 and 4 left it planned.
+* *Working days* (input: the company setting *Time fence and goods receipt in working days*, on for new companies;
+  output on a Monday–Friday plant: a 5-day fence from Monday 5 January ends Monday the 12th instead of Saturday the
+  10th; goods delivered on Saturday the 10th with two days of goods receipt are there on Tuesday the 13th instead of
+  Monday the 12th).
+
+ENTERPRISE_PLAN 2.4, in a browser and through the engine: the casing bought with 10 days' lead time, used 10 a day
+for six weeks, weekly CV 0.2, so its buffer is red to 87.5, yellow to 187.5 and green to 257.5.
+
+* *A buffer that places the orders* (input: *Positioned* on *Supply → Buffers → DDMRP buffers*, then *Plans the
+  orders*, which sets MRP type ddmrp, also offered on the *Ordering* view as "Demand-driven buffer (D1)"; processing:
+  on every day the net flow position can move, on hand plus open supply less what is due and the spikes inside the
+  decoupled lead time, and an order of top of green less NFP that day when it is at or under the top of yellow;
+  output: with 120 on hand, positioned but planned by requirements, the screen says *Advice only* while the row says
+  yellow, order 148; ticked, the plan buys 148 on Monday 5 January, the Problems list says "1 buffer to reorder today",
+  and the red zone is the safety stock the projection shows). With 200 on hand the first order is 78 on the 6th and
+  the next 80 on the 14th, where planning by requirements orders 10 a day from the 15th. 50 on hand is *Buffer in the
+  red*: order 218 today and expedite. A part made to order cannot hold a buffer, and a safety stock beside one is not
+  planned: the readiness check names both.
+
+ENTERPRISE_PLAN 2.5, in a browser and through the engine: pump casings bought to order at Pune, 10 days to buy. PO-1
+for 50, due Wednesday 14 January, was bought for SO-1 (50 on Tuesday the 20th); SO-2 wants 50 on Monday the 12th; 20
+casings in stock are held for SO-3 (Thursday the 22nd).
+
+* *Held for one order* (input: *Held for sales order* on the firm order, or stock held for an order; a requisition or
+  production order planned for one customer order of a made-to-order product carries that order when it is firmed;
+  processing: what is held for an order goes to that order first and to no other, in planning, promising and the
+  journal; output: free, PO-1 went to SO-2 with "expedite it by 2 d" and SO-1 got a new requisition; held, PO-1 stays
+  with SO-1, the plan buys for SO-2 (*Planned purchase … for SO-2*), the product's list shows the free stock running
+  out on the 12th at −50 and, below it, *Held for sales orders* order by order; SO-1's *Why this date* says "Firm
+  receipt PO-1 brings 50 to Pune plant, held for this order"; *Stock & actuals* shows "20 held for SO-3" beside the
+  free stock). Received, PO-1 goes into stock held for SO-1, starting the week puts it there in the plan, and SO-1's
+  delivery takes it from there; cut SO-1 to 30 and the plan says 20 are held for an order that no longer needs them.
+  A held order due after its order is due is to be expedited, with nothing else planned in front of it.
+
+ENTERPRISE_PLAN 2.6, in a browser and through the engine: 40 pump casings at Pune for Kumar Pumps. SO-0 (10, asked for
+Friday 2 January), SO-1 (30, Tuesday the 6th) and SO-2 (30, Wednesday the 7th), imported without prices; the casing
+sells at 1,500.
+
+* *The delivery checks the stock* (input: *Make deliveries*; processing: unrestricted stock at the shipping place plus
+  firm receipts in by the planned goods issue, less what open deliveries take, first to ship first served, stock held
+  for another order left alone; output: *Due to ship* has a *Can be picked* column — SO-0 10, SO-1 30, SO-2 *none in
+  stock*, left unticked; ticked anyway, the delivery is made for SO-0 and SO-1 and says "SO-2: nothing of 30 can be
+  picked (Pump casing at Pune plant by Mon 5 Jan), it stays to deliver"; inspection or blocked stock is named with
+  "release it first"). *Check stock when a delivery is made* in the selling settings switches it off.
+* *The price is fixed when the goods leave* (input: *Ship it*, or a delivery posted on the order; output: "SO-1 had no
+  agreed price: INR 1,500.00 a unit fixed at goods issue"; the line now carries that price, at its quantity scale, and
+  the invoice uses it whatever the price list says on the invoice day). A line with its own price keeps it.
+* *Late and not shipped* (output: the OTIF notes on *Performance* say "Not in this figure: 1 open order line worth INR
+  15,000 already past the requested date and not delivered; they count once they close", and the same against the
+  confirmed date).
+
+ENTERPRISE_PLAN 2.7, in a browser and through the engine. Kumar orders a kit from Pune: a pump (10 in stock) and a motor
+(none; 20 arrive on PO-7 on Wednesday 14 January); pumps and motors are the PUMPS family.
+
+* *One delivery for a whole order* (input: *Ship the whole order together* on the order form, or `single_delivery` on an
+  imported order; processing: each line is confirmed in full, then every line moves to the date the last one can come,
+  or no line is promised; output: "10 Pump promised 10 on Thu 15 Jan; 20 Motor promised 20 on Thu 15 Jan. One
+  delivery: every line on Thu 15 Jan"; a line the order cannot get in full keeps the whole order unpromised, and says
+  so). The pump's 10 stay free for other orders until the 15th.
+* *Allocations by family, the customer's own first, carried forward* (input: an allocation names a product or a
+  family, and may carry forward; processing: the family's cap is checked before the product's, a customer with
+  allocations of their own is held to them and not to the one for everyone else, and a period that carries forward adds
+  what earlier periods left; output: *Promise dates → Allocations* shows "family PUMPS · carries forward · 30 / 100"
+  beside "Motor · 20 / 50").
+* *Optimising lot sizes* (input: *Part-period balancing*, *Least unit cost* or *Groff's rule* as the lot-size rule,
+  with an ordering cost; processing: the lot covers the coming periods while holding stays within an order's cost, the
+  cost per unit falls, or Groff's rule holds; output: for 100, 60, 40 and 100 a week at 10 an order and 0.01 a unit a
+  day, part-period balancing orders 200 and 100, least unit cost 160 and 140; without an ordering cost or a value it
+  orders lot for lot and says so).
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N183 | Only one firming rule existed: a plant that must not get automatic orders inside its fence got them moved to the fence end anyway, and nothing was firmed as the fence moved over the plan (§8.5). | Serious | **Fixed.** Firming types 1–4 on the product or MRP group; 2 and 4 plan nothing inside the fence and report the shortage; 1 and 2 firm the fence's orders at the roll, as last week's plan had them. The default, 3, is how the fence behaved before (its description called it type 1, which it was not: nothing was firmed). |
+| N184 | The planning time fence and goods-receipt time counted calendar days, so a Friday receipt with two days of goods receipt was available on Sunday. | Minor | **Fixed** for companies that count working days: new companies do; saved companies keep calendar days until the setting is switched on (it moves their dates). |
+| N188 | Make-to-order supply could be taken by another order: a PO bought for one customer order was expedited for an earlier one, and the first got a new order (§16.2, §9.2). | Serious | **Fixed.** Sales-order stock: firm orders and stock held for one sales order, planned, promised and issued only to it; firming carries the order from the plan; the journal keeps held stock apart from free stock. Companies without held supply plan as before. |
+| N189 | The product's running list counted stock held for another order as available, so a shortage of 50 read as 30. | Minor | **Fixed** before it shipped: the list and the plan's projection are the free stock; what is held is shown order by order below it. |
+| N190 | Stock planned to expire was left out of the requirements once held supply was taken out of netting. | Minor | **Fixed** before it shipped (a test caught it): requirements added while a product is being netted join both lists. |
+| N186 | A DDMRP buffer only advised: its zones and order showed on the buffer screen while MRP planned the same part by net requirements, two signals that disagree (§8.7 pitfall). | Serious | **Fixed.** MRP type ddmrp (S/4 D1): the buffer's net flow places the planned orders, red and yellow buffers go to the Problems list and the inbox, and the buffer screen marks a positioned part still planned by requirements as advice only. Other MRP types plan as before. |
+| N187 | The red and yellow buffer situations pointed to "Inventory → DDMRP buffers", a name the navigation does not use. | Minor | **Fixed** before it shipped: "Supply → Buffers → DDMRP buffers". |
+| N185 | Automatic firming at the roll first firmed an order on time for the 16th as one moved to the new fence end, the 19th: the plan is worked out afresh, so the order last week had was gone. | Serious | **Fixed** before it shipped: the rolled company is planned with each fence ending where it ended last week, and what starts inside the new fence is firmed. |
+| N191 | A delivery was made for whatever was asked, stock or not; the shortfall showed only at goods issue, after picking (§13). | Serious | **Fixed.** The delivery takes what can be picked by its goods issue and leaves the rest to deliver; the list says what can be picked before the delivery is made. |
+| N192 | A line without an agreed price was billed at the list price on the invoice day, without its quantity scale (§15 pitfall, pricing type B). | Serious | **Fixed.** Its price is fixed at goods issue, at its scale, and billed at that. |
+| N193 | OTIF counted only closed orders: a backlog of late lines not yet shipped was in no figure (§18.2). | Minor | **Fixed.** The OTIF notes give the count and value of open lines already past their requested and confirmed dates. |
+| N194 | The deliveries list showed nothing until *Calculate*, though the company had just been imported with lines due to ship. | Minor | By design: every page with a *Calculate* button calculates on request; noted only. |
+| N195 | A kit's lines were promised one by one: the pump for the 7th, the motor for the 14th, two deliveries to a customer who wanted one (§7.2). | Serious | **Fixed.** An order can ship as one delivery: every line on the date the last can come, or none. |
+| N196 | Allocations had one level: no family cap, a catch-all applied to customers who had their own, and what a week left unused was lost (§7.4). | Serious | **Fixed.** Family before product, the customer's own allocations before the catch-all, carry-forward per allocation. |
+| N197 | EOQ was the only optimising lot size, poor for lumpy demand (§8.3). | Minor | **Fixed.** Part-period balancing, least unit cost and Groff's rule, holding each requirement from its own date. |
+| N198 | The kit test company first had no source for the pump, and taking the order said only that the data has problems. | Minor | Open: the order form could name the problem (here "Pump has no way to be supplied") instead of pointing to Home. |
+| N199 | A one-click what-if waited 5 seconds in its browser test for a plan run, and failed once under load. | Minor | **Fixed** in the test: it waits as long as the other plan runs. |
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N180 | A firm order due a week late was duplicated by a new requisition whenever a new order could still arrive on time, and the firm order was then called not needed (§8.1). | Serious | **Fixed.** A rescheduling horizon in working days (company setting, product, MRP group): within it the firm order is brought in first. The company default is 0, as in S/4 when none is set, so saved companies plan as before until a horizon is given; the not-needed situation now points to it. The reschedule-out tolerance (3 days) is a setting too. |
+| N181 | "Nothing needs them before the horizon ends" read as the new rescheduling horizon. | Minor | **Fixed.** It says *planning horizon*. |
+| N182 | A warehouse that needs a day to pick confirmed every order a day too early: the promise shipped goods the day they arrived, with no picking, packing, loading or transport booking (§6.2). | Serious | **Fixed.** Picking and packing and loading times on the shipping place, transport booking on the route, all in working days (0 by default, so nothing moves until they are set); stock is checked on the material availability date, and the line and the confirmation carry the goods issue. |
+
+## Enterprise plan, phase 3: connectors (15 October 2026)
+
+ENTERPRISE_PLAN 3.1, in a browser and through the engine. Kaveri keeps its stock in Tally: the closing stock sheet has
+Tally's item codes (`MG500`), its godown names (*Pune Works*) and quantities in dozens. A web shop sends its orders as
+JSON, an order per object with its lines inside, its own customer codes and dates written `08 Jan 2026`. A warehouse
+system answers page by page and can give only what changed after a time.
+
+* *Mapping* (input: on *Connections → Scheduled imports*, *Name the fields myself*: place from `Godown` with
+  `Pune Works=PLT-PUNE`, product from `Item Code` with `MG500=MG-500`, quantity from `Closing Qty (doz)` × 12; for
+  the shop, records at `orders`, one row per element of `line_items`, product from `line.sku`, the date from
+  `note_attributes.deliver_by` written `%d %b %Y`; processing: each field here is filled from the column or path named,
+  codes translated, numbers multiplied, dates read as written, the rest as a recognised file is; output: PLT-PUNE /
+  MG-500 120). A field named that is not a field here is refused with the fields there are.
+* *Try it first* (input: a few lines pasted in, or nothing to read the source now; processing: the message is applied
+  to the company's latest save and nothing is saved, logged or moved; output: "Dry run, nothing saved: 2 stock: 1
+  taken, 1 refused", each line "would be taken" or refused with why (*there is no place 'Mumbai Depot'*), the columns
+  found in what was read, and the first rows as the fields here). A saved import has *Dry run* beside *Run now*: a
+  file in the folder stays where it is and the schedule is as it was.
+* *A web API, page by page, only what changed* (input: from *a web API*, the next page's address at `links.next` or
+  numbered pages until a flag says there are no more, `{since}` in the address; processing: the pages are read into one
+  message, the key goes only to the API's own host, `{since}` is the start of the last good run; output: one message
+  for every page; the next day only what changed is asked for). A failed page fails the run: half an answer is never
+  taken and the time is not moved on.
+* *The log keeps what was read* (output: *Messages → What was read (the start)* shows the first 2,000 characters of the
+  file or answer, also for a file that could not be read).
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N200 | Imports recognised columns only by their names: a Tally sheet (`Item Code`, `Godown`, quantities in dozens) or a shop's nested JSON could not be read, and codes that differ from ours had to be changed in the other system first. | Serious | **Fixed.** A mapping per import: column or path, codes translated, a factor, a date format, a value when empty, one row per element of a list. |
+| N201 | An import could only be tried by running it, which saves what it read. | Serious | **Fixed.** *Try it* before saving (a sample or the source) and *Dry run* for a saved import: nothing saved, logged or moved. |
+| N202 | A web API that pages its answer was read one page at a time, and every run read everything again. | Serious | **Fixed.** Pages by the next page's address or by number, at most a set number (more fails the run); `{since}` is the last good run's start. |
+| N203 | A refused file left no trace of what it held: the log said "not a list of records" and nothing else. | Minor | **Fixed.** The log keeps the start of what was read with the message. |
+| N204 | The mapping table offered a date format and a factor for every field, the place and product included. | Minor | **Fixed** before it shipped: a factor only for numbers, a date format only for dates (any field of master data). |
+| N205 | The form sends only an `Authorization` header; an API with its own header (Shopify's `X-Shopify-Access-Token`) can be set only through the API. | Minor | **Fixed** (3.2, 3.3): Zoho, Shopify and Odoo have their own credential fields, sent in each system's own way. A generic web API with its own header is still set through the API. |
+| N206 | An API that names its next page in a `Link` header (Shopify) cannot be paged, since only the body is read. | Minor | **Fixed** (3.3): *Pages: the Link header names the next page*. |
+
+### 3.2: Tally Prime and Zoho Inventory (16 October 2026)
+
+ENTERPRISE_PLAN 3.2, through the engine and in a browser. Kaveri's books are in Tally Prime; a second company sells
+through Zoho Inventory. Neither was at hand, so each was played by a server answering as its documented interface
+does (Tally's XML envelopes, counts and `LINEERROR`s; Zoho's JSON with `code`, `page_context` and OAuth tokens): the
+connectors are checked against those formats, not yet against a running Tally or a live Zoho organisation.
+
+* *Tally's stock items, ledgers, stock and sales orders* (input: *Connect Tally*, Tally's address, the company's name
+  in Tally, the place its stock is at, *Translate codes* `Tin White 1L=TIN`; processing: the export envelope asks for
+  the collection, the answer's names become codes here, translated where the mapping says; output: products with
+  Tally's stock group as family, customers and suppliers from Sundry Debtors and Creditors with address and GSTIN, the
+  closing balance counted at the plant, sales order vouchers as customer orders a line per due date). *Try it* reads
+  Tally now and shows each line and the rows as the fields here before anything is saved.
+* *Purchase orders to Tally* (input: *What it brings: purchase orders to send*, the supplier's ledger translated;
+  processing: a purchase order voucher numbered as here, with each line's due date, rate and the purchase ledger;
+  output: "1 purchase order to Tally: 1 sent", *made in Tally as PO-00001* in Messages, the order taken, and the next
+  run "nothing to send". Changed here: the voucher is altered; cancelled or deleted here: cancelled. Refused by Tally
+  (*Ledger 'Sharma Metals' does not exist!*): said on the line, nothing kept, sent again next run).
+* *Zoho Inventory* (input: *Connect Zoho*, the organisation ID, the data centre, a self client's ID, secret and refresh
+  token; processing: one access token an hour, pages of 200, sales orders newest first until one older than the last
+  good run, each read whole; output: as Tally's, and purchase orders made with Zoho's item and vendor IDs). The secret
+  is not shown again: *Change* shows "kept as it is".
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N207 | A code translation with no column named was dropped when the import was saved: the form kept a row only when it named a source or a value, but for a connector "the same field" is the usual case. Found by the browser test (Tally's `Tin White 1L` reached the dry run untranslated). | Serious | **Fixed.** A row with codes is kept. |
+| N208 | Connectors' rows are typed already: the mapping table offered a factor and a date format to them. | Minor | **Fixed.** Hidden for Tally and Zoho; *From* reads "the same field". |
+| N209 | A new product from Tally or Zoho would have changed a product kept here: type, unit and family sent on every run. | Serious | **Fixed** before it shipped: those fields (a place's type and region too) are taken only by a new record. |
+| N210 | An order sent and taken, whose answer was lost (a timeout), would have been made twice on the next run. | Serious | **Fixed** before it shipped: the connector asks Tally (an export by voucher number) or Zoho (by `purchaseorder_number`) first and then changes it. |
+| N211 | Tally's stock is read item by item as one total at one place: godown-wise closing stock is not read. | Minor | Open: Tally's godown-wise closing needs a TDL report; to be done against a running Tally. |
+| N212 | Zoho's stock is the item's total, not per warehouse or location (Zoho gives that only item by item, which its call limits make slow). | Minor | Open. |
+| N213 | Goods movements are not read from Tally (receipt notes, delivery notes, stock journals) or Zoho (receives, packages). | Minor | Partly fixed (3.3): Shopify's fulfilments are read as deliveries. Tally, Zoho and Odoo still count stock instead. |
+
+### 3.3: Shopify and Odoo (16 October 2026)
+
+ENTERPRISE_PLAN 3.3, through the engine and in a browser. A second company sells online through Shopify and
+keeps its books, bills of materials and purchasing in Odoo. Again neither was at hand: each was played by a server
+answering as its documented interface does (Shopify's GraphQL `nodes`/`pageInfo`, `THROTTLED` errors and its token
+header; Odoo's JSON-RPC `authenticate` and `execute_kw`, its domains, many-to-one pairs and errors, and the JSON API
+of Odoo 19). The connectors are checked against those formats, not against a live shop or database.
+
+* *Shopify's catalogue, locations and stock* (input: *Connect Shopify*, the shop's myshopify.com address, a custom
+  app's token; processing: variants read a page at a time, the SKU (else the titles) as the code, each location's
+  on-hand stock by location; output: products in the product type's family, the locations as warehouses, stock at
+  the place each location is translated to, or of its own name).
+* *Shopify's orders and fulfilments* (input: *What it brings: customer orders*, *Booked to the customer: Online
+  shop*; processing: orders updated since the last good run, each line's quantity after edits; output: order 1001 of
+  the online shop with the buyer's name as its note, a cancelled one never taken; then *fulfilments (as deliveries)*:
+  2 delivered from line 10, the same fulfilment never posted twice).
+* *Odoo's products, partners and BOMs* (input: *Connect Odoo*, its address, the database, a login and API key;
+  processing: JSON-RPC as that user; output: products without services, customers and suppliers by rank, each BOM a
+  way to make at the plant named with its components, the steps here kept).
+* *Purchase and manufacturing orders to Odoo* (input: *purchase orders to send*; processing: Odoo's vendor and
+  product found, *Try it* first: "would be made in Odoo (Sharma Metals)"; output: "1 purchase order to Odoo: 1 sent",
+  made and confirmed with PO-00001 as its source document, kept as P00201, the next run "nothing to send". Changed:
+  its line rewritten in place. A manufacturing order: made with Odoo's start field and confirmed, a new quantity
+  through *change quantity*, deleted here cancelled there).
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N214 | A summary of one item read "1 orders: 1 taken". | Minor | **Fixed.** "1 order", "1 purchase order", "1 location". |
+| N215 | On a phone the four *Connect* buttons ran off the panel. | Minor | **Fixed.** They wrap. |
+| N216 | A sending job's *Try it* offered a sample box that sending never reads. | Minor | **Fixed.** Sending says what a dry run does instead. |
+| N217 | An Odoo stock quant below zero (stock sold before it was received) would have refused the warehouse's whole row. | Minor | **Fixed** before it shipped: quants are summed by warehouse first, and a total below zero counts as none. |
+| N218 | Shopify keeps no purchase or production orders, so nothing planned here can go to it. | Minor | By design: a shop that buys through Odoo or Zoho sends its orders there. |
+| N219 | A partner in Odoo who is both a customer and a vendor becomes one place here (the bigger rank). | Minor | Open: one place can be both only with two ids; translate the second by hand. |
+| N220 | Shopify's buyers are one customer here, so promises and margins are per channel, not per buyer. | Minor | By design for a shop; B2B buyers come through an ERP. |
+| N221 | Odoo's lots and Shopify's per-location committed stock are not read; stock is on hand only. | Minor | Open. |
+
+## Enterprise plan, phase 4: demand and S&OP depth (16 October 2026)
+
+### 4.1: The monthly S&OP cycle
+
+ENTERPRISE_PLAN 4.1, through the engine and in a browser: the Kaveri Kitchenware example in this browser, and a small
+company kept on the server by a signed-in owner. The example now carries the year's budget by product family.
+
+* *Budget* (input: Data → Budgets, a month's units and revenue for the mixer grinders and the kettles; output: a
+  table with the month, what it is for and both figures).
+* *The cycle* (input: Capacity plan → Monthly cycle, *Start the October 2026 cycle*; processing: five steps, each
+  signed in order; output, step by step):
+  1. *Data*: no blocking problems, 0 warnings, sales history to 21 September; signed.
+  2. *Demand review*: the demand plan month by month against the budget. October is 20,697 units against 20,750
+     (−0.3 %), but +6.2 % in revenue: more mixer grinders, fewer kettles. The six months are 4.8 % under the budget
+     in units, and kettles are 5.6 % under. Signed: the company as it stood was kept as plan version V0002.
+  3. *Supply review*: the capacity plan, solved by month, supplies 100 % of that demand. Signed.
+  4. *Pre-S&OP* would not sign without its minutes; signed with "Kettles below budget in Q1: promotion proposed for
+     January".
+  5. *Executive S&OP*: signed with the decision, which closed the month.
+* *Through the month* (output: a table with one row per signed step: units and revenue planned against the budget,
+  how much was supplied, and the plan version each step was kept as).
+* *Reopened* (input: the supply review, "Copper supplier cut its November capacity"; output: the supply review,
+  pre-S&OP and the executive step open again, their versions kept, the log saying who reopened them and why).
+* *In a company* (the owner names the demand review's owner from the members; the sign-offs carry their e-mail. In
+  the engine: a planner cannot sign another's step, a viewer signs nothing, and an executive step with no owner takes
+  an owner of the company. Next month's cycle starts with the same owners.)
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N222 | After a sign-off the page stayed on the signed step; the next step's button was one click away and easy to miss. | Minor | **Fixed.** A sign-off moves on to the next step. |
+| N223 | Reopening a step of a closed month answered with the month still closed. | Major | **Fixed** before it shipped (a test caught it): the answer is read after the change. |
+| N224 | With a demand lever on the capacity plan (demand × 1.5), the supply review showed more supply than demand. | Major | **Fixed.** The supply steps show the demand that plan supplies, and say it is scaled. |
+| N225 | A plan starting on 5 October set 27 days of demand against a whole month's budget. | Major | **Fixed** before it shipped: a month partly inside the plan counts that part of its budget ("from 5 Oct 2026"), and says so. |
+| N226 | On a phone the month names wrapped onto four lines. | Minor | **Fixed.** |
+| N227 | An executive step without an owner can be signed only by an owner of the company. | Minor | By design: the plan the business runs on is approved by someone who answers for the company. |
+| N228 | Signing a supply step solves the capacity plan again on the server; at 5,000 products a sign-off waits as long as the plan. | Minor | Open: reuse the page's last solve of the same data. |
+| N229 | A budget is by month for a product, a family or the company; not by customer, region or channel. | Minor | Open. |
+
+### 4.2: Forecast value add
+
+ENTERPRISE_PLAN 4.2, through the engine and in a browser: the Kaveri Kitchenware example, which now carries twelve
+weekly forecast releases from before its planning start (each the real forecast from the sales known that Monday,
+with two planners' overrides of the time), and a small shop imported as a file whose answers were worked out by hand.
+
+* *Kept forecasts* (input: every press of *Use this forecast in the supply plan*; output: Data → Kept forecasts, one
+  row per product, place and week from the value-add lag on (default one week ahead): the naïve forecast, the
+  statistical model, after events and new products, the consensus, and who overrode it. A later release replaces a
+  week until it is within the lag; then it stays as kept).
+* *Value add* (input: Demand → Value add; processing: each layer against the sales of the weeks that have sold;
+  output, for Kaveri):
+  * 99 product-weeks have sold (31,728 units, to 27 September). The consensus missed by 12.1 % and ran 5.2 % high.
+  * The statistical model missed by 9.7 %, a little *worse* than the naïve forecast (9.4 %) over these weeks. Weekly
+    noise near 8 % on smooth series is what naïve does well; the backtest on the Forecast tab (rolling origins over
+    two years) measures something else. This is the finding the page exists for.
+  * Events and new products changed nothing (no event fell in those weeks); the planners' overrides added 2.4 points
+    of error.
+  * *By planner*: Sales West's quarter lift on trade mixer grinders came closer to the sales in 2 of 12 weeks, added
+    15.4 points and ran 22.6 % high. The e-commerce desk's tenth on the marketplace took off 0.2 points.
+  * *By product family*: kettles 8.2 % after overrides (+0.3 points), mixer grinders 14.3 % (−3.9 points).
+  * *The overrides that cost most*: mixer grinder 500 W at the west trade distributors, week of 14 September: 686
+    against 497 sold, where the forecast before the override said 548.
+* *The small shop* (by hand: 260 sold over four product-weeks; absolute misses naïve 90, statistical 35, events 30,
+  consensus 37): 34.6 %, +21.2, +1.9 and −2.7 points, consensus 14.2 % and 10.4 % high; ana −15.0 points, ben +16.0,
+  an override without a name under "Not named". Releasing its forecast kept the next weeks: 2 waiting became 11.
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N230 | An override typed without a name was not counted as an override at all: a kept week said who overrode it only by the name. | Major | **Fixed** before it shipped: a kept week says whether it was overridden; one without a name counts under "Not named". |
+| N231 | The consensus grid wrote its overrides without a name, so no planner could be judged on them. | Major | **Fixed.** Signed in, an override from the grid carries the planner's e-mail. |
+| N232 | Near-zero figures read "−0.0 %" and "+0.0 pts". | Cosmetic | **Fixed.** |
+| N233 | The layers table repeated the same "sold" figure on every row. | Cosmetic | **Fixed.** It is in the sentence above the table. |
+| N234 | The planner is the name an override carries (the e-mail of who typed it in the grid, or what an import says), not checked against the company history. | Minor | By design: the company history says who saved each change. |
+| N235 | A product without sales of its own (a new product) has no naïve forecast; its naïve is its statistical forecast, so the model adds nothing over it. | Minor | By design: there is no yardstick for it. |
+| N236 | Value add is judged at one lag only; the forecast one week ahead and at the lead time cannot be set side by side. Kept forecasts grow by one row per product, place and week, like the sales history, and are never trimmed. | Minor | Open. |
+
+### 4.3: Planning material, assembly forecasts and the strategy advisor
+
+ENTERPRISE_PLAN 4.3, through the engine and in a browser: the Kaveri Kitchenware example (two products now say how
+many days their customers wait), a mixer shop imported as a file (a base mixer with a red variant and a blue twin pack
+that uses two), and a pump shop in the engine tests (a pump made to order from two motor units forecast ahead).
+
+* *Planning material* (input: a variant's *Planning material* and *Units of the planning material one of these uses
+  up*, under Data → Products; processing: the variants' sales are counted in the base's series, × the factor, and their
+  orders, open, delivered or closed, use up the base's forecast where they are sold; output):
+  * Sixteen weeks of 30 red and 10 blue twin packs make one series for the mixer, 50 a week: 300 over the six weeks,
+    one product and place. The series says "Forecast once for its variants (Mixer blue twin pack × 2, Mixer red)".
+  * Against a base forecast of 100 in a week, 30 red and 20 twin packs leave 30 to plan; the motors come to 100, not
+    the 170 of forecast and orders both. The mixer's own orders carry *Planning only* on the plan: they plan the
+    motors the variants share and are never made themselves.
+  * Checks: a variant with a forecast of its own (both are planned), a planning material that is itself a variant
+    (nothing is planned through it), an override on a variant (it goes to the base).
+* *Forecast on an assembly* (strategy *Forecast on an assembly, its parents' needs using it up (70)*; processing: the
+  parents' dependent requirements, from planned and firm orders, use up the assembly's forecast within its
+  consumption windows; output): the pump order needing 60 motor units plans 200 against a forecast of 200, not 260;
+  the week's remaining 40 stay spread at 8 a working day. 260 needed in all plans 260, and an order eleven days past
+  the last forecast week reaches none and is planned on top. The safety-stock rate counts the larger of the forecast
+  and the parents' demand.
+* *Strategy advisor* (Inventory → Strategy; input: *Days customers accept to wait* per product; processing: the
+  preferred path from where it is sold, the last delivery leg, assembling plus delivery, and the longest path through
+  the bill of materials plus delivery; output, for Kaveri):
+  * Every finished good is judged where its slowest path starts, the north trade distributors: 1 day from stock at the
+    Delhi warehouse, 7.3 to make at Pune and deliver, 53.3 from scratch. Customers of the 500 W mixer grinder and the
+    kettle wait two days: made to stock, which meets the wait.
+  * Typing ten days for the 750 W: "Assemble to order. Now made to stock, orders using up the forecast, which meets
+    the wait. Customers wait 10 days: enough to assemble it (7.3 days) but not to get its parts (53.3)". One click on
+    *Assemble to order* sets it where the north trade's demand is planned from, the Delhi warehouse.
+  * Half a day: *Orders late*, and the page says one product is planned in a way that makes orders late.
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N237 | The advisor's button set the strategy at the plant, where the product is made, and nothing changed: Kaveri's trade demand is planned with the strategy of the nearest place upstream with a record of the product, the Delhi warehouse. | Major | **Fixed** before it shipped: the advisor says where the strategy is read (`Dataset.demand_lp_at`), the button sets it there, and the row says "set at Delhi NCR DC". |
+| N238 | At phone width every Inventory tab scrolled sideways: the hidden "out of date" labels for screen readers sat outside the scrolling tab bar and widened the page. | Minor | **Fixed** for every page: those labels are pinned to the corner. |
+| N239 | The series workbench heading and list showed codes ("BASE @ CU"). | Cosmetic | **Fixed.** Names: "Mixer at Trade". |
+| N240 | The S&OP plan reads an assembly's forecast as demand of its own and adds its parents' needs on top: strategy 70 is planned once only by MRP and the safety-stock rates. | Minor | Open. |
+| N241 | A planning material reaches one level: a variant of a variant is forecast on its own (the check says so). | Minor | By design: SAP's planning material is one level too. |
+| N242 | The Kaveri example has no variants and no assembly forecast; those are shown on small imported companies. | Minor | Open. |
+| N243 | The advisor follows the preferred source and nominal lead times: no queue, capacity or alternative source shortens or lengthens them. | Minor | By design: it compares the planned times the plan itself uses. |
+| N244 | The Kaveri example was not the same file on every machine: OpenBLAS picks its kernel per processor, and the kept forecasts fitted on an AVX-512 machine and an AVX2 one differed by a tenth, so CI (AVX2) rounded a kettle week to 640 where this machine wrote 641. | Major | **Fixed.** The example builder sets one kernel (Haswell, single thread) on every x86 machine before numpy loads. |
+
+### 4.4: Demand with a spread, and lead times as measured
+
+ENTERPRISE_PLAN 4.4, through the engine and in a browser on the Kaveri Kitchenware example: its forecast used again
+from the Demand page, a new order checked on the order page and on a several-line order, and the supplier scorecard
+on the Buying page. Small companies in the engine tests cover the arithmetic.
+
+* *The high end with the forecast* (input: the forecast's interval, 80 % by default; processing: each released
+  period keeps the top of its interval over the part in the horizon, never below the forecast, in whole units for a
+  product counted in each; output): Kaveri's Demand page reads "Customers are expected to order 92,370 units over the
+  next 26 weeks, across 9 products and places, up to 1,14,798 at the high end (P90, which about one period in 10 goes
+  over)". *Use this forecast in the supply plan* writes each period's high end beside its quantity.
+* *A safe date beside the expected one* (input: an order checked before it is taken; processing: the order is
+  checked a second time after the forecast still to be ordered up to its date is promised first, at the high end:
+  what is left of each forecast once the orders, this one among them, have used it up, plus its spread, for the part
+  of its period up to the date; output):
+  * 400 mixer grinders 500 W for the north trade on 5 October: Delhi has 300 for that day, the rest by 11 October.
+    The tile *High demand (P90)* reads "Sun 11 Oct, 245 on time, the rest by Sun 11 Oct", and the page says the second
+    answer first promises the 644 more that other customers would order by 5 October if they ordered at the high end:
+    a date from the first answer may cost an order later; the second is safe to give.
+  * The same on Selling → New order: the line says "If demand runs high (P90): 245 on time, the rest by Sun 11 Oct".
+  * Small cases: another customer's week of 60 (90 at the high end) keeps 77.1 of 100 first; the order's own
+    customer's forecast is used up by the order first (34.3 kept, not 77.1); a forecast that starts after the date keeps
+    nothing; made to order or no high end, no second answer; lines of one order keep it once.
+* *Lead times as measured* (input: the purchase lines the roll-forward closed; processing: receipt less due date per
+  line over the last year, its sample standard deviation, from the source's own lines once it has three, else from
+  all its supplier's; output): Shenzhen electro-components delivered four lines, three a day early and one a week
+  late: "± 4.0 d over 4 receipts of all its parts, 1.0 d late on average" beside the "± 3.0 d" planned. *Plan with
+  ± 4.0 d* sets it; the switches' lead time at Pune reads 14 d ± 6.4 with the sea lane, not ± 5.8, and their safety
+  stock goes from 8,647 to 9,114. The copper supplier, two lines so far, says "too few receipts yet".
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N245 | After *Plan with ± 4.0 d* the supplier table still showed ± 3.0 planned and the button, until the Buying page was recalculated. | Minor | **Fixed** before it shipped: the planned spread is read from the company's data, so the click shows at once. |
+| N246 | "First promises the 644 other customers would still order" read as 644 customers. | Cosmetic | **Fixed:** "the 644 more that other customers would order". |
+| N247 | At phone width the tile label "If demand runs high (P90)" was cut off. | Cosmetic | **Fixed:** *High demand (P90)*. |
+| N248 | The Inventory stages table showed place codes, and the lead time without its spread. | Cosmetic | **Fixed:** names, and "14 d ± 6.4". |
+| N249 | The safe date keeps first only the forecast of the product ordered: other products that share its parts or machines, and a planning material's forecast for an order of its variant, are not kept first. | Minor | Open. |
+| N250 | Kaveri's forecast as shipped has no high end, so there is no second answer until the forecast is used again; S&OP releases and forecasts typed by hand have none unless *high_qty* is given. | Minor | By design: the high end comes with a release of the statistical forecast. |
+| N251 | "Up to … at the high end" adds each period's P90; the P90 of the whole horizon is lower. | Minor | By design: the page says one period in 10 goes over, each on its own, which is what the second answer keeps. |
+| N252 | The measured spread is of purchase lines only; a transfer lane's transit spread and production times are still typed in. | Minor | Open. |
+| N253 | A supplier late on average (Shenzhen, a day) shows its mean delay but it is not offered as a longer lead time. | Minor | By design: the page says a mean delay needs a longer lead time and leaves the choice to the buyer. |
+| N254 | A line delivered in parts is measured from its last receipt, when it was there in full. | Minor | By design: that is when the plan had it. |
+
+### 5.1: Planning again only what a change reaches
+
+ENTERPRISE_PLAN 5.1, in a browser on the Kaveri Kitchenware example and through the engine on the generated company
+of 5,000 products at 20 places (DEPLOY.md §5). Every plan keeps its work, product by product at each place; the next
+plan replays a node whose data, and whatever its consumers hand it, are as they were, and plans the rest (S/4 net
+change planning). The plan made that way is the plan made from scratch, byte for byte: over the six examples and 24
+random networks with random changes, and in the size test.
+
+* *Input:* on Data, Pune plant's heater elements on hand from 14,000 to 20,000. *Processing:* the heaters at Pune and
+  the part they go into are planned again; nothing else reads them. *Output:* the Plan page reads "⚠ Out of date",
+  then after *Recalculate* "Only what the changes since the last plan reached was planned again: 2 of 29 products at
+  their places; the rest stand as they were." One requisition for heaters (PR-0025-03) is no longer needed; every
+  other order keeps its number. Planning again with nothing changed says the plan stands as it was.
+* *At 5,000 × 20* (11,635 products at places; a plan from scratch takes 89–97 s): a forecast raised by half at
+  one warehouse is planned again in 13.5 s, the stock of one product at a warehouse set to nothing in 11.9 s, the lead
+  time of one bought part in 13.1 s; each the same plan as from scratch. What is left is reading the company: the data
+  checks, each product's inputs, and comparing them with the last plan's. Keeping the work makes a plan from scratch
+  about 7 % slower (86.7 s of planning before, 92.9 s now).
+* *What is planned whole* (the previous plan's work is not used): capacity-constrained planning and co-products,
+  where products share machines or one product's orders make another's stock; and a change everything reads
+  (settings, calendars, places, machines, suppliers, MRP groups, purchasing, scheduling and inventory settings,
+  contracts), or a product or place added or taken away.
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N255 | At 5,000 × 20 the data checks rebuilt the list of product families for every reference they checked, which grew with the square of the company: a plan from scratch took 590 s, 500 of them in the checks. | Major | **Fixed:** each check builds only the list it reads. |
+| N256 | Planned orders were numbered in one sequence over the whole network, so one requisition fewer renumbered every order planned after it: a stock change at one warehouse took 68 s, most of it renaming orders in work that had not changed. | Major | **Fixed:** a planned order is numbered by its product at its place, then in turn there (PR-0025-03), so a product planned as before keeps its numbers whatever changes elsewhere. The old engine numbered that way gives the same plans (differential test). |
+| N257 | Planned numbers are longer (PR-0025-03, not PR-00042); the schedule board labels orders "17-01". | Cosmetic | By design: the first part is the product at its place, the same in every plan. |
+| N258 | Capacity-constrained plans and plans with co-products are always planned whole. | Minor | Open: machines and suppliers shared between products would need planning again together. |
+| N259 | Deleting a demand line without an id renumbers the lines after it ("#12" becomes "#11"), so their products are planned again although nothing about them changed. | Minor | Open: the plan is right, only slower. |
+| N260 | The server keeps the last plan's work beside it, one company per server process: planning another company plans from scratch and replaces it. | Minor | By design: one plan's work per process; its memory is part of the plan's peak in DEPLOY.md §5. |
+| N261 | The first change after a plan of 5,000 products took 21 s, not 13: Python's collector looked through the gigabytes of kept work for cycles. | Minor | **Fixed:** the collector waits while a plan is made again from kept work. |
+
+### 5.2: Ask the plan
+
+ENTERPRISE_PLAN 5.2, in a browser on the Kaveri Kitchenware example (*Performance → Ask the plan*) and through the
+engine on the Chennai pumps example and the generated company of 5,000 products. A question in plain words is read
+by rules against the company's own names and ids (no language model, nothing leaves the server) and answered from
+the plan's records: the pegging, each planned order's projected date and what holds it up, the machines' daily
+load, the open worklist with its owners and money at risk. Every sentence cites the records it rests on, each a
+link to where it is seen. Asking changes nothing; what an answer proposes is the inbox's own fix, tried on a copy
+and kept by the person as one change, or a what-if kept as a stored scenario.
+
+* *Why late. Input:* "Why is the 10 HP export pump late for Jebel Ali?" (the product and the customer said in part).
+  *Processing:* each late demand of that product for that customer is followed down its pegging to the supply that
+  reaches it latest, and down from there. *Output:* "42 units of Export end-suction pump 10 HP (PUMP-10HP-EXP) for
+  Gulf distributor, Jebel Ali are projected late across 2 demands (2,184,000 INR of sales)", each demand with its
+  chain: the transfer from the port that is available 10 Oct, needed 5 Oct; it should have started 23 Sep, so even
+  started today 12 days of transit make it 10 Oct. For the Singapore buyer the chain runs five levels down, through
+  the port, the plant's production order MO-0007-01 and the motor it waits for, to the motor's purchase that should
+  have started 18 Sep (Hosur motor works takes 10 days). The late units add up to the plan's own demand at risk,
+  product by product at each customer.
+* *A fix kept. Input:* "Why is PUNE-WIND overloaded?" *Output:* "over its capacity and overtime on 7 more days in
+  periods with room", the worst day first (31 Oct: 61.0 h of work on 48.4 h with overtime, most from MO-0020-04 and
+  MO-0019-03), and the inbox's *Add 12.6 h of overtime*. *Try it* plans a copy (this problem → gone); *Keep this
+  change* applies it as one change, the question is asked again on the changed data ("not over its capacity on any
+  day") and one *Undo* takes it back.
+* *What if. Input:* "What happens if Hindalco goes bust?" *Output:* read as *SUP-COPPER out*, planned on a copy:
+  99.6 % → 69.4 % on time, 28,930 more units late, copper wire at Pune has no other supplier, and where the late
+  demand lands, customer by customer. *Keep as a scenario* stores it under Versions to compare and promote. The
+  numbers are the what-if page's for the same chip.
+* *Who owns, what is at risk.* "Who is responsible for the mixer grinders?" names the owners of the 10 open problems
+  on both mixer grinders (by owner rule), and the rule that routes new ones; "What is at risk?" is the inbox's top six
+  with owner and action. A question it cannot read ("tell me a joke") is answered with questions this company's data
+  can answer, each of which it reads.
+* *At 5,000 × 20* (the plan kept on the server, 125 s to make here): reading the open worklist takes 12 s (10,943
+  open problems), then "Why is FG-00008 late?", "Who owns FG-00008?" and "Why is anything late?" (368,825 units
+  across 4,394 demands) are answered in 1–3 s, "What is at risk?" in 9 s. A what-if question plans the company
+  again with the change: 3 minutes and 11 GB at the peak, as the what-if page.
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N262 | "Why is PUNE-WIND overloaded?" first answered "not over its capacity in any period": it looked at weekly totals only, while the inbox listed the machine's days over their hours. | Major | **Fixed:** a machine's answer counts the days over their hours inside weeks with room too, as the day-overload exception does, worst day first with the orders that load it. |
+| N263 | "Why is SO-88221 late?" said it was not late: the plan covers it on time, but the promise check confirms only 600 of 800 on the requested date. | Major | **Fixed:** when the plan has it on time, the open problems on it are said too ("But 1 open problem on it says otherwise: …"), with their fixes. |
+| N264 | "Who is responsible for the mixer grinders?" found no problem: the words also named *Assembly line 1 (mixer grinders)*, so it looked for problems on both the products and the line. | Major | **Fixed:** a word said names one kind of record: the kind whose names share the most of the words takes them (products before places before machines), and the next kind is read from the words left. |
+| N265 | For the kettle (KT-15) and the 500 W mixer grinder the inbox's one-click *expedite* is offered, but pulling the firm transfer in by a day leaves the demand late; *Try it* says so ("stays late"). | Minor | Open: proposals are not tried before they are offered (each try is a plan of the whole company). |
+| N266 | "What if the kettle line is down 3 days?" changes nothing on time: the plan does not wait for machines unless capacity-constrained planning is on. | Minor | By design: the answer says so and where the change shows (the machine's load). |
+| N267 | "What if steel prices rise 10 %?" is not read: no what-if changes a supplier's price. | Minor | **Fixed in 5.3:** a purchase-price chip (a supplier's, or some products'), read by *Ask the plan* when a supplier or a bought product is named with a price and a per cent. |
+| N268 | Time words are not read: "Is anything going to be late next week?" answers for the whole horizon. | Minor | Open. |
+| N270 | At 5,000 × 20 a what-if question takes 3 minutes: the company is planned again whole with the change. | Minor | Open: a change to one product's demand or one supplier could be planned again from the kept work (5.1) instead. |
+| N269 | "Which orders are late", "show me shortages" and "goes bust" were not read as asked (the first as *what is at risk*, the others not at all); "1 days of lead time". | Minor | **Fixed.** |
+
+### 5.3: What-if smaller than the leaders'
+
+ENTERPRISE_PLAN 5.3, in a browser on the Kaveri Kitchenware example (*What if… side by side*, its new tab *Sweep one
+change*) and through the engine on the Chennai pumps example and the generated company of 5,000 products. One change
+is planned at two to eight sizes and read against today; a stored version is a column of the side-by-side, read on
+the server for the company that asks; and every scenario's sales projected late are given by the period their
+demand is due.
+
+* *Sweep a lever. Input:* safety stock at 0, 2, 5, 10 and 20 days of cover, every product at every place.
+  *Processing:* the company is planned at each size; each plan is read for its cost, the plan's own on-time service
+  and the service to *expect* when demand misses its forecast: at every stocking place that ships to a customer,
+  β = 1 − σ·G(SS/σ)/Q with σ the spread of demand over the lead time (the same variance safety stock is sized with),
+  SS the plan's safety stock, Q the typical lot and G the normal loss function, weighted by the demand each serves.
+  *Output:* "expected service 93.7 % to 100.0 % (today 99.8 %), cost 63,407,292 INR to 88,955,232 INR"; "the
+  cheapest service is from 0 d to 2 d: 6.0 points at 797,138 INR a point", from 2 d to 5 d a point costs
+  12,074,536 INR, 10 d "costs 5,183,907 INR more than 5 d and buys no expected service", and *Not worth it: 10 d,
+  20 d*. The chart puts cost against expected service, a dot a size, today as a ring and the sizes worth their money
+  joined; a click on a row shows that size's money at risk over time beside today's; *Keep as a version* stores it.
+* *Sweep an exposure. Input:* every supplier's lead time −7, +7, +14, +21 days on the Chennai pumps (in the
+  browser, the copper supplier's on Kaveri).
+  *Output:* "Service holds within half a point of today up to −7 d; at +7 d it is 96.5 % with 5,004,433 INR of sales
+  projected late (today 3,686,267 INR)", the most at risk at +21 d (13,442,933 INR). No frontier is drawn: a longer
+  lead time is not something bought.
+* *A stored version as a column. Input:* the working copy saved as *Plan as is*, then compared with the working copy
+  and *Busy season* (demand +20 %). *Output:* the column reads *stored version V0001*, with *same service* and no
+  cost difference against the baseline, and no *Keep* button (it is stored already); chips can go on top of it. A
+  version of another company is refused (404), as is a browser with no key of its own.
+* *Money at risk over time.* Under the side-by-side, one line a scenario by week, the baseline dashed and drawn on
+  top, with the figures by period: Busy season puts 10.56 L at risk in the first week and 24.42 L in the second,
+  against 8.8 L today. Each scenario's periods add up to its *sales at risk* row.
+* *A supplier's prices.* A new chip, *Purchase prices +10 % at SUP-COPPER*: its prices, price scales and contract
+  lines (+15.01 L of cost, the same service); it can be swept, and *Ask the plan* reads "What if Hindalco raises prices
+  10 %?" and "What if copper wire costs 10 % more?" as it.
+* *At 5,000 × 20:* each size is a plan of the whole company; expected service adds 1.5 s. Safety stock at 0 and 7
+  days (today and two sizes, three plans) took 4 min 54 s at a peak of 10.7 GB, one plan held at a time. Today's mix
+  of policies gives 100.0 % expected service; none at all gives 93.6 % for 32.4 Cr less, and 7 days on every product
+  costs 64.9 Cr more for no more service (*not worth it*).
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N271 | A sweep of safety stock had nothing to read: the plan takes the forecast as certain, so its on-time service never rises with safety stock (Kaveri: 99.6 % at 0 d and at 5 d). | Major | **Fixed:** safety stock is read against the service to expect when demand misses its forecast (the loss-function fill rate where stock meets customer demand); the plan's own service is shown beside it. |
+| N272 | More safety stock *lowered* the plan's on-time service (Kaveri, 30 days: 99.6 % to 84.0 %): the whole top-up is ordered now, in one lot with the demand that falls due while it is made (12,450 mixer grinders at Pune, waiting for 23,452 motors and their copper wire), so that demand waits for the larger lot. | Major | By design in MRP (a shortfall below safety stock is a requirement today), and said in the sweep with what to do instead (raise it in steps over several weeks). Open: a raised safety stock phased in over weeks. |
+| N273 | The safety stock chip replaced each product's policy whole, dropping its measured forecast error and review period. | Major | **Fixed:** both are kept; they describe the demand, not the policy. |
+| N274 | A demand sweep read "Demand −10 % costs more than the step before it and buys no service: the money goes to stock". | Minor | **Fixed:** only a lever bought for service (safety stock) is read as cost against service; every other change as an exposure (how far before service falls, what it puts at risk). |
+| N275 | The labels of dots at 100 % were cut off at the top of the chart; a scenario with the same money at risk as the baseline hid the baseline's line. | Minor | **Fixed:** room above the plot; the baseline is dashed and drawn last. |
+| N276 | The sweep's sentences give whole amounts with the currency code (63,407,292 INR) while the page beside them compacts (₹6.34 Cr), as *Ask the plan* does. | Minor | Open: the engine's sentences take the page's money format. |
+| N278 | "What if kettle prices rise 5 %?" was first read as the purchase price of the kettle body: "kettle" names the kettle we make and the body we buy. | Minor | **Fixed:** a price is read as a purchase price only when a supplier is named, or every product named is one we buy. |
+| N279 | At 5,000 × 20 the first sweep ran out of memory and was stopped without a word: each scenario's plan was still held while the next was made, two plans of about 11 GB. | Major | **Fixed:** a plan is let go once its figures are read, in the side-by-side and the sweep alike: one plan in memory at a time (10.7 GB at the peak). |
+| N280 | Found by CI after 5.3: two browsers planning Kaveri in turn shared the server's one kept plan. One planned the heater stock change; the other then made the same change and read "Nothing the plan reads had changed since the last plan" of its own change. Two companies planned in turn each planned everything, from scratch. | Major | **Fixed:** the plan's work is kept for each planner, by the company open and the person or browser asking. The newest is always kept, others within `SCP_KEPT_NODES`. Tested with two planners, two companies, the budget, and two browsers through the API. |
+| N289 | Found by the full browser run after N280: a second browser opening Kaveri unchanged was answered with the plan the first had just made (the same data) and kept no plan work of its own, so its corrected stock figure was planned from scratch ("Only what the changes since the last plan reached" never showed). | Major | **Fixed:** whoever is answered with the kept plan keeps its work too; work held by two planners counts once in `SCP_KEPT_NODES`. Tested (and both changes mutation-checked) in tests/test_incremental.py. |
+| N290 | Found by CI after N280: the variant-shop browser test pressed *Use this forecast in the supply plan* and went straight to Recalculate. Under load the plan was asked for before the release answered, so it planned the demand without the forecast and was out of date the moment the release landed. The planner was right; the test raced it. | Minor | **Fixed:** the test waits for the "Released" banner before it plans, as demand-spread.spec.ts already did. |
+| N291 | Found by the full browser run: the S&OP browser test signed off the data step and checked the demand review's month row at once. The data step's panel shows the same month table, so under load the check passed on it, *Revenue* was pressed there, and the demand review then replaced the panel, showing units. | Minor | **Fixed:** the test waits for the step to move on (its sign-off button gone) after every sign-off; and the units-or-revenue choice is kept for the cycle, so the next step shows what was chosen instead of going back to units. |
+| N277 | At 5,000 × 20 each size of a sweep plans the whole company again, one after another. | Minor | Open, as N270: a change to some products' or one supplier's data could be planned again from the kept work (5.1), and the sizes side by side on more cores. |
+
+### 6.1: Bins, put-away, waves and a phone that reads the labels
+
+ENTERPRISE_PLAN 6.1, in a browser on the Kaveri Kitchenware example (*Stock & actuals → Warehouse*, the phone page
+*Scan* at 390 px, *Selling → Deliveries*), through the API, and through the engine on the generated company of 5,000
+products. The Delhi DC has two areas: eight picking shelves of 300 units along the walk (*add to stock*, two shelves
+a product) and eight high-rack bins of 1,800 kg behind them (*next empty*, a reserve). The rule sends every product
+to the shelves, then the rack.
+
+* *Put away. Input:* the go-live stock take, 1,500 kettles, 1,500 and 900 grinders, in no bin. *Processing:* each
+  product's storage types in the rule's order, in each its strategy, within each bin's units and kilograms.
+  *Output:* eleven tasks: two shelves of 300 for each product, the rest to the rack by weight (428 grinders of 4.2 kg
+  fill a rack bin to 99.9 %). Opened on the phone, the first task reads *Put away · To S-01-01 · 300 Electric kettle
+  1.5 L*. The 500 W grinder's label, read by mistake, is refused: "That is Mixer grinder 500 W: this task is for
+  Electric kettle 1.5 L". The kettle's label is read, then 300 confirmed, and the next task is *To S-01-02*. The
+  other ten are confirmed from the desk, in walk order. Stock by bin then shows every unit in a bin, and *in no bin*
+  is gone. The place's stock and the plan are the same as before the moves: a bin move is a pair of movements that
+  sums to zero.
+* *A wave. Input:* the orders due in the next ten days put on deliveries (Selling); the one from the Delhi DC has
+  two lines, 500 of the 500 W grinder (SO-88190) and 380 of the 750 W (SO-88140). *Processing:* each line is picked from the bins that hold it: the picking area before the reserve,
+  first expiring, then first in, then nearest on the walk; a bin and product once for every delivery that needs it.
+  *Output:* "Wave WV-0001: 1 delivery, 4 picks from 4 bins, in walk order", the pick list from S-01-03 to S-01-06,
+  the grinders' shelves (the rack is not needed).
+* *Pick on the phone, one short. Input:* the wrong bin is read first, then the right one; 20 fewer found than asked.
+  *Output:* "That is bin R-02-04: go to S-01-03". Then: "280 Mixer grinder 500 W picked from S-01-03, 20
+  short. Count bin S-01-03: the books say it still holds 20." Once the other picks are confirmed, the delivery reads
+  "is picked, short: SO-88190 480 of 500: pack it and ship it". The goods issue ships the batches the picks took. It
+  is refused while a pick is still open, and nothing is left staged.
+* *At 5,000 × 20:* 346 products in stock at one DC with 546 bins: stock by bin in 0.16 s, the put-away proposal in
+  0.6 s, making its 346 tasks 1.6 s, one task confirmed in 0.24 s.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N281 | The first put-away gave the kettles five of the eight picking shelves, being first in the list, and the 750 W grinders none: they would have been picked from the rack. | Major | **Fixed:** a storage type says how many of its bins one product may take (*Bins a product*). The Delhi shelves take two each, and put-away goes on to the next area. |
+| N282 | Every bin move was posted with its task as its reference, and the plan's data check reported each one as "the reference matches no receipt, sales order or closed order". | Major | **Fixed:** the task keeps the movements it posted; the movements name no order. A test checks that the plan, its warnings included, is the same before and after the moves. |
+| N283 | A storage type set to *mixed* never mixed: put-away only used empty bins or bins already holding the product. | Minor | **Fixed:** a mixed area takes a product beside others, once its empty bins are full. |
+| N284 | Selling listed only the order lines due in the next 3 days, a company setting with no field on the page, so an order due in 5 days could not be shipped early from the screen. Changing the setting while the list was being read left the old list showing. | Major | **Fixed:** the window is a field in the list's heading ("Due to ship in the next [3] days"), and changing it reads the list again. |
+| N285 | A short pick asks for a count of the bin, but the count is made on *Count stock*, by place and product, not by bin. | Minor | Open: a count by bin (a physical inventory of chosen bins, with the difference posted to the bin). |
+| N286 | Stock taken out without a pick (a component issue to production, a scrap, a goods issue at a place with bins but no wave) comes off the bins first in, first out: a guess. *Stock by bin* names those postings and asks for a count if the guess is wrong. | Minor | By design, until supply to production from a bin is built (staging for the shop floor); open. |
+| N287 | Reading a label with the phone's camera needs the browser's barcode reader, which Chrome on Android has and Safari on iPhone does not. A hand-held scanner works everywhere: it types the code and Enter into the field. | Minor | Open: a reader that does not depend on the browser. |
+| N288 | Picking bins are refilled from the reserve by a bin move made by hand; nothing proposes it when a shelf runs low. | Minor | Open: replenishment by minimum and maximum quantities per picking bin. |
+
+### 6.2: Stock in the books and cycle counts by ABC class
+
+ENTERPRISE_PLAN 6.2, in a browser on the Kaveri Kitchenware example (*Money → Stock in the books*, *Buying →
+Purchase orders → Supplier invoices*, *Stock & actuals → Count stock*), through the API, and through the engine on
+the generated company of 5,000 products.
+
+* *Valued at a moving average. Input:* the price control set to *a moving average of what it cost*, at the top of
+  the books. The 10,000 concealed heating elements on PO-4500012871 are received at Pune. Shenzhen's invoice SZ-771
+  bills 1.50 USD an element against the order's 1.35. *Processing:* the receipt goes in at what it lands at: the
+  order price in rupees, the duty, the lane's freight per unit and the handling. The invoice's difference times
+  (1 + duty) goes to the stock, by the share of what it bills that is still in stock; the rest is a price
+  difference. *Output:* before the receipt, 14,000 elements at ₹141.65. After it, 24,000 at ₹141.65 (it cost what
+  was planned). After the invoice, ₹147.97, +₹6.31 against the standard, and the invoice SI-00001 is among the
+  postings. Nothing had left the stock, so there is no price difference.
+* *The books as they stand.* At the standard price, on 3 Oct, Kaveri's stock is worth ₹2.93 Cr, the cost of sales
+  ₹48.3 L, the count differences −₹7,835 and the scrap ₹8,831. Planning keeps its planned unit value either way.
+* *A cycle count. Input:* the Delhi NCR DC, 12, 4 and 1 counts a year for A, B and C. *Processing:* the journal
+  holds no issues there yet, so the products are classed by what the DC's customers bought (sales history). The two
+  grinders make 63 % and 38 % of the value used up and are A; the kettle used nothing up there and is C. Nothing
+  was ever counted, so all three are due. *Output:* "Cycle count: 2 A, 1 C. PI-00001: 3 lines to count on Mon 28
+  Sep, book stock frozen." The 500 W grinder is counted 2 short and the differences posted. Class A then reads 2
+  counted, 50 % found as booked, −₹2.7K; C 100 %. Nothing is due, and the grinders are next due on Thu 29 Oct.
+* *At 5,000 × 20:* the books over 10,633 products at places in 1.7 s (0.4 s again), the cycle plan of one DC (346
+  products: 171 A, 85 B, 90 C) in 0.8 s, of every place in 1.0 s.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N292 | At a moving average a purchase came in at the bare order price, without the duty, freight and handling the planned value includes. The heater's price fell from ₹141.65 to ₹130 on a receipt that cost exactly what was planned. | Major | **Fixed:** a purchase comes in at its landed cost, and an invoice difference takes the duty with it. |
+| N293 | Unit prices in the books were rounded to the rupee (₹142), so a moving average that moved by paise looked unmoved. | Minor | **Fixed:** the books show prices to the paisa. |
+| N294 | *Enter the invoice*, opened from a purchase order imported without a document header (all of Kaveri's), ticked none of its lines. A price typed on an unticked line was ignored: "Enter the invoice (₹0.00)", greyed out. | Major | **Fixed:** the order's line is ticked when it is the order itself, and typing a quantity or price on a line ticks it. |
+| N295 | The invoice total on the button was always in rupees: a 15,000 USD bill read "₹15,000.00". | Major | **Fixed:** the total is in the supplier's currency when the lines share one. |
+| N296 | Where sales history is recorded at the DC itself (the generated company), the cycle count followed the DC's own supply lane back to the plant: every product at the DC used nothing up and was C. | Major | **Fixed:** history at a stocking place counts for that place. Only a customer's or market's history goes to the place that ships to it. |
+| N297 | A price difference is a figure on the page, not a posting to an account; a moving price cannot be revalued by hand (S/4 MR21); there is one price per product at a place, not per batch or valuation type. | Minor | Open: the account postings come with the double-entry journal (7.4); a price change by hand and split valuation, open. |
+| N298 | *Roll the plan forward* kept the date it offered while the company under it changed: after a roll then an undo (or another company opened with the page still mounted) it offered the week after the roll, 19 Jan, for a plan starting on 5 Jan. The browser test failed on it in CI and passed here only because the page happened to be mounted again. | Minor | **Fixed:** the date picked belongs to the planning start it was picked from; another start offers a week after its own. The test checks the date after the undo and the redo, with the page open. |
+
+### 6.3: Carriers, freight orders, loads by weight and volume, freight settled
+
+ENTERPRISE_PLAN 6.3, in a browser on the Kaveri Kitchenware example (*Selling → Deliveries*, *Stock & actuals →
+Transport*, at desktop and phone width), through the API, and through the engine on 2,000 deliveries. Kaveri has three
+fictional carriers:
+* *Sahyadri* charges 24,000 a truck plus 1.20 a kilogram from Pune to Delhi.
+* *Deccan* charges a flat 32,000 a truck.
+* *Northline* carries part loads on every LTL lane at 3.20 a kilogram (5 t, 30 m³ vehicles), never under 1,500.
+
+* *Loads. Input:* the orders due in the next ten days put on deliveries; the stock transfer STO-2201, 600 kettles
+  from Pune to Delhi due on 29 Sep, three days on the road, so late to leave. *Processing:* each lane's loads in
+  vehicles, first fit, heaviest first, by kilograms and cubic metres; every carrier costed on its own vehicles.
+  *Output:* four vehicles for ₹1.42 L:
+  * The transfer goes with Sahyadri: 780 kg, 17 % of a 9 t truck, ₹24,936. Deccan's ₹32,000 is shown beside it, and
+    the transfer is marked late.
+  * The Delhi delivery goes with Northline: 3,962 kg and 25.78 m³, 86 % full by volume, ₹12,678.40.
+  * The courier lane has no carrier, so it is costed at what planning assumes it costs.
+  * A note names the low-filled truck and says a longer window lets later loads share it.
+* *A freight order's life.* The transfer's order goes through each step:
+  1. Tendered to Sahyadri: "FO-00004 tendered to Sahyadri Freight Carriers for INR 24,936.00."
+  2. Rejected, it goes to the next carrier whose truck takes it: "tendered to Deccan Roadlines for INR 32,000.00
+     (+7,064.00)".
+  3. Accepted.
+  4. Shipped, which dispatches the transfer: "left Pune plant (Chakan) for Delhi NCR DC on Mon 28 Sep with STO-2201".
+  5. Settled against Deccan's bill DR-5521 of ₹33,150: "+1,150.00 against the planned INR 32,000.00; to pay by Wed
+     28 Oct".
+
+  The Delhi delivery's order, shipped, is its goods issue. *Carriers* then shows ₹33,150 to pay to Deccan and one
+  order turned down by Sahyadri.
+* *At 2,000 deliveries on four lanes, three carriers:* the vehicles planned in 0.11 s (958 of them), the freight
+  orders made in 0.23 s, the page read in 0.03 s.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| N299 | A carrier whose vehicle was too small for a delivery was proposed when it was cheapest: the delivery was marked "bigger than one vehicle", although another carrier's truck took it whole. | Major | **Fixed:** a vehicle too small for what it must carry is the last resort, whatever it costs. A test catches it. |
+| N300 | The lane's assumed cost competed with the carriers' rates, so a light load went "with no carrier" at planning's estimate, where nobody carries it at that price. | Major | **Fixed:** the lane's own cost is used only where no carrier has a rate for the lane. |
+| N301 | After a rejection, the freight order went to the lane's own cost (₹7,212) before the next carrier (Deccan, ₹32,000), because the cheaper one came first. | Major | **Fixed:** the next carrier first; the lane's own cost only when no carrier is left. |
+| N302 | The message for new freight orders gave the fill by weight (9 %), the vehicle table the fuller of weight and volume (17 %). | Minor | **Fixed:** both give the fuller. |
+| N303 | The fill bars hid their own percentage: the text sat under the bar. This also affected the bins on the Warehouse page (6.1). | Minor | **Fixed** on both pages. |
+| N304 | One vehicle goes to one place: no multi-stop tours. A delivery bigger than one vehicle is named, not split. Freight is not added to a transfer's value in the books, nor to the cost to serve on Money. A settled bill is shown as to pay on *Carriers*, not in what we owe. A carrier's answer is recorded by hand. | Minor | Open: multi-stop tours and splitting, freight into the books and cost to serve (with 7.4), freight bills in payables, tendering by message. |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

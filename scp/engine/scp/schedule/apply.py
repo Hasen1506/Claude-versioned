@@ -143,7 +143,8 @@ def apply_result(ds: Dataset, plan, sch: ScheduleResult, ids: list[str] | None =
                    for n in needs(ds, ps, start, qty=o.qty)]
         receipts.append(ScheduledReceipt(id=rid, kind=ReceiptKind.PRODUCTION, location=o.location, product=o.product,
                                          qty=o.qty, due_date=due, start_date=start, source=o.source_id,
-                                         reservations=rvs, step_resources=steps, scheduled=True))
+                                         reservations=rvs, step_resources=steps, scheduled=True,
+                                         sales_order=o.sales_order))
         rep.applied.append(AppliedOrder(order=so.id, receipt=rid, product=o.product, location=o.location, qty=o.qty,
                                         start_date=start, due_date=due, was_start=o.start_date, was_due=o.due_date,
                                         new=True))

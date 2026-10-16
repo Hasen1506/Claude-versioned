@@ -5,17 +5,19 @@ import { api } from "../api/client";
 import type { Dataset, DemandEvent, ForecastModels, ForecastPoint, ForecastResult, ForecastSeries } from "../api/types";
 import { BucketChart, type Mark, type Span } from "../components/charts";
 import { DemandPlan } from "./DemandPlan";
+import { ValueAddView } from "./DemandValueAdd";
 import {
   Badge, cols, Edits, Empty, Panel, Provenance, Reading, RunButton, SectionBand, SolverIO, StageHeader, StaleMark, StatTile, Tabs, Term,
   MoreRows, ROW_LIMIT,
 } from "../components/ui";
 import { day, pct, plural, qty } from "../lib/format";
+import { highEnd, overEvery } from "../lib/safe";
 import { Loc, namesOf, Prod, useNames } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useReadOnly, useStore } from "../state/store";
 
-type View = "plan" | "overview" | "series" | "consensus" | "settings";
+type View = "plan" | "overview" | "series" | "consensus" | "value" | "settings";
 
 const PATTERN_HELP: Record<string, string> = {
   smooth: "Regular demand, low size variation",
@@ -58,7 +60,8 @@ export function Demand({ route }: { route: string[] }) {
         borrow a similar product's history, and consensus overrides adjust it. Using the forecast in the supply plan writes it into
         your demand data as forecast records (undoable).</>}
       answer={view !== "plan" && fc?.ok && fc.series.length > 0 && fc.summary && <>Customers are expected to order {qty(Math.round(fc.summary.total_final))} units over the next {plural(fc.periods.length, fc.period)},
-        across {plural(fc.summary.series, "product and place", "products and places")}.{fc.summary.wape !== null && <> Tested on past sales it misses by about {pct(fc.summary.wape, 0)}
+        across {plural(fc.summary.series, "product and place", "products and places")}{fc.summary.total_high > fc.summary.total_final + 0.5
+          ? <>, up to {qty(Math.round(fc.summary.total_high))} at the high end ({highEnd(ds)}, which about one period in {overEvery(ds)} goes over)</> : null}.{fc.summary.wape !== null && <> Tested on past sales it misses by about {pct(fc.summary.wape, 0)}
         {fc.summary.bias !== null && Math.abs(fc.summary.bias) >= 0.05 ? <> and runs {fc.summary.bias > 0 ? "high" : "low"} by {pct(Math.abs(fc.summary.bias), 0)}</> : null}.</>}</>}
       right={view === "plan" ? undefined : <>
       {fc && <Provenance kind="solved" at={run.at} stale={stale} />}
@@ -74,6 +77,7 @@ export function Demand({ route }: { route: string[] }) {
     // REFRESH-01: the tabs stay while the forecast is being calculated (after a reload it is calculated again)
     ...(fc?.ok && fc.series.length ? [{ id: "series" as View, label: "Series workbench", count: fc.series.length }, { id: "consensus" as View, label: "Consensus grid" }]
       : run.running && (view === "series" || view === "consensus") ? [{ id: "series" as View, label: "Series workbench" }, { id: "consensus" as View, label: "Consensus grid" }] : []),
+    { id: "value", label: "Value add" },
     { id: "settings", label: "Forecast settings" },
   ]} />;
   const notYet = outdated && !released && <div className="banner warning" role="status">
@@ -83,6 +87,7 @@ export function Demand({ route }: { route: string[] }) {
   </div>;
   const body = (children: React.ReactNode) => <div>{head}<div className="content">{tabs}{notYet}{children}</div></div>;
   if (view === "plan") return body(<>{released && <ReleaseBanner info={released} ds={ds} onClose={() => setReleased(null)} />}<DemandPlan ds={ds} /></>);
+  if (view === "value") return body(<ValueAddView ds={ds} />);
 
   if (run.error) return body(<div className="banner error"><Badge sev="error">Forecast failed</Badge>{run.error}</div>);
   if (!fc && run.running) return body(<div className="banner info" role="status">Calculating the forecast…</div>);
@@ -284,7 +289,7 @@ function Workbench({ fc, sel }: { fc: ForecastResult; sel?: string }) {
             <tbody>
               {list.slice(0, ROW_LIMIT).map((s) => (
                 <tr key={s.key} className={`clickable ${s.key === current.key ? "selected" : ""}`} onClick={() => go("demand", "series", s.key)}>
-                  <td><b><Prod id={s.product} /></b><div className="faint small">{s.location}</div></td>
+                  <td><b><Prod id={s.product} /></b><div className="faint small"><Loc id={s.location} /></div></td>
                   <td className="num"><Badge>{s.segment.abc}{s.segment.xyz}</Badge></td>
                 </tr>
               ))}
@@ -325,7 +330,7 @@ function SeriesDetail({ s, fc }: { s: ForecastSeries; fc: ForecastResult }) {
   return (
     <div className="stack" style={{ minWidth: 0 }}>
       <Panel title={<div className="row wrap" style={{ gap: 8 }}>
-        <h3>{s.product} @ {s.location}</h3>
+        <h3><Prod id={s.product} /> at <Loc id={s.location} /></h3>
         <Badge sev="info">{s.segment.abc}{s.segment.xyz}</Badge><Badge>{s.segment.pattern}</Badge>
         {s.segment.lifecycle !== "mature" && <Badge sev="warning">{s.segment.lifecycle}</Badge>}
         <span className="faint small">Champion: <b>{s.champion_label || "—"}</b>{champ && <> · WAPE {pct(champ.wape)} · MASE {champ.mase?.toFixed(2)}</>}</span>
@@ -428,6 +433,7 @@ function PeriodTable({ s }: { s: ForecastSeries }) {
 // ------------------------------------------------------------------------------------------------
 /** The IBP-style planning grid: series × periods, with consensus overrides typed straight into cells. */
 function Consensus({ fc, ds }: { fc: ForecastResult; ds: Dataset }) {
+  const me = useStore((st) => st.session?.user.email ?? "");
   const periods = fc.series[0]?.forecast ?? [];
   const totals = periods.map((_, i) => fc.series.reduce((a, s) => a + s.forecast[i].final, 0));
   const nm = namesOf(ds);
@@ -440,7 +446,7 @@ function Consensus({ fc, ds }: { fc: ForecastResult; ds: Dataset }) {
     if (v !== null && (!Number.isFinite(v) || v < 0)) return;
     store.update((d) => {
       d.overrides = (d.overrides ?? []).filter((o) => !(o.location === s.location && o.product === s.product && o.date >= p.start && o.date < p.end));
-      if (v !== null) d.overrides.push({ location: s.location, product: s.product, date: p.start, qty: v, change: null, reason: "Consensus grid", author: "" });
+      if (v !== null) d.overrides.push({ location: s.location, product: s.product, date: p.start, qty: v, change: null, reason: "Consensus grid", author: me });
     });
     void store.run("forecast");
   };

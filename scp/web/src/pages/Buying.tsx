@@ -542,10 +542,26 @@ function Suppliers({ res, ds }: { res: PurchasingView; ds: Dataset }) {
       </Panel>
       {open && <SupplierDetail v={res.vendors.find((x) => x.supplier === open)!} currency={res.currency} ds={ds} />}
       <Reading formula={<>On time: share of delivered lines fully in by their due date. In full: delivered within the tolerance
-        ({pct(ds.execution?.delivery_tolerance ?? 0.02, 0)}, or the supplier's own).</>}
-        soWhat="The score comes from lines closed by the roll-forward, so it grows as the weeks roll. Blocking a supplier keeps planning and new orders off it; its open orders are still received." />
+        ({pct(ds.execution?.delivery_tolerance ?? 0.02, 0)}, or the supplier's own). Spread measured (a supplier's sources): the standard
+        deviation of goods receipt less due date over the last year, from the source's own receipts once it has three, else from all its supplier's.</>}
+        soWhat="The score comes from lines closed by the roll-forward, so it grows as the weeks roll. Safety stock covers the spread planned; planning with the measured one makes it cover what the supplier really does, and a supplier late on average needs a longer lead time instead. Blocking a supplier keeps planning and new orders off it; its open orders are still received." />
     </div>
   );
+}
+
+// How far the source's receipts landed from their due dates (Enterprise 4.4), and the button that plans with it
+function Measured({ r, planned }: { r: VendorRow["info_records"][number]; planned: number }) {
+  const m = r.measured;
+  if (!m) return <span className="faint small">too few receipts yet</span>;
+  const sd = Math.round(m.std_days * 10) / 10, mean = m.mean_days_late;
+  const use = () => store.update((d) => {
+    const pu = (d.purchasing_sources ?? []).find((x) => x.id === r.source_id);
+    if (pu) pu.lead_time_std_days = sd;
+  });
+  return <span className="small">± {sd.toFixed(1)} d <span className="faint">over {plural(m.lines, "receipt")}{m.basis === "supplier" ? " of all its parts" : ""}
+    {Math.abs(mean) >= 0.05 ? `, ${Math.abs(mean).toFixed(1)} d ${mean > 0 ? "late" : "early"} on average` : ""}</span>
+    {Math.abs(sd - planned) >= 0.05 && <Edits> <button className="btn sm" onClick={use}
+      title="Plan with the measured spread: safety stock covers it">Plan with ± {sd.toFixed(1)} d</button></Edits>}</span>;
 }
 
 function SupplierDetail({ v, currency, ds }: { v: VendorRow; currency: string; ds: Dataset }) {
@@ -576,7 +592,7 @@ function SupplierDetail({ v, currency, ds }: { v: VendorRow; currency: string; d
         <div className="table-wrap">
           <table className="t">
             <thead><tr><th>Source</th><th>Product</th><th>To</th><th className="num">Price</th><th>Price scales</th><th className="num">Min</th>
-              <th className="num">Lead time</th><th>Valid</th><th>Source list</th><th>Scheduling agreement</th></tr></thead>
+              <th className="num">Lead time</th><th className="num">Spread planned</th><th>Spread measured</th><th>Valid</th><th>Source list</th><th>Scheduling agreement</th></tr></thead>
             <tbody>
               {v.info_records.map((r) => (
                 <tr key={r.source_id}>
@@ -586,6 +602,10 @@ function SupplierDetail({ v, currency, ds }: { v: VendorRow; currency: string; d
                   <td className="small">{r.price_scales.length ? r.price_scales.map((s) => `from ${qty(s.from_qty)}: ${unitMoney(s.price, r.currency)}`).join(" · ") : "—"}</td>
                   <td className="num">{r.moq ? qty(r.moq) : ""}{r.rounding_qty ? <span className="faint small"> ×{qty(r.rounding_qty)}</span> : ""}</td>
                   <td className="num">{qty(r.lead_time_days)} d</td>
+                  {(() => { // the spread as the data says now: planning with the measured one shows at once, before a recalculation
+                    const planned = (ds.purchasing_sources ?? []).find((x) => x.id === r.source_id)?.lead_time_std_days ?? r.lead_time_std_days;
+                    return <><td className="num">{planned ? `± ${planned.toFixed(1)} d` : "none"}</td><td><Measured r={r} planned={planned} /></td></>;
+                  })()}
                   <td className="small">{r.valid_from || r.valid_to ? `${r.valid_from ? day(r.valid_from) : "…"} – ${r.valid_to ? day(r.valid_to) : "…"}` : "always"}</td>
                   <td>{r.blocked ? <Badge sev="error">blocked</Badge> : r.fixed ? <Badge sev="ok">fixed</Badge> : <span className="small">priority {r.priority}{r.quota != null ? ` · quota ${pct(r.quota, 0)}` : ""}</span>}</td>
                   <td>{(() => {

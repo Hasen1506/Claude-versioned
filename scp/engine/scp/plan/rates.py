@@ -50,27 +50,45 @@ def _lp(ds: Dataset, node: Node) -> LocationProduct:
     return ds.planning_lp(node)
 
 
-def independent_demand(ds: Dataset) -> dict[Node, list[tuple[IndependentReq, int]]]:
+def independent_demand(ds: Dataset, orders_consume: bool = False) -> dict[Node, list[tuple[IndependentReq, int]]]:
     """Each node's independent requirements as MRP plans them (forecast after consumption by sales orders,
-    plus the orders, by planning strategy), each with the days it spreads over (an order: one)."""
+    plus the orders, by planning strategy), each with the days it spreads over (an order: one). With
+    ``orders_consume``, orders use up the forecast under make to stock too (what of the forecast is still to be
+    ordered, whatever the strategy plans)."""
     recs: dict[Node, list] = defaultdict(list)
     for i, d in enumerate(ds.demand):
         recs[(d.location, d.product)].append((d.id or f"#{i}", d))
+    # a variant's orders use up its planning material's forecast where they are sold (S/4 strategies 60/63)
+    # (the variants' closed orders count too, where they have no open record left)
+    of = ds.variants_of
+    variants: dict[Node, list] = {node: [(f, (node[0], v), recs.get((node[0], v), [])) for v, f in of[node[1]]]
+                                  for node in recs if node[1] in of}
     out: dict[Node, list[tuple[IndependentReq, int]]] = {}
     for node, rs in recs.items():
         lp = ds.demand_lp(node)
         period = {rid: (r.period_days or 1) for rid, r in rs}
+        strategy = Strategy.MTS_CONSUME if orders_consume and lp.strategy is Strategy.MTS else lp.strategy
         out[node] = [(r, period[r.source_ref] if r.kind == "forecast" else 1)
-                     for r in effective_demand(rs, lp.strategy, lp.consumption_backward_days,
-                                               lp.consumption_forward_days, ds=ds, node=node)]
+                     for r in effective_demand(rs, strategy, lp.consumption_backward_days,
+                                               lp.consumption_forward_days, ds=ds, node=node,
+                                               variants=variants.get(node, ()))]
     return out
 
 
 def direct_rates(ds: Dataset, lo: date, hi: date) -> dict[Node, float]:
     """Mean daily independent demand per node in [lo, hi), after forecast consumption."""
+    return _direct(ds, lo, hi)[0]
+
+
+def _direct(ds: Dataset, lo: date, hi: date) -> tuple[dict[Node, float], dict[Node, float]]:
+    """:func:`direct_rates`, and the part of it that is forecast."""
     span = max(1, (hi - lo).days)
-    return {node: sum(r.qty * _overlap(r.date, days, lo, hi) for r, days in reqs) / span
-            for node, reqs in independent_demand(ds).items()}
+    total: dict[Node, float] = {}
+    fc: dict[Node, float] = {}
+    for node, reqs in independent_demand(ds).items():
+        total[node] = sum(r.qty * _overlap(r.date, days, lo, hi) for r, days in reqs) / span
+        fc[node] = sum(r.qty * _overlap(r.date, days, lo, hi) for r, days in reqs if r.kind == "forecast") / span
+    return total, fc
 
 
 def upstream_mix(ds: Dataset, g: NetworkGraph, node: Node) -> list[tuple[Node, float]]:
@@ -93,7 +111,8 @@ def upstream_mix(ds: Dataset, g: NetworkGraph, node: Node) -> list[tuple[Node, f
 
 
 def demand_flows(ds: Dataset, g: NetworkGraph, lo: date, hi: date) -> Flow:
-    f = Flow(direct=direct_rates(ds, lo, hi))
+    direct, forecast = _direct(ds, lo, hi)
+    f = Flow(direct=direct)
     default_cv = ds.inventory.default_demand_cv
     inflow_mean: dict[Node, float] = defaultdict(float)
     inflow_var: dict[Node, float] = defaultdict(float)
@@ -102,6 +121,10 @@ def demand_flows(ds: Dataset, g: NetworkGraph, lo: date, hi: date) -> Flow:
         cv = lp.safety_stock.demand_cv if lp else None
         mu_d = f.direct.get(node, 0.0)
         mean = mu_d + inflow_mean[node]
+        if forecast.get(node, 0.0) > 0 and _lp(ds, node).strategy is Strategy.ASSEMBLY:
+            # strategy 70: the parents' demand uses the assembly's forecast up; the larger of the two is planned
+            fc = forecast[node]
+            mean = mu_d - fc + max(fc, inflow_mean[node])
         if cv is not None:
             var, src = (cv * mean * SQRT7) ** 2, "policy"
         else:

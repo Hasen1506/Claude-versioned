@@ -62,10 +62,13 @@ def test_a_forecast_release_never_changes_history(a, b, existing, only_first):
     note(f"released {info.records} records for {info.series} series; replaced {info.replaced}")
     # 1. every other part of the company is untouched: history, movements, orders, master data …
     for name in type(x).model_fields:
-        if name in ("demand", "forecasting"):
+        if name in ("demand", "forecasting", "forecast_snapshots"):
             continue
         assert getattr(new, name) == getattr(x, name), f"release changed {name}"
     released = {(s.location, s.product) for s in res.series if keys is None or s.key in keys}
+    # the kept forecasts (forecast value add) are of the released series only, one per series and period
+    assert {(k.location, k.product) for k in new.forecast_snapshots} <= released
+    assert len({(k.location, k.product, k.start) for k in new.forecast_snapshots}) == len(new.forecast_snapshots)
     old = [_key(r) for r in x.demand]
     kept = [_key(r) for r in new.demand]
     for r in x.demand:

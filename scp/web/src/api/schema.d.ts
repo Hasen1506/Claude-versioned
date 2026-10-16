@@ -55,6 +55,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/signin/second": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Signin Second
+         * @description Finish signing in with two steps: the ticket the password gave, and the authenticator app's code.
+         */
+        post: operations["auth_signin_second_api_auth_signin_second_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/adopt": {
         parameters: {
             query?: never;
@@ -199,6 +219,166 @@ export interface paths {
         put?: never;
         /** Auth Password */
         post: operations["auth_password_api_auth_password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Email Change
+         * @description Move the account to another address (password and, with two steps, the app's code again). The old address is
+         *     told; a link to confirm the new one goes there when the server sends mail. Other sessions are signed out.
+         */
+        post: operations["auth_email_change_api_auth_email_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/account/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Account Export
+         * @description Download everything the account holds (one JSON file), after the password (and code) again.
+         */
+        post: operations["auth_account_export_api_auth_account_export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/account/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auth Account Deletion Plan
+         * @description What deleting the account would do: said first.
+         */
+        get: operations["auth_account_deletion_plan_api_auth_account_delete_get"];
+        put?: never;
+        /**
+         * Auth Account Delete
+         * @description Delete the account (password and code again; each company it alone owns handed over or deleted, as chosen).
+         *     Signs this browser out.
+         */
+        post: operations["auth_account_delete_api_auth_account_delete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/two-step": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Auth Two Step */
+        get: operations["auth_two_step_api_auth_two_step_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/two-step/begin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Two Step Begin
+         * @description A new key for an authenticator app (password again). Nothing changes until a code from the app comes back.
+         */
+        post: operations["auth_two_step_begin_api_auth_two_step_begin_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/two-step/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Two Step Enable
+         * @description Turn two-step sign-in on with a code from the app: answers the recovery codes, once. Signs out elsewhere.
+         */
+        post: operations["auth_two_step_enable_api_auth_two_step_enable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/two-step/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Auth Two Step Disable */
+        post: operations["auth_two_step_disable_api_auth_two_step_disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/two-step/recovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auth Two Step Recovery
+         * @description New recovery codes (the old ones stop working).
+         */
+        post: operations["auth_two_step_recovery_api_auth_two_step_recovery_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -375,6 +555,26 @@ export interface paths {
          * @description An owner turns master-data approval on or off (on needs a second person who can change the data).
          */
         put: operations["set_company_approval_api_companies__cid__approval_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/two-step": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Company Two Step
+         * @description An owner requires two-step sign-in of every member (or stops): one without it cannot open the company.
+         */
+        put: operations["set_company_two_step_api_companies__cid__two_step_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -823,6 +1023,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/companies/{cid}/imports/try": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Try Import
+         * @description Try an import before saving it, on a sample pasted in or on what its source gives now: what would become of
+         *     each line, the columns found and the first rows as the fields here. Nothing is saved, moved or logged.
+         */
+        post: operations["try_import_api_companies__cid__imports_try_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/companies/{cid}/imports/{jid}/dry-run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dry Run Import
+         * @description A saved import read now and checked line by line, with nothing saved, no file moved and its schedule as it
+         *     was.
+         */
+        post: operations["dry_run_import_api_companies__cid__imports__jid__dry_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/companies/{cid}/imports/{jid}/run": {
         parameters: {
             query?: never;
@@ -939,6 +1181,113 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sop/cycles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Cycles */
+        get: operations["list_cycles_api_sop_cycles_get"];
+        put?: never;
+        /** Create Cycle */
+        post: operations["create_cycle_api_sop_cycles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sop/cycles/{cid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Cycle */
+        get: operations["get_cycle_api_sop_cycles__cid__get"];
+        put?: never;
+        post?: never;
+        /** Delete Cycle */
+        delete: operations["delete_cycle_api_sop_cycles__cid__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sop/cycles/{cid}/steps/{step}/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Step Owner */
+        put: operations["set_step_owner_api_sop_cycles__cid__steps__step__owner_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sop/cycles/{cid}/steps/{step}/sign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sign Step */
+        post: operations["sign_step_api_sop_cycles__cid__steps__step__sign_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sop/cycles/{cid}/steps/{step}/reopen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reopen Step */
+        post: operations["reopen_step_api_sop_cycles__cid__steps__step__reopen_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sop/figures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Step Figures
+         * @description A step's figures for the company as it is now: what signing it would record (nothing is kept).
+         */
+        post: operations["step_figures_api_sop_figures_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -946,7 +1295,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Health */
+        /**
+         * Health
+         * @description Whether the server answers and reaches its database (a load balancer or the image's check calls it).
+         */
         get: operations["health_api_health_get"];
         put?: never;
         post?: never;
@@ -1126,6 +1478,48 @@ export interface paths {
         put?: never;
         /** Post Release */
         post: operations["post_release_api_forecast_release_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forecast/value-add": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Value Add
+         * @description Forecast value add: each layer of the kept forecasts (naïve, statistical, events, overrides) against the sales
+         *     of the periods that have sold, in total, per product family and per planner.
+         */
+        post: operations["post_value_add_api_forecast_value_add_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/plan/strategy-advice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Strategy Advice
+         * @description Strategy advisor (S/4 §5.4): for each product sold, the days customers wait against the time to deliver from
+         *     stock, to assemble from parts and to make from scratch; the strategy that fits, and whether today's does.
+         */
+        post: operations["post_strategy_advice_api_plan_strategy_advice_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1612,6 +2006,169 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/valuation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Valuation
+         * @description Stock in the books: each place's quantity, value and price (standard or moving average), the postings that
+         *     moved it and the price differences booked aside.
+         */
+        post: operations["post_valuation_api_valuation_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cycle-counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Cycle Counts
+         * @description Cycle counting: each stocked product's ABC class, its last count and when it is next due.
+         */
+        post: operations["post_cycle_counts_api_cycle_counts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/warehouse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Warehouse
+         * @description A place's bins with what each holds, the stock in no bin (to put away, or staged to ship) and what the journal
+         *     says about it.
+         */
+        post: operations["post_warehouse_api_warehouse_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/warehouse/putaway": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Warehouse Putaway
+         * @description Where the stock in no bin would go, by the place's rules (nothing is changed).
+         */
+        post: operations["post_warehouse_putaway_api_warehouse_putaway_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/warehouse/picks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Warehouse Picks
+         * @description A wave's pick list in walk order.
+         */
+        post: operations["post_warehouse_picks_api_warehouse_picks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/warehouse/act": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Warehouse Action
+         * @description One warehouse step: make the put-away tasks, a wave of picks, confirm or cancel a task, move between bins.
+         */
+        post: operations["post_warehouse_action_api_warehouse_act_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transport": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Transport
+         * @description What is waiting to be loaded, in vehicles by lane with the cheapest carrier, and the freight orders with
+         *     their cost shared over what they carry.
+         */
+        post: operations["post_transport_api_transport_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transport/act": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Transport Action
+         * @description One transport step: freight orders for what is waiting, tendered, accepted or rejected, shipped, settled.
+         */
+        post: operations["post_transport_action_api_transport_act_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/actuals/production-usage": {
         parameters: {
             query?: never;
@@ -1749,6 +2306,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Ask
+         * @description Ask the plan (enterprise plan 5.2): why something is late, what if something changes, who owns a problem, what
+         *     is at risk. Answered from the plan and the open worklist, each sentence citing its records; fixes and what-ifs it
+         *     proposes are tried and kept by a person. Nothing is changed or recorded.
+         */
+        post: operations["post_ask_api_ask_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tower/items/{iid}": {
         parameters: {
             query?: never;
@@ -1845,10 +2424,32 @@ export interface paths {
         put?: never;
         /**
          * Post Whatif
-         * @description Roadmap E: plan 2–4 scenarios (the base with quick-change chips, or whole datasets) and compare them side by
-         *     side: cost, service, inventory, capacity, late units, their deltas against the first, and cost per service point.
+         * @description Roadmap E: plan 2–4 scenarios (the base with quick-change chips, whole datasets, or stored versions of the
+         *     caller's company, read here) and compare them side by side: cost, service, inventory, capacity, late units, their
+         *     deltas against the first, cost per service point, and money at risk in each period.
          */
         post: operations["post_whatif_api_whatif_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/whatif/sweep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Whatif Sweep
+         * @description Enterprise plan 5.3: one change at 2–8 sizes, each planned in full, read as cost against service (safety stock,
+         *     against the service expected when demand misses its forecast) or as an exposure (how far before service falls).
+         */
+        post: operations["post_whatif_sweep_api_whatif_sweep_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1957,6 +2558,49 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AccountConfirm */
+        AccountConfirm: {
+            /**
+             * Password
+             * @default
+             */
+            password: string;
+            /**
+             * Code
+             * @default
+             */
+            code: string;
+            /**
+             * Confirm
+             * @default
+             */
+            confirm: string;
+        };
+        /** AccountDelete */
+        AccountDelete: {
+            /**
+             * Password
+             * @default
+             */
+            password: string;
+            /**
+             * Code
+             * @default
+             */
+            code: string;
+            /**
+             * Confirm
+             * @default
+             */
+            confirm: string;
+            /**
+             * Choices
+             * @default {}
+             */
+            choices: {
+                [key: string]: string;
+            };
+        };
         /**
          * AccuracyRecord
          * @description Forecast against actual sales for one series over one elapsed week (written by the roll-forward).
@@ -2124,18 +2768,30 @@ export interface components {
         };
         /**
          * Allocation
-         * @description Product allocation (PAL): caps what can be confirmed for a product (and optionally a set of
-         *     customers) in a period, independent of stock. Once a product-customer combination has any
-         *     allocation, a date in no allocation period has nothing to confirm (strict, as in aATP).
+         * @description Product allocation (PAL): caps what can be confirmed for a product or a product family (and optionally a set
+         *     of customers) in a period, independent of stock. Once a product-customer combination has any allocation, a date
+         *     in no allocation period has nothing to confirm (strict, as in aATP).
+         *
+         *     Hierarchy (S/4 guide §7.4): a family's cap is checked before the product's, and an order is confirmed only as far
+         *     as every level allows. At each level the allocations naming the customer apply; an allocation for no customer in
+         *     particular is the catch-all for every customer without one of their own.
          */
         Allocation: {
             /** Id */
             id: string;
-            /** Product */
-            product: string;
+            /**
+             * Product
+             * @description The product it caps (or give a family)
+             */
+            product?: string | null;
+            /**
+             * Family
+             * @description The product family it caps, across its products (checked before a product's own allocation)
+             */
+            family?: string | null;
             /**
              * Customers
-             * @description Demand locations it applies to (empty = all)
+             * @description Demand locations it applies to (empty = every customer without an allocation of their own)
              */
             customers?: string[];
             /**
@@ -2158,13 +2814,26 @@ export interface components {
              * @enum {string}
              */
             fallback: "next_period" | "reject";
+            /**
+             * Carry Forward
+             * @description What earlier periods of the same allocation left unused can be confirmed in this one
+             * @default false
+             */
+            carry_forward: boolean;
         };
         /** AllocationUse */
         AllocationUse: {
             /** Id */
             id: string;
             /** Product */
-            product: string;
+            product: string | null;
+            /** Family */
+            family: string | null;
+            /**
+             * Carry Forward
+             * @default false
+             */
+            carry_forward: boolean;
             /** Customers */
             customers: string[];
             /**
@@ -2207,6 +2876,85 @@ export interface components {
             revoked_at: string | null;
             /** Token */
             token: string | null;
+        };
+        /**
+         * AppSettings
+         * @description What a connector needs to know beyond its address and credentials.
+         */
+        AppSettings: {
+            /**
+             * Company
+             * @description Tally: the company's name in Tally (empty: the one open in Tally)
+             * @default
+             */
+            company: string;
+            /**
+             * Place
+             * @description Stock: the place here it is at, unless a godown or warehouse is translated (the mapping's location)
+             * @default
+             */
+            place: string;
+            /**
+             * @description The type a new product gets here
+             * @default FG
+             */
+            product_type: components["schemas"]["ProductType"];
+            /**
+             * Days Back
+             * @description Tally orders: the vouchers of this many days back are read (a changed one is changed here)
+             * @default 90
+             */
+            days_back: number;
+            /**
+             * Order Type
+             * @description Tally: the voucher type read as customer orders
+             * @default Sales Order
+             */
+            order_type: string;
+            /**
+             * Purchase Type
+             * @description Tally: the voucher type purchase orders are made as
+             * @default Purchase Order
+             */
+            purchase_type: string;
+            /**
+             * Purchase Ledger
+             * @description Tally: the ledger a purchase order is booked to
+             * @default Purchase
+             */
+            purchase_ledger: string;
+            /**
+             * Data Centre
+             * @description Zoho: where the organisation is kept (zoho.in, zoho.com, …)
+             * @default in
+             * @enum {string}
+             */
+            data_centre: "in" | "com" | "eu" | "com.au" | "jp" | "ca" | "sa";
+            /**
+             * Customer
+             * @description Shopify orders: the customer here they are booked to (the online shop)
+             * @default
+             */
+            customer: string;
+            /**
+             * Api Version
+             * @description Shopify: the Admin API version asked (a supported one, 2026-07)
+             * @default 2026-07
+             */
+            api_version: string;
+            /**
+             * Database
+             * @description Odoo: the database's name
+             * @default
+             */
+            database: string;
+            /**
+             * Odoo Api
+             * @description Odoo: JSON-RPC (every version), or the JSON API of Odoo 19 and later
+             * @default jsonrpc
+             * @enum {string}
+             */
+            odoo_api: "jsonrpc" | "json2";
         };
         /** AppliedOrder */
         AppliedOrder: {
@@ -2280,6 +3028,52 @@ export interface components {
         ApprovalSetting: {
             /** Approval */
             approval: boolean;
+        };
+        /** AskAnswer */
+        AskAnswer: {
+            /** Question */
+            question: string;
+            /**
+             * Intent
+             * @enum {string}
+             */
+            intent: "why_late" | "what_if" | "who_owns" | "at_risk" | "unknown";
+            /** Understood */
+            understood: string;
+            /** Answer */
+            answer: string;
+            /**
+             * Findings
+             * @default []
+             */
+            findings: components["schemas"]["Finding"][];
+            /**
+             * Proposals
+             * @default []
+             */
+            proposals: components["schemas"]["Proposal"][];
+            /**
+             * Suggestions
+             * @default []
+             */
+            suggestions: string[];
+            scenario: components["schemas"]["ScenarioOut"] | null;
+            /**
+             * Currency
+             * @default
+             */
+            currency: string;
+            /**
+             * More
+             * @default 0
+             */
+            more: number;
+        };
+        /** AskBody */
+        AskBody: {
+            /** Question */
+            question: string;
+            dataset: components["schemas"]["Dataset"];
         };
         /** AtpNode */
         AtpNode: {
@@ -2385,6 +3179,83 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /**
+         * Bin
+         * @description A storage bin (≈ EWM storage bin): the smallest place stock is kept in, its id the label read by the scanner.
+         */
+        Bin: {
+            /** Location */
+            location: string;
+            /**
+             * Id
+             * @description The bin's label, as printed on its barcode (e.g. A-01-02)
+             */
+            id: string;
+            /**
+             * Storage Type
+             * @description The storage type it belongs to
+             */
+            storage_type: string;
+            /**
+             * Walk
+             * @description Its place on the picking walk: picks are listed lowest first
+             * @default 0
+             */
+            walk: number;
+            /**
+             * Max Qty
+             * @description Most it holds, in the products' own units (empty: no limit)
+             */
+            max_qty?: number | null;
+            /**
+             * Max Kg
+             * @description Most weight it holds (empty: no limit)
+             */
+            max_kg?: number | null;
+            /**
+             * Product
+             * @description Kept for one product (fixed-bin put-away)
+             */
+            product?: string | null;
+            /**
+             * Blocked
+             * @description Nothing is put away into it or picked from it
+             * @default false
+             */
+            blocked: boolean;
+        };
+        /** BinRow */
+        BinRow: {
+            /** Bin */
+            bin: string;
+            /** Storage Type */
+            storage_type: string;
+            /** Walk */
+            walk: number;
+            /** Product */
+            product: string | null;
+            /** Batch */
+            batch: string | null;
+            stock_type: components["schemas"]["StockType"] | null;
+            /**
+             * Qty
+             * @default 0
+             */
+            qty: number;
+            /** Since */
+            since: string | null;
+            /** Expires On */
+            expires_on: string | null;
+            /** Fill */
+            fill: number | null;
+            /**
+             * Blocked
+             * @default false
+             */
+            blocked: boolean;
+            /** Fixed For */
+            fixed_for: string | null;
         };
         /**
          * Binding
@@ -2591,6 +3462,40 @@ export interface components {
             /** Estimate */
             estimate: number;
         };
+        /**
+         * Budget
+         * @description A month's budget: what the company planned to sell, for a product, a product family or the whole company.
+         *     The monthly S&OP cycle sets the demand plan and the supply plan against it, volume and revenue.
+         */
+        Budget: {
+            /**
+             * Month
+             * Format: date
+             * @description The month it is for (any day of it; read as the month)
+             */
+            month: string;
+            /**
+             * Product
+             * @description The product it budgets (or give a family, or neither for the whole company)
+             */
+            product?: string | null;
+            /**
+             * Family
+             * @description The product family it budgets
+             */
+            family?: string | null;
+            /**
+             * Qty
+             * @description Units planned to sell in the month
+             * @default 0
+             */
+            qty: number;
+            /**
+             * Revenue
+             * @description Sales planned in the month, in the company currency. Empty = the units at the product's price (a product's budget), else no revenue budget
+             */
+            revenue?: number | null;
+        };
         /** Calendar */
         Calendar: {
             /** Id */
@@ -2739,6 +3644,55 @@ export interface components {
              */
             life_years: number;
         };
+        /**
+         * Carrier
+         * @description A transport company and its rates.
+         */
+        Carrier: {
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** Rates */
+            rates: components["schemas"]["FreightRate"][];
+            /**
+             * Payment Days
+             * @description Days to pay its freight bill
+             * @default 30
+             */
+            payment_days: number;
+            /**
+             * Blocked
+             * @description Not tendered to
+             * @default false
+             */
+            blocked: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** CarrierRow */
+        CarrierRow: {
+            /** Carrier */
+            carrier: string;
+            /** Name */
+            name: string;
+            /** Orders */
+            orders: number;
+            /** Planned */
+            planned: number;
+            /** Billed */
+            billed: number;
+            /** To Pay */
+            to_pay: number;
+            /** Rejected */
+            rejected: number;
+        };
         /** CaseInfo */
         CaseInfo: {
             /** Example */
@@ -2795,6 +3749,43 @@ export interface components {
              * @default
              */
             why: string;
+        };
+        /** Choice */
+        Choice: {
+            /** Carrier */
+            carrier: string | null;
+            /** Name */
+            name: string;
+            mode: components["schemas"]["TransportMode"];
+            /** Vehicles */
+            vehicles: number;
+            /** Cost */
+            cost: number;
+            /** Too Small */
+            too_small: boolean;
+        };
+        /**
+         * Cite
+         * @description A record an answer rests on, and where it is seen in the application.
+         */
+        Cite: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "product" | "location" | "customer" | "supplier" | "resource" | "order" | "receipt" | "demand" | "exception" | "rule";
+            /** Id */
+            id: string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Href
+             * @default
+             */
+            href: string;
         };
         /** Clash */
         Clash: {
@@ -2936,6 +3927,25 @@ export interface components {
             /** Items */
             items: components["schemas"]["ItemChange"][];
         };
+        /** CompanyChoice */
+        CompanyChoice: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Role
+             * @default owner
+             */
+            role: string;
+            /**
+             * Members
+             * @default []
+             */
+            members: {
+                [key: string]: string;
+            }[];
+        };
         /** CompanyDoc */
         CompanyDoc: {
             meta: components["schemas"]["CompanyMeta"];
@@ -2982,6 +3992,16 @@ export interface components {
              * @default []
              */
             families: string[];
+            /**
+             * Two Step
+             * @default false
+             */
+            two_step: boolean;
+            /**
+             * Needs Two Step
+             * @default false
+             */
+            needs_two_step: boolean;
         };
         /** CompareRequest */
         CompareRequest: {
@@ -3048,6 +4068,7 @@ export interface components {
             /**
              * Ship Date
              * Format: date
+             * @description Material availability date: the goods are there to pick and pack
              */
             ship_date: string;
             /**
@@ -3064,6 +4085,11 @@ export interface components {
              * @enum {string}
              */
             method: "atp" | "rlt" | "ctp";
+            /**
+             * Goods Issue
+             * @description The goods leave, after picking, packing and loading (empty: the day they are there)
+             */
+            goods_issue?: string | null;
         };
         /**
          * ConfirmationStrategy
@@ -3174,6 +4200,30 @@ export interface components {
             unabsorbed: number;
             /** Difference */
             difference: number;
+        };
+        /** CostlyOverride */
+        CostlyOverride: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /** Label */
+            label: string;
+            /** Author */
+            author: string;
+            /** Actual */
+            actual: number;
+            /** Adjusted */
+            adjusted: number;
+            /** Final */
+            final: number;
+            /** Cost */
+            cost: number;
         };
         /** CountInput */
         CountInput: {
@@ -3448,6 +4498,193 @@ export interface components {
             /** Suggested */
             suggested: number;
         };
+        /** Cycle */
+        Cycle: {
+            /** Id */
+            id: string;
+            /** Month */
+            month: string;
+            /** Status */
+            status: string;
+            /** Created At */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Next */
+            next: string | null;
+            /** Steps */
+            steps: components["schemas"]["CycleStep"][];
+            /** Log */
+            log: components["schemas"]["CycleLog"][];
+        };
+        /** CycleClass */
+        CycleClass: {
+            /** Cls */
+            cls: string;
+            /** Items */
+            items: number;
+            /** Per Year */
+            per_year: number;
+            /** Due */
+            due: number;
+            /** Counted */
+            counted: number;
+            /** Exact */
+            exact: number;
+            /** Accuracy */
+            accuracy: number | null;
+            /** Difference Value */
+            difference_value: number;
+        };
+        /**
+         * CycleCounting
+         * @description Cycle counting by ABC class (≈ S/4 cycle counting indicator, MARC-ABCIN): each place's products are classed
+         *     by the value they used up over the look-back, and each class is counted so many times a year.
+         */
+        CycleCounting: {
+            /**
+             * A Share
+             * @description Share of the value used up that closes A
+             * @default 0.8
+             */
+            a_share: number;
+            /**
+             * B Share
+             * @description Share that closes B
+             * @default 0.95
+             */
+            b_share: number;
+            /**
+             * Counts A
+             * @description Counts a year of an A item
+             * @default 12
+             */
+            counts_a: number;
+            /**
+             * Counts B
+             * @description Counts a year of a B item
+             * @default 4
+             */
+            counts_b: number;
+            /**
+             * Counts C
+             * @description Counts a year of a C item
+             * @default 1
+             */
+            counts_c: number;
+            /**
+             * Lookback Days
+             * @description The days of issues and sales the classes are made of
+             * @default 365
+             */
+            lookback_days: number;
+            /**
+             * Block
+             * @description Cycle count documents hold the postings of what they count until posted
+             * @default false
+             */
+            block: boolean;
+        };
+        /** CycleLog */
+        CycleLog: {
+            /** At */
+            at: string;
+            /** Actor */
+            actor: string;
+            /** Action */
+            action: string;
+            /** Detail */
+            detail: string;
+        };
+        /** CyclePlan */
+        CyclePlan: {
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Location */
+            location: string | null;
+            /** Rows */
+            rows: components["schemas"]["CycleRow"][];
+            /** Classes */
+            classes: components["schemas"]["CycleClass"][];
+            /** Due */
+            due: number;
+            /** Currency */
+            currency: string;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /** CycleRow */
+        CycleRow: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Cls */
+            cls: string;
+            /** By Hand */
+            by_hand: boolean;
+            /** Used Value */
+            used_value: number;
+            /** Share */
+            share: number;
+            /** Per Year */
+            per_year: number;
+            /** Last Counted */
+            last_counted: string | null;
+            /** Next Due */
+            next_due: string | null;
+            /** Due */
+            due: boolean;
+            /** Overdue Days */
+            overdue_days: number;
+            /** On Doc */
+            on_doc: string | null;
+        };
+        /** CycleStep */
+        CycleStep: {
+            /** Step */
+            step: string;
+            /** Label */
+            label: string;
+            /** Owner */
+            owner: string;
+            /** Status */
+            status: string;
+            /**
+             * Signed By
+             * @default
+             */
+            signed_by: string;
+            /** Signed At */
+            signed_at: string | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /** Version Id */
+            version_id: string | null;
+            figures: components["schemas"]["Figures"] | null;
+        };
+        /** CycleSummary */
+        CycleSummary: {
+            /** Id */
+            id: string;
+            /** Month */
+            month: string;
+            /** Status */
+            status: string;
+            /** Next */
+            next: string | null;
+            /** Signed */
+            signed: number;
+        };
         /** DataQualityRow */
         DataQualityRow: {
             /** Code */
@@ -3537,10 +4774,14 @@ export interface components {
             npi?: components["schemas"]["NpiRule"][];
             /** Overrides */
             overrides?: components["schemas"]["ForecastOverride"][];
+            /** Forecast Snapshots */
+            forecast_snapshots?: components["schemas"]["ForecastSnapshot"][];
             inventory?: components["schemas"]["InventorySettings"];
             sop?: components["schemas"]["SopSettings"];
             /** Stock Targets */
             stock_targets?: components["schemas"]["StockTarget"][];
+            /** Budgets */
+            budgets?: components["schemas"]["Budget"][];
             /** Changeovers */
             changeovers?: components["schemas"]["Changeover"][];
             scheduling?: components["schemas"]["ScheduleSettings"];
@@ -3555,6 +4796,21 @@ export interface components {
             batches?: components["schemas"]["Batch"][];
             /** Inventory Docs */
             inventory_docs?: components["schemas"]["InventoryDoc"][];
+            /** Storage Types */
+            storage_types?: components["schemas"]["StorageType"][];
+            /** Bins */
+            bins?: components["schemas"]["Bin"][];
+            /** Putaway Rules */
+            putaway_rules?: components["schemas"]["PutawayRule"][];
+            /** Warehouse Tasks */
+            warehouse_tasks?: components["schemas"]["WarehouseTask"][];
+            /** Waves */
+            waves?: components["schemas"]["Wave"][];
+            /** Carriers */
+            carriers?: components["schemas"]["Carrier"][];
+            /** Freight Orders */
+            freight_orders?: components["schemas"]["FreightOrder"][];
+            transport?: components["schemas"]["TransportSettings"];
             /** Closed Orders */
             closed_orders?: components["schemas"]["ClosedOrder"][];
             /** Accuracy */
@@ -3652,6 +4908,22 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /** Deleted */
+        Deleted: {
+            /** Deleted At */
+            deleted_at: string;
+            /** Done */
+            done: string[];
+        };
+        /** DeletionPlan */
+        DeletionPlan: {
+            /** Alone */
+            alone: components["schemas"]["CompanyChoice"][];
+            /** Shared */
+            shared: components["schemas"]["CompanyChoice"][];
+            /** Member */
+            member: components["schemas"]["CompanyChoice"][];
         };
         /**
          * Delivery
@@ -3989,6 +5261,11 @@ export interface components {
              */
             original_qty?: number | null;
             /**
+             * High Qty
+             * @description Forecast only: the high end of the forecast's interval over the record (P90 at the default 80 % interval), written by a forecast release. An order check keeps it for the orders still to come to give a safe date beside the expected one. Empty: no spread is known
+             */
+            high_qty?: number | null;
+            /**
              * Released
              * @description Forecast only: written by a forecast release. Releasing every series again replaces it, so a series the new forecast no longer has does not stay in demand
              * @default false
@@ -4036,6 +5313,18 @@ export interface components {
              * @default []
              */
             unpriced: string[];
+        };
+        /** EmailChange */
+        EmailChange: {
+            /** Password */
+            password: string;
+            /** Email */
+            email: string;
+            /**
+             * Code
+             * @default
+             */
+            code: string;
         };
         /** EmailVerify */
         EmailVerify: {
@@ -4255,6 +5544,29 @@ export interface components {
              * @default true
              */
             promise_firms: boolean;
+            /**
+             * @description How stock is valued in the books unless a product says otherwise: at the standard (planned) price, or a moving average
+             * @default standard
+             */
+            price_control: components["schemas"]["PriceControl"];
+            cycle_counting?: components["schemas"]["CycleCounting"];
+        };
+        /** FamilyFigures */
+        FamilyFigures: {
+            /** Family */
+            family: string;
+            /** Budget Qty */
+            budget_qty: number;
+            /** Budget Revenue */
+            budget_revenue: number;
+            /** Demand Qty */
+            demand_qty: number;
+            /** Demand Revenue */
+            demand_revenue: number;
+            /** Supply Qty */
+            supply_qty: number | null;
+            /** Supply Revenue */
+            supply_revenue: number | null;
         };
         /** FieldChange */
         FieldChange: {
@@ -4309,6 +5621,91 @@ export interface components {
             /** Theirs */
             theirs: unknown;
         };
+        /** FieldMap */
+        FieldMap: {
+            /**
+             * Source
+             * @description The column (CSV) or the path in a record (JSON: customer.code); with `each`, line.<path> is the element
+             * @default
+             */
+            source: string;
+            /**
+             * Value
+             * @description Used when the source is empty or missing; with no source, always
+             */
+            value?: string | number | boolean | null;
+            /**
+             * Values
+             * @description Codes translated (WH-01 → P); * for any other code
+             */
+            values?: {
+                [key: string]: string;
+            };
+            /**
+             * Factor
+             * @description A number is multiplied by this (12: dozens to units)
+             */
+            factor?: number | null;
+            /**
+             * Date Format
+             * @description How dates are written, as strftime does (%d-%b-%Y); empty: recognised
+             * @default
+             */
+            date_format: string;
+        };
+        /** Figures */
+        Figures: {
+            /** Step */
+            step: string;
+            /** Currency */
+            currency: string;
+            /**
+             * Planning Start
+             * Format: date
+             */
+            planning_start: string;
+            /** Months */
+            months: components["schemas"]["MonthFigures"][];
+            /** Families */
+            families: components["schemas"]["FamilyFigures"][];
+            /** Blocking */
+            blocking: number;
+            /** Warnings */
+            warnings: number;
+            /** History To */
+            history_to: string | null;
+            /** Fill Rate */
+            fill_rate: number | null;
+            /**
+             * Limits
+             * @default []
+             */
+            limits: string[];
+            /**
+             * Unpriced
+             * @default []
+             */
+            unpriced: string[];
+            /**
+             * Budgets
+             * @default 0
+             */
+            budgets: number;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /** FiguresRequest */
+        FiguresRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Step
+             * @description One of data, demand, supply, pre, exec
+             */
+            step: string;
+        };
         /** FinanceResult */
         FinanceResult: {
             /** Ok */
@@ -4349,6 +5746,21 @@ export interface components {
              * @description Per year for NPV; empty = the company WACC
              */
             discount_rate?: number | null;
+        };
+        /** Finding */
+        Finding: {
+            /** Text */
+            text: string;
+            /**
+             * Cites
+             * @default []
+             */
+            cites: components["schemas"]["Cite"][];
+            /**
+             * Chain
+             * @default []
+             */
+            chain: components["schemas"]["Step"][];
         };
         /** FirmReport */
         FirmReport: {
@@ -4624,6 +6036,11 @@ export interface components {
              * @default
              */
             override_reason: string;
+            /**
+             * Override Author
+             * @default
+             */
+            override_author: string;
             /** Final */
             final: number;
             /** Lower */
@@ -4739,10 +6156,82 @@ export interface components {
                 [key: string]: number;
             } | null;
             /**
+             * Fva Lag
+             * @description Forecast value add judges each period's forecast as it stood this many periods before the period began (0 = the forecast made in the period itself); match it to the time it takes to react, such as the replenishment lead time
+             * @default 1
+             */
+            fva_lag: number;
+            /**
              * Released Inputs
              * @description Written by a forecast release: a fingerprint of the events, new-product rules, overrides and these settings it was made with, so a later change to them is noticed
              */
             released_inputs?: string | null;
+        };
+        /**
+         * ForecastSnapshot
+         * @description What each layer of the forecast said for one period, kept by a release so the forecast can be judged against
+         *     the sales once the period has sold (forecast value add). A later release replaces a period's row until the period
+         *     is nearer than the value-add lag of the forecast settings; from then on the row stays as it was kept.
+         */
+        ForecastSnapshot: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /**
+             * Start
+             * Format: date
+             * @description First day of the forecast period
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             * @description Day after the period (exclusive)
+             */
+            end: string;
+            /**
+             * Made
+             * Format: date
+             * @description Planning start of the release that kept it
+             */
+            made: string;
+            /**
+             * Naive
+             * @description Naïve forecast: the last period's sales
+             * @default 0
+             */
+            naive: number;
+            /**
+             * Statistical
+             * @description The champion model's forecast
+             * @default 0
+             */
+            statistical: number;
+            /**
+             * Adjusted
+             * @description After demand events and new-product rules (cannibalisation included)
+             * @default 0
+             */
+            adjusted: number;
+            /**
+             * Final
+             * @description The consensus: after the planners' overrides
+             * @default 0
+             */
+            final: number;
+            /**
+             * Overridden
+             * @description A planner's override set the final quantity
+             * @default false
+             */
+            overridden: boolean;
+            /**
+             * Author
+             * @description Who overrode it, as the override names them
+             * @default
+             */
+            author: string;
         };
         /** FoundationStatus */
         FoundationStatus: {
@@ -4756,6 +6245,175 @@ export interface components {
             license: string;
             /** Detail */
             detail: string;
+        };
+        /** FreightLine */
+        FreightLine: {
+            /** Kind */
+            kind: string;
+            /** Id */
+            id: string;
+            /** Weight Kg */
+            weight_kg: number;
+            /** Share */
+            share: number;
+            /** Cost */
+            cost: number;
+        };
+        /**
+         * FreightOrder
+         * @description One vehicle from one place to another (≈ TM freight order): what it carries, its load and its cost.
+         */
+        FreightOrder: {
+            /** Id */
+            id: string;
+            /** Lane */
+            lane: string;
+            mode: components["schemas"]["TransportMode"];
+            /**
+             * Carrier
+             * @description Empty: the lane's own cost, no carrier yet
+             */
+            carrier?: string | null;
+            /** Ship From */
+            ship_from: string;
+            /** Ship To */
+            ship_to: string;
+            /**
+             * Planned On
+             * Format: date
+             * @description Loading
+             */
+            planned_on: string;
+            /** Deliveries */
+            deliveries?: string[];
+            /**
+             * Transfers
+             * @description Stock transfer orders
+             */
+            transfers?: string[];
+            /**
+             * Weight Kg
+             * @default 0
+             */
+            weight_kg: number;
+            /**
+             * Volume M3
+             * @default 0
+             */
+            volume_m3: number;
+            /**
+             * Weights
+             * @description Kilograms of each delivery and transfer
+             */
+            weights?: {
+                [key: string]: number;
+            };
+            /**
+             * Units
+             * @description Units of each delivery and transfer
+             */
+            units?: {
+                [key: string]: number;
+            };
+            /** Capacity Kg */
+            capacity_kg?: number | null;
+            /** Capacity M3 */
+            capacity_m3?: number | null;
+            /**
+             * Planned Cost
+             * @default 0
+             */
+            planned_cost: number;
+            /**
+             * Status
+             * @default planned
+             */
+            status: string;
+            /** Tendered On */
+            tendered_on?: string | null;
+            /** Accepted On */
+            accepted_on?: string | null;
+            /**
+             * Rejected By
+             * @description Carriers that turned it down
+             */
+            rejected_by?: string[];
+            /** Shipped On */
+            shipped_on?: string | null;
+            /**
+             * Bill
+             * @description Settled: the carrier's bill number
+             * @default
+             */
+            bill: string;
+            /**
+             * Billed
+             * @description Settled: what the carrier billed
+             */
+            billed?: number | null;
+            /** Settled On */
+            settled_on?: string | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /**
+         * FreightRate
+         * @description What one vehicle costs on a lane (≈ TM freight agreement rate table).
+         */
+        FreightRate: {
+            /**
+             * Lane
+             * @description The lane (empty: every lane of the mode)
+             * @default
+             */
+            lane: string;
+            /** @default truck_ftl */
+            mode: components["schemas"]["TransportMode"];
+            /**
+             * Per Shipment
+             * @description A vehicle, whatever it carries
+             * @default 0
+             */
+            per_shipment: number;
+            /**
+             * Per Kg
+             * @default 0
+             */
+            per_kg: number;
+            /**
+             * Per M3
+             * @default 0
+             */
+            per_m3: number;
+            /**
+             * Min Charge
+             * @description A vehicle never costs less
+             * @default 0
+             */
+            min_charge: number;
+            /**
+             * Capacity Kg
+             * @description Empty: the lane's vehicle
+             */
+            capacity_kg?: number | null;
+            /**
+             * Capacity M3
+             * @description Empty: the lane's vehicle
+             */
+            capacity_m3?: number | null;
+        };
+        /** FreightRow */
+        FreightRow: {
+            order: components["schemas"]["FreightOrder"];
+            /** Lines */
+            lines: components["schemas"]["FreightLine"][];
+            /** Difference */
+            difference: number | null;
+            /** Pay By */
+            pay_by: string | null;
         };
         /** FxChip */
         "FxChip-Input": {
@@ -4835,6 +6493,11 @@ export interface components {
              */
             stock_type: components["schemas"]["StockType"];
             /**
+             * Sales Order
+             * @description Stock held for this sales order (S/4 sales-order stock): received for it, issued only to it
+             */
+            sales_order?: string | null;
+            /**
              * Doc
              * @description Material document: the movements posted together
              */
@@ -4854,6 +6517,11 @@ export interface components {
              * @description The ERP's document it came with: an ERP posting is taken once
              */
             erp_ref?: string | null;
+            /**
+             * Bin
+             * @description The storage bin the quantity comes from or goes to (places with bins; empty: goods in or staged to ship)
+             */
+            bin?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -4866,6 +6534,12 @@ export interface components {
             status: string;
             /** Version */
             version: string;
+            /** Commit */
+            commit: string;
+            /** Database */
+            database: string;
+            /** Up Seconds */
+            up_seconds: number;
         };
         /**
          * HeldChange
@@ -4975,6 +6649,11 @@ export interface components {
             last_status: string;
             /** Last Summary */
             last_summary: string;
+            mapping: components["schemas"]["Mapping"] | null;
+            paging: components["schemas"]["Paging"] | null;
+            /** Since */
+            since: string | null;
+            app: components["schemas"]["AppSettings"] | null;
         };
         /** ImportJobs */
         ImportJobs: {
@@ -4986,6 +6665,27 @@ export interface components {
             timezone: string;
             /** Kinds */
             kinds: string[];
+            /**
+             * Fields
+             * @default {}
+             */
+            fields: {
+                [key: string]: string[];
+            };
+            /**
+             * Apps
+             * @default {}
+             */
+            apps: {
+                [key: string]: string[];
+            };
+            /**
+             * Secrets
+             * @default {}
+             */
+            secrets: {
+                [key: string]: string[];
+            };
         };
         /**
          * InboxAction
@@ -5042,6 +6742,12 @@ export interface components {
             rounding_qty: number | null;
             /** Lead Time Days */
             lead_time_days: number;
+            /**
+             * Lead Time Std Days
+             * @default 0
+             */
+            lead_time_std_days: number;
+            measured: components["schemas"]["LeadTimeSpread"] | null;
             /** Valid From */
             valid_from: string | null;
             /** Valid To */
@@ -5537,12 +7243,25 @@ export interface components {
              * Source Type
              * @enum {string}
              */
-            source_type: "url" | "folder";
+            source_type: "url" | "folder" | "api" | "tally" | "zoho" | "shopify" | "odoo";
             /**
              * Source
-             * @description The web address, or the file pattern in the folder
+             * @description The web address, or the file pattern in the folder; {since} in an address is the time the last good run started (only what changed since); Tally: its address (http://tally-pc:9000); Zoho: the organisation ID; Shopify: the shop (my-shop.myshopify.com); Odoo: its address
              */
             source: string;
+            /** @description Tally, Zoho, Shopify or Odoo: what the connector needs beyond its source */
+            app?: components["schemas"]["AppSettings"] | null;
+            /**
+             * Secrets
+             * @description Zoho: client_id, client_secret and refresh_token; Shopify: access_token; Odoo: login and api_key; omitted (or a value left empty) keeps the one kept for the same organisation, shop or database
+             */
+            secrets?: {
+                [key: string]: string;
+            } | null;
+            /** @description Which column or field there fills each field here; none: columns are recognised by their names */
+            mapping?: components["schemas"]["Mapping"] | null;
+            /** @description api: how the answer comes page by page */
+            paging?: components["schemas"]["Paging"] | null;
             /**
              * Headers
              * @description A web address: headers to send (Authorization); omitted keeps them only for the same origin, {} removes them
@@ -5592,7 +7311,7 @@ export interface components {
             /** Label */
             label: string;
             /** Chips */
-            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"] | components["schemas"]["MachineDownChip-Input"] | components["schemas"]["CustomerPriceChip-Input"] | components["schemas"]["SafetyDaysChip-Input"] | components["schemas"]["FxChip-Input"])[];
+            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"] | components["schemas"]["MachineDownChip-Input"] | components["schemas"]["CustomerPriceChip-Input"] | components["schemas"]["SafetyDaysChip-Input"] | components["schemas"]["FxChip-Input"] | components["schemas"]["SupplierPriceChip-Input"])[];
             /** Parent */
             parent?: string | null;
             /**
@@ -5893,6 +7612,24 @@ export interface components {
              */
             default: boolean;
         };
+        /** LayerScore */
+        LayerScore: {
+            /**
+             * Layer
+             * @enum {string}
+             */
+            layer: "naive" | "statistical" | "adjusted" | "final";
+            /** Label */
+            label: string;
+            /** Forecast */
+            forecast: number;
+            /** Wape */
+            wape: number | null;
+            /** Bias */
+            bias: number | null;
+            /** Value Add */
+            value_add: number | null;
+        };
         /** LeadTimeChip */
         "LeadTimeChip-Input": {
             /**
@@ -5916,6 +7653,17 @@ export interface components {
             days: number;
             /** Supplier */
             supplier: string | null;
+        };
+        /** LeadTimeSpread */
+        LeadTimeSpread: {
+            /** Lines */
+            lines: number;
+            /** Mean Days Late */
+            mean_days_late: number;
+            /** Std Days */
+            std_days: number;
+            /** Basis */
+            basis: string;
         };
         /** LevelMove */
         LevelMove: {
@@ -6029,6 +7777,26 @@ export interface components {
             /** Names */
             names: string[];
         };
+        /** LoadGroup */
+        LoadGroup: {
+            /** Lane */
+            lane: string;
+            /** Ship From */
+            ship_from: string;
+            /** Ship To */
+            ship_to: string;
+            /**
+             * Planned On
+             * Format: date
+             */
+            planned_on: string;
+            /** Vehicles */
+            vehicles: components["schemas"]["Vehicle"][];
+            /** Choices */
+            choices: components["schemas"]["Choice"][];
+            /** Cost */
+            cost: number;
+        };
         /** Location */
         Location: {
             /** Id */
@@ -6070,6 +7838,18 @@ export interface components {
              * @default 0
              */
             handling_cost_per_unit: number;
+            /**
+             * Pick Pack Workdays
+             * @description Shipping from here: working days to pick and pack once the goods are there (S/4 pick/pack time at the shipping point). Promises check stock this much earlier than the goods leave
+             * @default 0
+             */
+            pick_pack_workdays: number;
+            /**
+             * Loading Workdays
+             * @description Shipping from here: working days to load a shipment before it leaves (goods issue)
+             * @default 0
+             */
+            loading_workdays: number;
         };
         /**
          * LocationProduct
@@ -6120,10 +7900,20 @@ export interface components {
              */
             on_hand: number;
             /**
+             * Order Stock
+             * @description Stock at planning start held for one sales order each (not in on hand): planned, promised and issued only to that order
+             */
+            order_stock?: components["schemas"]["OrderStock"][];
+            /**
              * Unit Cost
              * @description Valuation override
              */
             unit_cost?: number | null;
+            /**
+             * Cycle Count
+             * @description Cycle counting class here, set by hand ('none': never counted by the cycle). Empty: by the value it uses up
+             */
+            cycle_count?: ("A" | "B" | "C" | "none") | null;
             lot_sizing?: components["schemas"]["LotSizing"];
             safety_stock?: components["schemas"]["SafetyStockPolicy"];
             /**
@@ -6144,25 +7934,41 @@ export interface components {
             max_stock?: number | null;
             /**
              * Planning Time Fence Days
-             * @description No new proposals inside this fence (firming type 1)
+             * @description No new proposals inside this fence: see the firming type. Working days when the company counts them so
              * @default 0
              */
             planning_time_fence_days: number;
             /**
+             * Firming Type
+             * @description Firming type inside the planning time fence (S/4 §8.5): 1 = new orders move to the fence end, and those inside it are firmed when the week rolls; 2 = no new orders inside the fence (the shortage is reported), firmed when the week rolls; 3 = as 1, firmed by hand; 4 = as 2, firmed by hand
+             * @default 3
+             */
+            firming_type: number;
+            /**
+             * Rescheduling Horizon Days
+             * @description Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner (empty: the company's)
+             */
+            rescheduling_horizon_days?: number | null;
+            /**
+             * Reschedule Out Tolerance Days
+             * @description Rescheduling tolerance: a firm order up to this many days earlier than needed is left alone; earlier than that, the plan advises pushing it out (empty: the company's)
+             */
+            reschedule_out_tolerance_days?: number | null;
+            /**
              * Gr Processing Days
-             * @description Goods-receipt / putaway time
+             * @description Goods-receipt / putaway time (working days when the company counts them so)
              * @default 0
              */
             gr_processing_days: number;
             /**
              * Consumption Backward Days
-             * @description Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days before its date a sales order may reach back to eat forecast; a forecast for a period counts on every day of it. An order consumes backward first, then forward
+             * @description Forecast consumption (strategies MTS_CONSUME, ATO and ASSEMBLY): how many calendar days before its date a sales order may reach back to eat forecast; a forecast for a period counts on every day of it. An order consumes backward first, then forward
              * @default 7
              */
             consumption_backward_days: number;
             /**
              * Consumption Forward Days
-             * @description Forecast consumption (strategies MTS_CONSUME and ATO only): how many calendar days after its date a sales order may reach forward to eat forecast, once nothing is left backward. What no forecast in reach covers is planned on top of the forecast
+             * @description Forecast consumption (strategies MTS_CONSUME, ATO and ASSEMBLY): how many calendar days after its date a sales order may reach forward to eat forecast, once nothing is left backward. What no forecast in reach covers is planned on top of the forecast
              * @default 7
              */
             consumption_forward_days: number;
@@ -6257,6 +8063,21 @@ export interface components {
             /** Kept */
             kept: boolean;
         };
+        /** LooseRow */
+        LooseRow: {
+            /** Product */
+            product: string;
+            /** Batch */
+            batch: string | null;
+            stock_type: components["schemas"]["StockType"];
+            /** Qty */
+            qty: number;
+            /**
+             * To Put Away
+             * @default 0
+             */
+            to_put_away: number;
+        };
         /** LotRow */
         LotRow: {
             /** Batch */
@@ -6279,7 +8100,7 @@ export interface components {
          * LotSizePolicy
          * @enum {string}
          */
-        LotSizePolicy: "L4L" | "FIXED" | "EOQ" | "POQ" | "MIN_MAX";
+        LotSizePolicy: "L4L" | "FIXED" | "EOQ" | "POQ" | "MIN_MAX" | "PPB" | "LUC" | "GROFF";
         /** LotSizing */
         LotSizing: {
             /** @description Empty: the company default (settings) */
@@ -6416,6 +8237,25 @@ export interface components {
             next_reminder: string | null;
             /** Last Reminder */
             last_reminder: string | null;
+        };
+        /** Mapping */
+        Mapping: {
+            /**
+             * Items
+             * @description JSON: the path to the list of records (data.items); empty: the file itself, or its list named after the kind
+             * @default
+             */
+            items: string;
+            /**
+             * Each
+             * @description The path in each record to a list it holds (line_items): one row per element, read as line.<path>
+             * @default
+             */
+            each: string;
+            /** Fields */
+            fields?: {
+                [key: string]: components["schemas"]["FieldMap"];
+            };
         };
         /** Me */
         Me: {
@@ -6582,6 +8422,16 @@ export interface components {
              */
             source: string;
             /**
+             * Sample
+             * @default
+             */
+            sample: string;
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /**
              * Items
              * @default []
              */
@@ -6624,6 +8474,27 @@ export interface components {
             /** Rank */
             rank: number | null;
         };
+        /** MonthFigures */
+        MonthFigures: {
+            /** Month */
+            month: string;
+            /** Label */
+            label: string;
+            /** Share */
+            share: number;
+            /** Budget Qty */
+            budget_qty: number;
+            /** Budget Revenue */
+            budget_revenue: number;
+            /** Demand Qty */
+            demand_qty: number;
+            /** Demand Revenue */
+            demand_revenue: number;
+            /** Supply Qty */
+            supply_qty: number | null;
+            /** Supply Revenue */
+            supply_revenue: number | null;
+        };
         /**
          * MovementType
          * @enum {string}
@@ -6657,6 +8528,11 @@ export interface components {
              */
             planning_time_fence_days?: number | null;
             /**
+             * Firming Type
+             * @description Firming type inside the planning time fence (S/4 §8.5): 1 = new orders move to the fence end, and those inside it are firmed when the week rolls; 2 = no new orders inside the fence (the shortage is reported), firmed when the week rolls; 3 = as 1, firmed by hand; 4 = as 2, firmed by hand (empty: each product's own)
+             */
+            firming_type?: number | null;
+            /**
              * Consumption Backward Days
              * @description Calendar days a sales order may reach back to consume forecast (empty: each product's own)
              */
@@ -6671,12 +8547,22 @@ export interface components {
              * @description Who plans the group's products
              */
             mrp_controller?: string | null;
+            /**
+             * Rescheduling Horizon Days
+             * @description Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner (empty: each product's own, else the company's)
+             */
+            rescheduling_horizon_days?: number | null;
+            /**
+             * Reschedule Out Tolerance Days
+             * @description Rescheduling tolerance: a firm order up to this many days earlier than needed is left alone; earlier than that, the plan advises pushing it out (empty: each product's own, else the company's)
+             */
+            reschedule_out_tolerance_days?: number | null;
         };
         /**
          * MrpType
          * @enum {string}
          */
-        MrpType: "deterministic" | "reorder_point" | "none";
+        MrpType: "deterministic" | "reorder_point" | "none" | "ddmrp";
         /**
          * NegativeStock
          * @description What happens when a posting would take stock below zero (R17).
@@ -6771,6 +8657,14 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /** NewCycle */
+        NewCycle: {
+            /**
+             * Month
+             * @description The month of the cycle, YYYY-MM
+             */
+            month: string;
         };
         /** NewKey */
         NewKey: {
@@ -7314,6 +9208,11 @@ export interface components {
              * @default 0
              */
             allocation_capped: number;
+            /**
+             * Held
+             * @default false
+             */
+            held: boolean;
             /** Ctp */
             ctp: components["schemas"]["CtpStep"][];
             /** Previous */
@@ -7340,11 +9239,28 @@ export interface components {
             value: number | null;
             /** Why */
             why: components["schemas"]["WhyStep"][];
+            safe: components["schemas"]["SafeView"] | null;
             /**
              * Shipped
              * @default 0
              */
             shipped: number;
+        };
+        /**
+         * OrderStock
+         * @description Stock held for one sales order (S/4 sales-order stock, special stock E): only that order may use it.
+         */
+        OrderStock: {
+            /**
+             * Order
+             * @description The sales order it is held for
+             */
+            order: string;
+            /**
+             * Qty
+             * @description Quantity held
+             */
+            qty: number;
         };
         /** OrderView */
         OrderView: {
@@ -7532,6 +9448,15 @@ export interface components {
              */
             note: string;
         };
+        /** OwnerRequest */
+        OwnerRequest: {
+            /**
+             * Owner
+             * @description Who signs the step (a member's e-mail); empty = nobody
+             * @default
+             */
+            owner: string;
+        };
         /**
          * OwnerRule
          * @description The first rule that matches an exception names its owner. Empty lists match anything.
@@ -7560,6 +9485,36 @@ export interface components {
              */
             families?: string[];
         };
+        /**
+         * Paging
+         * @description How a web API gives its records page by page.
+         */
+        Paging: {
+            /**
+             * Mode
+             * @description next: each answer names the next page's address; page: pages are numbered; link: the answer's Link header names it (rel=next)
+             * @default next
+             * @enum {string}
+             */
+            mode: "next" | "page" | "link";
+            /**
+             * Next
+             * @description next: the path in the answer to the next page's address (links.next, @odata.nextLink); page: the path to a flag that more pages follow (page_context.has_more_page); empty: until a page has no records
+             * @default
+             */
+            next: string;
+            /**
+             * Param
+             * @description page: the parameter that numbers the pages, from 1
+             * @default page
+             */
+            param: string;
+            /**
+             * Max Pages
+             * @default 50
+             */
+            max_pages: number;
+        };
         /** PartSupply */
         PartSupply: {
             /** Supply */
@@ -7577,6 +9532,11 @@ export interface components {
             old: string;
             /** New */
             new: string;
+            /**
+             * Code
+             * @default
+             */
+            code: string;
         };
         /**
          * PayableRow
@@ -7709,6 +9669,69 @@ export interface components {
             /** At */
             at: string;
         };
+        /** Period */
+        Period: {
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
+            /** Label */
+            label: string;
+        };
+        /** PickFor */
+        PickFor: {
+            /** Delivery */
+            delivery: string;
+            /** Order */
+            order: string;
+            /** Qty */
+            qty: number;
+            /** Task */
+            task: string;
+            /** Status */
+            status: string;
+        };
+        /** PickList */
+        PickList: {
+            /** Wave */
+            wave: string;
+            /** Location */
+            location: string;
+            /** Rows */
+            rows: components["schemas"]["PickRow"][];
+            /** Done */
+            done: boolean;
+        };
+        /** PickRow */
+        PickRow: {
+            /** Bin */
+            bin: string | null;
+            /** Walk */
+            walk: number | null;
+            /** Product */
+            product: string;
+            /** Name */
+            name: string;
+            /** Batch */
+            batch: string | null;
+            /** Qty */
+            qty: number;
+            /**
+             * Picked
+             * @default 0
+             */
+            picked: number;
+            /** Tasks */
+            tasks: string[];
+            /** Deliveries */
+            deliveries: components["schemas"]["PickFor"][];
+        };
         /** PlacementApplied */
         PlacementApplied: {
             /** Changes */
@@ -7797,6 +9820,8 @@ export interface components {
             kpis: components["schemas"]["Kpis"];
             /** Issues */
             issues: components["schemas"]["Issue"][];
+            /** Planned Again */
+            planned_again: number | null;
         };
         /** PlanSummary */
         PlanSummary: {
@@ -7880,6 +9905,8 @@ export interface components {
              * @default true
              */
             convertible: boolean;
+            /** Sales Order */
+            sales_order: string | null;
             /**
              * Unit Cost
              * @default 0
@@ -8212,7 +10239,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "ship" | "receive" | "deliver" | "count" | "move" | "scrap" | "scrap_expired" | "reverse" | "shorten" | "count_doc" | "count_enter" | "count_post" | "count_cancel";
+            action: "ship" | "receive" | "deliver" | "count" | "move" | "scrap" | "scrap_expired" | "reverse" | "shorten" | "count_doc" | "count_enter" | "count_post" | "count_cancel" | "cycle_count";
             /** Order */
             order?: string | null;
             /** Qty */
@@ -8265,6 +10292,8 @@ export interface components {
              * @default false
              */
             uncounted_zero: boolean;
+            /** Classes */
+            classes?: ("A" | "B" | "C")[] | null;
         };
         /** PostingsMessage */
         PostingsMessage: {
@@ -8275,6 +10304,30 @@ export interface components {
             message_id: string;
             /** Postings */
             postings: components["schemas"]["ErpPosting"][];
+        };
+        /**
+         * PriceControl
+         * @description How stock is valued in the books (S/4 price control, MBEW-VPRSV).
+         * @enum {string}
+         */
+        PriceControl: "standard" | "moving_average";
+        /** PriceDifference */
+        PriceDifference: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** Reference */
+            reference: string | null;
+            /** Amount */
+            amount: number;
+            /** Why */
+            why: string;
         };
         /**
          * PriceScale
@@ -8324,6 +10377,12 @@ export interface components {
              * @description Volume per base unit
              */
             volume_m3?: number | null;
+            /**
+             * Barcode
+             * @description The code on its label (EAN, GTIN or your own), read by the warehouse scanner as well as the product id
+             * @default
+             */
+            barcode: string;
             /** Shelf Life Days */
             shelf_life_days?: number | null;
             /**
@@ -8359,6 +10418,8 @@ export interface components {
              * @description Override for the computed cost roll-up
              */
             standard_cost?: number | null;
+            /** @description How its stock is valued in the books: at the standard (planned) price, or at a moving average of what it cost. Empty: the company's */
+            price_control?: components["schemas"]["PriceControl"] | null;
             /**
              * Price
              * @description Default selling price
@@ -8374,6 +10435,22 @@ export interface components {
              * @description Sequence-dependent setup family (colour, allergen, grade…)
              */
             setup_group?: string | null;
+            /**
+             * Planning Material
+             * @description Planning material (S/4 strategies 60 and 63): this variant is forecast through the base product named here. Its sales count toward the base's forecast, and its orders use up the base's forecast where they are sold
+             */
+            planning_material?: string | null;
+            /**
+             * Planning Factor
+             * @description Units of the planning material one unit of this variant uses up
+             * @default 1
+             */
+            planning_factor: number;
+            /**
+             * Customer Wait Days
+             * @description Days customers accept to wait for it, from their order to delivery: the strategy advisor compares them with the lead times to make it, and to make its parts
+             */
+            customer_wait_days?: number | null;
         };
         /**
          * ProductType
@@ -8652,6 +10729,76 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /**
+         * Proposal
+         * @description Something to do about the answer. A fix is tried on a copy and kept by a person (``/api/tower/fix``, then
+         *     the edits are applied in the browser); a scenario is kept as a stored what-if (``/api/whatif/keep``).
+         */
+        Proposal: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "fix" | "scenario" | "open";
+            /** Label */
+            label: string;
+            /**
+             * Key
+             * @default
+             */
+            key: string;
+            /**
+             * Message
+             * @default
+             */
+            message: string;
+            /**
+             * Protects
+             * @default 0
+             */
+            protects: number;
+            /** Costs */
+            costs: number | null;
+            /**
+             * One Click
+             * @default false
+             */
+            one_click: boolean;
+            /**
+             * Why Not
+             * @default
+             */
+            why_not: string;
+            /**
+             * Href
+             * @default
+             */
+            href: string;
+            /**
+             * Chips
+             * @default []
+             */
+            chips: (components["schemas"]["DemandChip-Output"] | components["schemas"]["SupplierOutChip-Output"] | components["schemas"]["LeadTimeChip-Output"] | components["schemas"]["AddShiftChip-Output"] | components["schemas"]["LaneDelayChip-Output"] | components["schemas"]["MachineDownChip-Output"] | components["schemas"]["CustomerPriceChip-Output"] | components["schemas"]["SafetyDaysChip-Output"] | components["schemas"]["FxChip-Output"] | components["schemas"]["SupplierPriceChip-Output"])[];
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+        };
+        /** ProposedTask */
+        ProposedTask: {
+            /** Product */
+            product: string;
+            /** Batch */
+            batch: string | null;
+            stock_type: components["schemas"]["StockType"];
+            /** Qty */
+            qty: number;
+            /** To Bin */
+            to_bin: string;
+            /** Storage Type */
+            storage_type: string;
         };
         /**
          * PurchaseContract
@@ -9011,6 +11158,41 @@ export interface components {
             payables: components["schemas"]["PayablesView"] | null;
         };
         /**
+         * Putaway
+         * @description Where a storage type puts goods away (≈ EWM put-away strategies).
+         * @enum {string}
+         */
+        Putaway: "fixed" | "add_to_stock" | "next_empty";
+        /** PutawayProposal */
+        PutawayProposal: {
+            /** Location */
+            location: string;
+            /** Tasks */
+            tasks: components["schemas"]["ProposedTask"][];
+            /** Notes */
+            notes: string[];
+        };
+        /**
+         * PutawayRule
+         * @description Which storage types a product is put away to, in order (≈ EWM storage type search sequence). The rule with no
+         *     product holds for every product without a rule of its own.
+         */
+        PutawayRule: {
+            /** Location */
+            location: string;
+            /**
+             * Product
+             * @description The product (empty: every other product)
+             * @default
+             */
+            product: string;
+            /**
+             * Storage Types
+             * @description Searched in this order
+             */
+            storage_types: string[];
+        };
+        /**
          * Quotation
          * @description An offer to a customer (≈ a quotation): its lines become an order's lines when it is won.
          */
@@ -9112,6 +11294,16 @@ export interface components {
              */
             list_price?: number | null;
         };
+        /** Reauth */
+        Reauth: {
+            /** Password */
+            password: string;
+            /**
+             * Code
+             * @default
+             */
+            code: string;
+        };
         /**
          * ReceiptKind
          * @enum {string}
@@ -9163,6 +11355,11 @@ export interface components {
             records: {
                 [key: string]: unknown;
             }[];
+        };
+        /** RecoveryCodes */
+        RecoveryCodes: {
+            /** Codes */
+            codes: string[];
         };
         /**
          * ReleaseLevel
@@ -9231,6 +11428,14 @@ export interface components {
             at: string;
             /** Weekdays */
             weekdays?: number[];
+        };
+        /** ReopenRequest */
+        ReopenRequest: {
+            /**
+             * Note
+             * @description Why it is reopened
+             */
+            note: string;
         };
         /** Requirement */
         Requirement: {
@@ -9379,6 +11584,11 @@ export interface components {
             token: string;
             /** Password */
             password: string;
+            /**
+             * Code
+             * @default
+             */
+            code: string;
         };
         /** ResetRequest */
         ResetRequest: {
@@ -9653,6 +11863,16 @@ export interface components {
             confirmations_trimmed: number;
             /** Warnings */
             warnings: string[];
+            /**
+             * Firmed
+             * @default []
+             */
+            firmed: components["schemas"]["FirmedOrder"][];
+            /**
+             * Purchase Orders
+             * @default []
+             */
+            purchase_orders: string[];
         };
         /** RollRequest */
         RollRequest: {
@@ -9699,6 +11919,28 @@ export interface components {
             severity: string;
             /** Description */
             description: string;
+        };
+        /**
+         * SafeView
+         * @description The order checked again with the forecast's high end kept first: what it gets if the customers still to order
+         *     before its date order at the top of the forecast's interval (P90 at the default 80 % interval).
+         */
+        SafeView: {
+            /** Reserved */
+            reserved: number;
+            /** Confirmed */
+            confirmed: number;
+            /** On Time */
+            on_time: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "on_time" | "late" | "partial" | "unconfirmed";
+            /** Date */
+            date: string | null;
+            /** Lines */
+            lines: components["schemas"]["ScheduleLine"][];
         };
         /** SafetyDaysChip */
         "SafetyDaysChip-Input": {
@@ -9789,6 +12031,11 @@ export interface components {
             customer_ref: string;
             /** Payment Terms */
             payment_terms?: string | null;
+            /**
+             * Single Delivery
+             * @default false
+             */
+            single_delivery: boolean;
             /**
              * Note
              * @default
@@ -9930,6 +12177,12 @@ export interface components {
              * @description The quotation the order was won from
              */
             quotation?: string | null;
+            /**
+             * Single Delivery
+             * @description Ship the whole order together (a kit): every line is confirmed in full, for the date the last one can be, or none is
+             * @default false
+             */
+            single_delivery: boolean;
             /**
              * Credit Block
              * @description Over the customer's credit limit: not delivered until released
@@ -10095,6 +12348,12 @@ export interface components {
              */
             delivery_days: number;
             /**
+             * Delivery Check
+             * @description A delivery takes only what can be picked by its planned goods issue: unrestricted stock at the shipping place plus firm receipts in by then, less what other open deliveries take (S/4 availability check at delivery creation); the rest stays to deliver
+             * @default true
+             */
+            delivery_check: boolean;
+            /**
              * Reminder Days
              * @description Days past the due date for the first, second, third … payment reminder (dunning levels). Empty: no reminders
              */
@@ -10205,8 +12464,10 @@ export interface components {
              * Chips
              * @default []
              */
-            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"] | components["schemas"]["MachineDownChip-Input"] | components["schemas"]["CustomerPriceChip-Input"] | components["schemas"]["SafetyDaysChip-Input"] | components["schemas"]["FxChip-Input"])[];
+            chips: (components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"] | components["schemas"]["MachineDownChip-Input"] | components["schemas"]["CustomerPriceChip-Input"] | components["schemas"]["SafetyDaysChip-Input"] | components["schemas"]["FxChip-Input"] | components["schemas"]["SupplierPriceChip-Input"])[];
             dataset?: components["schemas"]["Dataset"] | null;
+            /** Version */
+            version?: string | null;
         };
         /** ScenarioIn */
         "ScenarioIn-Output": {
@@ -10216,8 +12477,10 @@ export interface components {
              * Chips
              * @default []
              */
-            chips: (components["schemas"]["DemandChip-Output"] | components["schemas"]["SupplierOutChip-Output"] | components["schemas"]["LeadTimeChip-Output"] | components["schemas"]["AddShiftChip-Output"] | components["schemas"]["LaneDelayChip-Output"] | components["schemas"]["MachineDownChip-Output"] | components["schemas"]["CustomerPriceChip-Output"] | components["schemas"]["SafetyDaysChip-Output"] | components["schemas"]["FxChip-Output"])[];
+            chips: (components["schemas"]["DemandChip-Output"] | components["schemas"]["SupplierOutChip-Output"] | components["schemas"]["LeadTimeChip-Output"] | components["schemas"]["AddShiftChip-Output"] | components["schemas"]["LaneDelayChip-Output"] | components["schemas"]["MachineDownChip-Output"] | components["schemas"]["CustomerPriceChip-Output"] | components["schemas"]["SafetyDaysChip-Output"] | components["schemas"]["FxChip-Output"] | components["schemas"]["SupplierPriceChip-Output"])[];
             dataset: components["schemas"]["Dataset"] | null;
+            /** Version */
+            version: string | null;
         };
         /** ScenarioInfo */
         ScenarioInfo: {
@@ -10300,6 +12563,13 @@ export interface components {
              * @default 0
              */
             errors: number;
+            /**
+             * At Risk
+             * @default []
+             */
+            at_risk: number[];
+            /** Expected Service */
+            expected_service: number | null;
             /** Cost Delta */
             cost_delta: number | null;
             /** Service Delta */
@@ -10466,6 +12736,8 @@ export interface components {
             method: "atp" | "rlt" | "ctp";
             /** On Time */
             on_time: boolean;
+            /** Goods Issue */
+            goods_issue: string | null;
         };
         /** ScheduleRequest */
         ScheduleRequest: {
@@ -10840,6 +13112,11 @@ export interface components {
              */
             po?: string | null;
             /**
+             * Sales Order
+             * @description Made or bought for this sales order (S/4 sales-order stock): planned, promised and issued only to it, and held for it once received
+             */
+            sales_order?: string | null;
+            /**
              * Planned As
              * @description The planned order it was firmed from (for reference: planned numbers are handed out again on every plan)
              */
@@ -10947,6 +13224,13 @@ export interface components {
             /** Trace */
             trace: number[];
             optimizer: components["schemas"]["OptimizerInfo"] | null;
+        };
+        /** SecondStep */
+        SecondStep: {
+            /** Ticket */
+            ticket: string;
+            /** Code */
+            code: string;
         };
         /** Segment */
         Segment: {
@@ -11100,6 +13384,11 @@ export interface components {
             expires_at: string;
             /** Csrf */
             csrf: string | null;
+            /**
+             * Second Step
+             * @default
+             */
+            second_step: string;
         };
         /**
          * SetAside
@@ -11241,6 +13530,24 @@ export interface components {
              * @description Levelling: move an order at most this many days earlier to fit; empty = as far as today
              */
             capacity_max_early_days?: number | null;
+            /**
+             * Working Day Fences
+             * @description Count the planning time fence and goods-receipt time in working days of the place's calendar, as S/4 does (new companies). Off: calendar days, as companies made before 15 October 2026 were planned; switching moves their dates (a 10-day fence becomes two working weeks)
+             * @default false
+             */
+            working_day_fences: boolean;
+            /**
+             * Rescheduling Horizon Days
+             * @description Rescheduling horizon (S/4 §8.1): a firm order due up to this many working days after a shortage is brought in to cover it (reschedule in) instead of a new order being planned beside it; beyond it, new supply. 0 = only when a new order could not arrive sooner. A product or MRP group may set its own
+             * @default 0
+             */
+            rescheduling_horizon_days: number;
+            /**
+             * Reschedule Out Tolerance Days
+             * @description Rescheduling tolerance: a firm order up to this many days earlier than needed is left alone; earlier than that, the plan advises pushing it out. A product or MRP group may set its own
+             * @default 3
+             */
+            reschedule_out_tolerance_days: number;
         };
         /** SetupAction */
         SetupAction: {
@@ -11332,6 +13639,16 @@ export interface components {
             email: string;
             /** Password */
             password: string;
+        };
+        /** SignRequest */
+        SignRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Note
+             * @description What was agreed (the pre-S&OP and executive steps need it)
+             * @default
+             */
+            note: string;
         };
         /** SignUp */
         SignUp: {
@@ -11590,6 +13907,16 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** Step */
+        Step: {
+            /** Text */
+            text: string;
+            /**
+             * Cites
+             * @default []
+             */
+            cites: components["schemas"]["Cite"][];
+        };
         /** StepReport */
         StepReport: {
             /** N */
@@ -11703,6 +14030,13 @@ export interface components {
              * @default 0
              */
             in_transit: number;
+            /**
+             * Held
+             * @default {}
+             */
+            held: {
+                [key: string]: number;
+            };
             /** Planning Stock */
             planning_stock: number | null;
             /** Counting */
@@ -11741,11 +14075,109 @@ export interface components {
          */
         StockType: "unrestricted" | "quality" | "blocked";
         /**
+         * StorageType
+         * @description An area of a warehouse with one way of putting away (≈ EWM storage type): a high rack, a picking shelf, a cold
+         *     room.
+         */
+        StorageType: {
+            /**
+             * Location
+             * @description The plant or warehouse it is in
+             */
+            location: string;
+            /**
+             * Id
+             * @description Short code, unique per place
+             */
+            id: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /**
+             * @description Where goods are put away here
+             * @default next_empty
+             */
+            putaway: components["schemas"]["Putaway"];
+            /**
+             * Mixed
+             * @description A bin here may hold several products at once
+             * @default false
+             */
+            mixed: boolean;
+            /**
+             * Picking
+             * @description Goods are picked from here (no: a reserve area, refilled from)
+             * @default true
+             */
+            picking: boolean;
+            /**
+             * Bins Per Product
+             * @description Most bins one product takes here (empty: no limit), so that one product does not fill a picking area
+             */
+            bins_per_product?: number | null;
+            /**
+             * Sequence
+             * @description Order in which put-away looks at the storage types when no rule names them: lowest first
+             * @default 10
+             */
+            sequence: number;
+        };
+        /**
          * Strategy
          * @description Planning strategy (S/4 guide §5.2).
          * @enum {string}
          */
-        Strategy: "MTS" | "MTS_CONSUME" | "MTO" | "ATO";
+        Strategy: "MTS" | "MTS_CONSUME" | "MTO" | "ATO" | "ASSEMBLY";
+        /** StrategyAdvice */
+        StrategyAdvice: {
+            /** Product */
+            product: string;
+            /** Sold At */
+            sold_at: string;
+            /** Kept At */
+            kept_at: string | null;
+            /** Set At */
+            set_at: string | null;
+            /**
+             * Made
+             * @default false
+             */
+            made: boolean;
+            /** Strategy */
+            strategy: string;
+            /** Wait Days */
+            wait_days: number | null;
+            /** From Stock Days */
+            from_stock_days: number;
+            /** Assemble Days */
+            assemble_days: number | null;
+            /** Scratch Days */
+            scratch_days: number;
+            /** Advised */
+            advised: ("MTO" | "ATO" | "MTS_CONSUME") | null;
+            /** Fits */
+            fits: boolean | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
+        /** StrategyAdvisor */
+        StrategyAdvisor: {
+            /**
+             * Rows
+             * @default []
+             */
+            rows: components["schemas"]["StrategyAdvice"][];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
         /**
          * Subcontract
          * @description An operation done outside by a supplier (≈ S/4 external operation): no own resource is loaded.
@@ -11804,6 +14236,11 @@ export interface components {
              * @default 0
              */
             total_final: number;
+            /**
+             * Total High
+             * @default 0
+             */
+            total_high: number;
         };
         /**
          * SupplierInvoice
@@ -12000,6 +14437,40 @@ export interface components {
             /** Supplier */
             supplier: string;
         };
+        /** SupplierPriceChip */
+        "SupplierPriceChip-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "supplier_price";
+            /** Pct */
+            pct: number;
+            /** Supplier */
+            supplier?: string | null;
+            /**
+             * Products
+             * @default []
+             */
+            products: string[];
+        };
+        /** SupplierPriceChip */
+        "SupplierPriceChip-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "supplier_price";
+            /** Pct */
+            pct: number;
+            /** Supplier */
+            supplier: string | null;
+            /**
+             * Products
+             * @default []
+             */
+            products: string[];
+        };
         /**
          * SupplierReturn
          * @description Goods sent back to the supplier (≈ return delivery): taken out of stock against the order line, so the line
@@ -12117,6 +14588,144 @@ export interface components {
             /** Unit Value */
             unit_value: number;
         };
+        /** SweepPoint */
+        SweepPoint: {
+            /** Label */
+            label: string;
+            /** Ok */
+            ok: boolean;
+            /**
+             * Levers
+             * @default []
+             */
+            levers: components["schemas"]["Lever"][];
+            /**
+             * Total Cost
+             * @default 0
+             */
+            total_cost: number;
+            /**
+             * Service
+             * @default 0
+             */
+            service: number;
+            /**
+             * Inventory Value Avg
+             * @default 0
+             */
+            inventory_value_avg: number;
+            /**
+             * Capacity Peak
+             * @default 0
+             */
+            capacity_peak: number;
+            /**
+             * Late Units
+             * @default 0
+             */
+            late_units: number;
+            /**
+             * Late Revenue
+             * @default 0
+             */
+            late_revenue: number;
+            /**
+             * Sales Value
+             * @default 0
+             */
+            sales_value: number;
+            /**
+             * Orders
+             * @default 0
+             */
+            orders: number;
+            /**
+             * Errors
+             * @default 0
+             */
+            errors: number;
+            /**
+             * At Risk
+             * @default []
+             */
+            at_risk: number[];
+            /** Expected Service */
+            expected_service: number | null;
+            /** Cost Delta */
+            cost_delta: number | null;
+            /** Service Delta */
+            service_delta: number | null;
+            /** Inventory Delta */
+            inventory_delta: number | null;
+            /** Late Units Delta */
+            late_units_delta: number | null;
+            /** Sales Delta */
+            sales_delta: number | null;
+            /** Cost Per Service Point */
+            cost_per_service_point: number | null;
+            /**
+             * Verdict
+             * @default
+             */
+            verdict: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /**
+             * Value
+             * @default 0
+             */
+            value: number;
+            /** Step Cost Per Point */
+            step_cost_per_point: number | null;
+            /**
+             * Frontier
+             * @default false
+             */
+            frontier: boolean;
+        };
+        /** SweepRequest */
+        SweepRequest: {
+            base: components["schemas"]["Dataset"];
+            /** Chip */
+            chip: components["schemas"]["DemandChip-Input"] | components["schemas"]["SupplierOutChip-Input"] | components["schemas"]["LeadTimeChip-Input"] | components["schemas"]["AddShiftChip-Input"] | components["schemas"]["LaneDelayChip-Input"] | components["schemas"]["MachineDownChip-Input"] | components["schemas"]["CustomerPriceChip-Input"] | components["schemas"]["SafetyDaysChip-Input"] | components["schemas"]["FxChip-Input"] | components["schemas"]["SupplierPriceChip-Input"];
+            /** Values */
+            values: number[];
+        };
+        /** SweepResult */
+        SweepResult: {
+            /** Currency */
+            currency: string;
+            /** Kind */
+            kind: string;
+            /** Field */
+            field: string;
+            /**
+             * Lever
+             * @default false
+             */
+            lever: boolean;
+            baseline: components["schemas"]["ScenarioOut"];
+            /** Points */
+            points: components["schemas"]["SweepPoint"][];
+            /**
+             * Periods
+             * @default []
+             */
+            periods: components["schemas"]["Period"][];
+            /**
+             * Read
+             * @default []
+             */
+            read: string[];
+        };
+        /**
+         * TaskKind
+         * @enum {string}
+         */
+        TaskKind: "putaway" | "pick" | "move";
         /** TaxPart */
         TaxPart: {
             /** Name */
@@ -12180,6 +14789,8 @@ export interface components {
              * @default false
              */
             credit_block: boolean;
+            /** Available */
+            available: number | null;
         };
         /**
          * ToInvoice
@@ -12352,6 +14963,37 @@ export interface components {
             /** Product */
             product?: string | null;
         };
+        /** TransportActionRequest */
+        TransportActionRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "plan" | "tender" | "accept" | "reject" | "ship" | "settle" | "cancel";
+            /** Order */
+            order?: string | null;
+            /** Lanes */
+            lanes?: string[] | null;
+            /** Billed */
+            billed?: number | null;
+            /**
+             * Bill
+             * @default
+             */
+            bill: string;
+            /** Date */
+            date?: string | null;
+        };
+        /** TransportActionResponse */
+        TransportActionResponse: {
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
+            report: components["schemas"]["TransportReport"];
+        };
         /** TransportLane */
         TransportLane: {
             /** Id */
@@ -12374,12 +15016,156 @@ export interface components {
             priority: number;
             /** Quota */
             quota?: number | null;
+            /**
+             * Transport Planning Workdays
+             * @description Working days to book the carrier before loading (S/4 transportation planning time); it runs alongside picking and packing, so the longer of the two counts
+             * @default 0
+             */
+            transport_planning_workdays: number;
         };
         /**
          * TransportMode
          * @enum {string}
          */
         TransportMode: "truck_ftl" | "truck_ltl" | "reefer" | "rail" | "sea" | "air" | "courier" | "pipeline";
+        /** TransportReport */
+        TransportReport: {
+            /** Message */
+            message: string;
+            /**
+             * Orders
+             * @default []
+             */
+            orders: string[];
+            /**
+             * Documents
+             * @default []
+             */
+            documents: string[];
+            /**
+             * Movements
+             * @default []
+             */
+            movements: string[];
+        };
+        /** TransportSettings */
+        TransportSettings: {
+            /**
+             * Window Days
+             * @description Loads due within this many days of the first share a vehicle, the later ones sent early
+             * @default 0
+             */
+            window_days: number;
+            /**
+             * Horizon Days
+             * @description Deliveries and transfers loading this far ahead are planned
+             * @default 7
+             */
+            horizon_days: number;
+            /**
+             * Low Fill
+             * @description A vehicle filled less than this is named
+             * @default 0.5
+             */
+            low_fill: number;
+        };
+        /** TransportView */
+        TransportView: {
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Currency */
+            currency: string;
+            /** Groups */
+            groups: components["schemas"]["LoadGroup"][];
+            /** Unplanned */
+            unplanned: components["schemas"]["Unplanned"][];
+            /** Orders */
+            orders: components["schemas"]["FreightRow"][];
+            /** Carriers */
+            carriers: components["schemas"]["CarrierRow"][];
+            /** Planned Cost */
+            planned_cost: number;
+            /** Billed */
+            billed: number;
+            /** Difference */
+            difference: number;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /**
+         * Tried
+         * @description A dry run: what an import would do now, with nothing saved, no file moved and its schedule as it was.
+         */
+        Tried: {
+            /** Messages */
+            messages: components["schemas"]["MessageRow"][];
+            /**
+             * Columns
+             * @default []
+             */
+            columns: string[];
+            /**
+             * Rows
+             * @default []
+             */
+            rows: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** TryInput */
+        TryInput: {
+            job: components["schemas"]["JobInput"];
+            /**
+             * Content
+             * @description A sample of the file or answer to try the mapping on; none: read the source now
+             */
+            content?: string | null;
+            /**
+             * Id
+             * @description The saved import this changes: its headers and {since} are used
+             */
+            id?: string | null;
+        };
+        /** TwoStepCode */
+        TwoStepCode: {
+            /** Code */
+            code: string;
+        };
+        /** TwoStepKey */
+        TwoStepKey: {
+            /** Secret */
+            secret: string;
+            /** Grouped */
+            grouped: string;
+            /** Uri */
+            uri: string;
+        };
+        /** TwoStepSetting */
+        TwoStepSetting: {
+            /** Required */
+            required: boolean;
+        };
+        /** TwoStepState */
+        TwoStepState: {
+            /** On */
+            on: boolean;
+            /**
+             * Recovery Left
+             * @default 0
+             */
+            recovery_left: number;
+            /**
+             * Password
+             * @default true
+             */
+            password: boolean;
+        };
         /**
          * Unbooked
          * @description Postings dated before the planning start that the starting position does not reflect yet (a late posting, or
@@ -12400,6 +15186,15 @@ export interface components {
             history_days: number;
             /** Closed */
             closed: number;
+        };
+        /** Unplanned */
+        Unplanned: {
+            /** Kind */
+            kind: string;
+            /** Id */
+            id: string;
+            /** Why */
+            why: string;
         };
         /** UomConversion */
         UomConversion: {
@@ -12431,6 +15226,11 @@ export interface components {
              * @default false
              */
             verified: boolean;
+            /**
+             * Two Step
+             * @default false
+             */
+            two_step: boolean;
         };
         /** ValidationError */
         ValidationError: {
@@ -12462,6 +15262,167 @@ export interface components {
              */
             setup: components["schemas"]["SetupItem"][];
         };
+        /** ValuationEntry */
+        ValuationEntry: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            /** What */
+            what: string;
+            /** Reference */
+            reference: string | null;
+            /** Qty */
+            qty: number;
+            /** Amount */
+            amount: number;
+            /** Price Before */
+            price_before: number | null;
+            /** Price After */
+            price_after: number | null;
+        };
+        /** ValuationRow */
+        ValuationRow: {
+            /** Location */
+            location: string;
+            /** Product */
+            product: string;
+            control: components["schemas"]["PriceControl"];
+            /** Qty */
+            qty: number;
+            /** Value */
+            value: number;
+            /** Price */
+            price: number | null;
+            /** Standard */
+            standard: number;
+            /** Changes */
+            changes: number;
+        };
+        /** ValuationView */
+        ValuationView: {
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Currency */
+            currency: string;
+            control: components["schemas"]["PriceControl"];
+            /** Rows */
+            rows: components["schemas"]["ValuationRow"][];
+            /** Entries */
+            entries: components["schemas"]["ValuationEntry"][];
+            /** Differences */
+            differences: components["schemas"]["PriceDifference"][];
+            /** Total Value */
+            total_value: number;
+            /** Total Differences */
+            total_differences: number;
+            /** Cost Of Sales */
+            cost_of_sales: number;
+            /** Count Differences */
+            count_differences: number;
+            /** Scrapped */
+            scrapped: number;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /** ValueAdd */
+        ValueAdd: {
+            /**
+             * Period
+             * @enum {string}
+             */
+            period: "week" | "month";
+            /** Lag */
+            lag: number;
+            /** Measured To */
+            measured_to: string | null;
+            /**
+             * Measured
+             * @default 0
+             */
+            measured: number;
+            /**
+             * Waiting
+             * @default 0
+             */
+            waiting: number;
+            total: components["schemas"]["ValueAddGroup"];
+            /**
+             * Families
+             * @default []
+             */
+            families: components["schemas"]["ValueAddGroup"][];
+            /**
+             * Planners
+             * @default []
+             */
+            planners: components["schemas"]["ValueAddGroup"][];
+            /**
+             * Periods
+             * @default []
+             */
+            periods: components["schemas"]["ValueAddPeriod"][];
+            /**
+             * Costly
+             * @default []
+             */
+            costly: components["schemas"]["CostlyOverride"][];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /** ValueAddGroup */
+        ValueAddGroup: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Periods */
+            periods: number;
+            /** Actual */
+            actual: number;
+            /** Layers */
+            layers: components["schemas"]["LayerScore"][];
+            /**
+             * Overrides
+             * @default 0
+             */
+            overrides: number;
+            /**
+             * Improved
+             * @default 0
+             */
+            improved: number;
+        };
+        /** ValueAddPeriod */
+        ValueAddPeriod: {
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /** Label */
+            label: string;
+            /** Actual */
+            actual: number;
+            /** Statistical Wape */
+            statistical_wape: number | null;
+            /** Final Wape */
+            final_wape: number | null;
+        };
         /** ValueBucket */
         ValueBucket: {
             /** Bucket */
@@ -12482,6 +15443,55 @@ export interface components {
              * @default {}
              */
             by_type: {
+                [key: string]: number;
+            };
+        };
+        /** Vehicle */
+        Vehicle: {
+            /** Lane */
+            lane: string;
+            /** Ship From */
+            ship_from: string;
+            /** Ship To */
+            ship_to: string;
+            mode: components["schemas"]["TransportMode"];
+            /** Carrier */
+            carrier: string | null;
+            /**
+             * Planned On
+             * Format: date
+             */
+            planned_on: string;
+            /** Deliveries */
+            deliveries: string[];
+            /** Transfers */
+            transfers: string[];
+            /** Weight Kg */
+            weight_kg: number;
+            /** Volume M3 */
+            volume_m3: number;
+            /** Capacity Kg */
+            capacity_kg: number | null;
+            /** Capacity M3 */
+            capacity_m3: number | null;
+            /** Fill */
+            fill: number | null;
+            /** Cost */
+            cost: number;
+            /** Over */
+            over: boolean;
+            /** Early */
+            early: string[];
+            /** Late */
+            late: string[];
+            /** Unweighed */
+            unweighed: string[];
+            /** Weights */
+            weights: {
+                [key: string]: number;
+            };
+            /** Units */
+            units: {
                 [key: string]: number;
             };
         };
@@ -12656,6 +15666,182 @@ export interface components {
             /** Company */
             company: string;
         };
+        /** WarehouseActionRequest */
+        WarehouseActionRequest: {
+            dataset: components["schemas"]["Dataset"];
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "putaway" | "wave" | "confirm" | "cancel" | "move";
+            /** Location */
+            location?: string | null;
+            /** Deliveries */
+            deliveries?: string[] | null;
+            /** Task */
+            task?: string | null;
+            /** Qty */
+            qty?: number | null;
+            /** Bin */
+            bin?: string | null;
+            /** Product */
+            product?: string | null;
+            /** From Bin */
+            from_bin?: string | null;
+            /** To Bin */
+            to_bin?: string | null;
+            /** Batch */
+            batch?: string | null;
+            /** @default unrestricted */
+            stock_type: components["schemas"]["StockType"];
+            /** Date */
+            date?: string | null;
+            /**
+             * By
+             * @default
+             */
+            by: string;
+        };
+        /** WarehouseActionResponse */
+        WarehouseActionResponse: {
+            dataset: components["schemas"]["Dataset"] | null;
+            /** Patch */
+            patch: {
+                [key: string]: unknown;
+            } | null;
+            report: components["schemas"]["WarehouseReport"];
+            picks: components["schemas"]["PickList"] | null;
+        };
+        /** WarehouseReport */
+        WarehouseReport: {
+            /** Message */
+            message: string;
+            /**
+             * Tasks
+             * @default []
+             */
+            tasks: string[];
+            /** Wave */
+            wave: string | null;
+            /**
+             * Movements
+             * @default []
+             */
+            movements: string[];
+            /** Next Task */
+            next_task: string | null;
+        };
+        /**
+         * WarehouseTask
+         * @description One move of stock inside a place (≈ EWM warehouse task): put away from goods in to a bin, picked from a bin
+         *     for a delivery, or moved between bins. Confirmed, it posts its movements.
+         */
+        WarehouseTask: {
+            /** Id */
+            id: string;
+            /** Location */
+            location: string;
+            kind: components["schemas"]["TaskKind"];
+            /** Product */
+            product: string;
+            /** Batch */
+            batch?: string | null;
+            /** @default unrestricted */
+            stock_type: components["schemas"]["StockType"];
+            /** Qty */
+            qty: number;
+            /**
+             * From Bin
+             * @description Empty: goods in (a put-away)
+             */
+            from_bin?: string | null;
+            /**
+             * To Bin
+             * @description Empty: staged for goods issue (a pick)
+             */
+            to_bin?: string | null;
+            /** Wave */
+            wave?: string | null;
+            /**
+             * Delivery
+             * @description The delivery a pick is for
+             */
+            delivery?: string | null;
+            /**
+             * Order
+             * @description The delivery's order line
+             */
+            order?: string | null;
+            /**
+             * Created On
+             * Format: date
+             */
+            created_on: string;
+            /**
+             * Status
+             * @default open
+             */
+            status: string;
+            /**
+             * Done Qty
+             * @description What was moved: less than asked is short
+             */
+            done_qty?: number | null;
+            /** Done On */
+            done_on?: string | null;
+            /**
+             * Done By
+             * @default
+             */
+            done_by: string;
+            /** Movements */
+            movements?: string[];
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** WarehouseView */
+        WarehouseView: {
+            /** Location */
+            location: string;
+            /**
+             * On
+             * Format: date
+             */
+            on: string;
+            /** Bins */
+            bins: components["schemas"]["BinRow"][];
+            /** Loose */
+            loose: components["schemas"]["LooseRow"][];
+            /** Tasks Open */
+            tasks_open: number;
+            /** Notes */
+            notes: string[];
+        };
+        /**
+         * Wave
+         * @description Deliveries picked together (≈ EWM wave): one pick list over all their lines, in walk order.
+         */
+        Wave: {
+            /** Id */
+            id: string;
+            /** Location */
+            location: string;
+            /**
+             * Created On
+             * Format: date
+             */
+            created_on: string;
+            /** Deliveries */
+            deliveries: string[];
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
         /** WhatIfRequest */
         WhatIfRequest: {
             base: components["schemas"]["Dataset"];
@@ -12668,6 +15854,11 @@ export interface components {
             currency: string;
             /** Scenarios */
             scenarios: components["schemas"]["ScenarioOut"][];
+            /**
+             * Periods
+             * @default []
+             */
+            periods: components["schemas"]["Period"][];
             /**
              * Best Service
              * @default
@@ -12688,7 +15879,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "asked" | "stock" | "receipt" | "planned" | "component" | "ctp" | "rlt" | "ship";
+            kind: "asked" | "stock" | "receipt" | "planned" | "component" | "ctp" | "rlt" | "handling" | "ship";
             /** Date */
             date: string | null;
             /**
@@ -12958,6 +16149,39 @@ export interface operations {
             };
         };
     };
+    auth_signin_second_api_auth_signin_second_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecondStep"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     auth_adopt_api_auth_adopt_post: {
         parameters: {
             query?: never;
@@ -13148,6 +16372,279 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_email_change_api_auth_email_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_account_export_api_auth_account_export_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountConfirm"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_account_deletion_plan_api_auth_account_delete_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletionPlan"];
+                };
+            };
+        };
+    };
+    auth_account_delete_api_auth_account_delete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountDelete"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_two_step_api_auth_two_step_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TwoStepState"];
+                };
+            };
+        };
+    };
+    auth_two_step_begin_api_auth_two_step_begin_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Reauth"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TwoStepKey"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_two_step_enable_api_auth_two_step_enable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TwoStepCode"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodes"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_two_step_disable_api_auth_two_step_disable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Reauth"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auth_two_step_recovery_api_auth_two_step_recovery_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Reauth"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodes"];
                 };
             };
             /** @description Validation Error */
@@ -13561,6 +17058,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ApprovalSetting"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyMeta"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_company_two_step_api_companies__cid__two_step_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TwoStepSetting"];
             };
         };
         responses: {
@@ -14413,6 +17945,73 @@ export interface operations {
             };
         };
     };
+    try_import_api_companies__cid__imports_try_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TryInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tried"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dry_run_import_api_companies__cid__imports__jid__dry_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                jid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tried"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     run_import_api_companies__cid__imports__jid__run_post: {
         parameters: {
             query?: never;
@@ -14648,6 +18247,262 @@ export interface operations {
             };
         };
     };
+    list_cycles_api_sop_cycles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CycleSummary"][];
+                };
+            };
+        };
+    };
+    create_cycle_api_sop_cycles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewCycle"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cycle"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_cycle_api_sop_cycles__cid__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cycle"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_cycle_api_sop_cycles__cid__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CycleSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_step_owner_api_sop_cycles__cid__steps__step__owner_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                step: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cycle"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sign_step_api_sop_cycles__cid__steps__step__sign_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                step: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cycle"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reopen_step_api_sop_cycles__cid__steps__step__reopen_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                cid: string;
+                step: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReopenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Cycle"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    step_figures_api_sop_figures_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FiguresRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Figures"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_api_health_get: {
         parameters: {
             query?: never;
@@ -14659,6 +18514,15 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Health"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14924,6 +18788,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReleaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_value_add_api_forecast_value_add_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValueAdd"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_strategy_advice_api_plan_strategy_advice_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyAdvisor"];
                 };
             };
             /** @description Validation Error */
@@ -15786,6 +19716,285 @@ export interface operations {
             };
         };
     };
+    post_valuation_api_valuation_post: {
+        parameters: {
+            query?: {
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValuationView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_cycle_counts_api_cycle_counts_post: {
+        parameters: {
+            query?: {
+                location?: string | null;
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CyclePlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_warehouse_api_warehouse_post: {
+        parameters: {
+            query: {
+                location: string;
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarehouseView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_warehouse_putaway_api_warehouse_putaway_post: {
+        parameters: {
+            query: {
+                location: string;
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PutawayProposal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_warehouse_picks_api_warehouse_picks_post: {
+        parameters: {
+            query: {
+                wave: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PickList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_warehouse_action_api_warehouse_act_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WarehouseActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarehouseActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_transport_api_transport_post: {
+        parameters: {
+            query?: {
+                as_of?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Dataset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransportView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_transport_action_api_transport_act_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransportActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransportActionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     preview_production_usage_api_actuals_production_usage_post: {
         parameters: {
             query?: never;
@@ -16072,6 +20281,39 @@ export interface operations {
             };
         };
     };
+    post_ask_api_ask_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AskAnswer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_work_item_api_tower_items__iid__post: {
         parameters: {
             query?: never;
@@ -16256,6 +20498,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WhatIfResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_whatif_sweep_api_whatif_sweep_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SweepRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SweepResult"];
                 };
             };
             /** @description Validation Error */
