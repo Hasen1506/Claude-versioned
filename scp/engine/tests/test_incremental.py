@@ -236,3 +236,79 @@ def test_a_change_every_node_reads_plans_everything_again(what):
         plant["loading_workdays"] = plant.get("loading_workdays", 0) + 2
     assert full(after)[0].model_dump_json() != full(d)[0].model_dump_json()
     assert again_equals_scratch(d, after) == len(full(after)[0].nodes)
+
+
+# --- the work kept by who plans (CI found two browsers planning the same company in turn: the second read "nothing
+# changed" of its own change, because the first had planned the changed data just before)
+
+def _heater(d: dict, qty: float) -> dict:
+    d = copy.deepcopy(d)
+    lp = next(x for x in d["location_products"] if x["location"] == "PLT-PUNE" and x["product"] == "RM-HEATER")
+    lp["on_hand"] = qty
+    return d
+
+
+def _as(owner: str, d: dict):
+    from scp.plan.mrp import plan_owner, run_mrp
+    tok = plan_owner.set(owner)
+    try:
+        return run_mrp(Dataset.model_validate(d))
+    finally:
+        plan_owner.reset(tok)
+
+
+@pytest.fixture
+def no_kept(monkeypatch):
+    from collections import OrderedDict
+
+    import scp.plan.mrp as mrp
+    monkeypatch.setattr(mrp, "_kept", OrderedDict())
+    monkeypatch.setattr(mrp, "_last", None)
+    return mrp
+
+
+def test_each_planner_plans_again_from_their_own_last_plan(no_kept):
+    d = example_dict("kitchenware_network")
+    _as("a", d)
+    _as("b", d)
+    _as("b", _heater(d, 20000))                 # b plans the change first
+    mine = _as("a", _heater(d, 20000))          # a's own last plan is still the one before the change
+    assert mine.planned_again and 0 < mine.planned_again < len(mine.nodes) / 2
+    again = _as("a", _heater(d, 20000))
+    assert again.planned_again == 0             # and now nothing has changed since a's last plan
+
+
+def test_two_companies_planned_in_turn_each_plan_again_from_their_own_work(no_kept):
+    k, c = example_dict("kitchenware_network"), example_dict("chennai_port_pumps")
+    _as("kaveri", k)
+    _as("chennai", c)
+    assert _as("kaveri", _heater(k, 20000)).planned_again       # not from scratch (None): Chennai's work is apart
+    assert _as("chennai", c).planned_again == 0
+
+
+def test_the_newest_work_is_kept_and_older_ones_within_the_budget(no_kept, monkeypatch):
+    d = example_dict("kitchenware_network")
+    _as("a", d)
+    n = len(no_kept._kept["a"].memo)
+    monkeypatch.setattr(no_kept, "KEPT_NODES", 2 * n)
+    _as("b", d)
+    _as("a", d)                                        # a plans again: now the newer of the two
+    _as("c", d)
+    assert list(no_kept._kept) == ["a", "c"]           # b, the oldest, made way
+    monkeypatch.setattr(no_kept, "KEPT_NODES", 1)
+    _as("a", d)
+    assert list(no_kept._kept) == ["a"]                # over the budget alone: the newest is still kept
+    assert _as("c", _heater(d, 20000)).planned_again is None     # c's work was dropped: planned from scratch
+
+
+def test_two_browsers_planning_through_the_api_keep_apart(no_kept):
+    from fastapi.testclient import TestClient
+
+    from scp.api.app import app
+    a = TestClient(app, headers={"X-Browser-Key": "incremental-browser-a-0001"})
+    b = TestClient(app, headers={"X-Browser-Key": "incremental-browser-b-0001"})
+    d = example_dict("kitchenware_network")
+    a.post("/api/plan", json=d)
+    b.post("/api/plan", json=_heater(d, 20000))
+    got = a.post("/api/plan", json=_heater(d, 20000)).json()
+    assert got["ok"] and 0 < got["planned_again"] < len(got["nodes"]) / 2

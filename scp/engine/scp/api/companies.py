@@ -63,6 +63,7 @@ from ..companies.store import PendingInvite
 from ..companies import mail, sso
 from ..companies.store import KEY_PREFIX
 from ..model.common import Out
+from ..plan.mrp import plan_owner
 from .working import asker, send_raw, takes_gzip, takes_rows
 
 router = APIRouter(prefix="/api", tags=["companies"])
@@ -242,7 +243,11 @@ def company_error(_request: Request, exc: CompanyError) -> JSONResponse:
 async def gate(request: Request, call_next):
     """With SCP_REQUIRE_SIGNIN, every API call but health and signing in needs a valid session."""
     path = request.url.path
-    asker.set((token_of(request), request.headers.get("x-company", "").strip()))
+    token, cid = token_of(request), request.headers.get("x-company", "").strip()
+    asker.set((token, cid))
+    # whose plan work a plan is made from next time: the person (or browser) and the company open, unchecked (it
+    # only finds a plan's work to start from: the plan is the one planned from scratch either way)
+    plan_owner.set(hashlib.sha256(f"{token or request.headers.get('x-browser-key', '')}|{cid}".encode()).hexdigest())
     takes_gzip.set("gzip" in request.headers.get("accept-encoding", ""))
     takes_rows.set(request.headers.get("x-pack", "") == "rows")
     try:

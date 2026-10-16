@@ -24,10 +24,12 @@ from __future__ import annotations
 import bisect
 import hashlib
 import math
+import os
 import threading
 import time
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from collections.abc import Callable
+from contextvars import ContextVar
 from itertools import accumulate
 import dataclasses
 import gc
@@ -2154,9 +2156,26 @@ _KEEP_AFTER_S = 2.0
 T = TypeVar("T")
 _last: tuple[str, PlanResult, dict[str, Any]] | None = None
 _last_lock = threading.Lock()
-# and the last plan's work, node by node, so that after a change only what the change reaches is planned again (any
-# company: the next plan of another company finds its data different and plans from scratch)
-_kept: Kept | None = None
+# and each planner's last plan's work, node by node, so that after a change only what the change reaches is planned
+# again. Kept by who plans (``plan_owner``): two planners, or two companies, planning in turn would otherwise each
+# find the other's work and plan everything (or, with the same data, read "nothing changed" of their own change).
+# The work of a large company takes gigabytes: the newest is always kept, older ones while all kept hold no more
+# than SCP_KEPT_NODES products at places (one company of 5,000 products at 20 places and some small ones).
+KEPT_NODES = max(1, int(os.environ.get("SCP_KEPT_NODES", "150000") or 150000))
+_kept: OrderedDict[str, Kept] = OrderedDict()
+#: who plans: set for each request by the API's gate (the company open and the person or browser asking); planning
+#: outside a request is one planner
+plan_owner: ContextVar[str] = ContextVar("plan_owner", default="")
+
+
+def _keep(owner: str, kept: Kept) -> None:
+    """Keep ``kept`` as ``owner``'s, then drop the oldest others' while all kept hold more than KEPT_NODES nodes."""
+    _kept.pop(owner, None)
+    _kept[owner] = kept
+    total = sum(len(k.memo) for k in _kept.values())
+    while len(_kept) > 1 and total > KEPT_NODES:
+        _, k = _kept.popitem(last=False)
+        total -= len(k.memo)
 
 
 #: A dataset's fingerprint when something already stands for its content (a company read by reference is its save
@@ -2174,7 +2193,7 @@ def _fingerprint(ds: Dataset) -> str:
 
 def run_mrp(ds: Dataset) -> PlanResult:
     """Validate, then plan. With blocking issues the result carries only the issues."""
-    global _last, _kept
+    global _last
     key = None
     if _last is not None:
         key = _fingerprint(ds)
@@ -2182,12 +2201,15 @@ def run_mrp(ds: Dataset) -> PlanResult:
             if _last is not None and _last[0] == key:
                 return _last[1]
     t = time.perf_counter()
-    res, kept = plan_again(ds, _kept)
+    owner = plan_owner.get()
+    with _last_lock:
+        mine = _kept.get(owner)
+    res, kept = plan_again(ds, mine)
     with _last_lock:
         if time.perf_counter() - t >= _KEEP_AFTER_S:
             _last = (key or _fingerprint(ds), res, {})
         if kept is not None:
-            _kept = kept
+            _keep(owner, kept)
     return res
 
 

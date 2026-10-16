@@ -84,6 +84,7 @@ Everything is set by environment variables. None is needed to try it; the ones m
 | `SCP_SCHEDULER` | `0`: this server does not run scheduled imports and reminders (a second server on the same database). | on |
 | `OPENBLAS_NUM_THREADS` | Threads of the maths library per process. Leave it at 1: the forecast runs one process per core. | `1` |
 | `SCP_LARGE_AT_ONCE` | How many large companies (200,000 records or more) are calculated at once. Each plan of 5,000 products takes about 5.5 GB: raise it only with the memory for it. | `1` |
+| `SCP_KEPT_NODES` | Each planner's last plan is kept, so that after a change only what it reaches is planned again (Phase 5.1). The newest is always kept; older ones while all of them hold no more than this many products at places. A company of 5,000 products at 20 places is about 100,000: raise it to keep two such planners' work, with the memory for it. | `150000` |
 
 Keep the secrets (`SCP_SMTP_PASSWORD`, `SCP_OIDC_CLIENT_SECRET`) out of the image: pass them with `--env-file`
 or your platform's secrets.
