@@ -264,6 +264,7 @@ def no_kept(monkeypatch):
     import scp.plan.mrp as mrp
     monkeypatch.setattr(mrp, "_kept", OrderedDict())
     monkeypatch.setattr(mrp, "_last", None)
+    monkeypatch.setattr(mrp, "_last_work", None)
     return mrp
 
 
@@ -299,6 +300,29 @@ def test_the_newest_work_is_kept_and_older_ones_within_the_budget(no_kept, monke
     _as("a", d)
     assert list(no_kept._kept) == ["a"]                # over the budget alone: the newest is still kept
     assert _as("c", _heater(d, 20000)).planned_again is None     # c's work was dropped: planned from scratch
+
+
+def test_a_planner_answered_with_anothers_kept_plan_keeps_its_work_too(no_kept, monkeypatch):
+    # e2e plan-again: two browsers open the same example; the second is answered with the first one's plan (the
+    # same data), and its own correction must still be planned again only where it reaches, not from scratch
+    monkeypatch.setattr(no_kept, "_KEEP_AFTER_S", 0.0)
+    d = example_dict("kitchenware_network")
+    first = _as("a", d)
+    assert _as("b", d) is first                         # the kept plan, not planned again
+    mine = _as("b", _heater(d, 20000))
+    assert mine.planned_again and 0 < mine.planned_again < len(mine.nodes) / 2
+    assert list(no_kept._kept) == ["a", "b"] and len({id(k) for k in no_kept._kept.values()}) == 2
+
+
+def test_one_plans_work_held_by_two_planners_counts_once_in_the_budget(no_kept, monkeypatch):
+    monkeypatch.setattr(no_kept, "_KEEP_AFTER_S", 0.0)
+    d = example_dict("kitchenware_network")
+    _as("a", d)
+    monkeypatch.setattr(no_kept, "KEPT_NODES", len(no_kept._kept["a"].memo))
+    _as("b", d)                                          # answered with a's plan: the same work, held once
+    assert list(no_kept._kept) == ["a", "b"]
+    _as("c", _heater(d, 20000))                          # c's own work: over the budget, so a's goes, and b still
+    assert list(no_kept._kept) == ["c"]                  # holds the same work: dropping a frees nothing till b goes
 
 
 def test_two_browsers_planning_through_the_api_keep_apart(no_kept):

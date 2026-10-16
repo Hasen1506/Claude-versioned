@@ -27,7 +27,7 @@ import math
 import os
 import threading
 import time
-from collections import OrderedDict, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Callable
 from contextvars import ContextVar
 from itertools import accumulate
@@ -2155,6 +2155,7 @@ def target_at(points: list[tuple[date, float]], d: date) -> float:
 _KEEP_AFTER_S = 2.0
 T = TypeVar("T")
 _last: tuple[str, PlanResult, dict[str, Any]] | None = None
+_last_work: Kept | None = None            # the kept plan's work: whoever is answered with that plan keeps it too
 _last_lock = threading.Lock()
 # and each planner's last plan's work, node by node, so that after a change only what the change reaches is planned
 # again. Kept by who plans (``plan_owner``): two planners, or two companies, planning in turn would otherwise each
@@ -2172,10 +2173,14 @@ def _keep(owner: str, kept: Kept) -> None:
     """Keep ``kept`` as ``owner``'s, then drop the oldest others' while all kept hold more than KEPT_NODES nodes."""
     _kept.pop(owner, None)
     _kept[owner] = kept
-    total = sum(len(k.memo) for k in _kept.values())
+    # two planners answered with one plan hold its work once
+    held = Counter(id(k) for k in _kept.values())
+    total = sum(len(k.memo) for k in {id(k): k for k in _kept.values()}.values())
     while len(_kept) > 1 and total > KEPT_NODES:
         _, k = _kept.popitem(last=False)
-        total -= len(k.memo)
+        held[id(k)] -= 1
+        if not held[id(k)]:
+            total -= len(k.memo)
 
 
 #: A dataset's fingerprint when something already stands for its content (a company read by reference is its save
@@ -2193,21 +2198,26 @@ def _fingerprint(ds: Dataset) -> str:
 
 def run_mrp(ds: Dataset) -> PlanResult:
     """Validate, then plan. With blocking issues the result carries only the issues."""
-    global _last
+    global _last, _last_work
     key = None
+    owner = plan_owner.get()
     if _last is not None:
         key = _fingerprint(ds)
         with _last_lock:
             if _last is not None and _last[0] == key:
+                # the same data planned by someone else: the plan is theirs, and so is the work this planner's next
+                # change is planned again from (else a second planner of an unchanged company plans all of it)
+                if _last_work is not None:
+                    _keep(owner, _last_work)
                 return _last[1]
     t = time.perf_counter()
-    owner = plan_owner.get()
     with _last_lock:
         mine = _kept.get(owner)
     res, kept = plan_again(ds, mine)
     with _last_lock:
         if time.perf_counter() - t >= _KEEP_AFTER_S:
             _last = (key or _fingerprint(ds), res, {})
+            _last_work = kept
         if kept is not None:
             _keep(owner, kept)
     return res
