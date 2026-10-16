@@ -13,6 +13,8 @@ const sign = async (page: Page, label: string) => {
   const b = page.getByRole("button", { name: `Sign off ${label}` });
   await expect(b).toBeEnabled({ timeout: 60_000 });
   await b.click();
+  // signed when the step moves on: until then the panel on screen is still this step's (N291)
+  await expect(b).toHaveCount(0, { timeout: 60_000 });
 };
 
 test("a month of S&OP: budget in, five sign-offs, the plan against the budget, then a step reopened", async ({ page }) => {

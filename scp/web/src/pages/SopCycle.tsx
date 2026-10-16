@@ -89,6 +89,8 @@ function CycleBody({ c, ds, revision, onChange, onDrop }: {
 }) {
   const company = useStore((s) => s.company);
   const [sel, setSel] = useState<string>(c.next ?? "exec");
+  // units or revenue: kept for the cycle, so the next step (a new panel) shows what was chosen
+  const [unit, setUnit] = useState<Unit>("qty");
   const step = c.steps.find((s) => s.step === sel) ?? c.steps[0];
   const members = useLatest(company ? () => api.members(company.id) : null, [company?.id]);
   const mayOwn = !company || company.role === "owner";
@@ -113,7 +115,7 @@ function CycleBody({ c, ds, revision, onChange, onDrop }: {
         </button></li>)}
     </ol>
     {err && <div className="banner error"><Badge sev="error">Not done</Badge>{err}</div>}
-    <StepPanel key={`${c.id}/${step.step}/${step.status}`} c={c} s={step} ds={ds} revision={revision} act={act}
+    <StepPanel key={`${c.id}/${step.step}/${step.status}`} c={c} s={step} ds={ds} revision={revision} act={act} unit={unit} setUnit={setUnit}
       owners={members.value?.filter((m) => m.role !== "viewer").map((m) => m.email) ?? null} mayOwn={mayOwn} />
     {c.steps.some((s) => s.figures) && <Journey c={c} />}
     <Panel title="What happened">
@@ -126,9 +128,9 @@ function CycleBody({ c, ds, revision, onChange, onDrop }: {
   </>;
 }
 
-function StepPanel({ c, s, ds, revision, act, owners, mayOwn }: {
+function StepPanel({ c, s, ds, revision, act, owners, mayOwn, unit, setUnit }: {
   c: Cycle; s: CycleStep; ds: Dataset; revision: number; act: (fn: () => Promise<Cycle>) => Promise<void>;
-  owners: string[] | null; mayOwn: boolean;
+  owners: string[] | null; mayOwn: boolean; unit: Unit; setUnit: (u: Unit) => void;
 }) {
   const isNext = s.step === c.next;
   const live = useLatest(isNext ? () => api.cycleFigures(ds, s.step) : null, [s.step, isNext, revision]);
@@ -157,7 +159,7 @@ function StepPanel({ c, s, ds, revision, act, owners, mayOwn }: {
       {!isNext && s.status !== "signed" && <p className="faint small" style={{ margin: 0 }}>{c.steps.find((x) => x.step === c.next)?.label} comes first.</p>}
       {isNext && live.error && <div className="banner error"><Badge sev="error">Figures not worked out</Badge>{live.error}</div>}
       {isNext && !f && !live.error && <p className="faint small" style={{ margin: 0 }}>Working out the figures{s.step === "supply" || s.step === "pre" || s.step === "exec" ? " (solving the capacity plan)" : ""}…</p>}
-      {f && <Figures f={f} frozen={s.status === "signed"} />}
+      {f && <Figures f={f} frozen={s.status === "signed"} unit={unit} setUnit={setUnit} />}
       {isNext && <Edits><div className="stack" style={{ gap: 8 }}>
         <label className="small">{MINUTES.has(s.step) ? "What was decided (kept with the sign-off)" : "Note (optional)"}
           <textarea aria-label="Sign-off note" rows={2} value={note} onChange={(e) => setNote(e.target.value)} style={{ width: "100%" }}
@@ -178,8 +180,7 @@ function StepPanel({ c, s, ds, revision, act, owners, mayOwn }: {
 
 type Unit = "qty" | "revenue";
 
-function Figures({ f, frozen }: { f: CycleFigures; frozen: boolean }) {
-  const [unit, setUnit] = useState<Unit>("qty");
+function Figures({ f, frozen, unit, setUnit }: { f: CycleFigures; frozen: boolean; unit: Unit; setUnit: (u: Unit) => void }) {
   const supply = f.months.some((m) => m.supply_qty !== null && m.supply_qty !== undefined);
   const fmt = (v: number) => (unit === "qty" ? qty(Math.round(v)) : money(v, f.currency));
   const pick = (m: { budget_qty: number; budget_revenue: number; demand_qty: number; demand_revenue: number; supply_qty?: number | null; supply_revenue?: number | null }) => ({

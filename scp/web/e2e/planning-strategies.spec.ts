@@ -90,6 +90,8 @@ test("a mixer forecast once for its red and blue variants: their sales counted t
   const use = page.getByRole("button", { name: "Use this forecast in the supply plan" });
   await expect(use).toBeEnabled({ timeout: 60_000 });
   await use.click();
+  // the release answers before the plan is asked for: a plan asked for sooner is of the demand before it (N290)
+  await expect(page.locator(".banner.info", { hasText: "Released" })).toBeVisible({ timeout: 30_000 });
 
   // output: the mixer's own orders only plan the motors its variants share; the red order is made as itself
   await page.goto("/#/plan/orders");
