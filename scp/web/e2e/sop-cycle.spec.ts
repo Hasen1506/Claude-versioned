@@ -115,6 +115,8 @@ test("in a company kept on the server the owner names step owners from the membe
   await page.getByRole("button", { name: "Start the October 2026 cycle" }).click();
   // the owner select lists the members who may sign
   await page.getByRole("button", { name: /Demand review/ }).click();
+  // the members come from the server: the field is a select once they have
+  await expect(page.locator("select[aria-label='Step owner'] option", { hasText: email })).toHaveCount(1, { timeout: 15_000 });
   await page.getByLabel("Step owner").selectOption(email);
   await expect(page.getByRole("button", { name: /Demand review/ })).toContainText(email);
   await page.getByRole("button", { name: /^1 Data/ }).click();
