@@ -53,7 +53,7 @@ from .leadtime import (
 from .lotsize import apply_modifiers, base_lot, dynamic_periods
 from .structure import co_output, needs
 from .result import (
-    BucketOut, Kpis, NodeBucket, NodePlan, OrderLoad, Peg, PlanException, PlannedOrder, PlanResult,
+    BucketOut, Kpis, LateDemand, NodeBucket, NodePlan, OrderLoad, Peg, PlanException, PlannedOrder, PlanResult,
     Requirement, ResourceBucket, ResourcePlan, ScheduledReceiptOut,
 )
 
@@ -1843,9 +1843,11 @@ class _Planner:
             if inv is not None:
                 inv_start += inv[0]
                 inv_end += inv[1]
-            for q, c in ind:
+            for q, c, late in ind:
                 total_ind += q
                 on_time += c
+                if late is not None:
+                    out._late.append(late)
             out.nodes.append(plan)
             self.exceptions.extend(excs)
             risks.extend(risk)
@@ -1927,12 +1929,19 @@ class _Planner:
         e0 = len(self.exceptions)
         self._node_exceptions(node, st, bks)
         # service: independent demand projected available on time
-        ind: list[tuple[float, float]] = []
+        ind: list[tuple[float, float, LateDemand | None]] = []
         for r in st.reqs:
             if r.kind not in ("forecast", "sales_order"):
                 continue
             covered = self._on_time(r)
-            ind.append((r.qty, covered))
+            late = None
+            if r.qty - covered > 1e-6:
+                got = [c for p in self._pegs_on(r) for c in self._peg_chunks(p)]
+                last = max((d for d, _ in got), default=None)
+                whole = r.qty - sum(q for _, q in got) <= 1e-6 and last is not None and last < self.b.end + timedelta(days=3650)
+                late = LateDemand(requirement=r.id, location=r.location, product=r.product, kind=r.kind, date=r.date,
+                                  qty=r.qty, late=r.qty - covered, all_by=last if whole else None)
+            ind.append((r.qty, covered, late))
             bi = self.b.index_of(r.date)
             if 0 <= bi < n and r.qty - covered > 1e-6:
                 bks[bi].at_risk += r.qty - covered

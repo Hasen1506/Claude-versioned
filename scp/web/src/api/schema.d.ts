@@ -2143,6 +2143,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Ask
+         * @description Ask the plan (enterprise plan 5.2): why something is late, what if something changes, who owns a problem, what
+         *     is at risk. Answered from the plan and the open worklist, each sentence citing its records; fixes and what-ifs it
+         *     proposes are tried and kept by a person. Nothing is changed or recorded.
+         */
+        post: operations["post_ask_api_ask_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tower/items/{iid}": {
         parameters: {
             query?: never;
@@ -2822,6 +2844,52 @@ export interface components {
             /** Approval */
             approval: boolean;
         };
+        /** AskAnswer */
+        AskAnswer: {
+            /** Question */
+            question: string;
+            /**
+             * Intent
+             * @enum {string}
+             */
+            intent: "why_late" | "what_if" | "who_owns" | "at_risk" | "unknown";
+            /** Understood */
+            understood: string;
+            /** Answer */
+            answer: string;
+            /**
+             * Findings
+             * @default []
+             */
+            findings: components["schemas"]["Finding"][];
+            /**
+             * Proposals
+             * @default []
+             */
+            proposals: components["schemas"]["Proposal"][];
+            /**
+             * Suggestions
+             * @default []
+             */
+            suggestions: string[];
+            scenario: components["schemas"]["ScenarioOut"] | null;
+            /**
+             * Currency
+             * @default
+             */
+            currency: string;
+            /**
+             * More
+             * @default 0
+             */
+            more: number;
+        };
+        /** AskBody */
+        AskBody: {
+            /** Question */
+            question: string;
+            dataset: components["schemas"]["Dataset"];
+        };
         /** AtpNode */
         AtpNode: {
             /** Location */
@@ -3370,6 +3438,29 @@ export interface components {
              * @default
              */
             why: string;
+        };
+        /**
+         * Cite
+         * @description A record an answer rests on, and where it is seen in the application.
+         */
+        Cite: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "product" | "location" | "customer" | "supplier" | "resource" | "order" | "receipt" | "demand" | "exception" | "rule";
+            /** Id */
+            id: string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Href
+             * @default
+             */
+            href: string;
         };
         /** Clash */
         Clash: {
@@ -5191,6 +5282,21 @@ export interface components {
              * @description Per year for NPV; empty = the company WACC
              */
             discount_rate?: number | null;
+        };
+        /** Finding */
+        Finding: {
+            /** Text */
+            text: string;
+            /**
+             * Cites
+             * @default []
+             */
+            cites: components["schemas"]["Cite"][];
+            /**
+             * Chain
+             * @default []
+             */
+            chain: components["schemas"]["Step"][];
         };
         /** FirmReport */
         FirmReport: {
@@ -9850,6 +9956,62 @@ export interface components {
             note: string;
         };
         /**
+         * Proposal
+         * @description Something to do about the answer. A fix is tried on a copy and kept by a person (``/api/tower/fix``, then
+         *     the edits are applied in the browser); a scenario is kept as a stored what-if (``/api/whatif/keep``).
+         */
+        Proposal: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "fix" | "scenario" | "open";
+            /** Label */
+            label: string;
+            /**
+             * Key
+             * @default
+             */
+            key: string;
+            /**
+             * Message
+             * @default
+             */
+            message: string;
+            /**
+             * Protects
+             * @default 0
+             */
+            protects: number;
+            /** Costs */
+            costs: number | null;
+            /**
+             * One Click
+             * @default false
+             */
+            one_click: boolean;
+            /**
+             * Why Not
+             * @default
+             */
+            why_not: string;
+            /**
+             * Href
+             * @default
+             */
+            href: string;
+            /**
+             * Chips
+             * @default []
+             */
+            chips: (components["schemas"]["DemandChip-Output"] | components["schemas"]["SupplierOutChip-Output"] | components["schemas"]["LeadTimeChip-Output"] | components["schemas"]["AddShiftChip-Output"] | components["schemas"]["LaneDelayChip-Output"] | components["schemas"]["MachineDownChip-Output"] | components["schemas"]["CustomerPriceChip-Output"] | components["schemas"]["SafetyDaysChip-Output"] | components["schemas"]["FxChip-Output"])[];
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+        };
+        /**
          * PurchaseContract
          * @description An outline agreement (≈ contract): prices agreed with a supplier for a period. Purchase orders for its products
          *     made while it is valid take its price and name it; what was ordered is set against its targets.
@@ -12909,6 +13071,16 @@ export interface components {
         SsoLink: {
             /** Url */
             url: string;
+        };
+        /** Step */
+        Step: {
+            /** Text */
+            text: string;
+            /**
+             * Cites
+             * @default []
+             */
+            cites: components["schemas"]["Cite"][];
         };
         /** StepReport */
         StepReport: {
@@ -18346,6 +18518,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FixResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_ask_api_ask_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AskAnswer"];
                 };
             };
             /** @description Validation Error */

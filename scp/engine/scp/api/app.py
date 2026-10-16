@@ -27,7 +27,8 @@ from ..actuals import ActualsView, FirmReport, PostingError, RollReport, actuals
 from ..actuals.post import production_usage
 from ..demand import ForecastResult, ReleaseResult, ValueAdd, release, run_forecast, value_add
 from ..finance import FinanceResult, run_finance
-from ..tower import FixError, FixResult, TowerResult, WorkItem, get_tracker, run_tower, try_inbox_fix
+from ..tower import FixError, FixResult, TowerResult, WorkItem, get_tracker, open_items, run_tower, try_inbox_fix
+from ..tower.ask import AskAnswer, AskRequest, ask
 from ..demand import foundation
 from ..demand.models import SPECS
 from ..demand.result import FoundationStatus
@@ -1032,6 +1033,21 @@ def post_tower_fix(req: FixRequest, sc: Scope) -> FixResult:
         return try_inbox_fix(req.dataset, req.key, scope=sc or "anon:-")
     except FixError as e:
         raise HTTPException(e.status, str(e)) from None
+
+
+class AskBody(AskRequest):
+    dataset: PlanData
+
+
+@app.post("/api/ask", response_model=AskAnswer)
+def post_ask(req: AskBody, sc: Scope) -> Response:
+    """Ask the plan (enterprise plan 5.2): why something is late, what if something changes, who owns a problem, what
+    is at risk. Answered from the plan and the open worklist, each sentence citing its records; fixes and what-ifs it
+    proposes are tried and kept by a person. Nothing is changed or recorded."""
+    plan = run_mrp(req.dataset)
+    items = open_items(req.dataset, plan, scope=sc or "anon:-") if plan.ok else []
+    ix = with_kept_plan(req.dataset, plan, "trace", lambda: trace_index(plan)) if plan.ok else None
+    return send(ask(req.dataset, plan, items, req.question, ix))
 
 
 class WorkItemUpdate(Out):

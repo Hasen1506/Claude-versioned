@@ -1,7 +1,7 @@
 import type {
   Cycle, CycleFigures, CycleSummary, StrategyAdvisor, ValueAdd,
   ProductionUsageInput,
-  Comparison, FinanceResult, FixResult, KeepResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
+  AskAnswer, Comparison, FinanceResult, FixResult, KeepResult, TowerResult, WorkItem, WorkItemEntry, VersionDoc, VersionMeta, ActualsView, FirmResponse, RollResponse, Dataset, DemandRecord, ExampleInfo, ForecastModels, ForecastResult, InventoryResult, PlacementResponse, PromiseCommitResponse, PromiseResult, ScheduleResult, SopReleaseResponse, SopResult, NetworkView, PlanResult, ReleaseResponse, RuleInfo,
   PlanTrace, ScenarioInfo, ScenarioReport, SchemaError, ValidationResult, ScheduleApplyResponse, LevelPreview, ScheduleCatalogue, ScheduleComparison,
   PurchasingView, CreatePoResponse, PoActionResponse, PoAction, PoActionInput, RequisitionPick, PostAction, CountInput, UsageInput, StockType, SalesOrderChange, SalesOrderResponse,
   SalesView, SalesAction, SalesActionInput, SalesActionResponse,
@@ -499,6 +499,8 @@ export const api = {
   tower: (ds: Dataset) => planPost<TowerResult>("/api/tower", ds),
   /** Try an inbox item's action on a copy of the company: money at risk before and after, and the edits (nothing kept). */
   towerFix: (ds: Dataset, key: string) => withDataset<FixResult>("/api/tower/fix", ds, { key }),
+  /** Ask the plan (enterprise plan 5.2): a question in plain words, answered from the plan with the records cited. */
+  ask: (ds: Dataset, question: string) => withDataset<AskAnswer>("/api/ask", ds, { question }),
   /** Assign (owner "" = back to the rules), acknowledge / resolve / reopen, or annotate a worklist item. */
   towerItem: (id: string, patch: { owner?: string; status?: "open" | "acknowledged" | "resolved"; note?: string; sla_days?: Record<string, number> }) =>
     call<WorkItem>(`/api/tower/items/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(patch) }),

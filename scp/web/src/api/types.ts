@@ -150,6 +150,10 @@ export type Kpi = S["Kpi"];
 export type WorkItem = S["WorkItem"];
 export type FixResult = S["FixResult"];
 export type FixEdit = S["FixEdit"];
+export type AskAnswer = S["AskAnswer"];
+export type AskFinding = S["Finding"];
+export type AskCite = S["Cite"];
+export type AskProposal = S["Proposal"];
 export type WorkItemEntry = S["WorkItemEntry"];
 export type DataQualityRow = S["DataQualityRow"];
 

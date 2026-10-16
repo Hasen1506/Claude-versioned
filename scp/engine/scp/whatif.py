@@ -33,7 +33,7 @@ from .model import Dataset
 from .model.common import Out
 from .model.master import CapacityChange, CustomerPrice, SafetyStockPolicy, Shift
 from .model.common import SafetyStockMethod
-from .plan import run_mrp
+from .plan import PlanResult, run_mrp
 from .versions.diff import diff
 from .versions.store import Store, VersionMeta
 
@@ -275,8 +275,8 @@ class WhatIfResult(Out):
     lowest_cost: str = ""
 
 
-def _metrics(label: str, ds: Dataset) -> ScenarioOut:
-    p = run_mrp(ds)
+def _metrics(label: str, ds: Dataset, plan: PlanResult | None = None) -> ScenarioOut:
+    p = plan or run_mrp(ds)
     k = p.kpis
     out = ScenarioOut(label=label, ok=p.ok)
     if not p.ok:

@@ -866,6 +866,51 @@ random networks with random changes, and in the size test.
 | N260 | The server keeps the last plan's work beside it, one company per server process: planning another company plans from scratch and replaces it. | Minor | By design: one plan's work per process; its memory is part of the plan's peak in DEPLOY.md §5. |
 | N261 | The first change after a plan of 5,000 products took 21 s, not 13: Python's collector looked through the gigabytes of kept work for cycles. | Minor | **Fixed:** the collector waits while a plan is made again from kept work. |
 
+### 5.2: Ask the plan
+
+ENTERPRISE_PLAN 5.2, in a browser on the Kaveri Kitchenware example (*Performance → Ask the plan*) and through the
+engine on the Chennai pumps example and the generated company of 5,000 products. A question in plain words is read
+by rules against the company's own names and ids (no language model, nothing leaves the server) and answered from
+the plan's records: the pegging, each planned order's projected date and what holds it up, the machines' daily
+load, the open worklist with its owners and money at risk. Every sentence cites the records it rests on, each a
+link to where it is seen. Asking changes nothing; what an answer proposes is the inbox's own fix, tried on a copy
+and kept by the person as one change, or a what-if kept as a stored scenario.
+
+* *Why late. Input:* "Why is the 10 HP export pump late for Jebel Ali?" (the product and the customer said in part).
+  *Processing:* each late demand of that product for that customer is followed down its pegging to the supply that
+  reaches it latest, and down from there. *Output:* "42 units of Export end-suction pump 10 HP (PUMP-10HP-EXP) for
+  Gulf distributor, Jebel Ali are projected late across 2 demands (2,184,000 INR of sales)", each demand with its
+  chain: the transfer from the port that is available 10 Oct, needed 5 Oct; it should have started 23 Sep, so even
+  started today 12 days of transit make it 10 Oct. For the Singapore buyer the chain runs five levels down, through
+  the port, the plant's production order MO-0007-01 and the motor it waits for, to the motor's purchase that should
+  have started 18 Sep (Hosur motor works takes 10 days). The late units add up to the plan's own demand at risk,
+  product by product at each customer.
+* *A fix kept. Input:* "Why is PUNE-WIND overloaded?" *Output:* "over its capacity and overtime on 7 more days in
+  periods with room", the worst day first (31 Oct: 61.0 h of work on 48.4 h with overtime, most from MO-0020-04 and
+  MO-0019-03), and the inbox's *Add 12.6 h of overtime*. *Try it* plans a copy (this problem → gone); *Keep this
+  change* applies it as one change, the question is asked again on the changed data ("not over its capacity on any
+  day") and one *Undo* takes it back.
+* *What if. Input:* "What happens if Hindalco goes bust?" *Output:* read as *SUP-COPPER out*, planned on a copy:
+  99.6 % → 69.4 % on time, 28,930 more units late, copper wire at Pune has no other supplier, and where the late
+  demand lands, customer by customer. *Keep as a scenario* stores it under Versions to compare and promote. The
+  numbers are the what-if page's for the same chip.
+* *Who owns, what is at risk.* "Who is responsible for the mixer grinders?" names the owners of the 10 open problems
+  on both mixer grinders (by owner rule), and the rule that routes new ones; "What is at risk?" is the inbox's top six
+  with owner and action. A question it cannot read ("tell me a joke") is answered with questions this company's data
+  can answer, each of which it reads.
+* *At 5,000 × 20:* measured in the next change.
+
+| # | Found | Severity | Outcome |
+|---|---|---|---|
+| N262 | "Why is PUNE-WIND overloaded?" first answered "not over its capacity in any period": it looked at weekly totals only, while the inbox listed the machine's days over their hours. | Major | **Fixed:** a machine's answer counts the days over their hours inside weeks with room too, as the day-overload exception does, worst day first with the orders that load it. |
+| N263 | "Why is SO-88221 late?" said it was not late: the plan covers it on time, but the promise check confirms only 600 of 800 on the requested date. | Major | **Fixed:** when the plan has it on time, the open problems on it are said too ("But 1 open problem on it says otherwise: …"), with their fixes. |
+| N264 | "Who is responsible for the mixer grinders?" found no problem: the words also named *Assembly line 1 (mixer grinders)*, so it looked for problems on both the products and the line. | Major | **Fixed:** a word said names one kind of record: the kind whose names share the most of the words takes them (products before places before machines), and the next kind is read from the words left. |
+| N265 | For the kettle (KT-15) and the 500 W mixer grinder the inbox's one-click *expedite* is offered, but pulling the firm transfer in by a day leaves the demand late; *Try it* says so ("stays late"). | Minor | Open: proposals are not tried before they are offered (each try is a plan of the whole company). |
+| N266 | "What if the kettle line is down 3 days?" changes nothing on time: the plan does not wait for machines unless capacity-constrained planning is on. | Minor | By design: the answer says so and where the change shows (the machine's load). |
+| N267 | "What if steel prices rise 10 %?" is not read: no what-if changes a supplier's price. | Minor | Open: a purchase-price change belongs with the what-if chips (5.3). |
+| N268 | Time words are not read: "Is anything going to be late next week?" answers for the whole horizon. | Minor | Open. |
+| N269 | "Which orders are late", "show me shortages" and "goes bust" were not read as asked (the first as *what is at risk*, the others not at all); "1 days of lead time". | Minor | **Fixed.** |
+
 ## Found in the second reality check (after Phase E)
 
 A new company built from an empty start through the screens only: a paint maker with one plant, a distribution

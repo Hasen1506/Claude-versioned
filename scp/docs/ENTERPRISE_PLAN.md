@@ -58,7 +58,8 @@ the spread on transfers and production, open). Phase 4 is done.
 | 4.4 | One demand number (no spread) | P90 demand and promise against it; measured supplier lead-time deviation fed into safety stock |
 
 ## Phase 5: Speed and an assistant
-Done: 5.1 (N255–N261; capacity-constrained plans and co-products planned whole, open).
+Done: 5.1 (N255–N261; capacity-constrained plans and co-products planned whole, open); 5.2 (N262–N269; fixes offered
+before they are tried, a supplier price change and time words, open).
 
 | # | Gap | Build |
 |---|---|---|

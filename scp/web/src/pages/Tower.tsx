@@ -11,8 +11,9 @@ import { Msg, namesOf } from "../lib/names";
 import { go, href } from "../lib/router";
 import { SchemaForm, type Obj } from "../schema/SchemaForm";
 import { isStale, store, useReadOnly, useStore } from "../state/store";
+import { Ask } from "./Ask";
 
-type View = "kpis" | "inbox" | "worklist" | "quality" | "settings";
+type View = "kpis" | "inbox" | "worklist" | "ask" | "quality" | "settings";
 
 // The §18.2 set, grouped the way a weekly review reads it.
 const GROUPS: { title: string; ids: string[] }[] = [
@@ -84,6 +85,7 @@ export function Tower({ route }: { route: string[] }) {
     <Tabs<View> value={view === "worklist" ? "inbox" : view} onChange={(v) => go("tower", v)} tabs={[
       { id: "kpis", label: "KPIs", count: res?.kpis.length },
       { id: "inbox", label: "Problems", count: res ? live.length : undefined },
+      { id: "ask", label: "Ask the plan" },
       { id: "quality", label: "Data quality", count: res?.data_quality.reduce((a, r) => a + r.count, 0) },
       { id: "settings", label: "Owners, SLA & targets" },
     ]} />
@@ -97,6 +99,7 @@ export function Tower({ route }: { route: string[] }) {
     </div>
   );
   if (view === "settings") return body(<>{nav}<Settings ds={ds} /></>);
+  if (view === "ask") return body(<>{nav}<Ask ds={ds} /></>);
   if (run.error) return body(<div className="banner error"><Badge sev="error">Could not refresh the tower</Badge>{run.error}</div>);
   if (!res) {
     return body(<>
@@ -253,13 +256,7 @@ function Inbox({ res, ds, cur }: { res: TowerResult; ds: Dataset; cur: string })
       .catch((e) => setTries((m) => ({ ...m, [key]: { busy: false, error: e instanceof Error ? e.message : String(e) } })));
   };
   const keepFix = (key: string, edits: FixEdit[]) => {
-    store.update((d) => {
-      for (const e of edits) {
-        const rows = (d as unknown as Record<string, Array<Record<string, unknown>>>)[e.collection];
-        const row = rows?.find((r) => r.id === e.id);
-        if (row) row[e.field] = e.value as unknown;
-      }
-    });
+    keepEdits(edits);
     setTries((m) => { const { [key]: _, ...rest } = m; return rest; });
     void store.run("tower");
   };
@@ -334,9 +331,20 @@ function Inbox({ res, ds, cur }: { res: TowerResult; ds: Dataset; cur: string })
   );
 }
 
+/** A tried fix kept: its edits applied to the working copy as one change (one undo step). */
+export function keepEdits(edits: FixEdit[]) {
+  store.update((d) => {
+    for (const e of edits) {
+      const rows = (d as unknown as Record<string, Array<Record<string, unknown>>>)[e.collection];
+      const row = rows?.find((r) => r.id === e.id);
+      if (row) row[e.field] = e.value as unknown;
+    }
+  });
+}
+
 /** What the tried action does to the money at risk, planned again on a copy: before → after, the edits, what it clears
  *  and brings. Keeping it applies the edits as one change (one undo step). */
-function FixOutcome({ f, cur, ro, onKeep, onLeave }: { f: FixResult; cur: string; ro: boolean; onKeep: () => void; onLeave: () => void }) {
+export function FixOutcome({ f, cur, ro, onKeep, onLeave }: { f: FixResult; cur: string; ro: boolean; onKeep: () => void; onLeave: () => void }) {
   const delta = f.after_total - f.before_total;
   const gone = f.after_item === null || f.after_item === undefined;
   return <div className="stack" style={{ gap: 8 }} role="region" aria-label="What this change does">

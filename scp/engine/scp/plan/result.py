@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, PrivateAttr
 
 from ..model.common import Out
 from ..validate import Issue
@@ -185,6 +185,18 @@ class Kpis(Out):
     max_utilization: float = 0.0
 
 
+class LateDemand(Out):
+    """A customer demand (forecast or sales order) its pegged supply reaches late or not at all."""
+    requirement: str
+    location: str
+    product: str
+    kind: ReqKind
+    date: dt.date
+    qty: float
+    late: float                      # units not available by the date
+    all_by: dt.date | None = None    # when all of it is projected available; None: not within the horizon
+
+
 class PlanResult(Out):
     ok: bool
     currency: str
@@ -202,3 +214,5 @@ class PlanResult(Out):
     # planned again from the previous plan's work (S/4 net change planning): the nodes the changes since reached, which
     # were planned; the rest were kept as they were. None: planned from scratch
     planned_again: int | None = None
+    # the demand projected late, kept with the plan on the server for questions about it (tower/ask.py), not sent
+    _late: list[LateDemand] = PrivateAttr(default_factory=list)
